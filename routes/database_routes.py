@@ -354,17 +354,39 @@ def index():
                     if column == 'state' and value == 'ghostlisted':
                         filter_where_clauses.append('ghostlisted = TRUE')
                         clause_added_in_this_iteration = True
+                    # Special handling for all_blacklisted state filter
+                    elif column == 'state' and value == 'all_blacklisted':
+                        from database.database_reading import get_items_with_all_blacklisted_versions
+                        all_blacklisted_ids = get_items_with_all_blacklisted_versions()
+                        if all_blacklisted_ids:
+                            placeholders = ','.join('?' * len(all_blacklisted_ids))
+                            filter_where_clauses.append(f'id IN ({placeholders})')
+                            filter_params.extend(all_blacklisted_ids)
+                        else:
+                            # If no items have all versions blacklisted, return no results
+                            filter_where_clauses.append('1 = 0')
+                        clause_added_in_this_iteration = True
                     elif operator == 'contains': filter_where_clauses.append(f'"{column}" LIKE ?'); filter_params.append(f"%{value}%")
                     elif operator == 'equals': filter_where_clauses.append(f'"{column}" = ?'); filter_params.append(value)
                     elif operator == 'not_equals': filter_where_clauses.append(f'"{column}" IS NOT ?'); filter_params.append(value) # Changed to IS NOT
                     elif operator == 'starts_with': filter_where_clauses.append(f'"{column}" LIKE ?'); filter_params.append(f"{value}%")
                     elif operator == 'ends_with': filter_where_clauses.append(f'"{column}" LIKE ?'); filter_params.append(f"%{value}")
                     elif operator == 'greater_than':
-                        try: filter_where_clauses.append(f'CAST("{column}" AS REAL) > ?'); filter_params.append(float(value))
-                        except (ValueError, TypeError): filter_where_clauses.append(f'"{column}" > ?'); filter_params.append(value)
+                        try: 
+                            float_value = float(value)
+                            filter_where_clauses.append(f'CAST("{column}" AS REAL) > ?'); 
+                            filter_params.append(float_value)
+                        except (ValueError, TypeError): 
+                            filter_where_clauses.append(f'"{column}" > ?'); 
+                            filter_params.append(value)
                     elif operator == 'less_than':
-                        try: filter_where_clauses.append(f'CAST("{column}" AS REAL) < ?'); filter_params.append(float(value))
-                        except (ValueError, TypeError): filter_where_clauses.append(f'"{column}" < ?'); filter_params.append(value)
+                        try: 
+                            float_value = float(value)
+                            filter_where_clauses.append(f'CAST("{column}" AS REAL) < ?'); 
+                            filter_params.append(float_value)
+                        except (ValueError, TypeError): 
+                            filter_where_clauses.append(f'"{column}" < ?'); 
+                            filter_params.append(value)
                     if len(filter_where_clauses) > original_clause_count: clause_added_in_this_iteration = True; continue
         
         final_where_clause = ""
@@ -465,9 +487,10 @@ def index():
                 try:
                     cursor.execute(f"SELECT DISTINCT \"{column_for_distinct_fetch}\" FROM media_items ORDER BY \"{column_for_distinct_fetch}\"")
                     values = [row[0] if row[0] is not None else "None" for row in cursor.fetchall()]
-                    # Add ghostlisted as a special state option
+                    # Add special state options
                     if column_for_distinct_fetch == 'state':
                         values.append('ghostlisted')
+                        values.append('all_blacklisted')
                     column_values[column_for_distinct_fetch] = values
                     logging.info(f"Fetched {len(values)} distinct values for '{column_for_distinct_fetch}' in {time.perf_counter() - loop_iteration_start_time:.4f}s.")
                 except Exception as e:

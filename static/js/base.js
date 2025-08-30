@@ -640,14 +640,22 @@ document.addEventListener('DOMContentLoaded', function() {
         document.querySelectorAll('.notification.unread').forEach(notif => {
             notif.addEventListener('click', async () => {
                 const id = notif.dataset.id;
-                await markNotificationRead(id);
+                
+                // Immediately update UI for better user experience
                 notif.classList.remove('unread');
                 notif.classList.add('read');
                 
-                // Only update indicator if notifications are not disabled
-                if (localStorage.getItem('notificationsDisabled') !== 'true') {
-                    updateNotificationIndicator();
+                // Update local notification state
+                const notification = notifications.find(n => n.id === id);
+                if (notification) {
+                    notification.read = true;
                 }
+                
+                // Update indicator immediately
+                updateNotificationIndicator();
+                
+                // Then send request to server
+                await markNotificationRead(id);
             });
         });
     }
@@ -674,12 +682,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 },
                 body: JSON.stringify({ id }),
             });
-            const notification = notifications.find(n => n.id === id);
-            if (notification) {
-                notification.read = true;
-            }
+            // Note: UI is already updated immediately, so no need to refresh here
+            // The periodic refresh will ensure consistency with server state
         } catch (error) {
             console.error('Error marking notification as read:', error);
+            // If the request fails, we could revert the UI changes here
+            // For now, we'll let the periodic refresh handle any inconsistencies
         }
     }
 
@@ -694,14 +702,8 @@ document.addEventListener('DOMContentLoaded', function() {
             });
             
             if (response.ok) {
-                // Update all notifications as read in the local array
-                notifications.forEach(notification => {
-                    notification.read = true;
-                });
-                
-                // Update the display
-                updateNotificationDisplay();
-                updateNotificationIndicator();
+                // Immediately refresh notifications to get updated read status
+                await fetchNotifications();
                 
                 // Show feedback to the user if requested
                 if (showFeedback) {

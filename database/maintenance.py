@@ -658,6 +658,24 @@ def run_plex_library_maintenance():
                 # Construct full path using mount location
                 full_path = os.path.join(mounted_path, location_on_disk)
                 
+                # Validate that the constructed path is within the mount location
+                try:
+                    # Resolve any symlinks to get the real path
+                    real_full_path = os.path.realpath(full_path)
+                    real_mounted_path = os.path.realpath(mounted_path)
+                    
+                    # Check if the path is within the mount location
+                    if not real_full_path.startswith(real_mounted_path):
+                        logging.warning(f"Path outside mount location for {title}: {full_path} (resolved: {real_full_path})")
+                        logging.warning(f"Mount location: {mounted_path} (resolved: {real_mounted_path})")
+                        # Skip this item as it's outside the expected mount location
+                        continue
+                        
+                except OSError as e:
+                    logging.warning(f"Error resolving path for {title}: {full_path} - {str(e)}")
+                    # If we can't resolve the path, skip this item
+                    continue
+                
                 if not os.path.exists(full_path):
                     logging.warning(f"File not found for {title}: {full_path}")
                     missing_files.append({

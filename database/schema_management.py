@@ -263,6 +263,12 @@ def migrate_schema():
             conn.execute('CREATE INDEX idx_media_items_original_path_for_symlink ON media_items(original_path_for_symlink);')
             logging.info("Successfully executed CREATE INDEX for idx_media_items_original_path_for_symlink.")
 
+        # Add index for collected_at to fix slow queries in get_items_processed_per_hour
+        if 'idx_media_items_collected_at' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_collected_at...")
+            conn.execute('CREATE INDEX idx_media_items_collected_at ON media_items(collected_at);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_collected_at.")
+
         # Add indexes for optimizing get_episode_runtime and get_episode_count
         if 'idx_media_items_tmdb_type_runtime' not in existing_indexes:
             logging.info("Attempting to create index idx_media_items_tmdb_type_runtime...")
@@ -273,6 +279,17 @@ def migrate_schema():
             logging.info("Attempting to create index idx_media_items_tmdb_type_ep_info...")
             conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_tmdb_type_ep_info ON media_items(tmdb_id, type, season_number, episode_number, version);')
             logging.info("Successfully executed CREATE INDEX for idx_media_items_tmdb_type_ep_info.")
+
+        # Add indexes for get_season_year function performance
+        if 'idx_media_items_imdb_type_season_release' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_imdb_type_season_release...")
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_imdb_type_season_release ON media_items(imdb_id, type, season_number, release_date);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_imdb_type_season_release.")
+
+        if 'idx_media_items_tmdb_type_season_release' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_tmdb_type_season_release...")
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_tmdb_type_season_release ON media_items(tmdb_id, type, season_number, release_date);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_tmdb_type_season_release.")
 
         # New Suggested Index for get_distinct_library_shows
         if 'idx_media_items_imdb_type_state_title' not in existing_indexes:
@@ -834,6 +851,14 @@ def create_statistics_summary_table():
             CREATE INDEX IF NOT EXISTS idx_media_items_upgraded_collected_at
             ON media_items(collected_at DESC)
             WHERE collected_at IS NOT NULL AND upgraded = 1
+        ''')
+        
+        # Create index for all_blacklisted filter optimization
+        cursor.execute('DROP INDEX IF EXISTS idx_media_items_all_blacklisted')
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_media_items_all_blacklisted
+            ON media_items(imdb_id, type, state, season_number, episode_number, ghostlisted)
+            WHERE imdb_id IS NOT NULL AND imdb_id != ''
         ''')
         
         conn.commit()

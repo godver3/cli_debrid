@@ -964,7 +964,13 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                                 username = list_info.get('username')
                                 list_id = list_info.get('list_id')
                                 if username and list_id:
-                                    endpoint = f"/users/{username}/lists/{list_id}/items?limit=3"
+                                    # Clean username for API use (handle email-based usernames)
+                                    from content_checkers.trakt import clean_username_for_api
+                                    clean_username = clean_username_for_api(username)
+                                    if clean_username != username:
+                                        log.info(f"Cleaned username for sample fetch: '{username}' -> '{clean_username}'")
+                                    
+                                    endpoint = f"/users/{clean_username}/lists/{list_id}/items?limit=3"
                                     items_response = make_trakt_request('get', endpoint)
                                     if items_response and items_response.status_code == 200:
                                         data = items_response.json()

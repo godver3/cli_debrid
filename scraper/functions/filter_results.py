@@ -136,7 +136,7 @@ def filter_results(
     # Determine base similarity threshold
     # Override anime similarity threshold to be more restrictive to prevent false matches
     original_anime_setting = version_settings.get('similarity_threshold_anime', 0.60)
-    anime_threshold = max(0.60, float(original_anime_setting))
+    anime_threshold = max(0.80, float(original_anime_setting))
     base_similarity_threshold = anime_threshold if is_anime else float(version_settings.get('similarity_threshold', 0.8))
     
     # Debug logging for threshold issues
@@ -339,7 +339,7 @@ def filter_results(
             # Check cache first for aliases
             if imdb_id in _aliases_cache:
                 item_aliases = _aliases_cache[imdb_id]
-                logging.debug(f"Using cached aliases for {imdb_id}")
+                # logging.debug(f"Using cached aliases for {imdb_id}")
             else:
                 try:
                     if direct_api:
@@ -366,7 +366,7 @@ def filter_results(
                     # Check metadata cache first
                     if imdb_id in _show_metadata_cache:
                         meta_data = _show_metadata_cache[imdb_id]
-                        logging.debug(f"Using cached metadata for original_title lookup for {imdb_id}")
+                        # logging.debug(f"Using cached metadata for original_title lookup for {imdb_id}")
                     else:
                         if content_type.lower() == 'movie':
                             meta_data, _ = direct_api.get_movie_metadata(imdb_id)
@@ -393,10 +393,6 @@ def filter_results(
             # Deduplicate and log aliases
             item_aliases = {k: list(set(v)) for k, v in item_aliases.items()}
             
-            # --- DEBUG: Log aliases for troubleshooting ---
-            if item_aliases:
-                logging.info(f"DEBUG: API aliases for '{title}' (IMDb: {imdb_id}): {item_aliases}")
-
             # --- Language Code Detection (after API aliases are fetched) ---
             # Check for language codes in original title, matching_aliases, and API aliases
             all_titles_to_check = [title]
@@ -432,7 +428,7 @@ def filter_results(
             else:
                 should_filter_language = False
                 expected_language_code = None
-                logging.info(f"No language codes detected in original title or aliases. Language code filtering disabled.")
+                # logging.info(f"No language codes detected in original title or aliases. Language code filtering disabled.")
             # --- End Language Code Detection ---
 
             # -------------------------------------------------------------
@@ -492,7 +488,7 @@ def filter_results(
             # --- ANIME-SPECIFIC SANITY CHECK ---
             # For anime, add additional validation to prevent false matches from fuzzy token overlap
             if is_anime and best_sim >= similarity_threshold:
-                logging.info(f"DEBUG SANITY: Running anime sanity check for '{original_title}' (best_sim={best_sim:.3f}, threshold={similarity_threshold:.3f})")
+                # logging.info(f"DEBUG SANITY: Running anime sanity check for '{original_title}' (best_sim={best_sim:.3f}, threshold={similarity_threshold:.3f})")
                 
                 # Check if we have substantial character overlap, not just token fragments
                 query_chars = set(normalized_query_title.replace('.', ''))
@@ -518,40 +514,17 @@ def filter_results(
                 
                 word_match_ratio = meaningful_word_matches / len(query_words) if query_words else 0
                 
-                logging.info(f"DEBUG SANITY: char_overlap={char_overlap_ratio:.3f}, word_match={word_match_ratio:.3f} for '{original_title}'")
+                # logging.info(f"DEBUG SANITY: char_overlap={char_overlap_ratio:.3f}, word_match={word_match_ratio:.3f} for '{original_title}'")
                 
                 # Require either strong character overlap OR meaningful word matches for anime
                 if char_overlap_ratio < 0.4 and word_match_ratio < 0.5:
                     result['filter_reason'] = f"Anime title failed sanity check (char_overlap={char_overlap_ratio:.2f}, word_match={word_match_ratio:.2f}, similarity={best_sim:.2f})"
                     logging.info(f"Rejected: Anime sanity check failed for '{original_title}' - insufficient substantial overlap despite fuzzy similarity {best_sim:.2f} (Size: {result['size']:.2f}GB)")
                     continue
-                else:
-                    logging.info(f"DEBUG SANITY: Sanity check passed for '{original_title}'")
-            elif is_anime:
-                logging.info(f"DEBUG SANITY: Skipping sanity check for '{original_title}' (best_sim={best_sim:.3f} < threshold={similarity_threshold:.3f})")
-            
+
             # --- DEBUG: Log detailed similarity scores for troublesome titles ---
             should_debug = ("araiguma" in original_title.lower() or "calcal" in original_title.lower() or
                           "shield" in original_title.lower() or "s.h.i.e.l.d" in title.lower())
-            
-            if should_debug:
-                logging.info(f"DEBUG SIMILARITY: Analyzing '{original_title}'")
-                logging.info(f"  - Original query title: '{title}'")
-                logging.info(f"  - Normalized result title: '{normalized_result_title}'")
-                logging.info(f"  - Normalized query title: '{normalized_query_title}'")
-                logging.info(f"  - Main title similarity: {main_title_sim:.3f}")
-                logging.info(f"  - Best alias similarity: {best_alias_sim:.3f}")
-                logging.info(f"  - Translated title similarity: {translated_title_sim:.3f}")
-                logging.info(f"  - Best overall similarity: {best_sim:.3f}")
-                logging.info(f"  - Similarity threshold: {similarity_threshold:.3f}")
-                if normalized_parsed_title:
-                    logging.info(f"  - Normalized parsed title: '{normalized_parsed_title}'")
-                if item_alias_similarities:
-                    logging.info(f"  - API alias similarities: {[f'{s:.3f}' for s in item_alias_similarities]}")
-                if alias_debug_info:
-                    for debug_info in alias_debug_info:
-                        if debug_info['similarity'] > 0.1:  # Only log aliases with some similarity
-                            logging.info(f"    - Alias '{debug_info['alias']}' (normalized: '{debug_info['normalized_alias']}') = {debug_info['similarity']:.3f}")
             
             if best_sim < similarity_threshold:
                 # Log the failure reason including all comparison scores
@@ -873,6 +846,12 @@ def filter_results(
 
                     season_pack = season_episode_info.get('season_pack', 'Unknown')
                     if season_pack == 'N/A':
+                        # Add detailed logging to understand why this is considered a single episode
+                        logging.info(f"SINGLE EPISODE DEBUG: '{original_title}' rejected because season_pack='N/A'")
+                        logging.info(f"SINGLE EPISODE DEBUG: season_episode_info: {season_episode_info}")
+                        logging.info(f"SINGLE EPISODE DEBUG: episodes: {season_episode_info.get('episodes', [])}")
+                        logging.info(f"SINGLE EPISODE DEBUG: seasons: {season_episode_info.get('seasons', [])}")
+                        logging.info(f"SINGLE EPISODE DEBUG: parsed_info: {parsed_info}")
                         result['filter_reason'] = "Single episode result when searching for multi"
                         logging.info(f"Rejected: Single episode in multi mode for '{original_title}' (Size: {result['size']:.2f}GB)")
                         continue
@@ -1439,14 +1418,6 @@ def filter_results(
                         logging.warning(f"Pack '{original_title}' (Scraper: {result_scraper_type}): Could not determine episode count. Using total pack size {total_size_gb:.2f}GB for filtering.")
                         size_gb_for_filter = total_size_gb
 
-
-            # --- ADDED DEBUG LOGGING ---
-            if original_title == "The.Handmaids.Tale.S03.SweSub.1080p.x264-Justiso":
-                logging.info(f"[FILTER_DEBUG HANDMAIDS] Pre-final size assignment for '{original_title}':")
-                logging.info(f"  total_size_gb: {total_size_gb:.4f}")
-                logging.info(f"  num_episodes_in_pack (calc'd in filter_results): {num_episodes_in_pack}")
-                logging.info(f"  provides_per_item_size: {provides_per_item_size}")
-                logging.info(f"  size_gb_for_filter (to be assigned to result['size']): {size_gb_for_filter:.4f}")
             # --- END ADDED DEBUG LOGGING ---
             result['size'] = size_gb_for_filter 
             result['total_size_gb'] = total_size_gb
@@ -1459,36 +1430,14 @@ def filter_results(
             # runtime is the base runtime for one item (episode or movie) passed into filter_results
             
             if runtime is not None and runtime > 0 and size_gb_for_filter > 0:
-                # Log detailed bitrate calculation inputs
-                logging.info(f"[BITRATE_CALC] '{original_title}':")
-                logging.info(f"  - total_size_gb (raw from scraper): {total_size_gb:.4f} GB")
-                logging.info(f"  - size_gb_for_filter (per-item size): {size_gb_for_filter:.4f} GB")
-                logging.info(f"  - runtime (per-item): {runtime} minutes")
-                logging.info(f"  - is_episode: {is_episode}")
-                logging.info(f"  - is_identified_as_pack: {is_identified_as_pack}")
-                logging.info(f"  - provides_per_item_size: {provides_per_item_size}")
-                logging.info(f"  - num_episodes_in_pack: {num_episodes_in_pack}")
                 
                 # Use per-item size with per-item runtime for consistent calculation
                 bitrate = calculate_bitrate(size_gb_for_filter, runtime) 
-                logging.info(f"  - calculated bitrate: {bitrate:.2f} Kbps ({bitrate/1000:.2f} Mbps)")
             else:
                 runtime_str = f"{runtime}min" if runtime is not None else "None"
                 logging.warning(f"Skipping bitrate calculation for '{original_title}' due to non-positive runtime ({runtime_str}) or size_gb_for_filter ({size_gb_for_filter:.3f}GB). Bitrate set to 0.")
                 bitrate = 0 
             
-            # --- ADDED DEBUG LOGGING ---
-            if original_title == "The.Handmaids.Tale.S03.SweSub.1080p.x264-Justiso":
-                logging.info(f"[FILTER_DEBUG HANDMAIDS] Pre-final bitrate assignment for '{original_title}':")
-                logging.info(f"  total_size_gb (from scraper): {total_size_gb:.4f}")
-                logging.info(f"  provides_per_item_size: {provides_per_item_size}")
-                logging.info(f"  is_identified_as_pack: {is_identified_as_pack}")
-                logging.info(f"  num_episodes_in_pack (calc'd in filter_results): {num_episodes_in_pack}")
-                logging.info(f"  runtime (base for one item): {runtime}")
-                logging.info(f"  actual_ep_count_for_bitrate_calc: {actual_ep_count_for_bitrate_calc}")
-                logging.info(f"  effective_runtime_for_bitrate: {effective_runtime_for_bitrate:.2f}")
-                logging.info(f"  calculated bitrate (to be assigned to result['bitrate']): {bitrate:.2f} Kbps")
-            # --- END ADDED DEBUG LOGGING ---
             result['bitrate'] = bitrate
             # Store the count that reflects the content of total_size_gb
             result['num_episodes_in_pack_calculated'] = num_episodes_in_pack 
@@ -1601,6 +1550,48 @@ def filter_results(
             # logging.debug("✓ Passed adult content check")
             # --- End Adult Content Check ---
             
+            # --- F1 Movie Specific Filtering for tt16311594 ---
+            if imdb_id == 'tt16311594':
+                title_lower = original_title.lower()
+                
+                # Check for race-related terms that indicate this is not the movie
+                race_indicators = [
+                    'race', 'grand prix', 'round', 'fp', 'qualifying', 'sprint', 'testing',
+                    'pre-race', 'post-race', 'pre-qualifying', 'post-qualifying', 'pre-sprint', 'post-sprint',
+                    'weekend warm-up', 'drivers press conference', 'jolyon palmers analysis',
+                    'australian grand prix', 'chinese grand prix', 'japanese grand prix', 'bahrain grand prix',
+                    'saudi arabian grand prix', 'emilia romagna grand prix', 'monaco grand prix', 'spanish grand prix',
+                    'british grand prix', 'belgian grand prix', 'hungarian grand prix', 'miami grand prix',
+                    'austrian grand prix', 'dutch grand prix', 'italian grand prix', 'azerbaijan grand prix',
+                    'singapore grand prix', 'united states grand prix', 'mexico grand prix', 'sao paulo grand prix',
+                    'las vegas grand prix', 'qatar grand prix', 'abu dhabi grand prix'
+                ]
+                
+                # Check if title contains any race indicators
+                has_race_indicators = any(indicator in title_lower for indicator in race_indicators)
+                
+                # Check for movie-specific terms that indicate this IS the movie
+                movie_indicators = [
+                    'the movie', 'il film', 'la película', 'la pelicula', 'película', 'pelicula'
+                ]
+                
+                # Check if title contains movie indicators
+                has_movie_indicators = any(indicator in title_lower for indicator in movie_indicators)
+                
+                # Reject if it has race indicators and no movie indicators
+                if has_race_indicators and not has_movie_indicators:
+                    result['filter_reason'] = "F1 race content filtered out for movie search"
+                    logging.info(f"Rejected: F1 race content detected for '{original_title}' (Size: {result['size']:.2f}GB)")
+                    continue
+                
+                # Also reject if it has round numbers but no movie indicators
+                if re.search(r'\br\d+\b', title_lower) and not has_movie_indicators:
+                    result['filter_reason'] = "F1 round content filtered out for movie search"
+                    logging.info(f"Rejected: F1 round content detected for '{original_title}' (Size: {result['size']:.2f}GB)")
+                    continue
+                
+            # --- End F1 Movie Specific Filtering ---
+            
             filtered_results.append(result)
             logging.info(f"Accepted: '{original_title}' (Size: {result['size']:.2f}GB)")
             
@@ -1610,10 +1601,6 @@ def filter_results(
             continue
     
     #logging.debug(f"\nFiltering complete: {len(filtered_results)}/{len(results)} results passed")
-    
-    # Log cache performance statistics
-    if _season_year_cache or _show_metadata_cache or _aliases_cache:
-        logging.info(f"Cache performance - Season year cache hits: {len(_season_year_cache)}, Show metadata cache hits: {len(_show_metadata_cache)}, Aliases cache hits: {len(_aliases_cache)}")
     
     return filtered_results, pre_size_filtered_results
 

@@ -152,8 +152,6 @@ def get_cached_poster_url(tmdb_id, media_type):
         url, timestamp = cache_item
         if datetime.now() - timestamp < timedelta(days=CACHE_EXPIRY_DAYS):
             return url
-        else:
-            logging.info(f"Cache expired for {cache_key}")
             
     return None
 
@@ -166,7 +164,6 @@ def cache_poster_url(tmdb_id, media_type, url):
     cache_key = f"{tmdb_id}_{normalized_type}"
     cache[cache_key] = (url, datetime.now())
     save_cache(cache)
-    logging.info(f"Cached poster URL for {cache_key}: {url}")
 
 def clean_expired_cache():
     cache = load_cache()

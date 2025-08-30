@@ -281,7 +281,6 @@ class WantedQueue:
             
             if effective_scrape_time:
                 if effective_scrape_time <= current_datetime:
-                    logging.info(f"[{item_identifier}] Effective scrape time is in the past or now. Marking as 'scrape'.")
                     return {'status': 'scrape', 'item_data': item, 'message': f"{item_identifier} release time met."}
                 else: # Not ready yet, check if it should go to Unreleased or just wait
                     time_until_release = effective_scrape_time - current_datetime
@@ -324,7 +323,7 @@ class WantedQueue:
                 blacklist_start_time = time.perf_counter()
                 blacklisted_count = self.move_blacklisted_items()
                 blacklist_elapsed = time.perf_counter() - blacklist_start_time
-                logging.debug(f"[Timing] move_blacklisted_items() elapsed: {blacklist_elapsed:.3f}s, moved {blacklisted_count} items.")
+                # logging.debug(f"[Timing] move_blacklisted_items() elapsed: {blacklist_elapsed:.3f}s, moved {blacklisted_count} items.")
                 # Optional: logging.info(f"Processed manual blacklist, {blacklisted_count} items moved.")
             except Exception as e_blacklist:
                 logging.error(f"Error moving manually blacklisted items: {e_blacklist}", exc_info=True)
@@ -345,16 +344,16 @@ class WantedQueue:
                 forced_items_raw = cursor_force.fetchall()
 
                 fp_query_duration = (datetime.now() - fp_start_time).total_seconds()
-                logging.info(
-                    f"[ForcePriority] DB query completed in {fp_query_duration:.3f}s and returned "
-                    f"{len(forced_items_raw)} row(s)."
-                )
+                # logging.info(
+                #     f"[ForcePriority] DB query completed in {fp_query_duration:.3f}s and returned "
+                #     f"{len(forced_items_raw)} row(s)."
+                # )
 
                 if forced_items_raw:
                     forced_items = [dict(row) for row in forced_items_raw]
-                    logging.info(
-                        f"[ForcePriority] Processing {len(forced_items)} item(s) marked as force_priority."
-                    )
+                    # logging.info(
+                    #     f"[ForcePriority] Processing {len(forced_items)} item(s) marked as force_priority."
+                    # )
                     for item in forced_items:
                         item_identifier_log = queue_manager.generate_identifier(item)
                         try:
@@ -370,7 +369,8 @@ class WantedQueue:
                                 exc_info=True,
                             )
                 else:
-                    logging.debug("[ForcePriority] No force-priority items found in this cycle.")
+                    pass
+                    # logging.debug("[ForcePriority] No force-priority items found in this cycle.")
 
             except Exception as e_force:
                 logging.error(f"Error fetching or processing force-prioritized items: {e_force}", exc_info=True)
@@ -645,13 +645,13 @@ class WantedQueue:
             return False
         finally:
             total_elapsed = time.perf_counter() - start_time
-            logging.debug(
-                f"[Timing] WantedQueue.process total elapsed: {total_elapsed:.3f}s | "
-                f"Candidates evaluated: {processed_candidates_count}, "
-                f"Moved to Scraping: {moved_to_scraping_count}, "
-                f"Moved to Unreleased: {moved_to_unreleased_count}, "
-                f"Forced moved: {forced_items_moved_count}"
-            )
+            #logging.debug(
+            #    f"[Timing] WantedQueue.process total elapsed: {total_elapsed:.3f}s | "
+            #    f"Candidates evaluated: {processed_candidates_count}, "
+            #    f"Moved to Scraping: {moved_to_scraping_count}, "
+            #    f"Moved to Unreleased: {moved_to_unreleased_count}, "
+            #    f"Forced moved: {forced_items_moved_count}"
+            #)
         return True
 
     def move_blacklisted_items(self):

@@ -283,6 +283,14 @@ def delete_database():
         from database.schema_management import verify_database
         verify_database()  # This will recreate all tables including torrent_additions
         
+        # Recreate battery database tables
+        try:
+            from cli_battery.app.database import init_db
+            init_db()
+            logging.info("Successfully recreated battery database tables")
+        except Exception as e:
+            logging.error(f"Error recreating battery database: {str(e)}")
+        
         # Delete cache files and not wanted files
         db_content_dir = os.environ['USER_DB_CONTENT']
         
@@ -2571,13 +2579,24 @@ def parse_symlink(symlink_path: Path):
 
     # 2. Extract Season and Episode Numbers (S##E## or similar)
     # More robust regex to handle variations like S01E01, S1E1, Season 1 Episode 1, 1x01 etc.
-    se_match = re.search(r'[Ss](\d{1,2})[EeXx](\d{1,3})|Season\s?(\d{1,2})\s?Episode\s?(\d{1,3})|(\d{1,2})[Xx](\d{1,3})', filename)
+    # Also handles multi-episode formats like S11E17-E18 or S11E17E18
+    se_match = re.search(r'[Ss](\d{1,2})[EeXx](\d{1,3}(?:[EeXx]\d{1,3})*)|Season\s?(\d{1,2})\s?Episode\s?(\d{1,3})|(\d{1,2})[Xx](\d{1,3})', filename)
     if se_match:
         parsed_data['media_type'] = 'episode'
         # Extract numbers from the first matching group that isn't None
         if se_match.group(1) is not None and se_match.group(2) is not None:
             parsed_data['season_number'] = int(se_match.group(1))
-            parsed_data['episode_number'] = int(se_match.group(2))
+            episode_match = se_match.group(2)
+            # Handle multi-episode format (e.g., "17E18" or "17-18")
+            if 'E' in episode_match or '-' in episode_match:
+                # Extract all episode numbers and create a range format
+                episode_numbers = re.findall(r'\d+', episode_match)
+                if len(episode_numbers) > 1:
+                    parsed_data['episode_number'] = f"E{episode_numbers[0]}-E{episode_numbers[-1]}"
+                else:
+                    parsed_data['episode_number'] = int(episode_numbers[0])
+            else:
+                parsed_data['episode_number'] = int(episode_match)
         elif se_match.group(3) is not None and se_match.group(4) is not None:
              parsed_data['season_number'] = int(se_match.group(3))
              parsed_data['episode_number'] = int(se_match.group(4))
@@ -3437,7 +3456,13 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
             parsed_season = parsed_season_folder_val if parsed_season_folder_val is not None else parsed_season_file_val
             parsed_episode = parsed_episode_folder_val if parsed_episode_folder_val is not None else parsed_episode_file_val
             if isinstance(parsed_season, list) and parsed_season: parsed_season = parsed_season[0]
-            if isinstance(parsed_episode, list) and parsed_episode: parsed_episode = parsed_episode[0]
+            
+            # Handle multi-episode files properly
+            if isinstance(parsed_episode, list) and len(parsed_episode) > 1:
+                # For multi-episode files, create a range format like "E17-E18"
+                parsed_episode = f"E{parsed_episode[0]}-E{parsed_episode[-1]}"
+            elif isinstance(parsed_episode, list) and parsed_episode:
+                parsed_episode = parsed_episode[0]
 
             is_version_folder_empty = parsed_version_folder is None or not str(parsed_version_folder).strip()
             is_version_file_empty = parsed_version_file is None or not str(parsed_version_file).strip()
@@ -3489,31 +3514,58 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                 final_search_results = None
                 title_that_yielded_search_results = None
 
-                # Attempt 1: Search using cleaned filename title
-                if cleaned_filename_title:
-                    logging.info(f"[RcloneScan {task_id}] Attempting primary search with filename title: '{cleaned_filename_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}'")
-                    search_results_file, _ = direct_api.search_media(query=cleaned_filename_title, year=parsed_year, media_type=search_type_for_api)
-                    if search_results_file:
-                        final_search_results = search_results_file
-                        title_that_yielded_search_results = cleaned_filename_title
-                        logging.info(f"[RcloneScan {task_id}] Primary search with filename title '{cleaned_filename_title}' was successful.")
-                    else:
-                        logging.warning(f"[RcloneScan {task_id}] Primary search with filename title '{cleaned_filename_title}' yielded no results.")
-                else:
-                    logging.debug(f"[RcloneScan {task_id}] No valid cleaned filename title to attempt primary search.")
-
-                # Attempt 2: If primary search failed or wasn't possible, try folder title (if different and valid)
-                if not final_search_results and cleaned_folder_title and cleaned_folder_title != cleaned_filename_title:
-                    logging.info(f"[RcloneScan {task_id}] Attempting fallback search with folder title: '{cleaned_folder_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}'")
+                # For episodes, prioritize folder title (show name) over filename title (episode title)
+                # For movies, prioritize filename title over folder title
+                if current_parsed_type == 'episode' and cleaned_folder_title:
+                    # Attempt 1: Search using folder title (show name) for episodes
+                    logging.info(f"[RcloneScan {task_id}] Attempting primary search with folder title (show name): '{cleaned_folder_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}'")
                     search_results_folder, _ = direct_api.search_media(query=cleaned_folder_title, year=parsed_year, media_type=search_type_for_api)
                     if search_results_folder:
                         final_search_results = search_results_folder
                         title_that_yielded_search_results = cleaned_folder_title
-                        logging.info(f"[RcloneScan {task_id}] Fallback search with folder title '{cleaned_folder_title}' was successful.")
+                        logging.info(f"[RcloneScan {task_id}] Primary search with folder title '{cleaned_folder_title}' was successful.")
                     else:
-                        logging.warning(f"[RcloneScan {task_id}] Fallback search with folder title '{cleaned_folder_title}' also yielded no results.")
-                elif not final_search_results and cleaned_folder_title and cleaned_folder_title == cleaned_filename_title:
-                    logging.debug(f"[RcloneScan {task_id}] Folder title is same as filename title, already attempted or filename title was null; no separate folder title search needed.")
+                        logging.warning(f"[RcloneScan {task_id}] Primary search with folder title '{cleaned_folder_title}' yielded no results.")
+                        
+                    # Attempt 2: If folder title search failed, try filename title as fallback
+                    if not final_search_results and cleaned_filename_title and cleaned_filename_title != cleaned_folder_title:
+                        logging.info(f"[RcloneScan {task_id}] Attempting fallback search with filename title: '{cleaned_filename_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}'")
+                        search_results_file, _ = direct_api.search_media(query=cleaned_filename_title, year=parsed_year, media_type=search_type_for_api)
+                        if search_results_file:
+                            final_search_results = search_results_file
+                            title_that_yielded_search_results = cleaned_filename_title
+                            logging.info(f"[RcloneScan {task_id}] Fallback search with filename title '{cleaned_filename_title}' was successful.")
+                        else:
+                            logging.warning(f"[RcloneScan {task_id}] Fallback search with filename title '{cleaned_filename_title}' also yielded no results.")
+                    elif not final_search_results and cleaned_filename_title and cleaned_filename_title == cleaned_folder_title:
+                        logging.debug(f"[RcloneScan {task_id}] Filename title is same as folder title, already attempted or folder title was null; no separate filename title search needed.")
+                else:
+                    # For movies, use original logic: filename title first, then folder title
+                    # Attempt 1: Search using cleaned filename title
+                    if cleaned_filename_title:
+                        logging.info(f"[RcloneScan {task_id}] Attempting primary search with filename title: '{cleaned_filename_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}'")
+                        search_results_file, _ = direct_api.search_media(query=cleaned_filename_title, year=parsed_year, media_type=search_type_for_api)
+                        if search_results_file:
+                            final_search_results = search_results_file
+                            title_that_yielded_search_results = cleaned_filename_title
+                            logging.info(f"[RcloneScan {task_id}] Primary search with filename title '{cleaned_filename_title}' was successful.")
+                        else:
+                            logging.warning(f"[RcloneScan {task_id}] Primary search with filename title '{cleaned_filename_title}' yielded no results.")
+                    else:
+                        logging.debug(f"[RcloneScan {task_id}] No valid cleaned filename title to attempt primary search.")
+
+                    # Attempt 2: If primary search failed or wasn't possible, try folder title (if different and valid)
+                    if not final_search_results and cleaned_folder_title and cleaned_folder_title != cleaned_filename_title:
+                        logging.info(f"[RcloneScan {task_id}] Attempting fallback search with folder title: '{cleaned_folder_title}', Year='{parsed_year}', Type='{search_type_for_api}' for File='{item_path.name}'")
+                        search_results_folder, _ = direct_api.search_media(query=cleaned_folder_title, year=parsed_year, media_type=search_type_for_api)
+                        if search_results_folder:
+                            final_search_results = search_results_folder
+                            title_that_yielded_search_results = cleaned_folder_title
+                            logging.info(f"[RcloneScan {task_id}] Fallback search with folder title '{cleaned_folder_title}' was successful.")
+                        else:
+                            logging.warning(f"[RcloneScan {task_id}] Fallback search with folder title '{cleaned_folder_title}' also yielded no results.")
+                    elif not final_search_results and cleaned_folder_title and cleaned_folder_title == cleaned_filename_title:
+                        logging.debug(f"[RcloneScan {task_id}] Folder title is same as filename title, already attempted or filename title was null; no separate folder title search needed.")
                 
                 if not final_search_results:
                     logging.warning(f"[RcloneScan {task_id}] All search attempts failed for file '{item_path.name}'. Parsed folder title: '{cleaned_folder_title}', Parsed filename title: '{cleaned_filename_title}'.")
@@ -4013,7 +4065,8 @@ def parse_riven_symlink(symlink_path: Path):
     }
 
     # Robust S/E matching from filename
-    se_filename_match = re.search(r'[Ss](\d{1,2})[EeXx](\d{1,3})|Season\s?(\d{1,2})\s?Episode\s?(\d{1,3})|(\d{1,2})[Xx](\d{1,3})', filename)
+    # Also handles multi-episode formats like S11E17-E18 or S11E17E18
+    se_filename_match = re.search(r'[Ss](\d{1,2})[EeXx](\d{1,3}(?:[EeXx]\d{1,3})*)|Season\s?(\d{1,2})\s?Episode\s?(\d{1,3})|(\d{1,2})[Xx](\d{1,3})', filename)
 
     parent_dir_name = symlink_path.parent.name if symlink_path.parent else ""
     season_from_parent_match = re.search(r'[Ss](?:eason)?\s?(\d+)', parent_dir_name)
@@ -4024,7 +4077,17 @@ def parse_riven_symlink(symlink_path: Path):
         # Extract S/E from filename groups
         if se_filename_match.group(1) is not None and se_filename_match.group(2) is not None: # SxxExx
             parsed_data['season_number'] = int(se_filename_match.group(1))
-            parsed_data['episode_number'] = int(se_filename_match.group(2))
+            episode_match = se_filename_match.group(2)
+            # Handle multi-episode format (e.g., "17E18" or "17-18")
+            if 'E' in episode_match or '-' in episode_match:
+                # Extract all episode numbers and create a range format
+                episode_numbers = re.findall(r'\d+', episode_match)
+                if len(episode_numbers) > 1:
+                    parsed_data['episode_number'] = f"E{episode_numbers[0]}-E{episode_numbers[-1]}"
+                else:
+                    parsed_data['episode_number'] = int(episode_numbers[0])
+            else:
+                parsed_data['episode_number'] = int(episode_match)
         elif se_filename_match.group(3) is not None and se_filename_match.group(4) is not None: # Season xx Episode xx
             parsed_data['season_number'] = int(se_filename_match.group(3))
             parsed_data['episode_number'] = int(se_filename_match.group(4))

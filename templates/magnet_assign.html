@@ -84,6 +84,20 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 // Enable season selection
                 seasonSelect.disabled = false;
+
+                // Apply prefilled seasons after options are ready
+                if (prefillSelection === 'seasons' && prefillSeasons) {
+                    const seasonValues = prefillSeasons.split(',').map(s => s.trim()).filter(Boolean);
+                    const optionMap = new Map(Array.from(seasonsSelect.options).map(o => [o.value, o]));
+                    seasonValues.forEach(val => {
+                        const opt = optionMap.get(val);
+                        if (opt) opt.selected = true;
+                    });
+                    const selected = Array.from(seasonsSelect.selectedOptions).map(opt => opt.value);
+                    selectedSeasonsInput.value = selected.join(',');
+                    selectionType.value = 'seasons';
+                    updateSelectionFields('seasons');
+                }
             } catch (error) {
                 console.error('Error loading season data:', error);
                 showError('Failed to load season data');
@@ -98,7 +112,16 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         // Initialize selection type fields based on default value
-        const initialSelectionType = selectionType.value;
+        const prefillDataElement = document.getElementById('prefill-data');
+        const prefillSelection = (prefillDataElement?.dataset?.prefillSelection || '').trim();
+        const prefillSeasons = (prefillDataElement?.dataset?.prefillSeasons || '').trim();
+        const initialSelectionType = prefillSelection || selectionType.value;
+        if (prefillSelection) {
+            const validValues = ['all','seasons','episode'];
+            if (validValues.includes(prefillSelection)) {
+                selectionType.value = prefillSelection;
+            }
+        }
         updateSelectionFields(initialSelectionType);
         // Ensure selectionTypeInput is updated on initial load
         selectionTypeInput.value = initialSelectionType;
@@ -146,6 +169,25 @@ document.addEventListener('DOMContentLoaded', function() {
                 hideMagnetFields();
             }
         });
+
+        // If prefilled for seasons, apply after season options are loaded
+        if (prefillSelection === 'seasons' && prefillSeasons) {
+            // Wait one microtask to ensure options appended
+            Promise.resolve().then(() => {
+                const seasonValues = prefillSeasons.split(',').map(s => s.trim()).filter(Boolean);
+                const optionMap = new Map(Array.from(seasonsSelect.options).map(o => [o.value, o]));
+                seasonValues.forEach(val => {
+                    const opt = optionMap.get(val);
+                    if (opt) opt.selected = true;
+                });
+                // Sync hidden input and UI
+                const selected = Array.from(seasonsSelect.selectedOptions).map(opt => opt.value);
+                selectedSeasonsInput.value = selected.join(',');
+                // Ensure selection type reflects seasons
+                selectionType.value = 'seasons';
+                updateSelectionFields('seasons');
+            });
+        }
 
         function updateSelectionFields(type) {
             // Clear season/episode hidden inputs when type changes away from 'episode'
@@ -323,6 +365,43 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .catch(error => console.error('Error loading versions:', error));
 
+    // Handle file upload UI updates
+    document.querySelectorAll('.custom-file-input').forEach(fileInput => {
+        fileInput.addEventListener('change', function() {
+            const targetInputId = this.getAttribute('data-target-input');
+            const targetInput = document.getElementById(targetInputId);
+            const fileLabel = this.nextElementSibling;
+            
+            if (this.files.length > 0) {
+                const fileName = this.files[0].name;
+                fileLabel.textContent = fileName;
+                
+                // Clear the magnet link input when a file is selected
+                if (targetInput) {
+                    targetInput.value = '';
+                }
+            } else {
+                fileLabel.textContent = 'Choose torrent file';
+            }
+        });
+    });
+
+    // Handle magnet link input clearing when file is selected
+    document.querySelectorAll('input[name="magnet_link"]').forEach(magnetInput => {
+        magnetInput.addEventListener('input', function() {
+            if (this.value.trim()) {
+                // Clear any selected file when magnet link is entered
+                const form = this.closest('form');
+                const fileInput = form.querySelector('input[name="torrent_file"]');
+                if (fileInput) {
+                    fileInput.value = '';
+                    const fileLabel = fileInput.nextElementSibling;
+                    fileLabel.textContent = 'Choose torrent file';
+                }
+            }
+        });
+    });
+
     // Re-introduce async form submission for the preparation step
     document.querySelectorAll('.magnet-form').forEach(form => {
         form.addEventListener('submit', async function(e) {
@@ -335,9 +414,14 @@ document.addEventListener('DOMContentLoaded', function() {
             try {
                 // Client-side validation (optional but good practice)
                 const magnetLink = form.querySelector('input[name="magnet_link"]').value;
+                const torrentFile = form.querySelector('input[name="torrent_file"]').files[0];
                 const version = form.querySelector('select[name="version"]').value;
-                if (!magnetLink || !magnetLink.startsWith('magnet:')) {
-                    throw new Error('Please enter a valid magnet link.');
+                
+                if (!magnetLink.trim() && !torrentFile) {
+                    throw new Error('Please enter a magnet link or upload a torrent file.');
+                }
+                if (magnetLink.trim() && torrentFile) {
+                    throw new Error('Please provide either a magnet link OR a torrent file, not both.');
                 }
                 if (!version) {
                     throw new Error('Please select a version.');
@@ -403,7 +487,9 @@ document.addEventListener('DOMContentLoaded', function() {
 {# --- ADD HIDDEN DIV FOR PREFILL DATA --- #}
 <div id="prefill-data"
      data-is-prefilled="{{ is_prefilled|default(false)|tojson }}"
-     data-prefill-version="{{ prefill_version|default('') }}">
+     data-prefill-version="{{ prefill_version|default('') }}"
+     data-prefill-selection="{{ prefill_selection|default('') }}"
+     data-prefill-seasons="{{ prefill_seasons|default('') }}">
 </div>
 {# --- END HIDDEN DIV --- #}
 
@@ -435,7 +521,7 @@ document.addEventListener('DOMContentLoaded', function() {
             <h3>Search Results for "{{ search_term }}"</h3>
             <a href="{{ url_for('magnet.assign_magnet') }}" class="btn btn-secondary">New Search</a>
         </div>
-        <div class="results-grid">
+        <div class="results-grid{% if is_prefilled %} single-item{% endif %}">
             {% for result in search_results %}
             <div class="media-card">
                 {% if result.posterPath %}
@@ -498,10 +584,23 @@ document.addEventListener('DOMContentLoaded', function() {
                         {% endif %}
 
                         <div class="form-group magnet-input" {% if result.mediaType == 'show' %}style="display: none;"{% endif %}>
-                            <input type="text" class="form-control" id="magnet_link_{{ result.id }}"
-                                   name="magnet_link" required placeholder="Enter magnet link"
-                                   {% if is_prefilled and prefill_magnet %} value="{{ prefill_magnet }}" {% endif %}
-                                   >
+                            <label for="magnet_link_{{ result.id }}">Magnet Link or Torrent File:</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="magnet_link_{{ result.id }}"
+                                       name="magnet_link" placeholder="Enter magnet link"
+                                       {% if is_prefilled and prefill_magnet %} value="{{ prefill_magnet }}" {% endif %}
+                                       >
+                                <div class="input-group-append">
+                                    <span class="input-group-text">or</span>
+                                </div>
+                                <div class="custom-file">
+                                    <input type="file" class="custom-file-input" id="torrent_file_{{ result.id }}"
+                                           name="torrent_file" accept=".torrent" 
+                                           data-target-input="magnet_link_{{ result.id }}">
+                                    <label class="custom-file-label" for="torrent_file_{{ result.id }}">Choose torrent file</label>
+                                </div>
+                            </div>
+                            <small class="form-text text-muted">Enter a magnet link or upload a .torrent file</small>
                         </div>
                         <div class="form-group version-input" {% if result.mediaType == 'show' %}style="display: none;"{% endif %}>
                             <select class="form-control" name="version" required>
@@ -509,7 +608,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             </select>
                         </div>
                         <button type="submit" class="btn btn-success submit-btn" {% if result.mediaType == 'show' %}style="display: none;"{% endif %}>
-                            Assign Magnet
+                            Assign
                         </button>
                     </form>
                 </div>

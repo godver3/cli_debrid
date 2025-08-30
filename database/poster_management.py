@@ -32,11 +32,9 @@ async def get_poster_url(session, tmdb_id, media_type):
         return UNAVAILABLE_POSTER
     
     url = f"https://api.themoviedb.org/3/{normalized_type}/{tmdb_id}/images?api_key={tmdb_api_key}"
-    logging.info(f"Fetching poster from TMDB API for {tmdb_id} as type '{normalized_type}'")
     
     try:
         async with session.get(url, timeout=10) as response:
-            logging.info(f"TMDB API response status: {response.status} for {tmdb_id}_{normalized_type}")
             if response.status == 200:
                 data = await response.json()
                 posters = data.get('posters', [])
@@ -46,7 +44,6 @@ async def get_poster_url(session, tmdb_id, media_type):
                     english_posters = [p for p in posters if p.get('iso_639_1') == 'en']
                     poster = english_posters[0] if english_posters else posters[0]
                     poster_url = f"https://image.tmdb.org/t/p/w300{poster['file_path']}"
-                    logging.info(f"Found poster for {tmdb_id}_{normalized_type}: {poster_url}")
                     cache_poster_url(tmdb_id, normalized_type, poster_url)
                     return poster_url
                 

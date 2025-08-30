@@ -685,12 +685,12 @@ def run_main():
     # Override Phalanx URL env var if provided via command line
     if args.phalanx_url:
         os.environ['CLI_DEBRID_PHALANX_URL'] = args.phalanx_url
-        logging.info(f"Using Phalanx DB URL from command line: {args.phalanx_url}")
+        # logging.info(f"Using Phalanx DB URL from command line: {args.phalanx_url}")
     else:
         # Use existing env var or default (which setup_environment should have handled, but double-check)
         if 'CLI_DEBRID_PHALANX_URL' not in os.environ:
             os.environ['CLI_DEBRID_PHALANX_URL'] = 'http://localhost' # Ensure default
-        logging.info(f"Using Phalanx DB URL from environment/default: {os.environ['CLI_DEBRID_PHALANX_URL']}")
+        # logging.info(f"Using Phalanx DB URL from environment/default: {os.environ['CLI_DEBRID_PHALANX_URL']}")
 
     # Log the config path being used
     config_path_to_check = os.path.join(os.environ.get('USER_CONFIG', 'UNKNOWN_PATH'), 'config.json')

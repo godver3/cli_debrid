@@ -52,6 +52,16 @@ Both options provide a hassle-free way to get cli_debrid running without the com
 - **Web Interface**: Provides a user-friendly web interface for monitoring.
 - **Metadata Battery**: Metadata is stored locally in a battery to avoid over-usage of APIs.
 
+## Firefox Extension
+
+cli_debrid offers a Firefox extension called **cli_debrid magnet assign** that integrates with [debridmediamanager.com](https://debridmediamanager.com) to pre-populate the magnet assignment tool with information from DMM.com.
+
+**Download**: [Firefox Add-on](https://addons.mozilla.org/firefox/downloads/file/4567721/baa7b13ad11b4c308b3e-1.2.xpi)
+
+**Requirements**: Minimum cli_debrid version 0.7.12
+
+This extension streamlines the process of assigning magnets to your media by automatically populating the magnet assignment tool with relevant information from DebridMediaManager - simply add your cli_debrid instance URL, username and password.
+
 ## Overall Program
 
 ### Run Program

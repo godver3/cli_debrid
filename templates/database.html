@@ -487,6 +487,8 @@ document.addEventListener('DOMContentLoaded', function() {
                         displayVal = 'Final Scrape';
                     } else if (column === 'state' && val === 'ghostlisted') {
                         displayVal = 'Ghostlisted';
+                    } else if (column === 'state' && val === 'all_blacklisted') {
+                        displayVal = 'All Versions Blacklisted';
                     }
                     return `<option value="${val}" ${value === val ? 'selected' : ''}>${displayVal}</option>`;
                 }).join('')}
@@ -1070,6 +1072,8 @@ document.addEventListener('DOMContentLoaded', function() {
                         displayContent = 'Final Scrape';
                     } else if (column === 'state' && displayContent === 'ghostlisted') {
                         displayContent = 'Ghostlisted';
+                    } else if (column === 'state' && displayContent === 'all_blacklisted') {
+                        displayContent = 'All Versions Blacklisted';
                     }
                 }
                 tableHTML += `<td class="truncate" data-full-content="${displayContent}">${displayContent}</td>`;

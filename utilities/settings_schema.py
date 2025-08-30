@@ -632,6 +632,7 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": [
                 "Template for episode symlink names. Available variables: {title}, {year}, {imdb_id}, {tmdb_id}, {season_number}, {episode_number}, {episode_title}, {version}, {original_filename}",
+                "For multi-episode files, {episode_number} will be formatted as 'E17-E18' instead of a single number.",
                 "Example: {title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} - {imdb_id} - {version} - ({original_filename})",
             ],
             "default": "{title} ({year})/Season {season_number:02d}/{title} ({year}) - S{season_number:02d}E{episode_number:02d} - {episode_title} - {imdb_id} - {version} - ({original_filename})"
@@ -1338,6 +1339,13 @@ SETTINGS_SCHEMA = {
         "description": "Notification configurations",
         "default": {},
         "schema": {
+            "General": {
+                "enabled_content_sources": {
+                    "type": "string",
+                    "description": "Comma-separated list of content sources to include in notifications. Leave empty to include all sources.",
+                    "default": ""
+                }
+            },
             "Telegram": {
                 "enabled": {"type": "boolean", "default": False},
                 "bot_token": {"type": "string", "default": "", "sensitive": True},

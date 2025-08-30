@@ -23,7 +23,11 @@ def normalize_string(input_str):
 
 # --- Row Conversion ---
 def row_to_dict(row: Row) -> Dict[str, Any]:
-    return {key: row[key] for key in row.keys()}
+    result = {key: row[key] for key in row.keys()}
+    # Convert 'read' field from integer (0/1) to boolean (false/true)
+    if 'read' in result:
+        result['read'] = bool(result['read'])
+    return result
 
 # --- Retry Decorator --- Moved UP ---
 def retry_on_db_lock(max_attempts=5, initial_wait=0.1, backoff_factor=2,

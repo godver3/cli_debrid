@@ -632,7 +632,6 @@ def rank_result_key(
     # Add multi-pack information to the score breakdown
     score_breakdown['is_multi_pack'] = is_multi_pack if content_type.lower() == 'episode' else False
     score_breakdown['num_items'] = num_items if content_type.lower() == 'episode' else 1
-    logging.debug(f"[RRK] Final num_items for score_breakdown: {score_breakdown['num_items']} for '{torrent_title}'")
     score_breakdown['multi_pack_score'] = multi_pack_score
     score_breakdown['single_episode_score'] = single_episode_score
 

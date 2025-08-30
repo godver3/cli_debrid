@@ -83,7 +83,11 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
         # No season info
         if episode_info:
             # Has episode but no season - assume season 1
-            result['season_pack'] = 'N/A'
+            # Check if it's multiple episodes (season pack) or single episode
+            if isinstance(episode_info, list) and len(episode_info) > 1:
+                result['season_pack'] = '1'  # Multiple episodes = season pack
+            else:
+                result['season_pack'] = 'N/A'  # Single episode
             result['seasons'] = [1]
         else:
             # No season or episode info - might be a complete pack

@@ -60,12 +60,19 @@ def get_cached_download_stats():
         download_stats_cache['active_downloads'] is None or 
         download_stats_cache['usage_stats'] is None):
         
+        logging.debug("Download stats cache expired, fetching fresh data...")
+        
         try:
+            # Add timeout protection for provider initialization
             provider = get_debrid_provider()
+            logging.debug("Debrid provider initialized successfully")
             
-            # Get active downloads
+            # Get active downloads with timeout protection
             try:
+                logging.debug("Fetching active downloads...")
                 active_count, limit = provider.get_active_downloads()
+                logging.debug(f"Active downloads fetched: {active_count}/{limit}")
+                
                 raw_limit = limit if limit else provider.MAX_DOWNLOADS
                 adjusted_limit = round(raw_limit)
                 percentage = round((active_count / adjusted_limit * 100) if adjusted_limit > 0 else 0)
@@ -84,6 +91,7 @@ def get_cached_download_stats():
                     'error': None
                 }
             except TooManyDownloadsError as e:
+                logging.debug(f"TooManyDownloadsError caught: {str(e)}")
                 import re
                 match = re.search(r'(\d+)/(\d+)', str(e))
                 if match:
@@ -113,9 +121,12 @@ def get_cached_download_stats():
                     'error': str(e)
                 }
             
-            # Get usage stats
+            # Get usage stats with timeout protection
             try:
+                logging.debug("Fetching usage stats...")
                 usage = provider.get_user_traffic()
+                logging.debug(f"Usage stats fetched: {usage}")
+                
                 if not usage or usage.get('limit') is None:
                     download_stats_cache['usage_stats'] = {
                         'used': '0 GB',
@@ -172,6 +183,7 @@ def get_cached_download_stats():
                 }
 
             download_stats_cache['last_update'] = current_time
+            logging.debug("Download stats cache updated successfully")
             
         except ProviderUnavailableError as e:
             logging.error(f"Provider unavailable: {str(e)}")
@@ -805,7 +817,6 @@ def get_statistics_summary():
         conn = get_db_connection()
         cursor = conn.cursor()
         db_connect_time = time.perf_counter() - db_connect_start
-        logging.info(f"Database connection took {db_connect_time*1000:.2f}ms")
 
         # Time table existence check
         table_check_start = time.perf_counter()
@@ -822,7 +833,6 @@ def get_statistics_summary():
                     from database.schema_management import create_statistics_summary_table
                     create_statistics_summary_table()
                     create_time = time.perf_counter() - create_start
-                    logging.info(f"Creating statistics table took {create_time*1000:.2f}ms")
                     
                     # Instead of recursively calling, continue with the logic inline
                     conn = get_db_connection()
@@ -832,7 +842,6 @@ def get_statistics_summary():
                     counts_start = time.perf_counter()
                     initial_counts = get_collected_counts()
                     counts_time = time.perf_counter() - counts_start
-                    logging.info(f"Initial counts calculation took {counts_time*1000:.2f}ms")
 
                     insert_start = time.perf_counter()
                     conn.execute('''
@@ -846,7 +855,6 @@ def get_statistics_summary():
                     ))
                     conn.commit()
                     insert_time = time.perf_counter() - insert_start
-                    logging.info(f"Initial data insertion took {insert_time*1000:.2f}ms")
                     
                     # Return the counts we just calculated
                     return initial_counts
@@ -854,7 +862,6 @@ def get_statistics_summary():
                     logging.error(f"Error creating statistics table: {str(e)}")
                     fallback_start = time.perf_counter()
                     result = get_collected_counts()  # Fallback on error
-                    logging.info(f"Fallback counts took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                     return result
         except sqlite3.OperationalError as e:
             if "no such table: sqlite_master" in str(e):
@@ -863,10 +870,8 @@ def get_statistics_summary():
                 logging.error(f"SQLite error checking for statistics_summary table: {str(e)}")
             fallback_start = time.perf_counter()
             result = get_collected_counts()
-            logging.info(f"Fallback counts after error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
             return result
         table_check_time = time.perf_counter() - table_check_start
-        logging.info(f"Table existence check took {table_check_time*1000:.2f}ms")
         
         # Time data retrieval and update check
         query_start = time.perf_counter()
@@ -885,16 +890,13 @@ def get_statistics_summary():
                 logging.error("statistics_summary table doesn't exist despite earlier check")
                 fallback_start = time.perf_counter()
                 result = get_collected_counts()
-                logging.info(f"Fallback counts after table error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                 return result
             else:
                 logging.error(f"SQLite error querying statistics_summary: {str(e)}")
                 fallback_start = time.perf_counter()
                 result = get_collected_counts()
-                logging.info(f"Fallback counts after query error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                 return result
         query_time = time.perf_counter() - query_start
-        logging.info(f"Data retrieval query took {query_time*1000:.2f}ms")
         
         if not result:
             # No data yet, initialize it
@@ -903,7 +905,6 @@ def get_statistics_summary():
                 counts_start = time.perf_counter()
                 counts = get_collected_counts()
                 counts_time = time.perf_counter() - counts_start
-                logging.info(f"Fresh counts calculation took {counts_time*1000:.2f}ms")
                 
                 # Insert the initial data
                 insert_start = time.perf_counter()
@@ -914,14 +915,12 @@ def get_statistics_summary():
                 ''', (counts['total_movies'], counts['total_shows'], counts['total_episodes']))
                 conn.commit()
                 insert_time = time.perf_counter() - insert_start
-                logging.info(f"Data insertion took {insert_time*1000:.2f}ms")
                 
                 return counts
             except sqlite3.Error as e:
                 logging.error(f"SQLite error initializing statistics_summary: {str(e)}")
                 fallback_start = time.perf_counter()
                 result = get_collected_counts()
-                logging.info(f"Fallback counts after initialization error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                 return result
                 
         elif result[3] < result[4]:
@@ -935,7 +934,6 @@ def get_statistics_summary():
                 update_start = time.perf_counter()
                 update_statistics_summary(force=True)
                 update_time = time.perf_counter() - update_start
-                logging.info(f"Statistics update took {update_time*1000:.2f}ms")
                 
                 # Open a new connection to get the fresh data
                 new_conn_start = time.perf_counter()
@@ -949,7 +947,6 @@ def get_statistics_summary():
                 ''')
                 updated_result = cursor.fetchone()
                 new_conn_time = time.perf_counter() - new_conn_start
-                logging.info(f"New connection and data fetch took {new_conn_time*1000:.2f}ms")
                 
                 if updated_result:
                     return {
@@ -962,13 +959,11 @@ def get_statistics_summary():
                     logging.error("Failed to retrieve updated statistics")
                     fallback_start = time.perf_counter()
                     result = get_collected_counts()
-                    logging.info(f"Fallback counts after update failure took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                     return result
             except Exception as e:
                 logging.error(f"Error updating statistics: {str(e)}")
                 fallback_start = time.perf_counter()
                 result = get_collected_counts()
-                logging.info(f"Fallback counts after update error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                 return result
                 
         elif result[3] > result[5]:
@@ -983,7 +978,6 @@ def get_statistics_summary():
                 update_start = time.perf_counter()
                 update_statistics_summary(force=True)
                 update_time = time.perf_counter() - update_start
-                logging.info(f"Statistics update took {update_time*1000:.2f}ms")
                 
                 # Open a new connection to get the fresh data
                 new_conn_start = time.perf_counter()
@@ -997,7 +991,6 @@ def get_statistics_summary():
                 ''')
                 updated_result = cursor.fetchone()
                 new_conn_time = time.perf_counter() - new_conn_start
-                logging.info(f"New connection and data fetch took {new_conn_time*1000:.2f}ms")
                 
                 if updated_result:
                     return {
@@ -1010,13 +1003,11 @@ def get_statistics_summary():
                     logging.error("Failed to retrieve updated statistics")
                     fallback_start = time.perf_counter()
                     result = get_collected_counts()
-                    logging.info(f"Fallback counts after update failure took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                     return result
             except Exception as e:
                 logging.error(f"Error updating statistics: {str(e)}")
                 fallback_start = time.perf_counter()
                 result = get_collected_counts()
-                logging.info(f"Fallback counts after update error took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
                 return result
         else:
             # Data exists and is current - return it
@@ -1024,7 +1015,7 @@ def get_statistics_summary():
             
         # Return the valid data we found
         overall_time = time.perf_counter() - overall_start
-        logging.info(f"Total get_statistics_summary execution took {overall_time*1000:.2f}ms")
+        logging.debug(f"Total get_statistics_summary execution took {overall_time*1000:.2f}ms")
         return {
             'total_movies': result[0],
             'total_shows': result[1],
@@ -1035,7 +1026,6 @@ def get_statistics_summary():
         logging.error(f"Unexpected error getting statistics summary: {str(e)}", exc_info=True)
         fallback_start = time.perf_counter()
         result = get_collected_counts()  # Fallback to direct count
-        logging.info(f"Final fallback counts took {(time.perf_counter() - fallback_start)*1000:.2f}ms")
         return result
     finally:
         if conn:

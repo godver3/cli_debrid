@@ -3,6 +3,7 @@
 import os
 import logging
 import time
+import threading
 from typing import Optional, Dict, Any, Union, List
 from pathlib import Path
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
@@ -11,6 +12,32 @@ from .exceptions import RealDebridAPIError, RealDebridAuthError
 from utilities.settings import get_setting
 from routes.api_tracker import api
 import asyncio
+
+# Global rate limiter for Real-Debrid API calls
+_api_rate_limiter = {
+    'last_request_time': 0,
+    'min_interval': 0.5,  # Minimum 500ms between API calls
+    'lock': threading.Lock()
+}
+
+def _wait_for_rate_limit():
+    """Wait if necessary to respect rate limits"""
+    with _api_rate_limiter['lock']:
+        current_time = time.time()
+        time_since_last = current_time - _api_rate_limiter['last_request_time']
+        min_interval = _api_rate_limiter['min_interval']
+        
+        if time_since_last < min_interval:
+            sleep_time = min_interval - time_since_last
+            time.sleep(sleep_time)
+        
+        _api_rate_limiter['last_request_time'] = time.time()
+
+def _decrease_rate_limit_on_success():
+    """Gradually decrease rate limiting interval on successful requests"""
+    with _api_rate_limiter['lock']:
+        if _api_rate_limiter['min_interval'] > 0.5:  # Don't go below 500ms
+            _api_rate_limiter['min_interval'] = max(0.5, _api_rate_limiter['min_interval'] * 0.95)
 
 def get_api_key() -> str:
     """Get Real-Debrid API key from settings"""
@@ -63,6 +90,13 @@ def make_request(
     headers = {'Authorization': f'Bearer {api_key}'}
     kwargs['headers'] = headers
     
+    # Add timeout if not already specified
+    if 'timeout' not in kwargs:
+        kwargs['timeout'] = 30  # 30 second timeout
+    
+    # Apply rate limiting
+    _wait_for_rate_limit()
+    
     try:
         if method.upper() == 'GET':
             response = api.get(url, **kwargs)
@@ -92,6 +126,12 @@ def make_request(
                         time.sleep(retry_after_seconds)
                     except (ValueError, TypeError):
                         pass  # If we can't parse the Retry-After header, just continue with default retry
+                
+                # Increase rate limiting interval when we hit 429
+                with _api_rate_limiter['lock']:
+                    _api_rate_limiter['min_interval'] = min(5.0, _api_rate_limiter['min_interval'] * 2)
+                    logging.warning(f"Increased API rate limit interval to {_api_rate_limiter['min_interval']}s due to 429 error")
+                
                 raise RateLimitError("Rate limit exceeded")
             elif response.status_code == 404:
                 # Check if this is a duplicate torrent add attempt
@@ -105,13 +145,18 @@ def make_request(
         
         # Some endpoints return no content
         if response.status_code == 204:
+            _decrease_rate_limit_on_success()
             return {"success": True, "status_code": 204}
             
         # Parse JSON response
         try:
-            return response.json()
+            result = response.json()
+            _decrease_rate_limit_on_success()
+            return result
         except ValueError:
-            return response.content
+            result = response.content
+            _decrease_rate_limit_on_success()
+            return result
             
     except api.exceptions.Timeout:
         raise ProviderUnavailableError("Request timed out")
