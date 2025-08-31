@@ -1027,10 +1027,12 @@
                     this.container = null;
                     this.stack = null;
                     this.toasts = new Map();
+                    this.toastQueue = []; // Queue for toasts that can't be displayed yet
                     this.toastCounter = 0;
                     this.removalTimers = new Map(); // Track individual removal timers
                     this.toastDuration = 2000; // 6 seconds per toast
                     this.removalDelay = 500; // 500ms between removals
+                    this.maxToasts = 5; // Maximum number of toasts to display at once
                     this.init();
                 }
 
@@ -1077,6 +1079,18 @@
                         return;
                     }
 
+                    // Check if we've reached the maximum number of toasts
+                    if (this.toasts.size >= this.maxToasts) {
+                        // Queue this toast for later display
+                        this.toastQueue.push({ title, message, type });
+                        console.log(`Toast queued. Queue length: ${this.toastQueue.length}`);
+                        return;
+                    }
+
+                    this.createAndShowToast(title, message, type);
+                }
+
+                createAndShowToast(title, message, type) {
                     const toastId = `toast-${++this.toastCounter}`;
                     const toast = this.createToast(toastId, title, message, type);
                     
@@ -1222,6 +1236,9 @@
                             // Reschedule remaining toasts to maintain sequential timing
                             this.rescheduleRemainingToasts();
                         }
+                        
+                        // Check if we have queued toasts to display
+                        this.processQueue();
                     }, 400);
                 }
 
@@ -1240,6 +1257,9 @@
                     // Clear all timers
                     this.removalTimers.forEach(timer => clearTimeout(timer));
                     this.removalTimers.clear();
+                    
+                    // Clear the queue
+                    this.toastQueue = [];
                     
                     // Slide out all toasts
                     this.toasts.forEach((toast, id) => {
@@ -1263,16 +1283,28 @@
                     
                     if (countElement) {
                         const count = this.toasts.size;
-                        countElement.textContent = `${count} notification${count !== 1 ? 's' : ''}`;
+                        const queueCount = this.toastQueue.length;
+                        const totalCount = count + queueCount;
+                        
+                        countElement.textContent = `${totalCount} notification${totalCount !== 1 ? 's' : ''}`;
                         
                         // Hide stack header when there are 0 notifications
                         if (stackHeader) {
-                            if (count === 0) {
+                            if (totalCount === 0) {
                                 stackHeader.style.display = 'none';
                             } else {
                                 stackHeader.style.display = 'flex';
                             }
                         }
+                    }
+                }
+
+                processQueue() {
+                    // Process queued toasts if we have space
+                    while (this.toasts.size < this.maxToasts && this.toastQueue.length > 0) {
+                        const queuedToast = this.toastQueue.shift();
+                        console.log(`Processing queued toast. Remaining in queue: ${this.toastQueue.length}`);
+                        this.createAndShowToast(queuedToast.title, queuedToast.message, queuedToast.type);
                     }
                 }
 

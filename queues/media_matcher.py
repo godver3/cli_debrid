@@ -43,16 +43,23 @@ class MediaMatcher:
         is_anime_special_content = False
         basename_lower = file_basename.lower()
         anime_special_patterns = [
-            r'\bncop\b', r'\bnced\b',  # No Credit Opening/Ending
-            r'\bopening\b', r'\bending\b',
-            r'\bova\b'
+            r'(?<![a-zA-Z0-9])ncop(?=[._-]|$)', r'(?<![a-zA-Z0-9])nced(?=[._-]|$)',  # No Credit Opening/Ending
+            r'(?<![a-zA-Z0-9])opening(?=[._-]|$)', r'(?<![a-zA-Z0-9])ending(?=[._-]|$)',
+            r'(?<![a-zA-Z0-9])ova(?=[._-]|$)',
+            r'(?<![a-zA-Z0-9])blooper(?=[._-]|$)', r'(?<![a-zA-Z0-9])bloopers(?=[._-]|$)',  # Blooper content
+            r'(?<![a-zA-Z0-9])special(?=[._-]|$)', r'(?<![a-zA-Z0-9])specials(?=[._-]|$)',  # Special content
+            r'(?<![a-zA-Z0-9])omake(?=[._-]|$)', r'(?<![a-zA-Z0-9])omakes(?=[._-]|$)',  # Omake (bonus content)
+            r'(?<![a-zA-Z0-9])extra(?=[._-]|$)', r'(?<![a-zA-Z0-9])extras(?=[._-]|$)',  # Extra content
+            r'(?<![a-zA-Z0-9])bonus(?=[._-]|$)', r'(?<![a-zA-Z0-9])bonuses(?=[._-]|$)'  # Bonus content
         ]
         
-        for pattern in anime_special_patterns:
-            if re.search(pattern, basename_lower):
+        for i, pattern in enumerate(anime_special_patterns):
+            match = re.search(pattern, basename_lower)
+            if match:
                 is_anime_special_content = True
                 logging.debug(f"Tagged as potential anime special content: '{file_basename}' (matched pattern: {pattern})")
                 break # Found a match, no need to check others
+        
 
         ptt_result = parse_title(file_basename) # Parse only the basename
         
@@ -108,6 +115,12 @@ class MediaMatcher:
         Returns:
             True if the file matches the item, False otherwise.
         """
+        # Always reject anime special content files (bloopers, openings, endings, etc.)
+        is_special_content = parsed_file_info.get('parsed_info', {}).get('is_anime_special_content', False)
+        if is_special_content:
+            logging.debug(f"Rejecting anime special content file: '{parsed_file_info.get('path', 'unknown')}'")
+            return False
+
         ptt_result = parsed_file_info['parsed_info'] # Get the PTT result stored earlier
 
         # Determine target season/episode: Use XEM if available, otherwise original item S/E
@@ -170,16 +183,40 @@ class MediaMatcher:
                 # Parsed season explicitly matches the target season
                 season_match = True
             elif is_anime and parsed_season_is_missing_or_default and target_season > 1:
-                # Check if title explicitly mentions a different season before applying leniency
-                # Example: Searching S7, title says "S01". We should NOT be lenient here.
+                # For anime S2+, if the file is parsed as S1/None, we need to be more restrictive
+                # Only allow if we have strong evidence this is the right season
                 filename_for_check = ptt_result.get('original_filename', '')
-                if not re.search(rf'[Ss](?!{target_season:02d})\d\d?', filename_for_check):
+                
+                # Check if we have absolute episode evidence
+                has_absolute_episode = False
+                try:
+                    from database.database_reading import get_all_season_episode_counts
+                    tmdb_id = item.get('tmdb_id')
+                    if tmdb_id:
+                        season_episode_counts = get_all_season_episode_counts(tmdb_id)
+                        if season_episode_counts:
+                            # Calculate target absolute episode number
+                            abs_target = 0
+                            sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < target_season])
+                            for s_num in sorted_seasons:
+                                abs_target += season_episode_counts.get(s_num, 0)
+                            abs_target += target_episode
+                            
+                            # Check if absolute episode appears in the original filename
+                            if filename_for_check and re.search(rf'\b{abs_target}\b', filename_for_check):
+                                has_absolute_episode = True
+                except Exception as e:
+                    logging.debug(f"Could not calculate absolute episode for anime matching: {e}")
+                
+                # Only allow if we have absolute episode evidence
+                if has_absolute_episode:
                     season_match = True
                     lenient_season_pass = True
-                    logging.debug(f"Allowing anime result ({filename_for_check}) parsed as S1/None when target is S{target_season} (no conflicting season found in title)")
+                    logging.debug(f"Allowing anime result ({filename_for_check}) parsed as S1/None when target is S{target_season} (absolute episode evidence found)")
                 else:
-                    explicit_season_mismatch = True
-                    logging.debug(f"Anime result ({filename_for_check}) parsed as S1/None has conflicting season info when target is S{target_season}. Not applying leniency.")
+                    # Reject if no strong evidence this is the right season
+                    season_match = False
+                    logging.debug(f"Rejecting anime result ({filename_for_check}) parsed as S1/None when target is S{target_season} (no absolute episode evidence)")
             elif not ptt_result.get('seasons'):
                 # Allow titles with NO season info at all (might be absolute)
                 # BUT: For anime with XEM mapping, be more restrictive
@@ -604,9 +641,10 @@ class MediaMatcher:
             logging.debug(f"Episode matching mode: {'Relaxed' if use_relaxed_matching else 'Strict'}")
 
             for parsed_file_info in parsed_files:
-                # If the item is anime, skip files that are tagged as anime special content
-                if is_anime and parsed_file_info.get('parsed_info', {}).get('is_anime_special_content', False):
-                    logging.debug(f"Skipping anime special file '{parsed_file_info['path']}' because item is anime.")
+                # Always skip files that are tagged as anime special content
+                is_special = parsed_file_info.get('parsed_info', {}).get('is_anime_special_content', False)
+                if is_special:
+                    logging.debug(f"Skipping anime special file '{parsed_file_info['path']}' for episode matching.")
                     continue
 
                 # Pass xem_mapping down to _check_match
@@ -630,6 +668,20 @@ class MediaMatcher:
         """
         # Remove the file extension
         basename = os.path.splitext(os.path.basename(filename))[0]
+        
+        # Skip special content files to avoid false episode extraction
+        basename_lower = basename.lower()
+        special_content_patterns = [
+            r'(?<![a-zA-Z0-9])ncop(?=[._-]|$)', r'(?<![a-zA-Z0-9])nced(?=[._-]|$)', r'(?<![a-zA-Z0-9])opening(?=[._-]|$)', r'(?<![a-zA-Z0-9])ending(?=[._-]|$)', r'(?<![a-zA-Z0-9])ova(?=[._-]|$)',
+            r'(?<![a-zA-Z0-9])blooper(?=[._-]|$)', r'(?<![a-zA-Z0-9])bloopers(?=[._-]|$)', r'(?<![a-zA-Z0-9])special(?=[._-]|$)', r'(?<![a-zA-Z0-9])specials(?=[._-]|$)',
+            r'(?<![a-zA-Z0-9])omake(?=[._-]|$)', r'(?<![a-zA-Z0-9])omakes(?=[._-]|$)', r'(?<![a-zA-Z0-9])extra(?=[._-]|$)', r'(?<![a-zA-Z0-9])extras(?=[._-]|$)',
+            r'(?<![a-zA-Z0-9])bonus(?=[._-]|$)', r'(?<![a-zA-Z0-9])bonuses(?=[._-]|$)'
+        ]
+        
+        for pattern in special_content_patterns:
+            if re.search(pattern, basename_lower):
+                logging.debug(f"Skipping episode extraction for special content file: '{filename}' (matched pattern: {pattern})")
+                return None
 
         # Try various patterns, but be more specific to avoid false positives
         patterns = [
@@ -777,7 +829,7 @@ class MediaMatcher:
              return abs(int(item_year) - int(parsed_year)) <= 1
         return True # Acceptable if one or both years are missing
 
-    def find_related_items(self, parsed_torrent_files: List[Dict[str, Any]], scraping_items: List[Dict[str, Any]], wanted_items: List[Dict[str, Any]], original_item: Dict[str, Any], xem_mapping: Optional[Dict[str, int]] = None) -> List[Tuple[Dict[str, Any], str]]:
+    def find_related_items(self, parsed_torrent_files: List[Dict[str, Any]], scraping_items: List[Dict[str, Any]], wanted_items: List[Dict[str, Any]], original_item: Dict[str, Any], xem_mapping: Optional[Dict[str, int]] = None, torrent_title: Optional[str] = None) -> List[Tuple[Dict[str, Any], str]]:
         """
         Find items in the scraping and wanted queues that match pre-parsed files in the torrent.
 
@@ -787,6 +839,7 @@ class MediaMatcher:
             wanted_items: List of items currently in wanted state.
             original_item: The original item being processed, used to match version/title.
             xem_mapping: Optional dictionary with 'season' from PTT of the torrent title, to enforce season-matching for packs.
+            torrent_title: Optional torrent title string to parse for season information.
 
         Returns:
             List of tuples, where each tuple contains (related_item_dict, matching_filepath_basename).
@@ -805,12 +858,47 @@ class MediaMatcher:
         from utilities.settings import get_setting
         restrict_to_pack_season = get_setting('Matching', 'restrict_related_to_pack_season', False)
 
-        # If the torrent was parsed as a specific season (pack), enforce matching only that season
-        pack_season = xem_mapping.get('season') if xem_mapping else None
+        # --- ENHANCED SEASON DETECTION ---
+        # Determine the pack season from multiple sources in order of priority:
+        pack_season = None
+        
+        # 1. First try XEM mapping (existing logic)
+        if xem_mapping and 'season' in xem_mapping:
+            pack_season = xem_mapping.get('season')
+            logging.debug(f"Using XEM mapping for pack season: {pack_season}")
+        
+        # 2. If no XEM mapping, try parsing the torrent title directly
+        if pack_season is None and torrent_title:
+            try:
+                from scraper.functions.ptt_parser import parse_with_ptt
+                torrent_parsed = parse_with_ptt(torrent_title)
+                torrent_seasons = torrent_parsed.get('seasons', [])
+                
+                if torrent_seasons:
+                    # If multiple seasons, this is a multi-season pack
+                    if len(torrent_seasons) > 1:
+                        logging.info(f"Torrent title indicates multi-season pack: {torrent_seasons}")
+                        # For multi-season packs, we might want to allow all seasons
+                        # But for now, let's be conservative and only allow if user setting is disabled
+                        if not restrict_to_pack_season:
+                            pack_season = None  # Allow all seasons
+                        else:
+                            pack_season = torrent_seasons[0]  # Restrict to first season
+                    else:
+                        pack_season = torrent_seasons[0]
+                        logging.info(f"Torrent title indicates single season pack: S{pack_season}")
+            except Exception as e:
+                logging.debug(f"Could not parse torrent title for season info: {e}")
+        
+        # 3. Fallback to original item's season if still no pack season
+        if pack_season is None:
+            pack_season = original_item.get('season') or original_item.get('season_number')
+            if pack_season:
+                logging.debug(f"Using original item season as pack season: {pack_season}")
+
+        # Apply season restriction if we have a pack season and the setting is enabled
         if pack_season is not None and restrict_to_pack_season:
-            logging.info(
-                f"Torrent pack identified as Season {pack_season}. Related item matching will be restricted to this season (per setting)."
-            )
+            logging.info(f"Torrent pack identified as Season {pack_season}. Related item matching will be restricted to this season (per setting).")
 
         # Determine relaxed matching based on original item (assuming related items follow same logic)
         genres = original_item.get('genres') or []
@@ -878,9 +966,9 @@ class MediaMatcher:
             # --- Find Match in Parsed Files ---
             found_match_for_this_item = False
             for parsed_file_info in parsed_torrent_files:
-                # If the candidate item is anime, skip files tagged as anime special content
-                if candidate_is_anime and parsed_file_info.get('parsed_info', {}).get('is_anime_special_content', False):
-                    logging.debug(f"Skipping anime special file '{parsed_file_info['path']}' for related anime item ID {item_id}.")
+                # Always skip files tagged as anime special content
+                if parsed_file_info.get('parsed_info', {}).get('is_anime_special_content', False):
+                    logging.debug(f"Skipping anime special file '{parsed_file_info['path']}' for related item matching.")
                     continue
                 
                 # Pass per-candidate mapping (if available) so scene numbering is considered correctly

@@ -902,14 +902,11 @@ def filter_results(
                                     logging.info(f"  - Anime pack heuristic failed: keywords={has_pack_keywords}, large_size={large_size}, no_episodes={no_explicit_episodes}")
                             
                             if not is_likely_anime_pack:
-                                if check_pack_wantedness:
-                                    result['filter_reason'] = "Non-multi result when searching for multi (pack wantedness check active)"
-                                    logging.info(f"Rejected: Not enough episodes for multi mode for '{original_title}' (is_anime={is_anime}, heuristic_failed={not is_likely_anime_pack}, pack_wantedness_check=True) (Size: {result['size']:.2f}GB)")
-                                    continue
-                                else:
-                                    logging.info(f"Skipping 'Not enough episodes for multi mode' rejection for '{original_title}' as check_pack_wantedness is False. (is_anime={is_anime}, heuristic_failed={not is_likely_anime_pack}) (Size: {result['size']:.2f}GB)")
-                                    # If check_pack_wantedness is false, do not 'continue' here.
-                                    # Let it proceed to other filters.
+                                # Always reject single-episode results when searching for multi-episode packs
+                                # regardless of check_pack_wantedness setting
+                                result['filter_reason'] = "Non-multi result when searching for multi"
+                                logging.info(f"Rejected: Not enough episodes for multi mode for '{original_title}' (is_anime={is_anime}, heuristic_failed={not is_likely_anime_pack}) (Size: {result['size']:.2f}GB)")
+                                continue
                     else:
                         if season not in season_episode_info.get('seasons', []):
                             result['filter_reason'] = f"Season pack not containing the requested season: {season}"
@@ -1130,17 +1127,21 @@ def filter_results(
                                  result.get('target_abs_episode') is None  # No absolute episode number
                              )
                              
-                             # For anime S2+ with no season info or season mismatch, require absolute episode numbers for proper context
-                             has_absolute_episode = result.get('target_abs_episode') is not None
-                             
-                             if has_absolute_episode:
-                                 episode_match = True
-                                 logging.debug(f"Episode matched via XEM-mapped episode {episode} for '{original_title}' (with absolute episode validation)")
-                             else:
-                                 if season_mismatch:
-                                     logging.info(f"Rejecting anime episode match due to season mismatch (expected S{season}, parsed {result_seasons}) and no absolute episode evidence for '{original_title}'")
+                             # For anime S2+ with season mismatch, always reject regardless of absolute episode numbers
+                             # Absolute episode numbers should only be used when there's no season info at all
+                             if season_mismatch:
+                                 logging.info(f"Rejecting anime episode match due to season mismatch (expected S{season}, parsed {result_seasons}) for '{original_title}'")
+                                 episode_match = False
+                             elif not result_seasons:
+                                 # Only use absolute episode validation when there's no season info at all
+                                 has_absolute_episode = result.get('target_abs_episode') is not None
+                                 if has_absolute_episode:
+                                     episode_match = True
+                                     logging.debug(f"Episode matched via XEM-mapped episode {episode} for '{original_title}' (with absolute episode validation)")
                                  else:
                                      logging.info(f"Rejecting anime episode match due to insufficient absolute episode evidence for S{season}E{episode}: '{original_title}'")
+                                     episode_match = False
+                             else:
                                  episode_match = False
                          else:
                              episode_match = True
@@ -1153,7 +1154,8 @@ def filter_results(
                             original_abs = result.get('target_abs_episode')
                             if original_abs and (
                                 original_abs in result_episodes or
-                                re.search(rf'\b{original_abs}\b', original_title)):
+                                # re.search(rf'\b{original_abs}\b', original_title)):  # COMMENTED OUT: This regex causes false positives like matching "28" in "25 of 28"
+                                False):  # Temporarily disabled regex fallback
                                 episode_match = True
                                 logging.info(
                                     f"Anime absolute fallback (orig abs): matched absolute "
@@ -1168,7 +1170,8 @@ def filter_results(
                                 abs_target += episode           # <- mapped episode (e.g. 4) gives 16
                                 # Accept if torrent explicitly carries that absolute number
                                 if (abs_target in result_episodes or
-                                    re.search(rf'\b{abs_target}\b', original_title)):
+                                    # re.search(rf'\b{abs_target}\b', original_title)):  # COMMENTED OUT: This regex causes false positives like matching numbers in episode counts
+                                    False):  # Temporarily disabled regex fallback
                                     episode_match = True
                                     logging.info(
                                         f"Anime absolute fallback: matched absolute "
