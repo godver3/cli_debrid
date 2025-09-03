@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from flask import current_app
 import time
 import requests
+import threading
 
 from .database import DatabaseManager, Item, init_db, Session as DbSession
 from .metadata_manager import MetadataManager
@@ -24,6 +25,7 @@ class BackgroundJobManager:
         # Rate limiting for Trakt API
         self.last_api_call = 0
         self.min_call_interval = 3.0  # Minimum 1 second between API calls
+        self._refresh_lock = threading.Lock()
 
     def init_app(self, app):
         """Initialize with Flask app context"""
@@ -54,7 +56,7 @@ class BackgroundJobManager:
         # Add jobs here
         self.scheduler.add_job(
             func=self.refresh_trakt_updates,
-            trigger=IntervalTrigger(hours=6),
+            trigger=IntervalTrigger(hours=1),
             id='refresh_trakt_updates',
             name='Refresh Metadata via Trakt Updates',
             replace_existing=True
@@ -110,6 +112,10 @@ class BackgroundJobManager:
 
     def refresh_trakt_updates(self):
         """Fetch Trakt updated shows/movies since last cursor and refresh only those items."""
+        if not self._refresh_lock.acquire(blocking=False):
+            logger.info("A refresh job is already running. Skipping Trakt updates refresh.")
+            return
+        
         try:
             trakt = TraktMetadata()
             cursors = self.settings.trakt_updates or {}
@@ -218,9 +224,15 @@ class BackgroundJobManager:
 
         except Exception as e:
             logger.error(f"Error in refresh_trakt_updates: {e}", exc_info=True)
+        finally:
+            self._refresh_lock.release()
 
     def refresh_stale_metadata(self):
         """Check and refresh stale metadata for all items"""
+        if not self._refresh_lock.acquire(blocking=False):
+            logger.info("A refresh job is already running. Skipping stale metadata refresh.")
+            return
+
         try:
             # Rate limiting strategy:
             # - Trakt allows 1000 GET requests per 5 minutes (~3.33 requests/second)
@@ -319,6 +331,8 @@ class BackgroundJobManager:
 
         except Exception as e:
             logger.error(f"Error in refresh_stale_metadata job setup: {e}", exc_info=True)
+        finally:
+            self._refresh_lock.release()
 
 # Global instance
 background_jobs = BackgroundJobManager()

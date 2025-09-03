@@ -4,6 +4,11 @@
     <button type="button" class="settings-collapse-all">Collapse All</button>
 </div>
 
+<div class="debug-warning-box">
+    <p><strong>⚠️ Advanced Settings Warning:</strong></p>
+    <p>These debug settings should not typically be changed unless you are troubleshooting specific issues or have been instructed to do so by support. Changing these settings can affect system stability and performance.</p>
+</div>
+
 <div class="settings-section">
     <div class="settings-section-header">
         <h4>Debug Settings</h4>
@@ -307,6 +312,28 @@
         </div>
     </div>
 </div>
+
+<style>
+    /* Debug warning box styling */
+    .debug-warning-box {
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 6px;
+        padding: 20px;
+        margin: 20px 0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    .debug-warning-box p {
+        margin: 0 0 10px 0;
+        line-height: 1.5;
+        color: #856404;
+    }
+    
+    .debug-warning-box strong {
+        color: #856404;
+    }
+</style>
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {

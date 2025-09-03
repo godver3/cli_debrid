@@ -195,6 +195,7 @@
         <div class="settings-form-group">
             <label for="{{ scraper_id }}-enabled-indexers" class="settings-title">Enabled Indexers:</label>
             <input type="text" id="{{ scraper_id }}-enabled-indexers" name="Scrapers.{{ scraper_id }}.enabled_indexers" value="{{ config.enabled_indexers }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.enabled_indexers">
+            <small class="settings-description">Leave blank to use all indexers, otherwise comma separated list of indexers to scrape.</small>
         </div>
         {% elif config.type == 'Prowlarr' %}
         <div class="settings-form-group">
@@ -211,6 +212,7 @@
         <div class="settings-form-group">
             <label for="{{ scraper_id }}-opts" class="settings-title">Options:</label>
             <input type="text" id="{{ scraper_id }}-opts" name="Scrapers.{{ scraper_id }}.opts" value="{{ config.opts }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.opts">
+            <small class="settings-description">Leave blank to use default options, otherwise copy from Torrentio URL. Recommend leaving blank.</small>
         </div>
         {% endif %}
     </div>

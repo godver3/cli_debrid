@@ -1,4 +1,7 @@
-from .logger_config import logger
+try:
+    from .logger_config import logger
+except ImportError:
+    from cli_battery.app.logger_config import logger
 import json
 import time
 import os
@@ -8,7 +11,10 @@ from urllib.parse import urlparse, urlencode
 import requests
 from requests.exceptions import RequestException
 import time
-from .settings import Settings
+try:
+    from .settings import Settings
+except ImportError:
+    from cli_battery.app.settings import Settings
 import trakt.core
 from trakt import init
 from trakt.users import User
@@ -19,7 +25,10 @@ from datetime import datetime, timedelta
 import iso8601
 from datetime import timezone, datetime
 from collections import defaultdict
-from .trakt_auth import TraktAuth
+try:
+    from .trakt_auth import TraktAuth
+except ImportError:
+    from cli_battery.app.trakt_auth import TraktAuth
 import traceback
 from collections import deque
 from datetime import datetime as dt
@@ -109,11 +118,10 @@ class TraktMetadata:
         headers = {}
         if since_iso:
             try:
-                # Format the timestamp to the hour as required by Trakt
+                # Use date-only format since time portion doesn't affect results
                 from datetime import datetime
                 dt = datetime.fromisoformat(since_iso.replace('Z', '+00:00'))
-                rounded_time = dt.replace(minute=0, second=0, microsecond=0)
-                start_date_header = rounded_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+                start_date_header = dt.strftime('%Y-%m-%d')
                 headers['X-Start-Date'] = start_date_header
                 logger.info(f"Using X-Start-Date header: {start_date_header} for URL: {url_base}")
             except Exception as e:
@@ -482,9 +490,9 @@ class TraktMetadata:
         response = self._make_request(url)
         if response and response.status_code == 200:
             results = response.json()
-            logger.debug(f"Trakt Search Raw Results for {imdb_id}: {results}")
+            # logger.debug(f"Trakt Search Raw Results for {imdb_id}: {results}")
             if results:  # This is true if results is not None and not an empty list/dict
-                logger.debug(f"Trakt Search: Taking first result for {imdb_id}: {results[0]}")
+                # logger.debug(f"Trakt Search: Taking first result for {imdb_id}: {results[0]}")
                 return results[0]  # Return first match
             else: # Explicitly log if results is empty
                 logger.warning(f"Trakt Search for IMDb ID {imdb_id} returned 200 OK but with an empty result list. URL: {url}")
@@ -513,7 +521,7 @@ class TraktMetadata:
         response = self._make_request(url)
         if response and response.status_code == 200:
             show_data_raw = response.json()
-            logger.debug(f"Trakt: Raw response from {url}: {show_data_raw}")
+            # logger.debug(f"Trakt: Raw response from {url}: {show_data_raw}")
             returned_imdb_id = show_data_raw.get('ids', {}).get('imdb')
             if returned_imdb_id != imdb_id:
                 logger.error(f"Trakt API Mismatch! Requested IMDb {imdb_id} but /shows/{trakt_id} endpoint returned data for IMDb {returned_imdb_id}. Raw Data: {show_data_raw}")
@@ -625,8 +633,30 @@ class TraktMetadata:
         response = self._make_request(url)
         if response and response.status_code == 200:
             seasons_data_raw = response.json()
-            logger.debug(f"Raw seasons response from Trakt for {imdb_id}: {json.dumps(seasons_data_raw)}")
-            logger.debug(f"Raw seasons data received: {len(seasons_data_raw)} seasons")
+            # logger.debug(f"Raw seasons response from Trakt for {imdb_id}: {json.dumps(seasons_data_raw)}")
+            # logger.debug(f"Raw seasons data received: {len(seasons_data_raw)} seasons")
+            
+            # Check if Trakt returns absolute episode numbers
+            logger.info(f"Checking Trakt API response for absolute episode information...")
+            for season in seasons_data_raw:
+                season_num = season.get('number')
+                if season_num is not None:
+                    episodes = season.get('episodes', [])
+                    for episode in episodes:
+                        ep_num = episode.get('number')
+                        # Log complete episode data structure
+                        # logger.info(f"Episode S{season_num}E{ep_num} complete data: {json.dumps(episode, indent=2)}")
+                        
+                        # Look for absolute episode number in Trakt response
+                        if 'absolute' in episode:
+                            # logger.info(f"Found absolute episode number in Trakt API: S{season_num}E{ep_num} -> Absolute: {episode.get('absolute')}")
+                            pass
+                        elif 'ids' in episode and 'tvdb' in episode['ids']:
+                            # logger.info(f"Episode S{season_num}E{ep_num} has TVDB ID: {episode['ids']['tvdb']} (might have absolute via XEM)")
+                            pass
+                        else:
+                            # logger.debug(f"Episode S{season_num}E{ep_num} - no absolute number found in Trakt response")
+                            pass
             
             processed_seasons = {}
             for season in seasons_data_raw:
@@ -659,7 +689,8 @@ class TraktMetadata:
                         'overview': episode.get('overview', ''),
                         'runtime': episode.get('runtime', 0),
                         'first_aired': episode.get('first_aired'),
-                        'imdb_id': episode['ids'].get('imdb')
+                        'imdb_id': episode['ids'].get('imdb'),
+                        'absolute': episode.get('number_abs')  # Capture absolute episode number from Trakt API
                     }
                 
                 logger.debug(f"Completed season {season_number} with {len(processed_seasons[season_number]['episodes'])} episodes")

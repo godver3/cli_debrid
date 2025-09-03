@@ -237,6 +237,9 @@ def migrate_schema():
         if 'theatrical_release_date_checked' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN theatrical_release_date_checked BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added theatrical_release_date_checked column to media_items table.")
+        if 'delayed_upgrade_eligible' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN delayed_upgrade_eligible BOOLEAN DEFAULT TRUE')
+            logging.info("Successfully added delayed_upgrade_eligible column to media_items table (default TRUE).")
 
         # Add new indexes for version and content_source if they don't exist
         existing_indexes_cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index';")
@@ -313,6 +316,18 @@ def migrate_schema():
                 WHERE state = 'Wanted'
             ''')
             logging.info("Successfully executed CREATE INDEX for idx_media_items_upcoming_releases.")
+
+        # Index for fast state-based queries (get_item_count_by_state)
+        if 'idx_media_items_state' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_state...")
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_state ON media_items(state);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_state.")
+
+        # Composite index for Blacklisted queries (state + ghostlisted for covering index)
+        if 'idx_media_items_state_ghostlisted' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_state_ghostlisted...")
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_state_ghostlisted ON media_items(state, ghostlisted);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_state_ghostlisted.")
 
         # Add triggers for location_basename
         cursor.execute("DROP TRIGGER IF EXISTS trigger_media_items_insert_location_basename")
@@ -646,7 +661,8 @@ def create_tables():
                 location_basename TEXT,
                 ghostlisted BOOLEAN DEFAULT FALSE,
                 theatrical_release_date DATE,
-                theatrical_release_date_checked BOOLEAN DEFAULT FALSE
+                theatrical_release_date_checked BOOLEAN DEFAULT FALSE,
+                delayed_upgrade_eligible BOOLEAN DEFAULT TRUE
             )
         ''')
 

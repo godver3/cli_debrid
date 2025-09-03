@@ -376,6 +376,12 @@ SETTINGS_SCHEMA = {
             "min": 0.0,
             "max": 1.0
         },
+        "delayed_upgrade_scrape_days": {
+            "type": "integer",
+            "description": "Number of days to wait before attempting a single upgrade scrape on an item. Set to 0 to disable delayed upgrade scraping.",
+            "default": 0,
+            "min": 0
+        },
         "enable_upgrading_cleanup": {
             "type": "boolean",
             "description": "Enable cleanup of original items after successful upgrade (removes original item from Debrid Provider)",
@@ -1534,6 +1540,11 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Comma-separated list of language codes (e.g., eng,zho,spa). Uses ISO-639-3 codes.",
             "default": "eng,zho"
+        },
+        "include_ai_translated_subtitles": {
+            "type": "boolean",
+            "description": "Include AI translated subtitles in search results. These may have lower quality but provide broader language coverage.",
+            "default": True
         },
         "subtitle_providers": {
             "type": "list",

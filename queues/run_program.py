@@ -99,6 +99,7 @@ from debrid import get_debrid_provider, ProviderUnavailableError
 from utilities.plex_removal_cache import process_removal_cache # Added import for standalone removal processing
 import sys # Add for checking apscheduler.events
 from collections import defaultdict  # Added alongside deque above for runtime tracking
+import resource # Added for CPU accounting
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -805,6 +806,16 @@ class ProgramRunner:
         self.task_runtime_lock = threading.Lock()  # Protect access to task_runtime_totals
         self._runtime_log_interval_sec = 300  # How often to emit runtime percentage report (seconds)
         self._last_runtime_log_time = time.monotonic()
+        # --- END EDIT ---
+        # --- START EDIT: CPU usage tracking attributes ---
+        # Accumulate per-task CPU seconds in current window
+        self.task_cpu_totals = defaultdict(float)
+        self.task_cpu_lock = threading.Lock()
+        # Share the same interval as runtime logging to avoid log noise
+        self._cpu_log_interval_sec = self._runtime_log_interval_sec
+        self._last_cpu_log_time = time.monotonic()
+        # Control per-run CPU logging via environment variable
+        self._log_per_run_cpu = os.environ.get('LOG_PER_RUN_CPU', 'false').lower() == 'true'
         # --- END EDIT ---
 
     # *** START EDIT: New method to get task target ***
@@ -4582,6 +4593,9 @@ class ProgramRunner:
              logging.warning(f"[Tracemalloc] Attempted sample for '{log_display_name}', but tracemalloc not available/tracing at point of memory check.")
              run_tracemalloc_sample = False
 
+        # --- START EDIT: Capture CPU time before task execution ---
+        cpu_start = self._get_current_thread_cpu_seconds()
+        # --- END EDIT ---
 
         try:
             # Execute the original task function
@@ -4623,6 +4637,14 @@ class ProgramRunner:
                 # Log if we intended to sample but tracemalloc became unavailable
                  logging.warning(f"[Tracemalloc] Attempted sample for '{log_display_name}', but tracemalloc not available at point of 'after' memory check.")
 
+            # --- START EDIT: Capture CPU time after task execution ---
+            cpu_end = self._get_current_thread_cpu_seconds()
+            cpu_seconds = cpu_end - cpu_start
+            cpu_util = (cpu_seconds / duration) * 100 if duration > 0 else 0
+            self._record_task_cpu(task_name_for_logging, cpu_seconds)
+            if self._log_per_run_cpu:
+                logging.debug(f"[CPU] Task '{log_display_name}' cpu={cpu_seconds:.3f}s, wall={duration:.3f}s, util={cpu_util:.1f}%")
+            # --- END EDIT ---
 
             # Optional: Log normal duration if not sampling (can be noisy)
             # else:
@@ -4653,6 +4675,16 @@ class ProgramRunner:
             elif run_tracemalloc_sample:
                  # Log if we intended to sample but tracemalloc became unavailable
                  logging.warning(f"[Tracemalloc] Attempted sample for '{log_display_name}', but tracemalloc not available at point of error memory check.")
+
+            # --- START EDIT: Capture CPU time after task execution on error ---
+            cpu_end = self._get_current_thread_cpu_seconds()
+            cpu_seconds = cpu_end - cpu_start
+            cpu_util = (cpu_seconds / duration) * 100 if duration > 0 else 0
+            self._record_task_cpu(task_name_for_logging, cpu_seconds)
+            if self._log_per_run_cpu:
+                logging.debug(f"[CPU] Task '{log_display_name}' cpu={cpu_seconds:.3f}s, wall={duration:.3f}s, util={cpu_util:.1f}%")
+            # --- END EDIT ---
+
             raise # Re-raise the exception
         finally:
             # --- START EDIT: Manage currently_executing_tasks ---
@@ -5026,6 +5058,44 @@ class ProgramRunner:
         logging.info(f"[RUNTIME] Last {self._runtime_log_interval_sec} s: "+", ".join(parts)+f"  (total={total:.1f} s)")
         self.task_runtime_totals.clear()
         self._last_runtime_log_time = now
+
+    # --- START EDIT: Add method to get current thread CPU seconds ---
+    def _get_current_thread_cpu_seconds(self):
+        """Get the current thread's CPU time in seconds."""
+        try:
+            if hasattr(resource, 'getrusage'):
+                return resource.getrusage(resource.RUSAGE_THREAD).ru_utime
+            else:
+                return time.process_time()
+        except Exception as e:
+            logging.error(f"Error getting current thread CPU time: {e}", exc_info=True)
+            return 0
+    # --- END EDIT ---
+
+    # --- START EDIT: Add method to record task CPU seconds ---
+    def _record_task_cpu(self, task_name: str, cpu_seconds: float):
+        """Accumulate task CPU seconds and periodically log per-task CPU share."""
+        now = time.monotonic()
+        with self.task_cpu_lock:
+            self.task_cpu_totals[task_name] += cpu_seconds
+            if now - self._last_cpu_log_time >= self._cpu_log_interval_sec:
+                self._emit_task_cpu_report_locked(now)
+
+    def _emit_task_cpu_report_locked(self, now: float):
+        """Assumes task_cpu_lock held. Emits report and resets counters."""
+        if not self.task_cpu_totals:
+            self._last_cpu_log_time = now
+            return
+        total = sum(self.task_cpu_totals.values())
+        if total <= 0:
+            self.task_cpu_totals.clear()
+            self._last_cpu_log_time = now
+            return
+        parts = [f"{t}={v / total * 100:.1f} % ({v:.2f}s)" for t, v in sorted(self.task_cpu_totals.items(), key=lambda x: x[1], reverse=True)]
+        logging.info(f"[CPU] Last {self._cpu_log_interval_sec} s: "+", ".join(parts)+f"  (total_cpu={total:.2f} s)")
+        self.task_cpu_totals.clear()
+        self._last_cpu_log_time = now
+    # --- END EDIT ---
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')

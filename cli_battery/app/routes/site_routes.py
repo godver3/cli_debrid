@@ -68,6 +68,14 @@ def debug():
             # Add the actual database updated_at timestamp
             item.db_updated_at = item.updated_at.isoformat() if item.updated_at else None
     
+    # Ensure episodes are loaded with absolute episode numbers for all items
+    for item in items:
+        if hasattr(item, 'seasons') and item.seasons:
+            for season in item.seasons:
+                if hasattr(season, 'episodes') and season.episodes:
+                    # Sort episodes by episode number to ensure proper display order
+                    season.episodes = sorted(season.episodes, key=lambda ep: ep.episode_number)
+    
     return render_template('debug.html', items=items)
 
 @main_bp.route('/debug/delete_item/<imdb_id>', methods=['POST'])
@@ -102,7 +110,23 @@ def debug_item(imdb_id):
             return jsonify({"error": f"No item found for IMDB ID: {imdb_id}"}), 404
         
         metadata = {m.key: m.value for m in item.item_metadata}
-        seasons = [{'season': s.season_number, 'episode_count': s.episode_count} for s in item.seasons]
+        seasons = []
+        for season in item.seasons:
+            season_data = {
+                'season': season.season_number, 
+                'episode_count': season.episode_count,
+                'episodes': []
+            }
+            if hasattr(season, 'episodes') and season.episodes:
+                for episode in sorted(season.episodes, key=lambda ep: ep.episode_number):
+                    episode_data = {
+                        'episode_number': episode.episode_number,
+                        'title': episode.title,
+                        'absolute_episode': episode.absolute_episode,
+                        'first_aired': episode.first_aired.isoformat() if episode.first_aired else None
+                    }
+                    season_data['episodes'].append(episode_data)
+            seasons.append(season_data)
         
         return jsonify({
             "item": {

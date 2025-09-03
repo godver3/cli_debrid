@@ -9,8 +9,19 @@
     <button id="add-default-version-btn" class="add-version-link">Add Default Version</button>
     <button id="add-separate-versions-btn" class="add-version-link">Add Separate 1080p/4K Versions</button>
     {% if not is_limited_environment() %}
-    <button id="import-default-versions-btn" class="import-versions-link">Add Alternate Default Versions</button>
+    <!--<button id="import-default-versions-btn" class="import-versions-link">Add Alternate Default Versions</button>-->
     {% endif %}
+</div>
+
+<div class="scraping-info-box">
+    <p><strong>How Scraping Versions Work:</strong></p>
+    <p>These scraping settings will be used to calculate a total score for each release, and to filter items in or out of the results. Weights are used to emphasize or de-emphasize specific traits. Use the Scraper Tester to verify that your results match what you expect.</p>
+    <ul>
+        <li><strong>Filter In</strong> - Include only results with these terms.</li>
+        <li><strong>Filter Out</strong> - Include no results with these terms.</li>
+        <li><strong>Preferred Filter In</strong> - Increase score of results with these terms.</li>
+        <li><strong>Preferred Filter Out</strong> - Reduce score of results with these terms.</li>
+    </ul>
 </div>
 
 <script>
@@ -549,6 +560,34 @@
     .settings-form-group.hybrid-mode-group {
         display: none !important;
     }
+    
+    /* Scraping info box styling */
+    .scraping-info-box {
+        background-color: #252525;
+        border-radius: 6px;
+        padding: 20px;
+        margin: 20px 0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    .scraping-info-box p {
+        margin: 0 0 10px 0;
+        line-height: 1.5;
+    }
+    
+    .scraping-info-box ul {
+        margin: 10px 0 0 0;
+        padding-left: 20px;
+    }
+    
+    .scraping-info-box li {
+        margin: 5px 0;
+        line-height: 1.4;
+    }
+    
+    .scraping-info-box strong {
+        color: #ffffff;
+    }
 </style>
 
 <script>
@@ -871,6 +910,11 @@
                                    data-section="Scraping" data-key="{{ key }}"
                                    min="{{ value.min }}" step="1">
                             <p class="settings-description">{{ value.description }}</p>
+                        {% elif value.type == 'integer' and key == 'delayed_upgrade_scrape_days' %}
+                            <input type="number" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   value="{{ settings.get('Scraping', {}).get(key, value.default) }}" class="settings-input"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   min="{{ value.min }}" step="1" placeholder="0">
                         {% else %}
                             {% set input_field_type = value.type %}
                             {% if value.type == 'float' or value.type == 'integer' %}

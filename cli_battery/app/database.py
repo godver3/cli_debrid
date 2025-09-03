@@ -135,8 +135,9 @@ def run_migrations(engine):
     """Run database migrations for existing tables."""
     try:
         with engine.connect() as conn:
-            # Check if tmdb_to_imdb_mapping table exists and add timestamp columns if needed
             inspector = inspect(engine)
+            
+            # Check if tmdb_to_imdb_mapping table exists and add timestamp columns if needed
             if 'tmdb_to_imdb_mapping' in inspector.get_table_names():
                 columns = [col['name'] for col in inspector.get_columns('tmdb_to_imdb_mapping')]
                 
@@ -153,6 +154,17 @@ def run_migrations(engine):
                     # Set default timestamp for existing records
                     conn.execute(text("UPDATE tmdb_to_imdb_mapping SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL"))
                     logger.info("Successfully added updated_at column to tmdb_to_imdb_mapping table.")
+            
+            # Check if episodes table exists and add absolute_episode column if needed
+            if 'episodes' in inspector.get_table_names():
+                columns = [col['name'] for col in inspector.get_columns('episodes')]
+                
+                if 'absolute_episode' not in columns:
+                    logger.info("Adding absolute_episode column to episodes table...")
+                    conn.execute(text("ALTER TABLE episodes ADD COLUMN absolute_episode INTEGER"))
+                    logger.info("Successfully added absolute_episode column to episodes table.")
+                else:
+                    logger.debug("absolute_episode column already exists in episodes table.")
             
             conn.commit()
             logger.info("Database migrations completed successfully.")
@@ -212,6 +224,7 @@ class Episode(Base):
     runtime = Column(Integer)
     first_aired = Column(DateTime)
     imdb_id = Column(String)
+    absolute_episode = Column(Integer, nullable=True)  # Add absolute episode number field
     season = relationship("Season", back_populates="episodes")
 
 class Poster(Base):

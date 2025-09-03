@@ -295,6 +295,10 @@ class MediaMatcher:
                     tmdb_id = item.get('tmdb_id')
                     series_title = item.get('series_title') or item.get('title')
                     if tmdb_id:
+                        # Initialize base_season and base_episode before conditional logic
+                        base_season = target_season  # This is already XEM-mapped if using_xem=True
+                        base_episode = target_episode  # This is already XEM-mapped if using_xem=True
+                        
                         # First check if this anime uses absolute numbering
                         uses_absolute, detected_absolute = detect_absolute_numbering(series_title, target_season, target_episode, tmdb_id)
                         
@@ -307,8 +311,7 @@ class MediaMatcher:
                             
                             # Calculate target absolute episode number using the same logic as convert_anime_episode_format
                             # Use XEM-mapped S/E if available, otherwise use original item S/E
-                            base_season = target_season  # This is already XEM-mapped if using_xem=True
-                            base_episode = target_episode  # This is already XEM-mapped if using_xem=True
+                            # base_season and base_episode already initialized above
                             
                             target_absolute_episode = 0
                             # Sort seasons to ensure correct order and handle potential non-integer keys from bad metadata

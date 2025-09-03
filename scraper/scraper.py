@@ -54,6 +54,42 @@ def normalize_episode_format_for_dedup(episode_format: str) -> str:
     
     return normalized
 
+def get_absolute_episode_from_database(imdb_id: str, season: int, episode: int) -> Optional[int]:
+    """Get the absolute episode number from the database if available."""
+    try:
+        from cli_battery.app.database import Session, Item, Season, Episode
+        
+        with Session() as session:
+            # Find the item by IMDB ID
+            item = session.query(Item).filter_by(imdb_id=imdb_id).first()
+            if not item:
+                logging.debug(f"Item not found in database for IMDB ID: {imdb_id}")
+                return None
+            
+            # Find the season
+            season_obj = session.query(Season).filter_by(item_id=item.id, season_number=season).first()
+            if not season_obj:
+                logging.debug(f"Season {season} not found for item {imdb_id}")
+                return None
+            
+            # Find the episode
+            episode_obj = session.query(Episode).filter_by(season_id=season_obj.id, episode_number=episode).first()
+            if not episode_obj:
+                logging.debug(f"Episode S{season}E{episode} not found for item {imdb_id}")
+                return None
+            
+            # Check if absolute episode number exists
+            if episode_obj.absolute_episode is not None:
+                logging.info(f"Found absolute episode number {episode_obj.absolute_episode} for S{season}E{episode} in database")
+                return episode_obj.absolute_episode
+            else:
+                logging.debug(f"Episode S{season}E{episode} exists but has no absolute episode number")
+                return None
+                
+    except Exception as e:
+        logging.warning(f"Error getting absolute episode from database: {e}")
+        return None
+
 def convert_anime_episode_format(season: int, episode: int, season_episode_counts: Dict[int, int], xem_mapping: Optional[List[Dict]] = None, tmdb_id: Optional[str] = None, imdb_id: Optional[str] = None, multi: bool = False) -> Dict[str, str]:
     """Convert anime episode numbers into different formats using XEM mapping when available.
     
@@ -144,10 +180,15 @@ def convert_anime_episode_format(season: int, episode: int, season_episode_count
         return formats
 
     # Original logic for single episodes
-    # Try to get absolute episode from XEM mapping first
+    # Try to get absolute episode from database first (most accurate for One Piece)
     absolute_episode = None
+    if imdb_id:
+        absolute_episode = get_absolute_episode_from_database(imdb_id, season, episode)
+        if absolute_episode is not None:
+            logging.info(f"Using absolute episode number {absolute_episode} from database for S{season}E{episode}")
     
-    if xem_mapping:
+    # If not in database, try XEM mapping as fallback
+    if absolute_episode is None and xem_mapping:
         logging.info(f"Checking XEM mapping for S{season}E{episode}")
         for mapping_entry in xem_mapping:
             tvdb_info = mapping_entry.get('tvdb', {})
@@ -336,6 +377,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
         # --- XEM Mapping Lookup ---
         target_air_date = None # Initialize target air date
+        xem_mapping_list = None  # Initialize xem_mapping_list here
+        
         if content_type.lower() == 'episode' and season is not None and original_episode is not None:
             try:
                 logging.info(f"Checking for XEM mapping for {title} S{season}E{original_episode} (IMDb: {imdb_id})")
