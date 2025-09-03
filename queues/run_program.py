@@ -99,7 +99,11 @@ from debrid import get_debrid_provider, ProviderUnavailableError
 from utilities.plex_removal_cache import process_removal_cache # Added import for standalone removal processing
 import sys # Add for checking apscheduler.events
 from collections import defaultdict  # Added alongside deque above for runtime tracking
-import resource # Added for CPU accounting
+# Try to import resource module (Unix only), fallback to time.process_time()
+try:
+    import resource
+except ImportError:
+    resource = None
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -5063,7 +5067,7 @@ class ProgramRunner:
     def _get_current_thread_cpu_seconds(self):
         """Get the current thread's CPU time in seconds."""
         try:
-            if hasattr(resource, 'getrusage'):
+            if resource is not None and hasattr(resource, 'getrusage'):
                 return resource.getrusage(resource.RUSAGE_THREAD).ru_utime
             else:
                 return time.process_time()
