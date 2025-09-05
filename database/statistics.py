@@ -14,6 +14,7 @@ import random
 from debrid import get_debrid_provider, TooManyDownloadsError, ProviderUnavailableError
 import threading
 import sqlite3
+from typing import Dict
 
 def format_bytes(size):
     """Convert bytes to human readable format."""
@@ -27,6 +28,7 @@ def format_bytes(size):
 download_stats_cache = {
     'active_downloads': None,
     'usage_stats': None,
+    'subscription': None,
     'last_update': 0,
     'cache_duration': 300  # 5 minutes in seconds
 }
@@ -202,6 +204,13 @@ def get_cached_download_stats():
                     'percentage': 0,
                     'error': 'provider_unavailable'
                 }
+            if download_stats_cache.get('subscription') is None:
+                download_stats_cache['subscription'] = {
+                    'days_remaining': None,
+                    'expiration': None,
+                    'premium': None,
+                    'error': 'provider_unavailable'
+                }
         except Exception as e:
             logging.error(f"Error updating download stats cache: {str(e)}")
             if download_stats_cache['active_downloads'] is None:
@@ -219,8 +228,48 @@ def get_cached_download_stats():
                     'percentage': 0,
                     'error': str(e)
                 }
+            if download_stats_cache.get('subscription') is None:
+                download_stats_cache['subscription'] = {
+                    'days_remaining': None,
+                    'expiration': None,
+                    'premium': None,
+                    'error': str(e)
+                }
 
     return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
+
+def get_cached_subscription_status() -> Dict:
+    """Return cached subscription info, refreshing if needed (30 min cache window)."""
+    try:
+        current_time = time.time()
+        # If we have never populated subscription, or our overall cache TTL expired, refresh
+        if (download_stats_cache.get('subscription') is None or
+            download_stats_cache['last_update'] + 1800 < current_time):
+            provider = get_debrid_provider()
+            # Provider method itself is cached for 30 minutes
+            subscription = provider.get_subscription_status() if hasattr(provider, 'get_subscription_status') else {
+                'days_remaining': None,
+                'expiration': None,
+                'premium': None
+            }
+            download_stats_cache['subscription'] = subscription
+            # Do not touch last_update for download/usage cache cadence; subscription has its own TTL above
+        return download_stats_cache['subscription']
+    except ProviderUnavailableError:
+        return {
+            'days_remaining': None,
+            'expiration': None,
+            'premium': None,
+            'error': 'provider_unavailable'
+        }
+    except Exception as e:
+        logging.error(f"Error getting cached subscription status: {str(e)}")
+        return {
+            'days_remaining': None,
+            'expiration': None,
+            'premium': None,
+            'error': str(e)
+        }
 
 def cache_for_seconds(seconds):
     """Cache the result of a function for the specified number of seconds."""

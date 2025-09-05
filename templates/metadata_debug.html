@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}Metadata Debug{% endblock %}
+
+{% block content %}
+<div class="metadata-debug-container">
+    <div class="page-header">
+        <h2>Metadata Debug</h2>
+        <p class="subtitle">Lookup or delete items by IMDB ID from the metadata database.</p>
+        <hr>
+    </div>
+
+    <div class="controls" style="display:flex; gap: 0.5rem; align-items:center; margin-top: 20px;">
+        <input type="text" id="imdbIdInput" placeholder="Enter IMDB ID (e.g., tt1234567)" style="flex:1;">
+        <button id="fetchBtn" class="primary">Fetch</button>
+        <button id="deleteBtn" class="danger">Recreate</button>
+    </div>
+    <div id="status" style="margin-top: 0.5rem; color: #888;"></div>
+
+</div>
+
+<div id="result" style="display:none; margin-top: 1rem; margin: 60px !important;">
+    <h3>Item</h3>
+    <pre id="itemBlock" class="code-block"></pre>
+
+    <h3>Metadata</h3>
+    <pre id="metadataBlock" class="code-block"></pre>
+
+    <h3>Seasons</h3>
+    <pre id="seasonsBlock" class="code-block"></pre>
+</div>
+
+<style>
+/* Page-specific styling to complement base.css without global changes */
+.metadata-debug {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 16px;
+}
+
+.controls input[type="text"] {
+    background: #222;
+    color: #f4f4f4;
+    border: 1px solid #444;
+    padding: 10px 12px;
+    border-radius: 4px;
+}
+
+.controls button {
+    border: none;
+    padding: 10px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.code-block { 
+    background:#0f0f0f; 
+    padding: 12px; 
+    border-radius: 6px; 
+    overflow:auto; 
+    border: 1px solid #222;
+}
+
+.metadata-debug-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 50px !important;
+}
+
+button.danger { background: #b00020; color: #fff; }
+button.danger:hover { background: #8a001a; }
+button.primary { background: #1e88e5; color: #fff; }
+button.primary:hover { background: #1669b9; }
+
+#status {
+    min-height: 20px;
+}
+
+/* Section headings */
+h3 {
+    margin: 0.5rem 0;
+    color: #bdbdbd;
+}
+</style>
+
+<script type="module">
+import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+document.addEventListener('DOMContentLoaded', function() {
+    const imdbInput = document.getElementById('imdbIdInput');
+    const fetchBtn = document.getElementById('fetchBtn');
+    const deleteBtn = document.getElementById('deleteBtn');
+    const status = document.getElementById('status');
+    const result = document.getElementById('result');
+    const itemBlock = document.getElementById('itemBlock');
+    const metadataBlock = document.getElementById('metadataBlock');
+    const seasonsBlock = document.getElementById('seasonsBlock');
+
+    function setStatus(text, isError=false) {
+        status.textContent = text || '';
+        status.style.color = isError ? '#ff6b6b' : '#888';
+    }
+
+    function renderJSON(element, data) {
+        try { element.textContent = JSON.stringify(data, null, 2); }
+        catch { element.textContent = 'Unable to render JSON'; }
+    }
+
+    function fetchMetadata() {
+        const imdbId = (imdbInput.value || '').trim();
+        if (!imdbId) { setStatus('Please enter an IMDB ID.', true); return; }
+        setStatus('Fetching...');
+        result.style.display = 'none';
+        fetch(`/metadata/api/item/${encodeURIComponent(imdbId)}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data && !data.error) {
+                    renderJSON(itemBlock, data.item);
+                    renderJSON(metadataBlock, data.metadata);
+                    renderJSON(seasonsBlock, data.seasons);
+                    result.style.display = 'block';
+                    setStatus('Fetched.');
+                } else {
+                    setStatus(data && data.error ? data.error : 'Not found.', true);
+                }
+            })
+            .catch(() => setStatus('Error fetching metadata.', true));
+    }
+
+    function deleteByImdb() {
+        const imdbId = (imdbInput.value || '').trim();
+        if (!imdbId) { setStatus('Please enter an IMDB ID.', true); return; }
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm',
+            message: `Recreate item ${imdbId}?`,
+            confirmText: 'Yes',
+            cancelText: 'No',
+            onConfirm: () => {
+                setStatus('Deleting...');
+                fetch(`/metadata/api/delete/${encodeURIComponent(imdbId)}`, { method: 'POST' })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data && data.success) {
+                            setStatus('Deleted.');
+                            result.style.display = 'none';
+                            itemBlock.textContent = '';
+                            metadataBlock.textContent = '';
+                            seasonsBlock.textContent = '';
+                        } else {
+                            setStatus('Delete failed.' + (data.error ? ` ${data.error}` : ''), true);
+                        }
+                    })
+                    .catch(() => setStatus('Error deleting item.', true))
+                    .finally(() => {
+                        fetchMetadata();
+                    });
+            }
+        });
+    }
+
+    fetchBtn.addEventListener('click', fetchMetadata);
+    deleteBtn.addEventListener('click', deleteByImdb);
+    imdbInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); fetchMetadata(); }});
+});
+</script>
+{% endblock %}
+
+

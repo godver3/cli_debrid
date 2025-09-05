@@ -109,6 +109,75 @@ class RealDebridProvider(DebridProvider):
         """Provides access to the API key by fetching it from settings on each call."""
         return self._load_api_key()
 
+    @timed_lru_cache(seconds=1800)
+    def get_subscription_status(self) -> Dict[str, Any]:
+        """
+        Return Real-Debrid subscription info with days remaining.
+        Cached for 30 minutes as it changes infrequently.
+
+        Response example:
+        {
+          'days_remaining': 12,
+          'expiration': '2025-09-30T12:34:56Z',
+          'premium': True
+        }
+        """
+        try:
+            from utilities.settings import get_setting
+            if get_setting("Debrid Provider", "api_key") == "demo_key":
+                return {'days_remaining': None, 'expiration': None, 'premium': False}
+
+            user_info = make_request('GET', '/user', self.api_key) or {}
+            premium = bool(user_info.get('premium', False))
+            expiration = user_info.get('expiration') or user_info.get('premium_until')
+
+            days_remaining = None
+            if expiration:
+                try:
+                    # RD returns ISO8601 like '2025-09-30T12:34:56Z' or with milliseconds '2025-09-30T12:34:56.000Z'
+                    exp = expiration
+                    exp_dt = None
+                    if isinstance(exp, str):
+                        if exp.endswith('Z'):
+                            # Try with fractional seconds, then without
+                            try:
+                                exp_dt = datetime.strptime(exp, '%Y-%m-%dT%H:%M:%S.%fZ')
+                            except ValueError:
+                                try:
+                                    exp_dt = datetime.strptime(exp, '%Y-%m-%dT%H:%M:%SZ')
+                                except ValueError:
+                                    # As a last resort, convert Z to +00:00 and use fromisoformat
+                                    try:
+                                        exp_dt = datetime.fromisoformat(exp.replace('Z', '+00:00')).replace(tzinfo=None)
+                                    except Exception:
+                                        exp_dt = None
+                        else:
+                            try:
+                                exp_dt = datetime.fromisoformat(exp)
+                            except Exception:
+                                exp_dt = None
+                    if exp_dt is not None:
+                        now = datetime.utcnow()
+                        delta = exp_dt - now
+                        days_remaining = max(0, delta.days)
+                except Exception as e:
+                    logging.warning(f"Failed parsing RD expiration '{expiration}': {e}")
+
+            return {
+                'days_remaining': days_remaining,
+                'expiration': expiration,
+                'premium': premium
+            }
+        except Exception as e:
+            logging.error(f"Error fetching subscription status: {str(e)}")
+            # Return a safe default
+            return {
+                'days_remaining': None,
+                'expiration': None,
+                'premium': None,
+                'error': str(e)
+            }
+
     async def is_cached(self, magnet_links: Union[str, List[str]], temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, remove_cached: bool = False, skip_phalanx_db: bool = False, imdb_id: Optional[str] = None) -> Union[bool, Dict[str, bool], None]:
         """
         Check if one or more magnet links or torrent files are cached on Real-Debrid.

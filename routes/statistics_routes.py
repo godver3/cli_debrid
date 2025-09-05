@@ -474,9 +474,13 @@ def root():
     if not limited_env:
         try:
             from database import get_cached_download_stats
+            from database.statistics import get_cached_subscription_status
             active_downloads, usage_stats = get_cached_download_stats()
             stats['active_downloads_data'] = active_downloads
             stats['usage_stats_data'] = usage_stats
+            # Subscription status (days remaining)
+            subscription = get_cached_subscription_status()
+            stats['subscription_status'] = subscription
         except Exception as e:
             logging.error(f"Error getting download stats: {str(e)}")
             stats['active_downloads_data'] = {
@@ -491,10 +495,17 @@ def root():
                 'percentage': 0,
                 'error': 'provider_error'
             }
+            stats['subscription_status'] = {
+                'days_remaining': None,
+                'expiration': None,
+                'premium': None,
+                'error': 'provider_error'
+            }
     else:
         # In limited environment, provide empty stats
         stats['active_downloads_data'] = None
         stats['usage_stats_data'] = None
+        stats['subscription_status'] = None
     
     # --- Read Cached Library Size for Initial Display ---
     library_cache_read_start = time.perf_counter()
@@ -1017,11 +1028,15 @@ def index_api():
     if not limited_env:
         active_downloads = get_cached_active_downloads()
         usage_stats = get_cached_user_traffic()
+        from database.statistics import get_cached_subscription_status
+        subscription = get_cached_subscription_status()
         stats['active_downloads_data'] = active_downloads
         stats['usage_stats_data'] = usage_stats
+        stats['subscription_status'] = subscription
     else:
         stats['active_downloads_data'] = None
         stats['usage_stats_data'] = None
+        stats['subscription_status'] = None
     
     # Get recently aired and airing soon
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()

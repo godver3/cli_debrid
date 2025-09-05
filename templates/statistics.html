@@ -38,6 +38,10 @@
     .toggle-container .toggle-item .refresh-btn i.fa-spin { /* Style for spinning icon */
         /* Optional: add animation if not default */
     }
+    /* Subscription days critical color */
+    .toggle-container .toggle-item #subscription-days-toggle.critical {
+        color: #ff4444;
+    }
     #library-size-display {
         margin-right: 2px; /* Add a little space before the button */
     }
@@ -103,6 +107,12 @@
         {% if not limited_env %}
         <div class="toggle-item">
             <span class="toggle-label"><i class="fas fa-globe"></i> {{ stats.timezone }}</span>
+        </div>
+        {% endif %}
+        {% if not limited_env %}
+        <div class="toggle-item">
+            <span class="toggle-label"><i class="fas fa-crown"></i> Sub:</span>
+            <span id="subscription-days-toggle" class="{% if stats.subscription_status and stats.subscription_status.days_remaining is not none and stats.subscription_status.days_remaining < 10 %}critical{% endif %}">{% if stats.subscription_status and stats.subscription_status.days_remaining is not none %}{{ stats.subscription_status.days_remaining }} days{% else %}N/A{% endif %}</span>
         </div>
         {% endif %}
         <div class="toggle-item">
@@ -434,6 +444,21 @@
             
             // Reattach click event listeners for external links modal after updating content
             reattachExternalLinksListeners();
+
+            // Update subscription days in toggle bar, if present
+            try {
+                const subToggle = document.getElementById('subscription-days-toggle');
+                const subData = data.subscription_status || (data.stats && data.stats.subscription_status) || null;
+                if (subToggle) {
+                    if (subData && subData.days_remaining !== null && subData.days_remaining !== undefined) {
+                        subToggle.textContent = `${subData.days_remaining} days`;
+                        subToggle.classList.toggle('critical', Number(subData.days_remaining) < 10);
+                    } else {
+                        subToggle.textContent = 'N/A';
+                        subToggle.classList.remove('critical');
+                    }
+                }
+            } catch (e) {}
         }
 
         // Function to reattach external links listeners
@@ -844,6 +869,7 @@
         const data = {{ stats.active_downloads_data|tojson|safe }};
         const downloadsElement = document.getElementById('active_downloads');
         const limitElement = document.getElementById('download_limit');
+        const subDaysElement = document.getElementById('subscription_days');
         
         // Skip if elements don't exist (limited environment)
         if (!downloadsElement || !limitElement || !data) {
@@ -863,6 +889,17 @@
         } else if (data.status === 'warning') {
             statusElement.classList.add('warning');
         }
+
+        // Initialize subscription days from server-rendered stats on first paint
+        try {
+            const initialStats = {{ stats|tojson|safe }};
+            if (subDaysElement && initialStats && initialStats.subscription_status) {
+                const days = initialStats.subscription_status.days_remaining;
+                if (days !== null && days !== undefined) {
+                    subDaysElement.textContent = ` (${days} days)`;
+                }
+            }
+        } catch (e) {}
     }
 
     // Update usage stats display based on data from server
@@ -1138,6 +1175,7 @@
                         // Update active downloads (only if not in limited environment)
                         const activeDownloadsElement = document.getElementById('active_downloads');
                         const downloadLimitElement = document.getElementById('download_limit');
+                        const subDaysElement = document.getElementById('subscription_days');
                         if (activeDownloadsElement && downloadLimitElement && activeDownloadsData) {
                             activeDownloadsElement.textContent = activeDownloadsData.count || "0";
                             downloadLimitElement.textContent = activeDownloadsData.limit || "25";
@@ -1153,7 +1191,31 @@
                                 }
                             }
                         }
+                        // Update subscription days if present
+                        const subscriptionData = data.subscription_status || (data.stats && data.stats.subscription_status) || null;
+                        if (subDaysElement) {
+                            if (subscriptionData && subscriptionData.days_remaining !== null && subscriptionData.days_remaining !== undefined) {
+                                subDaysElement.textContent = ` (${subscriptionData.days_remaining} days)`;
+                            } else {
+                                subDaysElement.textContent = '';
+                            }
+                        }
                         
+                        // Update subscription days in toggle bar on auto-refresh
+                        try {
+                            const subToggle = document.getElementById('subscription-days-toggle');
+                            const subData = data.subscription_status || (data.stats && data.stats.subscription_status) || null;
+                            if (subToggle) {
+                                if (subData && subData.days_remaining !== null && subData.days_remaining !== undefined) {
+                                    subToggle.textContent = `${subData.days_remaining} days`;
+                                    subToggle.classList.toggle('critical', Number(subData.days_remaining) < 10);
+                                } else {
+                                    subToggle.textContent = 'N/A';
+                                    subToggle.classList.remove('critical');
+                                }
+                            }
+                        } catch (e) {}
+
                         // Update usage stats (only if not in limited environment)
                         const dailyUsageElement = document.getElementById('daily_usage');
                         const dailyLimitElement = document.getElementById('daily_limit');

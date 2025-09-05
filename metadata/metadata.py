@@ -1076,11 +1076,7 @@ def refresh_release_dates():
                 metadata, source = DirectAPI.get_movie_metadata(imdb_id)
                 if not metadata:
                     logging.warning(f"No metadata found for movie {title} ({imdb_id})")
-                    if is_valid_date_str(existing_release_date):
-                        new_release_date = existing_release_date
-                        logging.warning(f"Metadata fetch failed for {title} ({imdb_id}), but preserving existing valid release date: {new_release_date}")
-                    else:
-                        new_release_date = 'Unknown'
+                    new_release_date = 'Unknown'
                     new_physical_release_date = None
                     new_theatrical_release_date = None
                 else:
@@ -1091,9 +1087,9 @@ def refresh_release_dates():
                     logging.info(f"Physical release date: {new_physical_release_date}")
                     logging.info(f"Theatrical release date: {new_theatrical_release_date}")
 
-                    if fetched_release_date == 'Unknown' and is_valid_date_str(existing_release_date):
-                        new_release_date = existing_release_date
-                        logging.warning(f"Fetched release date was 'Unknown' for {title} ({imdb_id}), but preserving existing valid release date: {new_release_date}")
+                    if fetched_release_date == 'Unknown':
+                        new_release_date = 'Unknown'
+                        logging.warning(f"Fetched release date was 'Unknown' for {title} ({imdb_id}), replacing any existing release date with 'Unknown'")
                     else:
                         new_release_date = fetched_release_date
 
@@ -1176,10 +1172,7 @@ def refresh_release_dates():
 
                 if not metadata or not isinstance(metadata, dict):
                     logging.warning(f"Invalid or missing metadata for show {imdb_id}")
-                    if is_valid_date_str(existing_release_date):
-                        new_release_date = existing_release_date
-                        logging.warning(f"Metadata fetch failed for show {imdb_id}, preserving existing valid date: {new_release_date}")
-                    else: new_release_date = 'Unknown'
+                    new_release_date = 'Unknown'
                 else:
                     seasons = metadata.get('seasons', {})
                     if not isinstance(seasons, dict):
@@ -1207,12 +1200,8 @@ def refresh_release_dates():
                                 if not episode_data or not isinstance(episode_data, dict):
 
                                     logging.warning(f"No valid data found for S{season_number}E{episode_number} in fetched metadata.")
-                                    if is_valid_date_str(existing_release_date):
-                                        new_release_date = existing_release_date
-                                        logging.warning(f"Episode data lookup failed, preserving existing valid release date: {new_release_date}")
-                                    else:
-                                        new_release_date = 'Unknown'
-                                        logging.warning("Episode data lookup failed and no valid existing date found. Setting to Unknown.")
+                                    new_release_date = 'Unknown'
+                                    logging.warning("Episode data lookup failed. Setting release date to 'Unknown'.")
                                 else:
                                     first_aired_str = episode_data.get('first_aired')
                                     # logging.info(f"First aired date from metadata: {first_aired_str}")
@@ -1231,16 +1220,10 @@ def refresh_release_dates():
                                             # logging.info(f"Calculated local release date {new_release_date} from original aired string {first_aired_str}")
                                         except (ValueError, iso8601.ParseError) as e: # Catch iso8601.ParseError as well
                                             logging.error(f"Invalid datetime format or conversion error: {first_aired_str} - Error: {e}")
-                                            if is_valid_date_str(existing_release_date):
-                                                new_release_date = existing_release_date
-                                                logging.warning(f"Date parsing failed for S{season_number}E{episode_number}, preserving existing valid release date: {new_release_date}")
-                                            else: new_release_date = 'Unknown'
+                                            new_release_date = 'Unknown'
                                     else:
                                         logging.warning("No first_aired date found in episode data")
-                                        if is_valid_date_str(existing_release_date):
-                                            new_release_date = existing_release_date
-                                            logging.warning(f"No first_aired found for S{season_number}E{episode_number}, preserving existing valid release date: {new_release_date}")
-                                        else: new_release_date = 'Unknown'
+                                        new_release_date = 'Unknown'
 
                 # logging.info(f"New release date: {new_release_date}")
 

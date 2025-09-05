@@ -73,20 +73,18 @@ class PreReleaseQueue:
             end_date = current_date + timedelta(days=pre_release_days)
             
             # Get all movie items from the database that are in Unreleased state
-            # and have a release date within our pre-release window
+            # Fetch items that have either a release_date or physical_release_date in a broad window
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT * FROM media_items 
                     WHERE state = 'Unreleased' 
-                    AND type = 'movie' 
-                    AND release_date >= ?
-                    AND release_date <= ?
-                    AND release_date IS NOT NULL
-                    AND release_date != 'Unknown'
-                    AND release_date != 'None'
-                    AND release_date != ''
-                """, (start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')))
+                    AND type = 'movie'
+                    AND (
+                        (release_date IS NOT NULL AND release_date NOT IN ('Unknown','None','') )
+                        OR (physical_release_date IS NOT NULL)
+                    )
+                """)
                 
                 items = cursor.fetchall()
                 
@@ -96,10 +94,48 @@ class PreReleaseQueue:
                     item_dict = dict(zip([col[0] for col in cursor.description], item))
                     movie_items.append(item_dict)
                 
-                logging.info(f"Found {len(movie_items)} movie items with release dates between {start_date} and {end_date} for pre-release scraping")
+                # Determine effective release date per item using version setting 'require_physical_release'
+                scraping_versions = get_setting('Scraping', 'versions', {})
+                eligible_items = []
+                for item in movie_items:
+                    try:
+                        version = item.get('version')
+                        version_settings = scraping_versions.get(version, {}) if version else {}
+                        require_physical = version_settings.get('require_physical_release', False)
+                        release_date_str = item.get('release_date')
+                        physical_release_date_str = item.get('physical_release_date')
+
+                        effective_release_date_str = None
+                        if require_physical and physical_release_date_str:
+                            effective_release_date_str = physical_release_date_str
+                        elif (not require_physical) and release_date_str and str(release_date_str).lower() not in ['unknown', 'none', '']:
+                            effective_release_date_str = str(release_date_str)
+                        elif require_physical and not physical_release_date_str:
+                            # If physical is required but unknown, skip from pre-release tracking
+                            continue
+                        else:
+                            # No valid date available
+                            continue
+
+                        try:
+                            effective_release_date = datetime.strptime(effective_release_date_str, '%Y-%m-%d').date()
+                        except Exception:
+                            # Bad date format; skip
+                            continue
+
+                        # Include only items with effective_release_date within [start_date, end_date]
+                        if start_date <= effective_release_date <= end_date:
+                            # Attach computed effective date for later logic
+                            item['effective_release_date'] = effective_release_date_str
+                            eligible_items.append(item)
+                    except Exception as item_err:
+                        logging.warning(f"Failed to evaluate effective release for item {item.get('id')}: {item_err}")
+                        continue
+                
+                logging.info(f"Found {len(eligible_items)} movie items with effective release dates between {start_date} and {end_date} for pre-release scraping")
                 
                 # Update the queue items (these stay in Unreleased state in DB)
-                self.items = movie_items
+                self.items = eligible_items
                 
         except Exception as e:
             logging.error(f"Error updating pre-release queue: {str(e)}")
@@ -141,20 +177,33 @@ class PreReleaseQueue:
         return should_run
 
     def is_within_24_hours_of_release(self, item: Dict[str, Any]) -> bool:
-        """Check if the item is within 24 hours of its release date"""
-        release_date_str = item.get('release_date')
-        if not release_date_str or release_date_str.lower() in ['unknown', 'none']:
+        """Check if the item is within 24 hours of its effective release date"""
+        # Prefer computed effective date if present (from update()), else compute on the fly
+        effective_release_date_str = item.get('effective_release_date')
+        if not effective_release_date_str:
+            try:
+                scraping_versions = get_setting('Scraping', 'versions', {})
+                version_settings = scraping_versions.get(item.get('version', ''), {})
+                require_physical = version_settings.get('require_physical_release', False)
+                if require_physical and item.get('physical_release_date'):
+                    effective_release_date_str = item.get('physical_release_date')
+                else:
+                    effective_release_date_str = item.get('release_date')
+            except Exception:
+                effective_release_date_str = item.get('release_date')
+
+        if not effective_release_date_str or str(effective_release_date_str).lower() in ['unknown', 'none', '']:
             return False
             
         try:
-            release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+            release_date = datetime.strptime(str(effective_release_date_str), '%Y-%m-%d').date()
             current_date = datetime.now().date()
             time_until_release = release_date - current_date
             
             # Return True if release is within 24 hours (1 day or less)
             return time_until_release <= timedelta(days=1)
         except Exception as e:
-            logging.error(f"Error checking release date for item {item.get('id')}: {str(e)}")
+            logging.error(f"Error checking effective release date for item {item.get('id')}: {str(e)}")
             return False
 
     def daily_scrape(self, item: Dict[str, Any], queue_manager=None):
@@ -183,12 +232,75 @@ class PreReleaseQueue:
             results = results if results is not None else []
             
             if results:
+                # Rank results: prefer highest score if available
+                try:
+                    results_sorted = sorted(
+                        results,
+                        key=lambda r: r.get('score_breakdown', {}).get('total_score', 0),
+                        reverse=True
+                    )
+                except Exception:
+                    results_sorted = results
+                best_result = results_sorted[0]
+
                 logging.info(f"Found {len(results)} results for pre-release item {item_identifier}")
-                
-                # If we found results, remove from Pre-Release queue (item stays in Unreleased state in DB)
-                # The normal queue processing will handle moving it to Wanted when appropriate
-                logging.info(f"Found results for pre-release item {item_identifier}, removing from Pre-Release queue")
-                # Note: We don't change the database state - item stays in Unreleased
+
+                # If a queue_manager is available, attempt to add immediately (like upgrading flow)
+                if queue_manager is not None:
+                    try:
+                        # Move to Adding with results
+                        queue_manager.move_to_adding(item, "Pre_release", best_result.get('title', ''), results_sorted)
+
+                        # Process Adding synchronously
+                        try:
+                            queue_manager.queues["Adding"].process(queue_manager)
+                        except Exception as add_proc_err:
+                            logging.error(f"Error during Adding processing for {item_identifier}: {add_proc_err}")
+
+                        # Check final state after Adding processing
+                        try:
+                            from database.database_reading import get_media_item_by_id
+                            db_item = get_media_item_by_id(item_id)
+                            final_state = db_item.get('state') if db_item else None
+                        except Exception as state_err:
+                            logging.error(f"Could not fetch final state after Adding for {item_identifier}: {state_err}")
+                            db_item = None
+                            final_state = None
+
+                        # Treat Checking, Pending Uncached, Upgrading, or Collected as success (no return to Pre-Release)
+                        if final_state in ["Checking", "Pending Uncached", "Upgrading", "Collected"]:
+                            logging.info(f"Pre-release add succeeded for {item_identifier}; final state: {final_state}")
+                            return
+
+                        # Otherwise, move back to Unreleased and re-queue for pre-release
+                        logging.info(f"Pre-release add did not succeed for {item_identifier} (state: {final_state}). Returning to Pre-Release queue.")
+                        try:
+                            from_queue_name = final_state if final_state in getattr(queue_manager, 'queues', {}) else None
+                            queue_manager.move_to_unreleased(db_item or item, from_queue_name or "Pre_release")
+                        except Exception as move_err:
+                            logging.error(f"Failed moving {item_identifier} back to Unreleased: {move_err}")
+                        # Ensure it remains tracked for future pre-release scrapes
+                        self.add_item(db_item or item)
+                        return
+
+                    except Exception as add_err:
+                        logging.error(f"Failed to initiate Adding for pre-release item {item_identifier}: {add_err}")
+                        # Keep item in Pre-Release for retry
+                        return
+
+                # Fallback: persist results to DB without state change if no queue_manager is available
+                try:
+                    update_media_item_state(
+                        item_id,
+                        state=item.get('state', 'Unreleased'),
+                        filled_by_title=best_result.get('title'),
+                        scrape_results=results_sorted
+                    )
+                    logging.info(f"Stored pre-release results for {item_identifier} (best: {best_result.get('title', 'N/A')})")
+                except Exception as persist_err:
+                    logging.error(f"Failed to store pre-release results for {item_identifier}: {persist_err}")
+
+                # Do not remove from queue here; leave for retry if no queue manager
             else:
                 logging.info(f"No results found for pre-release item {item_identifier}, will retry tomorrow")
                 # Item stays in Pre-Release queue for next daily scrape
