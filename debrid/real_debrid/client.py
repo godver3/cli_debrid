@@ -109,11 +109,10 @@ class RealDebridProvider(DebridProvider):
         """Provides access to the API key by fetching it from settings on each call."""
         return self._load_api_key()
 
-    @timed_lru_cache(seconds=1800)
     def get_subscription_status(self) -> Dict[str, Any]:
         """
         Return Real-Debrid subscription info with days remaining.
-        Cached for 30 minutes as it changes infrequently.
+        Note: This method is called by statistics layer which handles caching.
 
         Response example:
         {

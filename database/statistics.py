@@ -246,7 +246,7 @@ def get_cached_subscription_status() -> Dict:
         if (download_stats_cache.get('subscription') is None or
             download_stats_cache['last_update'] + 1800 < current_time):
             provider = get_debrid_provider()
-            # Provider method itself is cached for 30 minutes
+            # Get fresh subscription status from provider
             subscription = provider.get_subscription_status() if hasattr(provider, 'get_subscription_status') else {
                 'days_remaining': None,
                 'expiration': None,

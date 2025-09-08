@@ -241,9 +241,26 @@ class PreReleaseQueue:
                     )
                 except Exception:
                     results_sorted = results
-                best_result = results_sorted[0]
 
-                logging.info(f"Found {len(results)} results for pre-release item {item_identifier}")
+                # --- START: Minimum Scrape Score Filtering for Pre-Release ---
+                delayed_scrape_enabled = get_setting("Debug", "delayed_scrape_based_on_score", False)
+                minimum_scrape_score = float(get_setting("Debug", "minimum_scrape_score", 0.0))
+
+                if delayed_scrape_enabled and minimum_scrape_score > 0:
+                    # Filter results by minimum score
+                    original_count = len(results_sorted)
+                    results_sorted = [r for r in results_sorted if r.get('score_breakdown', {}).get('total_score', 0) >= minimum_scrape_score]
+
+                    if not results_sorted:
+                        logging.info(f"No results meet minimum score ({minimum_scrape_score}) for pre-release item {item_identifier}, will retry tomorrow")
+                        # Item stays in Pre-Release queue for next daily scrape
+                    else:
+                        best_result = results_sorted[0]
+                        logging.info(f"Found {len(results)} results for pre-release item {item_identifier} (filtered from {original_count} to {len(results_sorted)} by minimum score {minimum_scrape_score})")
+                else:
+                    # No minimum score filtering
+                    best_result = results_sorted[0]
+                    logging.info(f"Found {len(results)} results for pre-release item {item_identifier}")
 
                 # If a queue_manager is available, attempt to add immediately (like upgrading flow)
                 if queue_manager is not None:

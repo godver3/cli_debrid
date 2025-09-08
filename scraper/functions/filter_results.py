@@ -162,7 +162,6 @@ def filter_results(
         # or the anime threshold if is_anime was true.
     logging.info(f"DEBUG: Title length: {query_title_len}, Similarity threshold: {similarity_threshold}")
 
-    #logging.debug(f"Content type: {'movie' if is_movie else 'episode'}, Anime: {is_anime}, Title similarity threshold: {similarity_threshold}")
     
     # Cache season episode counts for multi-episode content
     total_episodes = sum(season_episode_counts.values()) if season_episode_counts and is_episode else 0
@@ -195,7 +194,6 @@ def filter_results(
             if "UFC" in original_title.upper():
                 is_ufc = True
                 similarity_threshold = 0.35
-                #logging.debug("UFC content detected, lowering similarity threshold")
             
             # Get parsed info from result (should be already parsed by PTT)
             if not parsed_info:
@@ -256,6 +254,7 @@ def filter_results(
             # Calculate similarities using a blended approach for better accuracy.
             # We combine a lenient check on the full title with a stricter check on the parsed title.
             parsed_title_str = parsed_info.get('title', '')
+            # logging.debug(f"  - Parsed info title: '{parsed_title_str}', parsed_info keys: {list(parsed_info.keys()) if parsed_info else 'None'}")
             normalized_parsed_title = normalize_title(parsed_title_str).lower() if parsed_title_str else None
 
             # Create simplified versions by removing all punctuation and spaces (used by all similarity checks)
@@ -270,9 +269,54 @@ def filter_results(
                 main_title_sim = (main_sim_set + main_sim_sort) / 2.0
             else:
                 main_title_sim = main_sim_set
-            
+
+            # Apply penalty for titles that are much longer than the query (e.g., "Dragon Ball" vs "Dragon Ball Daima")
+            # This prevents false positives when the result title contains the query plus significant additional content
+            query_length = len(normalized_query_title)
+
+            # Store original values for debug logging
+            original_main_sim_set = main_sim_set
+            original_main_sim_sort = main_sim_sort
+
+            # Apply penalty to token_set_ratio (result vs query comparison)
+            result_length = len(normalized_result_title)
+            token_set_penalty_applied = False
+            if query_length > 0 and result_length > query_length * 1.5:
+                length_ratio = query_length / result_length
+                # Use a more reasonable penalty: reduce similarity proportionally to length difference
+                penalty_factor = max(0.3, length_ratio)  # Minimum 30% of original similarity
+                main_sim_set *= penalty_factor
+                token_set_penalty_applied = True
+
+            # Apply penalty to token_sort_ratio (parsed vs query comparison)
+            token_sort_penalty_applied = False
+            if normalized_parsed_title and len(normalized_parsed_title) > query_length * 1.5:
+                parsed_length = len(normalized_parsed_title)
+                parsed_ratio = query_length / parsed_length
+                parsed_penalty_factor = max(0.3, parsed_ratio)  # Minimum 30% of original similarity
+                main_sim_sort *= parsed_penalty_factor
+                token_sort_penalty_applied = True
+
+                # Recalculate main_title_sim with penalized components
+                main_title_sim = (main_sim_set + main_sim_sort) / 2.0
+            else:
+                # No parsed title, main_title_sim is just main_sim_set
+                main_title_sim = main_sim_set
+
             # Special handling for common acronym variations (like SHIELD)
-            if main_title_sim < 0.8:
+            # Only apply if we haven't already applied a length penalty (to avoid overriding penalties)
+            if normalized_parsed_title:
+                original_main_title_sim = (original_main_sim_set + original_main_sim_sort) / 2.0
+            else:
+                original_main_title_sim = original_main_sim_set
+            penalty_was_applied = token_set_penalty_applied or token_sort_penalty_applied
+
+            # Initialize variables for debug logging
+            simple_sim_result = 0.0
+            simple_sim_parsed = 0.0 if simple_parsed else None
+            simple_sim = 0.0
+
+            if main_title_sim < 0.8 and not penalty_was_applied:
                 # Check if this might be an acronym mismatch (like S.H.I.E.L.D. vs S H I E L D)
                 simple_sim_result = fuzz.ratio(simple_result, simple_query) / 100.0
                 if simple_parsed:
@@ -280,33 +324,51 @@ def filter_results(
                     simple_sim = max(simple_sim_result, simple_sim_parsed)
                 else:
                     simple_sim = simple_sim_result
-                
+
                 # Use the better score, but don't let it exceed reasonable bounds
                 main_title_sim = max(main_title_sim, min(simple_sim, 0.95))
+                logging.debug(f"  - Acronym handling applied: simple_sim: {simple_sim:.3f}, new main_title_sim: {main_title_sim:.3f}")
+            elif main_title_sim < 0.8 and penalty_was_applied:
+                pass
+
 
             # --- Alias Similarities ---
             alias_similarities = []
             if normalized_aliases:
                 for alias in normalized_aliases:
-                    alias_sim_set = fuzz.token_set_ratio(normalized_result_title, alias) / 100.0
+                    # Compare parsed title against alias when available, otherwise query against alias
                     if normalized_parsed_title:
+                        alias_sim_set = fuzz.token_set_ratio(normalized_parsed_title, alias) / 100.0
                         alias_sim_sort = fuzz.token_sort_ratio(normalized_parsed_title, alias) / 100.0
                         alias_sim = (alias_sim_set + alias_sim_sort) / 2.0
                     else:
+                        alias_sim_set = fuzz.token_set_ratio(normalized_query_title, alias) / 100.0
                         alias_sim = alias_sim_set
-                    
+
                     # Apply same acronym handling for aliases
                     if alias_sim < 0.8:
                         simple_alias = re.sub(r'[^a-z0-9]', '', alias)
-                        simple_sim_result = fuzz.ratio(simple_result, simple_alias) / 100.0
+                        # Compare query vs alias for acronym handling, not result vs alias
+                        simple_sim_result = fuzz.ratio(simple_query, simple_alias) / 100.0
                         if simple_parsed:
-                            simple_sim_parsed = fuzz.ratio(simple_parsed, simple_alias) / 100.0
+                            simple_sim_parsed = fuzz.ratio(simple_query, simple_alias) / 100.0
                             simple_sim = max(simple_sim_result, simple_sim_parsed)
                         else:
                             simple_sim = simple_sim_result
                         alias_sim = max(alias_sim, min(simple_sim, 0.95))
-                    
+
+                    # Apply length penalty for aliases that are much longer than the comparison title
+                    # This penalizes when the alias being compared is significantly longer than the parsed/query title
+                    alias_length = len(alias)
+                    comparison_length = len(normalized_parsed_title) if normalized_parsed_title else len(normalized_query_title)
+                    if alias_length > 0 and alias_length > comparison_length * 1.5:
+                        alias_ratio = comparison_length / alias_length
+                        alias_penalty_factor = max(0.3, alias_ratio)  # Minimum 30% of original similarity
+                        alias_original_sim = alias_sim
+                        alias_sim *= alias_penalty_factor
+
                     alias_similarities.append(alias_sim)
+
             best_alias_sim = max(alias_similarities) if alias_similarities else 0.0
 
             # --- Translated Title Similarity ---
@@ -329,6 +391,16 @@ def filter_results(
                     else:
                         simple_sim = simple_sim_result
                     translated_title_sim = max(translated_title_sim, min(simple_sim, 0.95))
+
+                # Apply length penalty for translated titles that are much longer than the query
+                # This penalizes when the translated title being compared is significantly longer than the query title
+                trans_length = len(normalized_translated_title)
+                query_length = len(normalized_query_title)
+                if trans_length > 0 and trans_length > query_length * 1.5:
+                    trans_ratio = query_length / trans_length
+                    trans_penalty_factor = max(0.3, trans_ratio)  # Minimum 30% of original similarity
+                    trans_original_sim = translated_title_sim
+                    translated_title_sim *= trans_penalty_factor
 
             # Compute initial best similarity score (without API aliases)
             best_sim = max(main_title_sim, best_alias_sim, translated_title_sim)
@@ -444,29 +516,74 @@ def filter_results(
 
             item_alias_similarities: list = []
             alias_debug_info = []  # For debugging
+            if item_aliases:
+                pass
             for alias_list in item_aliases.values():
                 for alias in alias_list:
                     normalized_api_alias = normalize_title(alias).lower()
-                    alias_sim_set = fuzz.token_set_ratio(normalized_result_title, normalized_api_alias) / 100.0
+                    # Compare parsed title against API alias when available, otherwise query against API alias
                     if normalized_parsed_title:
+                        alias_sim_set = fuzz.token_set_ratio(normalized_parsed_title, normalized_api_alias) / 100.0
                         alias_sim_sort = fuzz.token_sort_ratio(normalized_parsed_title, normalized_api_alias) / 100.0
                         final_alias_sim = (alias_sim_set + alias_sim_sort) / 2.0
                     else:
+                        alias_sim_set = fuzz.token_set_ratio(normalized_query_title, normalized_api_alias) / 100.0
                         final_alias_sim = alias_sim_set
-                    
+
                     # Apply same acronym handling for API aliases
                     if final_alias_sim < 0.8:
                         simple_api_alias = re.sub(r'[^a-z0-9]', '', normalized_api_alias)
-                        simple_sim_result = fuzz.ratio(simple_result, simple_api_alias) / 100.0
+                        # Compare query vs API alias for acronym handling, not result vs API alias
+                        simple_sim_result = fuzz.ratio(simple_query, simple_api_alias) / 100.0
                         if simple_parsed:
-                            simple_sim_parsed = fuzz.ratio(simple_parsed, simple_api_alias) / 100.0
+                            simple_sim_parsed = fuzz.ratio(simple_query, simple_api_alias) / 100.0
                             simple_sim = max(simple_sim_result, simple_sim_parsed)
                         else:
                             simple_sim = simple_sim_result
                         final_alias_sim = max(final_alias_sim, min(simple_sim, 0.95))
-                    
+
+                    # Apply length penalty when parsed title is longer than API alias OR contains different content
+                    # This penalizes when the parsed title contains additional/different content beyond the alias
+                    # (e.g., "Dragon Ball Daima" vs alias "Dragon Ball" or "Dragon Ball 1986" - indicates a different show)
+                    api_alias_length = len(normalized_api_alias)
+                    comparison_length = len(normalized_parsed_title) if normalized_parsed_title else len(normalized_query_title)
+
+                    # Check if parsed title is longer than the API alias (lowered threshold to 1.2x for better detection)
+                    # Also check for significant word differences even at similar lengths
+                    if api_alias_length > 0 and comparison_length > api_alias_length * 1.2:
+                        length_ratio = api_alias_length / comparison_length
+                        api_alias_penalty_factor = max(0.3, length_ratio)  # Minimum 30% of original similarity
+                        api_alias_original_sim = final_alias_sim
+                        final_alias_sim *= api_alias_penalty_factor
+
+                    # Additional check: If titles are similar length but have different non-year content, apply penalty
+                    # This catches cases like "dragon.ball.daima" vs "dragon.ball.1986" or "dragon.ball.z" vs "dragon.ball"
+                    elif api_alias_length > 0 and final_alias_sim > 0.7:
+                        # Extract non-numeric words from both titles to check for content differences
+                        # Include single-character words (like 'Z', 'X', 'GT') which are significant in anime titles
+                        alias_words = set(w.lower() for w in normalized_api_alias.split('.') if not w.isdigit() and w)
+                        parsed_words = set(w.lower() for w in normalized_parsed_title.split('.') if not w.isdigit() and w)
+
+                        # Check if there are significant word differences (excluding years)
+                        unique_to_parsed = parsed_words - alias_words
+                        unique_to_alias = alias_words - parsed_words
+
+                        # Special handling for known problematic series with very similar names
+                        # Dragon Ball series: original, Z, GT, Super, Daima are all different shows
+                        is_dragon_ball_variant = 'dragon' in alias_words and 'ball' in alias_words
+                        if is_dragon_ball_variant and (unique_to_parsed or unique_to_alias):
+                            # Apply severe penalty for Dragon Ball variants
+                            content_penalty = 0.3  # Reduce similarity by 70% for different Dragon Ball series
+                            api_alias_original_sim = final_alias_sim
+                            final_alias_sim *= content_penalty
+                        elif unique_to_parsed or unique_to_alias:
+                            # Apply standard penalty for different content even at similar lengths
+                            content_penalty = 0.5  # Reduce similarity by 50% for different content
+                            api_alias_original_sim = final_alias_sim
+                            final_alias_sim *= content_penalty
+
                     item_alias_similarities.append(final_alias_sim)
-                    
+
                     # Store debug info for troublesome titles
                     if "araiguma" in original_title.lower() or "calcal" in original_title.lower():
                         alias_debug_info.append({
@@ -480,6 +597,9 @@ def filter_results(
                 alias_similarities.extend(item_alias_similarities)
                 best_alias_sim = max(alias_similarities)
                 best_sim = max(main_title_sim, best_alias_sim, translated_title_sim)
+            else:
+                best_sim = max(main_title_sim, best_alias_sim, translated_title_sim)
+
 
             # -------------------------------------------------------------
             # Check if the best similarity meets the threshold (now updated)
@@ -530,22 +650,8 @@ def filter_results(
                 # Log the failure reason including all comparison scores
                 result['filter_reason'] = f"Title similarity too low (best={best_sim:.2f} < {similarity_threshold})"
                 logging.info(f"Rejected: Title similarity too low (best={best_sim:.2f} < {similarity_threshold}) for '{original_title}' (Size: {result['size']:.2f}GB)")
-                # logging.debug(f"  - Main title ({main_title_sim:.2f}): '{normalized_result_title}' vs '{normalized_query_title}'")
-                # if normalized_aliases:
-                #     logging.debug(f"  - Best alias ({best_alias_sim:.2f}): '{normalized_result_title}' vs '{normalized_aliases[alias_similarities.index(best_alias_sim)]}'")
-                # if normalized_translated_title:
-                #     logging.debug(f"  - Translated title ({translated_title_sim:.2f}): '{normalized_result_title}' vs '{normalized_translated_title}'")
                 continue
             # else:
-                # Log which title matched - REMOVED FOR SIMPLICITY
-                # if main_title_sim >= similarity_threshold:
-                #     logging.debug(f"✓ Passed title similarity via main title ({main_title_sim:.2f})")
-                # elif best_alias_sim >= similarity_threshold:
-                #     logging.debug(f"✓ Passed title similarity via alias ({best_alias_sim:.2f})")
-                # elif translated_title_sim >= similarity_threshold:
-                #     logging.debug(f"✓ Passed title similarity via translated title ({translated_title_sim:.2f})")
-                    
-            #logging.debug("✓ Passed title similarity check")
             
             # --- Language Code Filtering (after similarity check passes) ---
             if should_filter_language:
@@ -676,7 +782,7 @@ def filter_results(
                             cache_key = (imdb_id, season)
                             if cache_key in _season_year_cache:
                                 target_year = _season_year_cache[cache_key]
-                                logging.debug(f"Using cached season year for {imdb_id} S{season}: {target_year}")
+                                # logging.debug(f"Using cached season year for {imdb_id} S{season}: {target_year}")
                             else:
                                 try:
                                     from database.database_reading import get_season_year
@@ -692,7 +798,7 @@ def filter_results(
                                             # Check metadata cache first
                                             if imdb_id in _show_metadata_cache:
                                                 show_metadata = _show_metadata_cache[imdb_id]
-                                                logging.debug(f"Using cached show metadata for {imdb_id}")
+                                                # logging.debug(f"Using cached show metadata for {imdb_id}")
                                             else:
                                                 try:
                                                     show_metadata, _ = direct_api.get_show_metadata(imdb_id)

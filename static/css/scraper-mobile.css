@@ -1,5 +1,9 @@
 /* Mobile-specific styles */
 /* Hide mobile elements on desktop by default */
+/* Hide assign-magnet-icon by default (will be shown on mobile) */
+.assign-magnet-mobile {
+    display: none !important;
+}
 #mobileActionModal {
     display: none !important; /* Hide on desktop by default - with !important */
 }
@@ -384,6 +388,7 @@
         max-width: calc(100% - 20px) !important;
         margin: 10px auto !important;
         box-sizing: border-box;
+        position: relative; /* to place absolute positioned assign icon */
     }
 
     .torresult button {
@@ -397,6 +402,39 @@
     .torresult-info {
         width: 100%;
         text-align: center;
+    }
+
+    /* Assign Magnet button on mobile torrent cards */
+    .torresult .assign-magnet-icon {
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+        width: 32px;
+        height: 32px;
+        background-color: #FFC107; /* Yellow */
+        border: 2px solid rgba(0,0,0,0.3);
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+
+    .torresult .assign-magnet-icon:hover {
+        background-color: #FFA000;
+        transform: scale(1.05);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+    }
+
+    .torresult .assign-magnet-icon svg {
+        width: 20px;
+        height: 20px;
+        color: #333;
+        /* fill: currentColor; */
+        pointer-events: none;
     }
 
     p.torresult-title {
@@ -521,6 +559,53 @@
     .sresult .poster-container .request-icon,
     .sresult .poster-container .tester-icon {
         display: none !important;
+    }
+
+    /* Show assign-magnet-icon on mobile devices - positioned at bottom right (only for scrape results) */
+    .torresult .assign-magnet-mobile {
+        display: block !important;
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+        width: 32px;
+        height: 32px;
+        background-color: #FFC107; /* Yellow color */
+        border: 2px solid rgba(0, 0, 0, 0.3);
+        border-radius: 6px;
+        cursor: pointer;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s ease;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        pointer-events: auto; /* Ensure pointer events work */
+    }
+
+    .torresult .assign-magnet-mobile:hover {
+        background-color: #FFA000; /* Darker yellow on hover */
+        transform: scale(1.1);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+    }
+
+    .torresult .assign-magnet-mobile svg {
+        width: 20px;
+        height: 20px;
+        color: #333; /* Dark text for better contrast */
+        fill: currentColor;
+    }
+
+    /* Ensure containers are positioned relatively for absolute positioning */
+    .sresult .media-poster,
+    .torresult {
+        position: relative !important;
+    }
+
+    /* Override any button styles that might interfere */
+    .torresult .assign-magnet-mobile:active,
+    .torresult .assign-magnet-mobile:focus {
+        outline: none !important;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4) !important;
     }
 
     .media-poster,

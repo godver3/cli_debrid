@@ -410,7 +410,36 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                                       torrent.cached === 'N/A' ? 'check-unavailable' : 'unknown'}" data-index="${index}">${torrent.cached || 'N/A'}</span>
                     </div>
                     </button>             
+                    <div class="assign-magnet-icon" title="Assign Magnet Link">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+                        </svg>
+                    </div>            
                 `;
+
+                // Assign Magnet click handler for mobile cards
+                const assignIcon = torResDiv.querySelector('.assign-magnet-icon');
+                if (assignIcon) {
+                    assignIcon.onclick = function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const currentVersion = document.getElementById('version-select')?.value || '';
+                        const assignUrlParams = new URLSearchParams({
+                            prefill_id: mediaId,
+                            prefill_type: mediaType,
+                            prefill_title: title,
+                            prefill_year: year,
+                            prefill_version: currentVersion,
+                        });
+                        if (torrent.magnet) {
+                            assignUrlParams.set('prefill_magnet', torrent.magnet);
+                        }
+                        const assignUrl = `/magnet/assign_magnet?${assignUrlParams.toString()}`;
+                        window.location.href = assignUrl;
+                        return false;
+                    };
+                }
                 
                 // Add click handler for all items (both filtered and non-filtered)
                 torResDiv.onclick = function() {
@@ -2093,16 +2122,12 @@ function displaySearchResults(results, version) {
 
     // Assign Magnet icon HTML
     const assignMagnetIconHTML = `
-        <div class="assign-magnet-icon" title="Assign Magnet Link">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                <polyline points="17 8 12 3 7 8"></polyline>
-                <line x1="12" y1="3" x2="12" y2="15"></line>
-                <path d="M15 8h2a1 1 0 0 1 1 1v2"></path> 
-                <path d="M9 8H7a1 1 0 0 0-1 1v2"></path> 
-                <path d="M12 18.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"></path> 
-            </svg>
-        </div>
+    <div class="assign-magnet-icon assign-magnet-mobile" title="Assign Magnet Link">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+        </svg>
+    </div>
     `;
 
     results.forEach(item => {
@@ -2168,7 +2193,6 @@ function displaySearchResults(results, version) {
                         </div>
                         ${requestIconHTML}
                         ${testerIconHTML}
-                        ${assignMagnetIconHTML}
                         ${dbStatusPipHTML}
                     </div>
                     <div class="searchresult-info" style="display: ${!tmdb_api_key_set ? 'block' : 'none'}">
@@ -2176,6 +2200,7 @@ function displaySearchResults(results, version) {
                         <p class="searchresult-year">${displayYear}</p>
                     </div>
                 </button>
+                ${assignMagnetIconHTML}
             </div>
         `;
 

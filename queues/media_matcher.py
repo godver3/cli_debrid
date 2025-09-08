@@ -278,10 +278,38 @@ class MediaMatcher:
             
             # Determine if parsed season info is missing or defaulted
             parsed_season_is_missing_or_default = not ptt_result.get('seasons') or ptt_result.get('seasons') == [1]
+
+            # Fallback season detection for anime when PTT fails to parse season
+            fallback_season = None
+            if is_anime and parsed_season_is_missing_or_default:
+                filename_for_season_check = ptt_result.get('original_filename', '')
+                if filename_for_season_check:
+                    # Look for patterns like "Title 2 - 01" or "Title Season 2 - 01"
+                    season_patterns = [
+                        r'(?<=\w)\s+(\d{1,2})\s*-\s*\d+',  # "Title 2 - 01"
+                        r'Season\s+(\d{1,2})',              # "Season 2"
+                        r'S(\d{1,2})',                      # "S2"
+                    ]
+                    for pattern in season_patterns:
+                        match = re.search(pattern, filename_for_season_check, re.IGNORECASE)
+                        if match:
+                            try:
+                                detected_season = int(match.group(1))
+                                if 1 <= detected_season <= 50:  # Reasonable season range
+                                    fallback_season = detected_season
+                                    logging.debug(f"Fallback season detection found season {fallback_season} in filename '{filename_for_season_check}'")
+                                    break
+                            except (ValueError, IndexError):
+                                continue
             
             if target_season in ptt_result.get('seasons', []):
                 # Parsed season explicitly matches the target season
                 season_match = True
+            elif fallback_season and target_season == fallback_season:
+                # Fallback season detection matches the target season
+                season_match = True
+                lenient_season_pass = True
+                logging.debug(f"Season match via fallback detection: target S{target_season} matches fallback season {fallback_season}")
             elif is_anime and parsed_season_is_missing_or_default and target_season > 1:
                 # For anime S2+, if the file is parsed as S1/None, we need to be more restrictive
                 # Only allow if we have strong evidence this is the right season
@@ -312,12 +340,16 @@ class MediaMatcher:
                     season_match = True
                     lenient_season_pass = True
                     logging.debug(f"Allowing anime result ({filename_for_check}) parsed as S1/None when target is S{target_season} (absolute episode evidence found)")
-                elif ptt_result.get('episodes') and not ptt_result.get('seasons'):
+                elif ptt_result.get('episodes') and not ptt_result.get('seasons') and not fallback_season:
                     # This is likely an absolute numbered episode. We can't confirm the season here,
                     # but we shouldn't reject it either. We'll let it pass the season check
                     # and rely on the comprehensive absolute episode matching logic later.
                     season_match = False # Keep false to trigger absolute matching block
                     logging.debug(f"Anime result ({filename_for_check}) has episode but no season. Deferring to absolute matching logic.")
+                elif ptt_result.get('episodes') and not ptt_result.get('seasons') and fallback_season and fallback_season != target_season:
+                    # We detected a fallback season but it doesn't match the target season
+                    season_match = False
+                    logging.debug(f"Anime result ({filename_for_check}) fallback season {fallback_season} doesn't match target S{target_season}")
                 else:
                     # Reject if no strong evidence this is the right season
                     season_match = False
@@ -769,6 +801,17 @@ class MediaMatcher:
             target_season = item.get('season') or item.get('season_number')
             target_episode = item.get('episode') or item.get('episode_number')
 
+            # Apply XEM mapping from item if available (similar to how scraper.py does it)
+            if xem_mapping:
+                try:
+                    xem_season = int(xem_mapping.get('season'))
+                    xem_episode = int(xem_mapping.get('episode'))
+                    logging.debug(f"Using XEM mapping for media matching: S{xem_season}E{xem_episode} (Original: S{target_season}E{target_episode})")
+                    target_season = xem_season
+                    target_episode = xem_episode
+                except (ValueError, TypeError):
+                    logging.warning(f"Invalid XEM mapping format in media matcher: {xem_mapping}. Using original S/E.")
+
             candidate_files: List[Dict[str, Any]] = []
             seen_ids = set()
             if target_episode is not None:
@@ -797,10 +840,10 @@ class MediaMatcher:
                 # Pass xem_mapping down to _check_match
                 if self._check_match(parsed_file_info, item, use_relaxed_matching, xem_mapping=xem_mapping):
                     # Return the first match found
-                    logging.info(f"Match found for item '{item.get('title')}' S{item.get('season_number')}E{item.get('episode_number')} (using XEM: {xem_mapping is not None}) -> File: {parsed_file_info['path']}")
+                    logging.info(f"Match found for item '{item.get('title')}' S{target_season}E{target_episode} (using XEM: {xem_mapping is not None}) -> File: {parsed_file_info['path']}")
                     return (os.path.basename(parsed_file_info['path']), item) # Return basename path and item
 
-            logging.debug(f"No matching file found for item '{item.get('title')}' S{item.get('season_number')}E{item.get('episode_number')} (using XEM: {xem_mapping is not None}) in parsed files.")
+            logging.debug(f"No matching file found for item '{item.get('title')}' S{target_season}E{target_episode} (using XEM: {xem_mapping is not None}) in parsed files.")
             return None # No match found
 
         # --- Unknown Type ---
