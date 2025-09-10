@@ -2425,6 +2425,7 @@ function checkCacheStatusInBackground(hashes, results) {
     }
 
     function showCompletionNotification() {
+        return;
         if (processedCount > 0) {
             // Only show if at least one result was processed
             const message = `Cache check completed for ${processedCount} ${processedCount === 1 ? 'result' : 'results'}`;

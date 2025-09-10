@@ -165,3 +165,4 @@ Dockerfile.battery
 curl_command
 
 firefox_extension/
+clear_migration_flag.py

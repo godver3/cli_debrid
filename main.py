@@ -1381,6 +1381,31 @@ def main():
     # Add migration for media_type setting
     config = load_config()
 
+    # --- Check and enable disabled content sources ---
+    if 'Content Sources' in config and config['Content Sources']:
+        content_sources = config['Content Sources']
+        total_sources = len(content_sources)
+        disabled_sources = []
+
+        # Check which sources are disabled
+        for source_id, source_config in content_sources.items():
+            if isinstance(source_config, dict) and not source_config.get('enabled', False):
+                disabled_sources.append(source_id)
+
+        # If all sources are disabled, enable them
+        if disabled_sources and len(disabled_sources) == total_sources:
+            logging.warning(f"All {total_sources} content sources are disabled. Automatically enabling all sources to prevent empty source list.")
+            for source_id in disabled_sources:
+                config['Content Sources'][source_id]['enabled'] = True
+
+            # Save the updated config
+            from queues.config_manager import save_config
+            save_config(config)
+            logging.info(f"Successfully enabled {len(disabled_sources)} previously disabled content sources: {', '.join(disabled_sources)}")
+        elif disabled_sources:
+            logging.info(f"Found {len(disabled_sources)} disabled content sources out of {total_sources} total sources. Leaving as-is (user preference).")
+    # --- End content source enable check ---
+
     # --- MIGRATION: Set default monitor_mode for enabled Collected content sources ---
     if 'Content Sources' in config:
         updated = False

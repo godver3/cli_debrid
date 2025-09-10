@@ -233,25 +233,6 @@
         align-self: center;
     }
 
-    .show-more-container {
-        text-align: center;
-        margin-top: 15px;
-        padding: 10px;
-    }
-
-    .show-more-container button {
-        background-color: #444;
-        border: none;
-        padding: 5px 15px;
-        border-radius: 4px;
-        color: #fff;
-        cursor: pointer;
-        transition: background-color 0.3s;
-    }
-
-    .show-more-container button:hover {
-        background-color: #555;
-    }
 
     .hidden-items-summary {
         margin-top: 20px;
@@ -1042,16 +1023,6 @@
                     if (hasHiddenItems) {
                         hiddenSummary.innerHTML = summaryText;
                         
-                        // Add "Show More" button
-                        const showMoreContainer = document.createElement('div');
-                        showMoreContainer.className = 'show-more-container';
-                        
-                        const showMoreButton = document.createElement('button');
-                        showMoreButton.textContent = 'Show More';
-                        showMoreButton.onclick = increasePageSize;
-                        
-                        showMoreContainer.appendChild(showMoreButton);
-                        hiddenSummary.appendChild(showMoreContainer);
                         queueContents.appendChild(hiddenSummary);
                     }
                 }

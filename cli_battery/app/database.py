@@ -253,6 +253,14 @@ class TVDBToIMDBMapping(Base):
     imdb_id = Column(String, unique=True, index=True)
     media_type = Column(String)  # 'show' or 'movie'
 
+class MigrationFlag(Base):
+    __tablename__ = 'migration_flags'
+
+    id = Column(Integer, primary_key=True)
+    migration_name = Column(String, unique=True, index=True)
+    completed_at = Column(DateTime, default=get_timezone_aware_now)
+    description = Column(String)
+
 class DatabaseManager:
     @staticmethod
     @retry_on_db_lock()
@@ -476,3 +484,91 @@ class DatabaseManager:
             except Exception as e:
                 logger.error(f"Error getting IMDB ID from TVDB ID: {str(e)}")
                 return None
+
+    @staticmethod
+    @retry_on_db_lock()
+    def check_migration_flag(migration_name: str) -> bool:
+        """Check if a migration has been completed."""
+        if engine is None:
+            init_db()
+            if engine is None:
+                logger.error("Database engine not initialized in check_migration_flag.")
+                raise Exception("Database engine not initialized.")
+
+        with Session() as session:
+            try:
+                flag = session.query(MigrationFlag).filter_by(migration_name=migration_name).first()
+                return flag is not None
+            except Exception as e:
+                logger.error(f"Error checking migration flag {migration_name}: {e}")
+                return False
+
+    @staticmethod
+    @retry_on_db_lock()
+    def set_migration_flag(migration_name: str, description: str = "") -> bool:
+        """Mark a migration as completed."""
+        if engine is None:
+            init_db()
+            if engine is None:
+                logger.error("Database engine not initialized in set_migration_flag.")
+                raise Exception("Database engine not initialized.")
+
+        with Session() as session:
+            try:
+                flag = MigrationFlag(migration_name=migration_name, description=description)
+                session.add(flag)
+                session.commit()
+                logger.info(f"Set migration flag: {migration_name}")
+                return True
+            except Exception as e:
+                logger.error(f"Error setting migration flag {migration_name}: {e}")
+                session.rollback()
+                return False
+
+    @staticmethod
+    @retry_on_db_lock()
+    def clear_migration_flag(migration_name: str) -> bool:
+        """Clear a migration flag to allow re-running the migration."""
+        if engine is None:
+            init_db()
+            if engine is None:
+                logger.error("Database engine not initialized in clear_migration_flag.")
+                raise Exception("Database engine not initialized.")
+
+        with Session() as session:
+            try:
+                flag = session.query(MigrationFlag).filter_by(migration_name=migration_name).first()
+                if flag:
+                    session.delete(flag)
+                    session.commit()
+                    logger.info(f"Cleared migration flag: {migration_name}")
+                    return True
+                else:
+                    logger.info(f"Migration flag not found: {migration_name}")
+                    return False
+            except Exception as e:
+                logger.error(f"Error clearing migration flag {migration_name}: {e}")
+                session.rollback()
+                return False
+
+    @staticmethod
+    @retry_on_db_lock()
+    def list_migration_flags() -> list:
+        """List all migration flags in the database."""
+        if engine is None:
+            init_db()
+            if engine is None:
+                logger.error("Database engine not initialized in list_migration_flags.")
+                raise Exception("Database engine not initialized.")
+
+        with Session() as session:
+            try:
+                flags = session.query(MigrationFlag).all()
+                return [{
+                    'migration_name': flag.migration_name,
+                    'completed_at': flag.completed_at,
+                    'description': flag.description
+                } for flag in flags]
+            except Exception as e:
+                logger.error(f"Error listing migration flags: {e}")
+                return []

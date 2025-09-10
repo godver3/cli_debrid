@@ -32,6 +32,42 @@ def _parse_with_ptt(title: str) -> Dict[str, Any]:
         # Ensure we're using just the movie/show title without the site prefix
         result['original_site'] = result['site']
     
+    # TEMPORARY OVERRIDE: Fix for Office Christmas Party parsing issue
+    # PTT parser incorrectly parses "Office.Christmas.Party.2016..." as just "Office"
+    # Override when the original title contains the full title but parsed title is incomplete
+    if result.get('title', '').lower() == 'office':
+        title_lower = title.lower()
+        if 'office.christmas.party' in title_lower or 'office christmas party' in title_lower:
+            result['title'] = 'Office Christmas Party'
+            logging.info(f"Applied Office Christmas Party override: '{title}' -> '{result['title']}'")
+    
+    # TEMPORARY OVERRIDE: Fix for Dragon Ball series parsing issue
+    # PTT parser incorrectly parses "Dragon Ball Z Complete Series..." as just "Dragon B"
+    # Override when the parsed title is "Dragon B" and the original title contains Dragon Ball series names
+    if result.get('title', '').lower() == 'dragon b':
+        title_lower = title.lower()
+        # Use regex to find Dragon Ball series patterns (with spaces or dots)
+        dragon_ball_patterns = [
+            r'dragon\.ball\.z\b',
+            r'dragon ball z\b',
+            r'dragon\.ball\.kai\b', 
+            r'dragon ball kai\b',
+            r'dragon\.ball\.gt\b',
+            r'dragon ball gt\b',
+            r'dragon\.ball\.daima\b',
+            r'dragon ball daima\b'
+        ]
+        
+        for pattern in dragon_ball_patterns:
+            match = re.search(pattern, title_lower)
+            if match:
+                # Convert the matched text to the dot-separated format
+                matched_text = match.group(0)
+                corrected_title = matched_text.replace(' ', '.').replace('..', '.')
+                result['title'] = corrected_title
+                logging.info(f"Applied Dragon Ball series override: '{title}' -> '{result['title']}'")
+                break
+    
     '''
     # Special handling for shows where the title is a year (e.g. "1923")
     if result.get('year'):

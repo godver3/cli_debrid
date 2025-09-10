@@ -1119,7 +1119,9 @@ class MediaMatcher:
             
             # Check if this specific candidate item is anime
             candidate_genres = item.get('genres', [])
-            if isinstance(candidate_genres, str):
+            if candidate_genres is None:
+                candidate_genres = []
+            elif isinstance(candidate_genres, str):
                 candidate_genres = [candidate_genres]
             candidate_is_anime = any('anime' in g.lower() for g in candidate_genres)
 
