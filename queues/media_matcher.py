@@ -196,6 +196,16 @@ class MediaMatcher:
                     logging.debug(f"Filtered out anime opening/ending with episode-like numbering: '{original_filename}' (matched pattern: {pattern})")
                     return None
         
+        # Debug snapshot of key parsed values to diagnose matching
+        try:
+            logging.debug(
+                f"Parsed file info: name='{file_basename}', date='{parsed_info.get('date')}', "
+                f"ymd=({parsed_info.get('year')},{parsed_info.get('month')},{parsed_info.get('day')}), "
+                f"seasons={parsed_info.get('seasons')}, episodes={parsed_info.get('episodes')}"
+            )
+        except Exception:
+            pass
+
         return {
             'path': file_path, # Store original full path
             'bytes': file_dict.get('bytes', 0),
@@ -545,6 +555,10 @@ class MediaMatcher:
                       if item.get('tmdb_id') and original_item_season is not None and original_item_episode is not None:
                            from utilities.web_scraper import get_tmdb_data
                            episode_data = get_tmdb_data(int(item['tmdb_id']), 'tv', original_item_season, original_item_episode)
+                           logging.debug(
+                               f"Date-only file: comparing file_date='{ptt_result.get('date')}' with TMDB='{episode_data.get('air_date') if episode_data else None}' "
+                               f"for tmdb_id={item.get('tmdb_id')} S{original_item_season}E{original_item_episode}"
+                           )
                            if episode_data and episode_data.get('air_date') == ptt_result['date']:
                                 logging.debug("Strict match: Date matched via TMDB lookup.")
                                 date_match = True
@@ -694,6 +708,10 @@ class MediaMatcher:
                          if item.get('tmdb_id') and original_item_season is not None and original_item_episode is not None:
                              from utilities.web_scraper import get_tmdb_data
                              episode_data = get_tmdb_data(int(item['tmdb_id']), 'tv', original_item_season, original_item_episode)
+                             logging.debug(
+                                 f"Fallback date compare: file_date='{ptt_result.get('date')}', TMDB='{episode_data.get('air_date') if episode_data else None}' "
+                                 f"for tmdb_id={item.get('tmdb_id')} S{original_item_season}E{original_item_episode}"
+                             )
                              if episode_data and episode_data.get('air_date') == ptt_result['date']:
                                  logging.debug("Strict match: Date matched via fallback TMDB lookup.")
                                  date_match = True # Consider it a date match if air dates align
@@ -745,6 +763,12 @@ class MediaMatcher:
             by_season_episode = indexes['by_season_episode']
             by_episode_only = indexes['by_episode_only']
             f1_candidates = indexes['f1_candidates']
+            try:
+                logging.debug(
+                    f"Parsed files summary: total={len(parsed_files)}, date_only={len(indexes.get('date_only_files', []))}"
+                )
+            except Exception:
+                pass
             # Check for Formula 1
             item_title_for_f1_check = (item.get('series_title', '') or item.get('title', '')).lower()
             # Same refined detection as above to avoid mis-classifying "Formula 1: Drive to Survive".
@@ -830,6 +854,17 @@ class MediaMatcher:
             else:
                 candidate_files = parsed_files  # Fallback if no episode available
 
+            # Always include date-only files as candidates so strict date matching can run
+            try:
+                date_only_list = indexes.get('date_only_files', [])
+                for pf in date_only_list:
+                    if id(pf) not in seen_ids:
+                        seen_ids.add(id(pf)); candidate_files.append(pf)
+                if date_only_list:
+                    logging.debug(f"Included {len(date_only_list)} date-only parsed files as candidates for matching.")
+            except Exception:
+                pass
+
             for parsed_file_info in candidate_files:
                 # Always skip files that are tagged as anime special content
                 is_special = parsed_file_info.get('parsed_info', {}).get('is_anime_special_content', False)
@@ -843,7 +878,13 @@ class MediaMatcher:
                     logging.info(f"Match found for item '{item.get('title')}' S{target_season}E{target_episode} (using XEM: {xem_mapping is not None}) -> File: {parsed_file_info['path']}")
                     return (os.path.basename(parsed_file_info['path']), item) # Return basename path and item
 
-            logging.debug(f"No matching file found for item '{item.get('title')}' S{target_season}E{target_episode} (using XEM: {xem_mapping is not None}) in parsed files.")
+            try:
+                logging.debug(
+                    f"No matching file found for item '{item.get('title')}' S{target_season}E{target_episode} (using XEM: {xem_mapping is not None}) in parsed files. "
+                    f"Candidates considered: {len(candidate_files)}"
+                )
+            except Exception:
+                logging.debug(f"No matching file found for item '{item.get('title')}' S{target_season}E{target_episode} (using XEM: {xem_mapping is not None}) in parsed files.")
             return None # No match found
 
         # --- Unknown Type ---
