@@ -283,6 +283,7 @@ def filter_results(
             # Only apply penalties to the parsed title (not the full filename)
             # This prevents penalizing good matches just because filenames have technical metadata
             token_sort_penalty_applied = False
+            token_set_penalty_applied = False
             if normalized_parsed_title and len(normalized_parsed_title) > query_length * 1.5:
                 parsed_length = len(normalized_parsed_title)
                 parsed_ratio = query_length / parsed_length
