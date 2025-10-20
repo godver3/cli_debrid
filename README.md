@@ -10,15 +10,6 @@ cli_debrid is a successor to, and pays homage to plex_debrid. cli_debrid is desi
 
 cli_debrid will always be free.
 
-## Need Help? Hitting a Brick Wall?
-
-If you're struggling with setup or configuration, consider using [Debridify](https://debridify.xyz) - a hosted service that offers:
-
-- **Monthly Hosted Service**: Ready-to-use cli_debrid/Jellyfin/Jellyseerr instance with full support
-- **One-Time Setup**: Custom deployment with your own equipment
-
-Both options provide a hassle-free way to get cli_debrid running without the complexity of manual setup. This is a service provided directly by the creator of cli_debrid.
-
 ## Version Information
 
 *Main Branch*
