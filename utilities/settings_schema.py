@@ -100,6 +100,16 @@ SETTINGS_SCHEMA = {
              "description": "How many days forward should be displayed on statistics page",
              "default": 28,
              "min": 0
+         },
+        "date_format": {
+             "type": "string",
+             "description": "Set your preferred date format. <a href='#' class='format-help-link' data-modal='dateTimeFormatModal'>Click here</a> to see the parameter list.",
+             "default": "%Y-%m-%d"
+         },
+        "time_format": {
+             "type": "string",
+             "description": "Set your preferred time format. <a href='#' class='format-help-link' data-modal='dateTimeFormatModal'>Click here</a> to see the parameter list.",
+             "default": "%H:%M:%S"
          }
     },
     "Plex": {

@@ -228,4 +228,116 @@ button.delete-scraper-btn:disabled,
         padding: 8px 12px;
         margin: 4px;
     }
+}
+/* Format Modal Styles */
+.format-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10000;
+}
+
+.format-modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+}
+
+.format-modal-content {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: #2b2b2b;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 800px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.format-modal-header {
+    padding: 20px;
+    border-bottom: 1px solid #444;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.format-modal-title {
+    margin: 0;
+    color: #fff;
+    font-size: 1.5em;
+}
+
+.format-modal-close {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 2em;
+    cursor: pointer;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.3s;
+}
+
+.format-modal-close:hover {
+    color: #f44336;
+}
+
+.format-modal-body {
+    padding: 20px;
+    color: #fff;
+}
+
+.notification-params.time-options {
+    width: 100%;
+    margin-bottom: 20px;
+    border-collapse: collapse;
+}
+
+.notification-params.time-options thead {
+    background-color: #1a1a1a;
+}
+
+.notification-params.time-options th {
+    padding: 10px;
+    text-align: left;
+    color: #fff;
+    font-weight: bold;
+}
+
+.notification-params.time-options td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #444;
+}
+
+.notification-params.time-options tr:hover {
+    background-color: #333;
+}
+
+.notification-params.time-options strong {
+    color: #4CAF50;
+    font-family: monospace;
+}
+
+.format-help-link {
+    color: #4CAF50;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.format-help-link:hover {
+    color: #45a049;
 } 
