@@ -10,6 +10,37 @@
     function initializeScrapersFunctionality() {
         initializeAddScraperButton();
         initializeDeleteButtons();
+        initializeScraperEnabledListeners();
+        updateAllScraperHeaderColors();
+    }
+
+    function updateAllScraperHeaderColors() {
+        document.querySelectorAll('.settings-section').forEach(section => {
+            const checkbox = section.querySelector('input[type="checkbox"][id$="-enabled"]');
+            if (checkbox) {
+                updateScraperHeaderColor(section, checkbox.checked);
+            }
+        });
+    }
+
+    function updateScraperHeaderColor(section, isEnabled) {
+        const header = section.querySelector('.settings-section-header');
+        if (header) {
+            if (isEnabled) {
+                header.classList.remove('scraper-disabled');
+            } else {
+                header.classList.add('scraper-disabled');
+            }
+        }
+    }
+
+    function initializeScraperEnabledListeners() {
+        document.querySelectorAll('input[type="checkbox"][id$="-enabled"]').forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                const section = this.closest('.settings-section');
+                updateScraperHeaderColor(section, this.checked);
+            });
+        });
     }
 
     function initializeAddScraperButton() {
@@ -168,7 +199,7 @@
 
 {% for scraper_id, config in settings.Scrapers.items() %}
 <div class="settings-section">
-    <div class="settings-section-header">
+    <div class="settings-section-header{% if not config.enabled %} scraper-disabled{% endif %}">
         <span class="settings-toggle-icon">+</span>
         <h4>{{ scraper_id }}</h4>
         <button type="button" class="delete-scraper-btn" data-scraper-id="{{ scraper_id }}">Delete Scraper</button>
