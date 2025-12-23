@@ -519,8 +519,8 @@ def manual_blacklist():
         try:
             title = item[1].get('title', '')
             if not isinstance(title, str):
-                logging.warning(f"Invalid title type for IMDb ID {item[0]}: {type(title)}")
-                title = ''
+                logging.warning(f"Invalid title type for IMDb ID {item[0]}: {type(title)}, converting to string")
+                title = str(title) if title is not None else ''
             return title.lower()
         except Exception as e:
             logging.error(f"Error getting sort key for blacklist item {item[0]}: {str(e)}")
