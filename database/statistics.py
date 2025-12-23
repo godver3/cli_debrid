@@ -407,7 +407,12 @@ def get_collected_counts():
         conn.close()
 
 @cache_for_seconds(60)  # Cache for 5 minutes
-async def get_recently_added_items(movie_limit=5, show_limit=5):
+async def get_recently_added_items(movie_limit=None, show_limit=None):
+    # Get limits from settings if not provided
+    if movie_limit is None:
+        movie_limit = get_setting('UI Settings', 'recently_added_limit', 7)
+    if show_limit is None:
+        show_limit = get_setting('UI Settings', 'recently_added_limit', 7)
     import time
     overall_start = time.perf_counter()
     
@@ -558,7 +563,10 @@ async def get_recently_added_items(movie_limit=5, show_limit=5):
         conn.close()
 
 @cache_for_seconds(300) # Cache for 5 minutes
-async def get_recently_upgraded_items(upgraded_limit=5):
+async def get_recently_upgraded_items(upgraded_limit=None):
+    # Get limit from settings if not provided
+    if upgraded_limit is None:
+        upgraded_limit = get_setting('UI Settings', 'recently_upgraded_limit', 7)
     import time
     overall_start = time.perf_counter()
     

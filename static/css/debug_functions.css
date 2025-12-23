@@ -12,6 +12,58 @@ body {
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 }
 
+/* Debug Tabs Styles */
+.debug-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding-bottom: 0;
+}
+
+.debug-tab {
+    padding: 0.875rem 1.5rem;
+    background: none;
+    border: none;
+    color: #aaa;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border-bottom: 2px solid transparent;
+    position: relative;
+}
+
+.debug-tab:hover {
+    color: #007bff;
+    background-color: rgba(0, 123, 255, 0.1);
+}
+
+.debug-tab.active {
+    color: #fff;
+    background-color: rgba(0, 123, 255, 0.2);
+    border-bottom-color: #007bff;
+}
+
+.debug-tab-content {
+    display: none;
+}
+
+.debug-tab-content.active {
+    display: block;
+}
+
+@media (max-width: 768px) {
+    .debug-tabs {
+        overflow-x: auto;
+        flex-wrap: nowrap;
+    }
+    
+    .debug-tab {
+        white-space: nowrap;
+    }
+}
+
 .debug-container .debug_items {
     display: flex;
     flex-wrap: wrap;

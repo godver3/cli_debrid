@@ -315,11 +315,11 @@
                 console.log('Updating upcoming releases');
                 upcomingReleasesList.innerHTML = data.upcoming_releases.map(release => `
                     <li class="clickable"
-                        data-title="${release.titles[0] || ''}"
+                        data-title="${release.titles || ''}"
                         data-release-date="${release.release_date || ''}"
-                        data-tmdb-id="${release.tmdb_ids && release.tmdb_ids.length > 0 ? release.tmdb_ids[0] : ''}"
-                        data-imdb-id="${release.imdb_ids && release.imdb_ids.length > 0 ? release.imdb_ids[0] : ''}">
-                        <span class="titles">${release.titles.join(', ')}</span>
+                        data-tmdb-id="${release.tmdb_ids && release.tmdb_ids.length > 0 ? release.tmdb_ids : ''}"
+                        data-imdb-id="${release.imdb_ids && release.imdb_ids.length > 0 ? release.imdb_ids : ''}">
+                        <span class="titles">${release.titles}</span>
                         <span class="release-date">${release.formatted_date}</span>
                     </li>
                 `).join('');
@@ -761,11 +761,11 @@
                 <ul>
                     {% for release in upcoming_releases %}
                     <li class="clickable"
-                        data-title="{{ release.titles[0] if release.titles else '' }}"
+                        data-title="{{ release.titles if release.titles else '' }}"
                         data-release-date="{{ release.release_date }}"
-                        data-tmdb-id="{{ release.tmdb_ids[0] if release.tmdb_ids and release.tmdb_ids|length > 0 else '' }}"
-                        data-imdb-id="{{ release.imdb_ids[0] if release.imdb_ids and release.imdb_ids|length > 0 else '' }}">
-                        <span class="titles">{{ release.titles | join(', ') }}</span>
+                        data-tmdb-id="{{ release.tmdb_ids if release.tmdb_ids and release.tmdb_ids|length > 0 else '' }}"
+                        data-imdb-id="{{ release.imdb_ids if release.imdb_ids and release.imdb_ids|length > 0 else '' }}">
+                        <span class="titles">{{ release.titles }}</span>
                         <span class="release-date">{{ release.formatted_date }}</span>
                     </li>
                     {% endfor %}

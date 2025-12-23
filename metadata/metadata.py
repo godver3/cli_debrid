@@ -554,6 +554,19 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
         media_type = item.get('media_type', '').lower()
         original_item_copy = item.copy()
 
+        # Validate that imdb_id looks like an actual IMDb ID (starts with 'tt')
+        if imdb_id and not str(imdb_id).startswith('tt'):
+            # This might be a TMDB ID stored in the imdb_id field
+            if str(imdb_id).isdigit():
+                logging.warning(f"Item has numeric-only ID '{imdb_id}' in imdb_id field. This appears to be a TMDB ID. Moving to tmdb_id field.")
+                # If we don't already have a tmdb_id, use this one
+                if not tmdb_id:
+                    tmdb_id = imdb_id
+                    original_item_copy['tmdb_id'] = tmdb_id
+                # Clear the invalid imdb_id
+                imdb_id = None
+                item['imdb_id'] = None
+        
         resolved_imdb = False
         if not imdb_id and tmdb_id:
             try:
@@ -717,7 +730,27 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                     logging.error(f"Error during individual metadata re-fetch for {imdb_id}: {e_ind}", exc_info=True)
 
         if not metadata:
-            logging.warning(f"Could not retrieve metadata for IMDb ID: {imdb_id} (effective type: {effective_metadata_fetch_type}). Skipping {len(original_items_list)} related item(s).")
+            # Check if this might be a TMDB ID mistakenly used as IMDb ID
+            is_likely_tmdb_id = imdb_id and not str(imdb_id).startswith('tt') and str(imdb_id).isdigit()
+            id_type_display = "TMDB ID (incorrectly stored as IMDb ID)" if is_likely_tmdb_id else "IMDb ID"
+            
+            # Log detailed information about what we tried
+            logging.warning(f"Could not retrieve metadata for {id_type_display}: {imdb_id} (effective type: {effective_metadata_fetch_type}). Skipping {len(original_items_list)} related item(s).")
+            
+            # If it looks like a TMDB ID, try one more time with TMDB-only approach
+            if is_likely_tmdb_id:
+                tmdb_id_attempt = representative_item.get('tmdb_id') or imdb_id
+                logging.info(f"Attempting TMDB-only metadata fetch for TMDB ID {tmdb_id_attempt}...")
+                tmdb_only_metadata = get_tmdb_metadata(str(tmdb_id_attempt), effective_metadata_fetch_type)
+                
+                if tmdb_only_metadata:
+                    logging.info(f"Successfully fetched TMDB-only metadata for {tmdb_id_attempt}")
+                    # Add this to TMDB-only items for processing
+                    for item_orig in original_items_list:
+                        items_by_tmdb_id_only[tmdb_id_attempt].append(item_orig)
+                else:
+                    logging.error(f"TMDB-only fetch also failed for ID {tmdb_id_attempt}")
+            
             continue
         
         for item_from_input_list in original_items_list:

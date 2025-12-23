@@ -74,7 +74,33 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Hide the Patreon support message in the header",
             "default": False
-        }
+        },
+        "recently_added_limit": {
+             "type": "integer",
+             "description": "Amount of items displayed for recently added on statistics page",
+             "default": 5,
+             "min": 5,
+             "max": 14
+         },
+        "recently_upgraded_limit": {
+             "type": "integer",
+             "description": "Amount of items displayed for recently upgraded on statistics page",
+             "default": 5,
+             "min": 5,
+             "max": 14
+         },
+        "upcoming_releases_start_limit": {
+             "type": "integer",
+             "description": "How many days back should be displayed on statistics page, 0 being today and 7 being a week back.",
+             "default": 0,
+             "min": 0
+         },
+        "upcoming_releases_end_limit": {
+             "type": "integer",
+             "description": "How many days forward should be displayed on statistics page",
+             "default": 28,
+             "min": 0
+         }
     },
     "Plex": {
         "tab": "Required Settings",
