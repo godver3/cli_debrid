@@ -67,7 +67,7 @@
                                {% if key == 'content_source_priority' %}placeholder="e.g., Plex,Trakt,Overseerr,Radarr,Sonarr"{% endif %}>
                     {% endif %}
                     {% if value.description %}
-                        <p class="settings-description">{{ value.description }}</p>
+                        <p class="settings-description">{{ value.description|safe }}</p>
                         {% if key == 'content_source_priority' %}
                         <!-- <div id="content-source-priority-container" class="content-source-priority" style="display: none;">
                             <p class="settings-description" style="margin-top: 5px;">
@@ -324,7 +324,7 @@
                                {% if key == 'content_source_priority' %}placeholder="e.g., Plex,Trakt,Overseerr,Radarr,Sonarr"{% endif %}>
                     {% endif %}
                     {% if value.description %}
-                        <p class="settings-description">{{ value.description }}</p>
+                        <p class="settings-description">{{ value.description|safe }}</p>
                         {% if key == 'content_source_priority' %}
                         <!-- <div id="content-source-priority-container" class="content-source-priority">
                             <p class="settings-description" style="margin-top: 5px;">
