@@ -15,6 +15,7 @@
 <script>
     let contentSourceSettingsLoaded = false;
     let scrapingVersionsLoaded = false;
+    let contentSourceTaskStates = {};
     // Initialize with value from Jinja template
     window.currentFileManagementModeForSymlinkVisibility = "{{ settings.get('File Management', {}).get('file_collection_management', '') }}";
 
@@ -25,8 +26,27 @@
     function loadSettings() {
         Promise.all([
             fetch('/settings/get_content_source_settings').then(response => response.json()),
-            fetch('/settings/get_scraping_versions').then(response => response.json())
-        ]).then(([contentSourceSettings, scrapingVersions]) => {
+            fetch('/settings/get_scraping_versions').then(response => response.json()),
+            fetch('/program_operation/api/task_timings').then(response => response.json())
+        ]).then(([contentSourceSettings, scrapingVersions, taskData]) => {
+            // Store task enabled states
+            console.log('[ContentSource] Task data received:', taskData);
+            if (taskData.success && taskData.tasks) {
+                // Check if tasks is an array or an object
+                if (Array.isArray(taskData.tasks)) {
+                    taskData.tasks.forEach(task => {
+                        contentSourceTaskStates[task.name] = task.enabled;
+                    });
+                } else if (typeof taskData.tasks === 'object') {
+                    // If tasks is an object, iterate over its entries
+                    Object.entries(taskData.tasks).forEach(([taskName, taskInfo]) => {
+                        contentSourceTaskStates[taskName] = taskInfo.enabled;
+                    });
+                }
+                console.log('[ContentSource] Task states:', contentSourceTaskStates);
+            } else {
+                console.warn('[ContentSource] No task data available:', taskData);
+            }
             window.contentSourceSettings = contentSourceSettings;
             window.scrapingVersions = scrapingVersions.versions;
             contentSourceSettingsLoaded = true;
@@ -66,6 +86,12 @@
                 updateVersionWarning(sourceId);
             }
         });
+        // Note: Header colors are set by Jinja template based on config.enabled
+    }
+
+    // This function is no longer needed - colors are set by Jinja template
+    function updateContentSourceHeaderColor(sourceId) {
+        // Removed - header colors are now set server-side in the template
     }
 
     function updateSymlinkSubfolderVisibility(sourceId, fileManagementValue) {
@@ -709,7 +735,7 @@
             {% endif %}
             
             <div class="settings-section" data-source-id="{{ source_id }}">
-                <div class="settings-section-header">
+                <div class="settings-section-header{% if not config.get('enabled', True) %} source-disabled{% endif %}">
                     <span class="settings-toggle-icon">+</span>
                     <h4>
                         {% if config.display_name %}

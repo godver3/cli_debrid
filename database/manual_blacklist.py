@@ -51,6 +51,11 @@ def save_manual_blacklist(blacklist):
 
 def add_to_manual_blacklist(imdb_id: str, media_type: str, title: str, year: str, season: int = None):
     blacklist = get_manual_blacklist()
+    
+    # Ensure title and year are strings
+    title = str(title) if title is not None else 'Unknown'
+    year = str(year) if year is not None else ''
+    
     logging.info(f"Inside add_to_manual_blacklist: IMDB_ID='{imdb_id}', MediaType='{media_type}', Title='{title}', Year='{year}', Season={season}")
     
     if season is not None and media_type == 'episode':
@@ -117,6 +122,15 @@ def is_blacklisted(imdb_id, season: int = None):
 def get_manual_blacklist() -> Dict[str, Dict[str, str]]:
     try:
         with open(BLACKLIST_FILE, 'r') as f:
-            return json.load(f)
+            blacklist = json.load(f)
+            # Sanitize data: ensure all titles and years are strings
+            for imdb_id, item in blacklist.items():
+                if 'title' in item and not isinstance(item['title'], str):
+                    item['title'] = str(item['title']) if item['title'] is not None else 'Unknown'
+                    logging.warning(f"Converted non-string title to string for IMDb ID {imdb_id}: {item['title']}")
+                if 'year' in item and not isinstance(item['year'], str):
+                    item['year'] = str(item['year']) if item['year'] is not None else ''
+                    logging.warning(f"Converted non-string year to string for IMDb ID {imdb_id}: {item['year']}")
+            return blacklist
     except FileNotFoundError:
         return {}
