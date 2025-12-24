@@ -935,6 +935,9 @@ class ScrapingQueue:
                     season_match = (target_season is None or parsed_seasons == [target_season])
                     episode_match = (target_episode is None or parsed_episodes == [target_episode])
                 
+                # Define original_filename for use in fallback logic
+                original_filename = parsed_info.get('original_filename', '')
+
                 # --- ANIME ABSOLUTE EPISODE MATCHING (similar to media_matcher.py) ---
                 # Check if this is anime content and we need to try absolute episode matching
                 if is_anime and not season_match and not episode_match and target_season is not None and target_episode is not None:
@@ -944,23 +947,22 @@ class ScrapingQueue:
                         tmdb_id = item.get('tmdb_id')
                         if tmdb_id:
                             season_episode_counts = get_all_season_episode_counts(tmdb_id)
-                            
+
                             # Calculate target absolute episode number using the same logic as convert_anime_episode_format
                             # Use XEM-mapped S/E if available, otherwise use original item S/E
                             base_season = target_season  # This is already XEM-mapped if scene_mapping exists
                             base_episode = target_episode  # This is already XEM-mapped if scene_mapping exists
-                            
+
                             target_absolute_episode = 0
                             # Sort seasons to ensure correct order and handle potential non-integer keys from bad metadata
                             sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < base_season])
                             for s_num in sorted_seasons:
                                 target_absolute_episode += season_episode_counts.get(s_num, 0)
                             target_absolute_episode += base_episode
-                            
+
                             # Check if torrent uses absolute episode numbering
                             torrent_seasons = parsed_seasons
                             torrent_episodes = parsed_episodes
-                            original_filename = parsed_info.get('original_filename', '')
                             
                             # Pattern 1: Check if calculated absolute episode number matches torrent episode
                             if torrent_seasons == [1] and target_absolute_episode in torrent_episodes:
@@ -1161,6 +1163,9 @@ class ScrapingQueue:
                     logging.debug(f"{log_prefix} PASSED S/E match. Adding to filtered_regular_results.")
                     filtered_regular_results.append(r)
                 else:
+                    # Define original_filename for use in fallback logic
+                    original_filename = parsed_info.get('original_filename', '')
+
                     # --- ANIME ABSOLUTE EPISODE MATCHING (similar to media_matcher.py) ---
                     # Check if this is anime content and we need to try absolute episode matching
                     is_anime = item.get('genres') and any('anime' in g.lower() for g in item.get('genres', []))
@@ -1171,23 +1176,22 @@ class ScrapingQueue:
                             tmdb_id = item.get('tmdb_id')
                             if tmdb_id:
                                 season_episode_counts = get_all_season_episode_counts(tmdb_id)
-                                
+
                                 # Calculate target absolute episode number using the same logic as convert_anime_episode_format
                                 # Use XEM-mapped S/E if available, otherwise use original item S/E
                                 base_season = target_season  # This is already XEM-mapped if scene_mapping exists
                                 base_episode = target_episode  # This is already XEM-mapped if scene_mapping exists
-                                
+
                                 target_absolute_episode = 0
                                 # Sort seasons to ensure correct order and handle potential non-integer keys from bad metadata
                                 sorted_seasons = sorted([s for s in season_episode_counts.keys() if isinstance(s, int) and s < base_season])
                                 for s_num in sorted_seasons:
                                     target_absolute_episode += season_episode_counts.get(s_num, 0)
                                 target_absolute_episode += base_episode
-                                
+
                                 # Check if torrent uses absolute episode numbering
                                 torrent_seasons = parsed_seasons
                                 torrent_episodes = parsed_episodes
-                                original_filename = parsed_info.get('original_filename', '')
                                 
                                 # Pattern 1: Check if calculated absolute episode number matches torrent episode
                                 if torrent_seasons == [1] and target_absolute_episode in torrent_episodes:
@@ -1369,13 +1373,15 @@ class ScrapingQueue:
 
         # --- Original Logic for Non-Upgrade Items ---
         if self.is_item_old(item):
-            item_title_for_f1_check = (item.get('title', '') or item.get('series_title', '')).lower()
-            is_formula_1_item = "formula 1" in item_title_for_f1_check
+            item_title_for_check = (item.get('title', '') or item.get('series_title', '')).lower()
+            is_formula_1_item = "formula 1" in item_title_for_check
+            is_ufc_item = "ufc" in item_title_for_check
 
             if item['type'] == 'episode':
-                if is_formula_1_item:
-                    logging.info(f"No results found for old Formula 1 item {item_identifier}. Blacklisting this specific item.")
-                    queue_manager.move_to_blacklisted(item, "Scraping") # Blacklist only this F1 item
+                if is_formula_1_item or is_ufc_item:
+                    content_type = "Formula 1" if is_formula_1_item else "UFC"
+                    logging.info(f"No results found for old {content_type} item {item_identifier}. Blacklisting this specific item.")
+                    queue_manager.move_to_blacklisted(item, "Scraping") # Blacklist only this F1/UFC item
                 else:
                     logging.info(f"No results found for old episode {item_identifier}. Blacklisting item and related season items.")
                     queue_manager.queues["Blacklisted"].blacklist_old_season_items(item, queue_manager)
@@ -1388,7 +1394,7 @@ class ScrapingQueue:
                 self.reset_not_wanted_check(item['id'])
                 self.remove_item(item) # Remove from current queue
             else: # Unknown types
-                logging.warning(f"Unknown item type {item['type']} for {item_identifier} (is_formula_1_item: {is_formula_1_item}). Blacklisting item.")
+                logging.warning(f"Unknown item type {item['type']} for {item_identifier}. Blacklisting item.")
                 queue_manager.move_to_blacklisted(item, "Scraping") # Direct blacklist
                 self.reset_not_wanted_check(item['id'])
                 self.remove_item(item) # Remove from current queue

@@ -18,6 +18,9 @@ def setup_logger():
     # Get log directory from environment variable with fallback
     log_dir = os.environ.get('USER_LOGS', '/user/logs')
     os.makedirs(log_dir, exist_ok=True)
+    
+    # Check if extended logging is enabled via environment variable
+    extended_logging = os.environ.get('EXTENDED_LOGGING', 'false').lower() == 'true'
 
     # Create logger
     logger = colorlog.getLogger('cli_battery')
@@ -46,10 +49,19 @@ def setup_logger():
 
     # Add file handler with immediate flushing for debug logs only
     log_file = os.path.join(log_dir, 'battery_debug.log')
+    
+    # Set log file size and backup count based on environment variable
+    if extended_logging:
+        max_bytes = 100*1024*1024  # 100MB
+        backup_count = 5  # Keep 5 backup files for extended history
+    else:
+        max_bytes = 10*1024*1024   # 10MB
+        backup_count = 2  # Keep 2 backup files for important history
+    
     file_handler = ImmediateRotatingFileHandler(
         log_file, 
-        maxBytes=10*1024*1024,  # 10MB - reduced from 50MB
-        backupCount=2,  # Keep 2 backup files for important history
+        maxBytes=max_bytes,
+        backupCount=backup_count,
         encoding='utf-8',
         errors='replace'
     )

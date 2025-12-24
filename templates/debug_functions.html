@@ -5,6 +5,8 @@
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/debug_functions.css') }}">
 
+<div class="toast-container" style="display: none !important;"></div>
+
 <div class="debug-container">    
     <h2>Debug Functions</h2>
     {% if environment_mode != 'full' %}
@@ -12,7 +14,18 @@
         <strong>⚠️ Warning:</strong> You are currently in a restricted environment mode. Avoid adjusting the "Debug Functions" content.
     </div>
     {% endif %}
-    <div class="debug_items">
+    
+    <!-- Tab Navigation -->
+    <div class="debug-tabs">
+        <button class="debug-tab active" onclick="switchDebugTab('database')">Database</button>
+        <button class="debug-tab" onclick="switchDebugTab('library')">Library</button>
+        <button class="debug-tab" onclick="switchDebugTab('symlink')">Symlink</button>
+        <button class="debug-tab" onclick="switchDebugTab('monitoring')">Monitoring</button>
+    </div>
+    
+    <!-- Database Tab -->
+    <div id="database-tab" class="debug-tab-content active">
+        <div class="debug_items">
         <div class="debug_item">
             <h3>Bulk Delete from Database</h3>
             <form action="{{ url_for('debug.bulk_delete_by_imdb') }}" method="POST" id="bulk-delete-form">
@@ -24,13 +37,10 @@
             </form>
         </div>
         <div class="debug_item">
-            <h3>Download Logs</h3>
-            <form id="download-logs-form">
-                <div class="form-group">
-                    <label for="log_lines">Number of log lines:</label>
-                    <input type="number" id="log_lines" name="lines" value="250" min="1" max="1000">
-                </div>
-                <button type="submit">Download Logs</button>
+            <h3>Delete Battery Database Files</h3>
+            <p class="description">Deletes the cli_battery.db, cli_battery.db-shm, and cli_battery.db-wal files from the db_content directory.</p>
+            <form id="delete-battery-db-form" action="{{ url_for('debug.delete_battery_db_files') }}" method="POST">
+                <button type="submit" class="btn btn-danger">Delete Battery DB Files</button>
             </form>
         </div>
         <div class="debug_item">
@@ -51,123 +61,17 @@
             </form>
         </div>
         <div class="debug_item">
-            <h3>Get Collected from Library (Plex)</h3>
-            <form action="{{ url_for('debug.get_collected_from_plex') }}" method="POST" id="get-collected-form">
+            <h3>Remove Duplicate Database Items</h3>
+            <p class="description">Find and remove duplicate database items based on the filled_by_file field. This will identify items with the same filename and remove the duplicates, keeping only one entry per unique file.</p>
+            <form id="remove-duplicates-form" action="/debug/api/remove_duplicate_items" method="POST">
                 <div class="form-group">
-                    <label for="collection_type">Collection Type:</label>
-                    <select id="collection_type" name="collection_type" required>
-                        <option value="all">All</option>
-                        <option value="recent">Recent</option>
-                    </select>
+                    <label>
+                        <input type="checkbox" id="dry_run_duplicates" name="dry_run" checked>
+                        Dry Run (Preview duplicates without deleting)
+                    </label>
                 </div>
-                <button type="submit">Get Plex Collected</button>
-            </form>
-        </div>
-        <div class="debug_item">
-            <h3>Get Wanted Content</h3>
-            <form action="{{ url_for('debug.get_wanted_content') }}" method="POST" id="get-wanted-form">
-                <div class="form-group">
-                    <label for="wanted_source">Source:</label>
-                    <select id="wanted_source" name="source" required>
-                        <option value="all">All Enabled Sources</option>
-                        {% for source in content_sources %}
-                            {% if content_sources[source].enabled %}
-                                {% set display_name = content_sources[source].get('display_name') %}
-                                {% if display_name %}
-                                    <option value="{{ source }}">{{ display_name }}</option>
-                                {% else %}
-                                    {% set formatted_name = source.replace('_', ' ') %}
-                                    <option value="{{ source }}">{{ formatted_name | title }}</option>
-                                {% endif %}
-                            {% endif %}
-                        {% endfor %}
-                    </select>
-                </div>
-                <button type="submit">Get Wanted</button>
-            </form>
-        </div>
-        <div class="debug_item">
-            <h3>Manual Blacklist</h3>
-            <a href="{{ url_for('debug.manual_blacklist') }}" class="btn">Manage Manual Blacklist</a>
-        </div>
-        <div class="debug_item">
-            <h3>Bulk Queue Actions</h3>
-            <form id="bulk-queue-action-form">
-                <div class="form-group">
-                    <label for="queue_select">Select Queue:</label>
-                    <select id="queue_select" name="queue_select">
-                        <option value="Adding">Adding</option>
-                        <option value="Blacklisted">Blacklisted</option>
-                        <option value="Checking">Checking</option>
-                        <option value="Scraping">Scraping</option>
-                        <option value="Sleeping">Sleeping</option>
-                        <option value="Unreleased">Unreleased</option>
-                        <option value="Wanted">Wanted</option>
-                        <option value="Pending Uncached">Pending Uncached</option>
-                        <option value="Upgrading">Upgrading</option>
-                    </select>
-                </div>
-                <div id="queue_items_container" class="queue-items-container">
-                    <h4>Select Items:</h4>
-                    <div class="select-all-container">
-                        <button type="button" id="select_all_btn">Select All</button>
-                        <button type="button" id="unselect_all_btn">Unselect All</button>
-                    </div>
-                    <div id="queue_items">Loading...</div>
-                </div>
-                <div class="form-group">
-                    <label for="action_select">Action:</label>
-                    <select id="action_select" name="action">
-                        <option value="delete">Delete</option>
-                        <option value="move">Move to...</option>
-                    </select>
-                </div>
-                <div id="target_queue_container" style="display: none;">
-                    <label for="target_queue">Target Queue:</label>
-                    <select id="target_queue" name="target_queue">
-                        <option value="Adding">Adding</option>
-                        <option value="Blacklisted">Blacklisted</option>
-                        <option value="Checking">Checking</option>
-                        <option value="Scraping">Scraping</option>
-                        <option value="Sleeping">Sleeping</option>
-                        <option value="Unreleased">Unreleased</option>
-                        <option value="Wanted">Wanted</option>
-                        <option value="Pending Uncached">Pending Uncached</option>
-                        <option value="Upgrading">Upgrading</option>
-                        <option value="Collected">Collected</option>
-                    </select>
-                </div>
-                <button type="submit">Apply Action</button>
-            </form>
-        </div>
-        <div class="debug_item">
-            <h3>Current Rate Limit State</h3>
-            <div id="rate-limit-info">
-                <p id="rate-limit-loading">Loading rate limit information...</p>
-                <div id="rate-limit-content" style="display: none;"></div>
-            </div>
-            <button id="refresh-rate-limits">Refresh Rate Limits</button>
-        </div>
-        <div class="debug_item">
-            <h3>Refresh Release Dates</h3>
-            <form action="{{ url_for('debug.refresh_release_dates_route') }}" method="POST" id="refresh-release-dates-form">
-                <button type="submit">Refresh Release Dates</button>
-            </form>
-        </div>
-        <div class="debug_item">
-            <h3>Send Test Notification</h3>
-            <form id="send-test-notification-form">
-                <button type="submit">Send Test Notification</button>
-            </form>
-        </div>
-        <div class="debug_item">
-            <h3>Move Item ID to Upgrading</h3>
-            <form action="{{ url_for('debug.move_to_upgrading') }}" method="POST" id="move-to-upgrading-form">
-                <div class="form-group">
-                    <label for="item_id">Item ID:</label>
-                    <input type="text" id="item_id" name="item_id" required>
-                </div>
-                <button type="submit">Move to Upgrading</button>
+                <button type="submit">Find and Remove Duplicates</button>
+                <div id="remove-duplicates-results" class="results-area" style="margin-top: 15px;"></div>
             </form>
         </div>
         <div class="debug_item">
@@ -182,32 +86,12 @@
                 <button type="submit">Run Task</button>
             </form>
         </div>
-        <div class="debug_item">
-            <h3>Version Propagator</h3>
-            <form action="{{ url_for('debug.propagate_version') }}" method="POST" id="version-propagator-form">
-                <div class="form-group">
-                    <label for="media_type">Media Type:</label>
-                    <select id="media_type" name="media_type" required>
-                        <option value="all">All</option>
-                        <option value="movie">Movies Only</option>
-                        <option value="episode">Episodes Only</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="original_version">Original Version:</label>
-                    <select id="original_version" name="original_version" required>
-                        <option value="">Select Version</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="propagated_version">Propagated Version:</label>
-                    <select id="propagated_version" name="propagated_version" required>
-                        <option value="">Select Version</option>
-                    </select>
-                </div>
-                <button type="submit">Propagate Version</button>
-            </form>
         </div>
+    </div>
+    
+    <!-- Symlink Tab -->
+    <div id="symlink-tab" class="debug-tab-content">
+        <div class="debug_items">
         <div class="debug_item verification-queue">
             <h3>Symlink Verification Queue</h3>
             <div id="verification-stats" class="verification-stats">
@@ -228,61 +112,6 @@
                 <button type="submit">Convert to Symlinks</button>
             </form>
             <div id="convert-to-symlinks-progress" class="progress-area" style="margin-top: 15px;"></div>
-        </div>
-        <div class="debug_item">
-            <h3>Plex Token Status</h3>
-            <div id="plex-token-status">
-                <div class="token-status-container">
-                    <!-- Status will be populated here -->
-                </div>
-                <button id="refresh-plex-tokens" class="btn">Refresh Tokens</button>
-            </div>
-        </div>
-        <div class="debug_item">
-            <h3>Torrent Tracking</h3>
-            <p class="description">View the history of torrent additions and their current status.</p>
-            <a href="{{ url_for('debug.torrent_tracking') }}" class="btn">View Torrent History</a>
-        </div>
-        <div class="debug_item">
-            <h3>Personal Trakt Token Status</h3>
-            <div id="trakt-token-status">
-                <div class="token-status-container">
-                    <!-- Status will be populated here -->
-                </div>
-                <button id="refresh-trakt-tokens" class="btn">Refresh Status</button>
-            </div>
-        </div>
-        <div class="debug_item">
-            <h3>Direct Emby/Jellyfin Scan</h3>
-            <p class="description">Trigger a full library scan on Emby/Jellyfin and add/update items in the database.</p>
-            <form action="{{ url_for('debug.direct_emby_scan') }}" method="POST" id="direct-emby-scan-form">
-                <button type="submit">Run Emby/Jellyfin Scan</button>
-            </form>
-        </div>
-        <div class="debug_item">
-            <h3>Manage Cache Files</h3>
-            <form id="manage-cache-files-form">
-                <div id="cache_files_container" class="cache-files-container">
-                    <h4>Select Cache Files:</h4>
-                    <div class="select-all-container">
-                        <button type="button" id="select_all_cache_btn">Select All</button>
-                        <button type="button" id="unselect_all_cache_btn">Unselect All</button>
-                    </div>
-                    <div id="cache_files_list">
-                        {% if cache_files %}
-                            {% for filename in cache_files %}
-                                <div class="cache-file-item">
-                                    <input type="checkbox" name="selected_files" value="{{ filename }}" id="cache_file_{{ loop.index }}">
-                                    <label for="cache_file_{{ loop.index }}">{{ filename }}</label>
-                                </div>
-                            {% endfor %}
-                        {% else %}
-                            <p>No cache files found.</p>
-                        {% endif %}
-                    </div>
-                </div>
-                <button type="submit" class="btn btn-danger">Delete Selected Cache Files</button>
-            </form>
         </div>
         <div class="debug_item">
             <h3>Symlink Library Recovery</h3>
@@ -343,13 +172,6 @@
             </form>
         </div>
         <div class="debug_item">
-            <h3>Delete Battery Database Files</h3>
-            <p class="description">Deletes the cli_battery.db, cli_battery.db-shm, and cli_battery.db-wal files from the db_content directory.</p>
-            <form id="delete-battery-db-form" action="{{ url_for('debug.delete_battery_db_files') }}" method="POST">
-                <button type="submit" class="btn btn-danger">Delete Battery DB Files</button>
-            </form>
-        </div>
-        <div class="debug_item">
             <h3>Rclone Mount to Symlinks</h3>
             <p class="description">Scan an Rclone mount, fetch metadata, create DB entries, and generate symlinks.</p>
             <form id="rclone-to-symlinks-form">
@@ -371,6 +193,231 @@
                 <div id="rclone-scan-progress" class="progress-area" style="margin-top: 15px;"></div>
             </form>
         </div>
+
+        </div>
+    </div>
+    
+    <!-- Library Tab -->
+    <div id="library-tab" class="debug-tab-content">
+        <div class="debug_items">
+        <div class="debug_item">
+            <h3>Get Collected from Library (Plex)</h3>
+            <form action="{{ url_for('debug.get_collected_from_plex') }}" method="POST" id="get-collected-form">
+                <div class="form-group">
+                    <label for="collection_type">Collection Type:</label>
+                    <select id="collection_type" name="collection_type" required>
+                        <option value="all">All</option>
+                        <option value="recent">Recent</option>
+                    </select>
+                </div>
+                <button type="submit">Get Plex Collected</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Get Wanted Content</h3>
+            <form action="{{ url_for('debug.get_wanted_content') }}" method="POST" id="get-wanted-form">
+                <div class="form-group">
+                    <label for="wanted_source">Source:</label>
+                    <select id="wanted_source" name="source" required>
+                        <option value="all">All Enabled Sources</option>
+                        {% for source in content_sources %}
+                            {% if content_sources[source].enabled %}
+                                {% set display_name = content_sources[source].get('display_name') %}
+                                {% if display_name %}
+                                    <option value="{{ source }}">{{ display_name }}</option>
+                                {% else %}
+                                    {% set formatted_name = source.replace('_', ' ') %}
+                                    <option value="{{ source }}">{{ formatted_name | title }}</option>
+                                {% endif %}
+                            {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit">Get Wanted</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Refresh Release Dates</h3>
+            <form action="{{ url_for('debug.refresh_release_dates_route') }}" method="POST" id="refresh-release-dates-form">
+                <button type="submit">Refresh Release Dates</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Manage Cache Files</h3>
+            <form id="manage-cache-files-form">
+                <div id="cache_files_container" class="cache-files-container">
+                    <h4>Select Cache Files:</h4>
+                    <div class="select-all-container">
+                        <button type="button" id="select_all_cache_btn">Select All</button>
+                        <button type="button" id="unselect_all_cache_btn">Unselect All</button>
+                    </div>
+                    <div id="cache_files_list">
+                        {% if cache_files %}
+                            {% for filename in cache_files %}
+                                <div class="cache-file-item">
+                                    <input type="checkbox" name="selected_files" value="{{ filename }}" id="cache_file_{{ loop.index }}">
+                                    <label for="cache_file_{{ loop.index }}">{{ filename }}</label>
+                                </div>
+                            {% endfor %}
+                        {% else %}
+                            <p>No cache files found.</p>
+                        {% endif %}
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-danger">Delete Selected Cache Files</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Bulk Queue Actions</h3>
+            <form id="bulk-queue-action-form">
+                <div class="form-group">
+                    <label for="queue_select">Select Queue:</label>
+                    <select id="queue_select" name="queue_select">
+                        <option value="Adding">Adding</option>
+                        <option value="Blacklisted">Blacklisted</option>
+                        <option value="Checking">Checking</option>
+                        <option value="Scraping">Scraping</option>
+                        <option value="Sleeping">Sleeping</option>
+                        <option value="Unreleased">Unreleased</option>
+                        <option value="Wanted">Wanted</option>
+                        <option value="Pending Uncached">Pending Uncached</option>
+                        <option value="Upgrading">Upgrading</option>
+                    </select>
+                </div>
+                <div id="queue_items_container" class="queue-items-container">
+                    <h4>Select Items:</h4>
+                    <div class="select-all-container">
+                        <button type="button" id="select_all_btn">Select All</button>
+                        <button type="button" id="unselect_all_btn">Unselect All</button>
+                    </div>
+                    <div id="queue_items">Loading...</div>
+                </div>
+                <div class="form-group">
+                    <label for="action_select">Action:</label>
+                    <select id="action_select" name="action">
+                        <option value="delete">Delete</option>
+                        <option value="move">Move to...</option>
+                    </select>
+                </div>
+                <div id="target_queue_container" style="display: none;">
+                    <label for="target_queue">Target Queue:</label>
+                    <select id="target_queue" name="target_queue">
+                        <option value="Adding">Adding</option>
+                        <option value="Blacklisted">Blacklisted</option>
+                        <option value="Checking">Checking</option>
+                        <option value="Scraping">Scraping</option>
+                        <option value="Sleeping">Sleeping</option>
+                        <option value="Unreleased">Unreleased</option>
+                        <option value="Wanted">Wanted</option>
+                        <option value="Pending Uncached">Pending Uncached</option>
+                        <option value="Upgrading">Upgrading</option>
+                        <option value="Collected">Collected</option>
+                    </select>
+                </div>
+                <button type="submit">Apply Action</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Version Propagator</h3>
+            <form action="{{ url_for('debug.propagate_version') }}" method="POST" id="version-propagator-form">
+                <div class="form-group">
+                    <label for="media_type">Media Type:</label>
+                    <select id="media_type" name="media_type" required>
+                        <option value="all">All</option>
+                        <option value="movie">Movies Only</option>
+                        <option value="episode">Episodes Only</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="original_version">Original Version:</label>
+                    <select id="original_version" name="original_version" required>
+                        <option value="">Select Version</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="propagated_version">Propagated Version:</label>
+                    <select id="propagated_version" name="propagated_version" required>
+                        <option value="">Select Version</option>
+                    </select>
+                </div>
+                <button type="submit">Propagate Version</button>
+            </form>
+        </div> 
+        <div class="debug_item">
+            <h3>Direct Emby/Jellyfin Scan</h3>
+            <p class="description">Trigger a full library scan on Emby/Jellyfin and add/update items in the database.</p>
+            <form action="{{ url_for('debug.direct_emby_scan') }}" method="POST" id="direct-emby-scan-form">
+                <button type="submit">Run Emby/Jellyfin Scan</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Move Item ID to Upgrading</h3>
+            <form action="{{ url_for('debug.move_to_upgrading') }}" method="POST" id="move-to-upgrading-form">
+                <div class="form-group">
+                    <label for="item_id">Item ID:</label>
+                    <input type="text" id="item_id" name="item_id" required>
+                </div>
+                <button type="submit">Move to Upgrading</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Manual Blacklist</h3>
+            <a href="{{ url_for('debug.manual_blacklist') }}" class="btn">Manage Manual Blacklist</a>
+        </div>
+        </div>
+    </div>
+    
+    <!-- Monitoring Tab -->
+    <div id="monitoring-tab" class="debug-tab-content">
+        <div class="debug_items">
+        <div class="debug_item">
+            <h3>Current Rate Limit State</h3>
+            <div id="rate-limit-info">
+                <p id="rate-limit-loading">Loading rate limit information...</p>
+                <div id="rate-limit-content" style="display: none;"></div>
+            </div>
+            <button id="refresh-rate-limits">Refresh Rate Limits</button>
+        </div>         
+        <div class="debug_item">
+            <h3>Plex Token Status</h3>
+            <div id="plex-token-status">
+                <div class="token-status-container">
+                    <!-- Status will be populated here -->
+                </div>
+                <button id="refresh-plex-tokens" class="btn">Refresh Tokens</button>
+            </div>
+        </div>
+        <div class="debug_item">
+            <h3>Personal Trakt Token Status</h3>
+            <div id="trakt-token-status">
+                <div class="token-status-container">
+                    <!-- Status will be populated here -->
+                </div>
+                <button id="refresh-trakt-tokens" class="btn">Refresh Status</button>
+            </div>
+        </div>
+        <div class="debug_item">
+            <h3>Torrent Tracking</h3>
+            <p class="description">View the history of torrent additions and their current status.</p>
+            <a href="{{ url_for('debug.torrent_tracking') }}" class="btn">View Torrent History</a>
+        </div>
+        <div class="debug_item">
+            <h3>Send Test Notification</h3>
+            <form id="send-test-notification-form">
+                <button type="submit">Send Test Notification</button>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Download Logs</h3>
+            <form id="download-logs-form">
+                <div class="form-group">
+                    <label for="log_lines">Number of log lines:</label>
+                    <input type="number" id="log_lines" name="lines" value="250" min="1" max="1000">
+                </div>
+                <button type="submit">Download Logs</button>
+            </form>
+        </div>
+        
         <!--
         <div class="debug_item">
             <h3>Bulk Subtitle Scan</h3>
@@ -380,22 +427,65 @@
             </form>
         </div>
         -->
-        <div class="debug_item">
-            <h3>Remove Duplicate Database Items</h3>
-            <p class="description">Find and remove duplicate database items based on the filled_by_file field. This will identify items with the same filename and remove the duplicates, keeping only one entry per unique file.</p>
-            <form id="remove-duplicates-form" action="/debug/api/remove_duplicate_items" method="POST">
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="dry_run_duplicates" name="dry_run" checked>
-                        Dry Run (Preview duplicates without deleting)
-                    </label>
-                </div>
-                <button type="submit">Find and Remove Duplicates</button>
-                <div id="remove-duplicates-results" class="results-area" style="margin-top: 15px;"></div>
-            </form>
         </div>
     </div>
 </div>
+
+<script>
+function switchDebugTab(tabName) {
+    // Hide all tab contents
+    const contents = document.querySelectorAll('.debug-tab-content');
+    contents.forEach(content => content.classList.remove('active'));
+    
+    // Remove active class from all tabs
+    const tabs = document.querySelectorAll('.debug-tab');
+    tabs.forEach(tab => tab.classList.remove('active'));
+    
+    // Show selected tab content
+    document.getElementById(tabName + '-tab').classList.add('active');
+    
+    // Add active class to clicked tab
+    event.target.classList.add('active');
+    
+    // Save the active tab to localStorage
+    localStorage.setItem('activeDebugTab', tabName);
+}
+
+// Function to restore the active tab on page load
+function restoreActiveTab() {
+    const savedTab = localStorage.getItem('activeDebugTab');
+    if (savedTab) {
+        // Hide all tab contents
+        const contents = document.querySelectorAll('.debug-tab-content');
+        contents.forEach(content => content.classList.remove('active'));
+        
+        // Remove active class from all tabs
+        const tabs = document.querySelectorAll('.debug-tab');
+        tabs.forEach(tab => tab.classList.remove('active'));
+        
+        // Show saved tab content
+        const tabContent = document.getElementById(savedTab + '-tab');
+        if (tabContent) {
+            tabContent.classList.add('active');
+            
+            // Find and activate the corresponding tab button
+            const tabButtons = document.querySelectorAll('.debug-tab');
+            tabButtons.forEach(button => {
+                if (button.textContent.toLowerCase() === savedTab) {
+                    button.classList.add('active');
+                }
+            });
+        }
+    }
+}
+
+// Restore tab on page load
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', restoreActiveTab);
+} else {
+    restoreActiveTab();
+}
+</script>
 
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module">
@@ -403,6 +493,11 @@
     // The 'Loading' object will be accessed from the global scope,
     // assuming loading.js makes it available there (e.g., window.Loading = Loading)
     // and is loaded before this module script.
+    
+    // Restore the active tab early
+    if (typeof restoreActiveTab === 'function') {
+        restoreActiveTab();
+    }
     
     // Define showToast function for notifications
     function showToast(message, type = 'info') {

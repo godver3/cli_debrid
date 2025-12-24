@@ -545,6 +545,14 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
         if movies_to_insert or episodes_to_insert or updated_any_title:
             conn.commit()
         
+        # Immediately trigger a Wanted queue run if new items were added
+        if items_added > 0:
+            try:
+                from queues.queue_manager import QueueManager
+                QueueManager().process_wanted()
+            except Exception as e:
+                logging.error(f"Error processing Wanted queue after adding items: {str(e)}", exc_info=True)
+        
         # Generate skip summary report
         skip_report = []
         if enable_granular_versions:

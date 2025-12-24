@@ -489,7 +489,8 @@ class AddingQueue:
                         scraping_items, # Fetched before loop
                         wanted_items,   # Fetched before loop
                         item,           # Original item for context
-                        xem_mapping=xem_mapping # Pass XEM mapping for season context
+                        xem_mapping=xem_mapping, # Pass XEM mapping for season context
+                        torrent_title=torrent_title # Pass torrent title for enhanced season detection
                     )
 
                     if related_matches:

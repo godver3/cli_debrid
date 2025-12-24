@@ -870,6 +870,66 @@ def set_wake_count(item_id: int, wake_count: int):
             conn.close()
 
 @retry_on_db_lock()
+def update_delayed_upgrade_eligibility(item_id: int, eligible: bool) -> bool:
+    """Update the delayed upgrade eligibility for a specific media item."""
+    conn = get_db_connection()
+    try:
+        conn.execute('''
+            UPDATE media_items
+            SET delayed_upgrade_eligible = ?, last_updated = ?
+            WHERE id = ?
+        ''', (eligible, datetime.now(), item_id))
+        conn.commit()
+        logging.debug(f"Updated delayed_upgrade_eligible to {eligible} for item ID {item_id}")
+        return True
+    except sqlite3.OperationalError as e:
+        logging.debug(f"OperationalError in update_delayed_upgrade_eligibility for item {item_id}: {e}. Handing over to retry_on_db_lock.")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_delayed_upgrade_eligibility after OperationalError: {rb_ex}")
+        raise
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error updating delayed_upgrade_eligible for item ID {item_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_delayed_upgrade_eligibility after sqlite3.Error: {rb_ex}")
+        return False
+    except Exception as e:
+        logging.error(f"Unexpected error updating delayed_upgrade_eligibility for item ID {item_id}: {str(e)}")
+        try:
+            if conn: conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in update_delayed_upgrade_eligibility after Exception: {rb_ex}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+@retry_on_db_lock()
+def get_delayed_upgrade_eligible_items(days_threshold: int) -> List[dict]:
+    """Get items eligible for delayed upgrade scraping that were released exactly N days ago."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('''
+            SELECT * FROM media_items
+            WHERE delayed_upgrade_eligible = 1
+            AND release_date IS NOT NULL
+            AND date(release_date) = date('now', '-{} days')
+            AND state = 'Collected'
+        '''.format(days_threshold))
+        
+        items = [dict(row) for row in cursor.fetchall()]
+        logging.info(f"Found {len(items)} items eligible for delayed upgrade scraping (released exactly {days_threshold} days ago)")
+        return items
+    except Exception as e:
+        logging.error(f"Error getting delayed upgrade eligible items: {str(e)}")
+        return []
+    finally:
+        conn.close()
+
+@retry_on_db_lock()
 def increment_wake_count(item_id: int) -> int:
     """Increment the wake count for a specific media item and return the new count."""
     conn = get_db_connection()

@@ -1054,11 +1054,11 @@ h2 {
     }
 
     .task-monitor-container.visible {
-        transform: translateY(0); 
+        transform: translateY(50px); 
     }
     
     .task-monitor-container.visible + .task-monitor-toggle {
-        bottom: 55px; /* Position it above the taller task display bar */
+        bottom: 105px; /* Position it above the extended task display bar (55px + 50px) */
     }
     
     .task-monitor-container.hidden {
@@ -1084,7 +1084,7 @@ h2 {
         min-width: 100%;
         box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
         /* Make taller and align content to top on mobile */
-        padding-bottom: 10px; /* Original from base is 10px, this adds 15px height */
+        padding-bottom: 60px; /* Extended from 10px to 60px to cover bottom of screen */
         align-items: flex-start; /* Aligns text spans to the top */
     }
     
@@ -1540,11 +1540,11 @@ h2 {
     }
 
     .task-monitor-container.visible {
-        transform: translateY(0); 
+        transform: translateY(50px); 
     }
     
     .task-monitor-container.visible + .task-monitor-toggle {
-        bottom: 55px; /* Position it above the taller task display bar */
+        bottom: 105px; /* Position it above the extended task display bar (55px + 50px) */
     }
     
     .task-monitor-container.hidden {
@@ -1570,7 +1570,7 @@ h2 {
         min-width: 100%;
         box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
         /* Make taller and align content to top on mobile */
-        padding-bottom: 10px; /* Original from base is 10px, this adds 15px height */
+        padding-bottom: 60px; /* Extended from 10px to 60px to cover bottom of screen */
         align-items: flex-start; /* Aligns text spans to the top */
     }
     
@@ -1732,7 +1732,7 @@ header:hover ~ .rate-limits-section {
 /* Add this class for visibility control via JS */
 .rate-limits-section.visible {
     /* Maintain horizontal centering, move vertically into view */
-    transform: translateX(-50%) translateY(0); 
+    transform: translateX(-50%) translateY(50px); 
     opacity: 1;
     pointer-events: auto;
 }
@@ -2791,7 +2791,7 @@ body.modal-open {
     }
 
     .task-monitor-container.visible + .task-monitor-toggle {
-        bottom: 95px;
+        bottom: 145px; /* Extended from 95px to 145px (95px + 50px) */
     }
 }
 
@@ -2913,6 +2913,6 @@ body.modal-open {
     }
 
     .task-monitor-container.visible + .task-monitor-toggle {
-        bottom: calc(env(safe-area-inset-bottom, 0px) + 95px) !important;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 145px) !important; /* Extended from 95px to 145px (95px + 50px) */
     }
 }

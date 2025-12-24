@@ -82,6 +82,13 @@
         justify-content: space-between;
         align-items: center;
         font-size: 1.1em;
+        transition: background-color 0.3s ease;
+    }
+
+    /* Disabled scraper/source header style */
+    .settings-section-header.scraper-disabled,
+    .settings-section-header.source-disabled {
+        background-color: #6d4040 !important;
     }
 
     .settings-section-header h4 {
@@ -488,6 +495,91 @@
     
     <div id="saveStatus"></div>
 </div>
+
+<!-- Date & Time Format Modal -->
+<div id="dateTimeFormatModal" class="format-modal">
+    <div class="format-modal-overlay"></div>
+    <div class="format-modal-content">
+        <div class="format-modal-header">
+            <h4 class="format-modal-title">Date & Time Format Options</h4>
+            <button type="button" class="format-modal-close">&times;</button>
+        </div>
+        <div class="format-modal-body">
+            <h3 style="margin-top: 0; color: #4CAF50;">Date Codes:</h3>
+            <table class="notification-params time-options">
+                <thead><tr><th>Code</th><th>Description</th><th>Example</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>%Y</strong></td><td>Year with century (4 digits)</td><td>2024</td></tr>
+                    <tr><td><strong>%y</strong></td><td>Year without century (2 digits)</td><td>24</td></tr>
+                    <tr><td><strong>%m</strong></td><td>Month as zero-padded number</td><td>01-12</td></tr>
+                    <tr><td><strong>%B</strong></td><td>Full month name</td><td>January, February</td></tr>
+                    <tr><td><strong>%b</strong></td><td>Abbreviated month name</td><td>Jan, Feb</td></tr>
+                    <tr><td><strong>%d</strong></td><td>Day of month as zero-padded number</td><td>01-31</td></tr>
+                    <tr><td><strong>%-d</strong></td><td>Day of month without padding</td><td>1-31</td></tr>
+                    <tr><td><strong>%j</strong></td><td>Day of year as zero-padded number</td><td>001-366</td></tr>
+                    <tr><td><strong>%-j</strong></td><td>Day of year without padding</td><td>1-366</td></tr>
+                </tbody>
+            </table>
+
+            <h3 style="color: #4CAF50; margin-top: 20px;">Day of Week:</h3>
+            <table class="notification-params time-options">
+                <thead><tr><th>Code</th><th>Description</th><th>Example</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>%A</strong></td><td>Full weekday name</td><td>Monday, Tuesday</td></tr>
+                    <tr><td><strong>%a</strong></td><td>Abbreviated weekday name</td><td>Mon, Tue</td></tr>
+                    <tr><td><strong>%w</strong></td><td>Weekday as number (0=Sunday)</td><td>0-6</td></tr>
+                    <tr><td><strong>%u</strong></td><td>Weekday as number (1=Monday)</td><td>1-7</td></tr>
+                </tbody>
+            </table>
+
+            <h3 style="color: #4CAF50; margin-top: 20px;">Time Codes:</h3>
+            <table class="notification-params time-options">
+                <thead><tr><th>Code</th><th>Description</th><th>Example</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>%H</strong></td><td>Hour (24-hour) zero-padded</td><td>00-23</td></tr>
+                    <tr><td><strong>%-H</strong></td><td>Hour (24-hour) without padding</td><td>0-23</td></tr>
+                    <tr><td><strong>%I</strong></td><td>Hour (12-hour) zero-padded</td><td>01-12</td></tr>
+                    <tr><td><strong>%-I</strong></td><td>Hour (12-hour) without padding</td><td>1-12</td></tr>
+                    <tr><td><strong>%M</strong></td><td>Minute zero-padded</td><td>00-59</td></tr>
+                    <tr><td><strong>%-M</strong></td><td>Minute without padding</td><td>0-59</td></tr>
+                    <tr><td><strong>%S</strong></td><td>Second zero-padded</td><td>00-59</td></tr>
+                    <tr><td><strong>%-S</strong></td><td>Second without padding</td><td>0-59</td></tr>
+                    <tr><td><strong>%f</strong></td><td>Microsecond (6 digits)</td><td>000000-999999</td></tr>
+                    <tr><td><strong>%p</strong></td><td>AM/PM</td><td>AM, PM</td></tr>
+                </tbody>
+            </table>
+
+            <h3 style="color: #4CAF50; margin-top: 20px;">Timezone:</h3>
+            <table class="notification-params time-options">
+                <thead><tr><th>Code</th><th>Description</th><th>Example</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>%z</strong></td><td>UTC offset</td><td>+0100, -0700</td></tr>
+                    <tr><td><strong>%Z</strong></td><td>Timezone name</td><td>UTC, EST, PST</td></tr>
+                </tbody>
+            </table>
+
+            <h3 style="color: #4CAF50; margin-top: 20px;">Common Format Examples:</h3>
+            <table class="notification-params time-options">
+                <thead><tr><th>Format</th><th>Description</th><th>Example Output</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>%Y-%m-%d</strong></td><td>ISO date format</td><td>2024-12-22</td></tr>
+                    <tr><td><strong>%m/%d/%Y</strong></td><td>US date format</td><td>12/22/2024</td></tr>
+                    <tr><td><strong>%d/%m/%Y</strong></td><td>European date format</td><td>22/12/2024</td></tr>
+                    <tr><td><strong>%B %d, %Y</strong></td><td>Long date format</td><td>December 22, 2024</td></tr>
+                    <tr><td><strong>%H:%M:%S</strong></td><td>24-hour time</td><td>14:30:45</td></tr>
+                    <tr><td><strong>%I:%M:%S %p</strong></td><td>12-hour time with AM/PM</td><td>02:30:45 PM</td></tr>
+                    <tr><td><strong>%H:%M:%S.%f</strong></td><td>Time with microseconds</td><td>14:30:45.123456</td></tr>
+                    <tr><td><strong>%Y-%m-%d %H:%M:%S</strong></td><td>Full datetime</td><td>2024-12-22 14:30:45</td></tr>
+                </tbody>
+            </table>
+
+            <p style="margin-top: 20px; padding: 10px; background-color: #1a1a1a; border-radius: 5px; color: #aaa;">
+                <strong>Note:</strong> The <code>%-</code> prefix (e.g., <code>%-d</code>, <code>%-H</code>) removes leading zeros but may not work on all platforms (especially Windows). For maximum compatibility, use zero-padded versions.
+            </p>
+        </div>
+    </div>
+</div>
+
 <script type="module" src="{{ url_for('static', filename='js/settings.js') }}"></script>
 <script type="module">
     import { updateSettings } from '/static/js/settings.js';
@@ -601,6 +693,9 @@
         const tabContents = document.querySelectorAll('.settings-tab-content');
         const tabSelect = document.querySelector('.settings-tab-select');
         
+        // Initialize format modal handlers
+        initializeFormatModal();
+        
         initializeTabSwitching();
         initializeExpandCollapse();
 
@@ -673,5 +768,42 @@
             updateSettings();
         });
     });
+    
+    function initializeFormatModal() {
+        // Handle clicks on format help links
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('format-help-link')) {
+                e.preventDefault();
+                const modalId = e.target.getAttribute('data-modal');
+                const modal = document.getElementById(modalId);
+                if (modal) {
+                    modal.style.display = 'block';
+                }
+            }
+        });
+        
+        // Handle close button clicks
+        document.querySelectorAll('.format-modal-close').forEach(closeBtn => {
+            closeBtn.addEventListener('click', function() {
+                this.closest('.format-modal').style.display = 'none';
+            });
+        });
+        
+        // Handle overlay clicks to close modal
+        document.querySelectorAll('.format-modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', function() {
+                this.closest('.format-modal').style.display = 'none';
+            });
+        });
+        
+        // Handle ESC key to close modal
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.format-modal').forEach(modal => {
+                    modal.style.display = 'none';
+                });
+            }
+        });
+    }
 </script>
 {% endblock %}

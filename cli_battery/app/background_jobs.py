@@ -2,13 +2,14 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from datetime import datetime, timezone, timedelta
 from app.logger_config import logger
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, sessionmaker, selectinload
 from sqlalchemy import func, select
 from flask import current_app
 import time
 import requests
+import threading
 
-from .database import DatabaseManager, Item, init_db, Session as DbSession
+from .database import DatabaseManager, Item, init_db, Session as DbSession, Metadata
 from .metadata_manager import MetadataManager
 from .settings import Settings
 from metadata.metadata import _get_local_timezone
@@ -24,6 +25,10 @@ class BackgroundJobManager:
         # Rate limiting for Trakt API
         self.last_api_call = 0
         self.min_call_interval = 3.0  # Minimum 1 second between API calls
+        # Separate locks for different types of jobs to avoid conflicts
+        self._trakt_lock = threading.Lock()  # For Trakt update jobs
+        self._migration_lock = threading.Lock()  # For migration jobs
+        self._stale_lock = threading.Lock()  # For stale metadata jobs
 
     def init_app(self, app):
         """Initialize with Flask app context"""
@@ -54,7 +59,7 @@ class BackgroundJobManager:
         # Add jobs here
         self.scheduler.add_job(
             func=self.refresh_trakt_updates,
-            trigger=IntervalTrigger(hours=6),
+            trigger=IntervalTrigger(hours=1),
             id='refresh_trakt_updates',
             name='Refresh Metadata via Trakt Updates',
             replace_existing=True
@@ -74,6 +79,16 @@ class BackgroundJobManager:
                 name='Initial Trakt Updates Refresh'
             )
             logger.info("Initial Trakt updates refresh scheduled in 5 seconds")
+
+            # Schedule one-time migration for returning series and recent movies
+            self.scheduler.add_job(
+                func=self.migrate_returning_series_and_recent_movies_refresh,
+                trigger='date',  # Run once
+                run_date=datetime.now(local_tz) + timedelta(seconds=60),  # 60 seconds after start
+                id='migration_returning_and_recent',
+                name='Migration: Refresh Returning Series & Recent Movies'
+            )
+            logger.info("Migration for returning series and recent movies scheduled in 60 seconds")
             
         except Exception as e:
             logger.error(f"Failed to start background job scheduler: {e}")
@@ -110,6 +125,10 @@ class BackgroundJobManager:
 
     def refresh_trakt_updates(self):
         """Fetch Trakt updated shows/movies since last cursor and refresh only those items."""
+        if not self._trakt_lock.acquire(blocking=False):
+            logger.info("A Trakt refresh job is already running. Skipping Trakt updates refresh.")
+            return
+        
         try:
             trakt = TraktMetadata()
             cursors = self.settings.trakt_updates or {}
@@ -218,9 +237,15 @@ class BackgroundJobManager:
 
         except Exception as e:
             logger.error(f"Error in refresh_trakt_updates: {e}", exc_info=True)
+        finally:
+            self._trakt_lock.release()
 
     def refresh_stale_metadata(self):
         """Check and refresh stale metadata for all items"""
+        if not self._stale_lock.acquire(blocking=False):
+            logger.info("A stale metadata refresh job is already running. Skipping stale metadata refresh.")
+            return
+
         try:
             # Rate limiting strategy:
             # - Trakt allows 1000 GET requests per 5 minutes (~3.33 requests/second)
@@ -319,6 +344,156 @@ class BackgroundJobManager:
 
         except Exception as e:
             logger.error(f"Error in refresh_stale_metadata job setup: {e}", exc_info=True)
+        finally:
+            self._stale_lock.release()
+
+    def migrate_returning_series_and_recent_movies_refresh(self):
+        """One-time migration to refresh shows with status 'returning series' and movies with recent/future release dates."""
+        if not self._migration_lock.acquire(blocking=False):
+            logger.info("A migration job is already running. Skipping migration.")
+            return
+
+        try:
+            # Check if migration has already been completed
+            migration_name = "returning_series_and_recent_movies_v1"
+            if DatabaseManager.check_migration_flag(migration_name):
+                logger.info("Migration has already been completed. Skipping.")
+                return
+
+            logger.info("Starting one-time migration for returning series shows and recent movies...")
+
+            # Calculate date range: past 3 months to future 3 months
+            now = datetime.now(_get_local_timezone())
+            past_cutoff = now - timedelta(days=90)  # 3 months ago
+            future_cutoff = now + timedelta(days=90)  # 3 months from now
+
+            with DbSession() as session:
+                items_to_refresh = []
+
+                # Find all shows with status "returning series"
+                returning_shows = session.query(Item).options(
+                    selectinload(Item.item_metadata)
+                ).filter(
+                    Item.type == 'show'
+                ).join(Metadata).filter(
+                    Metadata.key == 'status',
+                    Metadata.value == '"returning series"'  # JSON stored as string
+                ).all()
+
+                # Extract data while session is still open
+                for item in returning_shows:
+                    items_to_refresh.append({
+                        'imdb_id': item.imdb_id,
+                        'title': item.title,
+                        'type': 'show'
+                    })
+
+                logger.info(f"Found {len(returning_shows)} shows with status 'returning series'")
+
+                # Find movies with release dates in the past 3 months or next 3 months
+                recent_movies = []
+                all_movies = session.query(Item).options(
+                    selectinload(Item.item_metadata)
+                ).filter(
+                    Item.type == 'movie'
+                ).join(Metadata).filter(
+                    Metadata.key == 'release_dates'
+                ).all()
+
+                for movie in all_movies:
+                    try:
+                        # Find the release_dates metadata for this movie
+                        release_metadata = next((m for m in movie.item_metadata if m.key == 'release_dates'), None)
+                        if not release_metadata:
+                            continue
+
+                        import json
+                        release_dates = json.loads(release_metadata.value)
+
+                        if isinstance(release_dates, dict):
+                            # Check if any release date falls within our window
+                            has_recent_release = False
+                            for country, releases in release_dates.items():
+                                if isinstance(releases, list):
+                                    for release in releases:
+                                        if isinstance(release, dict) and 'date' in release:
+                                            try:
+                                                release_date = datetime.fromisoformat(release['date'])
+                                                if past_cutoff.date() <= release_date.date() <= future_cutoff.date():
+                                                    has_recent_release = True
+                                                    break
+                                            except (ValueError, TypeError):
+                                                continue
+                                if has_recent_release:
+                                    break
+
+                            if has_recent_release:
+                                recent_movies.append({
+                                    'imdb_id': movie.imdb_id,
+                                    'title': movie.title,
+                                    'type': 'movie'
+                                })
+
+                    except (json.JSONDecodeError, TypeError, AttributeError) as e:
+                        logger.debug(f"Error parsing release dates for movie {movie.imdb_id}: {e}")
+                        continue
+
+                items_to_refresh.extend(recent_movies)
+                logger.info(f"Found {len(recent_movies)} movies with release dates in past/future 3 months")
+
+                total_items = len(items_to_refresh)
+                if not total_items:
+                    logger.info("No items found needing migration refresh. Migration complete.")
+                    DatabaseManager.set_migration_flag(
+                        migration_name,
+                        "Migration completed - no items found needing refresh"
+                    )
+                    return
+
+                logger.info(f"Total items to refresh: {total_items} (shows: {len(returning_shows)}, movies: {len(recent_movies)})")
+
+                refreshed_count = 0
+                failed_count = 0
+
+                for item_data in items_to_refresh:
+                    try:
+                        self._enforce_rate_limit()
+
+                        # Force refresh this item to ensure it's up to date
+                        result = MetadataManager.refresh_metadata(item_data['imdb_id'])
+
+                        if result is not None:
+                            refreshed_count += 1
+                            logger.info(f"Migration refresh successful for {item_data['type']}: {item_data['imdb_id']} - {item_data['title']}")
+                        else:
+                            failed_count += 1
+                            logger.warning(f"Migration refresh failed for {item_data['type']}: {item_data['imdb_id']} - {item_data['title']}")
+
+                    except Exception as e:
+                        failed_count += 1
+                        logger.error(f"Error during migration refresh for {item_data['type']} {item_data['imdb_id']}: {e}")
+                        continue
+
+                # Count shows and movies from the processed items
+                show_count = sum(1 for item in items_to_refresh if item['type'] == 'show')
+                movie_count = sum(1 for item in items_to_refresh if item['type'] == 'movie')
+
+                logger.info(
+                    f"Migration check complete: refreshed {refreshed_count}/{total_items} items "
+                    f"({failed_count} failed) - {show_count} shows, {movie_count} movies"
+                )
+
+                # Mark migration as complete
+                DatabaseManager.set_migration_flag(
+                    migration_name,
+                    f"Migration completed - refreshed {refreshed_count}/{total_items} items "
+                    f"({show_count} shows, {movie_count} movies)"
+                )
+
+        except Exception as e:
+            logger.error(f"Error in migrate_returning_series_and_recent_movies_refresh: {e}", exc_info=True)
+        finally:
+            self._migration_lock.release()
 
 # Global instance
 background_jobs = BackgroundJobManager()

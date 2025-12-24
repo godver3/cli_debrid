@@ -74,7 +74,43 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Hide the Patreon support message in the header",
             "default": False
-        }
+        },
+        "recently_added_limit": {
+             "type": "integer",
+             "description": "Amount of items displayed for recently added on statistics page",
+             "default": 5,
+             "min": 5,
+             "max": 14
+         },
+        "recently_upgraded_limit": {
+             "type": "integer",
+             "description": "Amount of items displayed for recently upgraded on statistics page",
+             "default": 5,
+             "min": 5,
+             "max": 14
+         },
+        "upcoming_releases_start_limit": {
+             "type": "integer",
+             "description": "How many days back should be displayed on statistics page, 0 being today and 7 being a week back.",
+             "default": 0,
+             "min": 0
+         },
+        "upcoming_releases_end_limit": {
+             "type": "integer",
+             "description": "How many days forward should be displayed on statistics page",
+             "default": 28,
+             "min": 0
+         },
+        "date_format": {
+             "type": "string",
+             "description": "Set your preferred date format. <a href='#' class='format-help-link' data-modal='dateTimeFormatModal'>Click here</a> to see the parameter list.",
+             "default": "%Y-%m-%d"
+         },
+        "time_format": {
+             "type": "string",
+             "description": "Set your preferred time format. <a href='#' class='format-help-link' data-modal='dateTimeFormatModal'>Click here</a> to see the parameter list.",
+             "default": "%H:%M:%S"
+         }
     },
     "Plex": {
         "tab": "Required Settings",
@@ -375,6 +411,12 @@ SETTINGS_SCHEMA = {
             "default": 0.1,
             "min": 0.0,
             "max": 1.0
+        },
+        "delayed_upgrade_scrape_days": {
+            "type": "integer",
+            "description": "Number of days to wait before attempting a single upgrade scrape on an item. Set to 0 to disable delayed upgrade scraping.",
+            "default": 0,
+            "min": 0
         },
         "enable_upgrading_cleanup": {
             "type": "boolean",
@@ -1534,6 +1576,11 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Comma-separated list of language codes (e.g., eng,zho,spa). Uses ISO-639-3 codes.",
             "default": "eng,zho"
+        },
+        "include_ai_translated_subtitles": {
+            "type": "boolean",
+            "description": "Include AI translated subtitles in search results. These may have lower quality but provide broader language coverage.",
+            "default": True
         },
         "subtitle_providers": {
             "type": "list",

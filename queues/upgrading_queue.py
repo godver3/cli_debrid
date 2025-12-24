@@ -34,6 +34,8 @@ class UpgradingQueue:
         self.failed_upgrades = self.load_failed_upgrades()
         self.upgrade_states = self.load_upgrade_states()
         self.currently_processing_item_id: Optional[str] = None
+        # Track last run date for the daily delayed-upgrade pass
+        self._last_delayed_upgrade_run_date = None
 
     def load_upgrades_data(self):
         try:
@@ -342,6 +344,19 @@ class UpgradingQueue:
 
     def process(self, queue_manager=None):
         current_time = datetime.now()
+        # Run delayed upgrade scrape once per day based on setting Scraping.delayed_upgrade_scrape_days
+        try:
+            days_setting = get_setting('Scraping', 'delayed_upgrade_scrape_days', '0')
+            delayed_days = int(days_setting) if str(days_setting).strip() else 0
+        except Exception:
+            delayed_days = 0
+        if delayed_days > 0:
+            today = current_time.date()
+            if self._last_delayed_upgrade_run_date != today:
+                try:
+                    self._run_daily_delayed_upgrade_scrape(delayed_days)
+                finally:
+                    self._last_delayed_upgrade_run_date = today
         for item in self.items[:]:  # Create a copy of the list to iterate over
             try:
                 item_id = item['id']
@@ -392,6 +407,45 @@ class UpgradingQueue:
 
         # Clean up upgrade times for items no longer in the queue
         self.clean_up_upgrade_times()
+
+    def _run_daily_delayed_upgrade_scrape(self, delayed_days: int):
+        """Perform a one-time daily upgrade scrape for items released exactly delayed_days ago.
+
+        Eligibility is controlled by media_items.delayed_upgrade_eligible flag. Each item is
+        scraped at most once by this routine; after scraping we disable the flag.
+        """
+        try:
+            from database.database_writing import (
+                get_delayed_upgrade_eligible_items,
+                update_delayed_upgrade_eligibility,
+            )
+        except Exception as e:
+            logging.error(f"Unable to import delayed-upgrade DB helpers: {e}")
+            return
+
+        try:
+            candidates = get_delayed_upgrade_eligible_items(delayed_days) or []
+        except Exception as e:
+            logging.error(f"Failed to load delayed-upgrade candidates: {e}")
+            return
+
+        if not candidates:
+            logging.info("No delayed-upgrade candidates found today")
+            return
+
+        logging.info(f"Delayed-upgrade daily pass: {len(candidates)} candidate(s) at {delayed_days} days since release")
+
+        for item in candidates:
+            try:
+                item_id = item.get('id')
+                if not item_id:
+                    continue
+                # Mark as consumed before attempting (ensures single run)
+                update_delayed_upgrade_eligibility(item_id, False)
+                # Perform single scrape attempt
+                self.hourly_scrape(item, queue_manager=None)
+            except Exception as e:
+                logging.error(f"Delayed-upgrade scrape failed for item {item.get('id')}: {e}")
 
     def should_perform_hourly_scrape(self, item_id: str, current_time: datetime) -> bool:
         #return True

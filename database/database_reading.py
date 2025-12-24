@@ -863,13 +863,19 @@ def get_item_count_by_state(state: str) -> int:
     conn = None
     try:
         conn = get_db_connection()
-        
+
+        # Try to create the index if it doesn't exist (one-time operation)
+        try:
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_state ON media_items(state);')
+        except Exception as e:
+            logging.debug(f"Index creation attempt (may already exist): {e}")
+
         # Special handling for Blacklisted state to exclude ghostlisted items
         if state == 'Blacklisted':
             query = 'SELECT COUNT(*) as count FROM media_items WHERE state = ? AND (ghostlisted IS NULL OR ghostlisted = 0)'
         else:
             query = 'SELECT COUNT(*) as count FROM media_items WHERE state = ?'
-            
+
         cursor = conn.execute(query, (state,))
         result = cursor.fetchone()
         return result['count'] if result else 0

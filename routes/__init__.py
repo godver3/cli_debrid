@@ -38,6 +38,7 @@ from .content_requestor_routes import content_requestor_bp
 from .connections_routes import connections_bp
 from .user_token_routes import user_token_bp
 from .symlink_tools_routes import symlink_tools_bp
+from .metadata_routes import metadata_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
@@ -158,7 +159,8 @@ def register_blueprints(app):
         (settings_validation_bp, '/settings_validation'),
         (connections_bp, '/connections'),
         (user_token_bp, '/user_token'),
-        (symlink_tools_bp, '/symlink_tools')
+        (symlink_tools_bp, '/symlink_tools'),
+        (metadata_bp, '/metadata')
     ]
     
     for blueprint, url_prefix in blueprints:

@@ -67,7 +67,7 @@
                                {% if key == 'content_source_priority' %}placeholder="e.g., Plex,Trakt,Overseerr,Radarr,Sonarr"{% endif %}>
                     {% endif %}
                     {% if value.description %}
-                        <p class="settings-description">{{ value.description }}</p>
+                        <p class="settings-description">{{ value.description|safe }}</p>
                         {% if key == 'content_source_priority' %}
                         <!-- <div id="content-source-priority-container" class="content-source-priority" style="display: none;">
                             <p class="settings-description" style="margin-top: 5px;">
@@ -324,7 +324,7 @@
                                {% if key == 'content_source_priority' %}placeholder="e.g., Plex,Trakt,Overseerr,Radarr,Sonarr"{% endif %}>
                     {% endif %}
                     {% if value.description %}
-                        <p class="settings-description">{{ value.description }}</p>
+                        <p class="settings-description">{{ value.description|safe }}</p>
                         {% if key == 'content_source_priority' %}
                         <!-- <div id="content-source-priority-container" class="content-source-priority">
                             <p class="settings-description" style="margin-top: 5px;">
@@ -784,6 +784,14 @@
                    data-section="Subtitle Settings" data-key="subtitle_languages">
             <p class="settings-description">Comma-separated list of language codes (e.g., eng,zho,spa). Uses ISO-639-3 codes.</p>
         </div>
+
+        <!-- <div class="settings-form-group">
+            <label for="additional-include_ai_translated_subtitles" class="settings-title">Include AI Translated Subtitles:</label>
+            <input type="checkbox" id="additional-include_ai_translated_subtitles" name="Subtitle Settings.include_ai_translated_subtitles"
+                   data-section="Subtitle Settings" data-key="include_ai_translated_subtitles"
+                   {% if settings.get('Subtitle Settings', {}).get('include_ai_translated_subtitles', True) %}checked{% endif %}>
+            <p class="settings-description">Include AI translated subtitles in search results. These may have lower quality but provide broader language coverage.</p>
+        </div>-->
 
         <!-- subtitle_providers setting removed - providers are now hardcoded in downsub.sh -->
 

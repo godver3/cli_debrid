@@ -10,6 +10,37 @@
     function initializeScrapersFunctionality() {
         initializeAddScraperButton();
         initializeDeleteButtons();
+        initializeScraperEnabledListeners();
+        updateAllScraperHeaderColors();
+    }
+
+    function updateAllScraperHeaderColors() {
+        document.querySelectorAll('.settings-section').forEach(section => {
+            const checkbox = section.querySelector('input[type="checkbox"][id$="-enabled"]');
+            if (checkbox) {
+                updateScraperHeaderColor(section, checkbox.checked);
+            }
+        });
+    }
+
+    function updateScraperHeaderColor(section, isEnabled) {
+        const header = section.querySelector('.settings-section-header');
+        if (header) {
+            if (isEnabled) {
+                header.classList.remove('scraper-disabled');
+            } else {
+                header.classList.add('scraper-disabled');
+            }
+        }
+    }
+
+    function initializeScraperEnabledListeners() {
+        document.querySelectorAll('input[type="checkbox"][id$="-enabled"]').forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                const section = this.closest('.settings-section');
+                updateScraperHeaderColor(section, this.checked);
+            });
+        });
     }
 
     function initializeAddScraperButton() {
@@ -168,7 +199,7 @@
 
 {% for scraper_id, config in settings.Scrapers.items() %}
 <div class="settings-section">
-    <div class="settings-section-header">
+    <div class="settings-section-header{% if not config.enabled %} scraper-disabled{% endif %}">
         <span class="settings-toggle-icon">+</span>
         <h4>{{ scraper_id }}</h4>
         <button type="button" class="delete-scraper-btn" data-scraper-id="{{ scraper_id }}">Delete Scraper</button>
@@ -195,6 +226,7 @@
         <div class="settings-form-group">
             <label for="{{ scraper_id }}-enabled-indexers" class="settings-title">Enabled Indexers:</label>
             <input type="text" id="{{ scraper_id }}-enabled-indexers" name="Scrapers.{{ scraper_id }}.enabled_indexers" value="{{ config.enabled_indexers }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.enabled_indexers">
+            <small class="settings-description">Leave blank to use all indexers, otherwise comma separated list of indexers to scrape.</small>
         </div>
         {% elif config.type == 'Prowlarr' %}
         <div class="settings-form-group">
@@ -211,6 +243,7 @@
         <div class="settings-form-group">
             <label for="{{ scraper_id }}-opts" class="settings-title">Options:</label>
             <input type="text" id="{{ scraper_id }}-opts" name="Scrapers.{{ scraper_id }}.opts" value="{{ config.opts }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.opts">
+            <small class="settings-description">Leave blank to use default options, otherwise copy from Torrentio URL. Recommend leaving blank.</small>
         </div>
         {% endif %}
     </div>

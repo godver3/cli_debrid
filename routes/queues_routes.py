@@ -40,6 +40,135 @@ _torrent_status_cache = {}
 _torrent_status_cache_lock = threading.Lock()
 TORRENT_STATUS_CACHE_DURATION = 60  # Cache for 60 seconds
 
+def get_queue_contents_with_progressive_fallback(queue_manager, max_time=20):
+    """
+    Get queue contents with progressive fallback based on time taken.
+    Returns minimal data if taking too long, allowing the UI to still show something useful.
+    """
+    import time
+
+    start_time = time.time()
+    result_queue = {}
+    errors = {}
+
+    # First, try to get quick summary data for all queues
+    summary_start = time.time()
+    quick_summary = {}
+
+    for queue_name, queue in queue_manager.queues.items():
+        try:
+            # Get just the count first - this should be fast for most queues
+            if hasattr(queue, 'items'):
+                count = len(queue.items)
+            elif hasattr(queue, '__len__'):
+                count = len(queue)
+            else:
+                # For database-backed queues, try to get count with timeout protection
+                if queue_name in ['Wanted', 'Blacklisted', 'Unreleased']:
+                    count_start = time.time()
+                    from database.database_reading import get_item_count_by_state
+                    count = get_item_count_by_state(queue_name)
+                    count_time = time.time() - count_start
+
+                    # Log timing for debugging
+                    if count_time > 0.1:  # Log queries that take more than 100ms
+                        logging.debug(f"[QUEUE_ROUTES] Count query for {queue_name} took {count_time:.3f}s (result: {count})")
+
+                    # If a single count query takes too long, skip database counts entirely
+                    if count_time > 1.0:  # More than 1 second for one count
+                        logging.warning(f"[QUEUE_ROUTES] Count query for {queue_name} took {count_time:.3f}s, skipping remaining database counts")
+                        # Return what we have so far and mark as minimal
+                        for remaining_queue in ['Wanted', 'Blacklisted', 'Unreleased']:
+                            if remaining_queue not in quick_summary:
+                                quick_summary[remaining_queue] = {'count': 0, 'loaded': False, 'items': []}
+                        # Convert to expected format - empty lists for all queues
+                        minimal_result = {}
+                        for queue_name in quick_summary.keys():
+                            minimal_result[queue_name] = []
+                        return minimal_result, "minimal"
+                else:
+                    count = 0
+
+            quick_summary[queue_name] = {
+                'count': count,
+                'loaded': False,  # Will be set to True when full data is loaded
+                'items': []  # Placeholder for items
+            }
+        except Exception as e:
+            logging.warning(f"Error getting summary for queue {queue_name}: {e}")
+            quick_summary[queue_name] = {'count': 0, 'loaded': False, 'items': []}
+
+    summary_time = time.time() - summary_start
+    logging.debug(f"[QUEUE_ROUTES] Queue summary took {summary_time:.3f}s")
+
+    # If summary took too long, return minimal data immediately
+    if summary_time > max_time / 3:  # Reduced threshold - if summary takes >6.67s, bail
+        logging.warning(f"[QUEUE_ROUTES] Summary took {summary_time:.3f}s, returning minimal data")
+        # Convert to expected format - empty lists for all queues
+        minimal_result = {}
+        for queue_name in quick_summary.keys():
+            minimal_result[queue_name] = []
+        return minimal_result, "minimal"
+
+    # Now try to get full contents, but with time tracking
+    full_load_start = time.time()
+    for queue_name, queue in queue_manager.queues.items():
+        queue_start = time.time()
+
+        try:
+            # Skip database-backed queues that are slow to load fully
+            if queue_name in ['Wanted', 'Blacklisted', 'Unreleased']:
+                # For these queues, we'll load them separately or use counts only
+                quick_summary[queue_name]['loaded'] = 'partial'  # Mark as partial
+                continue
+
+            # Get full contents for in-memory queues
+            items = queue.get_contents()
+            quick_summary[queue_name]['items'] = items
+            quick_summary[queue_name]['loaded'] = True
+
+            queue_time = time.time() - queue_start
+            if queue_time > 2.0:  # Log slow queues
+                logging.debug(f"[QUEUE_ROUTES] Queue {queue_name} took {queue_time:.3f}s ({len(items)} items)")
+
+            # Check if we're approaching the time limit
+            elapsed = time.time() - start_time
+            if elapsed > max_time:
+                logging.warning(f"[QUEUE_ROUTES] Approaching time limit ({elapsed:.1f}s), stopping full load")
+                break
+
+        except Exception as e:
+            logging.error(f"Error loading queue {queue_name}: {e}")
+            errors[queue_name] = str(e)
+            quick_summary[queue_name]['error'] = str(e)
+
+    full_load_time = time.time() - full_load_start
+    total_time = time.time() - start_time
+
+    logging.debug(f"[QUEUE_ROUTES] Full queue loading took {full_load_time:.3f}s (total: {total_time:.3f}s)")
+
+    # Convert to the expected format for compatibility
+    final_result = {}
+    for queue_name, data in quick_summary.items():
+        if data['loaded'] == True:
+            # Full data loaded
+            final_result[queue_name] = data['items']
+        elif data['loaded'] == 'partial':
+            # Partial data - return empty list but mark for lazy loading
+            final_result[queue_name] = []
+        else:
+            # No data loaded - return empty list
+            final_result[queue_name] = []
+
+    # If we have any errors or timed out, include that info
+    error_info = None
+    if errors:
+        error_info = f"Some queues had errors: {', '.join(errors.keys())}"
+    elif total_time > max_time:
+        error_info = "timeout"
+
+    return final_result, error_info
+
 def get_cached_torrent_status(torrent_id: str, queue_manager) -> Optional[Dict]:
     """Get cached torrent status or return None if cache miss/expired"""
     with _torrent_status_cache_lock:
@@ -232,11 +361,23 @@ def index():
     # --- Performance logging ---
     start_time = time.time()
     logging.debug(f"[QUEUE_ROUTES] Starting index route at {start_time}")
-    
+
     queue_manager_start = time.time()
-    queue_contents = queue_manager.get_queue_contents()
+    # Use progressive fallback to handle large queues gracefully
+    queue_contents, error_info = get_queue_contents_with_progressive_fallback(queue_manager, max_time=20)
     queue_manager_time = time.time() - queue_manager_start
-    logging.debug(f"[QUEUE_ROUTES] QueueManager.get_queue_contents() took {queue_manager_time:.3f}s")
+
+    if error_info == "minimal":
+        logging.info(f"[QUEUE_ROUTES] Queue loading was slow, showing minimal view with counts only")
+        # Continue with minimal data - the template will handle showing counts vs full data
+    elif error_info == "timeout":
+        logging.warning(f"[QUEUE_ROUTES] Queue loading timed out, showing partial data")
+        # Continue with partial data
+    elif error_info:
+        logging.warning(f"[QUEUE_ROUTES] Some queues had errors: {error_info}")
+        # Continue with partial data, errors will be shown in UI
+
+    logging.debug(f"[QUEUE_ROUTES] Queue loading completed in {queue_manager_time:.3f}s")
     
     program_status_start = time.time()
     program_status = get_program_status()
@@ -250,8 +391,21 @@ def index():
     queue_processing_start = time.time()
     for queue_name, items in queue_contents.items():
         queue_item_start = time.time()
+
+        # Skip processing if no items or if items is not a list
+        if not items or not isinstance(items, list):
+            queue_item_time = time.time() - queue_item_start
+            if queue_item_time > 0.1:  # Log if processing took more than 100ms
+                logging.debug(f"[QUEUE_ROUTES] Processing queue '{queue_name}' took {queue_item_time:.3f}s (skipped - no items)")
+            continue
+
         if queue_name == 'Upgrading':
             for item in items:
+                # Skip if item is not a dictionary
+                if not isinstance(item, dict):
+                    logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
+                    continue
+
                 upgrade_info = queue_manager.queues['Upgrading'].upgrade_times.get(item['id'])
                 if upgrade_info:
                     time_added = upgrade_info.get('time_added')
@@ -267,6 +421,11 @@ def index():
                 item['upgrades_found'] = item.get('upgrades_found', 0)
         elif queue_name == 'Checking':
             for item in items:
+                # Skip if item is not a dictionary
+                if not isinstance(item, dict):
+                    logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
+                    continue
+
                 item['time_added'] = item.get('time_added', datetime.now())
                 item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
                 item['filled_by_torrent_id'] = item.get('filled_by_torrent_id', 'Unknown')
@@ -280,14 +439,26 @@ def index():
                     item['state'] = status_data['state']
         elif queue_name == 'Sleeping':
             for item in items:
+                # Skip if item is not a dictionary
+                if not isinstance(item, dict):
+                    logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
+                    continue
                 item['wake_count'] = queue_manager.get_wake_count(item['id'])
         elif queue_name == 'Pending Uncached':
             for item in items:
+                # Skip if item is not a dictionary
+                if not isinstance(item, dict):
+                    logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
+                    continue
                 item['time_added'] = item.get('time_added', datetime.now())
                 item['filled_by_magnet'] = item.get('filled_by_magnet', 'Unknown')
                 item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
         elif queue_name == 'Pre_release':
             for item in items:
+                # Skip if item is not a dictionary
+                if not isinstance(item, dict):
+                    logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
+                    continue
                 # Add pre-release specific data
                 item['time_added'] = item.get('time_added', datetime.now())
                 # Get pre-release data if available
@@ -334,12 +505,21 @@ def api_queue_contents():
     # --- Performance logging ---
     start_time = time.time()
     logging.debug(f"[QUEUE_ROUTES] Starting api_queue_contents route at {start_time}")
-    
+
     queue_name = request.args.get('queue', None)
     queue_manager_start = time.time()
-    queue_contents = queue_manager.get_queue_contents()
+    # Use progressive fallback to handle large queues gracefully
+    queue_contents, error_info = get_queue_contents_with_progressive_fallback(queue_manager, max_time=20)
     queue_manager_time = time.time() - queue_manager_start
-    logging.debug(f"[QUEUE_ROUTES] QueueManager.get_queue_contents() took {queue_manager_time:.3f}s")
+
+    if error_info == "minimal":
+        logging.info(f"[QUEUE_ROUTES] API queue loading was slow, showing minimal view")
+    elif error_info == "timeout":
+        logging.warning(f"[QUEUE_ROUTES] API queue loading timed out, showing partial data")
+    elif error_info:
+        logging.warning(f"[QUEUE_ROUTES] API queue loading had errors: {error_info}")
+
+    logging.debug(f"[QUEUE_ROUTES] API queue loading completed in {queue_manager_time:.3f}s")
     
     program_status_start = time.time()
     program_status = get_program_status()
@@ -398,9 +578,17 @@ def api_queue_contents():
     queue_counts = {}  # Store original counts
     for queue_name, items in queue_contents.items():
         queue_counts[queue_name] = len(items)  # Store original count before any processing
-        
+
+        # Skip processing if no items or if items is not a list
+        if not items or not isinstance(items, list):
+            continue
+
         if queue_name == 'Upgrading':
             for item in items:
+                # Skip if item is not a dictionary
+                if not isinstance(item, dict):
+                    logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
+                    continue
                 upgrade_info = queue_manager.queues['Upgrading'].upgrade_times.get(item['id'])
                 if upgrade_info:
                     time_added = upgrade_info.get('time_added')
@@ -415,6 +603,10 @@ def api_queue_contents():
                 item['upgrades_found'] = queue_manager.queues['Upgrading'].upgrades_found.get(item['id'], 0)
         elif queue_name == 'Wanted':
             for item in items:
+                # Skip if item is not a dictionary
+                if not isinstance(item, dict):
+                    logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
+                    continue
                 if 'scrape_time' in item:
                     if item['scrape_time'] not in ["Unknown", "Invalid date or time"]:
                         try:
@@ -426,6 +618,10 @@ def api_queue_contents():
                         item['formatted_scrape_time'] = item['scrape_time']
         elif queue_name == 'Checking':
             for item in items:
+                # Skip if item is not a dictionary
+                if not isinstance(item, dict):
+                    logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
+                    continue
                 item['time_added'] = item.get('time_added', datetime.now())
                 item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
                 item['filled_by_torrent_id'] = item.get('filled_by_torrent_id', 'Unknown')
@@ -438,6 +634,10 @@ def api_queue_contents():
                     item['state'] = status_data['state']
         elif queue_name == 'Sleeping':
             for item in items:
+                # Skip if item is not a dictionary
+                if not isinstance(item, dict):
+                    logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
+                    continue
                 if 'wake_count' not in item or item['wake_count'] is None:
                     item['wake_count'] = queue_manager.get_wake_count(item['id'])
 

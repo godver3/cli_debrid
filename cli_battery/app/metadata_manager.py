@@ -541,7 +541,7 @@ class MetadataManager:
         summary_data_result = trakt.refresh_metadata(imdb_id)
         # --- START DEBUG LOGGING ---
         # Log the raw data received before any processing/saving occurs
-        logger.debug(f"Raw data received from trakt.refresh_metadata for {imdb_id}: {summary_data_result}")
+        # logger.debug(f"Raw data received from trakt.refresh_metadata for {imdb_id}: {summary_data_result}")
         # --- END DEBUG LOGGING ---
         if not summary_data_result:
              logger.warning(f"Could not fetch summary metadata from Trakt for {imdb_id}")
@@ -933,7 +933,7 @@ class MetadataManager:
                 episode_number = episode_data.get('number') # Trakt uses 'number' for episode number
 
                 # --- Added Logging ---
-                logger.debug(f"Processing episode: S{season_number} E{episode_number}, Title: {episode_data.get('title')}")
+                # gger.debug(f"Processing episode: S{season_number} E{episode_number}, Title: {episode_data.get('title')}")
                 # --- End Added Logging ---
 
                 if season_number is None or episode_number is None:
@@ -985,7 +985,8 @@ class MetadataManager:
                     'overview': overview,
                     'runtime': runtime,
                     'first_aired': first_aired_dt,
-                    'imdb_id': episode_imdb_id # Correct field name from Trakt is often within 'ids'
+                    'imdb_id': episode_imdb_id, # Correct field name from Trakt is often within 'ids'
+                    'absolute_episode': episode_data.get('absolute')  # Add absolute episode number
                 })
 
             # --- Bulk Upsert Episodes ---
@@ -995,18 +996,18 @@ class MetadataManager:
                 # return True # Assuming empty is okay
             else:
                 # --- Added Logging ---
-                logger.debug(f"Prepared episode_upsert_data count: {len(episode_upsert_data)}")
+                # logger.debug(f"Prepared episode_upsert_data count: {len(episode_upsert_data)}")
                 # --- End Added Logging ---
 
                 # ... Batch episode upserts logic ...
                 chunk_size = 100 # Reduced chunk size for potentially better error isolation if needed
                 total_episodes = len(episode_upsert_data)
-                logger.info(f"Executing bulk episode upsert/update for {total_episodes} episodes for {item.imdb_id} in chunks of {chunk_size}")
+                # logger.info(f"Executing bulk episode upsert/update for {total_episodes} episodes for {item.imdb_id} in chunks of {chunk_size}")
 
                 for i in range(0, total_episodes, chunk_size):
                      chunk = episode_upsert_data[i:i + chunk_size]
                      if not chunk: continue
-                     logger.debug(f"Executing upsert for episode chunk {i // chunk_size + 1} ({len(chunk)} episodes)")
+                     # logger.debug(f"Executing upsert for episode chunk {i // chunk_size + 1} ({len(chunk)} episodes)")
 
                      # Upsert statement
                      episode_stmt = insert(Episode).values(chunk)
@@ -1017,11 +1018,12 @@ class MetadataManager:
                              overview=episode_stmt.excluded.overview,
                              runtime=episode_stmt.excluded.runtime,
                              first_aired=episode_stmt.excluded.first_aired,
-                             imdb_id=episode_stmt.excluded.imdb_id # Update imdb_id if it changes
+                             imdb_id=episode_stmt.excluded.imdb_id, # Update imdb_id if it changes
+                             absolute_episode=episode_stmt.excluded.absolute_episode  # Update absolute episode number
                          )
                      )
                      session.execute(episode_stmt)
-                     logger.debug(f"Episode chunk {(i // chunk_size) + 1}/{(total_episodes + chunk_size - 1) // chunk_size} executed for {item.imdb_id}.")
+                     # logger.debug(f"Episode chunk {(i // chunk_size) + 1}/{(total_episodes + chunk_size - 1) // chunk_size} executed for {item.imdb_id}.")
 
 
             # ** IMPORTANT: REMOVE COMMIT/ROLLBACK HERE **

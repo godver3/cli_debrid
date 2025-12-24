@@ -99,6 +99,11 @@ from debrid import get_debrid_provider, ProviderUnavailableError
 from utilities.plex_removal_cache import process_removal_cache # Added import for standalone removal processing
 import sys # Add for checking apscheduler.events
 from collections import defaultdict  # Added alongside deque above for runtime tracking
+# Try to import resource module (Unix only), fallback to time.process_time()
+try:
+    import resource
+except ImportError:
+    resource = None
 
 queue_logger = logging.getLogger('queue_logger')
 program_runner = None
@@ -553,23 +558,45 @@ class ProgramRunner:
                 logging.info(f"Disabled '{plex_scan_task}' as mode is Symlinked/Local and not toggled on.")
 
         if get_setting('File Management', 'file_collection_management') == 'Plex':
-            # Enable Plex file checking if either setting is true and not explicitly disabled by toggle
-            if get_setting('Plex', 'update_plex_on_file_discovery') or get_setting('Plex', 'disable_plex_library_checks'):
-                 if 'task_check_plex_files' not in self.enabled_tasks:
-                      # Check if it was disabled by toggle before enabling
-                      # This logic might be complex depending on desired precedence (setting vs toggle)
-                      # Assuming setting enables it unless explicitly toggled off:
-                      # Check toggle state again (or rely on previous toggle load)
-                      is_toggled_off = saved_states.get(self._normalize_task_name('task_check_plex_files'), True) is False
-                      if not is_toggled_off:
-                          self.enabled_tasks.add('task_check_plex_files')
-                          logging.info("Enabled 'task_check_plex_files' based on Plex settings.")
+            # Check if Plex library checks are disabled and mounted path is blank
+            plex_mounted_location = get_setting('Plex', 'mounted_file_location', default='')
+            disable_plex_library_checks = get_setting('Plex', 'disable_plex_library_checks', default=False)
+            mounted_path_is_blank = not plex_mounted_location or plex_mounted_location.strip() == ''
+            
+            # If library checks are disabled AND mounted path is blank, disable all Plex collection tasks
+            if disable_plex_library_checks and mounted_path_is_blank:
+                # Disable Plex file checking task
+                if 'Checking' in self.enabled_tasks:
+                    self.enabled_tasks.remove('Checking')
+                    logging.info("Disabled 'Checking' as Plex library checks are disabled and mounted path is blank.")
+                
+                # Disable Plex full scan task
+                if 'task_plex_full_scan' in self.enabled_tasks:
+                    self.enabled_tasks.remove('task_plex_full_scan')
+                    logging.info("Disabled 'task_plex_full_scan' as Plex library checks are disabled and mounted path is blank.")
+
+                if 'task_check_plex_files' not in self.enabled_tasks:
+                    self.enabled_tasks.add('task_check_plex_files')
+                    logging.info("Enabled 'task_check_plex_files' as Plex library checks are disabled and mounted path is blank.")
+                    
             else:
-                 # Ensure it's disabled if conditions aren't met AND wasn't manually enabled by toggle
-                 is_toggled_on = saved_states.get(self._normalize_task_name('task_check_plex_files'), False) is True
-                 if 'task_check_plex_files' in self.enabled_tasks and not is_toggled_on:
-                      self.enabled_tasks.remove('task_check_plex_files')
-                      logging.info("Disabled 'task_check_plex_files' as relevant Plex settings are off.")
+                # Enable Plex file checking if either setting is true and not explicitly disabled by toggle
+                if get_setting('Plex', 'update_plex_on_file_discovery') or get_setting('Plex', 'disable_plex_library_checks'):
+                     if 'task_check_plex_files' not in self.enabled_tasks:
+                          # Check if it was disabled by toggle before enabling
+                          # This logic might be complex depending on desired precedence (setting vs toggle)
+                          # Assuming setting enables it unless explicitly toggled off:
+                          # Check toggle state again (or rely on previous toggle load)
+                          is_toggled_off = saved_states.get(self._normalize_task_name('task_check_plex_files'), True) is False
+                          if not is_toggled_off:
+                              self.enabled_tasks.add('task_check_plex_files')
+                              logging.info("Enabled 'task_check_plex_files' based on Plex settings.")
+                else:
+                     # Ensure it's disabled if conditions aren't met AND wasn't manually enabled by toggle
+                     is_toggled_on = saved_states.get(self._normalize_task_name('task_check_plex_files'), False) is True
+                     if 'task_check_plex_files' in self.enabled_tasks and not is_toggled_on:
+                          self.enabled_tasks.remove('task_check_plex_files')
+                          logging.info("Disabled 'task_check_plex_files' as relevant Plex settings are off.")
 
         if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
              # Enable symlink task if configured (Plex OR Jellyfin/Emby) and not toggled off
@@ -805,6 +832,16 @@ class ProgramRunner:
         self.task_runtime_lock = threading.Lock()  # Protect access to task_runtime_totals
         self._runtime_log_interval_sec = 300  # How often to emit runtime percentage report (seconds)
         self._last_runtime_log_time = time.monotonic()
+        # --- END EDIT ---
+        # --- START EDIT: CPU usage tracking attributes ---
+        # Accumulate per-task CPU seconds in current window
+        self.task_cpu_totals = defaultdict(float)
+        self.task_cpu_lock = threading.Lock()
+        # Share the same interval as runtime logging to avoid log noise
+        self._cpu_log_interval_sec = self._runtime_log_interval_sec
+        self._last_cpu_log_time = time.monotonic()
+        # Control per-run CPU logging via environment variable
+        self._log_per_run_cpu = os.environ.get('LOG_PER_RUN_CPU', 'false').lower() == 'true'
         # --- END EDIT ---
 
     # *** START EDIT: New method to get task target ***
@@ -3181,6 +3218,8 @@ class ProgramRunner:
                 if not plex_file_location or not os.path.exists(plex_file_location):
                     logging.warning(f"Plex mounted_file_location and original_files_path (for symlink mode) do not exist. Cannot check files.")
                     return
+            elif get_setting('Plex', 'disable_plex_library_checks', default=False):
+                logging.warning(f"Plex mounted_file_location ('{plex_file_location}') does not exist, but proceeding with file discovery as library checks are disabled.")
             else:
                 logging.warning(f"Plex mounted_file_location does not exist: {plex_file_location}")
                 return
@@ -3216,6 +3255,53 @@ class ProgramRunner:
                 self.plex_scan_tick_counts = {}
             # --- END EDIT ---
 
+            # If mounted file location is blank/empty, mark all items as Collected without file checks
+            if not plex_file_location or plex_file_location.strip() == '':
+                logging.info("Plex mounted file location is blank - marking all items as Collected without file existence checks")
+                for item_dict in items:
+                    item_id = item_dict['id']
+                    item_title_log = (item_dict['title'] or 'N/A')
+                    
+                    conn_update = None
+                    try:
+                        conn_update = get_db_connection()
+                        cursor_update = conn_update.cursor()
+                        now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                        cursor_update.execute('UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking"',
+                                              (now, item_id))
+
+                        if cursor_update.rowcount > 0:
+                            conn_update.commit()
+                            logging.info(f"Updated item {item_id} ({item_title_log}) to Collected state (Plex checks disabled, no file location).")
+                            updated_items += 1
+                            # Post-processing and notification logic
+                            updated_item_details = get_media_item_by_id(item_id)
+                            if updated_item_details:
+                                handle_state_change(dict(updated_item_details))
+                                # Add Collected notification
+                                from database.database_writing import add_to_collected_notifications
+                                notification_item = dict(updated_item_details)
+                                notification_item['is_upgrade'] = False
+                                notification_item['new_state'] = "Collected"
+                                add_to_collected_notifications(notification_item)
+                                logging.info(f"Added collection notification for item: {item_id} ({item_title_log})")
+                        else:
+                            logging.debug(f"Item {item_id} was not updated to Collected (state may have changed).")
+
+                    except sqlite3.Error as db_update_err:
+                        logging.error(f"Database error updating item {item_id} to collected: {db_update_err}")
+                        if conn_update: conn_update.rollback()
+                    except Exception as e_update:
+                        logging.error(f"Unexpected error during item update/notification for {item_id}: {e_update}", exc_info=True)
+                        if conn_update: conn_update.rollback()
+                    finally:
+                        if conn_update: conn_update.close()
+                
+                # Log summary and return early
+                logging.info(f"Plex check summary (checks disabled, no file location): {updated_items} items marked as Collected, 0 items not found.")
+                return
+
+            # If we have a valid file location, proceed with file existence checks
             for item_dict in items: # Iterate over dicts
                 item_id = item_dict['id']
                 filled_by_title = item_dict['filled_by_title']
@@ -4582,6 +4668,9 @@ class ProgramRunner:
              logging.warning(f"[Tracemalloc] Attempted sample for '{log_display_name}', but tracemalloc not available/tracing at point of memory check.")
              run_tracemalloc_sample = False
 
+        # --- START EDIT: Capture CPU time before task execution ---
+        cpu_start = self._get_current_thread_cpu_seconds()
+        # --- END EDIT ---
 
         try:
             # Execute the original task function
@@ -4623,6 +4712,14 @@ class ProgramRunner:
                 # Log if we intended to sample but tracemalloc became unavailable
                  logging.warning(f"[Tracemalloc] Attempted sample for '{log_display_name}', but tracemalloc not available at point of 'after' memory check.")
 
+            # --- START EDIT: Capture CPU time after task execution ---
+            cpu_end = self._get_current_thread_cpu_seconds()
+            cpu_seconds = cpu_end - cpu_start
+            cpu_util = (cpu_seconds / duration) * 100 if duration > 0 else 0
+            self._record_task_cpu(task_name_for_logging, cpu_seconds)
+            if self._log_per_run_cpu:
+                logging.debug(f"[CPU] Task '{log_display_name}' cpu={cpu_seconds:.3f}s, wall={duration:.3f}s, util={cpu_util:.1f}%")
+            # --- END EDIT ---
 
             # Optional: Log normal duration if not sampling (can be noisy)
             # else:
@@ -4653,6 +4750,16 @@ class ProgramRunner:
             elif run_tracemalloc_sample:
                  # Log if we intended to sample but tracemalloc became unavailable
                  logging.warning(f"[Tracemalloc] Attempted sample for '{log_display_name}', but tracemalloc not available at point of error memory check.")
+
+            # --- START EDIT: Capture CPU time after task execution on error ---
+            cpu_end = self._get_current_thread_cpu_seconds()
+            cpu_seconds = cpu_end - cpu_start
+            cpu_util = (cpu_seconds / duration) * 100 if duration > 0 else 0
+            self._record_task_cpu(task_name_for_logging, cpu_seconds)
+            if self._log_per_run_cpu:
+                logging.debug(f"[CPU] Task '{log_display_name}' cpu={cpu_seconds:.3f}s, wall={duration:.3f}s, util={cpu_util:.1f}%")
+            # --- END EDIT ---
+
             raise # Re-raise the exception
         finally:
             # --- START EDIT: Manage currently_executing_tasks ---
@@ -5026,6 +5133,44 @@ class ProgramRunner:
         logging.info(f"[RUNTIME] Last {self._runtime_log_interval_sec} s: "+", ".join(parts)+f"  (total={total:.1f} s)")
         self.task_runtime_totals.clear()
         self._last_runtime_log_time = now
+
+    # --- START EDIT: Add method to get current thread CPU seconds ---
+    def _get_current_thread_cpu_seconds(self):
+        """Get the current thread's CPU time in seconds."""
+        try:
+            if resource is not None and hasattr(resource, 'getrusage'):
+                return resource.getrusage(resource.RUSAGE_THREAD).ru_utime
+            else:
+                return time.process_time()
+        except Exception as e:
+            logging.error(f"Error getting current thread CPU time: {e}", exc_info=True)
+            return 0
+    # --- END EDIT ---
+
+    # --- START EDIT: Add method to record task CPU seconds ---
+    def _record_task_cpu(self, task_name: str, cpu_seconds: float):
+        """Accumulate task CPU seconds and periodically log per-task CPU share."""
+        now = time.monotonic()
+        with self.task_cpu_lock:
+            self.task_cpu_totals[task_name] += cpu_seconds
+            if now - self._last_cpu_log_time >= self._cpu_log_interval_sec:
+                self._emit_task_cpu_report_locked(now)
+
+    def _emit_task_cpu_report_locked(self, now: float):
+        """Assumes task_cpu_lock held. Emits report and resets counters."""
+        if not self.task_cpu_totals:
+            self._last_cpu_log_time = now
+            return
+        total = sum(self.task_cpu_totals.values())
+        if total <= 0:
+            self.task_cpu_totals.clear()
+            self._last_cpu_log_time = now
+            return
+        parts = [f"{t}={v / total * 100:.1f} % ({v:.2f}s)" for t, v in sorted(self.task_cpu_totals.items(), key=lambda x: x[1], reverse=True)]
+        logging.info(f"[CPU] Last {self._cpu_log_interval_sec} s: "+", ".join(parts)+f"  (total_cpu={total:.2f} s)")
+        self.task_cpu_totals.clear()
+        self._last_cpu_log_time = now
+    # --- END EDIT ---
 
 def process_overseerr_webhook(data):
     notification_type = data.get('notification_type')

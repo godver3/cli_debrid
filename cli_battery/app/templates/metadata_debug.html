@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% block title %}Metadata Debug{% endblock %}
+
+{% block content %}
+<h2>Metadata Debug</h2>
+
+<div class="controls">
+    <form id="lookupForm" onsubmit="return false;" style="display:flex; gap: 0.5rem; align-items: center;">
+        <input type="text" id="imdbIdInput" placeholder="Enter IMDB ID (e.g., tt1234567)" style="flex:1; padding:0.5rem;">
+        <button id="fetchBtn" type="button">Fetch</button>
+        <button id="deleteBtn" type="button" class="danger">Delete</button>
+    </form>
+    <div id="status" style="margin-top: 0.5rem; color: #888;"></div>
+    <div id="sourceInfo" style="margin-top: 0.25rem; color: #888;"></div>
+    <div style="margin-top:0.5rem; font-size: 0.9em; color:#666;">Tip: You can also browse items in <a href="{{ url_for('main.debug') }}">Debug</a>.</div>
+    <hr style="margin: 1rem 0; border-color: #333;">
+</div>
+
+<div id="result" style="display:none;">
+    <h3 style="margin-top:0;">Item</h3>
+    <pre id="itemBlock" style="background:#1a1a1a; padding: 1rem; border-radius: 4px; overflow:auto;"></pre>
+
+    <h3>Metadata</h3>
+    <pre id="metadataBlock" style="background:#1a1a1a; padding: 1rem; border-radius: 4px; overflow:auto;"></pre>
+
+    <h3>Seasons</h3>
+    <pre id="seasonsBlock" style="background:#1a1a1a; padding: 1rem; border-radius: 4px; overflow:auto;"></pre>
+</div>
+
+<style>
+.controls button.danger { background: #b00020; color: #fff; }
+.controls button { padding: 0.5rem 0.75rem; }
+</style>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const imdbInput = document.getElementById('imdbIdInput');
+    const fetchBtn = document.getElementById('fetchBtn');
+    const deleteBtn = document.getElementById('deleteBtn');
+    const status = document.getElementById('status');
+    const sourceInfo = document.getElementById('sourceInfo');
+
+    const result = document.getElementById('result');
+    const itemBlock = document.getElementById('itemBlock');
+    const metadataBlock = document.getElementById('metadataBlock');
+    const seasonsBlock = document.getElementById('seasonsBlock');
+
+    function setStatus(text, isError=false) {
+        status.textContent = text || '';
+        status.style.color = isError ? '#ff6b6b' : '#888';
+    }
+
+    function renderJSON(element, data) {
+        try {
+            element.textContent = JSON.stringify(data, null, 2);
+        } catch (e) {
+            element.textContent = 'Unable to render JSON';
+        }
+    }
+
+    function fetchMetadata() {
+        const imdbId = (imdbInput.value || '').trim();
+        if (!imdbId) { setStatus('Please enter an IMDB ID.', true); return; }
+        setStatus('Fetching...');
+        sourceInfo.textContent = '';
+        result.style.display = 'none';
+
+        fetch(`/debug/item/${encodeURIComponent(imdbId)}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data && !data.error) {
+                    renderJSON(itemBlock, data.item);
+                    renderJSON(metadataBlock, data.metadata);
+                    renderJSON(seasonsBlock, data.seasons);
+                    result.style.display = 'block';
+                    setStatus('Fetched.');
+                } else {
+                    setStatus(data && data.error ? data.error : 'Not found.', true);
+                }
+            })
+            .catch(err => {
+                setStatus('Error fetching metadata.', true);
+            });
+    }
+
+    function deleteByImdb() {
+        const imdbId = (imdbInput.value || '').trim();
+        if (!imdbId) { setStatus('Please enter an IMDB ID.', true); return; }
+        if (!confirm(`Delete item ${imdbId}?`)) return;
+        setStatus('Deleting...');
+        fetch(`/debug/delete_item/${encodeURIComponent(imdbId)}`, { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                if (data && data.success) {
+                    setStatus('Deleted.');
+                    result.style.display = 'none';
+                    itemBlock.textContent = '';
+                    metadataBlock.textContent = '';
+                    seasonsBlock.textContent = '';
+                } else {
+                    setStatus('Delete failed.', true);
+                }
+            })
+            .catch(err => setStatus('Error deleting item.', true));
+    }
+
+    fetchBtn.addEventListener('click', fetchMetadata);
+    deleteBtn.addEventListener('click', deleteByImdb);
+
+    // Allow Enter to fetch
+    imdbInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            fetchMetadata();
+        }
+    });
+});
+</script>
+{% endblock %}
+
+

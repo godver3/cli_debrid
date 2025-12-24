@@ -468,6 +468,14 @@ class DirectAPI:
             # Instantiate TraktMetadata to use its search method
             trakt_api = TraktMetadata()
             results = trakt_api.search_media(query=query, year=year, media_type=media_type)
+
+            # If a year was provided and filtering produced no results, retry without year
+            if year is not None and (not results or len(results) == 0):
+                logger.info(
+                    f"DirectAPI.search_media year-filtered search returned 0 results for '{query}' ({media_type}, year={year}). Retrying without year filter."
+                )
+                results = trakt_api.search_media(query=query, year=None, media_type=media_type)
+
             # Search always comes from Trakt if successful
             source = 'trakt' if results is not None else None
             return results, source

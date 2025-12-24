@@ -611,6 +611,7 @@
             display: flex;
             align-items: center;
             gap: 10px;
+            flex-wrap: wrap;
         }
 
         .mark-all-read-btn {
@@ -632,6 +633,7 @@
         .notification-toggle-container {
             display: flex;
             align-items: center;
+            margin-right: 10px;
         }
 
         .notification-toggle-label {
@@ -689,6 +691,10 @@
         }
 
         input:checked + #disableNotificationsToggleSlider:before {
+            transform: translateX(14px) !important;
+        }
+
+        input:checked + #disableToastsToggleSlider:before {
             transform: translateX(14px) !important;
         }
         
@@ -753,6 +759,244 @@
             10%, 30%, 50%, 70%, 90% { transform: translate(calc(-1 * var(--shake-intensity)), var(--shake-intensity)); }
             20%, 40%, 60%, 80% { transform: translate(var(--shake-intensity), calc(-1 * var(--shake-intensity))); }
         }
+
+        /* Toast Notification System */
+        .toast-container {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            z-index: 9999;
+            display: none; /* Hidden by default, shown via JS */
+        }
+
+        .toast-stack {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 0; /* No gap for overlapping effect */
+            max-height: 400px;
+            overflow: visible; /* Allow overflow to see stacked items */
+        }
+
+        .toast-stack-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            background-color: #1a1a1a;
+            border: 1px solid #444;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: #ccc;
+            position: relative;
+            z-index: 20;
+            transition: all 0.4s ease-in-out;
+        }
+
+        .toast-stack-header.slide-out {
+            transform: translateX(-100%) !important;
+            opacity: 0 !important;
+        }
+
+        .toast-stack-count {
+            font-weight: bold;
+        }
+
+        .toast-stack-clear {
+            background: none;
+            border: none;
+            color: #aaa;
+            cursor: pointer;
+            font-size: 14px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            transition: all 0.2s ease;
+        }
+
+        .toast-stack-clear:hover {
+            color: #fff;
+            background-color: #dc3545;
+        }
+
+        .toast {
+            background-color: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            max-width: 400px;
+            min-width: 300px;
+            opacity: 0;
+            transform: translateX(-100%);
+            transition: all 0.4s ease-in-out;
+            overflow: hidden;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            margin-bottom: 0;
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .toast.hide {
+            transform: translateX(-100%);
+            opacity: 0;
+        }
+
+        .toast.slide-out {
+            transform: translateX(-100%) !important;
+            opacity: 0 !important;
+        }
+
+        .toast.fall-down {
+            transform: translateY(100px);
+            opacity: 0;
+        }
+
+        /* Vertical stacked card effect */
+        .toast-stack .toast:nth-child(2) {
+            z-index: 10;
+            transform: translateX(0) scale(1);
+            position: relative;
+            bottom: 0;
+        }
+
+        .toast-stack .toast:nth-child(3) {
+            z-index: 9;
+            transform: translateX(0) scale(0.98);
+            opacity: 0.95;
+            bottom: 4px;
+        }
+
+        .toast-stack .toast:nth-child(4) {
+            z-index: 8;
+            transform: translateX(0) scale(0.96);
+            opacity: 0.9;
+            bottom: 8px;
+        }
+
+        .toast-stack .toast:nth-child(5) {
+            z-index: 7;
+            transform: translateX(0) scale(0.94);
+            opacity: 0.85;
+            bottom: 12px;
+        }
+
+        .toast-stack .toast:nth-child(6) {
+            z-index: 6;
+            transform: translateX(0) scale(0.92);
+            opacity: 0.8;
+            bottom: 16px;
+        }
+
+        .toast-stack .toast:nth-child(n+7) {
+            z-index: 5;
+            transform: translateX(0) scale(0.9);
+            opacity: 0.75;
+            bottom: 20px;
+        }
+
+        /* Ensure slide-out animation overrides stacked positioning */
+        .toast-stack .toast.slide-out {
+            transform: translateX(-100%) !important;
+            opacity: 0 !important;
+            transition: all 0.4s ease-in-out !important;
+        }
+
+        .toast-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            border-bottom: 1px solid #444;
+        }
+
+        .toast-title {
+            font-weight: bold;
+            color: #fff;
+            font-size: 14px;
+            margin: 0;
+        }
+
+        .toast-close {
+            background: none;
+            border: none;
+            color: #aaa;
+            cursor: pointer;
+            font-size: 18px;
+            padding: 0;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s ease;
+        }
+
+        .toast-close:hover {
+            color: #fff;
+        }
+
+        .toast-body {
+            padding: 12px 16px;
+            color: #ddd;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .toast-time {
+            color: #888;
+            font-size: 11px;
+            margin-top: 8px;
+        }
+
+        /* Toast types */
+        .toast.success {
+            border-left: 4px solid #28a745;
+        }
+
+        .toast.error {
+            border-left: 4px solid #dc3545;
+        }
+
+        .toast.warning {
+            border-left: 4px solid #ffc107;
+        }
+
+        .toast.info {
+            border-left: 4px solid #17a2b8;
+        }
+
+        /* Mobile responsive - hide toasts on mobile */
+        @media (max-width: 768px) {
+            .toast-container {
+                display: none !important;
+            }
+        }
+
+        /* Toast animation for new notifications */
+        @keyframes toastPulse {
+            0% { transform: translateX(0) scale(1); }
+            50% { transform: translateX(0) scale(1.02); }
+            100% { transform: translateX(0) scale(1); }
+        }
+
+        .toast.new-notification {
+            animation: toastPulse 0.3s ease-in-out;
+        }
+
+        /* Stack animation */
+        @keyframes stackFall {
+            0% { transform: translateY(0); }
+            100% { transform: translateY(100px); opacity: 0; }
+        }
+
+        .toast-stack.falling {
+            animation: stackFall 0.6s ease-in-out forwards;
+        }
     </style>
     
     {% block head %}{% endblock %}
@@ -777,12 +1021,313 @@
     
     <script>
         document.addEventListener('DOMContentLoaded', function() {
+            // Toast Notification System
+            class ToastManager {
+                constructor() {
+                    this.container = null;
+                    this.stack = null;
+                    this.toasts = new Map();
+                    this.toastQueue = []; // Queue for toasts that can't be displayed yet
+                    this.toastCounter = 0;
+                    this.removalTimers = new Map(); // Track individual removal timers
+                    this.toastDuration = 2000; // 6 seconds per toast
+                    this.removalDelay = 500; // 500ms between removals
+                    this.maxToasts = 5; // Maximum number of toasts to display at once
+                    this.init();
+                }
+
+                init() {
+                    // Create toast container
+                    this.container = document.createElement('div');
+                    this.container.className = 'toast-container';
+                    
+                    // Create toast stack
+                    this.stack = document.createElement('div');
+                    this.stack.className = 'toast-stack';
+                    
+                    // Create stack header
+                    const stackHeader = document.createElement('div');
+                    stackHeader.className = 'toast-stack-header';
+                    stackHeader.style.display = 'none'; // Start hidden since there are 0 notifications
+                    stackHeader.innerHTML = `
+                        <span class="toast-stack-count">0 notifications</span>
+                        <button class="toast-stack-clear" onclick="toastManager.clearAll()">×</button>
+                    `;
+                    
+                    this.stack.appendChild(stackHeader);
+                    this.container.appendChild(this.stack);
+                    document.body.appendChild(this.container);
+                    
+                    // Show container on desktop
+                    if (window.innerWidth > 768) {
+                        this.container.style.display = 'block';
+                    }
+
+                    if (window.title && window.title.includes('Debug Functions')) {
+                        this.container.style.display = 'none';
+                    }
+                }
+
+                show(title, message, type = 'info', duration = 0) {
+                    // Don't show toasts if toasts are disabled
+                    if (localStorage.getItem('toastsDisabled') === 'true') {
+                        return;
+                    }
+
+                    // Don't show on mobile
+                    if (window.innerWidth <= 768) {
+                        return;
+                    }
+
+                    // Check if we've reached the maximum number of toasts
+                    if (this.toasts.size >= this.maxToasts) {
+                        // Queue this toast for later display
+                        this.toastQueue.push({ title, message, type });
+                        console.log(`Toast queued. Queue length: ${this.toastQueue.length}`);
+                        return;
+                    }
+
+                    this.createAndShowToast(title, message, type);
+                }
+
+                createAndShowToast(title, message, type) {
+                    const toastId = `toast-${++this.toastCounter}`;
+                    const toast = this.createToast(toastId, title, message, type);
+                    
+                    // Add toast to stack (after header)
+                    this.stack.insertBefore(toast, this.stack.children[1]);
+                    this.toasts.set(toastId, toast);
+
+                    console.log(`Created toast ${toastId}, total toasts: ${this.toasts.size}`);
+
+                    // Update stack count
+                    this.updateStackCount();
+
+                    // Show the toast immediately
+                    requestAnimationFrame(() => {
+                        toast.classList.add('show', 'new-notification');
+                        setTimeout(() => {
+                            toast.classList.remove('new-notification');
+                        }, 300);
+                    });
+
+                    // Reschedule all toasts to ensure proper sequential removal
+                    this.rescheduleAllToasts();
+
+                    return toastId;
+                }
+
+                scheduleRemoval(toastId) {
+                    // This method is now only used internally by rescheduleAllToasts
+                    const toastArray = Array.from(this.toasts.keys());
+                    const toastIndex = toastArray.indexOf(toastId);
+                    
+                    // Oldest toast (highest index) gets the base duration
+                    // Newer toasts get progressively longer delays
+                    const baseDelay = this.toastDuration;
+                    const additionalDelay = (toastArray.length - 1 - toastIndex) * this.removalDelay;
+                    const totalDelay = baseDelay + additionalDelay;
+                    
+                    console.log(`Scheduling removal for ${toastId}: index=${toastIndex}, position=${toastArray.length - 1 - toastIndex}, delay=${totalDelay}ms`);
+                    
+                    // Clear any existing timer for this toast
+                    if (this.removalTimers.has(toastId)) {
+                        clearTimeout(this.removalTimers.get(toastId));
+                    }
+                    
+                    // Set new timer
+                    const timer = setTimeout(() => {
+                        console.log(`Removing toast ${toastId} after ${totalDelay}ms`);
+                        this.hide(toastId);
+                        this.removalTimers.delete(toastId);
+                    }, totalDelay);
+                    
+                    this.removalTimers.set(toastId, timer);
+                }
+
+                rescheduleAllToasts() {
+                    // Clear all existing timers
+                    this.removalTimers.forEach(timer => clearTimeout(timer));
+                    this.removalTimers.clear();
+                    
+                    // Schedule all toasts with proper sequential timing (oldest first)
+                    const allToasts = Array.from(this.toasts.keys());
+                    console.log(`Rescheduling ${allToasts.length} toasts:`, allToasts);
+                    
+                    allToasts.forEach((toastId, index) => {
+                        // Each toast gets the base duration plus its position delay
+                        // Oldest toast (highest index) gets removed first
+                        const position = allToasts.length - 1 - index;
+                        const delay = this.toastDuration + (position * this.removalDelay);
+                        console.log(`Toast ${toastId}: index=${index}, position=${position}, delay=${delay}ms`);
+                        
+                        const timer = setTimeout(() => {
+                            this.hide(toastId);
+                            this.removalTimers.delete(toastId);
+                        }, delay);
+                        this.removalTimers.set(toastId, timer);
+                    });
+                }
+
+                rescheduleRemainingToasts() {
+                    // Clear all existing timers
+                    this.removalTimers.forEach(timer => clearTimeout(timer));
+                    this.removalTimers.clear();
+                    
+                    // Reschedule remaining toasts with proper sequential timing (oldest first)
+                    const remainingToasts = Array.from(this.toasts.keys());
+                    remainingToasts.forEach((toastId, index) => {
+                        // Each remaining toast gets the base duration plus its position delay
+                        // Oldest toast (highest index) gets removed first
+                        const position = remainingToasts.length - 1 - index;
+                        const delay = this.toastDuration + (position * this.removalDelay);
+                        const timer = setTimeout(() => {
+                            this.hide(toastId);
+                            this.removalTimers.delete(toastId);
+                        }, delay);
+                        this.removalTimers.set(toastId, timer);
+                    });
+                }
+
+                createToast(id, title, message, type) {
+                    const toast = document.createElement('div');
+                    toast.className = `toast ${type}`;
+                    toast.id = id;
+
+                    const time = new Date().toLocaleTimeString();
+                    
+                    toast.innerHTML = `
+                        <div class="toast-header">
+                            <div class="toast-title">${this.escapeHtml(title)}</div>
+                            <button class="toast-close" onclick="toastManager.hide('${id}')">&times;</button>
+                        </div>
+                        <div class="toast-body">
+                            ${this.escapeHtml(message)}
+                            <div class="toast-time">${time}</div>
+                        </div>
+                    `;
+
+                    return toast;
+                }
+
+                hide(toastId) {
+                    const toast = this.toasts.get(toastId);
+                    if (!toast) return;
+
+                    // Clear the removal timer
+                    if (this.removalTimers.has(toastId)) {
+                        clearTimeout(this.removalTimers.get(toastId));
+                        this.removalTimers.delete(toastId);
+                    }
+
+                    toast.classList.add('slide-out');
+                    
+                    setTimeout(() => {
+                        if (toast.parentNode) {
+                            toast.parentNode.removeChild(toast);
+                        }
+                        this.toasts.delete(toastId);
+                        this.updateStackCount();
+                        
+                        // If this was the last toast, slide out the header
+                        if (this.toasts.size === 0) {
+                            this.slideOutHeader();
+                        } else {
+                            // Reschedule remaining toasts to maintain sequential timing
+                            this.rescheduleRemainingToasts();
+                        }
+                        
+                        // Check if we have queued toasts to display
+                        this.processQueue();
+                    }, 400);
+                }
+
+                slideOutHeader() {
+                    const stackHeader = this.stack.querySelector('.toast-stack-header');
+                    if (stackHeader) {
+                        stackHeader.classList.add('slide-out');
+                        setTimeout(() => {
+                            stackHeader.style.display = 'none';
+                            stackHeader.classList.remove('slide-out');
+                        }, 400);
+                    }
+                }
+
+                clearAll() {
+                    // Clear all timers
+                    this.removalTimers.forEach(timer => clearTimeout(timer));
+                    this.removalTimers.clear();
+                    
+                    // Clear the queue
+                    this.toastQueue = [];
+                    
+                    // Slide out all toasts
+                    this.toasts.forEach((toast, id) => {
+                        toast.classList.add('slide-out');
+                    });
+                    
+                    setTimeout(() => {
+                        this.toasts.forEach((toast, id) => {
+                            if (toast.parentNode) {
+                                toast.parentNode.removeChild(toast);
+                            }
+                        });
+                        this.toasts.clear();
+                        this.updateStackCount();
+                    }, 400);
+                }
+
+                updateStackCount() {
+                    const countElement = this.stack.querySelector('.toast-stack-count');
+                    const stackHeader = this.stack.querySelector('.toast-stack-header');
+                    
+                    if (countElement) {
+                        const count = this.toasts.size;
+                        const queueCount = this.toastQueue.length;
+                        const totalCount = count + queueCount;
+                        
+                        countElement.textContent = `${totalCount} notification${totalCount !== 1 ? 's' : ''}`;
+                        
+                        // Hide stack header when there are 0 notifications
+                        if (stackHeader) {
+                            if (totalCount === 0) {
+                                stackHeader.style.display = 'none';
+                            } else {
+                                stackHeader.style.display = 'flex';
+                            }
+                        }
+                    }
+                }
+
+                processQueue() {
+                    // Process queued toasts if we have space
+                    while (this.toasts.size < this.maxToasts && this.toastQueue.length > 0) {
+                        const queuedToast = this.toastQueue.shift();
+                        console.log(`Processing queued toast. Remaining in queue: ${this.toastQueue.length}`);
+                        this.createAndShowToast(queuedToast.title, queuedToast.message, queuedToast.type);
+                    }
+                }
+
+                escapeHtml(text) {
+                    const div = document.createElement('div');
+                    div.textContent = text;
+                    return div.innerHTML;
+                }
+            }
+
+            // Initialize toast manager
+            window.toastManager = new ToastManager();
+
             // Notifications Modal Logic
             const notificationsModal = document.getElementById('notificationsModal');
             const notificationsBtn = document.getElementById('notifications_button');
             const notificationsCloseBtn = notificationsModal.querySelector('.close');
             const notificationsContainer = document.getElementById('notifications-container');
             let notifications = [];
+            let lastNotificationCount = 0;
+            let shownToastIds = new Set(); // Track which notifications have been shown as toasts
+            let isFirstLoad = true; // Track if this is the first load
+            let notificationEventSource = null; // SSE connection
             
             // --- Release Notes Modal Elements ---
             const releaseNotesButton = document.getElementById('releaseNotesButton');
@@ -792,138 +1337,10 @@
             const easterEggModal = document.getElementById('easterEggModal');
             // --- End Release Notes Modal Elements ---
 
-            // Fetch notifications
-            async function fetchNotifications() {
-                try {
-                    const response = await fetch('/base/api/notifications');
-                    const data = await response.json();
-                    notifications = data.notifications || [];
-                    updateNotificationDisplay();
-                    updateNotificationIndicator();
-                } catch (error) {
-                    console.error('Error fetching notifications:', error);
-                }
-            }
+            // Notification functions are handled in base.js to avoid conflicts
 
-            // Update notification display in modal
-            function updateNotificationDisplay() {
-                const notificationsDisabled = localStorage.getItem('notificationsDisabled') === 'true';
-
-                if (notifications.length === 0) {
-                    notificationsContainer.innerHTML = '<div class="no-notifications">No notifications</div>';
-                    return;
-                }
-
-                notificationsContainer.innerHTML = notifications
-                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-                    .map(notification => {
-                        // Determine read status based on toggle state
-                        const isEffectivelyRead = notificationsDisabled || notification.read;
-                        const readClass = isEffectivelyRead ? 'read' : 'unread';
-
-                        return `
-                        <div class="notification ${readClass}" data-id="${notification.id}">
-                            <div class="notification-header">
-                                <span class="notification-type ${notification.type || 'info'}">${notification.type || 'info'}</span>
-                                <span class="notification-time">${formatTimestamp(notification.timestamp)}</span>
-                            </div>
-                            <div class="notification-title">${notification.title}</div>
-                            <div class="notification-message">${notification.message}</div>
-                            ${notification.link ? `<a href="${notification.link}" class="notification-link">View Details</a>` : ''}
-                        </div>
-                    `;
-                    }).join('');
-
-                // Add click handlers for marking as read ONLY IF notifications are NOT disabled
-                if (!notificationsDisabled) {
-                    document.querySelectorAll('.notification.unread').forEach(notif => {
-                        notif.addEventListener('click', async () => {
-                            const id = notif.dataset.id;
-                            
-                            // Immediately update UI for better user experience
-                            notif.classList.remove('unread');
-                            notif.classList.add('read');
-                            
-                            // Update local notification state
-                            const notification = notifications.find(n => n.id === id);
-                            if (notification) {
-                                notification.read = true;
-                            }
-                            
-                            // Update indicator immediately
-                            updateNotificationIndicator();
-                            
-                            // Then send request to server
-                            await markNotificationRead(id);
-                        });
-                    });
-                }
-            }
-
-            // Update the notification indicator (red dot)
-            function updateNotificationIndicator() {
-                // Safeguard: if the button isn't present (e.g., on the login page), skip any DOM manipulation
-                if (!notificationsBtn) return;
-
-                const notificationsDisabled = localStorage.getItem('notificationsDisabled') === 'true';
-                // Indicator should only show if notifications are enabled AND there are unread ones
-                const hasUnread = !notificationsDisabled && notifications.some(n => !n.read);
-                notificationsBtn.classList.toggle('has-notifications', hasUnread);
-            }
-
-            // Mark notification as read
-            async function markNotificationRead(id) {
-                try {
-                    await fetch('/base/api/notifications/mark-read', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ id }),
-                    });
-                    // Note: UI is already updated immediately, so no need to refresh here
-                    // The periodic refresh will ensure consistency with server state
-                } catch (error) {
-                    console.error('Error marking notification as read:', error);
-                    // If the request fails, we could revert the UI changes here
-                    // For now, we'll let the periodic refresh handle any inconsistencies
-                }
-            }
-
-            // Format timestamp
-            function formatTimestamp(timestamp) {
-                const date = new Date(timestamp);
-                const now = new Date();
-                const diffHours = Math.abs(now - date) / 36e5;
-
-                if (diffHours < 24) {
-                    return date.toLocaleTimeString();
-                } else if (diffHours < 48) {
-                    return 'Yesterday';
-                } else {
-                    return date.toLocaleDateString();
-                }
-            }
-
-            // Modal controls (only if the notifications button exists on this page)
-            if (notificationsBtn) {
-                notificationsBtn.addEventListener('click', function() {
-                    notificationsModal.style.display = 'block';
-                    document.body.classList.add('modal-open'); // Add class to body
-                    fetchNotifications(); // Refresh notifications when opening modal
-                });
-            }
-
-            notificationsCloseBtn.addEventListener('click', function() {
-                notificationsModal.style.display = 'none';
-                document.body.classList.remove('modal-open'); // Remove class from body
-            });
-
+            // Modal controls for non-notification modals
             window.addEventListener('click', function(event) {
-                if (event.target == notificationsModal) {
-                    notificationsModal.style.display = 'none';
-                    document.body.classList.remove('modal-open'); // Remove class from body
-                }
                 // Close release notes if clicking overlay
                 if (event.target == releaseNotesOverlay) {
                     releaseNotesPopup.style.display = 'none';
@@ -943,43 +1360,7 @@
                 }
             });
 
-            // Initial fetch
-            fetchNotifications();
-            
-            // Refresh notifications periodically
-            setInterval(fetchNotifications, 10000); // Every 10 seconds instead of 30
-
-            // ---- Disable Notifications Toggle Logic ----
-            const disableNotificationsToggle = document.getElementById('disableNotificationsToggle');
-            const markAllAsReadBtn = document.getElementById('markAllAsReadBtn');
-            const notificationsDisabledKey = 'notificationsDisabled';
-
-            // Function to update UI based on toggle state
-            function updateNotificationDisabledState(isDisabled) {
-                document.body.setAttribute('data-notifications-disabled', isDisabled);
-                disableNotificationsToggle.checked = isDisabled;
-                if (markAllAsReadBtn) {
-                    markAllAsReadBtn.style.display = isDisabled ? 'none' : 'inline-block';
-                }
-                // Re-render notifications to apply read status if modal is open
-                if (notificationsModal.style.display === 'block') {
-                    updateNotificationDisplay();
-                }
-                // Update indicator immediately
-                updateNotificationIndicator(); 
-            }
-
-            // Load initial state from localStorage
-            const initialDisabledState = localStorage.getItem(notificationsDisabledKey) === 'true';
-            updateNotificationDisabledState(initialDisabledState);
-
-            // Add event listener to the toggle
-            disableNotificationsToggle.addEventListener('change', function() {
-                const isDisabled = this.checked;
-                localStorage.setItem(notificationsDisabledKey, isDisabled);
-                updateNotificationDisabledState(isDisabled);
-            });
-            // ---- End Disable Notifications Toggle Logic ----
+            // Notification toggle logic is handled in base.js to avoid conflicts
 
             // Support Modal Logic
             const supportModal = document.getElementById('supportModal');
@@ -1651,7 +2032,8 @@
                         ('debug.torrent_tracking', 'T. Tracker'),
                         ('trakt_friends.manage_friends', 'Trakt Friends'),
                         ('user_token.collect_tokens_page', 'Plex User Token M.'),
-                        ('symlink_tools.index', 'Symlink Tools')
+                        ('symlink_tools.index', 'Symlink Tools'),
+                        ('metadata.metadata_debug', 'Metadata Debug')
                     ]
                 } %}
                 
@@ -1784,6 +2166,15 @@
                             <div class="toggle-switch">
                                 <input type="checkbox" id="disableNotificationsToggle">
                                 <span id="disableNotificationsToggleSlider" class="toggle-slider"></span>
+                            </div>
+                        </label>
+                    </div>
+                    <div class="notification-toggle-container">
+                        <label class="notification-toggle-label" for="disableToastsToggle">
+                            <span>Disable Toast Notifications</span>
+                            <div class="toggle-switch">
+                                <input type="checkbox" id="disableToastsToggle">
+                                <span id="disableToastsToggleSlider" class="toggle-slider"></span>
                             </div>
                         </label>
                     </div>
@@ -1947,6 +2338,9 @@
             </div>
         </div>
     </div>
+    
+    <!-- Toast Container (will be populated by JavaScript) -->
+    <div id="toastContainer" class="toast-container"></div>
     
     {% block scripts %}{% endblock %}
 </body>

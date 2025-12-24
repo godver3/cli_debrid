@@ -320,7 +320,7 @@ def add_content_source(source_type, source_config):
     
     # Add type, enabled, versions, and display_name
     validated_config['type'] = source_type
-    validated_config['enabled'] = source_config.get('enabled', False)
+    validated_config['enabled'] = source_config.get('enabled', True)
     validated_config['versions'] = source_config.get('versions', [])
     if isinstance(validated_config['versions'], bool):
         validated_config['versions'] = []

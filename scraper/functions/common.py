@@ -53,9 +53,8 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
     is_ptt_complete = parsed_info.get('complete', False)
 
 
-    if is_ptt_complete or \
-       any(indicator in title for indicator in ['complete', 'collection', 'all.seasons']) or \
-       any(indicator in original_title for indicator in ['complete', 'collection', 'all.seasons']):
+    # Use PTT's built-in 'complete' field - it already handles this correctly
+    if is_ptt_complete:
         result['season_pack'] = 'Complete'
         return result
 
@@ -90,11 +89,9 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
                 result['season_pack'] = 'N/A'  # Single episode
             result['seasons'] = [1]
         else:
-            # No season or episode info - might be a complete pack
-            if any(word in title.lower() for word in ['season', 'complete', 'collection']):
-                result['season_pack'] = 'Complete'
-            else:
-                result['season_pack'] = 'Unknown'
+            # No season or episode info - default to Unknown
+            # PTT's complete field is already checked above, so no need for additional string matching
+            result['season_pack'] = 'Unknown'
     
     # Handle episode information
     if episode_info:

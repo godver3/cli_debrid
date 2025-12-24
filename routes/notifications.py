@@ -496,6 +496,24 @@ def store_notification(title, message, notification_type='info', link=None):
         # or just be logged (return True or None depending on desired behavior)
         return False # Indicate failure to store
 
+    # Broadcast the new notification to connected clients
+    try:
+        from routes.base_routes import broadcast_notification
+        notification_data = {
+            'type': 'new_notification',
+            'notification': {
+                'title': title,
+                'message': message,
+                'notification_type': notification_type,
+                'link': link,
+                'timestamp': datetime.now().isoformat(),
+                'is_read': is_read
+            }
+        }
+        broadcast_notification(notification_data)
+    except Exception as e:
+        logging.debug(f"Failed to broadcast notification: {e}")
+
     return True # Indicate success storing
 
 def _send_notifications(notifications, enabled_notifications, notification_category=None):

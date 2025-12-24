@@ -446,6 +446,34 @@ def check_service_connectivity():
                 failed_services_details.append(error_detail or {"service": "Debrid Provider API", "type": "CONNECTION_ERROR", "status_code": None, "message": "Connectivity check failed"})
         else:
             logging.info("Provider does not implement connectivity check; skipping provider connectivity validation.")
+
+        # Verify subscription days remaining > 0
+        try:
+            subscription_info = None
+            if hasattr(provider, 'get_subscription_status'):
+                subscription_info = provider.get_subscription_status()
+            if subscription_info is not None:
+                days_remaining = subscription_info.get('days_remaining')
+                premium = subscription_info.get('premium')
+                expiration = subscription_info.get('expiration')
+                logging.info(f"Debrid subscription status: days_remaining={days_remaining}, premium={premium}, expiration={expiration}")
+                if days_remaining is None or not isinstance(days_remaining, (int, float)) or days_remaining <= 0:
+                    services_reachable = False
+                    failed_services_details.append({
+                        "service": "Debrid Subscription",
+                        "type": "SUBSCRIPTION_EXPIRED",
+                        "message": f"Debrid subscription expired or invalid. days_remaining={days_remaining}, premium={premium}, expiration={expiration}"
+                    })
+            else:
+                logging.warning("Debrid subscription status unavailable from provider; skipping days remaining check")
+        except Exception as sub_err:
+            logging.error(f"Error checking Debrid subscription status: {sub_err}")
+            services_reachable = False
+            failed_services_details.append({
+                "service": "Debrid Subscription",
+                "type": "SUBSCRIPTION_CHECK_ERROR",
+                "message": str(sub_err)
+            })
     except Exception as e:
         logging.error(f"Failed to perform provider connectivity check: {e}")
         services_reachable = False

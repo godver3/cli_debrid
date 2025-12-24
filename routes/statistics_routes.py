@@ -98,9 +98,11 @@ def get_upcoming_releases():
     from database import get_db_connection
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+    upcoming_releases_start_limit = get_setting('UI Settings', 'upcoming_releases_start_limit', True)
+    upcoming_releases_end_limit = get_setting('UI Settings', 'upcoming_releases_end_limit', True)
     today = datetime.now().date()
-    next_month = today + timedelta(days=28)
+    start_day = today - timedelta(days=upcoming_releases_start_limit)
+    end_day = start_day + timedelta(days=upcoming_releases_end_limit)
     
     # Simplified query - directly filter out existing movies in the main query
     query = """
@@ -115,11 +117,11 @@ def get_upcoming_releases():
             AND e.type = 'movie'
             AND e.state IN ('Collected', 'Upgrading', 'Checking')
       )
-    GROUP BY m.release_date, m.title  -- Group by date and title to remove duplicates
+    GROUP BY m.title  -- Group by date and title to remove duplicates
     ORDER BY m.release_date ASC
     """
     
-    cursor.execute(query, (today.isoformat(), next_month.isoformat()))
+    cursor.execute(query, (start_day.isoformat(), end_day.isoformat()))
     results = cursor.fetchall()
     
     conn.close()
@@ -136,14 +138,23 @@ def get_upcoming_releases():
         })
     
     # Format the results
+    # formatted_results = [
+    #     {
+    #         'titles': [item['title'] for item in items],
+    #         'tmdb_ids': [item['tmdb_id'] for item in items if item['tmdb_id']],
+    #         'imdb_ids': [item['imdb_id'] for item in items if item['imdb_id']],
+    #         'release_date': date
+    #     }
+    #     for date, items in grouped_results.items()
+    # ]
     formatted_results = [
         {
-            'titles': [item['title'] for item in items],
-            'tmdb_ids': [item['tmdb_id'] for item in items if item['tmdb_id']],
-            'imdb_ids': [item['imdb_id'] for item in items if item['imdb_id']],
+            'titles': title,
+            'tmdb_ids': tmdb_id,
+            'imdb_ids': imdb_id,
             'release_date': date
         }
-        for date, items in grouped_results.items()
+        for title, date, tmdb_id, imdb_id in results
     ]
     
     return formatted_results
@@ -474,9 +485,13 @@ def root():
     if not limited_env:
         try:
             from database import get_cached_download_stats
+            from database.statistics import get_cached_subscription_status
             active_downloads, usage_stats = get_cached_download_stats()
             stats['active_downloads_data'] = active_downloads
             stats['usage_stats_data'] = usage_stats
+            # Subscription status (days remaining)
+            subscription = get_cached_subscription_status()
+            stats['subscription_status'] = subscription
         except Exception as e:
             logging.error(f"Error getting download stats: {str(e)}")
             stats['active_downloads_data'] = {
@@ -491,10 +506,17 @@ def root():
                 'percentage': 0,
                 'error': 'provider_error'
             }
+            stats['subscription_status'] = {
+                'days_remaining': None,
+                'expiration': None,
+                'premium': None,
+                'error': 'provider_error'
+            }
     else:
         # In limited environment, provide empty stats
         stats['active_downloads_data'] = None
         stats['usage_stats_data'] = None
+        stats['subscription_status'] = None
     
     # --- Read Cached Library Size for Initial Display ---
     library_cache_read_start = time.perf_counter()
@@ -525,7 +547,8 @@ def root():
         # Get recently added items
         get_recent_added_items_start = time.perf_counter()
         from database import get_recently_added_items
-        recently_added_data = loop.run_until_complete(get_recently_added_items())
+        recently_added_limit = get_setting('UI Settings', 'recently_added_limit', 7)
+        recently_added_data = loop.run_until_complete(get_recently_added_items(movie_limit=recently_added_limit, show_limit=recently_added_limit))
         
         recently_added_processing_start = time.perf_counter()
         recently_added = {
@@ -559,8 +582,9 @@ def root():
         recently_upgraded_processing_start = time.perf_counter()
         if upgrade_enabled:
             from database import get_recently_upgraded_items
+            recently_upgraded_limit = get_setting('UI Settings', 'recently_upgraded_limit', 7)
             recently_upgraded_async_start = time.perf_counter()
-            recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
+            recently_upgraded = loop.run_until_complete(get_recently_upgraded_items(upgraded_limit=recently_upgraded_limit))
             for item in recently_upgraded:
                 # Format the upgrade date using collected_at for better differentiation
                 item['formatted_date'] = format_datetime_preference(
@@ -637,18 +661,20 @@ def set_time_preference():
         try:
             # Get recently added items
             from database import get_recently_added_items
-            recently_added = loop.run_until_complete(get_recently_added_items(movie_limit=5, show_limit=5))
-            
+            recently_added_limit = get_setting('UI Settings', 'recently_added_limit', 7)
+            recently_added = loop.run_until_complete(get_recently_added_items(movie_limit=recently_added_limit, show_limit=recently_added_limit))
+            date_format = get_setting('UI Settings', 'date_format', '%Y-%m-%d')
+            time_format = get_setting('UI Settings', 'time_format', '%H:%M:%S')
             # Format recently added items
             for item in recently_added.get('movies', []) + recently_added.get('shows', []):
                 if 'collected_at' in item and item['collected_at'] is not None:
                     try:
                         # Try parsing with microseconds
-                        collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S.%f')
+                        collected_at = datetime.strptime(item['collected_at'], f"{date_format} {time_format}.%f")
                     except ValueError:
                         try:
                             # Try parsing without microseconds
-                            collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
+                            collected_at = datetime.strptime(item['collected_at'], f"{date_format} {time_format}")
                         except ValueError:
                             collected_at = None
                     
@@ -679,7 +705,8 @@ def set_time_preference():
             upgrade_enabled = get_setting('Scraping', 'enable_upgrading', False)
             if upgrade_enabled:
                 from database import get_recently_upgraded_items
-                recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
+                recently_upgraded_limit = get_setting('UI Settings', 'recently_upgraded_limit', 7)
+                recently_upgraded = loop.run_until_complete(get_recently_upgraded_items(upgraded_limit=recently_upgraded_limit))
                 for item in recently_upgraded:
                     # Format the upgrade date using collected_at for better differentiation
                     item['formatted_date'] = format_datetime_preference(
@@ -770,8 +797,11 @@ def recently_added():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     from database import get_recently_added_items
-    recently_added = loop.run_until_complete(get_recently_added_items(movie_limit=5, show_limit=5))
+    recently_added_limit = get_setting('UI Settings', 'recently_added_limit', 7)
+    recently_added = loop.run_until_complete(get_recently_added_items(movie_limit=recently_added_limit, show_limit=recently_added_limit))
     recently_added_end = time.time()
+    date_format = get_setting('UI Settings', 'date_format', '%Y-%m-%d')
+    time_format = get_setting('UI Settings', 'time_format', '%H:%M:%S')
     logging.debug(f"Time for get_recently_added_items: {recently_added_end - recently_added_start:.2f} seconds")
 
     # Format times for recently added items
@@ -779,11 +809,11 @@ def recently_added():
         if 'collected_at' in item and item['collected_at'] is not None:
             try:
                 # Try parsing with microseconds
-                collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S.%f')
+                collected_at = datetime.strptime(item['collected_at'], f"{date_format} {time_format}.%f")
             except ValueError:
                 try:
                     # Try parsing without microseconds
-                    collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
+                    collected_at = datetime.strptime(item['collected_at'], f"{date_format} {time_format}")
                 except ValueError:
                     item['formatted_collected_at'] = 'Unknown'
                     continue
@@ -793,7 +823,11 @@ def recently_added():
 
     return jsonify({'recently_added': recently_added})
 
-async def get_recent_from_plex(movie_limit=5, show_limit=5):
+async def get_recent_from_plex(movie_limit=None, show_limit=None):
+    if movie_limit is None:
+        movie_limit = get_setting('UI Settings', 'recently_added_limit', 7)
+    if show_limit is None:
+        show_limit = get_setting('UI Settings', 'recently_added_limit', 7)
     plex_url = get_setting('Plex', 'url', '').rstrip('/')
     plex_token = get_setting('Plex', 'token', '')
     
@@ -880,11 +914,12 @@ async def get_recent_from_plex(movie_limit=5, show_limit=5):
     }
 
 def format_date(date_string):
+    date_format = get_setting('UI Settings', 'date_format', '%Y-%m-%d')
     if not date_string:
         return ''
     try:
         date = datetime.fromisoformat(date_string)
-        return date.strftime('%Y-%m-%d')
+        return date.strftime(date_format)
     except ValueError:
         return date_string
 
@@ -909,16 +944,17 @@ def format_datetime_preference(date_input, use_24hour_format):
         # Get timezone using our robust function
         from metadata.metadata import _get_local_timezone
         local_tz = _get_local_timezone()
-        
+        date_format = get_setting('UI Settings', 'date_format', '%Y-%m-%d')
+        time_format = get_setting('UI Settings', 'time_format', '%H:%M:%S')
         # Convert string to datetime if necessary
         if isinstance(date_input, str):
             try:
                 # Try parsing with microseconds
-                date_input = datetime.strptime(date_input, '%Y-%m-%d %H:%M:%S.%f')
+                date_input = datetime.strptime(date_input, f"{date_format} {time_format}.%f")
             except ValueError:
                 try:
                     # Try parsing without microseconds
-                    date_input = datetime.strptime(date_input, '%Y-%m-%d %H:%M:%S')
+                    date_input = datetime.strptime(date_input, f"{date_format} {time_format}")
                 except ValueError:
                     try:
                         # Try parsing ISO format
@@ -1017,11 +1053,15 @@ def index_api():
     if not limited_env:
         active_downloads = get_cached_active_downloads()
         usage_stats = get_cached_user_traffic()
+        from database.statistics import get_cached_subscription_status
+        subscription = get_cached_subscription_status()
         stats['active_downloads_data'] = active_downloads
         stats['usage_stats_data'] = usage_stats
+        stats['subscription_status'] = subscription
     else:
         stats['active_downloads_data'] = None
         stats['usage_stats_data'] = None
+        stats['subscription_status'] = None
     
     # Get recently aired and airing soon
     recently_aired, airing_soon = get_recently_aired_and_airing_soon()
@@ -1038,8 +1078,8 @@ def index_api():
     try:
         # Get recently added items
         from database import get_recently_added_items
-
-        recently_added_data = loop.run_until_complete(get_recently_added_items())
+        recently_added_limit = get_setting('UI Settings', 'recently_added_limit', 7)
+        recently_added_data = loop.run_until_complete(get_recently_added_items(movie_limit=recently_added_limit, show_limit=recently_added_limit))
         recently_added = {
             'movies': [],
             'shows': []
@@ -1069,7 +1109,8 @@ def index_api():
         upgrade_enabled = get_setting('Scraping', 'enable_upgrading', False)
         if upgrade_enabled:
             from database import get_recently_upgraded_items
-            recently_upgraded = loop.run_until_complete(get_recently_upgraded_items())
+            recently_upgraded_limit = get_setting('UI Settings', 'recently_upgraded_limit', 7)
+            recently_upgraded = loop.run_until_complete(get_recently_upgraded_items(upgraded_limit=recently_upgraded_limit))
             for item in recently_upgraded:
                 # Format the upgrade date using collected_at for better differentiation
                 item['formatted_date'] = format_datetime_preference(
@@ -1364,8 +1405,8 @@ def calendar_view():
             release_date_str = movie['release_date']
             if not isinstance(release_date_str, str):
                 release_date_str = release_date_str.isoformat()
-
-            release_date_obj = datetime.strptime(release_date_str, '%Y-%m-%d').date()
+            date_format = get_setting('UI Settings', 'date_format', '%Y-%m-%d')
+            release_date_obj = datetime.strptime(release_date_str, date_format).date()
         except (ValueError, TypeError) as e:
             logging.error(f"Could not parse release_date '{movie['release_date']}' for movie '{movie['title']}': {e}")
             continue
