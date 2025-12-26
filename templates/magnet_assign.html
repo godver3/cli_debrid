@@ -98,6 +98,34 @@ document.addEventListener('DOMContentLoaded', function() {
                     selectionType.value = 'seasons';
                     updateSelectionFields('seasons');
                 }
+
+                // Apply prefilled episode after options are ready
+                if (prefillSelection === 'episode' && prefillSeasons) {
+                    const seasonValue = prefillSeasons.split(',')[0]?.trim();
+                    if (seasonValue && data[seasonValue]) {
+                        // Select the prefilled season
+                        seasonSelect.value = seasonValue;
+                        seasonInput.value = seasonValue;
+
+                        // Populate episodes for the selected season
+                        populateEpisodes(data[seasonValue]);
+
+                        // Select the prefilled episode if provided
+                        if (prefillEpisode) {
+                            episodeSelect.value = prefillEpisode;
+                            episodeInput.value = prefillEpisode;
+                        }
+
+                        // Ensure selection type is set
+                        selectionType.value = 'episode';
+                        updateSelectionFields('episode');
+
+                        // Force show magnet fields since we have all values
+                        if (seasonInput.value && episodeInput.value) {
+                            showMagnetFields();
+                        }
+                    }
+                }
             } catch (error) {
                 console.error('Error loading season data:', error);
                 showError('Failed to load season data');
@@ -115,6 +143,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const prefillDataElement = document.getElementById('prefill-data');
         const prefillSelection = (prefillDataElement?.dataset?.prefillSelection || '').trim();
         const prefillSeasons = (prefillDataElement?.dataset?.prefillSeasons || '').trim();
+        const prefillEpisode = (prefillDataElement?.dataset?.prefillEpisode || '').trim();
         const initialSelectionType = prefillSelection || selectionType.value;
         if (prefillSelection) {
             const validValues = ['all','seasons','episode'];
@@ -489,7 +518,8 @@ document.addEventListener('DOMContentLoaded', function() {
      data-is-prefilled="{{ is_prefilled|default(false)|tojson }}"
      data-prefill-version="{{ prefill_version|default('') }}"
      data-prefill-selection="{{ prefill_selection|default('') }}"
-     data-prefill-seasons="{{ prefill_seasons|default('') }}">
+     data-prefill-seasons="{{ prefill_seasons|default('') }}"
+     data-prefill-episode="{{ prefill_episode|default('') }}">
 </div>
 {# --- END HIDDEN DIV --- #}
 

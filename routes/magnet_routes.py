@@ -360,8 +360,10 @@ def assign_magnet():
         prefill_version = request.args.get('prefill_version')
         prefill_selection_raw = request.args.get('prefill_selection')
         prefill_seasons_raw = request.args.get('prefill_seasons')
+        prefill_episode_raw = request.args.get('prefill_episode')
         prefill_selection = None
         prefill_seasons_csv = None
+        prefill_episode = None
 
         # Normalize selection type to expected values: 'all', 'seasons', 'episode'
         if prefill_selection_raw:
@@ -393,6 +395,18 @@ def assign_magnet():
             except Exception as e:
                 logging.warning(f"Error processing prefill_seasons '{prefill_seasons_raw}': {e}")
 
+        # Parse episode number
+        if prefill_episode_raw:
+            try:
+                ep = prefill_episode_raw.strip()
+                if ep.isdigit():
+                    prefill_episode = ep
+                    logging.info(f"Prefill episode provided: {prefill_episode}")
+                else:
+                    logging.warning(f"Invalid prefill_episode value: '{prefill_episode_raw}'")
+            except Exception as e:
+                logging.warning(f"Error processing prefill_episode '{prefill_episode_raw}': {e}")
+
         if prefill_id and prefill_type:
             # Determine if prefill_id is IMDb ID or TMDB ID
             id_kind = 'tmdb'  # Default to TMDB
@@ -419,16 +433,17 @@ def assign_magnet():
                 # The helper already formats title, year, posterPath, mediaType, and id (TMDB)
                 # We can directly use this single_result.
                 logging.info(f"Prefilled data via helper: {single_result}, Version: {prefill_version}")
-                return render_template('magnet_assign.html', 
+                return render_template('magnet_assign.html',
                                     search_results=[single_result], # Pass as a list
-                                    search_term=prefill_title or single_result['title'], 
+                                    search_term=prefill_title or single_result['title'],
                                     content_type=single_result['mediaType'], # Use mediaType from helper
                                     step='results',
                                     is_prefilled=True,
                                     prefill_magnet=prefill_magnet,
                                     prefill_version=prefill_version,
                                     prefill_selection=prefill_selection,
-                                    prefill_seasons=prefill_seasons_csv)
+                                    prefill_seasons=prefill_seasons_csv,
+                                    prefill_episode=prefill_episode)
             else:
                 logging.warning(f"Could not fetch details via helper for prefill ID: {prefill_id} ({id_kind.upper()}), Type: {prefill_type}")
                 flash(f'Could not find details for {prefill_title} ({prefill_year}). Please search manually.', 'warning')
