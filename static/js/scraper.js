@@ -236,17 +236,17 @@ function displayEpisodeResults(episodeResults, title, year, version, mediaId, me
         episodeDiv.className = 'episode';
         var options = {year: 'numeric', month: 'long', day: 'numeric' };
         var date = item.air_date ? new Date(item.air_date) : null;
-        episodeDiv.innerHTML = `        
+        episodeDiv.innerHTML = `
             <button ${isRequester ? 'disabled' : ''}><span class="episode-rating">${(item.vote_average || 0).toFixed(1)}</span>
-            <img src="${item.still_path ? `/scraper/tmdb_image/w300${item.still_path}` : '/static/image/placeholder-horizontal.png'}" 
-                alt="${item.episode_title || ''}" 
+            <img src="${item.still_path ? `/scraper/tmdb_image/w300${item.still_path}` : '/static/image/placeholder-horizontal.png'}"
+                alt="${item.episode_title || ''}"
                 class="${item.still_path ? '' : 'placeholder-episode'}">
             <div class="episode-info">
                 <h2 class="episode-title">${item.episode_num}. ${item.episode_title || ''}</h2>
                 <p class="episode-sub">${date ? date.toLocaleDateString("en-US", options) : 'Air date unknown'}</p>
             </div></button>
         `;
-        
+
         // Only add click handler for non-requester users
         if (!isRequester) {
             episodeDiv.onclick = function() {
@@ -267,7 +267,7 @@ function displayEpisodeResults(episodeResults, title, year, version, mediaId, me
             episodeDiv.style.cursor = 'default';
             episodeDiv.style.opacity = '0.8';
         }
-        
+
         gridContainer.appendChild(episodeDiv);
     });
 
@@ -424,16 +424,27 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                     assignIcon.onclick = function(e) {
                         e.preventDefault();
                         e.stopPropagation();
-                        const currentVersion = document.getElementById('version-select')?.value || '';
                         const assignUrlParams = new URLSearchParams({
                             prefill_id: mediaId,
                             prefill_type: mediaType,
                             prefill_title: title,
                             prefill_year: year,
-                            prefill_version: currentVersion,
+                            prefill_version: version,
                         });
                         if (torrent.magnet) {
                             assignUrlParams.set('prefill_magnet', torrent.magnet);
+                        }
+                        // Set selection type based on whether this is an episode or season pack
+                        if (season) {
+                            assignUrlParams.set('prefill_seasons', season);
+                            if (episode) {
+                                // Individual episode
+                                assignUrlParams.set('prefill_selection', 'episode');
+                                assignUrlParams.set('prefill_episode', episode);
+                            } else {
+                                // Season pack
+                                assignUrlParams.set('prefill_selection', 'seasons');
+                            }
                         }
                         const assignUrl = `/magnet/assign_magnet?${assignUrlParams.toString()}`;
                         window.location.href = assignUrl;
@@ -508,11 +519,22 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                     torrent.magnet_link = torrent.magnet;
                 }
 
-                const currentVersion = document.getElementById('version-select').value;
                 const assignUrlParams = new URLSearchParams({
                     prefill_id: mediaId, prefill_type: mediaType, prefill_title: title,
-                    prefill_year: year, prefill_magnet: torrent.magnet, prefill_version: currentVersion
+                    prefill_year: year, prefill_magnet: torrent.magnet, prefill_version: version
                 });
+                // Set selection type based on whether this is an episode or season pack
+                if (season) {
+                    assignUrlParams.set('prefill_seasons', season);
+                    if (episode) {
+                        // Individual episode
+                        assignUrlParams.set('prefill_selection', 'episode');
+                        assignUrlParams.set('prefill_episode', episode);
+                    } else {
+                        // Season pack
+                        assignUrlParams.set('prefill_selection', 'seasons');
+                    }
+                }
                 const assignUrl = `/magnet/assign_magnet?${assignUrlParams.toString()}`;
 
                 // Create bitrate tooltip for desktop
