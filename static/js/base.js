@@ -28,11 +28,19 @@ function initializeNavigation() {
     const navMenu = document.querySelector('#navMenu');
 
     if (hamburger && navMenu) {
+        // Clean up any leftover state from previous page (mobile menu issue fix)
+        navMenu.classList.remove('show');
+        hamburger.classList.remove('active');
+        const allDropdowns = navMenu.querySelectorAll('.dropdown');
+        const allGroupTitles = navMenu.querySelectorAll('.group-title');
+        allDropdowns.forEach(dropdown => dropdown.classList.remove('show'));
+        allGroupTitles.forEach(title => title.classList.remove('active'));
+
         // Hamburger menu toggle
         hamburger.addEventListener('click', function() {
             hamburger.classList.toggle('active');
             navMenu.classList.toggle('show');
-            
+
             // Close all dropdowns when closing the menu
             if (!navMenu.classList.contains('show')) {
                 const allDropdowns = navMenu.querySelectorAll('.dropdown');
@@ -46,21 +54,29 @@ function initializeNavigation() {
         const groupTitles = navMenu.querySelectorAll('.group-title');
         groupTitles.forEach(title => {
             const handleClick = function(e) {
-                if (window.innerWidth <= 1045) {
+                // On desktop (tangerine theme), also use click-based navigation
+                const isTangerine = document.body.getAttribute('data-theme') === 'tangerine';
+                const isMobile = window.innerWidth <= 1045;
+
+                if (isMobile || isTangerine) {
                     e.preventDefault();
                     e.stopPropagation();
-                    
+
+                    const menuGroup = this.closest('.menu-group');
                     const dropdown = this.nextElementSibling;
-                    const wasActive = this.classList.contains('active');
-                    
+                    const wasActive = menuGroup.classList.contains('active');
+
                     // Close all dropdowns and remove active states
+                    const allMenuGroups = navMenu.querySelectorAll('.menu-group');
                     const allDropdowns = navMenu.querySelectorAll('.dropdown');
                     const allGroupTitles = navMenu.querySelectorAll('.group-title');
+                    allMenuGroups.forEach(g => g.classList.remove('active'));
                     allDropdowns.forEach(d => d.classList.remove('show'));
                     allGroupTitles.forEach(t => t.classList.remove('active'));
-                    
+
                     // Toggle current if it wasn't active
                     if (!wasActive) {
+                        menuGroup.classList.add('active');
                         this.classList.add('active');
                         dropdown.classList.add('show');
                     }
@@ -77,16 +93,38 @@ function initializeNavigation() {
 
         // Close menu when clicking outside
         document.addEventListener('click', function(e) {
-            if (window.innerWidth <= 1045) {
-                if (!navMenu.contains(e.target) && !hamburger.contains(e.target)) {
+            const isTangerine = document.body.getAttribute('data-theme') === 'tangerine';
+            const isMobile = window.innerWidth <= 1045;
+
+            if (!navMenu.contains(e.target) && !hamburger.contains(e.target)) {
+                // Close mobile menu
+                if (isMobile) {
                     navMenu.classList.remove('show');
                     hamburger.classList.remove('active');
+                }
+                // Close all dropdowns (mobile and tangerine desktop)
+                if (isMobile || isTangerine) {
+                    const allMenuGroups = navMenu.querySelectorAll('.menu-group');
                     const allDropdowns = navMenu.querySelectorAll('.dropdown');
                     const allGroupTitles = navMenu.querySelectorAll('.group-title');
+                    allMenuGroups.forEach(g => g.classList.remove('active'));
                     allDropdowns.forEach(dropdown => dropdown.classList.remove('show'));
                     allGroupTitles.forEach(title => title.classList.remove('active'));
                 }
             }
+        });
+
+        // Close mobile menu when any link is clicked
+        const navLinks = navMenu.querySelectorAll('a');
+        navLinks.forEach(link => {
+            link.addEventListener('click', function(e) {
+                if (window.innerWidth <= 1045) {
+                    navMenu.classList.remove('show');
+                    hamburger.classList.remove('active');
+                    allDropdowns.forEach(dropdown => dropdown.classList.remove('show'));
+                    allGroupTitles.forEach(title => title.classList.remove('active'));
+                }
+            });
         });
     }
 }
@@ -447,20 +485,14 @@ document.addEventListener('DOMContentLoaded', function() {
     // Check initial visibility state before any other initialization
     const taskMonitorVisible = localStorage.getItem('taskMonitorVisible') === 'true';
     const rateLimitsVisible = localStorage.getItem('rateLimitsSectionVisible') !== 'false';
-    
+
     // Set initial padding and visibility state
     if (window.innerWidth > 776 && (taskMonitorVisible || rateLimitsVisible)) {
         document.body.classList.add('has-visible-section');
     }
 
-    // Show the body after initial state is set
-    requestAnimationFrame(() => {
-        document.body.classList.add('initialized');
-        // Enable transitions after a small delay to ensure initial state is rendered
-        setTimeout(() => {
-            document.body.classList.add('transitions-enabled');
-        }, 100);
-    });
+    // Note: body.initialized and transitions-enabled are now handled inline in base.html
+    // to prevent FOUC before DOMContentLoaded fires
 
     // Set updating content state to false before initializing tooltips
     setUpdatingContent(false);

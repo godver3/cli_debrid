@@ -1,0 +1,683 @@
+{% extends "base.html" %}
+
+{% block title %}Settings{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_settings.css') }}">
+
+<!-- Mobile Menu Toggle Button -->
+<button class="settings-mobile-menu-toggle" id="settingsMobileMenuToggle" aria-label="Toggle settings menu">
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+    </svg>
+</button>
+
+<!-- Mobile Overlay -->
+<div class="settings-mobile-overlay" id="settingsMobileOverlay"></div>
+
+<div class="settings-page-container">
+    <!-- Sidebar Navigation -->
+    <aside class="settings-sidebar" id="settingsSidebar">
+        <div class="settings-sidebar-header">
+            <h1 class="settings-sidebar-title">Settings</h1>
+            <p class="settings-sidebar-subtitle">Configure your application</p>
+
+            <!-- Settings Search Bar -->
+            <div class="settings-search-container">
+                <input type="text" id="settingsSearch" class="settings-search-input" placeholder="Search settings..." autocomplete="off">
+                <button type="button" id="clearSearch" class="settings-search-clear" style="display: none;">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <nav>
+            <div class="settings-nav-section">
+                <div class="settings-nav-section-title">General</div>
+                <div class="settings-nav-item active" data-tab="required">
+                    <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    Required Settings
+                </div>
+                <div class="settings-nav-item" data-tab="additional">
+                    <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/>
+                    </svg>
+                    Additional Settings
+                </div>
+            </div>
+
+            <div class="settings-nav-section">
+                <div class="settings-nav-section-title">Media</div>
+                <div class="settings-nav-item" data-tab="scrapers">
+                    <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                    </svg>
+                    Scrapers
+                </div>
+                <div class="settings-nav-item" data-tab="scraping">
+                    <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
+                    </svg>
+                    Version Settings
+                </div>
+                <div class="settings-nav-item" data-tab="content-sources">
+                    <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"/>
+                    </svg>
+                    Content Sources
+                </div>
+                {% if environment_mode == 'full' %}
+                <div class="settings-nav-item" data-tab="debug">
+                    <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    </svg>
+                    Advanced Settings
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="settings-nav-section">
+                <div class="settings-nav-section-title">System</div>
+                <div class="settings-nav-item" data-tab="notifications">
+                    <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+                    </svg>
+                    Notifications
+                </div>
+                {% if environment_mode == 'full' %}
+                <!-- <div class="settings-nav-item" data-tab="reverse-parser">
+                    <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+                    </svg>
+                    Reverse Parser
+                </div> -->
+                <div class="settings-nav-item" data-tab="true-debug">
+                    <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+                    </svg>
+                    Debug
+                </div>
+                {% endif %}
+            </div>
+        </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="settings-main-content">
+        <div class="settings-container">
+            <div id="settingsForm">
+                <div id="required" class="settings-tab-content active">
+                    {% include 'settings_tabs/required_tangerine.html' %}
+                </div>
+                <div id="scraping" class="settings-tab-content" style="display: none;">
+                    {% include 'settings_tabs/scraping_tangerine.html' %}
+                </div>
+                <div id="content-sources" class="settings-tab-content" style="display: none;">
+                    {% include 'settings_tabs/content_sources_tangerine.html' %}
+                </div>
+                <div id="additional" class="settings-tab-content" style="display: none;">
+                    {% include 'settings_tabs/additional_tangerine.html' %}
+                </div>
+                {% if environment_mode == 'full' %}
+                <div id="debug" class="settings-tab-content" style="display: none;">
+                    {% include 'settings_tabs/debug_tangerine.html' %}
+                </div>
+                {% endif %}
+                <div id="notifications" class="settings-tab-content" style="display: none;">
+                    {% include 'settings_tabs/notifications_tangerine.html' %}
+                </div>
+                {% if environment_mode == 'full' %}
+                <div id="reverse-parser" class="settings-tab-content" style="display: none;">
+                    {% include 'settings_tabs/reverse_parser_tangerine.html' %}
+                </div>
+                <div id="true-debug" class="settings-tab-content" style="display: none;">
+                    {% include 'settings_tabs/true_debug_tangerine.html' %}
+                </div>
+                {% endif %}
+                <div id="scrapers" class="settings-tab-content" style="display: none;">
+                    {% include 'settings_tabs/scrapers_tangerine.html' %}
+                </div>
+            </div>
+
+            <button type="button" id="saveSettingsButton" class="btn btn-primary settings-submit-button">Save Settings</button>
+
+            <div id="saveStatus"></div>
+        </div>
+    </main>
+</div>
+
+<!-- Date & Time Format Modal -->
+<div id="dateTimeFormatModal" class="format-modal">
+    <div class="format-modal-overlay"></div>
+    <div class="format-modal-content">
+        <div class="format-modal-header">
+            <h4 class="format-modal-title">Date & Time Format Options</h4>
+            <button type="button" class="format-modal-close">&times;</button>
+        </div>
+        <div class="format-modal-body">
+            <h3 style="margin-top: 0; color: #4CAF50;">Date Codes:</h3>
+            <table class="notification-params time-options">
+                <thead><tr><th>Code</th><th>Description</th><th>Example</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>%Y</strong></td><td>Year with century (4 digits)</td><td>2024</td></tr>
+                    <tr><td><strong>%y</strong></td><td>Year without century (2 digits)</td><td>24</td></tr>
+                    <tr><td><strong>%m</strong></td><td>Month as zero-padded number</td><td>01-12</td></tr>
+                    <tr><td><strong>%B</strong></td><td>Full month name</td><td>January, February</td></tr>
+                    <tr><td><strong>%b</strong></td><td>Abbreviated month name</td><td>Jan, Feb</td></tr>
+                    <tr><td><strong>%d</strong></td><td>Day of month as zero-padded number</td><td>01-31</td></tr>
+                    <tr><td><strong>%-d</strong></td><td>Day of month without padding</td><td>1-31</td></tr>
+                    <tr><td><strong>%j</strong></td><td>Day of year as zero-padded number</td><td>001-366</td></tr>
+                    <tr><td><strong>%-j</strong></td><td>Day of year without padding</td><td>1-366</td></tr>
+                </tbody>
+            </table>
+
+            <h3 style="color: #4CAF50; margin-top: 20px;">Day of Week:</h3>
+            <table class="notification-params time-options">
+                <thead><tr><th>Code</th><th>Description</th><th>Example</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>%A</strong></td><td>Full weekday name</td><td>Monday, Tuesday</td></tr>
+                    <tr><td><strong>%a</strong></td><td>Abbreviated weekday name</td><td>Mon, Tue</td></tr>
+                    <tr><td><strong>%w</strong></td><td>Weekday as number (0=Sunday)</td><td>0-6</td></tr>
+                    <tr><td><strong>%u</strong></td><td>Weekday as number (1=Monday)</td><td>1-7</td></tr>
+                </tbody>
+            </table>
+
+            <h3 style="color: #4CAF50; margin-top: 20px;">Time Codes:</h3>
+            <table class="notification-params time-options">
+                <thead><tr><th>Code</th><th>Description</th><th>Example</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>%H</strong></td><td>Hour (24-hour) zero-padded</td><td>00-23</td></tr>
+                    <tr><td><strong>%-H</strong></td><td>Hour (24-hour) without padding</td><td>0-23</td></tr>
+                    <tr><td><strong>%I</strong></td><td>Hour (12-hour) zero-padded</td><td>01-12</td></tr>
+                    <tr><td><strong>%-I</strong></td><td>Hour (12-hour) without padding</td><td>1-12</td></tr>
+                    <tr><td><strong>%M</strong></td><td>Minute zero-padded</td><td>00-59</td></tr>
+                    <tr><td><strong>%-M</strong></td><td>Minute without padding</td><td>0-59</td></tr>
+                    <tr><td><strong>%S</strong></td><td>Second zero-padded</td><td>00-59</td></tr>
+                    <tr><td><strong>%-S</strong></td><td>Second without padding</td><td>0-59</td></tr>
+                    <tr><td><strong>%f</strong></td><td>Microsecond (6 digits)</td><td>000000-999999</td></tr>
+                    <tr><td><strong>%p</strong></td><td>AM/PM</td><td>AM, PM</td></tr>
+                </tbody>
+            </table>
+
+            <h3 style="color: #4CAF50; margin-top: 20px;">Timezone:</h3>
+            <table class="notification-params time-options">
+                <thead><tr><th>Code</th><th>Description</th><th>Example</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>%z</strong></td><td>UTC offset</td><td>+0100, -0700</td></tr>
+                    <tr><td><strong>%Z</strong></td><td>Timezone name</td><td>UTC, EST, PST</td></tr>
+                </tbody>
+            </table>
+
+            <h3 style="color: #4CAF50; margin-top: 20px;">Common Format Examples:</h3>
+            <table class="notification-params time-options">
+                <thead><tr><th>Format</th><th>Description</th><th>Example Output</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>%Y-%m-%d</strong></td><td>ISO date format</td><td>2024-12-22</td></tr>
+                    <tr><td><strong>%m/%d/%Y</strong></td><td>US date format</td><td>12/22/2024</td></tr>
+                    <tr><td><strong>%d/%m/%Y</strong></td><td>European date format</td><td>22/12/2024</td></tr>
+                    <tr><td><strong>%B %d, %Y</strong></td><td>Long date format</td><td>December 22, 2024</td></tr>
+                    <tr><td><strong>%H:%M:%S</strong></td><td>24-hour time</td><td>14:30:45</td></tr>
+                    <tr><td><strong>%I:%M:%S %p</strong></td><td>12-hour time with AM/PM</td><td>02:30:45 PM</td></tr>
+                    <tr><td><strong>%H:%M:%S.%f</strong></td><td>Time with microseconds</td><td>14:30:45.123456</td></tr>
+                    <tr><td><strong>%Y-%m-%d %H:%M:%S</strong></td><td>Full datetime</td><td>2024-12-22 14:30:45</td></tr>
+                </tbody>
+            </table>
+
+            <p style="margin-top: 20px; padding: 10px; background-color: #1a1a1a; border-radius: 5px; color: #aaa;">
+                <strong>Note:</strong> The <code>%-</code> prefix (e.g., <code>%-d</code>, <code>%-H</code>) removes leading zeros but may not work on all platforms (especially Windows). For maximum compatibility, use zero-padded versions.
+            </p>
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/settings.js') }}"></script>
+<script type="module">
+    import { updateSettings } from '/static/js/settings.js';
+    import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
+
+    // Make POPUP_TYPES available globally for other scripts
+    window.POPUP_TYPES = POPUP_TYPES;
+
+    // Define reloadTabContent in the global scope
+    window.reloadTabContent = function(tabName, callback) {
+        return fetch(`/settings/${tabName}/content`)
+            .then(response => {
+                return response.text();
+            })
+            .then(html => {
+                const tabContent = document.getElementById(tabName);
+                if (tabContent) {
+                    console.log('Updating HTML for tab:', tabName);
+                    tabContent.innerHTML = html;
+                    console.log('HTML updated, tab content length:', tabContent.innerHTML.length);
+                    if (tabName === 'scrapers') {
+                        console.log('Dispatching scrapersContentLoaded event');
+                        const event = new CustomEvent('scrapersContentLoaded');
+                        document.dispatchEvent(event);
+                    } else if (tabName === 'scraping') {
+                        console.log('Dispatching scrapingContentLoaded event');
+                        const event = new CustomEvent('scrapingContentLoaded');
+                        document.dispatchEvent(event);
+                    } else if (tabName === 'true-debug') {
+                        console.log('Dispatching trueDebugContentLoaded event');
+                        const event = new CustomEvent('trueDebugContentLoaded');
+                        document.dispatchEvent(event);
+                    }
+                    initializeExpandCollapse();
+                    if (callback && typeof callback === 'function') {
+                        callback();
+                    }
+                } else {
+                    console.error('Tab content element not found:', tabName);
+                }
+            })
+            .catch(error => {
+                console.error(`Error reloading ${tabName} tab:`, error);
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    message: `Error reloading ${tabName} tab: ${error.message}`
+                });
+            });
+    };
+
+    window.initializeExpandCollapse = function() {
+        const allTabContents = document.querySelectorAll('.settings-tab-content');
+
+        allTabContents.forEach(tabContent => {
+            const expandAllButton = tabContent.querySelector('.settings-expand-all');
+            const collapseAllButton = tabContent.querySelector('.settings-collapse-all');
+            const settingsSections = tabContent.querySelectorAll('.settings-section');
+
+            if (expandAllButton) {
+                expandAllButton.addEventListener('click', () => expandAll(tabContent));
+            }
+
+            if (collapseAllButton) {
+                collapseAllButton.addEventListener('click', () => collapseAll(tabContent));
+            }
+
+            settingsSections.forEach(section => {
+                const header = section.querySelector('.settings-section-header');
+                const content = section.querySelector('.settings-section-content');
+                const toggleIcon = header.querySelector('.settings-toggle-icon');
+
+                if (header && content && toggleIcon) {
+                    header.addEventListener('click', toggleSectionHandler);
+                }
+            });
+        });
+    };
+
+    function expandAll(tabContent) {
+        const sections = tabContent.querySelectorAll('.settings-section');
+        sections.forEach(section => {
+            const content = section.querySelector('.settings-section-content');
+            if (content) {
+                content.style.display = 'block';
+                section.classList.add('expanded');
+            }
+        });
+    }
+
+    function collapseAll(tabContent) {
+        const sections = tabContent.querySelectorAll('.settings-section');
+        sections.forEach(section => {
+            const content = section.querySelector('.settings-section-content');
+            if (content) {
+                content.style.display = 'none';
+                section.classList.remove('expanded');
+            }
+        });
+    }
+
+    function toggleSectionHandler(e) {
+        if (!e.target.closest('button')) {
+            const header = e.currentTarget;
+            const section = header.closest('.settings-section');
+            const content = header.nextElementSibling;
+
+            if (content.style.display === 'none' || content.style.display === '') {
+                content.style.display = 'block';
+                section.classList.add('expanded');
+            } else {
+                content.style.display = 'none';
+                section.classList.remove('expanded');
+            }
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const navItems = document.querySelectorAll('.settings-nav-item');
+        const tabContents = document.querySelectorAll('.settings-tab-content');
+        const mobileMenuToggle = document.getElementById('settingsMobileMenuToggle');
+        const mobileOverlay = document.getElementById('settingsMobileOverlay');
+        const sidebar = document.getElementById('settingsSidebar');
+
+        // Initialize format modal handlers
+        initializeFormatModal();
+
+        // Mobile menu functionality
+        function toggleMobileMenu() {
+            sidebar.classList.toggle('mobile-open');
+            mobileOverlay.classList.toggle('active');
+            document.body.style.overflow = sidebar.classList.contains('mobile-open') ? 'hidden' : '';
+        }
+
+        mobileMenuToggle.addEventListener('click', toggleMobileMenu);
+        mobileOverlay.addEventListener('click', toggleMobileMenu);
+
+        // Navigation item click handler
+        navItems.forEach(item => {
+            item.addEventListener('click', function() {
+                const tabName = this.getAttribute('data-tab');
+
+                // Update active states
+                navItems.forEach(i => i.classList.remove('active'));
+                this.classList.add('active');
+
+                // Switch tabs
+                openTab(tabName);
+
+                // Close mobile menu on mobile
+                if (window.innerWidth <= 768) {
+                    toggleMobileMenu();
+                }
+            });
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', function() {
+            if (window.innerWidth > 768) {
+                sidebar.classList.remove('mobile-open');
+                mobileOverlay.classList.remove('active');
+                document.body.style.overflow = '';
+            }
+        });
+
+        function openTab(tabName) {
+            tabContents.forEach(content => content.style.display = 'none');
+
+            const activeTab = document.getElementById(tabName);
+            if (activeTab) {
+                activeTab.style.display = 'block';
+                localStorage.setItem('currentTab', tabName);
+            }
+        }
+
+        initializeExpandCollapse();
+
+        // Open the last active tab or default to 'required'
+        const lastActiveTab = localStorage.getItem('currentTab') || 'required';
+        const defaultNavItem = document.querySelector(`.settings-nav-item[data-tab="${lastActiveTab}"]`);
+        if (defaultNavItem) {
+            navItems.forEach(i => i.classList.remove('active'));
+            defaultNavItem.classList.add('active');
+        }
+        openTab(lastActiveTab);
+
+        // Dispatch an event to signal that dashboard initialization is complete
+        document.dispatchEvent(new Event('dashboardInitialized'));
+
+        // Add event listener for the Save Settings button
+        const saveSettingsButton = document.getElementById('saveSettingsButton');
+        saveSettingsButton.addEventListener('click', function() {
+            updateSettings();
+        });
+    });
+
+    function initializeFormatModal() {
+        // Handle clicks on format help links
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('format-help-link')) {
+                e.preventDefault();
+                const modalId = e.target.getAttribute('data-modal');
+                const modal = document.getElementById(modalId);
+                if (modal) {
+                    modal.style.display = 'block';
+                }
+            }
+        });
+
+        // Handle close button clicks
+        document.querySelectorAll('.format-modal-close').forEach(closeBtn => {
+            closeBtn.addEventListener('click', function() {
+                this.closest('.format-modal').style.display = 'none';
+            });
+        });
+
+        // Handle overlay clicks to close modal
+        document.querySelectorAll('.format-modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', function() {
+                this.closest('.format-modal').style.display = 'none';
+            });
+        });
+
+        // Handle ESC key to close modal
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                document.querySelectorAll('.format-modal').forEach(modal => {
+                    modal.style.display = 'none';
+                });
+            }
+        });
+    }
+
+    // Settings Search Functionality
+    function initializeSettingsSearch() {
+        const searchInput = document.getElementById('settingsSearch');
+        const clearButton = document.getElementById('clearSearch');
+        let searchTimeout;
+
+        if (!searchInput) return;
+
+        // Handle input changes
+        searchInput.addEventListener('input', function() {
+            const query = this.value.trim();
+
+            // Show/hide clear button
+            clearButton.style.display = query ? 'flex' : 'none';
+
+            // Debounce search
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                performSearch(query);
+            }, 300);
+        });
+
+        // Handle clear button click
+        clearButton.addEventListener('click', function() {
+            searchInput.value = '';
+            clearButton.style.display = 'none';
+            performSearch('');
+            searchInput.focus();
+        });
+
+        // Handle ESC key to clear search
+        searchInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                searchInput.value = '';
+                clearButton.style.display = 'none';
+                performSearch('');
+            }
+        });
+    }
+
+    function performSearch(query) {
+        const lowerQuery = query.toLowerCase();
+        const tabContents = document.querySelectorAll('.settings-tab-content');
+
+        if (!query) {
+            // Reset: hide all search highlights and show normal view
+            removeSearchHighlights();
+            return;
+        }
+
+        let totalMatches = 0;
+        const matchesByTab = {};
+
+        // Search through all tabs
+        tabContents.forEach(tabContent => {
+            const tabId = tabContent.id;
+            const sections = tabContent.querySelectorAll('.settings-section');
+            let tabMatches = 0;
+
+            sections.forEach(section => {
+                const sectionHeader = section.querySelector('.settings-section-header h4');
+                const formGroups = section.querySelectorAll('.settings-form-group');
+                let sectionHasMatch = false;
+                let matchedGroups = [];
+
+                // Check section header
+                const sectionTitle = sectionHeader ? sectionHeader.textContent.toLowerCase() : '';
+                if (sectionTitle.includes(lowerQuery)) {
+                    sectionHasMatch = true;
+                }
+
+                // Check each form group
+                formGroups.forEach(group => {
+                    const label = group.querySelector('.settings-title, label');
+                    const description = group.querySelector('.settings-description');
+                    const input = group.querySelector('input, select, textarea');
+
+                    const labelText = label ? label.textContent.toLowerCase() : '';
+                    const descText = description ? description.textContent.toLowerCase() : '';
+                    const inputValue = input ? (input.value || '').toLowerCase() : '';
+                    const inputId = input ? (input.id || '').toLowerCase() : '';
+
+                    if (labelText.includes(lowerQuery) ||
+                        descText.includes(lowerQuery) ||
+                        inputValue.includes(lowerQuery) ||
+                        inputId.includes(lowerQuery)) {
+                        sectionHasMatch = true;
+                        matchedGroups.push(group);
+                    }
+                });
+
+                // Mark section visibility
+                if (sectionHasMatch) {
+                    section.classList.add('search-match');
+                    section.classList.remove('search-hidden');
+
+                    // Expand section to show matches
+                    const content = section.querySelector('.settings-section-content');
+                    if (content) {
+                        content.style.display = 'block';
+                        section.classList.add('expanded');
+                    }
+
+                    // Highlight matched form groups
+                    matchedGroups.forEach(group => {
+                        group.classList.add('search-highlight');
+                    });
+
+                    tabMatches++;
+                } else {
+                    section.classList.remove('search-match');
+                    section.classList.add('search-hidden');
+                }
+            });
+
+            if (tabMatches > 0) {
+                matchesByTab[tabId] = tabMatches;
+                totalMatches += tabMatches;
+            }
+        });
+
+        // Update search results indicator
+        displaySearchResults(matchesByTab, totalMatches, query);
+    }
+
+    function removeSearchHighlights() {
+        // Remove all search-related classes
+        document.querySelectorAll('.search-match, .search-hidden, .search-highlight').forEach(el => {
+            el.classList.remove('search-match', 'search-hidden', 'search-highlight');
+        });
+
+        // Remove search results indicator
+        const resultsIndicator = document.querySelector('.search-results-indicator');
+        if (resultsIndicator) {
+            resultsIndicator.remove();
+        }
+    }
+
+    function displaySearchResults(matchesByTab, totalMatches, query) {
+        // Remove existing indicator
+        const existingIndicator = document.querySelector('.search-results-indicator');
+        if (existingIndicator) {
+            existingIndicator.remove();
+        }
+
+        if (totalMatches === 0) {
+            // Show "no results" message
+            const nav = document.querySelector('.settings-sidebar nav');
+            const indicator = document.createElement('div');
+            indicator.className = 'search-results-indicator no-results';
+            indicator.innerHTML = `
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 20px; height: 20px; margin-right: 8px;">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                No results found for "${query}"
+            `;
+            nav.insertBefore(indicator, nav.firstChild);
+        } else {
+            // Show results count and matched tabs
+            const nav = document.querySelector('.settings-sidebar nav');
+            const indicator = document.createElement('div');
+            indicator.className = 'search-results-indicator';
+
+            // Map tab IDs to their proper display names
+            const tabDisplayNames = {
+                'required': 'Required Settings',
+                'additional': 'Additional Settings',
+                'scrapers': 'Scrapers',
+                'scraping': 'Version Settings',
+                'content-sources': 'Content Sources',
+                'debug': 'Advanced Settings',
+                'notifications': 'Notifications',
+                'reverse-parser': 'Reverse Parser',
+                'true-debug': 'Debug'
+            };
+
+            let tabsList = Object.entries(matchesByTab)
+                .map(([tabId, count]) => {
+                    const tabName = tabDisplayNames[tabId] || tabId.charAt(0).toUpperCase() + tabId.slice(1).replace(/-/g, ' ');
+                    return `<span class="search-tab-match" data-tab="${tabId}">${tabName} (${count})</span>`;
+                })
+                .join('');
+
+            indicator.innerHTML = `
+                <div class="search-results-header">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 18px; height: 18px; margin-right: 6px;">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                    </svg>
+                    Found ${totalMatches} match${totalMatches !== 1 ? 'es' : ''}
+                </div>
+                <div class="search-tabs-list">${tabsList}</div>
+            `;
+            nav.insertBefore(indicator, nav.firstChild);
+
+            // Add click handlers to tab matches
+            indicator.querySelectorAll('.search-tab-match').forEach(match => {
+                match.addEventListener('click', function() {
+                    const tabId = this.getAttribute('data-tab');
+                    const navItem = document.querySelector(`.settings-nav-item[data-tab="${tabId}"]`);
+                    if (navItem) {
+                        navItem.click();
+                    }
+                });
+            });
+        }
+    }
+
+    // Initialize search on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        initializeSettingsSearch();
+    });
+</script>
+{% endblock %}

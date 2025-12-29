@@ -25,6 +25,24 @@ html, body {
     color: var(--text-primary);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
 }
+.loading-message p {
+    margin: 0 0 10px 0;
+    font-size: 1.1rem;
+    color: #fff;
+}
+
+button.close-loading {
+    background: #007bff;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    transition: all 0.3s ease;
+}
+
 
 body {
     padding-top: 60px;
@@ -1500,4 +1518,923 @@ tr.filtered-out-item:hover {
 .sresult:hover .mediatype-tv,
 .sresult:hover .mediatype-mv {
     transform: none !important;
+}/* Container */
+.container {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+    overflow-x: hidden;
 }
+
+.mt-4 {
+    margin-top: 1.5rem;
+}
+
+.mb-4 {
+    margin-bottom: 1.5rem;
+}
+
+.mb-2 {
+    margin-bottom: 0.5rem;
+}
+
+.mb-3 {
+    margin-bottom: 1rem;
+}
+
+.mb-1 {
+    margin-bottom: 0.25rem;
+}
+
+.ms-2 {
+    margin-left: 0.5rem;
+}
+
+/* Alert styles */
+.alert {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border: 1px solid transparent;
+    border-radius: 0.25rem;
+}
+
+.alert-warning {
+    background-color: #2c2c2c;
+    border-color: #444;
+    color: #f4f4f4;
+}
+
+/* Navigation tabs */
+.nav-tabs {
+    display: flex;
+    border-bottom: 1px solid #444;
+    margin-bottom: 1rem;
+    padding-left: 0;
+    list-style: none;
+}
+
+.nav-item {
+    margin-bottom: -1px;
+}
+
+.nav-link {
+    display: block;
+    padding: 0.5rem 1rem;
+    text-decoration: none;
+    color: #f4f4f4;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 0.25rem 0.25rem 0 0;
+}
+
+.nav-link:hover {
+    border-color: #444;
+    background-color: #2a2a2a;
+}
+
+.nav-link.active {
+    color: #fff;
+    background-color: #1a1a1a;
+    border-color: #444 #444 transparent;
+}
+
+/* Letter navigation */
+.letter-nav {
+    margin: 2rem 0;
+    background-color: #1a1a1a;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    border: 1px solid #444;
+    text-align: center;
+    overflow-x: auto;
+}
+
+.letter-nav .d-flex {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.25rem;
+    padding: 0 1rem;
+    min-width: min-content;
+}
+
+.letter-nav .btn {
+    min-width: 2.5rem;
+    padding: 0.5rem;
+}
+
+.btn {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    font-size: 1rem;
+    font-weight: 400;
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+    border: 1px solid transparent;
+    border-radius: 0.25rem;
+    transition: all 0.15s ease-in-out;
+}
+
+.btn-primary {
+    background-color: #007bff;
+    border-color: #0056b3;
+    color: #fff;
+}
+
+.btn-primary:hover {
+    background-color: #0056b3;
+    border-color: #004085;
+}
+
+.btn-outline-light {
+    color: #f4f4f4;
+    border-color: #f4f4f4;
+    background: transparent;
+}
+
+.btn-outline-light:hover {
+    background-color: #f4f4f4;
+    color: #1a1a1a;
+}
+
+/* Grid layout */
+.row {
+    display: grid;
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+    gap: 1rem;
+    margin: 0 auto;
+    max-width: 800px;
+    padding: 0 1rem;
+}
+
+@media (min-width: 768px) {
+    .row {
+        grid-template-columns: repeat(2, minmax(0, 400px));
+        justify-content: center;
+    }
+}
+
+@media (min-width: 992px) {
+    .row {
+        grid-template-columns: repeat(2, minmax(0, 400px));
+        max-width: 850px;
+    }
+}
+
+/* Card styles */
+.card {
+    background-color: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 0.25rem;
+    overflow: hidden;
+    width: 100%;
+}
+
+.card-header {
+    padding: 0.8rem 1.25rem;
+    background-color: #1a1a1a;
+    border-bottom: 1px solid #444;
+}
+
+.btn-link {
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: #f4f4f4;
+    text-decoration: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    min-width: 0;
+}
+
+.btn-link span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-right: 0.5rem;
+}
+
+.badge {
+    display: inline-block;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    line-height: 1;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: baseline;
+    border-radius: 0.25rem;
+    background-color: #6c757d;
+    color: #fff;
+}
+
+/* Modal styles */
+.modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 1050;
+    overflow-y: auto;
+    padding: 1rem;
+}
+
+.modal.show {
+    display: block;
+}
+
+.modal-dialog {
+    position: relative;
+    width: auto;
+    margin: 3rem auto;
+    max-width: 800px;
+    display: flex;
+    align-items: flex-start;
+    min-height: calc(100% - 6rem);
+}
+
+.modal-content {
+    position: relative;
+    background-color: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 0.3rem;
+    outline: 0;
+    width: 100%;
+    margin: auto;
+}
+
+.modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem;
+    border-bottom: 1px solid #444;
+}
+
+.modal-title {
+    margin: 0;
+    color: #f4f4f4;
+}
+
+.btn-close {
+    background: transparent;
+    border: 0;
+    color: #f4f4f4;
+    font-size: 1.5rem;
+    cursor: pointer;
+}
+
+.modal-body {
+    position: relative;
+    padding: 1rem;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+/* Version items */
+.version-item {
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    background-color: #2a2a2a;
+    border-radius: 0.25rem;
+    border: 1px solid #444;
+    color: #f4f4f4;
+    cursor: pointer;
+    width: 100%;
+    text-align: left;
+}
+
+.version-item:hover {
+    background-color: #333;
+}
+
+.text-muted {
+    color: #aaa;
+}
+
+/* Utility classes */
+.d-flex {
+    display: flex;
+}
+
+.justify-content-between {
+    justify-content: space-between;
+}
+
+.align-items-center {
+    align-items: center;
+}
+
+.w-100 {
+    width: 100%;
+}
+
+.text-light {
+    color: #f4f4f4;
+}
+
+.text-center {
+    text-align: center;
+}
+
+.bg-dark {
+    background-color: #1a1a1a;
+}
+
+.bg-secondary {
+    background-color: #6c757d;
+}
+
+
+/* ========================================
+   Inline CSS from scraper.html
+   ======================================== */
+.trending-container p {
+        font-style: italic;
+        color: #888;
+        text-align: center;
+    }
+
+    .tmdb-info {
+        margin-top: 10px;
+        margin-bottom: 0px;
+        padding: 10px;
+        color: #be1600;
+        font-style: italic;
+        text-align: center;
+    }
+
+    .requester-notice {
+        background-color: #f39c12;
+        color: white;
+        padding: 10px 15px;
+        text-align: center;
+        border-radius: 5px;
+        margin: 10px 0;
+        font-weight: bold;
+    }
+
+    .loading {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        z-index: 9999;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .loading-content {
+        background-color: #333;
+        padding: 20px;
+        border-radius: 5px;
+        text-align: center;
+    }
+
+    .spinner {
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #3498db;
+        border-radius: 50%;
+        width: 40px;
+        height: 40px;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 10px;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+    /* Table styles */
+    table {
+        border-spacing: 0;
+        border-collapse: separate;
+    }
+
+    td, th {
+        padding: 10px;
+        vertical-align: middle;
+    }
+
+    tr {
+        line-height: 1.4;
+    }
+
+    /* Cache status badges */
+    .cache-status {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.85em;
+        font-weight: bold;
+        text-transform: uppercase;
+        margin-top: 5px;
+        min-width: 40px;
+        text-align: center;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .cache-status.cached {
+        background-color: #4CAF50;
+        color: white;
+    }
+
+    .cache-status.not-cached {
+        background-color: #f44336;
+        color: white;
+    }
+
+    .cache-status.not-checked {
+        background-color: #9e9e9e;
+        color: white;
+    }
+
+    .cache-status.check-unavailable {
+        background-color: #607D8B;
+        color: white;
+    }
+
+    .cache-status.unknown {
+        background-color: #607d8b;
+        color: white;
+    }
+
+    /* Simple CSS reset for checkbox */
+    #skip-cache-check {
+        /* Reset to browser defaults */
+        -webkit-appearance: checkbox !important;
+        -moz-appearance: checkbox !important;
+        appearance: checkbox !important;
+        
+        /* Remove any custom styling */
+        all: revert !important;
+        
+        /* Optional: add minimal styling if needed */
+        margin-right: 5px !important;
+        vertical-align: middle !important;
+    }
+    
+    .checkbox-container label {
+        cursor: pointer !important;
+        vertical-align: middle !important;
+    }
+
+    #skip-cache-check-container {
+        display: none !important;
+    }
+
+
+    .checkbox-container input[type="checkbox"] {
+        all: revert !important;
+    }
+
+    /* Request icon styling - Current blue plus style */
+    .request-icon {
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+        background-color: #3498db; /* Blue */
+        color: white;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        z-index: 5;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .request-icon:hover {
+        transform: scale(1.1);
+        background-color: #2980b9; /* Darker blue on hover */
+    }
+
+    /* Additional color options - Uncomment to use
+    
+    /* Purple style 
+    .request-icon {
+        background-color: #9b59b6;
+    }
+    .request-icon:hover {
+        background-color: #8e44ad;
+    }
+    */
+    
+    /* Teal style 
+    .request-icon {
+        background-color: #1abc9c;
+    }
+    .request-icon:hover {
+        background-color: #16a085;
+    }
+    */
+    
+    /* Orange style 
+    .request-icon {
+        background-color: #e67e22;
+    }
+    .request-icon:hover {
+        background-color: #d35400;
+    }
+    */
+
+    /* Make request icon follow poster hover animation */
+    .media-poster:hover .request-icon {
+        transform: translateY(0px);
+    }
+
+    /* Combine hover effects when hovering directly on the icon */
+    .media-poster:hover .request-icon:hover {
+        transform: translateY(0px) scale(1);
+        background-color: #2980b9; /* Match the darker blue for consistency */
+    }
+
+    .request-icon svg {
+        width: 18px;
+        height: 18px;
+    }
+
+    /* Version Modal Styles */
+    .version-modal {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.7);
+        z-index: 1000;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .version-modal-content {
+        background-color: #333;
+        padding: 20px;
+        border-radius: 5px;
+        width: 300px;
+        max-width: 90%;
+        color: white;
+    }
+
+    .version-modal h3 {
+        margin-top: 0;
+        margin-bottom: 15px;
+        text-align: center;
+    }
+
+    .version-checkbox {
+        margin-bottom: 10px;
+    }
+
+    .version-checkbox input[type="checkbox"] {
+        margin-right: 10px;
+    }
+
+    .version-modal-buttons {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 20px;
+    }
+
+    .version-modal-buttons button {
+        padding: 8px 16px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    .version-modal-buttons button:first-child {
+        background-color: #2ecc71;
+        color: white;
+    }
+
+    .version-modal-buttons button:last-child {
+        background-color: #7f8c8d;
+        color: white;
+    }
+
+    .media-poster {
+        position: relative;
+    }
+    
+    /* Season selection styles */
+    .version-section-header {
+        margin: 15px 0 10px;
+        border-bottom: 1px solid #555;
+        padding-bottom: 5px;
+    }
+    
+    .version-section-header h4 {
+        margin: 0;
+        font-size: 16px;
+        color: #ccc;
+    }
+    
+    .selection-type-container {
+        margin: 10px 0;
+    }
+    
+    .selection-type-option {
+        margin-bottom: 8px;
+    }
+    
+    .selection-type-option input[type="radio"] {
+        margin-right: 8px;
+    }
+    
+    .season-selection-container {
+        margin: 10px 0;
+        max-height: 200px;
+        overflow-y: auto;
+        padding: 5px;
+        background-color: #444;
+        border-radius: 4px;
+    }
+    
+    .seasons-list {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+    }
+    
+    .season-checkbox {
+        margin-bottom: 5px;
+    }
+    
+    hr {
+        border: 0;
+        height: 1px;
+        background-color: #555;
+        margin: 15px 0;
+    }
+
+    .sresult {
+        position: relative;
+        margin-bottom: 15px;
+        transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+        overflow: visible;
+        margin: -8px 8px; /* Restore original margin */
+        z-index: 1;
+    }
+    
+    .sresult .media-poster {
+        position: relative;
+        display: inline-block;
+        overflow: visible;
+        border-radius: 5px;
+        transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    /* Apply hover effects to search results - THE ENTIRE CARD */
+    .sresult:hover {
+        transform: translateY(0px);
+        z-index: 2;
+    }
+    
+    /* Remove the transform from the inner poster since it's now on the card */
+    .sresult:hover .media-poster {
+        transform: none;
+    }
+    
+    .sresult .media-poster img {
+        max-width: 100%;
+        display: block;
+        transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 
+            0 4px 6px rgba(0, 0, 0, 0.2),
+            0 0 25px rgba(255, 255, 255, 0.15);
+        border-radius: var(--border-radius-lg);
+    }
+    
+    /* Apply box-shadow enhancement to the img on hover */
+    .sresult:hover .media-poster img {
+        box-shadow: 
+            0 8px 16px rgba(0, 0, 0, 0.3),
+            0 0 50px rgba(255, 255, 255, 0.5);
+    }
+    
+    /* Reduce glow intensity to match trending items */
+    .sresult:hover .media-poster::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        border-radius: var(--border-radius-lg);
+        box-shadow: none;
+        z-index: -1;
+        pointer-events: none;
+    }
+    
+    /* Remove the effect from the sresult itself */
+    .sresult:hover::after {
+        content: none;
+    }
+    
+    .sresult .searchresult-info {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        padding: var(--spacing-md);
+        background: linear-gradient(to top, rgba(0, 0, 0, 0.9), transparent);
+        color: var(--text-primary);
+        opacity: 0;
+        transition: all var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
+        text-align: center;
+        backdrop-filter: blur(4px);
+        z-index: 2;
+        border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
+    }
+    
+    /* Make the info section visible on hover */
+    .sresult:hover .searchresult-info {
+        opacity: 1;
+    }
+    
+    .sresult .request-icon {
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+        z-index: 5;
+    }
+    
+    /* No need for separate transform on the icon, it will move with the card */
+    .sresult:hover .request-icon {
+        transform: none;
+    }
+
+    /* Maintain the icon hover effect */
+    .sresult .request-icon:hover {
+        transform: scale(1.1);
+        background-color: #2980b9;
+    }
+    
+    /* Style for the Request Season button */
+    #requestSeasonButton {
+        background-color: #3498db;
+    }
+    
+    #requestSeasonButton:hover {
+        background-color: #2980b9;
+    }
+    
+    #searchResults {
+        min-width: 95%;
+    }
+
+    /* Search results container similar to trending container */
+    .search-results-container {
+        background-color: #1e1e1e;
+        border-radius: var(--border-radius-md);
+        padding: var(--spacing-md);
+        margin: var(--spacing-lg) auto;
+        width: 95%;
+        max-width: 1200px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    
+    .search-results-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: var(--spacing-md);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        padding-bottom: var(--spacing-sm);
+    }
+    
+    .search-results-title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        margin: 0;
+    }
+    
+    .search-results-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(176px, 1fr));
+        gap: var(--spacing-md);
+        justify-items: center;
+        row-gap: 40px;
+    }
+    
+    /* Adjust sresult for grid layout */
+    .sresult {
+        margin: 0;
+        padding: 0;
+        display: flex;
+        justify-content: center;
+    }
+
+    /* DB Status Pip Styles */
+    .poster-container {
+        position: relative; /* Ensure the container is positioned for the absolute pip */
+    }
+    
+    .db-status-pip {
+        position: absolute;
+        top: 8px; /* Adjust as needed */
+        right: 8px; /* Adjust as needed */
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 1px solid rgba(0, 0, 0, 0.5); /* Optional border */
+        z-index: 10; /* Ensure it's above the poster image/overlay */
+        box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    }
+    
+    .db-status-collected {
+        background-color: #4CAF50; /* Green */
+    }
+    
+    .db-status-blacklisted {
+        background-color: #f44336; /* Red */
+    }
+    
+    .db-status-processing {
+        background-color: #f39c12; /* Yellow/Orange */
+    }
+
+    /* New: partially collected (mix) */
+    .db-status-partial {
+        background-color: #2196F3; /* Blue */
+        color: white;
+    }
+
+    /* Bitrate tooltip styling */
+    td[data-bitrate]:hover::after,
+    span[data-bitrate]:hover::after {
+        content: attr(data-bitrate);
+        position: absolute;
+        background: rgba(0, 0, 0, 0.9);
+        color: white;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 0.85em;
+        white-space: nowrap;
+        z-index: 1000;
+        margin-top: 25px;
+        margin-left: -50px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    }
+
+    /* Ensure tooltips appear above overlay content */
+    .overlay-content td[data-bitrate] {
+        position: relative;
+    }
+
+    /* Back Button Styles */
+    .back-button-container {
+        display: none; /* Hidden by default, shown via JavaScript */
+    }
+
+    .back-button {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background-color: #3498db;
+        color: white;
+        border: none;
+        padding: 10px 16px;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all 0.2s ease;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .back-button:active {
+        transform: translateY(0);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .back-button svg {
+        width: 16px;
+        height: 16px;
+    }
+
+    /* Hide back button on mobile */
+    @media (max-width: 768px) {
+        .back-button-container {
+            display: none !important;
+        }
+    }

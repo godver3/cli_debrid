@@ -1,114 +1,11 @@
 {% extends "base.html" %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/inline.css') }}">
+{% endblock %}
 {% block title %}Collect User Plex Tokens{% endblock %}
 
 {% block content %}
-<style>
-    .token-collection-container {
-        max-width: 800px;
-        margin: 20px auto;
-        padding: 20px;
-        background-color: var(--card-bg);
-        border-radius: 8px;
-        color: var(--text-color);
-    }
-    .token-collection-container h2 {
-        color: var(--primary-color);
-        margin-bottom: 15px;
-        text-align: center;
-    }
-    .instructions {
-        margin-bottom: 20px;
-        padding: 15px;
-        background-color: var(--input-bg);
-        border-radius: 5px;
-        border-left: 4px solid var(--info-color);
-    }
-    .generate-section, .auth-status-section, .stored-tokens-section {
-        margin-bottom: 25px;
-    }
-    .btn-generate {
-        background-color: var(--primary-color);
-        color: white;
-        padding: 10px 15px;
-        border: none;
-        border-radius: 5px;
-        cursor: pointer;
-        font-size: 1em;
-    }
-    .btn-generate:disabled {
-        background-color: #888;
-        cursor: not-allowed;
-    }
-    #auth-details {
-        margin-top: 15px;
-        padding: 15px;
-        background-color: #2a2a2a;
-        border-radius: 5px;
-        display: none; /* Hidden initially */
-    }
-    #auth-details code {
-        background-color: #1a1a1a;
-        padding: 3px 6px;
-        border-radius: 3px;
-        color: #e5a00d; /* Plex yellow */
-        word-break: break-all;
-    }
-     #auth-details a {
-         color: #e5a00d;
-         word-break: break-all;
-     }
-    #polling-status {
-        margin-top: 10px;
-        font-style: italic;
-    }
-    .stored-tokens-list {
-        list-style: none;
-        padding: 0;
-    }
-    .stored-tokens-list li {
-        background-color: var(--input-bg);
-        padding: 10px 15px;
-        margin-bottom: 8px;
-        border-radius: 4px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    .btn-delete {
-        background-color: var(--danger-color);
-        color: white;
-        padding: 5px 10px;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-        font-size: 0.9em;
-    }
-    .warning {
-        color: var(--warning-color);
-        font-weight: bold;
-        margin-top: 15px;
-        padding: 10px;
-        background-color: rgba(255, 193, 7, 0.1);
-        border: 1px solid var(--warning-color);
-        border-radius: 4px;
-    }
-    /* Styles for .btn and .btn-primary are inherited from base.css */
-    
-    /* Keep specific padding/font-size if the base .btn style isn't quite right */
-    #generate-btn {
-        padding: 10px 15px; /* Adjust if needed */
-        font-size: 1em; /* Adjust if needed */
-    }
-
-    /* Override disabled state for this specific button */
-    #generate-btn:disabled {
-        background-color: #888; /* Standard disabled gray */
-        border-color: #888;   /* Match border color */
-        cursor: not-allowed;
-        opacity: 0.65;       /* Common opacity for disabled elements */
-    }
-</style>
-
 <div class="token-collection-container">
     <h2>Collect User Plex Tokens</h2>
 

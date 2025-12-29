@@ -41,6 +41,29 @@
     white-space: nowrap;
 }
 
+/* Theme selector styles */
+.theme-selector {
+    background: #2a2a2a;
+    color: #f0f0f0;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 0.9em;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.theme-selector:hover {
+    background: #333;
+    border-color: #ff6b35;
+}
+
+.theme-selector:focus {
+    border-color: #ff6b35;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.2);
+}
+
 /* Toggle switch styles */
 .toggle-switch {
     position: relative;
@@ -235,6 +258,11 @@ input:checked + .toggle-slider:before {
 .rescrape-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+}
+
+.recrape-icon::before {
+  font: var(--fa-font-solid); /* Automatically sets family and weight to 900 */
+  content: "\f01e";                /* Unicode for fa-arrows-rotate */
 }
 
 /* Card styles */
@@ -705,4 +733,80 @@ input:checked + .toggle-slider:before {
     width: 24px;
     height: 24px;
     object-fit: contain;
+}
+
+/* ========================================
+   Additional inline CSS from statistics.html
+   ======================================== */
+.stat-item p[data-label="Active Downloads"].warning,
+.stat-item p[data-label="Daily Usage"].warning {
+    color: #ffa500; /* Orange/Yellow for warning */
+}
+.stat-item p[data-label="Active Downloads"].critical,
+.stat-item p[data-label="Daily Usage"].critical {
+    color: #ff4444; /* Red for critical */
+}
+.stats-box.recently-aired .show-title.uncollected {
+    color: #ff4444; /* Red for uncollected */
+}
+.stats-box.recently-aired .show-title.checking_upgrade {
+    color: #00aeff; /* Orange/Yellow for checking upgrade */
+}
+.modal-content {
+    background-color: #1e1e1e !important;
+}
+.toggle-container .toggle-item .refresh-btn { /* Style for the specific size refresh */
+    background: none;
+    border: none;
+    color: #aaa; /* Match icon color */
+    cursor: pointer;
+    font-size: 1em; /* Match icon size */
+    padding: 0 3px;
+    margin-left: 3px;
+    vertical-align: middle;
+}
+.toggle-container .toggle-item .refresh-btn:hover {
+    color: #fff;
+}
+.toggle-container .toggle-item .refresh-btn i.fa-spin { /* Style for spinning icon */
+    /* Optional: add animation if not default */
+}
+/* Subscription days critical color */
+.toggle-container .toggle-item #subscription-days-toggle.critical {
+    color: #ff4444;
+}
+#library-size-display {
+    margin-right: 2px; /* Add a little space before the button */
+}
+/* General page refresh button style (if keeping it) */
+ .page-refresh-btn {
+    background: none;
+    border: none;
+    color: #ccc;
+    cursor: pointer;
+    font-size: 1.1em;
+    padding: 0 5px;
+    margin-left: 5px;
+    vertical-align: middle;
+}
+.page-refresh-btn:hover {
+    color: #fff;
+}
+
+/* Tangerine Theme - Recently Upgraded Section Inline Formatting */
+/* Note: The combining of From/To filenames is handled by JavaScript in tangerine_filename_formatter.js */
+body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[data-label="From:"]::before,
+body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[data-label="To:"]::before {
+    display: none !important;
+}
+
+body[data-theme="tangerine"] .recently-upgraded-section .poster-hover .filename[data-label="From:"]::before,
+body[data-theme="tangerine"] .recently-upgraded-section .poster-hover .filename[data-label="To:"]::before {
+    display: none !important;
+}
+
+/* Style the upgrade arrow - white and bold */
+body[data-theme="tangerine"] .upgrade-arrow {
+    color: #fff;
+    font-weight: bold;
 }

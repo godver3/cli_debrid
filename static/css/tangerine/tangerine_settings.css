@@ -1,0 +1,4326 @@
+/* ========================================
+   Settings Page - Sidebar Navigation
+   Tangerine Theme with Mobile Support
+   VERSION: 2024-12-26-02:05 - Content Sources Fixes Applied
+   ======================================== */
+
+/* Settings Container Layout */
+.settings-page-container {
+    display: flex;
+    min-height: calc(100vh - 60px);
+    position: relative;
+}
+
+/* Sidebar Navigation */
+.settings-sidebar {
+    width: 280px;
+    background: rgba(255, 255, 255, 0.02);
+    backdrop-filter: blur(10px);
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 2rem 0;
+    position: fixed;
+    height: calc(100vh - 60px);
+    overflow-y: auto;
+    transition: all 0.3s ease;
+    z-index: 100;
+}
+
+.settings-sidebar-header {
+    padding: 0 1.5rem 2rem 1.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    margin-bottom: 1rem;
+}
+
+.settings-sidebar-title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 0.5rem;
+}
+
+.settings-sidebar-subtitle {
+    font-size: 0.875rem;
+    color: #666;
+    font-weight: 400;
+    margin-bottom: 1rem;
+}
+
+/* Settings Search Bar */
+.settings-search-container {
+    position: relative;
+    margin-top: 1rem;
+}
+
+.settings-search-icon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    color: #666;
+    pointer-events: none;
+}
+
+.settings-search-input {
+    width: 100%;
+    padding: 10px 40px 10px 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    color: #fff;
+    font-size: 0.875rem;
+    transition: all 0.3s ease;
+    outline: none;
+    box-sizing: border-box;
+}
+
+.settings-search-input:focus {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 107, 53, 0.5);
+    box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+}
+
+.settings-search-input::placeholder {
+    color: #666;
+}
+
+.settings-search-clear {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.05);
+    border: none;
+    border-radius: 6px;
+    color: #888;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    padding: 0;
+}
+
+.settings-search-clear:hover {
+    background: rgba(255, 107, 53, 0.2);
+    color: #ff6b35;
+}
+
+.settings-search-clear svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* Search Results Indicator */
+.search-results-indicator {
+    margin: 0 1.5rem 1rem 1.5rem;
+    padding: 12px;
+    background: rgba(255, 107, 53, 0.1);
+    border: 1px solid rgba(255, 107, 53, 0.3);
+    border-radius: 10px;
+    font-size: 0.875rem;
+}
+
+.search-results-indicator.no-results {
+    background: rgba(255, 193, 7, 0.1);
+    border-color: rgba(255, 193, 7, 0.3);
+    color: #ffc107;
+    display: flex;
+    align-items: center;
+}
+
+.search-results-header {
+    display: flex;
+    align-items: center;
+    color: #ff6b35;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.search-tabs-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.search-tab-match {
+    display: inline-block;
+    padding: 4px 10px;
+    background: rgba(255, 107, 53, 0.15);
+    border: 1px solid rgba(255, 107, 53, 0.3);
+    border-radius: 6px;
+    color: #ff8c5a;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.search-tab-match:hover {
+    background: rgba(255, 107, 53, 0.25);
+    border-color: rgba(255, 107, 53, 0.5);
+    color: #ff6b35;
+    transform: translateY(-1px);
+}
+
+/* Search Highlighting */
+.search-hidden {
+    display: none !important;
+}
+
+
+@keyframes highlightFade {
+    0% {
+        background: rgba(255, 107, 53, 0.3);
+    }
+    100% {
+        background: rgba(255, 107, 53, 0.1);
+    }
+}
+
+/* Navigation Sections */
+.settings-nav-section {
+    margin-bottom: 1.5rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.settings-nav-section-title {
+    font-size: 0.75rem;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 700;
+    padding: 0 1.5rem;
+    margin-bottom: 0.75rem;
+}
+
+/* Navigation Items */
+.settings-nav-item {
+    padding: 0.875rem 1.5rem;
+    color: #888;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border-left: 3px solid transparent;
+    font-size: 0.95rem;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    position: relative;
+    text-decoration: none;
+}
+
+.settings-nav-item:hover {
+    background: rgba(255, 255, 255, 0.03);
+    color: #e0e0e0;
+    border-left-color: rgba(255, 107, 53, 0.3);
+}
+
+.settings-nav-item.active {
+    background: rgba(255, 107, 53, 0.1);
+    color: #fff;
+    border-left-color: #ff6b35;
+}
+
+.settings-nav-item.active::after {
+    content: '';
+    position: absolute;
+    right: 1.5rem;
+    width: 6px;
+    height: 6px;
+    background: #ff6b35;
+    border-radius: 50%;
+}
+
+.settings-nav-icon {
+    width: 18px;
+    height: 18px;
+    opacity: 0.6;
+    transition: opacity 0.3s ease;
+    flex-shrink: 0;
+}
+
+.settings-nav-item:hover .settings-nav-icon,
+.settings-nav-item.active .settings-nav-icon {
+    opacity: 1;
+}
+
+/* Main Content Area */
+.settings-main-content {
+    flex: 1;
+    margin-left: 280px;
+    padding: 2rem 3rem;
+    min-height: calc(100vh - 60px);
+    position: relative;
+    z-index: 1;
+}
+
+/* Tab Content Sections */
+.settings-tab-content {
+    display: none;
+}
+
+.settings-tab-content.active {
+    display: block;
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Mobile Menu Toggle */
+.settings-mobile-menu-toggle {
+    display: none;
+    position: fixed;
+    top: 70px;
+    left: 1.5rem;
+    z-index: 1001;
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    backdrop-filter: blur(10px);
+    border: none;
+    border-radius: 12px;
+    padding: 0.875rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3);
+}
+
+.settings-mobile-menu-toggle:hover {
+    transform: scale(1.05);
+    box-shadow: 0 6px 16px rgba(255, 107, 53, 0.4);
+}
+
+.settings-mobile-menu-toggle svg {
+    width: 24px;
+    height: 24px;
+    color: #fff;
+    display: block;
+}
+
+.settings-mobile-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+    z-index: 99;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.settings-mobile-overlay.active {
+    opacity: 1;
+}
+
+/* Scrollbar Styling */
+.settings-sidebar::-webkit-scrollbar {
+    width: 6px;
+}
+
+.settings-sidebar::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.settings-sidebar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+}
+
+.settings-sidebar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 107, 53, 0.3);
+}
+
+/* Help Button Override for Settings Page Only - Right Side */
+.settings-page-container ~ .help-button,
+body:has(.settings-page-container) .help-button {
+    position: fixed;
+    top: 100px;
+    left: auto;
+    right: -15px; /* Partially hidden off-screen on right */
+    z-index: 999;
+    background-color: #ff6b35;
+    color: white;
+    border: none;
+    border-radius: 50% 0 0 50%; /* Round only the left corners */
+    width: 40px;
+    height: 40px;
+    font-size: 20px;
+    cursor: pointer;
+    box-shadow: -2px 2px 5px rgba(0,0,0,0.2); /* Shadow on left side */
+    transition: right 0.3s ease-in-out, background-color 0.3s ease;
+    padding-right: 10px; /* Push icon left */
+    padding-left: 0;
+}
+
+body:has(.settings-page-container) .help-button:hover {
+    background-color: #0056b3;
+    right: 0px; /* Fully visible on hover */
+}
+
+body:has(.settings-page-container) .help-button i {
+    margin: 0;
+}
+
+/* Keep original position on mobile */
+@media (max-width: 768px) {
+    .settings-page-container ~ .help-button,
+    body:has(.settings-page-container) .help-button {
+        top: 60px;
+    }
+}
+
+/* Common styles */
+.settings-container {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+/* Content Header */
+.content-header {
+    margin-bottom: 2.5rem;
+}
+
+.content-title {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 0.5rem;
+}
+
+.content-subtitle {
+    font-size: 1rem;
+    color: #666;
+}
+
+/* Content Sections */
+.content-section {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    padding: 2rem;
+    margin-bottom: 2rem;
+    transition: all 0.3s ease;
+}
+
+.content-section:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.section-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.section-title::before {
+    content: '';
+    width: 4px;
+    height: 24px;
+    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+    border-radius: 2px;
+}
+
+/* Buttons */
+.btn {
+    padding: 0.625rem 1.25rem;
+    border-radius: 8px;
+    border: none;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-primary {
+    background: #ff6b35;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.625rem 1.25rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-primary:hover {
+    background: #f7931e;
+    transform: none;
+    box-shadow: none;
+}
+
+.btn-secondary {
+    background: rgba(255, 255, 255, 0.05);
+    color: #e0e0e0;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.btn-danger {
+    background: rgba(220, 38, 38, 0.15);
+    color: #ff6b6b;
+    border: 1px solid rgba(220, 38, 38, 0.3);
+}
+
+.btn-danger:hover {
+    background: rgba(220, 38, 38, 0.25);
+}
+
+/* Source Items */
+.source-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.source-item {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 1.25rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: all 0.3s ease;
+}
+
+.source-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 107, 53, 0.3);
+    transform: translateX(4px);
+}
+
+.source-item.expanded {
+    background: rgba(255, 107, 53, 0.05);
+    border-color: rgba(255, 107, 53, 0.2);
+}
+
+.source-info {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex: 1;
+}
+
+.expand-icon {
+    width: 20px;
+    height: 20px;
+    color: #666;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.source-item.expanded .expand-icon {
+    transform: rotate(90deg);
+    color: #ff6b35;
+}
+
+.source-name {
+    color: #fff;
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.source-type {
+    color: #666;
+    font-size: 0.8rem;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 0.25rem 0.75rem;
+    border-radius: 6px;
+}
+
+.source-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* Info Note */
+.info-note {
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+}
+
+.info-icon {
+    width: 20px;
+    height: 20px;
+    color: #60a5fa;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.info-text {
+    color: #93c5fd;
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+
+.info-text a {
+    color: #60a5fa;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.info-text a:hover {
+    text-decoration: underline;
+}
+
+/* Description styles */
+.settings-description {
+    color: #888;
+    font-size: 0.9em;
+    line-height: 1.4;
+    margin: 8px 0;
+}
+
+.settings-description p {
+    margin: 0 0 8px 0;
+}
+
+.settings-description ul {
+    margin: 4px 0 8px 24px;
+    padding: 0;
+    list-style-type: disc;
+}
+
+.settings-description li {
+    margin: 4px 0;
+    padding: 0;
+    display: list-item;
+}
+
+.settings-description a {
+    color: #dfdfdf;
+}
+
+/* Form group styles */
+.settings-form-group {
+    /* margin-bottom: 15px; */
+    padding: 12px 16px;
+    /* background-color: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px; */
+    transition: all 0.2s ease;
+}
+
+.settings-form-group:hover {
+    background-color: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Checkbox specific styles */
+.settings-form-group:has(input[type="checkbox"]) {
+    margin-bottom: 0;
+    padding: 5px 10px;
+}
+
+.settings-form-group:has(input[type="checkbox"]) .settings-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.settings-form-group:has(input[type="checkbox"]) .settings-description {
+    margin: 0;
+    display: inline;
+}
+
+.settings-form-group:has(input[type="checkbox"]) .settings-description p {
+    margin: 0;
+    display: inline;
+}
+
+.settings-title {
+    font-weight: 500;
+    margin-bottom: 5px;
+    display: block;
+    color: #fff;
+}
+
+.settings-input {
+    width: 100%;
+    padding: 10px 12px;
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    color: #e0e0e0;
+    border-radius: 8px;
+    box-sizing: border-box;
+    font-family: inherit;
+    transition: all 0.2s ease;
+}
+
+.settings-input:focus {
+    outline: none;
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 107, 53, 0.3);
+    box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+}
+
+
+/* Override for settings pages to remove borders from inputs */
+.scraping-settings-page .settings-section-content input,
+.scraping-settings-page .settings-section-content textarea,
+.scraping-settings-page .settings-section-content select,
+.required-settings-page .settings-section-content input,
+.required-settings-page .settings-section-content textarea,
+.required-settings-page .settings-section-content select,
+.additional-settings-page .settings-section-content input,
+.additional-settings-page .settings-section-content textarea,
+.additional-settings-page .settings-section-content select,
+.notifications-settings-page .settings-section-content input,
+.notifications-settings-page .settings-section-content textarea,
+.notifications-settings-page .settings-section-content select,
+.reverse-parser-settings-page .settings-section-content input,
+.reverse-parser-settings-page .settings-section-content textarea,
+.reverse-parser-settings-page .settings-section-content select,
+.debug-settings-page .settings-section-content input,
+.debug-settings-page .settings-section-content textarea,
+.debug-settings-page .settings-section-content select,
+.true-debug-settings-page .settings-section-content input,
+.true-debug-settings-page .settings-section-content textarea,
+.true-debug-settings-page .settings-section-content select {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+}
+
+.scraping-settings-page .settings-section-content input:focus,
+.scraping-settings-page .settings-section-content textarea:focus,
+.scraping-settings-page .settings-section-content select:focus,
+.required-settings-page .settings-section-content input:focus,
+.required-settings-page .settings-section-content textarea:focus,
+.required-settings-page .settings-section-content select:focus,
+.additional-settings-page .settings-section-content input:focus,
+.additional-settings-page .settings-section-content textarea:focus,
+.additional-settings-page .settings-section-content select:focus,
+.notifications-settings-page .settings-section-content input:focus,
+.notifications-settings-page .settings-section-content textarea:focus,
+.notifications-settings-page .settings-section-content select:focus,
+.reverse-parser-settings-page .settings-section-content input:focus,
+.reverse-parser-settings-page .settings-section-content textarea:focus,
+.reverse-parser-settings-page .settings-section-content select:focus,
+.debug-settings-page .settings-section-content input:focus,
+.debug-settings-page .settings-section-content textarea:focus,
+.debug-settings-page .settings-section-content select:focus,
+.true-debug-settings-page .settings-section-content input:focus,
+.true-debug-settings-page .settings-section-content textarea:focus,
+.true-debug-settings-page .settings-section-content select:focus {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.2) !important;
+}
+
+/* Delete button styles */
+.delete-scraper-btn,
+.delete-source-btn,
+.delete-version-btn {
+    background: rgba(220, 38, 38, 0.15);
+    color: #ff6b6b;
+    border: 1px solid rgba(220, 38, 38, 0.3);
+    padding: 0.625rem 1.25rem;
+    border-radius: 8px;
+    border: none;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.delete-scraper-btn:hover,
+.delete-source-btn:hover,
+.delete-version-btn:hover {
+    background-color: #ff6666;
+    box-shadow: 0 2px 8px rgba(255, 68, 68, 0.3);
+    transform: translateY(-1px);
+}
+
+.delete-scraper-btn:hover:not(:disabled),
+.delete-source-btn:hover:not(:disabled),
+.delete-version-btn:hover:not(:disabled) {
+    background-color: #d32f2f;
+}
+
+/* Disabled scraper/source header style */
+.settings-section-header.scraper-disabled,
+.settings-section-header.source-disabled {
+    background-color: #6d4040 !important;
+}
+
+/* Disabled delete button styles */
+.settings-section-header button.delete-scraper-btn[disabled],
+.settings-section-header button.delete-scraper-btn:disabled,
+button.delete-scraper-btn[disabled],
+button.delete-scraper-btn:disabled,
+.delete-scraper-btn[disabled],
+.delete-scraper-btn:disabled {
+    background-color: #666666 !important;
+    color: #999999 !important;
+    cursor: not-allowed !important;
+    opacity: 0.7 !important;
+    pointer-events: none !important;
+    border: none !important;
+    transition: none !important;
+    box-shadow: none !important;
+}
+
+/* Environment override icon in delete buttons */
+.delete-scraper-btn .env-override,
+.delete-source-btn .env-override,
+.delete-version-btn .env-override {
+    font-size: 0.9em;
+    margin-left: 5px;
+    color: #ffa500;
+    display: inline-flex;
+    align-items: center;
+}
+
+/* Hide hybrid mode and jackett seeders only checkboxes */
+.settings-form-group.hybrid-mode-group,
+.settings-form-group.jackett-seeders-only-group {
+    display: none !important;
+}
+
+/* Also hide any form group with hybrid_mode or jackett_seeders_only checkbox */
+.settings-form-group:has(#scraping-hybrid_mode),
+.settings-form-group:has(input[data-hybrid-mode="true"]),
+.settings-form-group:has(#scraping-jackett_seeders_only),
+.settings-form-group:has(input[data-jackett-seeders-only="true"]) {
+    display: none !important;
+}
+
+/* Add specific styling for the Import Liked Lists button */
+.import-liked-to-source-btn, .get-user-watchlist-btn {
+    padding: 0.625rem 1.25rem;
+    border-radius: 8px;
+    border: none;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: block;
+    transition: all 0.3s ease;
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    color: #fff;
+}
+
+
+.import-liked-to-source-btn:hover {
+    background: #f7931e;
+    border: none !important;
+    outline: none;
+    box-shadow: none;
+    }
+
+/* Disabled state for the import button */
+.import-liked-to-source-btn:disabled, .get-user-watchlist-btn:disabled {
+    background-color: #6c757d !important; /* Grey background when disabled */
+    color: #ccc !important;
+    cursor: not-allowed !important;
+    opacity: 0.65 !important;
+}
+
+/* Responsive styles for settings */
+@media screen and (max-width: 1245px) {
+    .settings-container {
+        width: 100%;
+        padding: 15px;
+    }
+
+    .settings-section-header {
+        padding: 12px 10px;
+    }
+
+    .settings-section-content {
+        padding: 12px 10px;
+    }
+
+    .settings-form-group {
+        margin-bottom: 12px;
+        padding: 8px;
+    }
+
+    .settings-input {
+        padding: 10px;
+        font-size: 16px; /* Larger font for better mobile usability */
+    }
+
+    .settings-title {
+        margin-bottom: 8px;
+        font-size: 16px;
+    }
+
+    /* Adjust button sizes for better touch targets */
+    .delete-scraper-btn,
+    .delete-source-btn,
+    .delete-version-btn,
+    .rename-version-btn,
+    .duplicate-source-btn,
+    .duplicate-scraper-btn,
+    .duplicate-version-btn {
+        min-height: 36px;
+        min-width: 36px;
+        padding: 8px 12px;
+        margin: 4px;
+    }
+}
+/* Format Modal Styles */
+.format-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10000;
+}
+
+.format-modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+}
+
+.format-modal-content {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background-color: #2b2b2b;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 800px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.format-modal-header {
+    padding: 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.format-modal-title {
+    margin: 0;
+    color: #fff;
+    font-size: 1.5em;
+}
+
+.format-modal-close {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 2em;
+    cursor: pointer;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.3s;
+}
+
+.format-modal-close:hover {
+    color: #f44336;
+}
+
+.format-modal-body {
+    padding: 20px;
+    color: #fff;
+}
+
+.notification-params.time-options {
+    width: 100%;
+    margin-bottom: 20px;
+    border-collapse: collapse;
+}
+
+.notification-params.time-options thead {
+    background-color: #1a1a1a;
+}
+
+.notification-params.time-options th {
+    padding: 10px;
+    text-align: left;
+    color: #fff;
+    font-weight: bold;
+}
+
+.notification-params.time-options td {
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.notification-params.time-options tr:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.notification-params.time-options strong {
+    color: #ff6b35;
+    font-family: monospace;
+}
+
+.format-help-link {
+    color: #ff6b35;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.format-help-link:hover {
+    color: #45a049;
+} 
+
+
+/* ========================================
+   Inline CSS from settings_base.html
+   ======================================== */
+/* Button styles */
+    .btn {
+        border: none;
+        outline: none;
+        color: white;
+        padding: 5px 10px;
+        margin: 0 3px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 14px;
+        cursor: pointer;
+        border-radius: 10px;
+        transition: all 0.3s ease;
+        box-shadow: none;
+    }
+
+    .btn:focus {
+        outline: none;
+        box-shadow: none;
+    }
+
+    .btn-primary { 
+        background: #ff6b35;
+        margin: 0 0px 10px;
+     }
+    .btn-primary:hover { background: #f7931e; }
+    .btn-secondary { background-color: rgba(255, 255, 255, 0.08); }
+    .btn-secondary:hover { background-color: #777; }
+    .btn-danger { background-color: #f44336; }
+    .btn-danger:hover { background-color: #d32f2f; }
+    .btn-info { background-color: #3498db; }
+    .btn-info:hover { background-color: #2980b9; }
+
+    .btn:disabled {
+        background-color: #cccccc;
+        color: #666666;
+        cursor: not-allowed;
+    }
+
+    /* Tabs */
+    .settings-tabs {
+        display: flex;
+        justify-content: flex-start;
+        background-color: rgba(255, 255, 255, 0.05);
+        border-radius: 10px;
+        padding: 5px;
+        margin-bottom: 20px;
+    }
+
+    .settings-tab-button {
+        margin-right: 5px;
+        background-color: rgba(255, 255, 255, 0.08);
+        border: none;
+        color: #fff;
+        padding: 15px 15px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        border-radius: 10px;
+    }
+
+    .settings-tab-button.active { background-color: #777; }
+
+    /* Sections */
+    .settings-section {
+        background: rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 20px;
+        margin-bottom: 20px;
+        overflow: hidden;
+        transition: all 0.3s ease;
+    }
+
+    .settings-section:hover {
+        border-color: rgba(255, 255, 255, 0.12);
+    }
+
+    .settings-section-header {
+        /* background-color: transparent;
+        padding: 1.25rem 1.5rem; */
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 1rem !important;
+        font-size: 1.1em;
+        transition: all 0.3s ease;
+        /* border-bottom: 1px solid rgba(255, 255, 255, 0.05); */
+    }
+
+    /* Disabled scraper/source header style */
+    .settings-section-header.scraper-disabled,
+    .settings-section-header.source-disabled {
+        background-color: #6d4040 !important;
+    }
+
+    .settings-section-header h4 {
+        margin: 0;
+        color: #fff;
+        text-align: left;
+        flex-grow: 1;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+
+    .settings-section-header h4::before {
+        content: '';
+        width: 4px;
+        height: 24px;
+        background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+        border-radius: 2px;
+        flex-shrink: 0;
+    }
+
+    /* Button groups */
+    .version-buttons,
+    .source-buttons {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        min-height: 32px;
+    }
+
+    /* Specific buttons */
+    .settings-submit-button {
+        padding: 15px 32px;
+        font-size: 16px;
+    }
+    
+
+    /* Add and duplicate buttons */
+    /* #add-source-btn,
+    #add-notification-btn,
+    .add-scraper-link,
+    .add-version-link,
+    .duplicate-source-btn,
+    .duplicate-scraper-btn,
+    .duplicate-version-btn,
+    .import-versions-link {
+        composes: btn btn-primary;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 5px 10px;
+        margin: 0 5px 5px;
+        background: #ff6b35;
+        color: white;
+        text-decoration: none;
+        border-radius: 8px;
+        transition: all 0.2s ease;
+        border: none !important;
+        outline: none;
+        box-shadow: none;
+        height: 28px;
+    } */
+    #add-source-btn,
+    #add-notification-btn,
+    .add-scraper-link,
+    .add-version-link,
+    .duplicate-source-btn,
+    .duplicate-scraper-btn,
+    .duplicate-version-btn,
+    .import-versions-link {
+        padding: 0.625rem 1.25rem;
+        border-radius: 8px;
+        border: none;
+        font-size: 0.875rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        color: #fff;
+    }
+
+    #add-source-btn:hover,
+    #add-notification-btn:hover,
+    .add-scraper-link:hover,
+    .add-version-link:hover,
+    .duplicate-source-btn:hover,
+    .duplicate-scraper-btn:hover,
+    .duplicate-version-btn:hover,
+    .import-versions-link:hover {
+        background: #f7931e;
+        border: none !important;
+        outline: none;
+        box-shadow: none;
+    }
+
+    .import-versions-link, #add-default-version-btn, #add-separate-versions-btn {
+        background-color: rgb(255 107 53 / 41%);
+        border: none !important;
+        outline: none;
+        box-shadow: none;
+    }
+
+    .import-versions-link:hover, #add-default-version-btn:hover, #add-separate-versions-btn:hover {
+        background-color: #803578;
+        border: none !important;
+        outline: none;
+        box-shadow: none;
+    }
+
+    /* Remove any other duplicate button styles that might be conflicting */
+    .duplicate-version-btn {
+        border: none !important;
+        margin: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+
+
+    .rename-version-btn:hover,
+    .delete-version-btn:hover,
+    .delete-notification-btn:hover,
+    .delete-source-btn:hover,
+    .delete-scraper-btn:hover {
+        background-color: rgba(220, 38, 38, 0.2);
+        border-color: #dc2626;
+        outline: none;
+        box-shadow: none;
+    }
+
+    /* Expand/Collapse buttons */
+    .settings-expand-all,
+    .settings-collapse-all {
+        background-color: rgba(255, 255, 255, 0.08);
+        border: none;
+        color: white;
+        padding: 5px 10px;
+        margin: 0 0px 10px;
+        text-align: center;
+        text-decoration: none;
+        display: inline-block;
+        font-size: 14px;
+        cursor: pointer;
+        border-radius: 10px;
+        transition: all 0.3s ease;
+    }
+
+    .settings-expand-all:hover,
+    .settings-collapse-all:hover {
+        background-color: #777;
+    }
+
+    /* Section content */
+    .settings-section-content {
+        padding: 1.5rem;
+        display: none;
+        background-color: transparent;
+    }
+
+    .settings-section-content.active {
+        display: block;
+    }
+
+    .settings-form-group {
+        margin-bottom: 2px;
+        padding-top: 2px;
+        padding-top: 2px;
+    }
+
+    .settings-input-wrapper {
+        display: flex;
+        align-items: center;
+    }
+
+    .settings-title {
+        flex: 0 0 auto;
+        margin-right: 10px;
+        font-weight: bold;
+        color: #fff;
+    }
+
+    .settings-input {
+        flex: 1 1 auto;
+        padding: 8px;
+        background-color: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        color: #fff;
+        border-radius: 10px;
+        box-sizing: border-box;
+        font-family: inherit;
+    }
+
+    /* Desktop only: wider input fields */
+    @media (min-width: 769px) {
+        .settings-title {
+            min-width: 150px;
+            max-width: 250px;
+        }
+
+        .settings-input,
+        .settings-form-group input[type="text"],
+        .settings-form-group input[type="number"],
+        .settings-form-group input[type="email"],
+        .settings-form-group input[type="password"],
+        .settings-form-group input[type="url"],
+        .settings-form-group input[type="string"],
+        .settings-form-group select {
+            width: auto !important;
+            min-width: 300px !important;
+            max-width: 600px !important;
+            flex: 0 1 auto !important;
+        }
+    }
+
+    .settings-form-group input[type="checkbox"] {
+        margin: 0;
+        padding: 0;
+        position: static;
+        transform: none;
+    }
+
+    .settings-description {
+        margin-top: 5px;
+        font-style: italic;
+        color: #888;
+        font-size: 0.9em;
+    }
+
+    .settings-description a {
+        color: #dfdfdf;
+    }
+
+    /* Version, scraper, and source action buttons */
+    /* Secondary buttons (Rename, Duplicate, Test) */
+    .rename-version-btn,
+    .duplicate-version-btn,
+    .test-notification-btn {
+        padding: 0.625rem 1.25rem;
+        background: rgba(255, 255, 255, 0.05);
+        color: #e0e0e0;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        font-size: 0.875rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        display: inline-block;
+        text-decoration: none;
+    }
+
+    .rename-version-btn:hover,
+    .duplicate-version-btn:hover,
+    .test-notification-btn:hover {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: rgba(255, 255, 255, 0.2);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+
+    /* Delete buttons */
+    .delete-scraper-btn,
+    .delete-source-btn,
+    .delete-version-btn,
+    .delete-notification-btn {
+        padding: 0.625rem 1.25rem;
+        background: rgba(220, 38, 38, 0.15);
+        color: #ff6b6b;
+        border: 1px solid rgba(220, 38, 38, 0.3);
+        border-radius: 8px;
+        font-size: 0.875rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        display: inline-block;
+        text-decoration: none;
+    }
+
+    .delete-scraper-btn:hover,
+    .delete-source-btn:hover,
+    .delete-version-btn:hover,
+    .delete-notification-btn:hover {
+        background: rgba(220, 38, 38, 0.25);
+        border-color: rgba(220, 38, 38, 0.5);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+    }
+
+    .delete-scraper-btn:hover,
+    .delete-source-btn:hover,
+    .delete-version-btn:hover {
+        background-color: #d32f2f;
+    }
+
+    .rename-version-btn,
+    .duplicate-version-btn {
+        background-color: #3498db;
+    }
+
+    .rename-version-btn:hover,
+    .duplicate-version-btn:hover {
+        background-color: #2980b9;
+    }
+
+    /* Mobile responsive - hide text, show only icons */
+    @media (max-width: 768px) {
+        .rename-version-btn .btn-text,
+        .duplicate-version-btn .btn-text,
+        .delete-version-btn .btn-text,
+        .test-notification-btn .btn-text,
+        .delete-notification-btn .btn-text,
+        .delete-scraper-btn .btn-text,
+        .delete-source-btn .btn-text {
+            display: none;
+        }
+
+        .rename-version-btn::before,
+        .duplicate-version-btn::before,
+        .delete-version-btn::before,
+        .test-notification-btn::before,
+        .delete-notification-btn::before,
+        .delete-scraper-btn::before,
+        .delete-source-btn::before {
+            margin-right: 0;
+        }
+
+        .rename-version-btn,
+        .duplicate-version-btn,
+        .delete-version-btn,
+        .test-notification-btn,
+        .delete-notification-btn,
+        .delete-scraper-btn,
+        .delete-source-btn {
+            padding: 0.625rem;
+            min-width: 40px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+    }
+
+    /* Add/remove filter button */
+    .add-filter-btn {
+        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        color: white;
+        border: none;
+        padding: 5px 10px;
+        border-radius: 10px;
+        cursor: pointer;
+        margin-top: 5px;
+        margin-bottom: 10px;
+    }
+
+    .add-filter-btn:hover {
+        background-color: #45a049;
+    }
+
+    .remove-filter {
+        background-color: #f44336;
+        color: white;
+        border: none;
+        padding: 5px 10px;
+        border-radius: 10px;
+        cursor: pointer;
+    }
+
+    .remove-filter:hover {
+        background-color: #d32f2f;
+    }
+
+    .filter-list {
+        margin-bottom: 10px;
+    }
+
+    .filter-item {
+        display: flex;
+        align-items: center;
+        margin-bottom: 5px;
+    }
+
+    .filter-term,
+    .filter-weight {
+        flex: 1;
+        padding: 5px;
+        margin-right: 5px;
+        background-color: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        color: #fff;
+        border-radius: 10px;
+    }
+
+    .filter-weight {
+        flex: 0 0 60px;
+    }
+
+    /* Responsive styles for settings tabs */
+    @media screen and (max-width: 1245px) {
+        .settings-tabs {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .settings-tab-button {
+            margin-right: 0;
+            margin-bottom: 5px;
+        }
+
+        .settings-tab-select {
+            display: block;
+            width: 100%;
+            height: 50px;
+            padding: 10px;
+            background-color: rgba(255, 255, 255, 0.05);
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-size: 18px;
+            margin-bottom: 15px;
+        }
+
+        .settings-tabs-desktop {
+            display: none;
+        }
+    }
+
+    @media screen and (min-width: 1246px) {
+        .settings-tab-select {
+            display: none;
+        }
+    }
+
+
+/* ========================================
+   Inline CSS from additional.html
+   ======================================== */
+.content-source-priority {
+                                margin-top: 10px;
+                            }
+                            .content-source-list {
+                                list-style: none;
+                                padding: 0;
+                                margin: 10px 0;
+                                max-width: 400px;
+                            }
+                            .content-source-item {
+                                background: #2a2a2a;
+                                padding: 10px 15px;
+                                margin: 5px 0;
+                                border-radius: 10px;
+                                cursor: move;
+                                display: flex;
+                                align-items: center;
+                                transition: background-color 0.2s;
+                                position: relative;
+                                user-select: none;
+                            }
+                            .content-source-item:hover {
+                                background: rgba(255, 255, 255, 0.05);
+                            }
+                            .content-source-item.dragging {
+                                opacity: 0.5;
+                                background: #404040;
+                            }
+                            .content-source-item::before {
+                                content: "⋮⋮";
+                                margin-right: 10px;
+                                color: #666;
+                                cursor: grab;
+                            }
+                            .content-source-item:active::before {
+                                cursor: grabbing;
+                            }
+                            /* Add tooltip styles */
+                            .content-source-item:hover::after {
+                                content: attr(title);
+                                position: absolute;
+                                bottom: 100%;
+                                left: 50%;
+                                transform: translateX(-50%);
+                                padding: 4px 8px;
+                                background: rgba(0, 0, 0, 0.8);
+                                color: white;
+                                border-radius: 10px;
+                                font-size: 12px;
+                                white-space: nowrap;
+                                pointer-events: none;
+                                opacity: 0;
+                                transition: opacity 0.2s;
+                            }
+                            .content-source-item:hover:hover::after {
+                                opacity: 1;
+                            }
+
+
+/* ========================================
+   Inline CSS from content_sources.html
+   ======================================== */
+/* Add your custom styles here */
+    .versions-checkboxes {
+        display: flex;
+        flex-wrap: wrap;
+        max-height: 200px;
+        overflow-y: auto;
+        margin-bottom: 15px;
+        padding: 5px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 10px;
+    }
+    
+    .checkbox-item {
+        display: flex;
+        align-items: center;
+        margin-right: 15px;
+        margin-bottom: 8px;
+    }
+    
+    .checkbox-item input[type="checkbox"] {
+        margin-right: 5px;
+    }
+    
+    /* Warning indicator for sources with no versions enabled */
+    .no-versions-warning {
+        display: inline-flex;
+        align-items: center;
+        margin-left: 8px;
+        color: #ff6b6b;
+        font-size: 12px;
+        font-weight: normal;
+    }
+    
+    .no-versions-warning-icon {
+        margin-right: 4px;
+        font-size: 14px;
+    }
+    
+    .no-versions-warning:hover {
+        color: #ff5252;
+    }
+
+
+/* ========================================
+   Inline CSS from notifications.html
+   ======================================== */
+.notification-categories {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px;
+    margin: 10px 0;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+}
+
+.notification-category {
+    padding: 5px;
+}
+
+.notification-category label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.notification-category input[type="checkbox"] {
+    margin: 0;
+}
+
+.notification-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+.test-notification-btn {
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+.test-notification-btn:hover {
+    background-color: #45a049;
+}
+
+.delete-notification-btn {
+    background-color: #f44336;
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+.delete-notification-btn:hover {
+    background-color: #d32f2f;
+}
+
+@media (max-width: 600px) {
+    .test-notification-btn,
+    .delete-notification-btn {
+        padding: 3px 4px; /* Reduced padding for smaller screens */
+    }
+}
+
+/* Multi-select styling */
+#notifications-general-enabled-content-sources {
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background-color: rgba(255, 255, 255, 0.03);
+    color: #fff;
+    border-radius: 10px;
+    padding: 8px;
+}
+
+#notifications-general-enabled-content-sources option {
+    padding: 4px 8px;
+    background-color: rgba(255, 255, 255, 0.03);
+    color: #fff;
+}
+
+#notifications-general-enabled-content-sources option:checked {
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    color: white;
+}
+
+#notifications-general-enabled-content-sources option:hover {
+    background-color: #3a3a3a;
+}
+
+
+/* ========================================
+   Inline CSS from required.html
+   ======================================== */
+div#trakt-auth-status {
+    padding-top: 10px;
+}
+.settings-description {
+    margin-top: 10px;
+    margin-bottom: 10px;
+    font-style: italic;
+    color: #8f8f8f;
+}
+
+.plex-auth-section {
+    padding: 20px;
+    background-color: var(--card-bg);
+    border-radius: 12px;
+}
+
+.plex-auth-btn {
+    background-color: #282a2d;
+    color: #e5a00d;
+    border: 2px solid #e5a00d;
+    padding: 10px 20px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.plex-auth-btn:hover {
+    background-color: #e5a00d;
+    color: #282a2d;
+}
+
+.plex-auth-btn img {
+    height: 20px;
+}
+
+.plex-server-select {
+    margin-top: 15px;
+    display: none;
+}
+
+.plex-server-select.active {
+    display: block;
+}
+
+.plex-server-card {
+    background-color: rgba(255, 255, 255, 0.03);
+    padding: 15px;
+    margin: 10px 0;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.plex-server-card:hover {
+    background-color: #3a3a3a;
+}
+
+.plex-server-card.selected {
+    border: 2px solid #e5a00d;
+}
+
+.plex-server-name {
+    font-weight: bold;
+    color: #e5a00d;
+}
+
+.plex-connection-type {
+    font-size: 0.9em;
+    color: #8f8f8f;
+}
+
+.plex-libraries-section {
+    margin-top: 15px;
+    display: none;
+}
+
+.plex-libraries-section.active {
+    display: block;
+}
+
+.plex-library-select {
+    margin: 10px 0;
+}
+
+.plex-library-select select {
+    width: 100%;
+    padding: 8px;
+    background-color: rgba(255, 255, 255, 0.03);
+    color: #f1f1f1;
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+}
+
+.plex-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    z-index: 1000;
+}
+
+.plex-modal-content {
+    position: relative;
+    background-color: var(--card-bg);
+    margin: 5% auto;
+    padding: 20px;
+    width: 80%;
+    max-width: 600px;
+    border-radius: 12px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.plex-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #3a3a3a;
+}
+
+.plex-modal-title {
+    font-size: 1.5em;
+    color: #e5a00d;
+}
+
+.plex-modal-close {
+    cursor: pointer;
+    font-size: 1.5em;
+    color: #8f8f8f;
+}
+
+.plex-modal-close:hover {
+    color: #e5a00d;
+}
+
+.plex-modal-step {
+    display: none;
+}
+
+.plex-modal-step.active {
+    display: block;
+}
+
+.plex-modal-footer {
+    margin-top: 20px;
+    padding-top: 10px;
+    border-top: 1px solid #3a3a3a;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.plex-modal-btn {
+    padding: 8px 16px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: all 0.3s;
+}
+
+.plex-modal-btn.primary {
+    background-color: #e5a00d;
+    color: #282a2d;
+    border: none;
+}
+
+.plex-modal-btn.primary:hover {
+    background-color: #c48c0b;
+}
+
+.plex-modal-btn.secondary {
+    background-color: transparent;
+    color: #e5a00d;
+    border: 1px solid #e5a00d;
+}
+
+.plex-modal-btn.secondary:hover {
+    background-color: rgba(229, 160, 13, 0.1);
+}
+
+
+/* ========================================
+   Inline CSS from reverse_parser.html
+   ======================================== */
+/* Reverse parser info box styling */
+    .reverse-parser-info-box {
+        background-color: #252525;
+        border-radius: 12px;
+        padding: 20px;
+        margin: 20px 0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    .reverse-parser-info-box p {
+        margin: 0 0 10px 0;
+        line-height: 1.5;
+        color: #ffffff;
+    }
+    
+    .reverse-parser-info-box strong {
+        color: #ffffff;
+    }
+
+
+/* ========================================
+   Inline CSS from scraping.html
+   ======================================== */
+/* Hide hybrid mode checkbox */
+    .settings-form-group.hybrid-mode-group {
+        display: none !important;
+    }
+    
+    /* Scraping info box styling */
+    .scraping-info-box {
+        background-color: #252525;
+        border-radius: 12px;
+        padding: 20px;
+        margin: 20px 0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    .scraping-info-box p {
+        margin: 0 0 10px 0;
+        line-height: 1.5;
+    }
+    
+    .scraping-info-box ul {
+        margin: 10px 0 0 0;
+        padding-left: 20px;
+    }
+    
+    .scraping-info-box li {
+        margin: 5px 0;
+        line-height: 1.4;
+    }
+    
+    .scraping-info-box strong {
+        color: #ffffff;
+    }
+
+    /* AIOStreams info box styling - Tangerine theme (blue) */
+    .aiostreams-info-box {
+        background: rgba(59, 130, 246, 0.1);
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 12px;
+        padding: 1rem 1.25rem;
+        margin: 20px 0;
+        display: flex;
+        gap: 0.75rem;
+        align-items: flex-start;
+        overflow: hidden;
+    }
+
+    .aiostreams-info-box .info-icon {
+        width: 20px;
+        height: 20px;
+        color: #60a5fa;
+        flex-shrink: 0;
+    }
+
+    .aiostreams-info-box-content {
+        flex: 1;
+        min-width: 0;
+        overflow-wrap: break-word;
+        word-wrap: break-word;
+    }
+
+    .aiostreams-info-box p {
+        margin: 0 0 10px 0;
+        line-height: 1.5;
+        color: #e5e7eb;
+        overflow-wrap: break-word;
+        word-wrap: break-word;
+    }
+
+    .aiostreams-info-box p:last-child {
+        margin-bottom: 0;
+    }
+
+    /* Add spacing between steps */
+    .aiostreams-info-box p + p {
+        margin-top: 20px;
+    }
+
+    .aiostreams-info-box ul {
+        margin: 8px 0 20px 30px;
+        padding: 0;
+        list-style-type: disc;
+    }
+
+    .aiostreams-info-box li {
+        margin: 5px 0;
+        line-height: 1.4;
+        color: #e5e7eb;
+        overflow-wrap: break-word;
+        word-wrap: break-word;
+    }
+
+    .aiostreams-info-box strong {
+        color: #ffffff;
+        overflow-wrap: break-word;
+        word-wrap: break-word;
+    }
+
+    .aiostreams-info-box pre {
+        background-color: rgba(0, 0, 0, 0.3);
+        padding: 10px;
+        border-radius: 8px;
+        overflow-x: auto;
+        font-size: 12px;
+        color: #e5e7eb;
+        border: 1px solid rgba(59, 130, 246, 0.2);
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        margin: 8px 0 20px 0;
+    }
+
+/* Content Sources Page Styling - Tangerine Theme (matching settings.html) */
+.content-sources-page {
+    max-width: 100%;
+}
+
+/* Content Header */
+.content-sources-title {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 0.5rem;
+}
+
+.content-sources-subtitle {
+    font-size: 1rem;
+    color: #666;
+    margin-bottom: 2.5rem;
+}
+
+/* Info Note (Blue Banner) */
+.info-note,
+.info-banner-blue,
+.info-banner.info-banner-warning {
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+}
+
+.info-icon {
+    width: 20px;
+    height: 20px;
+    color: #60a5fa;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.info-text,
+.info-banner-content {
+    color: #93c5fd;
+    font-size: 0.875rem;
+    line-height: 1.6;
+}
+
+.info-text a,
+.info-link {
+    color: #60a5fa;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.info-text a:hover,
+.info-link:hover {
+    text-decoration: underline;
+}
+
+.info-banner-content strong {
+    font-weight: 600;
+}
+
+/* Content Section (wrapper for all sources) */
+.content-section {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    padding: 2rem;
+    margin-bottom: 2rem;
+    transition: all 0.3s ease;
+}
+
+.content-section:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* Section Header */
+.content-sources-header,
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.content-sources-settings-title,
+.section-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Only style the title-bar span, not ::before */
+.title-bar {
+    content: '';
+    width: 4px;
+    height: 24px;
+    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+    border-radius: 2px;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+/* Action Buttons */
+
+
+.btn,
+.btn-secondary,
+.content-sources-btn,
+.scrapers-btn {
+    padding: 0.625rem 1.25rem;
+    border-radius: 8px;
+    border: none;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-secondary,
+.content-sources-btn {
+    background: rgba(255, 255, 255, 0.05);
+    color: #e0e0e0;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.btn-secondary:hover,
+.content-sources-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.btn-primary,
+.content-sources-btn-primary,
+.add-source-link {
+    background: #ff6b35;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.625rem 1.25rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: none;
+}
+
+.btn-primary:hover,
+.content-sources-btn-primary:hover,
+.add-source-link:hover {
+    background: #f7931e;
+    transform: none;
+    box-shadow: none;
+}
+
+/* Source List */
+.source-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+/* Source Item / Content Source Card */
+.source-item,
+.content-source-card {
+    background: rgb(255 255 255 / 0%);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 1.25rem;
+    display: block !important; /* Changed from flex to block for proper section structure */
+    transition: all 0.3s ease;
+}
+
+.source-item:hover,
+.content-source-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 107, 53, 0.3);
+    transform: translateX(4px);
+}
+
+.source-item.expanded,
+.content-source-card.expanded {
+    background: rgba(255, 107, 53, 0.05);
+    border-color: rgba(255, 107, 53, 0.2);
+}
+
+/* Source Disabled - Apply to entire card when header is disabled */
+.source-item:has(.source-disabled),
+.content-source-card:has(.source-disabled),
+.settings-section:has(.source-disabled),
+.scraper-card:has(.scraper-disabled) {
+    background: rgb(172 25 25 / 14%) !important;
+    border-left: 4px solid #ff6b6b !important;
+}
+
+.content-source-header.source-disabled {
+    background: transparent;
+}
+
+/* Source Info */
+.source-info,
+.content-source-header-left {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex: 1;
+}
+
+/* Expand Icon / Toggle Icon */
+.expand-icon,
+.settings-toggle-icon {
+    width: 20px;
+    height: 20px;
+    color: #666;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: inline-block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+.source-item.expanded .expand-icon,
+.content-source-card.expanded .settings-toggle-icon {
+    transform: rotate(90deg);
+    color: #ff6b35;
+}
+
+/* Ensure SVG expand icons stay visible in all states - FORCE */
+.content-sources-page svg.expand-icon,
+.content-sources-page svg.settings-toggle-icon,
+.content-sources-page .expand-icon,
+.content-sources-page .settings-toggle-icon,
+.content-source-card svg.expand-icon,
+.content-source-card svg.settings-toggle-icon,
+.content-source-card .expand-icon,
+.content-source-card .settings-toggle-icon,
+.source-item svg.expand-icon,
+.source-item svg.settings-toggle-icon,
+.source-item .expand-icon,
+.source-item .settings-toggle-icon,
+.settings-section svg.expand-icon,
+.settings-section svg.settings-toggle-icon,
+.settings-section .expand-icon,
+.settings-section .settings-toggle-icon {
+    display: inline-block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    width: 20px !important;
+    height: 20px !important;
+    min-width: 20px !important;
+    min-height: 20px !important;
+    flex-shrink: 0 !important;
+}
+
+/* Source Name */
+.source-name,
+.content-source-name {
+    color: #fff;
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin: 0;
+}
+
+/* Source Type */
+.source-type,
+.content-source-type {
+    color: #666;
+    font-size: 0.8rem;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 0.25rem 0.75rem;
+    border-radius: 6px;
+}
+
+/* Source Actions */
+.source-actions,
+.content-source-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* Delete Button */
+.btn-danger,
+.delete-source-btn {
+    padding: 0.625rem 1.25rem;
+    background: rgba(220, 38, 38, 0.15);
+    color: #ff6b6b;
+    border: 1px solid rgba(220, 38, 38, 0.3);
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-danger:hover,
+.delete-source-btn:hover {
+    background: rgba(220, 38, 38, 0.25);
+    transform: translateY(-1px);
+}
+
+/* No Versions Warning */
+.no-versions-warning {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: #ff9800;
+    padding: 0.3rem 0.85rem;
+    background-color: rgba(255, 152, 0, 0.15);
+    border-radius: 14px;
+    border: 1px solid rgba(255, 152, 0, 0.3);
+}
+
+.no-versions-warning-icon {
+    font-size: 0.9rem;
+}
+
+/* Settings Section Content */
+.content-source-card .settings-section-content {
+    padding: 1.5rem;
+    background-color: rgba(0, 0, 0, 0.2);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+/* Override base settings.css styles for content sources in tangerine theme */
+.content-source-card .settings-section-header,
+.source-item .settings-section-header {
+    background-color: transparent !important;
+    border-bottom: none !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 1rem !important;
+    cursor: pointer !important;
+}
+
+/* Show the h4 for content source names */
+.content-source-card .settings-section-header h4,
+.source-item .settings-section-header h4 {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    color: #fff !important;
+    font-weight: 600 !important;
+    font-size: 0.95rem !important;
+    flex-grow: 0 !important;
+    text-align: left !important;
+}
+
+/* Ensure expanded content has proper styling */
+.settings-section-content,
+.source-item .settings-section-content {
+    background-color: rgba(0, 0, 0, 0.2) !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+    padding: 1.5rem !important;
+    margin-top: 1rem !important;
+    border-radius: 8px !important;
+}
+
+/* When content is visible, ensure proper display */
+.content-source-card .settings-section-content[style*="display: block"],
+.source-item .settings-section-content[style*="display: block"] {
+    display: block !important;
+}
+
+/* CRITICAL: Show tangerine-specific elements that classic CSS might hide */
+.content-sources-title,
+.content-sources-subtitle,
+.title-bar,
+.info-icon,
+.content-source-type,
+.source-type,
+.scraper-type {
+    display: block !important;
+}
+
+.content-source-info {
+    display: flex !important;
+}
+
+/* Ensure proper flex layout for source info */
+.content-source-header-left.content-source-info {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    gap: 1rem !important;
+}
+
+/* Make sure h4 is visible in tangerine */
+.content-source-name,
+.source-name {
+    display: block !important;
+}
+
+/* Fix the source-info header to be a proper flex container */
+.source-item .source-info,
+.content-source-card .source-info,
+.content-source-header.source-info {
+    display: flex !important;
+    align-items: center !important;
+    gap: 1rem !important;
+    flex: 1 !important;
+    padding: 0 !important;
+    background: transparent !important;
+    border-bottom: none !important;
+    width: 100% !important;
+}
+
+/* Inner content-source-info div should also be flex */
+.content-source-header-left.content-source-info > div {
+    display: flex !important;
+    flex-direction: column !important;
+}
+
+/* Remove borders from form groups AND input fields in content sources expanded sections */
+.content-sources-page .source-list .settings-section .settings-section-content .settings-form-group {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    background-color: transparent !important;
+    padding: 8px 0 !important;
+}
+
+.content-sources-page .source-list .settings-section .settings-section-content .settings-form-group:hover {
+    border: none !important;
+    background-color: transparent !important;
+}
+
+.content-sources-page .source-list .settings-section .settings-section-content input[type="text"],
+.content-sources-page .source-list .settings-section .settings-section-content input[type="number"],
+.content-sources-page .source-list .settings-section .settings-section-content input[type="email"],
+.content-sources-page .source-list .settings-section .settings-section-content input[type="password"],
+.content-sources-page .source-list .settings-section .settings-section-content input[type="url"],
+.content-sources-page .source-list .settings-section .settings-section-content textarea,
+.content-sources-page .source-list .settings-section .settings-section-content select,
+.content-sources-page .source-list .settings-section .settings-section-content .settings-input {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.content-sources-page .source-list .settings-section .settings-section-content input:focus,
+.content-sources-page .source-list .settings-section .settings-section-content textarea:focus,
+.content-sources-page .source-list .settings-section .settings-section-content select:focus,
+.content-sources-page .source-list .settings-section .settings-section-content .settings-input:focus {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.2) !important;
+    outline: none !important;
+}
+
+.content-sources-page .source-list .settings-section .settings-section-content input:hover,
+.content-sources-page .source-list .settings-section .settings-section-content textarea:hover,
+.content-sources-page .source-list .settings-section .settings-section-content select:hover {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+}
+
+/* ========================================
+   Inline CSS from true_debug.html
+   ======================================== */
+/* Debug warning box styling */
+    .debug-warning-box {
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 12px;
+        padding: 20px;
+        margin: 20px 0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    
+    .debug-warning-box p {
+        margin: 0 0 10px 0;
+        line-height: 1.5;
+        color: #856404;
+    }
+    
+    .debug-warning-box strong {
+        color: #856404;
+    }
+/* ========================================
+   SCRAPERS PAGE STYLES (Tangerine Theme)
+   ======================================== */
+
+.scrapers-page {
+    max-width: 100%;
+}
+
+/* Scrapers Header */
+.scrapers-title {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 0.5rem;
+}
+
+.scrapers-subtitle {
+    font-size: 1rem;
+    color: #666;
+    margin-bottom: 2.5rem;
+}
+
+/* Scrapers Header */
+.scrapers-header,
+.scrapers-header.section-header {
+    display: flex;
+    justify-content: space-between;
+    /* align-items: center; */
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.scrapers-settings-title,
+.scrapers-settings-title.section-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Scraper List */
+.scraper-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+/* Scraper Item / Card */
+.scraper-item,
+.scraper-card {
+    background: rgb(255 255 255 / 0%);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 1.25rem;
+    display: block !important;
+    transition: all 0.3s ease;
+}
+
+.scraper-item:hover,
+.scraper-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 107, 53, 0.3);
+    transform: translateX(4px);
+}
+
+.scraper-item.expanded,
+.scraper-card.expanded {
+    background: rgba(255, 107, 53, 0.05);
+    border-color: rgba(255, 107, 53, 0.2);
+}
+
+.scraper-header.scraper-disabled {
+    background: transparent;
+}
+
+/* Scraper Info */
+.scraper-info,
+.scraper-header-left,
+.settings-header-left,
+.version-header-left,
+.notification-header-left {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex: 1;
+}
+
+/* Scraper Name */
+.scraper-name {
+    color: #fff;
+    font-weight: 600;
+    font-size: 0.95rem;
+    margin: 0;
+}
+
+/* Scraper Type */
+.scraper-type {
+    color: #666;
+    font-size: 0.8rem;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 0.25rem 0.75rem;
+    border-radius: 6px;
+}
+
+/* Scraper Actions */
+.scraper-actions,
+.scraper-buttons {
+    display: flex;
+    gap: 0.5rem;
+}
+
+/* Scraper expand icons */
+.scrapers-page svg.expand-icon,
+.scrapers-page svg.settings-toggle-icon,
+.scrapers-page .expand-icon,
+.scrapers-page .settings-toggle-icon,
+.scraper-card svg.expand-icon,
+.scraper-card svg.settings-toggle-icon,
+.scraper-card .expand-icon,
+.scraper-card .settings-toggle-icon,
+.scraper-item svg.expand-icon,
+.scraper-item svg.settings-toggle-icon,
+.scraper-item .expand-icon,
+.scraper-item .settings-toggle-icon {
+    display: inline-block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    width: 20px !important;
+    height: 20px !important;
+    min-width: 20px !important;
+    min-height: 20px !important;
+    flex-shrink: 0 !important;
+}
+
+.scraper-item.expanded .expand-icon,
+.scraper-card.expanded .settings-toggle-icon {
+    transform: rotate(90deg);
+    color: #ff6b35;
+}
+
+/* Settings Section Content for Scrapers */
+.scraper-card .settings-section-content {
+    padding: 1.5rem;
+    background-color: rgba(0, 0, 0, 0.2);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Override base settings.css styles for scrapers in tangerine theme */
+.scraper-card .settings-section-header,
+.scraper-item .settings-section-header {
+    background-color: transparent !important;
+    border-bottom: none !important;
+    padding: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 1rem !important;
+    cursor: pointer !important;
+}
+
+/* Show the h4 for scraper names */
+.scraper-card .settings-section-header h4,
+.scraper-item .settings-section-header h4 {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    color: #fff !important;
+    font-weight: 600 !important;
+    font-size: 0.95rem !important;
+    flex-grow: 0 !important;
+    text-align: left !important;
+}
+
+/* Hide the content initially */
+.scraper-card .settings-section-content,
+.scraper-item .settings-section-content {
+    display: none;
+}
+
+/* Show content when explicitly set to block */
+.scraper-card .settings-section-content[style*="display: block"],
+.scraper-item .settings-section-content[style*="display: block"] {
+    display: block !important;
+}
+
+/* Scraper header left alignment */
+.scraper-header-left.scraper-info {
+    display: flex !important;
+    align-items: center !important;
+    gap: 1rem !important;
+    flex: 1 !important;
+}
+
+.scraper-card .scraper-info,
+.scraper-header.scraper-info {
+    display: flex !important;
+    align-items: center !important;
+    gap: 1rem !important;
+    flex: 1 !important;
+    cursor: pointer !important;
+}
+
+.scraper-header-left.scraper-info > div {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+/* Remove borders from form groups in scrapers */
+.scrapers-page .scraper-list .settings-section .settings-section-content .settings-form-group {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    background-color: transparent !important;
+    padding: 8px 0 !important;
+}
+
+.scrapers-page .scraper-list .settings-section .settings-section-content .settings-form-group:hover {
+    border: none !important;
+    background-color: transparent !important;
+}
+
+/* Input styling for scrapers */
+.scrapers-page .scraper-list .settings-section .settings-section-content input[type="text"],
+.scrapers-page .scraper-list .settings-section .settings-section-content input[type="number"],
+.scrapers-page .scraper-list .settings-section .settings-section-content input[type="email"],
+.scrapers-page .scraper-list .settings-section .settings-section-content input[type="password"],
+.scrapers-page .scraper-list .settings-section .settings-section-content input[type="url"],
+.scrapers-page .scraper-list .settings-section .settings-section-content textarea,
+.scrapers-page .scraper-list .settings-section .settings-section-content select,
+.scrapers-page .scraper-list .settings-section .settings-section-content .settings-input {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    color: #fff !important;
+}
+
+.scrapers-page .scraper-list .settings-section .settings-section-content input:focus,
+.scrapers-page .scraper-list .settings-section .settings-section-content textarea:focus,
+.scrapers-page .scraper-list .settings-section .settings-section-content select:focus,
+.scrapers-page .scraper-list .settings-section .settings-section-content .settings-input:focus {
+    border-color: rgba(255, 107, 53, 0.5) !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+    outline: none !important;
+    box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1) !important;
+}
+
+/* ========================================
+   Remove borders from all settings tabs inputs
+   ======================================== */
+
+/* Required Settings */
+.required-settings-page .settings-list .settings-section .settings-section-content input[type="text"],
+.required-settings-page .settings-list .settings-section .settings-section-content input[type="number"],
+.required-settings-page .settings-list .settings-section .settings-section-content input[type="email"],
+.required-settings-page .settings-list .settings-section .settings-section-content input[type="password"],
+.required-settings-page .settings-list .settings-section .settings-section-content input[type="url"],
+.required-settings-page .settings-list .settings-section .settings-section-content textarea,
+.required-settings-page .settings-list .settings-section .settings-section-content select,
+.required-settings-page .settings-list .settings-section .settings-section-content .settings-input {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.required-settings-page .settings-list .settings-section .settings-section-content input:focus,
+.required-settings-page .settings-list .settings-section .settings-section-content textarea:focus,
+.required-settings-page .settings-list .settings-section .settings-section-content select:focus,
+.required-settings-page .settings-list .settings-section .settings-section-content .settings-input:focus {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.2) !important;
+    outline: none !important;
+    background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Additional Settings */
+.additional-settings-page .settings-list .settings-section .settings-section-content input[type="text"],
+.additional-settings-page .settings-list .settings-section .settings-section-content input[type="number"],
+.additional-settings-page .settings-list .settings-section .settings-section-content input[type="email"],
+.additional-settings-page .settings-list .settings-section .settings-section-content input[type="password"],
+.additional-settings-page .settings-list .settings-section .settings-section-content input[type="url"],
+.additional-settings-page .settings-list .settings-section .settings-section-content textarea,
+.additional-settings-page .settings-list .settings-section .settings-section-content select,
+.additional-settings-page .settings-list .settings-section .settings-section-content .settings-input {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.additional-settings-page .settings-list .settings-section .settings-section-content input:focus,
+.additional-settings-page .settings-list .settings-section .settings-section-content textarea:focus,
+.additional-settings-page .settings-list .settings-section .settings-section-content select:focus,
+.additional-settings-page .settings-list .settings-section .settings-section-content .settings-input:focus {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.2) !important;
+    outline: none !important;
+    background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Notifications Settings */
+.notifications-settings-page .notification-list .settings-section .settings-section-content input[type="text"],
+.notifications-settings-page .notification-list .settings-section .settings-section-content input[type="number"],
+.notifications-settings-page .notification-list .settings-section .settings-section-content input[type="email"],
+.notifications-settings-page .notification-list .settings-section .settings-section-content input[type="password"],
+.notifications-settings-page .notification-list .settings-section .settings-section-content input[type="url"],
+.notifications-settings-page .notification-list .settings-section .settings-section-content textarea,
+.notifications-settings-page .notification-list .settings-section .settings-section-content select,
+.notifications-settings-page .notification-list .settings-section .settings-section-content .settings-input {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.notifications-settings-page .notification-list .settings-section .settings-section-content input:focus,
+.notifications-settings-page .notification-list .settings-section .settings-section-content textarea:focus,
+.notifications-settings-page .notification-list .settings-section .settings-section-content select:focus,
+.notifications-settings-page .notification-list .settings-section .settings-section-content .settings-input:focus {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.2) !important;
+    outline: none !important;
+    background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Scraping Settings */
+.scraping-settings-page .version-list .settings-section .settings-section-content input[type="text"],
+.scraping-settings-page .version-list .settings-section .settings-section-content input[type="number"],
+.scraping-settings-page .version-list .settings-section .settings-section-content input[type="email"],
+.scraping-settings-page .version-list .settings-section .settings-section-content input[type="password"],
+.scraping-settings-page .version-list .settings-section .settings-section-content input[type="url"],
+.scraping-settings-page .version-list .settings-section .settings-section-content textarea,
+.scraping-settings-page .version-list .settings-section .settings-section-content select,
+.scraping-settings-page .version-list .settings-section .settings-section-content .settings-input {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.scraping-settings-page .version-list .settings-section .settings-section-content input:focus,
+.scraping-settings-page .version-list .settings-section .settings-section-content textarea:focus,
+.scraping-settings-page .version-list .settings-section .settings-section-content select:focus,
+.scraping-settings-page .version-list .settings-section .settings-section-content .settings-input:focus {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.2) !important;
+    outline: none !important;
+    background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Reverse Parser Settings */
+.reverse-parser-settings-page .settings-list .settings-section .settings-section-content input[type="text"],
+.reverse-parser-settings-page .settings-list .settings-section .settings-section-content input[type="number"],
+.reverse-parser-settings-page .settings-list .settings-section .settings-section-content input[type="email"],
+.reverse-parser-settings-page .settings-list .settings-section .settings-section-content input[type="password"],
+.reverse-parser-settings-page .settings-list .settings-section .settings-section-content input[type="url"],
+.reverse-parser-settings-page .settings-list .settings-section .settings-section-content textarea,
+.reverse-parser-settings-page .settings-list .settings-section .settings-section-content select,
+.reverse-parser-settings-page .settings-list .settings-section .settings-section-content .settings-input {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.reverse-parser-settings-page .settings-list .settings-section .settings-section-content input:focus,
+.reverse-parser-settings-page .settings-list .settings-section .settings-section-content textarea:focus,
+.reverse-parser-settings-page .settings-list .settings-section .settings-section-content select:focus,
+.reverse-parser-settings-page .settings-list .settings-section .settings-section-content .settings-input:focus {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.2) !important;
+    outline: none !important;
+    background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Debug Settings */
+.debug-settings-page .settings-list .settings-section .settings-section-content input[type="text"],
+.debug-settings-page .settings-list .settings-section .settings-section-content input[type="number"],
+.debug-settings-page .settings-list .settings-section .settings-section-content input[type="email"],
+.debug-settings-page .settings-list .settings-section .settings-section-content input[type="password"],
+.debug-settings-page .settings-list .settings-section .settings-section-content input[type="url"],
+.debug-settings-page .settings-list .settings-section .settings-section-content textarea,
+.debug-settings-page .settings-list .settings-section .settings-section-content select,
+.debug-settings-page .settings-list .settings-section .settings-section-content .settings-input {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.debug-settings-page .settings-list .settings-section .settings-section-content input:focus,
+.debug-settings-page .settings-list .settings-section .settings-section-content textarea:focus,
+.debug-settings-page .settings-list .settings-section .settings-section-content select:focus,
+.debug-settings-page .settings-list .settings-section .settings-section-content .settings-input:focus {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.2) !important;
+    outline: none !important;
+    background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* True Debug Settings */
+.true-debug-settings-page .settings-list .settings-section .settings-section-content input[type="text"],
+.true-debug-settings-page .settings-list .settings-section .settings-section-content input[type="number"],
+.true-debug-settings-page .settings-list .settings-section .settings-section-content input[type="email"],
+.true-debug-settings-page .settings-list .settings-section .settings-section-content input[type="password"],
+.true-debug-settings-page .settings-list .settings-section .settings-section-content input[type="url"],
+.true-debug-settings-page .settings-list .settings-section .settings-section-content textarea,
+.true-debug-settings-page .settings-list .settings-section .settings-section-content select,
+.true-debug-settings-page .settings-list .settings-section .settings-section-content .settings-input {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.true-debug-settings-page .settings-list .settings-section .settings-section-content input:focus,
+.true-debug-settings-page .settings-list .settings-section .settings-section-content textarea:focus,
+.true-debug-settings-page .settings-list .settings-section .settings-section-content select:focus,
+.true-debug-settings-page .settings-list .settings-section .settings-section-content .settings-input:focus {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.2) !important;
+    outline: none !important;
+    background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+.scrapers-page .scraper-list .settings-section .settings-section-content input:hover,
+.scrapers-page .scraper-list .settings-section .settings-section-content textarea:hover,
+.scrapers-page .scraper-list .settings-section .settings-section-content select:hover {
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+}
+/* Exclude scrapers settings title from the ::before bar */
+.content-section h3.scrapers-settings-title::before,
+.content-section h3.scrapers-settings-title.section-title::before {
+    display: none !important;
+}
+
+/* ========================================
+   FINAL OVERRIDE - Remove all borders from settings tab inputs
+   This must be at the end to override base.css
+   ======================================== */
+
+/* Remove borders from form groups in ALL settings pages */
+/* .scraping-settings-page .settings-form-group,
+.required-settings-page .settings-form-group,
+.additional-settings-page .settings-form-group,
+.notifications-settings-page .settings-form-group,
+.reverse-parser-settings-page .settings-form-group,
+.debug-settings-page .settings-form-group,
+.true-debug-settings-page .settings-form-group {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    background-color: transparent !important;
+    padding: 8px 0 !important;
+} */
+
+.scraping-settings-page .settings-form-group:hover,
+.required-settings-page .settings-form-group:hover,
+.additional-settings-page .settings-form-group:hover,
+.notifications-settings-page .settings-form-group:hover,
+.reverse-parser-settings-page .settings-form-group:hover,
+.debug-settings-page .settings-form-group:hover,
+.true-debug-settings-page .settings-form-group:hover {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    background-color: transparent !important;
+}
+
+/* Remove borders from all inputs in ALL settings pages */
+.scraping-settings-page input[type="text"],
+.scraping-settings-page input[type="number"],
+.scraping-settings-page input[type="email"],
+.scraping-settings-page input[type="password"],
+.scraping-settings-page input[type="url"],
+.scraping-settings-page input[type="search"],
+.scraping-settings-page input[type="tel"],
+.scraping-settings-page input[type="date"],
+.scraping-settings-page input[type="time"],
+.scraping-settings-page input[type="datetime-local"],
+.scraping-settings-page textarea,
+.scraping-settings-page select,
+.required-settings-page input[type="text"],
+.required-settings-page input[type="number"],
+.required-settings-page input[type="email"],
+.required-settings-page input[type="password"],
+.required-settings-page input[type="url"],
+.required-settings-page input[type="search"],
+.required-settings-page input[type="tel"],
+.required-settings-page input[type="date"],
+.required-settings-page input[type="time"],
+.required-settings-page input[type="datetime-local"],
+.required-settings-page textarea,
+.required-settings-page select,
+.additional-settings-page input[type="text"],
+.additional-settings-page input[type="number"],
+.additional-settings-page input[type="email"],
+.additional-settings-page input[type="password"],
+.additional-settings-page input[type="url"],
+.additional-settings-page input[type="search"],
+.additional-settings-page input[type="tel"],
+.additional-settings-page input[type="date"],
+.additional-settings-page input[type="time"],
+.additional-settings-page input[type="datetime-local"],
+.additional-settings-page textarea,
+.additional-settings-page select,
+.notifications-settings-page input[type="text"],
+.notifications-settings-page input[type="number"],
+.notifications-settings-page input[type="email"],
+.notifications-settings-page input[type="password"],
+.notifications-settings-page input[type="url"],
+.notifications-settings-page input[type="search"],
+.notifications-settings-page input[type="tel"],
+.notifications-settings-page input[type="date"],
+.notifications-settings-page input[type="time"],
+.notifications-settings-page input[type="datetime-local"],
+.notifications-settings-page textarea,
+.notifications-settings-page select,
+.reverse-parser-settings-page input[type="text"],
+.reverse-parser-settings-page input[type="number"],
+.reverse-parser-settings-page input[type="email"],
+.reverse-parser-settings-page input[type="password"],
+.reverse-parser-settings-page input[type="url"],
+.reverse-parser-settings-page input[type="search"],
+.reverse-parser-settings-page input[type="tel"],
+.reverse-parser-settings-page input[type="date"],
+.reverse-parser-settings-page input[type="time"],
+.reverse-parser-settings-page input[type="datetime-local"],
+.reverse-parser-settings-page textarea,
+.reverse-parser-settings-page select,
+.debug-settings-page input[type="text"],
+.debug-settings-page input[type="number"],
+.debug-settings-page input[type="email"],
+.debug-settings-page input[type="password"],
+.debug-settings-page input[type="url"],
+.debug-settings-page input[type="search"],
+.debug-settings-page input[type="tel"],
+.debug-settings-page input[type="date"],
+.debug-settings-page input[type="time"],
+.debug-settings-page input[type="datetime-local"],
+.debug-settings-page textarea,
+.debug-settings-page select,
+.true-debug-settings-page input[type="text"],
+.true-debug-settings-page input[type="number"],
+.true-debug-settings-page input[type="email"],
+.true-debug-settings-page input[type="password"],
+.true-debug-settings-page input[type="url"],
+.true-debug-settings-page input[type="search"],
+.true-debug-settings-page input[type="tel"],
+.true-debug-settings-page input[type="date"],
+.true-debug-settings-page input[type="time"],
+.true-debug-settings-page input[type="datetime-local"],
+.true-debug-settings-page textarea,
+.true-debug-settings-page select {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+}
+
+/* Focus states for settings page inputs */
+.scraping-settings-page input:focus,
+.scraping-settings-page textarea:focus,
+.scraping-settings-page select:focus,
+.required-settings-page input:focus,
+.required-settings-page textarea:focus,
+.required-settings-page select:focus,
+.additional-settings-page input:focus,
+.additional-settings-page textarea:focus,
+.additional-settings-page select:focus,
+.notifications-settings-page input:focus,
+.notifications-settings-page textarea:focus,
+.notifications-settings-page select:focus,
+.reverse-parser-settings-page input:focus,
+.reverse-parser-settings-page textarea:focus,
+.reverse-parser-settings-page select:focus,
+.debug-settings-page input:focus,
+.debug-settings-page textarea:focus,
+.debug-settings-page select:focus,
+.true-debug-settings-page input:focus,
+.true-debug-settings-page textarea:focus,
+.true-debug-settings-page select:focus {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.2) !important;
+}
+
+/* Hover states for settings page inputs */
+.scraping-settings-page input:hover,
+.scraping-settings-page textarea:hover,
+.scraping-settings-page select:hover,
+.required-settings-page input:hover,
+.required-settings-page textarea:hover,
+.required-settings-page select:hover,
+.additional-settings-page input:hover,
+.additional-settings-page textarea:hover,
+.additional-settings-page select:hover,
+.notifications-settings-page input:hover,
+.notifications-settings-page textarea:hover,
+.notifications-settings-page select:hover,
+.reverse-parser-settings-page input:hover,
+.reverse-parser-settings-page textarea:hover,
+.reverse-parser-settings-page select:hover,
+.debug-settings-page input:hover,
+.debug-settings-page textarea:hover,
+.debug-settings-page select:hover,
+.true-debug-settings-page input:hover,
+.true-debug-settings-page textarea:hover,
+.true-debug-settings-page select:hover {
+    border: none !important;
+    border-width: 0 !important;
+    border-color: transparent !important;
+}
+
+/* Add hover and transition effects to match scrapers/content sources */
+.scraping-settings-page .settings-section,
+.scraping-settings-page .settings-card,
+.required-settings-page .settings-section,
+.required-settings-page .settings-card,
+.additional-settings-page .settings-section,
+.additional-settings-page .settings-card,
+.notifications-settings-page .settings-section,
+.notifications-settings-page .settings-card,
+.reverse-parser-settings-page .settings-section,
+.reverse-parser-settings-page .settings-card,
+.debug-settings-page .settings-section,
+.debug-settings-page .settings-card,
+.true-debug-settings-page .settings-section,
+.true-debug-settings-page .settings-card {
+    transition: all 0.3s ease;
+}
+
+.scraping-settings-page .settings-section:hover,
+.scraping-settings-page .settings-card:hover,
+.required-settings-page .settings-section:hover,
+.required-settings-page .settings-card:hover,
+.additional-settings-page .settings-section:hover,
+.additional-settings-page .settings-card:hover,
+.notifications-settings-page .settings-section:hover,
+.notifications-settings-page .settings-card:hover,
+.reverse-parser-settings-page .settings-section:hover,
+.reverse-parser-settings-page .settings-card:hover,
+.debug-settings-page .settings-section:hover,
+.debug-settings-page .settings-card:hover,
+.true-debug-settings-page .settings-section:hover,
+.true-debug-settings-page .settings-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 107, 53, 0.3);
+    transform: translateX(4px);
+}
+
+.scraper-item, .scraper-card
+ {
+    background: rgb(255 255 255 / 0%);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 1.25rem;
+    display: block !important;
+    transition: all 0.3s 
+ease;
+}
+
+.settings-section {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    margin-bottom: 20px;
+    overflow: hidden;
+    transition: all 0.3s 
+ease;
+}
+
+/* Expanded/open state for settings sections - orange tint */
+.scraping-settings-page .settings-section.expanded,
+.scraping-settings-page .settings-card.expanded,
+.required-settings-page .settings-section.expanded,
+.required-settings-page .settings-card.expanded,
+.additional-settings-page .settings-section.expanded,
+.additional-settings-page .settings-card.expanded,
+.notifications-settings-page .settings-section.expanded,
+.notifications-settings-page .settings-card.expanded,
+.reverse-parser-settings-page .settings-section.expanded,
+.reverse-parser-settings-page .settings-card.expanded,
+.debug-settings-page .settings-section.expanded,
+.debug-settings-page .settings-card.expanded,
+.true-debug-settings-page .settings-section.expanded,
+.true-debug-settings-page .settings-card.expanded {
+    background: rgba(255, 107, 53, 0.05);
+    border-color: rgba(255, 107, 53, 0.2);
+}
+
+/* Rotate chevron and change color when expanded */
+.scraping-settings-page .settings-section.expanded .expand-icon,
+.scraping-settings-page .settings-card.expanded .settings-toggle-icon,
+.required-settings-page .settings-section.expanded .expand-icon,
+.required-settings-page .settings-card.expanded .settings-toggle-icon,
+.additional-settings-page .settings-section.expanded .expand-icon,
+.additional-settings-page .settings-card.expanded .settings-toggle-icon,
+.notifications-settings-page .settings-section.expanded .expand-icon,
+.notifications-settings-page .settings-card.expanded .settings-toggle-icon,
+.reverse-parser-settings-page .settings-section.expanded .expand-icon,
+.reverse-parser-settings-page .settings-card.expanded .settings-toggle-icon,
+.debug-settings-page .settings-section.expanded .expand-icon,
+.debug-settings-page .settings-card.expanded .settings-toggle-icon,
+.true-debug-settings-page .settings-section.expanded .expand-icon,
+.true-debug-settings-page .settings-card.expanded .settings-toggle-icon {
+    transform: rotate(90deg);
+    color: #ff6b35;
+}
+
+/* Add orange vertical bar and left align section titles */
+.scraping-settings-page .settings-section-header h4,
+.required-settings-page .settings-section-header h4,
+.additional-settings-page .settings-section-header h4,
+.notifications-settings-page .settings-section-header h4,
+.reverse-parser-settings-page .settings-section-header h4,
+.debug-settings-page .settings-section-header h4,
+.true-debug-settings-page .settings-section-header h4 {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    color: #fff !important;
+    font-weight: 600 !important;
+    font-size: 0.95rem !important;
+    flex-grow: 0 !important;
+    text-align: left !important;
+}
+
+.scraping-settings-page .settings-section-header h4::before,
+.required-settings-page .settings-section-header h4::before,
+.additional-settings-page .settings-section-header h4::before,
+.notifications-settings-page .settings-section-header h4::before,
+.reverse-parser-settings-page .settings-section-header h4::before,
+.debug-settings-page .settings-section-header h4::before,
+.true-debug-settings-page .settings-section-header h4::before {
+    display: none !important;
+}
+
+/* Ensure all settings sections have consistent base styling like scrapers/content sources */
+.scraping-settings-page .settings-section,
+.scraping-settings-page .settings-card,
+.required-settings-page .settings-section,
+.required-settings-page .settings-card,
+.additional-settings-page .settings-section,
+.additional-settings-page .settings-card,
+.notifications-settings-page .settings-section,
+.notifications-settings-page .settings-card,
+.reverse-parser-settings-page .settings-section,
+.reverse-parser-settings-page .settings-card,
+.debug-settings-page .settings-section,
+.debug-settings-page .settings-card,
+.true-debug-settings-page .settings-section,
+.true-debug-settings-page .settings-card {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    margin-bottom: 20px;
+    overflow: hidden;
+    padding: 1.25rem;
+}
+/* Match page title and subtitle styling with scrapers/content sources */
+.scraping-settings-title,
+.required-settings-title,
+.additional-settings-title,
+.notifications-settings-title,
+.reverse-parser-settings-title,
+.debug-settings-title,
+.true-debug-settings-title {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #fff;
+    /* margin-bottom: 0.5rem; */
+}
+
+.scraping-settings-subtitle,
+.required-settings-subtitle,
+.additional-settings-subtitle,
+.notifications-settings-subtitle,
+.reverse-parser-settings-subtitle,
+.debug-settings-subtitle,
+.true-debug-settings-subtitle {
+    font-size: 1rem;
+    color: #666;
+    margin-bottom: 2.5rem;
+}
+
+/* Version action buttons styling to match scrapers/content sources */
+.version-buttons,
+.version-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+/* Secondary buttons (Rename, Duplicate, Test, etc.) */
+.rename-version-btn,
+.duplicate-version-btn,
+.test-notification-btn {
+    padding: 0.625rem 1.25rem;
+    background: rgba(255, 255, 255, 0.05);
+    color: #e0e0e0;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.rename-version-btn:hover,
+.duplicate-version-btn:hover,
+.test-notification-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    transform: translateY(-1px);
+}
+
+/* Ensure delete buttons in all contexts have consistent styling */
+.delete-version-btn,
+.delete-notification-btn {
+    padding: 0.625rem 1.25rem;
+    background: rgba(220, 38, 38, 0.15);
+    color: #ff6b6b;
+    border: 1px solid rgba(220, 38, 38, 0.3);
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.delete-version-btn:hover,
+.delete-notification-btn:hover {
+    background: rgba(220, 38, 38, 0.25);
+    transform: translateY(-1px);
+}
+/* ========================================
+   Sidebar Responsive Design
+   ======================================== */
+@media (max-width: 1024px) {
+    .settings-sidebar {
+        width: 240px;
+    }
+
+    .settings-main-content {
+        margin-left: 240px;
+        padding: 1.5rem;
+    }
+    .rename-version-btn,
+    .duplicate-version-btn,
+    .test-notification-btn {
+        padding: 0.5rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .settings-page-container{
+        display: block !important;
+
+    }
+    .rename-version-btn,
+    .duplicate-version-btn,
+    .test-notification-btn {
+        padding: 0;
+    }
+    .settings-container {
+        padding: 5px;
+    }
+    .content-source-header-left.content-source-info,
+    .scraper-header-left.scraper-info {
+        display: block !important;
+
+    }
+    .settings-section-header .source-buttons {
+        width: auto;
+    }
+    .source-type, 
+    .content-source-type,
+    .scraper-type {
+        background: rgba(255, 255, 255, 0);
+        padding: 0;
+    }
+    .settings-mobile-menu-toggle {
+        display: block;
+        opacity: 1;
+        visibility: visible;
+        transition: opacity 0.3s ease, visibility 0.3s ease;
+    }
+
+    /* Hide hamburger when sidebar is open */
+    .settings-sidebar.mobile-open ~ .settings-mobile-menu-toggle,
+    body:has(.settings-sidebar.mobile-open) .settings-mobile-menu-toggle {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+    }
+
+    .settings-expand-all,
+    .settings-collapse-all {
+        margin: 0 0px 10px;
+    }
+
+    .settings-mobile-overlay.active {
+        display: block;
+    }
+
+    .settings-sidebar {
+        width: 280px;
+        position: fixed;
+        left: -280px;
+        z-index: 100;
+        transition: left 0.3s ease;
+        height: 100vh;
+        top: 0;
+        pointer-events: none; /* Disable interaction when closed */
+    }
+
+    .settings-sidebar.mobile-open {
+        left: 0;
+        padding-top: 60px;
+        pointer-events: auto; /* Re-enable interaction when open */
+    }
+
+    /* Mobile search adjustments */
+    .settings-search-container {
+        margin-top: 0.75rem;
+    }
+
+    .settings-search-input {
+        font-size: 0.8rem;
+        padding: 9px 32px 9px 12px;
+    }
+
+    .settings-search-clear {
+        right: 8px;
+        width: 20px;
+        height: 20px;
+    }
+
+    .search-results-indicator {
+        margin: 0 1rem 0.75rem 1rem;
+        padding: 10px;
+        font-size: 0.8rem;
+    }
+
+    .search-tabs-list {
+        gap: 4px;
+    }
+
+    .search-tab-match {
+        font-size: 0.75rem;
+        padding: 3px 8px;
+    }
+
+    .settings-main-content {
+        margin-left: 0;
+        padding: 1.5rem;
+        padding-top: 5rem;
+        pointer-events: auto; /* Ensure main content is always clickable */
+    }
+
+    .settings-nav-section {
+        margin-bottom: 0.5rem;
+    }
+
+    /* Help button on mobile for settings page */
+    body:has(.settings-page-container) .help-button {
+        bottom: 1.5rem;
+        left: auto;
+        right: 1.5rem;
+        z-index: 102;
+    }
+
+    /* Content responsive */
+    .content-title {
+        font-size: 1.5rem;
+    }
+
+    .content-section {
+        padding: 1.5rem;
+        border-radius: 16px;
+    }
+
+    .section-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+
+    .action-buttons {
+        flex-direction: row;
+        flex-wrap: wrap;
+        width: 100%;
+        gap: 0.5rem;
+    }
+
+    .btn {
+        width: 100%;
+    }
+
+    /* All sections buttons responsive sizing */
+    .scraping-settings-actions,
+    .scrapers-actions,
+    .content-sources-actions,
+    .notifications-settings-actions,
+    .required-settings-actions,
+    .additional-settings-actions,
+    .debug-settings-actions,
+    .true-debug-settings-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    /* Small buttons that can fit 2 per row at 50% each, but grow to full width if alone */
+    .scraping-settings-actions .settings-collapse-all,
+    .scraping-settings-actions .settings-expand-all,
+    .scraping-settings-actions #add-version-btn,
+    .scrapers-actions .settings-collapse-all,
+    .scrapers-actions .settings-expand-all,
+    .scrapers-actions #add-scraper-btn,
+    .content-sources-actions .settings-collapse-all,
+    .content-sources-actions .settings-expand-all,
+    .content-sources-actions #add-source-btn,
+    .notifications-settings-actions .settings-collapse-all,
+    .notifications-settings-actions .settings-expand-all,
+    .notifications-settings-actions #add-notification-btn,
+    .required-settings-actions .settings-collapse-all,
+    .required-settings-actions .settings-expand-all,
+    .additional-settings-actions .settings-collapse-all,
+    .additional-settings-actions .settings-expand-all,
+    .debug-settings-actions .settings-collapse-all,
+    .debug-settings-actions .settings-expand-all,
+    .true-debug-settings-actions .settings-collapse-all,
+    .true-debug-settings-actions .settings-expand-all {
+        flex: 1 1 calc(50% - 0.25rem) !important;
+        max-width: 100% !important;
+        min-width: calc(50% - 0.25rem) !important;
+        width: auto !important;
+    }
+
+    /* Larger buttons that need full width */
+    .scraping-settings-actions #add-default-version-btn,
+    .scraping-settings-actions #add-separate-versions-btn {
+        flex: 0 0 100% !important;
+        max-width: 100% !important;
+        width: 100% !important;
+    }
+
+    .source-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+
+    .source-actions {
+        width: 100%;
+    }
+
+    .source-actions .btn {
+        width: 100%;
+    }
+}
+
+@media (max-width: 480px) {
+    .settings-sidebar {
+        width: 85vw;
+        left: -85vw;
+    }
+
+    .settings-mobile-menu-toggle {
+        top: 70px;
+        left: 1rem;
+    }
+
+    .settings-main-content {
+        padding: 1rem;
+        padding-top: 4.5rem;
+    }
+}
+
+
+
+/* Responsive */
+@media (max-width: 1024px) {
+    .content-sources-header,
+    .section-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+
+    .content-sources-actions,
+    .action-buttons {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .content-sources-btn,
+    .content-sources-btn-primary {
+        flex: 1;
+        min-width: 120px;
+    }
+}
+
+@media (max-width: 768px) {
+    .content-sources-actions,
+    .action-buttons {
+        flex-direction: column;
+    }
+
+    .btn,
+    .content-sources-btn,
+    .content-sources-btn-primary {
+        width: 100%;
+    }
+
+    /* Expand icon on left, spans both rows */
+    .settings-section-header .expand-icon,
+    .settings-section-header .settings-toggle-icon {
+        grid-column: 1;
+        grid-row: 1 / 3;
+        align-self: center;
+    }
+
+    /* Title in middle column, first row */
+    .settings-section-header h4 {
+        grid-column: 2;
+        grid-row: 1;
+        margin: 0 !important;
+    }
+
+    /* Source type badge in middle column, second row */
+    .content-source-header-left .content-source-type,
+    .source-info .source-type,
+    .content-source-type,
+    .source-type {
+        grid-column: 2;
+        grid-row: 2;
+    }
+
+    /* Delete button on right, spans both rows */
+    .settings-section-header .source-buttons {
+        grid-column: 3;
+        grid-row: 1 / 3;
+        align-self: center;
+    }
+
+
+
+    /* Ensure all nested elements are visible and positioned correctly */
+    .settings-section-header .content-source-name,
+    .settings-section-header .source-name {
+        display: block !important;
+    }
+
+    /* Change delete button text to trash icon on mobile */
+    .delete-source-btn,
+    .delete-scraper-btn,
+    .delete-notification-btn,
+    .delete-version-btn {
+        font-size: 0;
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* Action button icons via ::before on button element */
+    .delete-source-btn::before,
+    .delete-scraper-btn::before,
+    .delete-notification-btn::before,
+    .delete-version-btn::before {
+        content: '\f1f8';
+        font-family: 'Font Awesome 5 Free';
+        font-weight: 900;
+        font-size: 1rem;
+    }
+
+    .rename-version-btn::before {
+        content: '\f044';
+        font-family: 'Font Awesome 5 Free';
+        font-weight: 900;
+        font-size: 1rem;
+    }
+
+    .duplicate-version-btn::before {
+        content: '\f0c5';
+        font-family: 'Font Awesome 5 Free';
+        font-weight: 900;
+        font-size: 1rem;
+    }
+
+    .test-notification-btn::before {
+        content: '\f1d8';
+        font-family: 'Font Awesome 5 Free';
+        font-weight: 900;
+        font-size: 1rem;
+    }
+
+    .source-item,
+    .content-source-card{
+        padding: 1rem;
+    }
+    .settings-section-header{
+        padding: 0rem;
+    }
+}
+
+
+
+/* Scrapers page responsive styles */
+@media (max-width: 768px) {
+    /* Mobile grid layout for scrapers */
+    .settings-section-header.scraper-header,
+    .settings-section-header.scraper-info {
+        /* display: grid !important;
+        grid-template-columns: auto 1fr auto;
+        grid-template-rows: auto auto; */
+        gap: 0.5rem 0.75rem;
+        align-items: start;
+        padding: 0 !important;
+    }
+
+    /* Expand icon on left, spans both rows */
+    .scraper-card .settings-section-header .expand-icon,
+    .scraper-card .settings-section-header .settings-toggle-icon,
+    .scraper-item .settings-section-header .expand-icon,
+    .scraper-item .settings-section-header .settings-toggle-icon {
+        grid-column: 1;
+        grid-row: 1 / 3;
+        align-self: center;
+    }
+
+    /* Title in middle column, first row */
+    .scraper-card .settings-section-header h4,
+    .scraper-item .settings-section-header h4 {
+        grid-column: 2;
+        grid-row: 1;
+        margin: 0 !important;
+    }
+
+    /* Scraper type badge in middle column, second row */
+    .scraper-header-left .scraper-type,
+    .scraper-info .scraper-type,
+    .scraper-type {
+        grid-column: 2;
+        grid-row: 2;
+    }
+
+    /* Delete button on right, spans both rows */
+    .scraper-card .settings-section-header .scraper-buttons,
+    .scraper-item .settings-section-header .scraper-buttons,
+    .scraper-card .settings-section-header .scraper-actions,
+    .scraper-item .settings-section-header .scraper-actions {
+        grid-column: 3;
+        grid-row: 1 / 3;
+        align-self: center;
+    }
+
+    /* Make wrapper use display: contents so children participate in grid */
+    .scraper-header-left,
+    .scraper-info,
+    .scraper-header-left > div {
+        display: contents !important;
+    }
+
+    .scraper-item,
+    .scraper-card {
+        padding: 1rem;
+    }
+
+    .scrapers-actions,
+    .action-buttons {
+        flex-direction: row;
+    }
+
+    .scrapers-btn,
+    .scrapers-btn-primary {
+        width: 100%;
+    }
+}
+
+/* Desktop mode: Auto-width inputs to fit content for all settings sections */
+@media (min-width: 769px) {
+    /* Scrapers page inputs */
+    .scrapers-page .scraper-list .settings-section .settings-section-content input[type="text"],
+    .scrapers-page .scraper-list .settings-section .settings-section-content input[type="number"],
+    .scrapers-page .scraper-list .settings-section .settings-section-content input[type="email"],
+    .scrapers-page .scraper-list .settings-section .settings-section-content input[type="password"],
+    .scrapers-page .scraper-list .settings-section .settings-section-content input[type="url"],
+    .scrapers-page .scraper-list .settings-section .settings-section-content select,
+    .scrapers-page .scraper-list .settings-section .settings-section-content .settings-input,
+
+    /* Content Sources page inputs */
+    .content-sources-page .source-list .settings-section .settings-section-content input[type="text"],
+    .content-sources-page .source-list .settings-section .settings-section-content input[type="number"],
+    .content-sources-page .source-list .settings-section .settings-section-content input[type="email"],
+    .content-sources-page .source-list .settings-section .settings-section-content input[type="password"],
+    .content-sources-page .source-list .settings-section .settings-section-content input[type="url"],
+    .content-sources-page .source-list .settings-section .settings-section-content select,
+    .content-sources-page .source-list .settings-section .settings-section-content .settings-input,
+
+    /* Notifications page inputs */
+    .notifications-settings-page .notification-list .settings-section .settings-section-content input[type="text"],
+    .notifications-settings-page .notification-list .settings-section .settings-section-content input[type="number"],
+    .notifications-settings-page .notification-list .settings-section .settings-section-content input[type="email"],
+    .notifications-settings-page .notification-list .settings-section .settings-section-content input[type="password"],
+    .notifications-settings-page .notification-list .settings-section .settings-section-content input[type="url"],
+    .notifications-settings-page .notification-list .settings-section .settings-section-content select,
+    .notifications-settings-page .notification-list .settings-section .settings-section-content .settings-input,
+
+    /* Required Settings page inputs */
+    .required-settings-page .settings-list .settings-section .settings-section-content input[type="text"],
+    .required-settings-page .settings-list .settings-section .settings-section-content input[type="number"],
+    .required-settings-page .settings-list .settings-section .settings-section-content input[type="email"],
+    .required-settings-page .settings-list .settings-section .settings-section-content input[type="password"],
+    .required-settings-page .settings-list .settings-section .settings-section-content input[type="url"],
+    .required-settings-page .settings-list .settings-section .settings-section-content select,
+    .required-settings-page .settings-list .settings-section .settings-section-content .settings-input,
+
+    /* Additional Settings page inputs */
+    .additional-settings-page .settings-list .settings-section .settings-section-content input[type="text"],
+    .additional-settings-page .settings-list .settings-section .settings-section-content input[type="number"],
+    .additional-settings-page .settings-list .settings-section .settings-section-content input[type="email"],
+    .additional-settings-page .settings-list .settings-section .settings-section-content input[type="password"],
+    .additional-settings-page .settings-list .settings-section .settings-section-content input[type="url"],
+    .additional-settings-page .settings-list .settings-section .settings-section-content select,
+    .additional-settings-page .settings-list .settings-section .settings-section-content .settings-input,
+
+    /* Debug Settings (Advanced) page inputs */
+    .debug-settings-page .settings-list .settings-section .settings-section-content input[type="text"],
+    .debug-settings-page .settings-list .settings-section .settings-section-content input[type="number"],
+    .debug-settings-page .settings-list .settings-section .settings-section-content input[type="email"],
+    .debug-settings-page .settings-list .settings-section .settings-section-content input[type="password"],
+    .debug-settings-page .settings-list .settings-section .settings-section-content input[type="url"],
+    .debug-settings-page .settings-list .settings-section .settings-section-content select,
+    .debug-settings-page .settings-list .settings-section .settings-section-content .settings-input,
+
+    /* True Debug Settings page inputs */
+    .true-debug-settings-page .settings-list .settings-section .settings-section-content input[type="text"],
+    .true-debug-settings-page .settings-list .settings-section .settings-section-content input[type="number"],
+    .true-debug-settings-page .settings-list .settings-section .settings-section-content input[type="email"],
+    .true-debug-settings-page .settings-list .settings-section .settings-section-content input[type="password"],
+    .true-debug-settings-page .settings-list .settings-section .settings-section-content input[type="url"],
+    .true-debug-settings-page .settings-list .settings-section .settings-section-content select,
+    .true-debug-settings-page .settings-list .settings-section .settings-section-content .settings-input {
+        width: auto !important;
+        min-width: 500px !important;
+        max-width: 100% !important;
+    }
+
+    /* Textareas always full width */
+    .scrapers-page .scraper-list .settings-section .settings-section-content textarea,
+    .content-sources-page .source-list .settings-section .settings-section-content textarea,
+    .notifications-settings-page .notification-list .settings-section .settings-section-content textarea,
+    .required-settings-page .settings-list .settings-section .settings-section-content textarea,
+    .additional-settings-page .settings-list .settings-section .settings-section-content textarea,
+    .debug-settings-page .settings-list .settings-section .settings-section-content textarea,
+    .true-debug-settings-page .settings-list .settings-section .settings-section-content textarea {
+        width: 100% !important;
+        min-width: 100% !important;
+    }
+}
+
+
+.search-highlight {
+    background: rgba(255, 107, 53, 0.1) !important;
+    border-left: 3px solid #ff6b35 !important;
+    padding-left: 12px !important;
+    /* margin-left: -15px; */
+    border-radius: 4px !important;
+    animation: highlightFade 0.5s ease !important;
+}
+
+button#trakt-auth-btn {
+    background: #ff6b35;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.625rem 1.25rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    box-shadow: none;
+}
+
+/* ========================================
+   Date & Time Format Modal - Tangerine Theme
+   ======================================== */
+
+.format-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10000;
+    display: none;
+}
+
+.format-modal[style*="display: block"],
+.format-modal[style*="display: flex"] {
+    display: flex !important;
+}
+
+.format-modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(8px);
+}
+
+.format-modal-content {
+    position: relative;
+    background: rgba(26, 26, 26, 0.98);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    max-width: 900px;
+    max-height: 90vh;
+    width: 90%;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    z-index: 10001;
+}
+
+.format-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.5rem 2rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.format-modal-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #fff;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.format-modal-title::before {
+    content: '';
+    width: 4px;
+    height: 24px;
+    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+    border-radius: 2px;
+}
+
+.format-modal-close {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #e0e0e0;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    line-height: 1;
+    padding: 0;
+}
+
+.format-modal-close:hover {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #ef4444;
+    transform: scale(1.1);
+}
+
+.format-modal-body {
+    padding: 2rem;
+    overflow-y: auto;
+    max-height: calc(90vh - 80px);
+}
+
+.format-modal-body::-webkit-scrollbar {
+    width: 8px;
+}
+
+.format-modal-body::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 10px;
+}
+
+.format-modal-body::-webkit-scrollbar-thumb {
+    background: rgba(255, 107, 53, 0.3);
+    border-radius: 10px;
+}
+
+.format-modal-body::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 107, 53, 0.5);
+}
+
+input#settingsSearch {
+    width: 100%;
+}
+
+.format-modal-body h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #ff6b35 !important;
+    margin: 2rem 0 1rem 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.format-modal-body h3:first-child {
+    margin-top: 0 !important;
+}
+
+.format-modal-body h3::before {
+    content: '';
+    width: 3px;
+    height: 18px;
+    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+    border-radius: 2px;
+}
+
+.format-modal-body table.notification-params,
+.format-modal-body table.time-options {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 1.5rem;
+}
+
+.format-modal-body table.notification-params thead tr,
+.format-modal-body table.time-options thead tr {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.format-modal-body table.notification-params th,
+.format-modal-body table.time-options th {
+    padding: 1rem;
+    text-align: left;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #ff6b35;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.format-modal-body table.notification-params td,
+.format-modal-body table.time-options td {
+    padding: 0.875rem 1rem;
+    color: #e0e0e0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 0.9rem;
+}
+
+.format-modal-body table.notification-params tbody tr:last-child td,
+.format-modal-body table.time-options tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.format-modal-body table.notification-params tbody tr:hover,
+.format-modal-body table.time-options tbody tr:hover {
+    background: rgba(255, 107, 53, 0.05);
+}
+
+.format-modal-body table.notification-params td strong,
+.format-modal-body table.time-options td strong {
+    color: #f7931e;
+    font-weight: 600;
+    font-family: 'Courier New', Courier, monospace;
+    background: rgba(255, 107, 53, 0.1);
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 0.875rem;
+}
+
+.format-modal-body p {
+    padding: 1rem 1.25rem !important;
+    background: rgba(255, 255, 255, 0.03) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-left: 3px solid #ff6b35;
+    border-radius: 12px !important;
+    color: #d0d0d0 !important;
+    line-height: 1.6;
+    margin-top: 1.5rem;
+}
+
+.format-modal-body p strong {
+    color: #ff6b35;
+    font-weight: 600;
+}
+
+.format-modal-body p code {
+    background: rgba(255, 107, 53, 0.1);
+    color: #f7931e;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.875rem;
+    border: 1px solid rgba(255, 107, 53, 0.2);
+}
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+    .format-modal-content {
+        width: 95%;
+        max-height: 95vh;
+        border-radius: 16px;
+    }
+
+    .format-modal-header {
+        padding: 1rem 1.5rem;
+    }
+
+    .format-modal-title {
+        font-size: 1.25rem;
+    }
+
+    .format-modal-body {
+        padding: 1.5rem;
+    }
+
+    .format-modal-body h3 {
+        font-size: 1rem;
+    }
+
+    .format-modal-body table.notification-params,
+    .format-modal-body table.time-options {
+        font-size: 0.85rem;
+    }
+
+    .format-modal-body table.notification-params th,
+    .format-modal-body table.time-options th,
+    .format-modal-body table.notification-params td,
+    .format-modal-body table.time-options td {
+        padding: 0.75rem;
+        font-size: 0.85rem;
+    }
+
+    .format-modal-body p {
+        padding: 0.875rem 1rem !important;
+        font-size: 0.875rem;
+    }
+}
+
+/* ========================================
+   Loading Overlay - Tangerine Theme
+   ======================================== */
+.loading {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(8px);
+    z-index: 9999;
+    justify-content: center;
+    align-items: center;
+}
+
+.loading-content {
+    background: rgba(26, 26, 26, 0.95);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 20px;
+    border-radius: 20px;
+    text-align: center;
+}
+
+.loading-content p {
+    color: #e0e0e0;
+    margin-bottom: 15px;
+}
+
+.loading-message {
+    margin-bottom: 10px;
+}
+
+.loading-details {
+    font-size: 14px;
+    color: #ccc;
+    margin-top: 10px;
+}
+
+.spinner {
+    border: 4px solid rgba(255, 255, 255, 0.1);
+    border-top: 4px solid #ff6b35;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 10px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.close-loading {
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 16px;
+    font-weight: 600;
+    margin: 4px 2px;
+    cursor: pointer;
+    border-radius: 12px;
+    transition: all 0.3s ease;
+}
+
+.close-loading:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(255, 107, 53, 0.4);
+}

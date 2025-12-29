@@ -1,0 +1,111 @@
+/* ========================================
+   Inline CSS from phalanxdb_status.html
+   ======================================== */
+/* List Group Styling */
+.list-group-item {
+    background-color: #2c2c2c;
+    color: #f4f4f4;
+    margin-bottom: 4px;
+    border-radius: 4px;
+    font-family: monospace;
+    margin-top: 10px;
+    padding-left: 15px;
+    list-style-type: none;
+    font-size: 1.2em;
+}
+
+.mb-0 {
+    font-size: 1.2em;
+    margin-left: 10px;
+}
+
+.col-md-6 {
+    margin-top: 10px;
+}
+
+/* Card Styling */
+.card {
+    background-color: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    font-size: 1em;
+    margin-bottom: 20px;
+}
+
+.card-header {
+    background-color: #2c2c2c;
+    border-bottom: 1px solid #444;
+    color: #f4f4f4;
+}
+
+.card-body {
+    background-color: #1a1a1a;
+}
+
+.row {
+    padding-left: 10px;
+}
+
+/* Alert Styling */
+.alert {
+    margin: 10px;
+}
+
+.alert-success {
+    background-color: #198754;
+    color: #f4f4f4;
+    border: none;
+}
+
+.alert-danger {
+    background-color: #dc3545;
+    color: #f4f4f4;
+    border: none;
+}
+
+.alert-warning {
+    background-color: #ffc107;
+    color: #000;
+    border: none;
+}
+
+.alert-info {
+    background-color: #0dcaf0;
+    color: #000;
+    border: none;
+}
+
+/* Network Health specific styling */
+.network-health .list-group-item {
+    margin-top: 0;
+    margin-bottom: 0;
+    border-radius: 0;
+}
+
+.network-health .list-group-item:first-child {
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    overflow-wrap: anywhere;
+}
+
+.network-health .list-group-item:last-child {
+    border-bottom-left-radius: 4px;
+    border-bottom-right-radius: 4px;
+    margin-bottom: 4px;
+}
+
+.list-group.network-health {
+    margin-right: 10px;
+    padding-top: 10px;
+    padding-bottom: 10px;
+}
+
+#hashInput {
+    background-color: #2c2c2c;
+    color: #f4f4f4;
+    border: 1px solid #444;
+    width: 85%;
+    min-height: 36px;
+    margin: 10px;
+}
+
