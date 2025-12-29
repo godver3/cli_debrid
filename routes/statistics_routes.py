@@ -663,18 +663,16 @@ def set_time_preference():
             from database import get_recently_added_items
             recently_added_limit = get_setting('UI Settings', 'recently_added_limit', 7)
             recently_added = loop.run_until_complete(get_recently_added_items(movie_limit=recently_added_limit, show_limit=recently_added_limit))
-            date_format = get_setting('UI Settings', 'date_format', '%Y-%m-%d')
-            time_format = get_setting('UI Settings', 'time_format', '%H:%M:%S')
             # Format recently added items
             for item in recently_added.get('movies', []) + recently_added.get('shows', []):
                 if 'collected_at' in item and item['collected_at'] is not None:
                     try:
                         # Try parsing with microseconds
-                        collected_at = datetime.strptime(item['collected_at'], f"{date_format} {time_format}.%f")
+                        collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S.%f')
                     except ValueError:
                         try:
                             # Try parsing without microseconds
-                            collected_at = datetime.strptime(item['collected_at'], f"{date_format} {time_format}")
+                            collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
                         except ValueError:
                             collected_at = None
                     
@@ -800,8 +798,6 @@ def recently_added():
     recently_added_limit = get_setting('UI Settings', 'recently_added_limit', 7)
     recently_added = loop.run_until_complete(get_recently_added_items(movie_limit=recently_added_limit, show_limit=recently_added_limit))
     recently_added_end = time.time()
-    date_format = get_setting('UI Settings', 'date_format', '%Y-%m-%d')
-    time_format = get_setting('UI Settings', 'time_format', '%H:%M:%S')
     logging.debug(f"Time for get_recently_added_items: {recently_added_end - recently_added_start:.2f} seconds")
 
     # Format times for recently added items
@@ -809,11 +805,11 @@ def recently_added():
         if 'collected_at' in item and item['collected_at'] is not None:
             try:
                 # Try parsing with microseconds
-                collected_at = datetime.strptime(item['collected_at'], f"{date_format} {time_format}.%f")
+                collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S.%f')
             except ValueError:
                 try:
                     # Try parsing without microseconds
-                    collected_at = datetime.strptime(item['collected_at'], f"{date_format} {time_format}")
+                    collected_at = datetime.strptime(item['collected_at'], '%Y-%m-%d %H:%M:%S')
                 except ValueError:
                     item['formatted_collected_at'] = 'Unknown'
                     continue
@@ -914,10 +910,10 @@ async def get_recent_from_plex(movie_limit=None, show_limit=None):
     }
 
 def format_date(date_string):
-    date_format = get_setting('UI Settings', 'date_format', '%Y-%m-%d')
     if not date_string:
         return ''
     try:
+        date_format = get_setting('UI Settings', 'date_format', '%Y-%m-%d')
         date = datetime.fromisoformat(date_string)
         return date.strftime(date_format)
     except ValueError:
@@ -927,13 +923,14 @@ def format_time(date_input):
     if not date_input:
         return ''
     try:
+        time_format = get_setting('UI Settings', 'time_format', '%H:%M:%S')
         if isinstance(date_input, str):
             date = datetime.fromisoformat(date_input.rstrip('Z'))  # Remove 'Z' if present
         elif isinstance(date_input, datetime):
             date = date_input
         else:
             return ''
-        return date.strftime('%H:%M:%S')
+        return date.strftime(time_format)
     except ValueError:
         return ''
     
@@ -944,17 +941,15 @@ def format_datetime_preference(date_input, use_24hour_format):
         # Get timezone using our robust function
         from metadata.metadata import _get_local_timezone
         local_tz = _get_local_timezone()
-        date_format = get_setting('UI Settings', 'date_format', '%Y-%m-%d')
-        time_format = get_setting('UI Settings', 'time_format', '%H:%M:%S')
         # Convert string to datetime if necessary
         if isinstance(date_input, str):
             try:
                 # Try parsing with microseconds
-                date_input = datetime.strptime(date_input, f"{date_format} {time_format}.%f")
+                date_input = datetime.strptime(date_input, '%Y-%m-%d %H:%M:%S.%f')
             except ValueError:
                 try:
                     # Try parsing without microseconds
-                    date_input = datetime.strptime(date_input, f"{date_format} {time_format}")
+                    date_input = datetime.strptime(date_input, '%Y-%m-%d %H:%M:%S')
                 except ValueError:
                     try:
                         # Try parsing ISO format
@@ -1405,8 +1400,7 @@ def calendar_view():
             release_date_str = movie['release_date']
             if not isinstance(release_date_str, str):
                 release_date_str = release_date_str.isoformat()
-            date_format = get_setting('UI Settings', 'date_format', '%Y-%m-%d')
-            release_date_obj = datetime.strptime(release_date_str, date_format).date()
+            release_date_obj = datetime.strptime(release_date_str, '%Y-%m-%d').date()
         except (ValueError, TypeError) as e:
             logging.error(f"Could not parse release_date '{movie['release_date']}' for movie '{movie['title']}': {e}")
             continue

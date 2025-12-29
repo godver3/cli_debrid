@@ -1,0 +1,395 @@
+.connections-container {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(200px, 1fr));
+    gap: 15px;
+    padding: 20px;
+}
+
+main > h1, main > h2, .container > h1, .container > h2, [class*="-container"] > h1, [class*="-container"] > h2, .content > h1, .content > h2, body > h1, body > h2, .manage-users > h2 {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding-bottom: 20px;
+}
+main > h1::before, main > h2::before, .container > h1::before, .container > h2::before, [class*="-container"] > h1::before, [class*="-container"] > h2::before, .content > h1::before, .content > h2::before, body > h1::before, body > h2::before, .manage-users > h2::before {
+    content: '';
+    width: 4px;
+    height: 23px;
+    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+    border-radius: 2px;
+}
+
+/* Alert styles */
+.alert {
+    padding: 12px;
+    margin-bottom: 15px;
+    border: none;
+    border-radius: 10px;
+    color: #fff;
+}
+
+.alert-success {
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+}
+
+.alert-error {
+    background-color: #f44336;
+}
+
+.connection-card {
+    background-color: rgba(255, 255, 255, 0.03);
+    border-radius: 12px;
+    padding: 15px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s ease;
+}
+
+.connection-card:hover {
+    transform: translateY(-2px);
+}
+
+.connection-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.connection-header i {
+    font-size: 1.2rem;
+    margin-right: 1rem;
+    width: 24px;
+    text-align: center;
+    color: #888;
+}
+
+.connection-title {
+    flex-grow: 1;
+    font-weight: 500;
+    font-size: 1.1rem;
+    color: #e0e0e0;
+    margin-right: 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 55%;
+}
+
+.connection-status {
+    display: flex;
+    align-items: center;
+    margin-top: 10px;
+}
+
+.status-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-left: 1rem;
+}
+
+.status-indicator.connected {
+    background:  #2faf3e;
+    box-shadow: 0 0 8px rgba(76, 175, 80, 0.5);
+}
+
+.status-indicator.disconnected {
+    background-color: #f44336;
+    box-shadow: 0 0 8px rgba(244, 67, 54, 0.5);
+}
+
+.status-text {
+    color: #e0e0e0;
+}
+
+.status-text.connected {
+    color: #ff6b35;
+}
+
+.status-text.disconnected {
+    color: #f44336;
+}
+
+.connection-details {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid #444;
+    font-size: 0.9rem;
+    color: #bbb;
+}
+
+.status-message {
+    margin-bottom: 0.5rem;
+    color: #e0e0e0;
+}
+
+.status-message strong {
+    color: #888;
+}
+
+.details-info ul {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+}
+
+.details-info ul ul {
+    padding-left: 1.5rem;
+    margin-top: 0.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.details-info li {
+    margin-bottom: 0.5rem;
+    color: #bbb;
+}
+
+.details-info li strong {
+    color: #888;
+}
+
+.details-info li:last-child {
+    margin-bottom: 0;
+}
+
+.connection-actions {
+    margin-top: 15px;
+    display: flex;
+    gap: 10px;
+}
+
+.connection-button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 0.9em;
+    transition: background-color 0.2s ease;
+}
+
+.connection-button.test {
+    background-color: #2196F3;
+    color: white;
+}
+
+.connection-button.test:hover {
+    background-color: #1976D2;
+}
+
+.connection-button.configure {
+    background-color: #757575;
+    color: white;
+}
+
+.connection-button.configure:hover {
+    background-color: #616161;
+}
+
+/* Failing Connections Section */
+.failing-connections {
+    margin-top: 2rem;
+    padding: 1rem;
+    background-color: rgba(255, 255, 255, 0.03);
+    border-radius: 12px;
+}
+
+.failing-connections h3 {
+    color: #fff;
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 1.2em;
+    font-weight: 700;
+    position: relative;
+    padding-left: 16px;
+}
+
+.failing-connections h3::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    border-radius: 2px;
+}
+
+.failure-details {
+    margin-top: 1rem;
+    padding: 1rem;
+    background-color: #363636;
+    border-radius: 10px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.failure-details h4 {
+    color: #fff;
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 1em;
+    font-weight: 700;
+    position: relative;
+    padding-left: 16px;
+}
+
+.failure-details h4::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    border-radius: 2px;
+}
+
+.error-message {
+    margin-bottom: 1rem;
+    color: #bbb;
+}
+
+.error-message strong {
+    color: #888;
+}
+
+.debug-info {
+    background-color: rgba(255, 255, 255, 0.03);
+    padding: 10px;
+    border-radius: 10px;
+    font-family: monospace;
+    font-size: 0.9em;
+    color: #bbb;
+}
+
+.debug-info strong {
+    color: #888;
+    margin-right: 5px;
+}
+
+.debug-info ul {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+}
+
+.debug-info ul ul {
+    padding-left: 1.5rem;
+    margin-top: 0.25rem;
+    margin-bottom: 0.5rem;
+}
+
+.debug-info li {
+    margin-bottom: 0.5rem;
+}
+
+.debug-info li:last-child {
+    margin-bottom: 0;
+}
+
+/* Sample Data Styling */
+.toggle-sample {
+    cursor: pointer;
+    color: #4dabf7;
+    font-size: 0.8em;
+    margin-left: 10px;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.toggle-sample:hover {
+    text-decoration: underline;
+    color: #74c0fc;
+}
+
+/* Default (Desktop) Styles for the icon and text elements within .toggle-sample */
+.toggle-sample-icon {
+    display: none; /* Icon hidden by default (desktop) */
+    line-height: 1; /* Adjust if vertical alignment is off */
+}
+
+.toggle-sample-text {
+    display: inline; /* Text visible by default (desktop) */
+}
+
+.sample-data-container {
+    display: none;
+    margin-top: 10px;
+    padding: 10px;
+    background-color: #363636;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    font-size: 0.9em;
+    color: #bbb;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.sample-data-container strong {
+    color: #888;
+    display: block;
+    margin-bottom: 5px;
+}
+
+.sample-data-container ul {
+    list-style: disc;
+    margin-bottom: 0;
+    padding-left: 20px;
+    margin-left: 0;
+}
+
+.sample-data-container li {
+    margin-bottom: 4px;
+    color: #bbb;
+}
+
+.sample-error {
+    color: #f44336;
+    font-style: italic;
+    font-size: 0.9em;
+}
+
+/* Ensure status and link stay together */
+.connection-header > .status-indicator {
+    margin-left: auto;
+}
+.connection-header > .toggle-sample {
+    margin-left: 10px;
+    flex-shrink: 0;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .connections-container {
+        grid-template-columns: 1fr;
+    }
+    
+    .connection-card {
+        margin: 10px 0;
+        max-width: 75vw;
+    }
+
+    .connection-title {
+        max-width: 60%;
+    }
+    
+    .failing-connections {
+        margin-top: 20px;
+        padding: 15px;
+    }
+    
+    .failure-details {
+        padding: 12px;
+    }
+
+    /* Mobile styles for toggle-sample */
+    .toggle-sample-text {
+        display: none; /* Hide text on mobile */
+    }
+
+    .toggle-sample-icon {
+        display: inline; /* Show icon on mobile */
+        font-size: 1.2em; /* Make icon a bit larger, adjust as needed */
+    }
+} 

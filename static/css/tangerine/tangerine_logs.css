@@ -1,0 +1,503 @@
+/* ========================================
+   Inline CSS from logs.html
+   ======================================== */
+/* Logs page styles */
+
+    .log-container {
+        width: 100%;
+        height: calc(100vh - 95px);
+        /* width: 95vw; */
+        /* max-width: 1200px; */
+        /* height: calc(100vh - 200px); */
+        /* margin: 20px auto; */
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        background-color: #222;
+        /* border: 1px solid rgba(255, 255, 255, 0.15); */
+        /* border-radius: 10px; */
+        position: relative;
+        /* margin-top: 25px; */
+    }
+
+    .log-controls {
+        padding: 5px 10px;
+        background-color: #141414;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        white-space: nowrap;
+        flex-wrap: nowrap;
+    }
+
+    #log-level-filter {
+        padding: 0.75rem 1rem;
+        background: rgba(255, 255, 255, 0.05);
+        color: #e0e0e0;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        transition: all 0.3s ease;
+    }
+
+    #log-level-filter:focus,
+    #log-level-filter:hover {
+        outline: none;
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 107, 53, 0.5);
+        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+    }
+
+    #log-search {
+        padding: 0.75rem 1rem;
+        background: rgba(255, 255, 255, 0.05);
+        color: #e0e0e0;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        transition: all 0.3s ease;
+        min-width: 200px;
+    }
+
+    #log-search:focus,
+    #log-search:hover {
+        outline: none;
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 107, 53, 0.5);
+        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+    }
+
+    #log-entries {
+        flex-grow: 1;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding: 10px;
+        width: 100%;
+        box-sizing: border-box;
+        -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
+    }
+
+    .log-entry {
+        font-family: monospace;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        word-break: break-all;
+        padding: 2px 5px;
+        border-left: 3px solid transparent;
+        margin-bottom: 2px;
+        line-height: 1.2;
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    .log-entry:not(:last-child) {
+        border-bottom: 1px solid #333;
+    }
+
+    .log-entry.debug {
+        border-left-color: #3498db;
+        color: #3498db;
+    }
+
+    .log-entry.info {
+        border-left-color: #2ecc71;
+        color: #2ecc71;
+    }
+
+    .log-entry.warning {
+        border-left-color: #f39c12;
+        color: #f39c12;
+    }
+
+    .log-entry.error {
+        border-left-color: #e74c3c;
+        color: #e74c3c;
+    }
+
+    .log-entry.critical {
+        border-left-color: #9b59b6;
+        color: #9b59b6;
+    }
+
+    /* Prevent scrolling on the main body when viewing logs */
+    body.logs-page {
+        overflow: hidden;
+    }
+
+    /* Adjust the main content area for the logs page */
+    body.logs-page main {
+        height: calc(100vh - 60px); /* Subtract the header height */
+        overflow: hidden;
+    }
+
+    /* Custom scrollbar styles for log entries */
+    #log-entries::-webkit-scrollbar {
+        width: 12px;
+    }
+
+    #log-entries::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 10px;
+    }
+
+    #log-entries::-webkit-scrollbar-thumb {
+        background: #666;
+        border-radius: 10px;
+    }
+
+    #log-entries::-webkit-scrollbar-thumb:hover {
+        background: #888;
+    }
+
+    /* For Firefox */
+    #log-entries {
+        scrollbar-width: thin;
+        scrollbar-color: #666 #333;
+    }
+
+    #pause-indicator {
+        position: absolute;
+        top: 5px;
+        right: 10%;
+        background-color: rgba(255, 255, 255, 0.05);
+        color: #e0e0e0;
+        padding: 5px 10px;
+        border-radius: 10px;
+        font-size: 0.9em;
+        display: none;
+        z-index: 10;
+        opacity: 0.7;
+        animation: flash-opacity 2s ease-in-out infinite;
+    }
+
+    @keyframes flash-opacity {
+        0% { opacity: 0.7; }
+        50% { opacity: 0; }
+        100% { opacity: 0.7; }
+    }
+
+    /* Style for the new hidden div */
+    #hidden-div {
+        position: fixed;
+        bottom: 5px;
+        left: 20px;
+        background-color: rgba(255, 255, 255, 0.05);
+        color: #e0e0e0;
+        padding: 10px;
+        border-radius: 10px;
+        opacity: 0;
+        z-index: 1000;
+        font-size: 0.3em;
+    }
+
+    #share-logs-btn {
+        padding: 0.75rem 1rem;
+        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        color: white;
+        border: none;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        min-width: 120px;
+        position: relative;
+        font-weight: 600;
+    }
+
+    #share-logs-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 24px rgba(255, 107, 53, 0.3);
+    }
+
+    #share-logs-btn:disabled {
+        background: rgba(255, 255, 255, 0.1);
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+    }
+
+    .share-progress {
+        position: absolute;
+        bottom: -2px;
+        left: 0;
+        height: 2px;
+        background-color: #3498db;
+        transition: width 0.3s ease-in-out;
+    }
+
+    #share-url {
+        color: #3498db;
+        text-decoration: none;
+        font-family: monospace;
+        padding: 5px 10px;
+        background-color: #2c3e50;
+        border-radius: 10px;
+        display: none;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 300px;
+    }
+
+    #share-url:hover {
+        background-color: #34495e;
+        text-decoration: underline;
+    }
+
+    #copy-url-btn {
+        background: none;
+        border: none;
+        color: #3498db;
+        cursor: pointer;
+        padding: 5px;
+        display: none;
+        transition: color 0.2s;
+    }
+
+    #copy-url-btn:hover {
+        color: #2980b9;
+    }
+
+    #copy-url-btn svg {
+        width: 16px;
+        height: 16px;
+        vertical-align: middle;
+    }
+
+    /* Add new syntax highlighting styles */
+    .log-component {
+        display: inline;
+    }
+
+    .log-timestamp {
+        color: #888;
+    }
+
+    .log-level.debug { color: #3498db; }
+    .log-level.info { color: #2ecc71; }
+    .log-level.warning { color: #f39c12; }
+    .log-level.error { color: #e74c3c; }
+    .log-level.critical { color: #9b59b6; }
+
+    .log-filename {
+        color: #e67e22;  /* Orange for files */
+        font-weight: bold;
+    }
+
+    .log-function {
+        color: #1abc9c;  /* Turquoise for functions */
+    }
+
+    .log-line-number {
+        color: #95a5a6;  /* Gray for line numbers */
+    }
+
+    .log-message {
+        color: #ecf0f1;  /* Light gray for the main message */
+    }
+
+    .log-duration {
+        color: #f1c40f;  /* Yellow for durations/timing */
+        font-weight: bold;
+    }
+
+    /* Update the log message colors to match their levels */
+    .log-message.debug { color: #3498db; }
+    .log-message.info { color: #2ecc71; }
+    .log-message.warning { color: #f39c12; }
+    .log-message.error { color: #e74c3c; }
+    .log-message.critical { color: #9b59b6; }
+
+    /* Remove the generic message color since we'll use level-specific colors */
+    .log-message {
+        opacity: 0.9;  /* Slightly reduce opacity to differentiate from level indicator */
+    }
+
+    /* Add styles for the goto search container */
+    .goto-container {
+        display: flex;
+        gap: 5px;
+    }
+
+    .goto-btn {
+        padding: 0.75rem 1rem;
+        background: rgba(255, 255, 255, 0.05);
+        color: #e0e0e0;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: all 0.3s ease;
+    }
+
+    .goto-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .goto-btn:not(:disabled):hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 107, 53, 0.5);
+        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+    }
+
+    .goto-nav-buttons {
+        display: flex;
+        gap: 2px;
+    }
+
+    .goto-nav-button {
+        padding: 0.75rem;
+        background: rgba(255, 255, 255, 0.05);
+        color: #e0e0e0;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .goto-nav-button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .goto-nav-button:not(:disabled):hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 107, 53, 0.5);
+        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+    }
+
+    .match-count {
+        color: #888;
+        font-size: 0.8em;
+        padding: 0 5px;
+        min-width: 45px;  /* Ensure consistent width for count */
+        text-align: left;
+    }
+
+    /* Update the existing search box style */
+    #log-search {
+        min-width: 200px;
+    }
+
+    /* Add styles for highlighted matches */
+    .highlight-match {
+        background-color: rgba(255, 255, 0, 0.2);
+        outline: 2px solid rgba(255, 255, 0, 0.3);
+    }
+
+    #goto-search {
+        padding: 0.75rem 1rem;
+        background: rgba(255, 255, 255, 0.05);
+        color: #e0e0e0;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        transition: all 0.3s ease;
+        width: 250px;
+    }
+
+    #goto-search:focus,
+    #goto-search:hover {
+        outline: none;
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 107, 53, 0.5);
+        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+    }
+
+    /* Add styles for the bottom button */
+    .bottom-button {
+        position: absolute;
+        top: 5px;
+        right: 90px;
+        padding: 5px 10px;
+        background-color: rgba(255, 255, 255, 0.05);
+        color: #e0e0e0;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 10px;
+        cursor: pointer;
+        z-index: 100;
+        display: none;  /* Hidden by default, shown when not at bottom */
+    }
+
+    .bottom-button:hover {
+        background-color: rgba(255, 255, 255, 0.08);
+    }
+
+    /* Show bottom button when not at bottom */
+    .bottom-button.visible {
+        display: block;
+    }
+    /* Mobile-specific adjustments */
+    @media screen and (max-width: 768px) {
+        .log-container {
+            width: 100vw;
+            margin: 0;
+            /* Default adjusted height for mobile browser UI */
+            height: calc(100vh - 100px); 
+            border-radius: 0;
+        }
+
+        /* Override height if running as standalone PWA or fullscreen */
+        @media (display-mode: standalone), (display-mode: fullscreen) {
+            .log-container {
+                 height: calc(100vh - 70px); /* Use original offset when browser UI is minimal/absent */
+            }
+        }
+
+        .log-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        #log-level-filter,
+        #log-search {
+            flex: 1;
+            min-width: 120px;
+            margin-right: 0 !important;
+        }
+
+        .match-count {
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+
+        .bottom-button {
+            position: absolute !important;
+            left: 50%;
+            transform: translateX(-50%);
+            margin-top: 120px;
+            width: 90px;
+        }
+
+        #pause-indicator {
+            top: 124px !important;
+            right: 10px !important;
+        }
+
+        #goto-container {
+            width: 100%;
+        }
+
+        /* --- START EDIT: Adjust height when task monitor overlay is visible --- */
+        body.has-bottom-overlay .log-container {
+            height: calc(100vh - 100px); /* existing offset + overlay */
+        }
+        .goto-btn {
+            padding: 0.55rem .4rem;
+        }
+        #goto-search {
+            width: auto;
+        }
+        .goto-container {
+            flex-flow: wrap;
+        }
+    }
+
+    /* Standalone/Fullscreen PWA override */
+    @media screen and (max-width: 768px) and (display-mode: standalone),
+           screen and (max-width: 768px) and (display-mode: fullscreen) {
+        /* --- START EDIT: Adjust height for overlay in standalone/fullscreen --- */
+        body.has-bottom-overlay .log-container {
+            height: calc(100vh - 70px - 70px); /* existing offset + overlay */
+        }
+    }
+    /* --- END EDIT --- */

@@ -659,9 +659,18 @@ HARDCODED_DEFAULT_VERSIONS = {
 def content_sources_content():
     config = load_config()
     source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
-    return render_template('settings_tabs/content_sources.html', 
-                           settings=config, 
-                           source_types=source_types, 
+
+    # Determine which template to use based on theme (from cookie or default to tangerine)
+    theme = request.cookies.get('selectedTheme', 'tangerine')
+    template_name = 'settings_tabs/content_sources_tangerine.html' if theme == 'tangerine' else 'settings_tabs/content_sources.html'
+
+    # Debug logging
+    current_app.logger.info(f"Content Sources route - All cookies: {dict(request.cookies)}")
+    current_app.logger.info(f"Content Sources route - Theme cookie: {theme}, Template: {template_name}")
+
+    return render_template(template_name,
+                           settings=config,
+                           source_types=source_types,
                            settings_schema=SETTINGS_SCHEMA)
 
 @settings_bp.route('/content-sources/types')
@@ -811,17 +820,32 @@ def add_scraper_route():
 def scrapers_content():
     try:
         settings = load_config()
-        scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())        
+        scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())
         scraper_settings = {scraper: list(SETTINGS_SCHEMA["Scrapers"]["schema"][scraper].keys()) for scraper in SETTINGS_SCHEMA["Scrapers"]["schema"]}
-        return render_template('settings_tabs/scrapers.html', settings=settings, scraper_types=scraper_types, scraper_settings=scraper_settings)
+
+        # Determine which template to use based on theme (from cookie or default to tangerine)
+        theme = request.cookies.get('selectedTheme', 'tangerine')
+        template_name = 'settings_tabs/scrapers_tangerine.html' if theme == 'tangerine' else 'settings_tabs/scrapers.html'
+
+        # Debug logging
+        current_app.logger.info(f"Scrapers route - Theme cookie: {theme}, Template: {template_name}")
+
+        return render_template(template_name, settings=settings, scraper_types=scraper_types, scraper_settings=scraper_settings)
     except Exception as e:
         return jsonify({'error': 'An error occurred while loading scraper settings'}), 500
 
 @settings_bp.route('/scrapers/get', methods=['GET'])
 def get_scrapers():
     config = load_config()
-    scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())        
-    return render_template('settings_tabs/scrapers.html', settings=config, scraper_types=scraper_types)
+    scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())
+
+    # Determine which template to use based on theme (from cookie or default to tangerine)
+    theme = request.cookies.get('selectedTheme', 'tangerine')
+    template_name = 'settings_tabs/scrapers_tangerine.html' if theme == 'tangerine' else 'settings_tabs/scrapers.html'
+
+    current_app.logger.info(f"Scrapers GET route - Theme cookie: {theme}, Template: {template_name}")
+
+    return render_template(template_name, settings=config, scraper_types=scraper_types)
 
 @settings_bp.route('/get_content_source_types', methods=['GET'])
 def get_content_source_types():
@@ -1003,24 +1027,28 @@ def notifications_content():
     try:
         config = load_config()
         notification_settings = config.get('Notifications', {})
-        
+
         # Ensure all notifications have the required defaults
         for notification_id, notification_config in notification_settings.items():
             if notification_config is not None:
                 notification_settings[notification_id] = ensure_notification_defaults(notification_config)
-        
+
         # Always save the config to ensure defaults are persisted
         config['Notifications'] = notification_settings
         save_config(config)
-        
+
         # Sort notifications by type and then by number
         sorted_notifications = sorted(
             notification_settings.items(),
             key=lambda x: (x[1]['type'], int(x[0].split('_')[-1]))
         )
-        
+
+        # Determine which template to use based on theme
+        theme = request.cookies.get('selectedTheme', 'tangerine')
+        template_name = 'settings_tabs/notifications_tangerine.html' if theme == 'tangerine' else 'settings_tabs/notifications.html'
+
         html_content = render_template(
-            'settings_tabs/notifications.html',
+            template_name,
             notification_settings=dict(sorted_notifications),
             settings_schema=SETTINGS_SCHEMA
         )
@@ -1154,11 +1182,19 @@ def index():
 
         # Get environment mode from environment variable
         environment_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
-        
-        return render_template('settings_base.html', 
-                               settings=config, 
+
+        # Determine which template to use based on theme (from cookie or default to tangerine)
+        theme = request.cookies.get('selectedTheme', 'tangerine')
+        template_name = 'settings_tangerine.html' if theme == 'tangerine' else 'settings_base.html'
+
+        # Debug logging
+        current_app.logger.info(f"Settings route - All cookies: {dict(request.cookies)}")
+        current_app.logger.info(f"Settings route - Theme cookie: {theme}, Template: {template_name}")
+
+        return render_template(template_name,
+                               settings=config,
                                notification_settings=config['Notifications'],
-                               scraper_types=scraper_types, 
+                               scraper_types=scraper_types,
                                scraper_settings=scraper_settings,
                                source_types=source_types_from_schema,
                                content_source_settings=content_source_settings,
@@ -1364,7 +1400,7 @@ def update_settings():
 
         # Update the main config object with the new settings
         update_nested_dict(config, new_settings)
-        
+
         # --- Simplified Staleness Update (if needed, relies on update_nested_dict) ---
         # If 'Staleness Threshold' exists in new_settings, update_nested_dict should handle it.
         # We might want explicit type conversion/validation *before* update_nested_dict though.
@@ -1400,7 +1436,7 @@ def update_settings():
         # Save the updated main config object atomically (assuming save_config does this)
         save_config(config)
         logging.info("Main configuration saved successfully.")
-        
+
         # Clear content source cache files
         try:
             from routes.debug_routes import get_cache_files
@@ -1833,15 +1869,20 @@ def duplicate_version():
 def scraping_content():
     config = load_config() # Initial load
     # Add logging to see the config state within the route
-    logging.debug(f"[scraping_content] Loaded config: {config}") 
+    logging.debug(f"[scraping_content] Loaded config: {config}")
     schema = SETTINGS_SCHEMA
     # Explicitly reload config right before accessing versions
-    config = load_config() 
+    config = load_config()
     version_names = list(config.get('Scraping', {}).get('versions', {}).keys())
     logging.debug(f"[scraping_content] Extracted version names: {version_names}") # Log extracted names
-    return render_template('settings_tabs/scraping.html', 
-                           settings=config, 
-                           settings_schema=schema, 
+
+    # Determine which template to use based on theme
+    theme = request.cookies.get('selectedTheme', 'tangerine')
+    template_name = 'settings_tabs/scraping_tangerine.html' if theme == 'tangerine' else 'settings_tabs/scraping.html'
+
+    return render_template(template_name,
+                           settings=config,
+                           settings_schema=schema,
                            version_names=version_names)
 
 @settings_bp.route('/get_scraping_versions', methods=['GET'])

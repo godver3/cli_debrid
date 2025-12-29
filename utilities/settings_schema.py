@@ -948,6 +948,10 @@ SETTINGS_SCHEMA = {
             "MediaFusion": {
                 "enabled": {"type": "boolean", "default": False},
                 "url": {"type": "string", "default": "", "validate": "url"},
+            },
+            "AIOStreams": {
+                "enabled": {"type": "boolean", "default": False},
+                "url": {"type": "string", "default": "", "validate": "url"}
             }
         }
     },

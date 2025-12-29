@@ -1,4 +1,8 @@
 {% extends "base.html" %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/inline.css') }}">
+{% endblock %}
 {% block title %}Onboarding - Step 3{% endblock %}
 {% block content %}
 <div class="onboarding-container">
@@ -15,160 +19,6 @@
     <p class="info-message">Scraper settings can only be configured when adding a new scraper. To modify settings, you'll need to delete the existing scraper and create a new one.</p>
     <button id="add-scraper-btn" class="onboarding-btn">Add Scraper</button>
 </div>
-
-<style>
-    .info-message {
-        background-color: #1a1a1a;
-        border-left: 4px solid #4CAF50;
-        padding: 0.75rem;
-        margin: 0.75rem 0;
-        color: #888;
-        font-size: 0.85rem;
-    }
-
-    .setting-value[readonly],
-    .setting-value option:disabled {
-        background-color: #2c2c2c;
-        cursor: not-allowed;
-        color: #c1c1c1;
-        opacity: 0.9;
-        pointer-events: none;
-        border: 1px solid #444;
-        font-size: 0.85rem;
-        height: 28px;
-        margin-right: 10px;
-    }
-    
-    .setting-value {
-        width: 100%;
-        padding: 0.2rem 0.4rem;
-        border: 1px solid #444;
-        border-radius: 0.25rem;
-        background-color: #333;
-        color: #f4f4f4;
-        margin: 0;
-    }
-
-    .setting-item {
-        margin-bottom: 0.35rem;
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-    }
-
-    .setting-item label {
-        min-width: 100px;
-        flex-shrink: 0;
-        color: #aaa;
-        font-size: 0.85rem;
-        padding-left: 10px;
-    }
-
-    .scraper-item {
-        background-color: #1a1a1a;
-        padding: 0.5rem 0.75rem;
-        margin-bottom: 0.5rem;
-        border-radius: 0.25rem;
-        border: 1px solid #333;
-    }
-
-    .scraper-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 0.35rem;
-        padding: 0 0.25rem 0.35rem;
-        border-bottom: 1px solid #333;
-    }
-
-    .scraper-settings {
-        display: flex;
-        flex-direction: column;
-        gap: 0.35rem;
-        padding: 0.25rem 0;
-        max-width: 600px;
-    }
-
-    select.setting-value {
-        padding-right: 1.5rem;
-    }
-
-    .onboarding-btn-delete {
-        background-color: #dc3545;
-        color: white;
-        border: none;
-        padding: 0.2rem 0.4rem;
-        border-radius: 0.25rem;
-        cursor: pointer;
-        transition: background-color 0.2s;
-        font-size: 0.8rem;
-        opacity: 0.8;
-    }
-
-    .onboarding-btn-delete:hover {
-        background-color: #c82333;
-        opacity: 1;
-    }
-
-    .scraper-header .onboarding-text {
-        font-weight: 500;
-        font-size: 0.95rem;
-        color: #f4f4f4;
-    }
-
-    /* Make the add button more prominent */
-    #add-scraper-btn {
-        opacity: 0.9;
-    }
-    #add-scraper-btn:hover {
-        opacity: 1;
-    }
-
-    /* Scraper selection modal styles */
-    .scraper-option {
-        margin-bottom: 15px;
-        display: flex;
-        flex-wrap: wrap;
-        align-items: flex-start;
-        gap: 8px;
-    }
-
-    .scraper-option input[type="radio"] {
-        margin: 4px 0;
-    }
-
-    .scraper-option label {
-        color: #f1f1f1;
-        font-weight: bold;
-        margin-right: 12px;
-        min-width: 100px;
-    }
-
-    .scraper-option-description {
-        color: #888;
-        font-size: 0.85rem;
-        flex: 1;
-        min-width: 200px;
-    }
-
-    /* Override popup styles */
-    :root {
-        --popup-width: 600px;
-    }
-
-    .onboarding-title {
-        padding-left: 0.5rem;
-        margin-top: 1rem;
-        margin-bottom: 0.75rem;
-    }
-
-    .onboarding-text-no-config {
-        color: #888;
-        font-style: italic;
-        font-size: 0.85rem;
-        padding-left: 10px;
-    }
-</style>
 
 <div id="existing-scrapers">
     {% if settings.Scrapers %}
@@ -226,7 +76,9 @@ document.addEventListener('DOMContentLoaded', function() {
             'OldNyaa': 'DO NOT USE - legacy scraper.',
             'Jackett': 'Advanced scraper that connects to multiple torrent indexers. Requires URL and API key.',
             'Zilean': 'Scraper service. Requires URL.',
-            'MediaFusion': 'Scraper service that covers many different services. Good option if Torrentio is not available. Requires URL.'
+            'MediaFusion': 'Scraper service that covers many different services. Good option if Torrentio is not available. Requires URL.',
+            'AIOStreams': 'Stremio addon scraper service. Requires URL.',
+            'Prowlarr': 'Advanced indexer manager that connects to multiple torrent sites. Requires URL and API key.'
         };
 
         // Create dropdown options with descriptions

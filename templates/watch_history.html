@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/inline.css') }}">
+{% endblock %}
 {% block title %}Watch History{% endblock %}
 
 {% block content %}
@@ -71,15 +75,6 @@
         </div>
     {% endif %}
 </div>
-
-<style>
-    .table td {
-        vertical-align: middle;
-    }
-    .badge {
-        font-size: 0.9em;
-    }
-</style>
 
 <script>
 function confirmClearHistory() {

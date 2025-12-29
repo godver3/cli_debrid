@@ -655,3 +655,42 @@ body {
     white-space: nowrap;
     word-break: break-all; /* Allow breaking long paths */
 }
+
+/* ========================================
+   Inline CSS from debug_functions.html
+   ======================================== */
+    #trakt-token-status .token-details {
+        margin: 10px 0;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+    }
+
+    #trakt-token-status .token-validity {
+        font-weight: bold;
+        margin-bottom: 10px;
+    }
+
+    #trakt-token-status .token-validity.valid {
+        color: #28a745;
+    }
+
+    #trakt-token-status .token-validity.invalid {
+        color: #dc3545;
+    }
+
+    #trakt-token-status .token-expiry,
+    #trakt-token-status .token-last-refresh,
+    #trakt-token-status .token-access,
+    #trakt-token-status .token-refresh {
+        margin: 5px 0;
+        font-family: monospace;
+    }
+
+    #trakt-token-status .error {
+        color: #dc3545;
+        padding: 10px;
+        border: 1px solid #dc3545;
+        border-radius: 4px;
+        margin: 10px 0;
+    }

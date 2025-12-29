@@ -2203,7 +2203,6 @@ function displaySearchResults(results, version) {
 
         searchResDiv.innerHTML = `
             <div class="media-poster">
-                <button>
                     ${item.media_type === 'show' || item.media_type === 'tv' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
                     <div class="poster-container">
                         <img src="${posterUrl}"
@@ -2221,42 +2220,40 @@ function displaySearchResults(results, version) {
                         <h2 class="searchresult-item">${item.title}</h2>
                         <p class="searchresult-year">${displayYear}</p>
                     </div>
-                </button>
                 ${assignMagnetIconHTML}
             </div>
         `;
 
         // ... (rest of the button handlers remain the same) ...
          // Add click handler for the main content area
-        const button = searchResDiv.querySelector('button');
-        if (button) {
-            button.onclick = function() {
-                if (isRequester) { return; }
+         // Add click handlers for the poster
+        searchResDiv.onclick = function() {
+            if (isRequester) { return; }
 
-                if (window.innerWidth <= 768) {
-                    item.tmdb_api_key_set = tmdb_api_key_set;
-                    item.version = version;
-                    showMobileActionModal(item);
+            if (window.innerWidth <= 768) {
+                item.tmdb_api_key_set = tmdb_api_key_set;
+                item.version = version;
+                showMobileActionModal(item);
+            } else {
+                if (item.media_type === 'movie') {
+                    const content = {
+                        mediaId: item.id,
+                        title: item.title,
+                        year: item.year,
+                        mediaType: 'movie',
+                        season: null,
+                        episode: null,
+                        multi: false,
+                        genre_ids: item.genre_ids
+                    };
+                    showScrapeVersionModal(content);
                 } else {
-                    if (item.media_type === 'movie') {
-                        const content = {
-                            mediaId: item.id,
-                            title: item.title,
-                            year: item.year,
-                            mediaType: 'movie',
-                            season: null,
-                            episode: null,
-                            multi: false,
-                            genre_ids: item.genre_ids
-                        };
-                        showScrapeVersionModal(content);
-                    } else {
-                         // Make sure to pass the correct poster path key if needed by selectSeason
-                        selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.voteAverage, item.backdrop_path, item.show_overview, tmdb_api_key_set);
-                    }
+                        // Make sure to pass the correct poster path key if needed by selectSeason
+                    selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.voteAverage, item.backdrop_path, item.show_overview, tmdb_api_key_set);
                 }
-            };
-        }
+            }
+        };
+ 
 
         // Add click handler for the request icon
         const requestIcon = searchResDiv.querySelector('.request-icon');

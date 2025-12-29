@@ -9,6 +9,7 @@ import time
 from .nyaa import scrape_nyaa
 from .jackett import scrape_jackett_instance
 from .mediafusion import scrape_mediafusion_instance
+from .aiostreams import scrape_aiostreams_instance
 from .prowlarr import scrape_prowlarr_instance
 from .torrentio import scrape_torrentio_instance
 from .zilean import scrape_zilean_instance
@@ -22,6 +23,7 @@ class ScraperManager:
         self.scrapers = {
             'Jackett': scrape_jackett_instance,
             'MediaFusion': scrape_mediafusion_instance,
+            'AIOStreams': scrape_aiostreams_instance,
             'Prowlarr': scrape_prowlarr_instance,
             'Torrentio': scrape_torrentio_instance,
             'Zilean': scrape_zilean_instance,
@@ -501,6 +503,17 @@ class ScraperManager:
                     if binge_group:
                         additional_metadata['bingeGroup'] = binge_group
             
+            elif scraper_type == 'AIOStreams':
+                filename = parsed_info.get('filename')
+                binge_group = parsed_info.get('bingeGroup')
+
+                if filename or binge_group:
+                    additional_metadata = result.setdefault('additional_metadata', {})
+                    if filename:
+                        additional_metadata['filename'] = filename
+                    if binge_group:
+                        additional_metadata['bingeGroup'] = binge_group
+
             elif scraper_type == 'Torrentio':
                 # Extract Torrentio specific metadata
                 filename = parsed_info.get('filename')

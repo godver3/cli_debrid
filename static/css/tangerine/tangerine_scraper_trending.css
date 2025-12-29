@@ -1,0 +1,132 @@
+/* Trending Container */
+.trending-container {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding-top: 20px;
+}
+
+.trending-movies,
+.trending-shows,
+.trending-anime {
+    /* background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px; */
+    padding: 1rem;
+    /* margin-bottom: 2rem; */
+    position: relative;
+    overflow: hidden;
+}
+
+/* .trending-movies::before,
+.trending-shows::before,
+.trending-anime::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, #ff6b35, #f7931e);
+    opacity: 0.8;
+} */
+
+.trending-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    /* margin-bottom: 1.5rem; */
+}
+
+.trending-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.trending-title::before {
+    content: '';
+    width: 4px;
+    height: 28px;
+    background: linear-gradient(180deg, #ff6b35 0%, #f7931e 100%);
+    border-radius: 2px;
+}
+
+.trending-navigation {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.trending-nav-button {
+    width: 40px;
+    height: 40px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    color: #888;
+}
+
+.trending-nav-button:hover {
+    background: rgba(255, 107, 53, 0.2);
+    border-color: rgba(255, 107, 53, 0.5);
+    color: #ff6b35;
+    transform: scale(1.1);
+}
+
+.trending-nav-button:active {
+    transform: scale(0.95);
+}
+
+.trending-nav-button:disabled {
+    background: rgba(255, 255, 255, 0.03);
+    color: rgba(255, 255, 255, 0.3);
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* SVG icons */
+.trending-nav-button svg {
+    width: 20px;
+    height: 20px;
+}
+
+#trending-rating {
+    position: absolute;
+    margin: 5px;
+    width: 26px;
+    display: none;
+    height: 16px;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 11px;
+    font-weight: bold;
+    line-height: 16px;
+    text-align: center;
+    border-radius: 11px;
+    background-color: #ed1c23c0;
+    z-index: 1;
+}
+
+#trending-watchers {
+    position: absolute;
+    right: 0;
+    margin: 5px;
+    display: none;
+    width: 52px;
+    height: 16px;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 11px;
+    font-weight: bold;
+    line-height: 16px;
+    text-align: center;
+    border-radius: 11px;
+    background-color: rgb(0 0 0 / 72%);
+    z-index: 1;
+}

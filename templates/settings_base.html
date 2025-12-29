@@ -485,10 +485,9 @@
             {% include 'settings_tabs/true_debug.html' %}
         </div>
         {% endif %}
-    </div>
-
-    <div id="scrapers" class="settings-tab-content" style="display: none;">
-        {% include 'settings_tabs/scrapers.html' %}
+        <div id="scrapers" class="settings-tab-content" style="display: none;">
+            {% include 'settings_tabs/scrapers.html' %}
+        </div>
     </div>
 
     <button type="button" id="saveSettingsButton" class="btn btn-primary settings-submit-button">Save Settings</button>
@@ -580,6 +579,7 @@
     </div>
 </div>
 
+<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/settings.js') }}"></script>
 <script type="module">
     import { updateSettings } from '/static/js/settings.js';

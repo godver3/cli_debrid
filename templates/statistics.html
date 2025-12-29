@@ -1,66 +1,13 @@
 {% extends "base.html" %}
 
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/statistics.css') }}">
+<script src="{{ url_for('static', filename='js/tangerine_filename_formatter.js') }}"></script>
+{% endblock %}
 {% block title %}Home{% endblock %}
 
 {% block content %}
-<style>
-    @import url('{{ url_for('static', filename='css/statistics.css') }}');
-    .stat-item p[data-label="Active Downloads"].warning,
-    .stat-item p[data-label="Daily Usage"].warning {
-        color: #ffa500; /* Orange/Yellow for warning */
-    }
-    .stat-item p[data-label="Active Downloads"].critical,
-    .stat-item p[data-label="Daily Usage"].critical {
-        color: #ff4444; /* Red for critical */
-    }
-    .stats-box.recently-aired .show-title.uncollected {
-        color: #ff4444; /* Red for uncollected */
-    }
-    .stats-box.recently-aired .show-title.checking_upgrade {
-        color: #00aeff; /* Orange/Yellow for checking upgrade */
-    }
-    .modal-content {
-        background-color: #1e1e1e !important;
-    }
-    .toggle-container .toggle-item .refresh-btn { /* Style for the specific size refresh */
-        background: none;
-        border: none;
-        color: #aaa; /* Match icon color */
-        cursor: pointer;
-        font-size: 1em; /* Match icon size */
-        padding: 0 3px;
-        margin-left: 3px;
-        vertical-align: middle;
-    }
-    .toggle-container .toggle-item .refresh-btn:hover {
-        color: #fff;
-    }
-    .toggle-container .toggle-item .refresh-btn i.fa-spin { /* Style for spinning icon */
-        /* Optional: add animation if not default */
-    }
-    /* Subscription days critical color */
-    .toggle-container .toggle-item #subscription-days-toggle.critical {
-        color: #ff4444;
-    }
-    #library-size-display {
-        margin-right: 2px; /* Add a little space before the button */
-    }
-    /* General page refresh button style (if keeping it) */
-     .page-refresh-btn {
-        background: none;
-        border: none;
-        color: #ccc;
-        cursor: pointer;
-        font-size: 1.1em;
-        padding: 0 5px;
-        margin-left: 5px;
-        vertical-align: middle;
-    }
-    .page-refresh-btn:hover {
-        color: #fff;
-    }
-</style>
-
 <!-- Add modal for external links -->
 <div id="external-links-modal" class="modal">
     <div class="modal-content" id="external-links-modal-content">
@@ -128,6 +75,13 @@
                 <input type="checkbox" id="compact-toggle">
                 <span class="toggle-slider"></span>
             </label>
+        </div>
+        <div class="toggle-item">
+            <span class="toggle-label"><i class="fas fa-palette"></i> Theme:</span>
+            <select id="theme-selector" class="theme-selector">
+                <option value="classic">Classic</option>
+                <option value="tangerine">Tangerine</option>
+            </select>
         </div>
     </div>
 
@@ -279,7 +233,7 @@
                                 data-season="${item.season_number}"
                                 data-episode="${item.episode_number}"
                                 title="Move back to Wanted state">
-                                <i class="fas fa-redo"></i>
+                                <i class="recrape-icon"></i>
                             </button>
                         ` : ''}
                     </li>
@@ -686,11 +640,11 @@
                     </p>
                 </div>
                 <div class="stat-item">
-                    <p data-label="Daily Usage"><span id="daily_usage">{{ stats.usage_stats_data.used }}</span> / <span id="daily_limit">{{ stats.usage_stats_data.limit }}</span></p>
+                    <p data-label="Daily Usage"><span id="daily_usage">{{ stats.usage_stats_data.used }}</span></p>
                 </div>
                 {% endif %}
                 <div class="stat-item">
-                    <p data-label="Uptime">{{ '%d days %d hours %d minutes' | format(
+                    <p data-label="Uptime">{{ '%dd %dh %dm' | format(
                         stats.uptime // 86400,
                         (stats.uptime % 86400) // 3600,
                         (stats.uptime % 3600) // 60
@@ -731,7 +685,7 @@
                                 data-season="{{ item.season_number }}"
                                 data-episode="{{ item.episode_number }}"
                                 title="Move back to Wanted state">
-                            <i class="fas fa-redo"></i>
+                            <i class="recrape-icon"></i>
                         </button>
                         {% endif %}
                     </li>
@@ -1054,87 +1008,6 @@
         });
     }
 </script>
-
-<style>
-    /* Modal styles */
-    .modal {
-        display: none;
-        position: fixed;
-        z-index: 1000;
-        left: 0;
-        top: 0;
-        width: 100%;
-        height: 100%;
-        background-color: rgba(0, 0, 0, 0.7);
-    }
-    
-    .modal-content {
-        background-color: #1e1e1e !important;
-    }
-    
-    .close-modal {
-        color: #aaa;
-        float: right;
-        font-size: 28px;
-        font-weight: bold;
-        cursor: pointer;
-    }
-    
-    .close-modal:hover {
-        color: #fff;
-    }
-    
-    .external-links {
-        display: flex;
-        flex-direction: column;
-        gap: 15px;
-        margin-top: 20px;
-    }
-    
-    .external-link {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 10px 15px;
-        background-color: #2a2a2a;
-        border-radius: 4px;
-        text-decoration: none;
-        color: #fff;
-        transition: background-color 0.2s;
-    }
-    
-    .external-link:hover {
-        background-color: #3498db;
-        color: white;
-    }
-    
-    .provider-icon {
-        width: 24px;
-        height: 24px;
-        object-fit: contain;
-    }
-    
-    .clickable {
-        cursor: pointer;
-    }
-    
-    .clickable:hover {
-        background-color: rgba(255, 255, 255, 0.1);
-    }
-    
-    /* Make sure the rescrape button doesn't trigger the modal */
-    .rescrape-btn {
-        z-index: 5;
-        position: relative;
-    }
-    
-    @media (max-width: 768px) {
-        .modal-content {
-            margin: 30% auto;
-            width: 90%;
-        }
-    }
-</style>
 
 <script>
     // Auto-refresh functionality

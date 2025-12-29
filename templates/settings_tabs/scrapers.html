@@ -63,6 +63,7 @@
             dropdownOptions: [
                 { value: 'Zilean', text: 'Zilean' },
                 { value: 'MediaFusion', text: 'MediaFusion' },
+                { value: 'AIOStreams', text: 'AIOStreams' },
                 { value: 'Jackett', text: 'Jackett' },
                 { value: 'Torrentio', text: 'Torrentio' },
                 { value: 'Nyaa', text: 'Nyaa' },
@@ -213,12 +214,75 @@
             <label for="{{ scraper_id }}-enabled" class="settings-title">Enabled:</label>
             <input type="checkbox" id="{{ scraper_id }}-enabled" name="Scrapers.{{ scraper_id }}.enabled" {% if config.enabled %}checked{% endif %} data-section="Scrapers" data-key="{{ scraper_id }}.enabled">
         </div>
-        {% if config.type in ['Zilean', 'MediaFusion', 'Jackett', 'Prowlarr'] %}
+        {% if config.type in ['Zilean', 'MediaFusion', 'AIOStreams', 'Jackett', 'Prowlarr'] %}
         <div class="settings-form-group">
             <label for="{{ scraper_id }}-url" class="settings-title">URL:</label>
-            <input type="text" id="{{ scraper_id }}-url" name="Scrapers.{{ scraper_id }}.url" value="{{ config.url }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.url">
+            <input type="text" id="{{ scraper_id }}-url" name="Scrapers.{{ scraper_id }}.url" value="{{ config.url | default('') }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.url">
         </div>
-        {% if config.type == 'Jackett' %}
+        {% if config.type == 'AIOStreams' %}
+        <!-- AIOStreams Setup Information -->
+        <div class="aiostreams-info-box">
+            <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <div class="aiostreams-info-box-content">
+                <p><strong>AIOStreams Configuration Requirements:</strong></p>
+                <p>AIOStreams requires specific configuration to work properly with CLI-Debrid. Follow these steps in your AIOStreams settings:</p>
+
+                <p><strong>1. Install P2P-Compatible Addons</strong></p>
+                <ul>
+                    <li>Add source addons that support P2P torrents (e.g., Comet, TorrentsDB, MediaFusion)</li>
+                    <li>In each addon's settings, enable "Include P2P" or similar P2P option</li>
+                </ul>
+
+                <p><strong>2. Configure Stream Type Filters</strong></p>
+                <ul>
+                    <li>Go to AIOStreams → Filters → Stream Type</li>
+                    <li>Set <strong>P2P</strong> as the <strong>Primary Stream Type</strong></li>
+                    <li>Set <strong>P2P</strong> as a <strong>Required Stream Type</strong></li>
+                </ul>
+
+                <p><strong>3. Set Custom Description Format</strong></p>
+                <ul>
+                    <li>Go to AIOStreams → Formatter</li>
+                    <li>Enable <strong>Custom</strong> from dropdown under <strong>Formatter Selection</strong></li>
+                    <li>Paste this template into the <strong>Description Template</strong> field:</li>
+                </ul>
+                <pre>{stream.message::exists["ℹ️ {stream.message}"||""]}
+{stream.title::exists["📁 {stream.title::title}"||""]}{stream.year::exists[" ({stream.year})"||""]}{stream.seasonEpisode::exists[" {stream.seasonEpisode::join(' • ')}"||""]}
+{stream.filename::exists["ℹ️ {stream.filename}"||""]}
+{stream.infoHash::exists["ℹ️ {stream.infoHash}"||""]}
+{addon.name::exists["ℹ️ {addon.name}"||""]}
+{stream.indexer::exists["ℹ️ {stream.indexer}"||""]}
+{stream.quality::exists["🎥 {stream.quality} "||""]}{stream.encode::exists["🎞️ {stream.encode} "||""]}{stream.releaseGroup::exists["🏷️ {stream.releaseGroup}"||""]}
+{stream.visualTags::exists["📺 {stream.visualTags::join(' • ')} "||""]}{stream.audioTags::exists["🎧 {stream.audioTags::join(' • ')} "||""]}{stream.audioChannels::exists["🔊 {stream.audioChannels::join(' • ')}"||""]}
+{stream.size::>0["📦 {stream.size::bytes} "||""]}{stream.folderSize::>0["/ 📦 {stream.folderSize::bytes}"||""]}{stream.duration::>0["⏱️ {stream.duration::time} "||""]}{stream.age::exists["📅 {stream.age} "||""]}{stream.indexer::exists["🔍 {stream.indexer}"||""]}
+{stream.languageEmojis::exists["🌐 {stream.languageEmojis::join(' / ')}"||""]}</pre>
+
+                <p><strong>4. Optimize Your Filters</strong></p>
+                <ul>
+                    <li>Fine-tune your resolution, quality, and content filters to reduce scraping time</li>
+                    <li>Disable addons or sources you don't need to speed up responses</li>
+                    <li>If scraping remains slow after optimization, proceed to <strong>Step 5</strong> below</li>
+                </ul>
+
+                <p><strong>5. Increase Scraper Timeout (Important!)</strong></p>
+                <ul>
+                    <li>AIOStreams can be slow when checking multiple addons and sources</li>
+                    <li>Go to <strong>cli_debrid Settings → Version Settings → Other Scraping Settings</strong></li>
+                    <li>Find the <strong>"Scraper Timeout"</strong> setting</li>
+                    <li>Set it to <strong>15 seconds minimum</strong> (20-30 seconds recommended for best results)</li>
+                </ul>
+
+                <p style="margin-top: 15px; display: flex; gap: 8px; align-items: flex-start;">
+                    <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 20px; height: 20px; flex-shrink: 0; color: #fbbf24;">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                    <span><strong>Note:</strong> Without proper configuration, AIOStreams will not return usable results. The custom description template is required for CLI-Debrid to extract addon and indexer information.</span>
+                </p>
+            </div>
+        </div>
+        {% elif config.type == 'Jackett' %}
         <div class="settings-form-group">
             <label for="{{ scraper_id }}-api" class="settings-title">API Key:</label>
             <input type="text" id="{{ scraper_id }}-api" name="Scrapers.{{ scraper_id }}.api" value="{{ config.api }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.api">
