@@ -227,13 +227,20 @@
             </svg>
             <div class="aiostreams-info-box-content">
                 <p><strong>AIOStreams Configuration Requirements:</strong></p>
-                <p>AIOStreams requires specific configuration to work properly with CLI-Debrid. Follow these steps in your AIOStreams settings:</p>
+                <p>AIOStreams requires specific configuration in <b>ADVANCED</b> mode to work properly with CLI-Debrid. Follow these steps in your AIOStreams settings:</p>
 
                 <p><strong>1. Install P2P-Compatible Addons</strong></p>
                 <ul>
                     <li>Add source addons that support P2P torrents (e.g., Comet, TorrentsDB, MediaFusion)</li>
                     <li>In each addon's settings, enable "Include P2P" or similar P2P option</li>
                 </ul>
+
+                <p style="margin-top: 15px; padding: 12px; background-color: rgba(59, 130, 246, 0.1); border-left: 4px solid #3b82f6; border-radius: 4px; display: flex; gap: 8px; align-items: flex-start;">
+                    <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 20px; height: 20px; flex-shrink: 0; color: #fbbf24;">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                    <span><strong style="color: #3b82f6;">Important:</strong> Enabling "P2P" in AIOStreams does <strong>NOT</strong> establish actual peer-to-peer torrent connections like traditional torrent clients. It simply filters for torrent-based streams (infohashes) that CLI-Debrid can send to your debrid service just like all the other scrapers. All downloading is handled securely through your debrid provider, not through direct P2P connections.<span>
+                </p>
 
                 <p><strong>2. Configure Stream Type Filters</strong></p>
                 <ul>
