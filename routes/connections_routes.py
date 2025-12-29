@@ -620,11 +620,11 @@ def check_scraper_connection(scraper_id, scraper_config):
         elif scraper_type == 'Prowlarr':
             url = scraper_config.get('url', '').strip()
             api_key = scraper_config.get('api_key', '').strip()
-            
+
             if not url or not api_key:
                 base_response['error'] = 'URL or API key not configured'
                 return base_response
-                
+
             # Test Prowlarr connection by getting system status
             test_url = f"{url.rstrip('/')}/api/v1/system/status"
             headers = {'X-Api-Key': api_key}
@@ -636,7 +636,32 @@ def check_scraper_connection(scraper_id, scraper_config):
                 'url': url,
                 'tags': scraper_config.get('tags', '')
             })
-                
+
+        elif scraper_type == 'AIOStreams':
+            from scraper.aiostreams import scrape_aiostreams_instance
+
+            # Test with a known movie (The Dark Knight)
+            try:
+                results = scrape_aiostreams_instance(
+                    instance='AIOStreams',
+                    settings=scraper_config,
+                    imdb_id='tt0468569',
+                    title='The Dark Knight',
+                    year=2008,
+                    content_type='movie'
+                )
+                base_response['connected'] = len(results) > 0
+                if not base_response['connected']:
+                    base_response['error'] = 'No results found from test search'
+                base_response['details'].update({
+                    'test_movie': 'The Dark Knight (tt0468569)',
+                    'results_found': len(results),
+                    'url': scraper_config.get('url', '')
+                })
+            except Exception as e:
+                base_response['connected'] = False
+                base_response['error'] = str(e)
+
         else:
             base_response['error'] = f'Unknown scraper type: {scraper_type}'
             

@@ -1,0 +1,355 @@
+<div class="scrapers-page">
+    <h2 class="scrapers-title">Scrapers Settings</h2>
+    <p class="scrapers-subtitle">Manage your scraper configurations</p>
+
+    <div class="content-section">
+        <div class="scrapers-header section-header">
+            <h3 class="scrapers-settings-title section-title">
+                <span class="title-bar"></span>
+                Scrapers
+            </h3>
+            <div class="scrapers-actions action-buttons settings-expand-collapse-buttons">
+                <button type="button" class="scrapers-btn btn-secondary settings-collapse-all">Collapse All</button>
+                <button type="button" class="scrapers-btn btn-secondary settings-expand-all">Expand All</button>
+                <button id="add-scraper-btn" class="scrapers-btn-primary btn-primary add-scraper-link">Add New Scraper</button>
+            </div>
+        </div>
+
+        <div class="scraper-list">
+
+<script>
+    function initializeScrapersFunctionality() {
+        initializeAddScraperButton();
+        initializeDeleteButtons();
+        initializeScraperEnabledListeners();
+        updateAllScraperHeaderColors();
+    }
+
+    function updateAllScraperHeaderColors() {
+        document.querySelectorAll('.settings-section').forEach(section => {
+            const checkbox = section.querySelector('input[type="checkbox"][id$="-enabled"]');
+            if (checkbox) {
+                updateScraperHeaderColor(section, checkbox.checked);
+            }
+        });
+    }
+
+    function updateScraperHeaderColor(section, isEnabled) {
+        const header = section.querySelector('.settings-section-header');
+        if (header) {
+            if (isEnabled) {
+                header.classList.remove('scraper-disabled');
+            } else {
+                header.classList.add('scraper-disabled');
+            }
+        }
+    }
+
+    function initializeScraperEnabledListeners() {
+        document.querySelectorAll('input[type="checkbox"][id$="-enabled"]').forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                const section = this.closest('.settings-section');
+                updateScraperHeaderColor(section, this.checked);
+            });
+        });
+    }
+
+    function initializeAddScraperButton() {
+        const addButton = document.querySelector('#add-scraper-btn');
+        if (addButton) {
+            addButton.addEventListener('click', function(event) {
+                event.preventDefault();
+                showAddScraperPopup();
+            });
+        } else {
+            console.error('Add scraper button not found');
+        }
+    }
+
+    function showAddScraperPopup() {
+        window.showPopup({
+            type: POPUP_TYPES.PROMPT,
+            title: 'Add New Scraper',
+            message: 'Select the type of scraper you want to add:',
+            dropdownOptions: [
+                { value: 'Zilean', text: 'Zilean' },
+                { value: 'MediaFusion', text: 'MediaFusion' },
+                { value: 'AIOStreams', text: 'AIOStreams' },
+                { value: 'Jackett', text: 'Jackett' },
+                { value: 'Torrentio', text: 'Torrentio' },
+                { value: 'Nyaa', text: 'Nyaa' },
+                { value: 'Prowlarr', text: 'Prowlarr' },
+                { value: 'OldNyaa', text: 'Old Nyaa (Do Not Use)' }
+            ],
+            confirmText: 'Add',
+            cancelText: 'Cancel',
+            onConfirm: (selectedType) => {
+                if (selectedType) {
+                    addScraper(selectedType);
+                } else {
+                    console.error('No scraper type selected');
+                }
+            }
+        });
+    }
+
+    function addScraper(scraperType) {
+        console.log('Adding scraper of type:', scraperType);
+        window.showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Add Scraper',
+            message: `Are you sure you want to add a scraper of type: ${scraperType}?`,
+            confirmText: 'Add',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                // Show loading dialog
+                window.showLoading('Adding scraper...');
+
+                fetch('/settings/scrapers/add', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ type: scraperType })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        if (typeof window.reloadTabContent === 'function') {
+                            window.reloadTabContent('scrapers', () => {
+                                window.hideLoading(); // Hide loading dialog
+                                window.initializeExpandCollapse(); // Reinitialize expand/collapse
+                                initializeScrapersFunctionality(); // Reinitialize scraper functionality
+                                window.showPopup({
+                                    type: POPUP_TYPES.SUCCESS,
+                                    message: 'Scraper added and tab content reloaded successfully',
+                                });
+                            });
+                        } else {
+                            window.hideLoading(); // Hide loading dialog
+                            console.error('reloadTabContent is not a function');
+                            window.showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: 'Scraper added, but failed to reload tab content',
+                            });
+                        }
+                    } else {
+                        window.hideLoading(); // Hide loading dialog
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                })
+                .catch(error => {
+                    window.hideLoading(); // Hide loading dialog
+                    console.error('Error adding scraper:', error);
+                    window.showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Error adding scraper: ' + error.message
+                    });
+                });
+            },
+            onCancel: () => {
+            }
+        });
+    }
+
+    function deleteScraper(scraperId) {
+        window.showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Delete Scraper',
+            message: 'Are you sure you want to delete this scraper?',
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                // Show loading dialog
+                window.showLoading('Deleting scraper...');
+
+                fetch('/settings/scrapers/delete', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ scraper_id: scraperId })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        if (typeof window.reloadTabContent === 'function') {
+                            window.reloadTabContent('scrapers', () => {
+                                window.hideLoading(); // Hide loading dialog
+                                window.initializeExpandCollapse(); // Reinitialize expand/collapse
+                                initializeScrapersFunctionality(); // Reinitialize scraper functionality
+                                window.showPopup({
+                                    type: POPUP_TYPES.SUCCESS,
+                                    message: 'Scraper deleted and tab content reloaded successfully',
+                                });
+                            });
+                        } else {
+                            window.hideLoading(); // Hide loading dialog
+                            console.error('reloadTabContent is not a function');
+                            window.showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: 'Scraper deleted, but failed to reload tab content',
+                            });
+                        }
+                    } else {
+                        window.hideLoading(); // Hide loading dialog
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                })
+                .catch(error => {
+                    window.hideLoading(); // Hide loading dialog
+                    console.error('Error deleting scraper:', error);
+                    window.showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Error deleting scraper: ' + error.message
+                    });
+                });
+            }
+        });
+    }
+
+    function initializeDeleteButtons() {
+        const deleteButtons = document.querySelectorAll('.delete-scraper-btn');
+        deleteButtons.forEach(button => {
+            button.addEventListener('click', function() {
+                const scraperId = this.getAttribute('data-scraper-id');
+                deleteScraper(scraperId);
+            });
+        });
+    }
+
+    document.addEventListener('dashboardInitialized', function() {
+        initializeScrapersFunctionality();
+    });
+</script>
+
+{% for scraper_id, config in settings.Scrapers.items() %}
+<div class="settings-section scraper-card scraper-item" data-scraper-id="{{ scraper_id }}">
+    <div class="settings-section-header scraper-header scraper-info{% if not config.enabled %} scraper-disabled{% endif %}">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="scraper-header-left scraper-info">
+            <div>
+                <h4 class="scraper-name">{{ scraper_id }}</h4>
+            </div>
+            <span class="scraper-type">{{ config.type }}</span>
+        </div>
+        <div class="scraper-buttons scraper-actions">
+            <button type="button" class="delete-scraper-btn btn-danger" data-scraper-id="{{ scraper_id }}">
+                <span class="btn-text">Delete</span>
+            </button>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-type" class="settings-title">Type:</label>
+            <input type="text" id="{{ scraper_id }}-type" name="Scrapers.{{ scraper_id }}.type" value="{{ config.type }}" class="settings-input" readonly data-section="Scrapers" data-key="{{ scraper_id }}.type">
+        </div>
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-enabled" class="settings-title">Enabled:</label>
+            <input type="checkbox" id="{{ scraper_id }}-enabled" name="Scrapers.{{ scraper_id }}.enabled" {% if config.enabled %}checked{% endif %} data-section="Scrapers" data-key="{{ scraper_id }}.enabled">
+        </div>
+        {% if config.type in ['Zilean', 'MediaFusion', 'AIOStreams', 'Jackett', 'Prowlarr'] %}
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-url" class="settings-title">URL:</label>
+            <input type="text" id="{{ scraper_id }}-url" name="Scrapers.{{ scraper_id }}.url" value="{{ config.url | default('') }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.url">
+        </div>
+        {% if config.type == 'AIOStreams' %}
+        <!-- AIOStreams Setup Information -->
+        <div class="aiostreams-info-box">
+            <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <div class="aiostreams-info-box-content">
+                <p><strong>AIOStreams Configuration Requirements:</strong></p>
+                <p>AIOStreams requires specific configuration to work properly with CLI-Debrid. Follow these steps in your AIOStreams settings:</p>
+
+                <p><strong>1. Install P2P-Compatible Addons</strong></p>
+                <ul>
+                    <li>Add source addons that support P2P torrents (e.g., Comet, TorrentsDB, MediaFusion)</li>
+                    <li>In each addon's settings, enable "Include P2P" or similar P2P option</li>
+                </ul>
+
+                <p><strong>2. Configure Stream Type Filters</strong></p>
+                <ul>
+                    <li>Go to AIOStreams → Filters → Stream Type</li>
+                    <li>Set <strong>P2P</strong> as the <strong>Primary Stream Type</strong></li>
+                    <li>Set <strong>P2P</strong> as a <strong>Required Stream Type</strong></li>
+                </ul>
+
+                <p><strong>3. Set Custom Description Format</strong></p>
+                <ul>
+                    <li>Go to AIOStreams → Formatter</li>
+                    <li>Enable <strong>Custom</strong> from dropdown under <strong>Formatter Selection</strong></li>
+                    <li>Paste this template into the <strong>Description Template</strong> field:</li>
+                </ul>
+                <pre>{stream.message::exists["ℹ️ {stream.message}"||""]}
+{stream.title::exists["📁 {stream.title::title}"||""]}{stream.year::exists[" ({stream.year})"||""]}{stream.seasonEpisode::exists[" {stream.seasonEpisode::join(' • ')}"||""]}
+{stream.filename::exists["ℹ️ {stream.filename}"||""]}
+{stream.infoHash::exists["ℹ️ {stream.infoHash}"||""]}
+{addon.name::exists["ℹ️ {addon.name}"||""]}
+{stream.indexer::exists["ℹ️ {stream.indexer}"||""]}
+{stream.quality::exists["🎥 {stream.quality} "||""]}{stream.encode::exists["🎞️ {stream.encode} "||""]}{stream.releaseGroup::exists["🏷️ {stream.releaseGroup}"||""]}
+{stream.visualTags::exists["📺 {stream.visualTags::join(' • ')} "||""]}{stream.audioTags::exists["🎧 {stream.audioTags::join(' • ')} "||""]}{stream.audioChannels::exists["🔊 {stream.audioChannels::join(' • ')}"||""]}
+{stream.size::>0["📦 {stream.size::bytes} "||""]}{stream.folderSize::>0["/ 📦 {stream.folderSize::bytes}"||""]}{stream.duration::>0["⏱️ {stream.duration::time} "||""]}{stream.age::exists["📅 {stream.age} "||""]}{stream.indexer::exists["🔍 {stream.indexer}"||""]}
+{stream.languageEmojis::exists["🌐 {stream.languageEmojis::join(' / ')}"||""]}</pre>
+
+                <p><strong>4. Optimize Your Filters</strong></p>
+                <ul>
+                    <li>Fine-tune your resolution, quality, and content filters to reduce scraping time</li>
+                    <li>Disable addons or sources you don't need to speed up responses</li>
+                    <li>If scraping remains slow after optimization, proceed to <strong>Step 5</strong> below</li>
+                </ul>
+
+                <p><strong>5. Increase Scraper Timeout (Important!)</strong></p>
+                <ul>
+                    <li>AIOStreams can be slow when checking multiple addons and sources</li>
+                    <li>Go to <strong>cli_debrid Settings → Version Settings → Other Scraping Settings</strong></li>
+                    <li>Find the <strong>"Scraper Timeout"</strong> setting</li>
+                    <li>Set it to <strong>15 seconds minimum</strong> (20-30 seconds recommended for best results)</li>
+                </ul>
+
+                <p style="margin-top: 15px; display: flex; gap: 8px; align-items: flex-start;">
+                    <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 20px; height: 20px; flex-shrink: 0; color: #fbbf24;">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                    <span><strong>Note:</strong> Without proper configuration, AIOStreams will not return usable results. The custom description template is required for CLI-Debrid to extract addon and indexer information.</span>
+                </p>
+            </div>
+        </div>
+        {% elif config.type == 'Jackett' %}
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-api" class="settings-title">API Key:</label>
+            <input type="text" id="{{ scraper_id }}-api" name="Scrapers.{{ scraper_id }}.api" value="{{ config.api }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.api">
+        </div>
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-enabled-indexers" class="settings-title">Enabled Indexers:</label>
+            <input type="text" id="{{ scraper_id }}-enabled-indexers" name="Scrapers.{{ scraper_id }}.enabled_indexers" value="{{ config.enabled_indexers }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.enabled_indexers">
+            <small class="settings-description">Leave blank to use all indexers, otherwise comma separated list of indexers to scrape.</small>
+        </div>
+        {% elif config.type == 'Prowlarr' %}
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-api_key" class="settings-title">API Key:</label>
+            <input type="text" id="{{ scraper_id }}-api_key" name="Scrapers.{{ scraper_id }}.api_key" value="{{ config.api_key }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.api_key">
+        </div>
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-tags" class="settings-title">Indexer IDs:</label>
+            <input type="text" id="{{ scraper_id }}-tags" name="Scrapers.{{ scraper_id }}.tags" value="{{ config.tags }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.tags" placeholder="e.g., 1,5,23">
+            <small class="settings-description">Comma-separated list of numeric Prowlarr Indexer IDs. If provided, searches will only use these indexers, otherwise all indexers will be used.</small>
+        </div>
+        {% endif %}
+        {% elif config.type == 'Torrentio' %}
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-opts" class="settings-title">Options:</label>
+            <input type="text" id="{{ scraper_id }}-opts" name="Scrapers.{{ scraper_id }}.opts" value="{{ config.opts }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.opts">
+            <small class="settings-description">Leave blank to use default options, otherwise copy from Torrentio URL. Recommend leaving blank.</small>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+
+        </div>
+    </div>
+</div>

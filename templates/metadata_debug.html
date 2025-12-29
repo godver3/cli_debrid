@@ -3,6 +3,7 @@
 {% block title %}Metadata Debug{% endblock %}
 
 {% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/metadata_debug.css') }}">
 <div class="metadata-debug-container">
     <div class="page-header">
         <h2>Metadata Debug</h2>
@@ -30,59 +31,6 @@
     <pre id="seasonsBlock" class="code-block"></pre>
 </div>
 
-<style>
-/* Page-specific styling to complement base.css without global changes */
-.metadata-debug {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 16px;
-}
-
-.controls input[type="text"] {
-    background: #222;
-    color: #f4f4f4;
-    border: 1px solid #444;
-    padding: 10px 12px;
-    border-radius: 4px;
-}
-
-.controls button {
-    border: none;
-    padding: 10px 14px;
-    border-radius: 4px;
-    cursor: pointer;
-}
-
-.code-block { 
-    background:#0f0f0f; 
-    padding: 12px; 
-    border-radius: 6px; 
-    overflow:auto; 
-    border: 1px solid #222;
-}
-
-.metadata-debug-container {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    margin: 50px !important;
-}
-
-button.danger { background: #b00020; color: #fff; }
-button.danger:hover { background: #8a001a; }
-button.primary { background: #1e88e5; color: #fff; }
-button.primary:hover { background: #1669b9; }
-
-#status {
-    min-height: 20px;
-}
-
-/* Section headings */
-h3 {
-    margin: 0.5rem 0;
-    color: #bdbdbd;
-}
-</style>
 
 <script type="module">
 import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';

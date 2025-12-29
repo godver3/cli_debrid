@@ -3,75 +3,7 @@
 {% block title %}Real-time API Calls{% endblock %}
 
 {% block head %}
-<style>
-    .realtime-api-container {
-        padding: 20px;
-    }
-
-    .realtime-api-form {
-        margin-bottom: 20px;
-    }
-
-    .realtime-api-form select, 
-    .realtime-api-form input[type="submit"] {
-        padding: 8px 12px;
-        margin-right: 10px;
-        background-color: #2c2c2c;
-        color: #f4f4f4;
-        border: 1px solid #444;
-        border-radius: 4px;
-    }
-
-    .realtime-api-form input[type="submit"] {
-        background-color: #4CAF50;
-        color: white;
-        cursor: pointer;
-        transition: background-color 0.3s;
-    }
-
-    .realtime-api-form input[type="submit"]:hover {
-        background-color: #45a049;
-    }
-
-    .realtime-api-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 20px;
-        background-color: #2c2c2c;
-    }
-
-    .realtime-api-table th, 
-    .realtime-api-table td {
-        border: 1px solid #444;
-        padding: 12px;
-        text-align: left;
-    }
-
-    .realtime-api-table th {
-        background-color: #1a1a1a;
-        font-weight: bold;
-        text-transform: uppercase;
-    }
-
-    .realtime-api-table tr:nth-child(even) {
-        background-color: #333;
-    }
-
-    .realtime-api-table tr:hover {
-        background-color: #444;
-    }
-
-    @media screen and (max-width: 600px) {
-        .realtime-api-table {
-            font-size: 14px;
-        }
-
-        .realtime-api-table th, 
-        .realtime-api-table td {
-            padding: 8px;
-        }
-    }
-</style>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/inline.css') }}">
 {% endblock %}
 
 {% block content %}

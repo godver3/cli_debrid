@@ -2916,3 +2916,962 @@ body.modal-open {
         bottom: calc(env(safe-area-inset-bottom, 0px) + 145px) !important; /* Extended from 95px to 145px (95px + 50px) */
     }
 }
+/* ========================================
+   Inline CSS from base.html
+   ======================================== */
+.advice-section {
+    margin: 15px 0;
+    background-color: #2a2a2a;
+    border-radius: 8px;
+    border-left: 4px solid #4CAF50;
+    overflow: hidden;
+}
+
+.advice-header {
+    padding: 15px;
+    font-weight: bold;
+    color: #4CAF50;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+}
+
+.advice-header:hover {
+    background-color: #333;
+}
+
+.advice-content {
+    color: #f1f1f1;
+    line-height: 1.4;
+    padding: 0 15px;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out, padding 0.3s ease-out;
+}
+
+.advice-section.expanded .advice-content {
+    padding: 0 15px 15px 15px;
+    max-height: 500px; /* Adjust based on your content */
+}
+
+.advice-header .toggle-icon {
+    transition: transform 0.3s ease;
+}
+
+.advice-section.expanded .toggle-icon {
+    transform: rotate(180deg);
+}
+
+/* Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+    background-color: #2a2a2a;
+    margin: auto;
+    margin-top: calc(15% - 100px);
+    padding: 20px;
+    border: 1px solid #444;
+    border-radius: 8px;
+    width: 70%;
+    position: relative;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #444;
+}
+
+.modal-header h2 {
+    margin: 0;
+    color: #fff;
+}
+
+.close {
+    color: #aaa;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.close:hover {
+    color: #fff;
+}
+
+#notifications-container {
+    max-height: 400px;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+/* Notification button styles */
+#notifications_button {
+    position: relative;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0px !important;
+    transition: opacity 0.3s ease;
+    min-width: auto !important;
+    gap: 0px !important;
+    margin-left: 5px;
+}
+
+#notifications_button:hover {
+    opacity: 0.8;
+}
+
+#notifications_button.has-notifications::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    right: -5px;
+    width: 8px;
+    height: 8px;
+    background-color: #ff4444;
+    border-radius: 50%;
+}
+
+#releaseNotesButton {
+    min-width: auto !important;
+    gap: 0px !important;
+    padding: 0px !important;
+    margin-left: 0px !important;
+}
+
+/* Notification Styles */
+.notification {
+    background-color: #333;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.notification:hover {
+    background-color: #404040;
+}
+
+.notification.unread {
+    border-left: 3px solid #007bff;
+}
+
+.notification.read {
+    opacity: 0.7;
+}
+
+body[data-notifications-disabled="true"] .notification.read {
+    opacity: 1; /* Override opacity when notifications are disabled */
+}
+
+body[data-notifications-disabled="true"] .notification.unread {
+    border-left: none; /* Remove the unread indicator border when disabled */
+}
+
+.notification-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 0.9em;
+}
+
+.notification-type {
+    text-transform: capitalize;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.8em;
+}
+
+.notification-type.info { background-color: #17a2b8; }
+.notification-type.warning { background-color: #ffc107; color: #000; }
+.notification-type.error { background-color: #dc3545; }
+.notification-type.success { background-color: #28a745; }
+
+.notification-time {
+    color: #888;
+}
+
+.notification-title {
+    font-weight: bold;
+    margin-bottom: 4px;
+}
+
+.notification-message {
+    color: #ddd;
+    font-size: 0.95em;
+    line-height: 1.4;
+}
+
+.notification-link {
+    display: inline-block;
+    margin-top: 8px;
+    color: #007bff;
+    text-decoration: none;
+    font-size: 0.9em;
+}
+
+.notification-link:hover {
+    text-decoration: underline;
+}
+
+.no-notifications {
+    text-align: center;
+    padding: 20px;
+    color: #888;
+}
+
+.support-link {
+    display: block;
+    text-decoration: none;
+    transition: opacity 0.3s ease;
+}
+
+.support-link:hover {
+    opacity: 0.8;
+}
+
+.support-link i.fa-patreon {
+    margin-right: 8px;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+.support-text {
+    color: #aaa;
+    font-size: 0.9em;
+}
+
+.patreon-link {
+    color: #fff;
+    transition: color 0.3s ease;
+    text-decoration: none;
+}
+
+.patreon-link:hover {
+    color: #FF424D;  /* Patreon brand color */
+}
+
+.patreon-link i {
+    font-size: 1.1em;
+}
+
+/* Support icons styles */
+.support-icons {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 0px;
+}
+
+.support-icon-link {
+    color: white;
+    font-size: 1.5em;
+    transition: transform 0.3s ease, color 0.8s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.support-icon-link:hover {
+    transform: translateY(-2px);
+}
+
+.support-icon-link.patreon:hover {
+    color: #FF424D; /* Patreon brand color */
+}
+
+.support-icon-link.kofi:hover {
+    color: #29ABE0; /* Ko-fi brand color */
+}
+
+.support-icon-link.github:hover {
+    color: #fe8e86; /* GitHub Sponsors color */
+}
+
+.support-icon-link.discord:hover {
+    color: #7289DA; /* Discord brand color */
+}
+
+/* Brand color classes for fade effect */
+.support-icon-link.fade-github {
+    color: #fe8e86 !important; /* GitHub Sponsors color */
+}
+
+.support-icon-link.fade-patreon {
+    color: #FF424D !important; /* Patreon brand color */
+}
+
+.support-icon-link.fade-kofi {
+    color: #29ABE0 !important; /* Ko-fi brand color */
+}
+
+.support-icon-link.fade-discord {
+    color: #7289DA !important; /* Discord brand color */
+}
+
+/* Modal adjustments */
+.modal-content {
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-body {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.version-container {
+    display: flex;
+    align-items: center;
+}
+
+.version-info {
+    color: #aaa;
+    font-size: 0.8em;
+}
+
+/* Support Modal Styles */
+.support-modal {
+    margin: 10vh auto;
+    width: 70%;
+}
+
+.support-modal-content {
+    padding: 20px;
+    color: #f1f1f1;
+}
+
+.support-modal-content h3 {
+    color: #fff;
+    margin-bottom: 20px;
+    font-size: 1.4em;
+}
+
+.support-modal-content p {
+    margin: 15px 0;
+    line-height: 1.6;
+}
+
+.support-modal-content ul {
+    margin: 15px 0;
+    padding-left: 20px;
+}
+
+.support-modal-content li {
+    margin: 10px 0;
+    line-height: 1.4;
+    color: #ddd;
+}
+
+.support-cta {
+    margin-top: 30px;
+    text-align: center;
+}
+
+.patreon-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background-color: #FF424D;
+    color: white;
+    padding: 12px 24px;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: bold;
+    transition: all 0.3s ease;
+}
+
+.patreon-button:hover {
+    background-color: #E23B45;
+    transform: translateY(-2px);
+}
+
+.patreon-button i {
+    font-size: 1.2em;
+}
+
+.support-note {
+    margin-top: 15px;
+    color: #aaa;
+    font-style: italic;
+}
+
+.support-modal-actions {
+    margin-top: 20px;
+    text-align: center;
+}
+
+.never-show-again-btn {
+    background-color: #6c757d;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-size: 0.9em;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.never-show-again-btn:hover {
+    background-color: #5a6268;
+}
+
+.never-show-again-btn i {
+    font-size: 0.9em;
+}
+
+/* Mobile responsive styles for support modal */
+@media (max-width: 768px) {
+    .support-modal {
+        margin: 5vh auto;
+        width: 95%;
+        max-width: 400px;
+    }
+
+    .support-modal-content {
+        padding: 15px;
+    }
+
+    .support-modal-content div[style*="text-align: center"] {
+        text-align: left !important;
+        margin-left: 0px !important;
+        margin-right: 0px !important;
+    }
+
+    .support-modal-content div[style*="text-align: right"] {
+        text-align: right !important;
+        margin-right: 0px !important;
+    }
+
+    .support-modal-content h3 {
+        font-size: 1.2em;
+        margin-bottom: 15px;
+    }
+
+    .support-modal-content p {
+        margin: 10px 0;
+        line-height: 1.5;
+        font-size: 0.95em;
+    }
+
+    .support-modal-content ul {
+        margin: 10px 0;
+        padding-left: 15px;
+    }
+
+    .support-modal-content li {
+        margin: 8px 0;
+        font-size: 0.9em;
+    }
+
+    .support-cta {
+        margin-top: 20px;
+    }
+
+    .patreon-button {
+        padding: 10px 16px;
+        font-size: 0.9em;
+        margin: 5px;
+        flex-direction: column;
+        gap: 5px;
+        min-width: 120px;
+    }
+
+    .patreon-button i {
+        font-size: 1.1em;
+    }
+
+    .support-note {
+        margin-top: 10px;
+        font-size: 0.85em;
+    }
+
+    .support-modal-actions {
+        margin-top: 15px;
+    }
+
+    .never-show-again-btn {
+        padding: 6px 12px;
+        font-size: 0.8em;
+        gap: 6px;
+    }
+
+    .never-show-again-btn i {
+        font-size: 0.8em;
+    }
+}
+
+/* Extra small mobile devices */
+@media (max-width: 480px) {
+    .support-modal {
+        margin: 2vh auto;
+        width: 98%;
+        max-width: 350px;
+    }
+
+    .support-modal-content {
+        padding: 12px;
+    }
+
+    .support-modal-content h3 {
+        font-size: 1.1em;
+        margin-bottom: 12px;
+    }
+
+    .support-modal-content p {
+        font-size: 0.9em;
+        margin: 8px 0;
+    }
+
+    .support-modal-content li {
+        font-size: 0.85em;
+        margin: 6px 0;
+    }
+
+    .patreon-button {
+        padding: 8px 12px;
+        font-size: 0.8em;
+        margin: 3px;
+        min-width: 100px;
+    }
+
+    .patreon-button i {
+        font-size: 1em;
+    }
+
+    .support-note {
+        font-size: 0.8em;
+        margin-top: 8px;
+    }
+
+    .never-show-again-btn {
+        padding: 5px 10px;
+        font-size: 0.75em;
+        gap: 4px;
+    }
+
+    .never-show-again-btn i {
+        font-size: 0.75em;
+    }
+}
+
+.modal-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.mark-all-read-btn {
+    background-color: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.mark-all-read-btn:hover {
+    background-color: #0d8bf2;
+}
+
+/* Notification toggle styles */
+.notification-toggle-container {
+    display: flex;
+    align-items: center;
+    margin-right: 10px;
+}
+
+.notification-toggle-label {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+    font-size: 0.8rem;
+    color: #ccc;
+}
+
+.notification-toggle-label span {
+    margin-right: 8px;
+}
+
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 20px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #555;
+    transition: .3s;
+    border-radius: 20px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 2px;
+    bottom: 2px;
+    background-color: white;
+    transition: .3s;
+    border-radius: 50%;
+}
+
+input:checked + .toggle-slider {
+    background-color: #2196F3;
+}
+
+input:checked + #disableNotificationsToggleSlider:before {
+    transform: translateX(14px) !important;
+}
+
+input:checked + #disableToastsToggleSlider:before {
+    transform: translateX(14px) !important;
+}
+
+/* Hide notifications for disabled mode */
+body[data-notifications-disabled="true"] #notifications_button.has-notifications::after {
+    display: none !important;
+}
+
+/* Easter Egg Modal Styles */
+#easterEggModal .modal-content { /* Target specific modal */
+    width: 50%; /* Or your preferred size */
+    background-color: #2c3e50; /* A different dark theme color */
+    border-left: 5px solid #f1c40f; /* Gold border */
+    margin-top: 80px;
+}
+
+#easterEggModal .modal-header h2 { /* Target specific modal */
+    color: #f1c40f; /* Gold title */
+}
+
+#easterEggModal .modal-body img {
+    max-width: 100%;
+    max-height: 60vh; /* Adjust for content */
+    border-radius: 8px;
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+}
+#easterEggModal .modal-body p {
+    margin-top: 15px;
+    color: #ddd;
+    text-align: center;
+}
+
+/* "Hacked" Easter Egg Styles */
+#hack-overlay {
+    position: fixed;
+    top: -2.5%; /* Adjust for oversized dimension */
+    left: -2.5%; /* Adjust for oversized dimension */
+    width: 105%; /* Expand to hide edges during shake */
+    height: 105%; /* Expand to hide edges during shake */
+    background: #000; /* Solid black for full effect */
+    z-index: 9998;
+    display: none; /* Initially hidden, will be set to 'flex' by JS */
+    justify-content: center;
+    align-items: center;
+}
+#hack-text {
+    width: 90%; /* Prevent text from hitting screen edges */
+    font-size: 2em;
+    text-shadow: 0 0 15px #0f0, 0 0 15px #0f0; /* Enhanced glow effect */
+    white-space: pre-wrap;
+    color: #0f0;
+    font-family: 'Courier New', Courier, monospace;
+    text-align: center;
+}
+.screen-shake {
+    animation: shake 0.4s infinite;
+}
+@keyframes shake {
+    0%, 100% { transform: translate(0, 0); }
+    10%, 30%, 50%, 70%, 90% { transform: translate(calc(-1 * var(--shake-intensity)), var(--shake-intensity)); }
+    20%, 40%, 60%, 80% { transform: translate(var(--shake-intensity), calc(-1 * var(--shake-intensity))); }
+}
+
+/* Toast Notification System */
+.toast-container {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    z-index: 9999;
+    display: none; /* Hidden by default, shown via JS */
+}
+
+.toast-stack {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0; /* No gap for overlapping effect */
+    max-height: 400px;
+    overflow: visible; /* Allow overflow to see stacked items */
+}
+
+.toast-stack-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background-color: #1a1a1a;
+    border: 1px solid #444;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: #ccc;
+    position: relative;
+    z-index: 20;
+    transition: all 0.4s ease-in-out;
+}
+
+.toast-stack-header.slide-out {
+    transform: translateX(-100%) !important;
+    opacity: 0 !important;
+}
+
+.toast-stack-count {
+    font-weight: bold;
+}
+
+.toast-stack-clear {
+    background: none;
+    border: none;
+    color: #aaa;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    transition: all 0.2s ease;
+}
+
+.toast-stack-clear:hover {
+    color: #fff;
+    background-color: #dc3545;
+}
+
+.toast {
+    background-color: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    max-width: 400px;
+    min-width: 300px;
+    opacity: 0;
+    transform: translateX(-100%);
+    transition: all 0.4s ease-in-out;
+    overflow: hidden;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    margin-bottom: 0;
+}
+
+.toast.show {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+.toast.hide {
+    transform: translateX(-100%);
+    opacity: 0;
+}
+
+.toast.slide-out {
+    transform: translateX(-100%) !important;
+    opacity: 0 !important;
+}
+
+.toast.fall-down {
+    transform: translateY(100px);
+    opacity: 0;
+}
+
+/* Vertical stacked card effect */
+.toast-stack .toast:nth-child(2) {
+    z-index: 10;
+    transform: translateX(0) scale(1);
+    position: relative;
+    bottom: 0;
+}
+
+.toast-stack .toast:nth-child(3) {
+    z-index: 9;
+    transform: translateX(0) scale(0.98);
+    opacity: 0.95;
+    bottom: 4px;
+}
+
+.toast-stack .toast:nth-child(4) {
+    z-index: 8;
+    transform: translateX(0) scale(0.96);
+    opacity: 0.9;
+    bottom: 8px;
+}
+
+.toast-stack .toast:nth-child(5) {
+    z-index: 7;
+    transform: translateX(0) scale(0.94);
+    opacity: 0.85;
+    bottom: 12px;
+}
+
+.toast-stack .toast:nth-child(6) {
+    z-index: 6;
+    transform: translateX(0) scale(0.92);
+    opacity: 0.8;
+    bottom: 16px;
+}
+
+.toast-stack .toast:nth-child(n+7) {
+    z-index: 5;
+    transform: translateX(0) scale(0.9);
+    opacity: 0.75;
+    bottom: 20px;
+}
+
+/* Ensure slide-out animation overrides stacked positioning */
+.toast-stack .toast.slide-out {
+    transform: translateX(-100%) !important;
+    opacity: 0 !important;
+    transition: all 0.4s ease-in-out !important;
+}
+
+.toast-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid #444;
+}
+
+.toast-title {
+    font-weight: bold;
+    color: #fff;
+    font-size: 14px;
+    margin: 0;
+}
+
+.toast-close {
+    background: none;
+    border: none;
+    color: #aaa;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 0;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s ease;
+}
+
+.toast-close:hover {
+    color: #fff;
+}
+
+.toast-body {
+    padding: 12px 16px;
+    color: #ddd;
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+.toast-time {
+    color: #888;
+    font-size: 11px;
+    margin-top: 8px;
+}
+
+/* Toast types */
+.toast.success {
+    border-left: 4px solid #28a745;
+}
+
+.toast.error {
+    border-left: 4px solid #dc3545;
+}
+
+.toast.warning {
+    border-left: 4px solid #ffc107;
+}
+
+.toast.info {
+    border-left: 4px solid #17a2b8;
+}
+
+/* Mobile responsive - hide toasts on mobile */
+@media (max-width: 768px) {
+    .toast-container {
+        display: none !important;
+    }
+}
+
+/* Toast animation for new notifications */
+@keyframes toastPulse {
+    0% { transform: translateX(0) scale(1); }
+    50% { transform: translateX(0) scale(1.02); }
+    100% { transform: translateX(0) scale(1); }
+}
+
+.toast.new-notification {
+    animation: toastPulse 0.3s ease-in-out;
+}
+
+/* Stack animation */
+@keyframes stackFall {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(100px); opacity: 0; }
+}
+
+.toast-stack.falling {
+    animation: stackFall 0.6s ease-in-out forwards;
+}

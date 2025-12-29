@@ -1,0 +1,584 @@
+<div class="debug-settings-page">
+    <h2 class="debug-settings-title">Advanced Settings</h2>
+    <p class="debug-settings-subtitle">Configure advanced and debug options</p>
+
+    <div class="content-section">
+        <div class="debug-settings-header section-header">
+            <h3 class="debug-settings-settings-title section-title">
+                <span class="title-bar"></span>
+                Settings
+            </h3>
+            <div class="debug-settings-actions action-buttons settings-expand-collapse-buttons">
+                <button type="button" class="debug-settings-btn btn-secondary settings-collapse-all">Collapse All</button>
+                <button type="button" class="debug-settings-btn btn-secondary settings-expand-all">Expand All</button>
+            </div>
+        </div>
+
+        <div class="settings-list">
+
+<!-- System & Logging Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>System & Logging</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        {% for key in ['logging_level', 'timezone_override', 'auto_run_program', 'disable_initialization', 'enable_crash_test', 'enable_tracemalloc', 'tracemalloc_sample_rate'] %}
+            {% set value = settings_schema.Debug.get(key) %}
+            {% if value %}
+            <div class="settings-form-group">
+                <label for="debug-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if settings.get('Debug', {}).get(key, value.default) == True %}checked{% endif %}>
+                {% elif value.type == 'string' and value.choices %}
+                    <select id="debug-{{ key }}" name="Debug.{{ key }}" class="settings-input"
+                            data-section="Debug" data-key="{{ key }}">
+                        {% for option in value.choices %}
+                            <option value="{{ option }}" {% if (settings.get('Debug', {}).get(key, value.default) | string) == (option | string) %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{{ value.type if value.type != 'string' else 'text' }}" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           value="{{ settings.get('Debug', {}).get(key, value.default) }}" class="settings-input"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if value.sensitive %}type="password"{% endif %}
+                           {% if value.min is defined %}min="{{ value.min }}"{% endif %}
+                           {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
+                {% endif %}
+                {% if value.description %}
+                    {% if value.description is string %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% else %}
+                        <div class="settings-description">
+                            {% for item in value.description %}
+                                {% if loop.first %}
+                                    <p>{{ item }}</p>
+                                    <ul>
+                                {% elif loop.last %}
+                                    <li>{{ item }}</li>
+                                    </ul>
+                                {% else %}
+                                    <li>{{ item }}</li>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                {% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Library Management Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Library Management</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        {% for key in ['skip_initial_plex_update', 'plex_removal_cache_delay_minutes', 'emby_jellyfin_url', 'emby_jellyfin_token', 'cinesync_path'] %}
+            {% set value = settings_schema.Debug.get(key) %}
+            {% if value %}
+            <div class="settings-form-group">
+                <label for="debug-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if settings.get('Debug', {}).get(key, value.default) == True %}checked{% endif %}>
+                {% elif value.type == 'string' and value.choices %}
+                    <select id="debug-{{ key }}" name="Debug.{{ key }}" class="settings-input"
+                            data-section="Debug" data-key="{{ key }}">
+                        {% for option in value.choices %}
+                            <option value="{{ option }}" {% if (settings.get('Debug', {}).get(key, value.default) | string) == (option | string) %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{{ value.type if value.type != 'string' else 'text' }}" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           value="{{ settings.get('Debug', {}).get(key, value.default) }}" class="settings-input"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if value.sensitive %}type="password"{% endif %}
+                           {% if value.min is defined %}min="{{ value.min }}"{% endif %}
+                           {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
+                {% endif %}
+                {% if value.description %}
+                    {% if value.description is string %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% else %}
+                        <div class="settings-description">
+                            {% for item in value.description %}
+                                {% if loop.first %}
+                                    <p>{{ item }}</p>
+                                    <ul>
+                                {% elif loop.last %}
+                                    <li>{{ item }}</li>
+                                    </ul>
+                                {% else %}
+                                    <li>{{ item }}</li>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                {% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Content Processing Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Content Processing</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        {% for key in ['disable_not_wanted_check', 'item_process_delay_seconds', 'disable_content_source_caching'] %}
+            {% set value = settings_schema.Debug.get(key) %}
+            {% if value %}
+            <div class="settings-form-group">
+                <label for="debug-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if settings.get('Debug', {}).get(key, value.default) == True %}checked{% endif %}>
+                {% elif value.type == 'string' and value.choices %}
+                    <select id="debug-{{ key }}" name="Debug.{{ key }}" class="settings-input"
+                            data-section="Debug" data-key="{{ key }}">
+                        {% for option in value.choices %}
+                            <option value="{{ option }}" {% if (settings.get('Debug', {}).get(key, value.default) | string) == (option | string) %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{{ value.type if value.type != 'string' else 'text' }}" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           value="{{ settings.get('Debug', {}).get(key, value.default) }}" class="settings-input"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if value.sensitive %}type="password"{% endif %}
+                           {% if value.min is defined %}min="{{ value.min }}"{% endif %}
+                           {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
+                {% endif %}
+                {% if value.description %}
+                    {% if value.description is string %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% else %}
+                        <div class="settings-description">
+                            {% for item in value.description %}
+                                {% if loop.first %}
+                                    <p>{{ item }}</p>
+                                    <ul>
+                                {% elif loop.last %}
+                                    <li>{{ item }}</li>
+                                    </ul>
+                                {% else %}
+                                    <li>{{ item }}</li>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                {% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Queue & Upgrade Management Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Queue & Upgrade Management</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        {% for key in ['sort_by_uncached_status', 'checking_queue_period', 'ignore_wanted_queue_throttling', 'max_upgrading_score', 'emphasize_number_of_items_over_quality', 'only_current_file', 'enable_library_maintenance_task'] %}
+            {% set value = settings_schema.Debug.get(key) %}
+            {% if value %}
+            <div class="settings-form-group">
+                <label for="debug-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if settings.get('Debug', {}).get(key, value.default) == True %}checked{% endif %}>
+                {% elif value.type == 'string' and value.choices %}
+                    <select id="debug-{{ key }}" name="Debug.{{ key }}" class="settings-input"
+                            data-section="Debug" data-key="{{ key }}">
+                        {% for option in value.choices %}
+                            <option value="{{ option }}" {% if (settings.get('Debug', {}).get(key, value.default) | string) == (option | string) %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{{ value.type if value.type != 'string' else 'text' }}" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           value="{{ settings.get('Debug', {}).get(key, value.default) }}" class="settings-input"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if value.sensitive %}type="password"{% endif %}
+                           {% if value.min is defined %}min="{{ value.min }}"{% endif %}
+                           {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
+                {% endif %}
+                {% if value.description %}
+                    {% if value.description is string %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% else %}
+                        <div class="settings-description">
+                            {% for item in value.description %}
+                                {% if loop.first %}
+                                    <p>{{ item }}</p>
+                                    <ul>
+                                {% elif loop.last %}
+                                    <li>{{ item }}</li>
+                                    </ul>
+                                {% else %}
+                                    <li>{{ item }}</li>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                {% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Filtering & Blacklist Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Filtering & Blacklist</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        {% for key in ['filename_filter_out_list', 'sanitizer_replacement_character'] %}
+            {% set value = settings_schema.Debug.get(key) %}
+            {% if value %}
+            <div class="settings-form-group">
+                {% if key == 'filename_filter_out_list' %}
+                    <label for="debug-{{ key }}" class="settings-title">Filename/Folder Name Filter Out List:</label>
+                {% else %}
+                    <label for="debug-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% endif %}
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if settings.get('Debug', {}).get(key, value.default) == True %}checked{% endif %}>
+                {% elif value.type == 'string' and value.choices %}
+                    <select id="debug-{{ key }}" name="Debug.{{ key }}" class="settings-input"
+                            data-section="Debug" data-key="{{ key }}">
+                        {% for option in value.choices %}
+                            <option value="{{ option }}" {% if (settings.get('Debug', {}).get(key, value.default) | string) == (option | string) %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{{ value.type if value.type != 'string' else 'text' }}" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           value="{{ settings.get('Debug', {}).get(key, value.default) }}" class="settings-input"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if value.sensitive %}type="password"{% endif %}
+                           {% if value.min is defined %}min="{{ value.min }}"{% endif %}
+                           {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
+                {% endif %}
+                {% if value.description %}
+                    {% if value.description is string %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% else %}
+                        <div class="settings-description">
+                            {% for item in value.description %}
+                                {% if loop.first %}
+                                    <p>{{ item }}</p>
+                                    <ul>
+                                {% elif loop.last %}
+                                    <li>{{ item }}</li>
+                                    </ul>
+                                {% else %}
+                                    <li>{{ item }}</li>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                {% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+
+        <!-- Manually added and modified Enable Unblacklisting (inverts Debug.disable_unblacklisting) -->
+        <div class="settings-form-group">
+            <label for="ui_enable_unblacklisting" class="settings-title">Enable Unblacklisting:</label>
+            <input type="checkbox" id="ui_enable_unblacklisting"> <!-- This is the visible UI checkbox -->
+
+            <!-- This is the actual checkbox that interacts with the backend/saving mechanism -->
+            <input type="checkbox" id="debug-disable_unblacklisting" name="Debug.disable_unblacklisting"
+                   data-section="Debug" data-key="disable_unblacklisting"
+                   style="display: none;"
+                   {% if settings.get('Debug', {}).get('disable_unblacklisting', settings_schema.Debug.disable_unblacklisting.default) == True %}checked{% endif %}>
+            <!-- Comment moved outside the tag --> <!-- We hide this as user interacts with ui_enable_unblacklisting -->
+            <p class="settings-description">Check to enable automatic unblacklisting of items after their blacklist duration.</p>
+        </div>
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const uiCheckbox = document.getElementById('ui_enable_unblacklisting');
+            const actualCheckbox = document.getElementById('debug-disable_unblacklisting');
+
+            // Set initial state of the visible UI checkbox based on the actual (hidden) checkbox's state
+            // If actual 'disable_unblacklisting' is checked (true), then 'enable_unblacklisting' is unchecked (false).
+            if (actualCheckbox) { // Ensure the element exists
+                 uiCheckbox.checked = !actualCheckbox.checked;
+
+                uiCheckbox.addEventListener('change', function() {
+                    // When the visible UI checkbox changes, update the actual (hidden) checkbox inversely
+                    // If 'ui_enable_unblacklisting' is now checked, then 'disable_unblacklisting' should be false (unchecked).
+                    actualCheckbox.checked = !this.checked;
+
+                    // Dispatch a change event on the actual checkbox so that any existing save mechanisms
+                    // that listen for changes on data-key="disable_unblacklisting" will pick it up.
+                    const event = new Event('change', { bubbles: true });
+                    actualCheckbox.dispatchEvent(event);
+                });
+            }
+        });
+        </script>
+
+        <!-- Manually added Blacklist Duration -->
+        <div class="settings-form-group">
+            <label for="debug-blacklist_duration" class="settings-title">Blacklist Duration (Days):</label>
+            <input type="number" id="debug-blacklist_duration" name="Queue.blacklist_duration" class="settings-input"
+                   data-section="Queue" data-key="blacklist_duration"
+                   value="{{ settings.get('Queue', {}).get('blacklist_duration', settings_schema.Queue.blacklist_duration.default) }}"
+                   min="0">
+            <p class="settings-description">{{ settings_schema.Queue.blacklist_duration.description }}</p>
+        </div>
+    </div>
+</div>
+
+<!-- Scraping & Scoring Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Scraping & Scoring</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        {% for key in ['rescrape_missing_files', 'enable_reverse_order_scraping', 'skip_initial_multi_scrape_for_new_content', 'delayed_scrape_based_on_score', 'delayed_scrape_time_limit', 'minimum_scrape_score', 'alternate_scrape_time_24h', 'use_alternate_scrape_time_strategy'] %}
+            {% set value = settings_schema.Debug.get(key) %}
+            {% if value %}
+            <div class="settings-form-group">
+                <label for="debug-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if settings.get('Debug', {}).get(key, value.default) == True %}checked{% endif %}>
+                {% elif value.type == 'string' and value.choices %}
+                    <select id="debug-{{ key }}" name="Debug.{{ key }}" class="settings-input"
+                            data-section="Debug" data-key="{{ key }}">
+                        {% for option in value.choices %}
+                            <option value="{{ option }}" {% if (settings.get('Debug', {}).get(key, value.default) | string) == (option | string) %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{{ value.type if value.type != 'string' else 'text' }}" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           value="{{ settings.get('Debug', {}).get(key, value.default) }}" class="settings-input"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if value.sensitive %}type="password"{% endif %}
+                           {% if value.min is defined %}min="{{ value.min }}"{% endif %}
+                           {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
+                {% endif %}
+                {% if value.description %}
+                    {% if value.description is string %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% else %}
+                        <div class="settings-description">
+                            {% for item in value.description %}
+                                {% if loop.first %}
+                                    <p>{{ item }}</p>
+                                    <ul>
+                                {% elif loop.last %}
+                                    <li>{{ item }}</li>
+                                    </ul>
+                                {% else %}
+                                    <li>{{ item }}</li>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                {% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Notifications & Display Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Notifications & Display</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        {% for key in ['truncate_episode_notifications'] %}
+            {% set value = settings_schema.Debug.get(key) %}
+            {% if value %}
+            <div class="settings-form-group">
+                <label for="debug-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if settings.get('Debug', {}).get(key, value.default) == True %}checked{% endif %}>
+                {% elif value.type == 'string' and value.choices %}
+                    <select id="debug-{{ key }}" name="Debug.{{ key }}" class="settings-input"
+                            data-section="Debug" data-key="{{ key }}">
+                        {% for option in value.choices %}
+                            <option value="{{ option }}" {% if (settings.get('Debug', {}).get(key, value.default) | string) == (option | string) %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{{ value.type if value.type != 'string' else 'text' }}" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           value="{{ settings.get('Debug', {}).get(key, value.default) }}" class="settings-input"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if value.sensitive %}type="password"{% endif %}
+                           {% if value.min is defined %}min="{{ value.min }}"{% endif %}
+                           {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
+                {% endif %}
+                {% if value.description %}
+                    {% if value.description is string %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% else %}
+                        <div class="settings-description">
+                            {% for item in value.description %}
+                                {% if loop.first %}
+                                    <p>{{ item }}</p>
+                                    <ul>
+                                {% elif loop.last %}
+                                    <li>{{ item }}</li>
+                                    </ul>
+                                {% else %}
+                                    <li>{{ item }}</li>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                {% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Symlink & Naming Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Symlink & Naming</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        {% for key in ['symlink_movie_template', 'symlink_episode_template', 'anime_renaming_using_anidb', 'enable_separate_anime_folders', 'enable_separate_documentary_folders', 'movies_folder_name', 'tv_shows_folder_name', 'anime_movies_folder_name', 'anime_tv_shows_folder_name', 'documentary_movies_folder_name', 'documentary_tv_shows_folder_name', 'apply_to_anime_tv_shows', 'apply_to_documentary_movies', 'apply_to_documentary_tv_shows', 'use_symlinks_on_windows'] %}
+            {% set value = settings_schema.Debug.get(key) %}
+            {% if value %}
+            <div class="settings-form-group">
+                <label for="debug-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                {% if value.type == 'boolean' %}
+                    <input type="checkbox" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if settings.get('Debug', {}).get(key, value.default) == True %}checked{% endif %}>
+                {% elif value.type == 'string' and value.choices %}
+                    <select id="debug-{{ key }}" name="Debug.{{ key }}" class="settings-input"
+                            data-section="Debug" data-key="{{ key }}">
+                        {% for option in value.choices %}
+                            <option value="{{ option }}" {% if (settings.get('Debug', {}).get(key, value.default) | string) == (option | string) %}selected{% endif %}>{{ option }}</option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="{{ value.type if value.type != 'string' else 'text' }}" id="debug-{{ key }}" name="Debug.{{ key }}"
+                           value="{{ settings.get('Debug', {}).get(key, value.default) }}" class="settings-input"
+                           data-section="Debug" data-key="{{ key }}"
+                           {% if value.sensitive %}type="password"{% endif %}
+                           {% if value.min is defined %}min="{{ value.min }}"{% endif %}
+                           {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
+                {% endif %}
+                {% if value.description %}
+                    {% if value.description is string %}
+                        <p class="settings-description">{{ value.description }}</p>
+                    {% else %}
+                        <div class="settings-description">
+                            {% for item in value.description %}
+                                {% if loop.first %}
+                                    <p>{{ item }}</p>
+                                    <ul>
+                                {% elif loop.last %}
+                                    <li>{{ item }}</li>
+                                    </ul>
+                                {% else %}
+                                    <li>{{ item }}</li>
+                                {% endif %}
+                            {% endfor %}
+                        </div>
+                    {% endif %}
+                {% endif %}
+            </div>
+            {% endif %}
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Content Source Check Periods Section -->
+<div class="settings-section" style="display: none;">
+    <div class="settings-section-header">
+        <h4>Content Source Check Periods</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-subsection">
+            <div id="content-source-check-periods">
+                <h5>Content Source Check Periods (minutes)</h5>
+                {% for source_id, source_config in settings.get('Content Sources', {}).items() %}
+                    {% if source_config.get('enabled', False) %}
+                        <div class="content-source-check-period">
+                            {% set display_name = source_config.get('display_name') %}
+                            {% if display_name and display_name != "" %}
+                                <label for="debug-content-source-{{ source_id }}">{{ display_name }} ({{ source_id }}):</label>
+                            {% else %}
+                                <label for="debug-content-source-{{ source_id }}">{{ source_config.get('type', source_id) }} ({{ source_id }}):</label>
+                            {% endif %}
+                            <input type="number" id="debug-content-source-{{ source_id }}" 
+                                   name="Debug.content_source_check_period.{{ source_id }}" 
+                                   value="{{ settings.get('Debug', {}).get('content_source_check_period', {}).get(source_id, 15) }}" 
+                                   step="0.1" min="0.1" class="settings-input">
+                        </div>
+                    {% endif %}
+                {% endfor %}
+                <p class="settings-description">Override Content Source checking period (in minutes) - note that a minimum of 5 minutes is recommended</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+        </div>
+    </div>
+</div>

@@ -1,0 +1,484 @@
+<div class="notifications-settings-page">
+    <h2 class="notifications-settings-title">Notification Settings</h2>
+    <p class="notifications-settings-subtitle">Manage notification channels and preferences</p>
+
+    <div class="content-section">
+        <div class="notifications-settings-header section-header">
+            <h3 class="notifications-settings-settings-title section-title">
+                <span class="title-bar"></span>
+                Notifications
+            </h3>
+            <div class="notifications-settings-actions action-buttons settings-expand-collapse-buttons">
+                <button type="button" class="notifications-settings-btn btn-secondary settings-collapse-all">Collapse All</button>
+                <button type="button" class="notifications-settings-btn btn-secondary settings-expand-all">Expand All</button>
+                <button id="add-notification-btn" class="notifications-settings-btn-primary btn-primary add-notification-link">Add New Notification</button>
+            </div>
+        </div>
+
+        <div class="notification-list">
+
+{% if notification_settings %}
+    {% for notification_id, config in notification_settings.items() %}
+        {% if config is not none %}
+        <div class="settings-section settings-card notification-card" data-notification-id="{{ notification_id }}">
+            <div class="settings-section-header notification-header">
+                <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                </svg>
+                <div class="notification-header-left settings-header-left">
+                    <h4>{{ config.title }}_{{ notification_id.split('_')[-1] }}</h4>
+                </div>
+                <div class="notification-buttons notification-actions">
+                    <button type="button" class="test-notification-btn btn-secondary" data-notification-id="{{ notification_id }}">
+                        <span class="btn-text">Test</span>
+                    </button>
+                    <button type="button" class="delete-notification-btn btn-danger" data-notification-id="{{ notification_id }}">
+                        <span class="btn-text">Delete</span>
+                    </button>
+                </div>
+            </div>
+            <div class="settings-section-content" style="display: none;">
+                {% for key, value in config.items() %}
+                    {% if key not in ['type', 'title'] %}
+                        {% if key == 'notify_on' %}
+                            <div class="settings-form-group">
+                                <label class="settings-title">Notify On:</label>
+                                <div class="notification-categories">
+                                    {% set allowed_categories = ['collected', 'wanted', 'scraping', 'adding', 'checking', 'sleeping', 'unreleased', 'blacklisted', 'pending_uncached', 'upgrading', 'program_stop', 'program_crash', 'program_start', 'program_pause', 'program_resume', 'queue_pause', 'queue_resume', 'queue_start', 'queue_stop'] %}
+                                    {% for category, enabled in value.items() %}
+                                        {% if category.lower() in allowed_categories %}
+                                            <div class="notification-category">
+                                                <label>
+                                                    <input type="checkbox" 
+                                                           name="Notifications.{{ notification_id }}.notify_on.{{ category }}" 
+                                                           data-section="Notifications" 
+                                                           data-key="{{ notification_id }}.notify_on.{{ category }}"
+                                                           {% if enabled %}checked{% endif %}>
+                                                    {{ category|replace('_', ' ')|title }}
+                                                </label>
+                                            </div>
+                                        {% endif %}
+                                    {% endfor %}
+                                </div>
+                                {% if settings_schema['Notifications'] is defined and settings_schema['Notifications'].schema is defined and settings_schema['Notifications'].schema[config.type] is defined and settings_schema['Notifications'].schema[config.type][key] is defined and settings_schema['Notifications'].schema[config.type][key].description is defined %}
+                                <p class="settings-description">{{ settings_schema['Notifications'].schema[config.type][key].description }}</p>
+                                {% endif %}
+                            </div>
+                        {% else %}
+                            <div class="settings-form-group">
+                                {% if key == 'enabled' %}
+                                    <label class="settings-title">
+                                        <input type="checkbox" id="notifications-{{ notification_id }}-{{ key }}" 
+                                               name="Notifications.{{ notification_id }}.{{ key }}" 
+                                               data-section="Notifications" 
+                                               data-key="{{ notification_id }}.{{ key }}"
+                                               {% if value %}checked{% endif %}>
+                                        {{ key|replace('_', ' ')|title }}
+                                    </label>
+                                {% else %}
+                                    <label for="notifications-{{ notification_id }}-{{ key }}" class="settings-title">
+                                        {{ key|replace('_', ' ')|title }}{% if key in ['smtp_username', 'smtp_password'] %} (Optional){% endif %}:
+                                    </label>
+                                    <input type="{% if 'password' in key %}password{% else %}text{% endif %}" 
+                                           id="notifications-{{ notification_id }}-{{ key }}" 
+                                           name="Notifications.{{ notification_id }}.{{ key }}" 
+                                           value="{{ value }}" 
+                                           class="settings-input"
+                                           data-section="Notifications" 
+                                           data-key="{{ notification_id }}.{{ key }}">
+                                {% endif %}
+                                {% if settings_schema['Notifications'] is defined and settings_schema['Notifications'].schema is defined and settings_schema['Notifications'].schema[config.type] is defined and settings_schema['Notifications'].schema[config.type][key] is defined and settings_schema['Notifications'].schema[config.type][key].description is defined %}
+                                <p class="settings-description">{{ settings_schema['Notifications'].schema[config.type][key].description }}</p>
+                                {% endif %}
+                            </div>
+                        {% endif %}
+                    {% endif %}
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    {% endfor %}
+{% else %}
+    <p>No Notifications configured.</p>
+{% endif %}
+
+<div class="settings-section">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>General Notification Options</h4>
+        </div>
+    </div>
+    <div class="settings-section-content" style="display: none;">
+        <div class="settings-form-group">
+            <label class="settings-title">
+                <input type="checkbox"
+                       name="Debug.truncate_episode_notifications"
+                       data-section="Debug"
+                       data-key="truncate_episode_notifications"
+                       {% if settings.Debug.truncate_episode_notifications %}checked{% endif %}>
+                Truncate Episode Notifications
+            </label>
+            {% if settings_schema['Debug'] and settings_schema['Debug']['truncate_episode_notifications'] and settings_schema['Debug']['truncate_episode_notifications'].description %}
+            <p class="settings-description">{{ settings_schema['Debug']['truncate_episode_notifications'].description }}</p>
+            {% endif %}
+        </div>
+        <div class="settings-form-group">
+            <label for="notifications-general-enabled-content-sources" class="settings-title">
+                Enabled Content Sources:
+            </label>
+            <select id="notifications-general-enabled-content-sources" 
+                    name="Notifications.General.enabled_content_sources" 
+                    class="settings-input"
+                    data-section="Notifications" 
+                    data-key="General.enabled_content_sources"
+                    data-current-value="{{ settings.get('Notifications', {}).get('General', {}).get('enabled_content_sources', '') }}"
+                    multiple
+                    style="min-height: 120px;">
+                <!-- Options will be populated by JavaScript -->
+            </select>
+            <p class="settings-description">Select content sources to include in notifications. Leave empty to include all sources. Hold Ctrl/Cmd to select multiple sources. The filtering works with both backend IDs and display names.</p>
+        </div>
+    </div>
+</div>
+
+<script>
+function initializeNotificationsFunctionality() {
+    console.log('Initializing Notifications Functionality');
+
+    const addNotificationBtn = document.getElementById('add-notification-btn');
+
+    if (addNotificationBtn) {
+        // Remove existing listener before adding a new one
+        addNotificationBtn.removeEventListener('click', addNotificationHandler);
+        addNotificationBtn.addEventListener('click', addNotificationHandler);
+    }
+
+    document.querySelectorAll('.delete-notification-btn').forEach(button => {
+        // Remove existing listeners before adding new ones
+        button.removeEventListener('click', deleteNotificationHandler);
+        button.addEventListener('click', deleteNotificationHandler);
+    });
+    
+    document.querySelectorAll('.test-notification-btn').forEach(button => {
+        // Remove existing listeners before adding new ones
+        button.removeEventListener('click', testNotificationHandler);
+        button.addEventListener('click', testNotificationHandler);
+    });
+}
+
+// Separate handler function for add button
+function addNotificationHandler(e) {
+    e.preventDefault();
+    showAddNotificationPopup();
+}
+
+// Separate handler function for delete button
+function deleteNotificationHandler(e) {
+    e.stopPropagation();
+    const notificationId = this.getAttribute('data-notification-id');
+    deleteNotification(notificationId);
+}
+
+// Handler function for test notification button
+function testNotificationHandler(e) {
+    e.stopPropagation();
+    const notificationId = this.getAttribute('data-notification-id');
+    testNotification(notificationId);
+}
+
+function testNotification(notificationId) {
+    // Disable the button and show loading state
+    const button = document.querySelector(`.test-notification-btn[data-notification-id="${notificationId}"]`);
+    const btnText = button.querySelector('.btn-text');
+    const originalText = btnText.textContent;
+    btnText.textContent = 'Sending...';
+    button.disabled = true;
+
+    fetch('/settings/notifications/test', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ notification_id: notificationId })
+    })
+    .then(response => response.json())
+    .then(data => {
+        // Reset button state
+        btnText.textContent = originalText;
+        button.disabled = false;
+        
+        if (data.success) {
+            import('/static/js/notifications.js').then(module => {
+                const { showPopup, POPUP_TYPES } = module;
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Success',
+                    message: 'Test notification sent successfully',
+                    confirmText: 'OK'
+                });
+            });
+        } else {
+            throw new Error(data.error || 'Unknown error');
+        }
+    })
+    .catch(error => {
+        // Reset button state
+        button.textContent = originalText;
+        button.disabled = false;
+        
+        console.error('Error:', error);
+        import('/static/js/notifications.js').then(module => {
+            const { showPopup, POPUP_TYPES } = module;
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'Error sending test notification: ' + error.message,
+                confirmText: 'OK'
+            });
+        });
+    });
+}
+
+function showAddNotificationPopup() {
+    import('/static/js/notifications.js').then(module => {
+        const { showPopup, POPUP_TYPES } = module;
+        showPopup({
+            type: POPUP_TYPES.PROMPT,
+            title: 'Add New Notification',
+            message: 'Select the notification type:',
+            dropdownOptions: [
+                { value: 'Telegram', text: 'Telegram' },
+                { value: 'Discord', text: 'Discord' },
+                { value: 'NTFY', text: 'NTFY' },
+                { value: 'Email', text: 'Email' }
+            ],
+            confirmText: 'Add',
+            cancelText: 'Cancel',
+            onConfirm: (selectedType) => {
+                if (selectedType) {
+                    addNotification(selectedType);
+                }
+            }
+        });
+    });
+}
+
+function addNotification(notificationType) {
+    fetch('/settings/notifications/add', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ type: notificationType })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            return updateNotificationsTab();
+        } else {
+            throw new Error(data.error || 'Unknown error');
+        }
+    })
+    .then(() => {
+        import('/static/js/notifications.js').then(module => {
+            const { showPopup, POPUP_TYPES } = module;
+            showPopup({
+                type: POPUP_TYPES.SUCCESS,
+                title: 'Success',
+                message: 'Notification added successfully',
+                confirmText: 'OK'
+            });
+        });
+        initializeNotificationsFunctionality();
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        import('/static/js/notifications.js').then(module => {
+            const { showPopup, POPUP_TYPES } = module;
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'Error adding notification: ' + error.message,
+                confirmText: 'OK'
+            });
+        });
+    });
+}
+
+function deleteNotification(notificationId) {
+    import('/static/js/notifications.js').then(module => {
+        const { showPopup, POPUP_TYPES } = module;
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Delete Notification',
+            message: 'Are you sure you want to delete this notification?',
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                performDeleteNotification(notificationId);
+            }
+        });
+    });
+}
+
+function performDeleteNotification(notificationId) {
+    fetch('/settings/notifications/delete', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ notification_id: notificationId })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            return updateNotificationsTab();
+        } else {
+            throw new Error(data.error || 'Unknown error');
+        }
+    })
+    .then(() => {
+        import('/static/js/notifications.js').then(module => {
+            const { showPopup, POPUP_TYPES } = module;
+            showPopup({
+                type: POPUP_TYPES.SUCCESS,
+                title: 'Success',
+                message: 'Notification deleted successfully',
+                confirmText: 'OK'
+            });
+        });
+        initializeNotificationsFunctionality();
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        import('/static/js/notifications.js').then(module => {
+            const { showPopup, POPUP_TYPES } = module;
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'Error deleting notification: ' + error.message,
+                confirmText: 'OK'
+            });
+        });
+    });
+}
+
+function updateNotificationsTab() {
+    return fetch('/settings')
+        .then(response => response.text())
+        .then(html => {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const newNotificationsTab = doc.getElementById('notifications');
+            
+            if (newNotificationsTab) {
+                const currentNotificationsTab = document.getElementById('notifications');
+                if (currentNotificationsTab) {
+                    currentNotificationsTab.innerHTML = newNotificationsTab.innerHTML;
+                    initializeNotificationsFunctionality();
+                    initializeExpandCollapse();
+                }
+            } else {
+                throw new Error('Notifications tab not found in the response');
+            }
+        })
+        .catch(error => {
+            console.error('Error updating Notifications tab:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'Error updating Notifications tab: ' + error.message,
+                confirmText: 'OK'
+            });
+            initializeNotificationsFunctionality();
+        });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    initializeNotificationsFunctionality();
+    initializeContentSourceFilter();
+});
+
+function initializeContentSourceFilter() {
+    const selectElement = document.getElementById('notifications-general-enabled-content-sources');
+    if (!selectElement) return;
+
+    // Get current selected values
+    const currentValue = selectElement.getAttribute('data-current-value') || '';
+    const selectedSources = currentValue ? currentValue.split(',').map(s => s.trim()).filter(s => s) : [];
+    
+    // Create hidden input for form submission
+    let hiddenInput = document.getElementById('notifications-general-enabled-content-sources-hidden');
+    if (!hiddenInput) {
+        hiddenInput = document.createElement('input');
+        hiddenInput.type = 'hidden';
+        hiddenInput.id = 'notifications-general-enabled-content-sources-hidden';
+        hiddenInput.name = 'Notifications.General.enabled_content_sources';
+        hiddenInput.setAttribute('data-section', 'Notifications');
+        hiddenInput.setAttribute('data-key', 'General.enabled_content_sources');
+        hiddenInput.value = currentValue;
+        selectElement.parentNode.appendChild(hiddenInput);
+    }
+
+    // Fetch content sources from the API
+    fetch('/settings/api/enabled_content_sources')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.sources) {
+                // Clear existing options
+                selectElement.innerHTML = '';
+                
+                // Add options for each content source
+                data.sources.forEach(source => {
+                    const option = document.createElement('option');
+                    option.value = source.id;
+                    
+                    // Show display name with backend ID in parentheses for clarity
+                    const displayText = source.display_name || source.id;
+                    option.textContent = source.display_name && source.display_name !== source.id 
+                        ? `${displayText} (${source.id})`
+                        : displayText;
+                    
+                    // Mark as selected if it was previously selected
+                    if (selectedSources.includes(source.id)) {
+                        option.selected = true;
+                    }
+                    
+                    selectElement.appendChild(option);
+                });
+            }
+        })
+        .catch(error => {
+            console.error('Error loading content sources:', error);
+        });
+
+    // Handle change events to update the hidden input for form submission
+    selectElement.addEventListener('change', function() {
+        const selectedOptions = Array.from(this.selectedOptions).map(option => option.value);
+        const selectedValue = selectedOptions.join(', ');
+        
+        // Update the data attribute to preserve the value
+        this.setAttribute('data-current-value', selectedValue);
+        
+        // Create or update a hidden input for form submission
+        let hiddenInput = document.getElementById('notifications-general-enabled-content-sources-hidden');
+        if (!hiddenInput) {
+            hiddenInput = document.createElement('input');
+            hiddenInput.type = 'hidden';
+            hiddenInput.id = 'notifications-general-enabled-content-sources-hidden';
+            hiddenInput.name = 'Notifications.General.enabled_content_sources';
+            hiddenInput.setAttribute('data-section', 'Notifications');
+            hiddenInput.setAttribute('data-key', 'General.enabled_content_sources');
+            selectElement.parentNode.appendChild(hiddenInput);
+        }
+        hiddenInput.value = selectedValue;
+    });
+}
+</script>
+
+        </div>
+    </div>
+</div>
