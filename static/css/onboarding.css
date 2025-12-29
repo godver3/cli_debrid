@@ -317,3 +317,10 @@ body[data-is-onboarding="true"] .navMenu {
 .rate-limits-section-toggle {
     display: none !important;
 }
+
+/* ========================================
+   Inline CSS from onboarding_navigation.html
+   ======================================== */
+.popup-content.confirm {
+        max-width: 50vw !important;
+    }

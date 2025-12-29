@@ -1,0 +1,111 @@
+.version-terms-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.version-terms-input {
+    display: flex;
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.05);
+    padding: 10px;
+    border-radius: 10px;
+    transition: all 0.3s ease ease;
+}
+.version-name {
+    font-weight: bold;
+    min-width: 100px;
+    margin-right: 10px;
+}
+.version-terms {
+    flex-grow: 1;
+    margin-right: 10px;
+}
+.move-btn {
+    background-color: rgba(255, 255, 255, 0.08);
+    color: white;
+    border: none;
+    padding: 5px 10px;
+    margin: 0 2px;
+    cursor: pointer;
+    transition: all 0.3s ease ease;
+}
+.move-btn:hover {
+    background-color: #777;
+}
+.move-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.default-version-container {
+    margin-top: 20px;
+}
+@keyframes moveUp {
+    from { transform: translateY(0); }
+    to { transform: translateY(-100%); }
+}
+@keyframes moveDown {
+    from { transform: translateY(0); }
+    to { transform: translateY(100%); }
+}
+.moving-up {
+    animation: moveUp 0.3s ease-in-out;
+}
+.moving-down {
+    animation: moveDown 0.3s ease-in-out;
+}
+
+.settings-input {
+    width: auto;
+    padding: 8px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #fff;
+    border-radius: 10px;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+
+/* If there's a striped table effect, override it for matched rows */
+#items-table tbody tr.matched:nth-child(even),
+#items-table tbody tr.matched:nth-child(odd) {
+    background-color: #20415f !important;
+}
+
+/* If there's a striped table effect, override it for matched rows */
+#items-table tbody tr.matched:nth-child(even):hover,
+#items-table tbody tr.matched:nth-child(odd):hover {
+    background-color: #42678a !important;
+}
+
+/* Default version rows (unmatched) */
+#items-table tbody tr.default-version:nth-child(even),
+#items-table tbody tr.default-version:nth-child(odd) {
+    background-color: #783d3b !important; /* Orange */
+}
+
+#items-table tbody tr.default-version:nth-child(even):hover,
+#items-table tbody tr.default-version:nth-child(odd):hover {
+    background-color: #aa5151 !important; /* Dark Orange */
+}
+
+.assigned-version {
+    font-weight: bold;
+}
+
+.save-button, .filter-button {
+    margin-top: 10px;
+    padding: 15px 32px;
+    font-size: 16px;
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    border: none;
+    color: white;
+    padding: 5px 10px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 14px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    border-radius: 10px;
+    transition: all 0.3s ease;
+}

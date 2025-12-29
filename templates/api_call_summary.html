@@ -3,78 +3,7 @@
 {% block title %}API Call Summary{% endblock %}
 
 {% block head %}
-<style>
-    .api-summary-container {
-        padding: 20px;
-    }
-
-    .api-summary-form {
-        margin-bottom: 20px;
-    }
-
-    .api-summary-form select, 
-    .api-summary-form input[type="submit"] {
-        padding: 8px 12px;
-        margin-right: 10px;
-        background-color: #2c2c2c;
-        color: #f4f4f4;
-        border: 1px solid #444;
-        border-radius: 4px;
-    }
-
-    .api-summary-form input[type="submit"] {
-        background-color: #4CAF50;
-        color: white;
-        cursor: pointer;
-        transition: background-color 0.3s;
-    }
-
-    .api-summary-form input[type="submit"]:hover {
-        background-color: #45a049;
-    }
-
-    .api-summary-table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 20px;
-        background-color: #2c2c2c;
-    }
-
-    .api-summary-table th, 
-    .api-summary-table td {
-        border: 1px solid #444;
-        padding: 12px;
-        text-align: left;
-    }
-
-    .api-summary-table th {
-        position: -webkit-sticky;
-        position: sticky;
-        top: 0;
-        background-color: #1a1a1a;
-        font-weight: bold;
-        text-transform: uppercase;
-    }
-
-    .api-summary-table tr:nth-child(even) {
-        background-color: #333;
-    }
-
-    .api-summary-table tr:hover {
-        background-color: #444;
-    }
-
-    @media screen and (max-width: 600px) {
-        .api-summary-table {
-            font-size: 14px;
-        }
-
-        .api-summary-table th, 
-        .api-summary-table td {
-            padding: 8px;
-        }
-    }
-</style>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/inline.css') }}">
 {% endblock %}
 
 {% block content %}

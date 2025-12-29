@@ -1,63 +1,12 @@
 {% extends "base.html" %}
 
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/inline.css') }}">
+{% endblock %}
 {% block title %}Rate Limit Exceeded{% endblock %}
 
 {% block content %}
-<style>
-    .rate-limit-container {
-        max-width: 800px;
-        margin: 0 auto;
-        padding: 2rem;
-        line-height: 1.6;
-    }
-
-    .rate-limit-title {
-        color: #d9534f;
-        font-size: 2.5rem;
-        margin-bottom: 1.5rem;
-    }
-
-    .section-title {
-        color: #ffffff;
-        font-size: 1.8rem;
-        margin-top: 2rem;
-        margin-bottom: 1rem;
-    }
-
-    .blocked-domains-list {
-        color: #ffffff;
-        border-radius: 4px;
-        padding: 1rem 1rem 1rem 2rem;
-    }
-
-    .blocked-domains-list li {
-        margin-bottom: 0.5rem;
-    }
-
-    p {
-        margin-bottom: 1rem;
-    }
-
-    ul {
-        padding-left: 1.5rem;
-    }
-
-    .action-buttons {
-        margin-top: 2rem;
-    }
-
-    .btn-primary {
-        background-color: #007bff;
-        border-color: #007bff;
-        padding: 0.5rem 1rem;
-        font-size: 1rem;
-    }
-
-    .btn-primary:hover {
-        background-color: #0056b3;
-        border-color: #0056b3;
-    }
-</style>
 <div class="container rate-limit-container">
     <h2 class="rate-limit-title">Rate Limit Exceeded</h2>
     <div class="alert alert-danger">

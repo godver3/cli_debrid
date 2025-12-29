@@ -19,7 +19,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     {% block extra_css %}{% endblock %}
 </head>
-<body>
+<body class="page-loading">
     <header>
         <div class="header-content">
             <img src="{{ url_for('static', filename='white-icon-32x32.png') }}" alt="CLI Battery icon" class="header-icon">
@@ -67,6 +67,11 @@
     </main>
     {% block extra_js %}{% endblock %}
     <script>
+    // Remove page-loading class after page is fully loaded
+    window.addEventListener('load', function() {
+        document.body.classList.remove('page-loading');
+    });
+
     document.addEventListener('DOMContentLoaded', function() {
         const hamburger = document.getElementById('hamburger-menu');
         const nav = document.getElementById('nav-menu');

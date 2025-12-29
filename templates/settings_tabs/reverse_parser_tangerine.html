@@ -1,0 +1,119 @@
+<div class="reverse-parser-settings-page">
+    <h2 class="reverse-parser-settings-title">Reverse Parser Settings</h2>
+    <p class="reverse-parser-settings-subtitle">Configure reverse parser default version assignment</p>
+
+    <div class="info-banner info-banner-blue">
+        <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        <div class="info-banner-content">
+            <strong>Default Version Assignment:</strong> This is the version that will be assigned when parsing releases if a version cannot be automatically identified from the release name or metadata.
+        </div>
+    </div>
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/reverse_parser.css') }}">
+
+    <div class="content-section">
+        <div class="reverse-parser-settings-header section-header">
+            <h3 class="reverse-parser-settings-settings-title section-title">
+                <span class="title-bar"></span>
+                Reverse Parser Settings
+            </h3>
+        </div>
+
+        <div class="settings-list">
+
+<div class="settings-section settings-card default-version-container">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Default Version</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <select id="default-version" 
+                name="Reverse Parser.default_version" 
+                class="settings-input"
+                data-section="Reverse Parser" 
+                data-key="default_version">
+            <!-- Options will be dynamically populated -->
+        </select>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const defaultVersionSelect = document.getElementById('default-version');
+
+    function updateDefaultVersionOptions(versions, currentConfiguredDefault) {
+        const currentValue = defaultVersionSelect.value || currentConfiguredDefault;
+        defaultVersionSelect.innerHTML = versions.map(v => `<option value="${v}">${v}</option>`).join('');
+        
+        if (versions.includes(currentValue)) {
+            defaultVersionSelect.value = currentValue;
+        } else if (versions.length > 0) {
+            defaultVersionSelect.value = versions[0]; // Fallback to the first available version if current is not in the list
+        }
+    }
+
+    // Load existing versions and settings
+    Promise.all([
+        fetch('/settings/get_scraping_versions').then(response => response.json()),
+        fetch('/settings/api/reverse_parser_settings').then(response => response.json())
+    ]).then(([versionsData, reverseParserData]) => {
+        const allVersions = versionsData.versions || [];
+        const configuredDefaultVersion = reverseParserData.default_version || '';
+        
+        updateDefaultVersionOptions(allVersions, configuredDefaultVersion);
+        
+        // Set the default version from the configuration
+        if (allVersions.includes(configuredDefaultVersion)) {
+            defaultVersionSelect.value = configuredDefaultVersion;
+        } else if (allVersions.length > 0) {
+            // If configured default is not in allVersions (e.g. stale), pick first
+            defaultVersionSelect.value = allVersions[0]; 
+        }
+        
+    }).catch(error => {
+        console.error("Error loading initial data for Reverse Parser settings:", error);
+    });
+
+    // Add event listener for saving settings
+    document.addEventListener('saveSettings', function() {
+        const defaultVersion = defaultVersionSelect.value;
+
+        // Prepare the settings object
+        const settings = {
+            'Reverse Parser': {
+                default_version: defaultVersion
+            }
+        };
+
+        // Send the settings to the server
+        fetch('/settings/api/reverse_parser_settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(settings),
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                console.log('Reverse Parser settings saved successfully');
+            } else {
+                console.error('Failed to save Reverse Parser settings:', data.error);
+            }
+        })
+        .catch((error) => {
+            console.error('Error saving Reverse Parser settings:', error);
+        });
+    });
+});
+</script>
+
+        </div>
+    </div>
+</div>

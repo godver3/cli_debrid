@@ -4,62 +4,20 @@
 
 {% block head %}
     {{ super() }}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/scraper_tester.css') }}">
-    <style>
-        .mobile-warning {
-            display: none;
-            background-color: #ff4444;
-            color: white;
-            text-align: center;
-            margin-top: 50px;
-            padding: 20px;
-            font-weight: bold;
-        }
-        @media screen and (max-width: 768px) {
-            .mobile-warning {
-                display: block;
-            }
-            .scraper-tester-container {
-                display: none;
-            }
-        }
-
-        .loading {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.5);
-            z-index: 9999;
-            justify-content: center;
-            align-items: center;
-        }
-
-        .loading-content {
-            background-color: #333;
-            padding: 20px;
-            border-radius: 5px;
-            text-align: center;
-        }
-
-        .spinner {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #3498db;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 10px;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-    </style>
-{% endblock %}
+    <meta http-equiv="refresh" content="300">
+    <script>
+        // Dynamically load the correct CSS based on theme cookie
+        (function() {
+            const theme = document.cookie.split('; ').find(row => row.startsWith('selectedTheme='))?.split('=')[1] || 'classic';
+            const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_scraper_tester.css' : 'css/scraper_tester.css';
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            // Add cache-busting parameter based on theme to force reload when theme changes
+            link.href = '{{ url_for("static", filename="") }}' + cssFile + '?v=' + theme + '_' + Date.now();
+            document.head.appendChild(link);
+        })();
+    </script>
+    {% endblock %}
 
 {% block content %}
 <div class="mobile-warning">

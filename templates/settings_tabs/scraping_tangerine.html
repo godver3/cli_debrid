@@ -1,0 +1,1101 @@
+<div class="scraping-settings-page">
+    <h2 class="scraping-settings-title">Version Settings</h2>
+    <p class="scraping-settings-subtitle">Configure scraping profiles and preferences</p>
+
+    <div class="info-banner info-banner-blue" style="margin-top: 1rem;">
+        <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        <div class="info-banner-content">
+            <strong>How Scraping Versions Work:</strong> These scraping settings will be used to calculate a total score for each release, and to filter items in or out of the results. Weights are used to emphasize or de-emphasize specific traits. Use the Scraper Tester to verify that your results match what you expect.
+            <ul style="margin-top: 8px; padding-left: 20px;">
+                <li><strong>Filter In</strong> - Include only results with these terms.</li>
+                <li><strong>Filter Out</strong> - Include no results with these terms.</li>
+                <li><strong>Preferred Filter In</strong> - Increase score of results with these terms.</li>
+                <li><strong>Preferred Filter Out</strong> - Reduce score of results with these terms.</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="content-section">
+        <div class="scraping-settings-header section-header">
+            <h3 class="scraping-settings-settings-title section-title">
+                <span class="title-bar"></span>
+                Versions
+            </h3>
+            <div class="scraping-settings-actions action-buttons settings-expand-collapse-buttons">
+                <button type="button" class="scraping-settings-btn btn-secondary settings-collapse-all">Collapse All</button>
+                <button type="button" class="scraping-settings-btn btn-secondary settings-expand-all">Expand All</button>
+                <button id="add-version-btn" class="scraping-settings-btn-primary btn-primary add-version-link">Add New Version</button>
+                <button id="add-default-version-btn" class="scraping-settings-btn-primary btn-primary add-version-link">Add Default Version</button>
+                <button id="add-separate-versions-btn" class="scraping-settings-btn-primary btn-primary add-version-link">Add Separate 1080p/4K Versions</button>
+            </div>
+        </div>
+
+        <div class="version-list">
+
+<script>
+    // Define handler functions outside
+    const addVersionHandler = function(event) {
+        event.preventDefault();
+        showAddVersionPopup();
+    };
+
+    const defaultVersionHandler = function(event) {
+        event.preventDefault();
+        showAddDefaultVersionConfirmation();
+    };
+
+    const separateVersionsHandler = function(event) {
+        event.preventDefault();
+        showSeparateVersionsConfirmation();
+    };
+
+    const importVersionsHandler = function(event) {
+        event.preventDefault();
+        showImportConfirmation();
+    };
+
+    function initializeScrapingFunctionality() {
+        initializeAddVersionButton();
+        initializeVersionButtons();
+        initializeFilterButtons();
+        initializeImportButton();
+        initializeDefaultVersionButton();
+        initializeSeparateVersionsButton();
+    }
+
+    function initializeAddVersionButton() {
+        const addButton = document.querySelector('#add-version-btn');
+        if (addButton) {
+            addButton.removeEventListener('click', addVersionHandler);
+            addButton.addEventListener('click', addVersionHandler);
+        } else {
+            console.error('Add version button not found');
+        }
+    }
+
+    function initializeImportButton() {
+        const importButton = document.querySelector('#import-default-versions-btn');
+        if (importButton) {
+            importButton.removeEventListener('click', importVersionsHandler);
+            importButton.addEventListener('click', importVersionsHandler);
+        } else {
+            console.error('Import button not found');
+        }
+    }
+
+    function initializeDefaultVersionButton() {
+        const addDefaultButton = document.querySelector('#add-default-version-btn');
+        if (addDefaultButton) {
+            addDefaultButton.removeEventListener('click', defaultVersionHandler);
+            addDefaultButton.addEventListener('click', defaultVersionHandler);
+        }
+    }
+
+    function initializeSeparateVersionsButton() {
+        const addSeparateButton = document.querySelector('#add-separate-versions-btn');
+        if (addSeparateButton) {
+            addSeparateButton.removeEventListener('click', separateVersionsHandler);
+            addSeparateButton.addEventListener('click', separateVersionsHandler);
+        }
+    }
+
+    function showImportConfirmation() {
+        window.showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Add Alternate Default Versions',
+            message: 'This will add alternate versions that include comprehensive 2160p, REMUX and WEB versions for the connoisseur.',
+            confirmText: 'Add',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                importDefaultVersions();
+            }
+        });
+    }
+
+    function showAddDefaultVersionConfirmation() {
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Add Default Version',
+            message: 'This will add a new version with recommended default settings.',
+            confirmText: 'Add',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                addDefaultVersion();
+            }
+        });
+    }
+
+    function showSeparateVersionsConfirmation() {
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Add Separate Versions',
+            message: 'This will add two new versions: one for 1080p content and another for 4K HDR content.',
+            confirmText: 'Add Versions',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                addSeparateVersions();
+            }
+        });
+    }
+
+    function importDefaultVersions() {
+        fetch('/settings/versions/import_defaults', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.reloadTabContent('scraping', () => {
+                    window.initializeExpandCollapse();
+                    initializeScrapingFunctionality();
+                    window.showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        message: 'Default versions imported successfully',
+                    });
+                });
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error importing default versions:', error);
+            window.showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error importing default versions: ' + error.message
+            });
+        });
+    }
+
+    function showAddVersionPopup() {
+        window.showPopup({
+            type: POPUP_TYPES.PROMPT,
+            title: 'Add New Version',
+            message: 'Enter a name for the new version:',
+            inputPlaceholder: 'Version name',
+            confirmText: 'Add',
+            cancelText: 'Cancel',
+            onConfirm: (versionName) => {
+                if (versionName) {
+                    addVersion(versionName);
+                } else {
+                    console.error('No version name entered');
+                }
+            }
+        });
+    }
+
+    function addVersion(versionName) {
+        fetch('/settings/versions/add', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ name: versionName })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.reloadTabContent('scraping', () => {
+                    window.initializeExpandCollapse();
+                    initializeScrapingFunctionality();
+                    window.showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        message: 'Version added successfully',
+                    });
+                });
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error adding version:', error);
+            window.showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error adding version: ' + error.message
+            });
+        });
+    }
+
+    function initializeVersionButtons() {
+        const buttons = {
+            '.rename-version-btn': renameVersion,
+            '.duplicate-version-btn': duplicateVersion,
+            '.delete-version-btn': deleteVersion
+        };
+
+        for (const [selector, handler] of Object.entries(buttons)) {
+            document.querySelectorAll(selector).forEach(btn => {
+                // Store the handler function as a property on the button element
+                const wrappedHandler = function() {
+                    const versionId = this.getAttribute('data-version-id');
+                    handler(versionId);
+                };
+                
+                // Remove old handler if it exists
+                if (btn._versionHandler) {
+                    btn.removeEventListener('click', btn._versionHandler);
+                }
+                
+                // Store and add new handler
+                btn._versionHandler = wrappedHandler;
+                btn.addEventListener('click', wrappedHandler);
+            });
+        }
+    }
+
+    function renameVersion(versionId) {
+        window.showPopup({
+            type: POPUP_TYPES.PROMPT,
+            title: 'Rename Version',
+            message: 'Enter a new name for the version:',
+            inputPlaceholder: 'New version name',
+            confirmText: 'Rename',
+            cancelText: 'Cancel',
+            onConfirm: (newName) => {
+                if (newName) {
+                    fetch('/settings/versions/rename', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ old_name: versionId, new_name: newName })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            window.reloadTabContent('scraping', () => {
+                                window.initializeExpandCollapse();
+                                window.showPopup({
+                                    type: POPUP_TYPES.SUCCESS,
+                                    message: 'Version renamed successfully. Associated database items have also been updated.',
+                                });
+                            });
+                        } else {
+                            throw new Error(data.error || 'Unknown error');
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error renaming version:', error);
+                        window.showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            message: 'Error renaming version: ' + error.message
+                        });
+                    });
+                }
+            }
+        });
+    }
+
+    function duplicateVersion(versionId) {
+        window.showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Duplicate Version',
+            message: 'Are you sure you want to duplicate this version?',
+            confirmText: 'Duplicate',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                fetch('/settings/versions/duplicate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ version_id: versionId })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        window.reloadTabContent('scraping', () => {
+                            window.initializeExpandCollapse();
+                            initializeScrapingFunctionality();
+                            window.showPopup({
+                                type: POPUP_TYPES.SUCCESS,
+                                message: 'Version duplicated successfully',
+                            });
+                        });
+                    } else {
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error duplicating version:', error);
+                    window.showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Error duplicating version: ' + error.message
+                    });
+                });
+            }
+        });
+    }
+
+    function deleteVersion(versionId) {
+        // First, check usage
+        fetch(`/settings/versions/check_usage/${versionId}`)
+        .then(response => response.json())
+        .then(checkData => {
+            if (!checkData.success) {
+                throw new Error(checkData.error || 'Failed to check version usage.');
+            }
+
+            let popupConfig;
+            let onConfirmAction;
+
+            if (!checkData.in_use) {
+                // Not in use, simple confirm
+                popupConfig = {
+                    type: POPUP_TYPES.CONFIRM,
+                    title: 'Delete Version',
+                    message: 'Are you sure you want to delete this version? It is not currently used by any database items.',
+                    confirmText: 'Delete',
+                    cancelText: 'Cancel'
+                };
+                onConfirmAction = () => {
+                    performDelete(versionId);
+                };
+            } else if (checkData.is_last) {
+                // In use and is the last version
+                popupConfig = {
+                    type: POPUP_TYPES.CONFIRM,
+                    title: 'Delete Last Version?',
+                    message: 'This is the last version and it is currently in use. Deleting it will make associated database items versionless. Are you sure?',
+                    confirmText: 'Delete Anyway',
+                    cancelText: 'Cancel',
+                    warning: true
+                };
+                onConfirmAction = () => {
+                    performDelete(versionId); // No target version needed
+                };
+            } else {
+                // In use, but other versions exist
+                const options = checkData.alternatives.map(alt => ({ text: alt, value: alt }));
+                popupConfig = {
+                    type: POPUP_TYPES.PROMPT,
+                    title: 'Reassign and Delete Version',
+                    message: 'This version is currently in use. Choose a version to reassign the associated database items to before deleting:',
+                    dropdownOptions: options,
+                    confirmText: 'Reassign and Delete',
+                    cancelText: 'Cancel'
+                };
+                onConfirmAction = (selectedVersion) => {
+                    if (selectedVersion) {
+                        performDelete(versionId, selectedVersion);
+                    } else {
+                        window.showPopup({ type: POPUP_TYPES.ERROR, message: 'You must select a version to reassign items to.' });
+                    }
+                };
+            }
+
+            console.log('Popup Config:', popupConfig);
+            window.showPopup({ ...popupConfig, onConfirm: onConfirmAction });
+
+        })
+        .catch(error => {
+            console.error('Error checking version usage:', error);
+            window.showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error checking version usage: ' + error.message
+            });
+        });
+    }
+
+    function performDelete(versionId, targetVersionId = null) {
+        // Show loading dialog
+        window.showLoading('Deleting version...');
+
+        fetch('/settings/versions/delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ version_id: versionId, target_version_id: targetVersionId })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.reloadTabContent('scraping', () => {
+                    window.hideLoading(); // Hide loading dialog
+                    window.initializeExpandCollapse();
+                    initializeScrapingFunctionality(); // Re-initialize buttons after reload
+                    window.showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        message: data.message || 'Version deleted successfully.',
+                    });
+                });
+            } else {
+                window.hideLoading(); // Hide loading dialog
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            window.hideLoading(); // Hide loading dialog
+            console.error('Error deleting version:', error);
+            window.showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error deleting version: ' + error.message
+            });
+        });
+    }
+
+    function initializeFilterButtons() {
+        document.querySelectorAll('.add-filter-btn').forEach(btn => {
+            // Create a wrapped handler function that can be stored and removed
+            const filterButtonHandler = function() {
+                const versionId = this.getAttribute('data-version-id');
+                const filterType = this.getAttribute('data-filter-type');
+                addFilterItem(versionId, filterType);
+            };
+            
+            // Remove old handler if it exists
+            if (btn._filterHandler) {
+                btn.removeEventListener('click', btn._filterHandler);
+            }
+            
+            // Store and add new handler
+            btn._filterHandler = filterButtonHandler;
+            btn.addEventListener('click', filterButtonHandler);
+        });
+
+        // Initialize remove filter buttons
+        document.querySelectorAll('.filter-list').forEach(list => {
+            // Create a wrapped handler function
+            const removeFilterHandler = function(event) {
+                if (event.target.classList.contains('remove-filter')) {
+                    event.target.closest('.filter-item').remove();
+                }
+            };
+            
+            // Remove old handler if it exists
+            if (list._removeFilterHandler) {
+                list.removeEventListener('click', list._removeFilterHandler);
+            }
+            
+            // Store and add new handler
+            list._removeFilterHandler = removeFilterHandler;
+            list.addEventListener('click', removeFilterHandler);
+        });
+    }
+
+    function addFilterItem(version, filterType) {
+        const list = document.querySelector(`.filter-list[data-version="${version}"][data-filter-type="${filterType}"]`);
+        const newItem = document.createElement('div');
+        newItem.className = 'filter-item';
+
+        if (filterType.startsWith('preferred_')) {
+            newItem.innerHTML = `
+                <input type="text" class="filter-term" placeholder="Term">
+                <input type="number" class="filter-weight" min="1" value="1" placeholder="Weight">
+                <button type="button" class="remove-filter">Remove</button>
+            `;
+        } else {
+            newItem.innerHTML = `
+                <input type="text" class="filter-term" placeholder="Term">
+                <button type="button" class="remove-filter">Remove</button>
+            `;
+        }
+
+        list.appendChild(newItem);
+    }
+
+    function addDefaultVersion() {
+        fetch('/settings/versions/add_default', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.reloadTabContent('scraping', () => {
+                    window.initializeExpandCollapse();
+                    initializeScrapingFunctionality();
+                    showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        message: 'Default version added successfully',
+                    });
+                });
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error adding default version:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error adding default version: ' + error.message
+            });
+        });
+    }
+
+    function addSeparateVersions() {
+        fetch('/settings/versions/add_separate_versions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                window.reloadTabContent('scraping', () => {
+                    window.initializeExpandCollapse();
+                    initializeScrapingFunctionality();
+                    showPopup({
+                        type: POPUP_TYPES.SUCCESS,
+                        message: 'Separate versions added successfully',
+                    });
+                });
+            } else {
+                throw new Error(data.error || 'Unknown error');
+            }
+        })
+        .catch(error => {
+            console.error('Error adding separate versions:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: 'Error adding separate versions: ' + error.message
+            });
+        });
+    }
+
+    // Remove any existing initialization listeners
+    document.removeEventListener('dashboardInitialized', initializeScrapingFunctionality);
+    document.removeEventListener('scrapingContentLoaded', initializeScrapingFunctionality);
+
+    // Add new listeners
+    document.addEventListener('dashboardInitialized', initializeScrapingFunctionality);
+    document.addEventListener('scrapingContentLoaded', initializeScrapingFunctionality);
+</script>
+
+<script>
+    function hideHybridModeCheckboxes() {
+        // Hide hybrid_mode checkbox completely
+        const hybridModeCheckbox = document.getElementById('scraping-hybrid_mode');
+        if (hybridModeCheckbox) {
+            const hybridModeFormGroup = hybridModeCheckbox.closest('.settings-form-group');
+            if (hybridModeFormGroup) {
+                hybridModeFormGroup.classList.add('hybrid-mode-group');
+            }
+        }
+        
+        // Also hide any version-specific hybrid_mode checkboxes
+        document.querySelectorAll('input[data-hybrid-mode="true"]').forEach(function(checkbox) {
+            const formGroup = checkbox.closest('.settings-form-group');
+            if (formGroup) {
+                formGroup.classList.add('hybrid-mode-group');
+            }
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', hideHybridModeCheckboxes);
+    document.addEventListener('scrapingContentLoaded', hideHybridModeCheckboxes);
+</script>
+
+<script>
+    document.addEventListener('DOMContentLoaded', initializeScrapingFunctionality);
+    document.addEventListener('scrapingContentLoaded', initializeScrapingFunctionality);
+</script>
+
+<script>
+// Reverse Parser Default Version functionality
+document.addEventListener('DOMContentLoaded', function() {
+    const defaultVersionSelect = document.getElementById('default-version');
+
+    function updateDefaultVersionOptions(versions, currentConfiguredDefault) {
+        if (!defaultVersionSelect) return;
+
+        const currentValue = defaultVersionSelect.value || currentConfiguredDefault;
+        defaultVersionSelect.innerHTML = versions.map(v => `<option value="${v}">${v}</option>`).join('');
+
+        if (versions.includes(currentValue)) {
+            defaultVersionSelect.value = currentValue;
+        } else if (versions.length > 0) {
+            defaultVersionSelect.value = versions[0];
+        }
+    }
+
+    // Load existing versions and settings
+    Promise.all([
+        fetch('/settings/get_scraping_versions').then(response => response.json()),
+        fetch('/settings/api/reverse_parser_settings').then(response => response.json())
+    ]).then(([versionsData, reverseParserData]) => {
+        const allVersions = versionsData.versions || [];
+        const configuredDefaultVersion = reverseParserData.default_version || '';
+
+        updateDefaultVersionOptions(allVersions, configuredDefaultVersion);
+
+        if (allVersions.includes(configuredDefaultVersion)) {
+            defaultVersionSelect.value = configuredDefaultVersion;
+        } else if (allVersions.length > 0) {
+            defaultVersionSelect.value = allVersions[0];
+        }
+
+    }).catch(error => {
+        console.error("Error loading initial data for Reverse Parser settings:", error);
+    });
+
+    // Add event listener for saving settings
+    document.addEventListener('saveSettings', function() {
+        if (!defaultVersionSelect) return;
+
+        const defaultVersion = defaultVersionSelect.value;
+
+        const settings = {
+            'Reverse Parser': {
+                default_version: defaultVersion
+            }
+        };
+
+        fetch('/settings/api/reverse_parser_settings', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(settings),
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                console.log('Reverse Parser settings saved successfully');
+            } else {
+                console.error('Failed to save Reverse Parser settings:', data.error);
+            }
+        })
+        .catch((error) => {
+            console.error('Error saving Reverse Parser settings:', error);
+        });
+    });
+});
+
+document.addEventListener('scrapingContentLoaded', function() {
+    const defaultVersionSelect = document.getElementById('default-version');
+
+    function updateDefaultVersionOptions(versions, currentConfiguredDefault) {
+        if (!defaultVersionSelect) return;
+
+        const currentValue = defaultVersionSelect.value || currentConfiguredDefault;
+        defaultVersionSelect.innerHTML = versions.map(v => `<option value="${v}">${v}</option>`).join('');
+
+        if (versions.includes(currentValue)) {
+            defaultVersionSelect.value = currentValue;
+        } else if (versions.length > 0) {
+            defaultVersionSelect.value = versions[0];
+        }
+    }
+
+    Promise.all([
+        fetch('/settings/get_scraping_versions').then(response => response.json()),
+        fetch('/settings/api/reverse_parser_settings').then(response => response.json())
+    ]).then(([versionsData, reverseParserData]) => {
+        const allVersions = versionsData.versions || [];
+        const configuredDefaultVersion = reverseParserData.default_version || '';
+
+        updateDefaultVersionOptions(allVersions, configuredDefaultVersion);
+
+        if (allVersions.includes(configuredDefaultVersion)) {
+            defaultVersionSelect.value = configuredDefaultVersion;
+        } else if (allVersions.length > 0) {
+            defaultVersionSelect.value = allVersions[0];
+        }
+
+    }).catch(error => {
+        console.error("Error loading initial data for Reverse Parser settings:", error);
+    });
+});
+</script>
+
+{% for version, config in settings.Scraping.versions.items() %}
+<div class="settings-section settings-card version-card" data-version-id="{{ version }}">
+    <div class="settings-section-header version-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="version-header-left settings-header-left">
+            <h4>{{ version }}</h4>
+        </div>
+        <div class="version-buttons version-actions">
+            <button type="button" class="rename-version-btn btn-secondary" data-version-id="{{ version }}">
+                <span class="btn-text">Rename</span>
+            </button>
+            <button type="button" class="duplicate-version-btn btn-secondary" data-version-id="{{ version }}">
+                <span class="btn-text">Duplicate</span>
+            </button>
+            <button type="button" class="delete-version-btn btn-danger" data-version-id="{{ version }}">
+                <span class="btn-text">Delete</span>
+            </button>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        {# Define settings order #}
+        {% set settings_order = [
+            'max_resolution',
+            'resolution_wanted',
+            'enable_hdr',
+            'hdr_weight',
+            'min_size_gb',
+            'max_size_gb',
+            'min_bitrate_mbps',
+            'max_bitrate_mbps',
+            'resolution_weight',
+            'similarity_weight',
+            'similarity_threshold',
+            'similarity_threshold_anime',
+            'size_weight',
+            'bitrate_weight',
+            'wake_count',
+            'require_physical_release',
+            'language_code',
+            'anime_filter_mode'
+        ] %}
+        
+        {# Sort config items based on settings_order #}
+        {% set sorted_keys = (settings_order + config.keys()|list)|unique|list %}
+        {% for key in sorted_keys %}
+            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out', 'hybrid_mode', 'jackett_seeders_only', 'fallback_version'] %}
+                {% set value = config[key] %}
+                <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'jackett_seeders_only' %}style="display: none !important;"{% endif %}>
+                    {% if value is boolean %}
+                        <label class="settings-title">
+                            <input type="checkbox" id="scraping-{{ version }}-{{ key }}" 
+                                   name="Scraping.versions.{{ version }}.{{ key }}" 
+                                   data-section="Scraping" 
+                                   data-key="versions.{{ version }}.{{ key }}"
+                                   {% if key == 'hybrid_mode' %}data-hybrid-mode="true"{% endif %}
+                                   {% if key == 'jackett_seeders_only' %}data-jackett-seeders-only="true"{% endif %}
+                                   {% if value %}checked{% endif %}>
+                            {{ key|replace('_', ' ')|title }}
+                        </label>
+                        {% if key == 'enable_upgrading' %}
+                            <p class="settings-description">Enable upgrading of items in the queue.</p>
+                        {% elif key == 'enable_upgrading_cleanup' %}
+                            <p class="settings-description">Enable cleanup of original items after successful upgrade (removes original item from Plex and Real-Debrid).</p>
+                        {% elif key == 'require_physical_release' %}
+                            <p class="settings-description">Only mark as Wanted after physical release date is available.</p>
+                        {% endif %}
+                    {% elif key == 'max_resolution' %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">Resolution Value:</label>
+                        <select id="scraping-{{ version }}-{{ key }}" 
+                                name="Scraping.versions.{{ version }}.{{ key }}" 
+                                class="settings-input"
+                                data-section="Scraping" 
+                                data-key="versions.{{ version }}.{{ key }}">
+                            {% for option in ['2160p', '1080p', '720p', 'SD'] %}
+                                <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                            {% endfor %}
+                        </select>
+                    {% elif key == 'resolution_wanted' %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">Resolution Requirement:</label>
+                        <select id="scraping-{{ version }}-{{ key }}" 
+                                name="Scraping.versions.{{ version }}.{{ key }}" 
+                                class="settings-input"
+                                data-section="Scraping" 
+                                data-key="versions.{{ version }}.{{ key }}">
+                            {% for option in ['<=', '==', '>='] %}
+                                <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                            {% endfor %}
+                        </select>
+                    {% elif key == 'anime_filter_mode' %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">Anime Filter Mode:</label>
+                        <select id="scraping-{{ version }}-{{ key }}"
+                                name="Scraping.versions.{{ version }}.{{ key }}"
+                                class="settings-input"
+                                data-section="Scraping"
+                                data-key="versions.{{ version }}.{{ key }}">
+                            {% for option in ['None', 'Anime Only', 'Non-Anime Only'] %}
+                                <option value="{{ option }}" {% if value == option %}selected{% endif %}>{{ option }}</option>
+                            {% endfor %}
+                        </select>
+                        <p class="settings-description">Filter for anime content: 'None' (no filter), 'Anime Only', or 'Non-Anime Only'.</p>
+                    {% elif key == 'wake_count' %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <input type="number" id="scraping-{{ version }}-{{ key }}" 
+                               name="Scraping.versions.{{ version }}.{{ key }}" 
+                               value="{{ '' if value is none else value }}" 
+                               class="settings-input" 
+                               min="-1"
+                               placeholder="Use global setting"
+                               data-section="Scraping" 
+                               data-key="versions.{{ version }}.{{ key }}">
+                        <p class="settings-description">Override global wake count limit. Leave empty to use global setting. Set to -1 to disable sleeping queue (only search once).</p>
+                    {% elif key == 'max_size_gb' %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <input type="number" id="scraping-{{ version }}-{{ key }}" 
+                               name="Scraping.versions.{{ version }}.{{ key }}" 
+                               value="{{ '' if value|is_infinite else value }}" 
+                               class="settings-input" 
+                               step="0.01" 
+                               min="0" 
+                               placeholder="Infinite"
+                               data-section="Scraping" 
+                               data-key="versions.{{ version }}.{{ key }}">
+                        <p class="settings-description">Maximum size per file in GB. Leave empty for no limit.</p>
+                    {% elif key == 'min_size_gb' %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <input type="number" id="scraping-{{ version }}-{{ key }}" 
+                               name="Scraping.versions.{{ version }}.{{ key }}" 
+                               value="{{ value }}" 
+                               class="settings-input" 
+                               step="0.01" 
+                               min="0"
+                               data-section="Scraping" 
+                               data-key="versions.{{ version }}.{{ key }}">
+                        <p class="settings-description">Minimum size per file in GB.</p>
+                    {% elif key == 'max_bitrate_mbps' %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <input type="number" id="scraping-{{ version }}-{{ key }}" 
+                               name="Scraping.versions.{{ version }}.{{ key }}" 
+                               value="{{ '' if value|is_infinite else value }}" 
+                               class="settings-input" 
+                               step="0.01" 
+                               min="0" 
+                               placeholder="Infinite"
+                               data-section="Scraping" 
+                               data-key="versions.{{ version }}.{{ key }}">
+                        <p class="settings-description">Maximum bitrate per file in Mbps. Leave empty for no limit.</p>
+                    {% elif key == 'min_bitrate_mbps' %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <input type="number" id="scraping-{{ version }}-{{ key }}" 
+                               name="Scraping.versions.{{ version }}.{{ key }}" 
+                               value="{{ value }}" 
+                               class="settings-input" 
+                               step="0.01" 
+                               min="0"
+                               data-section="Scraping" 
+                               data-key="versions.{{ version }}.{{ key }}">
+                        <p class="settings-description">Minimum bitrate per file in Mbps.</p>
+                    {% else %}
+                        <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        <input type="{{ 'number' if value is number else 'text' }}" 
+                               id="scraping-{{ version }}-{{ key }}" 
+                               name="Scraping.versions.{{ version }}.{{ key }}" 
+                               value="{{ value }}" 
+                               class="settings-input"
+                               {% if key == 'language_code' %}placeholder="en"{% endif %}
+                               data-section="Scraping" 
+                               data-key="versions.{{ version }}.{{ key }}">
+                        {% if key == 'language_code' %}
+                            <p class="settings-description">Preferred language code(s), comma-separated (e.g., fr, es, ja). The first language found will be used. See ISO 639-1.</p>
+                        {% endif %}
+                    {% endif %}
+                </div>
+                
+            {% endif %}
+
+        {% endfor %}
+        
+        {# Add Fallback Version Dropdown Here #}
+        <div class="settings-form-group">
+            <label for="scraping-{{ version }}-fallback_version" class="settings-title">Fallback Version:</label>
+            <select id="scraping-{{ version }}-fallback_version"
+                    name="Scraping.versions.{{ version }}.fallback_version"
+                    class="settings-input"
+                    data-section="Scraping"
+                    data-key="versions.{{ version }}.fallback_version">
+                <option value="None" {% if settings.Scraping.versions[version].get('fallback_version', 'None') == 'None' %}selected{% endif %}>None</option>
+                {% for v_name in version_names %}
+                    {% if v_name != version %} {# Don't allow falling back to self #}
+                        <option value="{{ v_name }}" {% if settings.Scraping.versions[version].get('fallback_version') == v_name %}selected{% endif %}>{{ v_name }}</option>
+                    {% endif %}
+                {% endfor %}
+            </select>
+            <p class="settings-description">Version to use if this one is blacklisted. Select 'None' to disable.</p>
+        </div>
+        
+        <div class="filter-section">
+            <h5>Filters</h5>
+            <button type="button" class="add-filter-btn" data-version-id="{{ version }}" data-filter-type="filter_in">Add Filter In</button>
+            <div class="filter-list" data-version="{{ version }}" data-filter-type="filter_in">
+                {% for filter in config.filter_in %}
+                <div class="filter-item">
+                    <input type="text" class="filter-term" value="{{ filter }}"
+                           data-section="Scraping"
+                           data-key="versions.{{ version }}.filter_in.{{ loop.index0 }}">
+                    <button type="button" class="remove-filter">Remove</button>
+                </div>
+                {% endfor %}
+            </div>
+            <button type="button" class="add-filter-btn" data-version-id="{{ version }}" data-filter-type="filter_out">Add Filter Out</button>
+            <div class="filter-list" data-version="{{ version }}" data-filter-type="filter_out">
+                {% for filter in config.filter_out %}
+                <div class="filter-item">
+                    <input type="text" class="filter-term" value="{{ filter }}"
+                           data-section="Scraping"
+                           data-key="versions.{{ version }}.filter_out.{{ loop.index0 }}">
+                    <button type="button" class="remove-filter">Remove</button>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="preferred-filter-section">
+            <h5>Preferred Filters</h5>
+            <button type="button" class="add-filter-btn" data-version-id="{{ version }}" data-filter-type="preferred_filter_in">Add Preferred Filter In</button>
+            <div class="filter-list" data-version="{{ version }}" data-filter-type="preferred_filter_in">
+                {% for filter, weight in config.preferred_filter_in %}
+                <div class="filter-item">
+                    <input type="text" class="filter-term" value="{{ filter }}"
+                           data-section="Scraping"
+                           data-key="versions.{{ version }}.preferred_filter_in.{{ loop.index0 }}.term">
+                    <input type="number" class="filter-weight" min="1" value="{{ weight }}"
+                           data-section="Scraping"
+                           data-key="versions.{{ version }}.preferred_filter_in.{{ loop.index0 }}.weight">
+                    <button type="button" class="remove-filter">Remove</button>
+                </div>
+                {% endfor %}
+            </div>
+            <button type="button" class="add-filter-btn" data-version-id="{{ version }}" data-filter-type="preferred_filter_out">Add Preferred Filter Out</button>
+            <div class="filter-list" data-version="{{ version }}" data-filter-type="preferred_filter_out">
+                {% for filter, weight in config.preferred_filter_out %}
+                <div class="filter-item">
+                    <input type="text" class="filter-term" value="{{ filter }}"
+                           data-section="Scraping"
+                           data-key="versions.{{ version }}.preferred_filter_out.{{ loop.index0 }}.term">
+                    <input type="number" class="filter-weight" min="1" value="{{ weight }}"
+                           data-section="Scraping"
+                           data-key="versions.{{ version }}.preferred_filter_out.{{ loop.index0 }}.weight">
+                    <button type="button" class="remove-filter">Remove</button>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+<!-- Reverse Parser Default Version Section -->
+<div class="settings-section settings-card default-version-container">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Reverse Parser</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="info-banner info-banner-blue" style="margin-bottom: 1rem;">
+            <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <div class="info-banner-content">
+                <strong>Default Version Assignment:</strong> This is the version that will be assigned when parsing releases if a version cannot be automatically identified from the release name or metadata.
+            </div>
+        </div>
+        <div class="settings-form-group">
+            <label for="default-version" class="settings-title">Default Version:</label>
+            <select id="default-version"
+                    name="Reverse Parser.default_version"
+                    class="settings-input"
+                    data-section="Reverse Parser"
+                    data-key="default_version">
+                <!-- Options will be dynamically populated -->
+            </select>
+        </div>
+    </div>
+</div>
+
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Other Scraping Settings</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-subsection">
+            <!-- Debug: environment_mode = {{ environment_mode }} -->
+            {% for key, value in settings_schema.Scraping.items() %}
+                {% if key not in ['versions', 'tab', 'upgrade_similarity_threshold', 'hybrid_mode', 'jackett_seeders_only', 'ultimate_sort_order', 'soft_max_size_gb', 'enable_upgrading_cleanup'] %}
+                    <!-- Debug: Processing key "{{ key }}" -->
+                    {% if environment_mode is not defined or environment_mode == 'full' or key not in ['uncached_content_handling', 'accept_uncached_within_hours'] %}
+                    <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'jackett_seeders_only' or key == 'ultimate_sort_order' or key == 'soft_max_size_gb' or key == 'enable_upgrading_cleanup' %}style="display: none !important;"{% endif %}>
+                        <label for="scraping-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
+                        {% if value.type == 'boolean' %}
+                            <input type="checkbox" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   {% if key == 'hybrid_mode' %}data-hybrid-mode="true"{% endif %}
+                                   {% if key == 'jackett_seeders_only' %}data-jackett-seeders-only="true"{% endif %}
+                                   {% if settings.get('Scraping', {}).get(key) %}checked{% endif %}>
+                        {% elif value.choices %}
+                            <select id="scraping-{{ key }}" name="Scraping.{{ key }}" class="settings-input"
+                                    data-section="Scraping" data-key="{{ key }}">
+                                {% if key == 'uncached_content_handling' %}
+                                    <option value="None" {% if settings.get('Scraping', {}).get(key) == 'None' and not settings.get('Scraping', {}).get('hybrid_mode', False) %}selected{% endif %}>None</option>
+                                    <option value="Hybrid" {% if settings.get('Scraping', {}).get('hybrid_mode', False) and settings.get('Scraping', {}).get(key) == 'None' %}selected{% endif %}>Hybrid</option>
+                                    <option value="Full" {% if settings.get('Scraping', {}).get(key) == 'Full' %}selected{% endif %}>Full</option>
+                                {% else %}
+                                    {% for choice in value.choices %}
+                                        <option value="{{ choice }}" {% if settings.get('Scraping', {}).get(key) == choice %}selected{% endif %}>{{ choice }}</option>
+                                    {% endfor %}
+                                {% endif %}
+                            </select>
+                            {% if key == 'uncached_content_handling' %}
+                                <p class="settings-description">
+                                    <strong>None:</strong> Only take the best Cached result<br>
+                                    <strong>Hybrid:</strong> Take the first best Cached result, and if no Cached results found, take the best Uncached result<br>
+                                    <strong>Full:</strong> Take the best result, whether it's Cached or Uncached
+                                </p>
+                            {% endif %}
+                        {% elif value.type == 'integer' and key in ['scraper_timeout'] %}
+                            <input type="number" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   value="{{ settings.get('Scraping', {}).get(key, value.default) }}" class="settings-input"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   min="{{ value.min }}" step="1">
+                            <p class="settings-description">{{ value.description }}</p>
+                        {% elif value.type == 'integer' and key == 'delayed_upgrade_scrape_days' %}
+                            <input type="number" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   value="{{ settings.get('Scraping', {}).get(key, value.default) }}" class="settings-input"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   min="{{ value.min }}" step="1" placeholder="0">
+                        {% else %}
+                            {% set input_field_type = value.type %}
+                            {% if value.type == 'float' or value.type == 'integer' %}
+                                {% set input_field_type = 'number' %}
+                            {% endif %}
+                            <input type="{{ input_field_type }}" id="scraping-{{ key }}" name="Scraping.{{ key }}"
+                                   value="{{ settings.get('Scraping', {}).get(key, value.default) }}" class="settings-input"
+                                   data-section="Scraping" data-key="{{ key }}"
+                                   {% if value.sensitive %}type="password"{% endif %}
+                                   {% if value.type == 'float' %}{% if value.min is defined %}min="{{ value.min }}"{% endif %} {% if value.max is defined %}max="{{ value.max }}"{% endif %} step="{{ value.step | default('any') }}"{% endif %} {# Use 'any' for float steps #}
+                                   {% if value.type == 'integer' and key not in ['scraper_timeout'] %}{% if value.min is defined %}min="{{ value.min }}"{% endif %} {% if value.max is defined %}max="{{ value.max }}"{% endif %} step="1"{% endif %}>
+                        {% endif %}
+                        {% if value.description %}
+                            {% if value.description is string %}
+                                {% if key != 'uncached_content_handling' and key not in ['scraper_timeout'] %}
+                                    <p class="settings-description">{{ value.description }}</p>
+                                {% endif %}
+                            {% else %}
+                                {% if key != 'uncached_content_handling' %}
+                                    <div class="settings-description">
+                                        {% for item in value.description %}
+                                            {% if loop.first %}
+                                                <p>{{ item }}</p>
+                                                <ul>
+                                            {% elif loop.last %}
+                                                <li>{{ item }}</li>
+                                                </ul>
+                                            {% else %}
+                                                <li>{{ item }}</li>
+                                            {% endif %}
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+                            {% endif %}
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+        </div>
+    </div>
+</div>

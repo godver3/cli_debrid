@@ -1,0 +1,894 @@
+/* Main container */
+.statistics-wrapper {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    align-items: center;
+}
+
+.stats-container {
+    width: 80%;
+}
+
+/* Toggle container */
+.toggle-container {
+    display: flex;
+    align-items: center;
+    /* width: 100%; */
+    padding: 10px 5%;
+    margin-bottom: 15px;
+    font-size: 0.9em;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 15px;
+    background-color: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+}
+
+.toggle-item {
+    display: flex;
+    align-items: center;
+    margin-right: 0;
+    padding: 5px 10px;
+    border-radius: 12px;
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.toggle-label {
+    margin-right: 8px;
+    color: #e17c52;
+    font-size: 0.95em;
+    white-space: nowrap;
+}
+
+/* Theme selector styles */
+.theme-selector {
+    background: rgba(255, 255, 255, 0.03);
+    color: #e0e0e0;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 0.9em;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.theme-selector:hover {
+    background: #1a1a1a;
+    border-color: rgba(255, 107, 53, 0.3);
+}
+
+.theme-selector:focus {
+    border-color: rgba(255, 107, 53, 0.5);
+    box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+}
+
+/* Toggle switch styles */
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 22px;
+    margin-left: 0;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(255, 255, 255, 0.08);
+    transition: .3s;
+    border-radius: 22px;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+    background-color: #fff;
+    transition: .3s;
+    border-radius: 50%;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+
+input:checked + .toggle-slider {
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+}
+
+input:checked + .toggle-slider:before {
+    transform: translateX(22px);
+}
+
+/* Collection stats - Grid layout with separate boxes */
+.stats-box.collection-stats {
+    margin-bottom: 10px;
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+
+.stats-box.collection-stats .stat-items {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1.5rem;
+}
+
+.stats-box.collection-stats .stat-item {
+    background-color: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 1.5rem;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.stats-box.collection-stats .stat-item:hover {
+    background-color: rgba(255, 255, 255, 0.04);
+    border-color: rgba(255, 255, 255, 0.1);
+    transform: translateY(-2px);
+}
+
+.stats-box.collection-stats .stat-item p {
+    font-size: 1.75rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.stats-box.collection-stats .stat-item p::before {
+    content: attr(data-label);
+    display: block;
+    color: #888;
+    font-weight: 600;
+    font-size: 0.5em;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+    -webkit-text-fill-color: #888;
+}
+
+/* Top stats grid */
+.top-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 15px;
+    margin-bottom: 10px;
+}
+
+/* Common stats box styles */
+.stats-box {
+    background-color: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 1.5rem;
+}
+
+.stats-box h3 {
+    color: #fff;
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 1.2em;
+    font-weight: 700;
+    position: relative;
+    padding-left: 16px;
+}
+
+.stats-box h3::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    border-radius: 2px;
+}
+
+/* List styles for aired/airing/upcoming */
+.stats-box.recently-aired ul,
+.stats-box.airing-soon ul,
+.stats-box.upcoming-releases ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.stats-box.recently-aired li,
+.stats-box.airing-soon li,
+.stats-box.upcoming-releases li {
+    display: flex;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 8px;
+    position: relative;
+    transition: all 0.2s ease;
+}
+
+.stats-box.recently-aired li:hover,
+.stats-box.airing-soon li:hover,
+.stats-box.upcoming-releases li:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 107, 53, 0.3);
+    transform: translateX(4px);
+}
+
+.stats-box.recently-aired li:last-child,
+.stats-box.airing-soon li:last-child,
+.stats-box.upcoming-releases li:last-child {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.stats-box.recently-aired .show-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.show-info.clickable,
+.clickable {
+    cursor: pointer;
+}
+
+.stats-box.airing-soon li,
+.stats-box.upcoming-releases li
+    {
+        flex-direction: column;
+        align-items: left;
+    }
+
+
+.stats-box.recently-aired .show-title,
+.stats-box.airing-soon .show-title,
+.stats-box.upcoming-releases .titles {
+    color: #e0e0e0;
+    text-align: left;
+    font-weight: 500;
+    font-size: 0.95rem;
+    flex: 1;
+}
+.stats-box.recently-aired .air-time,
+.stats-box.airing-soon .air-time,
+.stats-box.upcoming-releases .release-date {
+    color: #888;
+    white-space: nowrap;
+    font-size: 0.85rem;
+}
+
+.rescrape-btn {
+    background: none;
+    border: none;
+    color: currentColor;
+    cursor: pointer;
+    padding: 0;
+    margin-left: 10px;
+    transition: all 0.3s ease;
+    width: 20px;
+    height: 20px;
+    position: absolute;
+    right: 12px;
+    opacity: 0.4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.rescrape-btn i {
+    font-size: 16px;
+    transition: all 0.3s ease;
+}
+
+.stats-box.recently-aired li:hover .rescrape-btn,
+.stats-box.airing-soon li:hover .rescrape-btn,
+.stats-box.upcoming-releases li:hover .rescrape-btn {
+    opacity: 1;
+}
+
+.stats-box.recently-aired li:hover .rescrape-btn i,
+.stats-box.airing-soon li:hover .rescrape-btn i,
+.stats-box.upcoming-releases li:hover .rescrape-btn i {
+    transform: rotate(180deg);
+}
+
+.rescrape-btn:hover {
+    background-color: rgba(255, 107, 53, 0.15);
+}
+
+.rescrape-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Card styles */
+.cards-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, 190px);
+    gap: 15px;
+    width: 100%;
+    justify-content: center;
+}
+
+.card {
+    display: flex;
+    /* flex-direction: column; */
+    align-items: center;
+    /* padding: 12px; */
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 107, 53, 1);
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+
+.card:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 107, 53, 0.2);
+}
+
+.card:last-child {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+/* Poster styles */
+.poster-container {
+    width: 200px;
+    aspect-ratio: 2/3;
+    position: relative;
+    overflow: hidden;
+    border-radius: 8px;
+    margin: 0 auto;
+}
+
+.poster {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.poster-hover {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.95);
+    color: white;
+    padding: 15px;
+    opacity: 0;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.poster-container:hover .poster-hover {
+    opacity: 1;
+}
+span.upgrade-arrow {
+    font-weight: 900;
+    color: #e17c52;
+}
+
+
+.poster-hover .title {
+    color: #ff6b35;
+    font-size: 1.1em;
+    font-weight: 500;
+    margin-bottom: 8px;
+}
+
+.poster-hover .metadata {
+    color: #e0e0e0;
+    font-size: 0.9em;
+    margin-bottom: 4px;
+}
+
+.poster-hover .filename {
+    color: #888;
+    font-family: monospace;
+    font-size: 0.8em;
+    word-break: break-all;
+}
+
+/* Recently added sections */
+.recently-added {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    width: 100%;
+}
+
+.recently-added-section-top,
+.recently-added-section-bottom,
+.recently-upgraded-section {
+    width: 100%;
+    min-width: 0;
+}
+
+.recently-upgraded-section {
+    margin-bottom: 20px;
+}
+
+/* File details */
+.file-details {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.file-details .title {
+    color: #e17c52;
+    font-weight: 500;
+}
+
+.file-details .metadata {
+    color: #e0e0e0;
+    font-size: 0.85rem;
+}
+
+.file-details .filename {
+    color: #888;
+    font-family: monospace;
+    font-size: 0.85em;
+    letter-spacing: 0.3px;
+}
+
+/* Add styling for From/To labels */
+.file-details .filename::before {
+    color: #fff;
+    font-family: inherit;
+}
+
+.file-details .filename[data-label]::before {
+    content: attr(data-label);
+    color: white;
+    margin-right: 4px;
+    font-family: inherit;
+}
+
+.file-details .filename {
+    color: #808080;  /* Keep the filename text gray */
+    display: block;
+    margin-top: 4px;
+    font-family: monospace;
+}
+
+/* Recently Upgraded Section - Special formatting for Tangerine theme */
+/* Note: The combining of From/To filenames is handled by JavaScript in tangerine_filename_formatter.js */
+.recently-upgraded-section .file-details {
+    gap: 4px;
+}
+
+/* Hide the From/To labels in upgraded section */
+body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[data-label="From:"]::before,
+body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[data-label="To:"]::before {
+    display: none !important;
+}
+
+/* Compact view modifications */
+.compact-view .cards-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.compact-view .card {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding: 12px 16px;
+    margin: 0;
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 8px;
+}
+
+.compact-view .card:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 107, 53, 0.2);
+}
+
+.compact-view .card:last-child {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.compact-view .poster-container {
+    display: none;
+}
+
+.compact-view .stats-box.recently-aired li,
+.compact-view .stats-box.airing-soon li,
+.compact-view .stats-box.upcoming-releases li {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.compact-view .stats-box.airing-soon .air-time,
+.compact-view .stats-box.upcoming-releases .release-date {
+    margin-left: auto;
+    text-align: right;
+}
+
+.compact-view .file-details {
+    width: 100%;
+    padding-right: 10px;
+}
+
+.compact-view .file-details .title {
+    font-size: 1em;
+    margin-bottom: 4px;
+    word-break: break-word;
+}
+
+.compact-view .file-details .metadata,
+.compact-view .file-details .filename {
+    font-size: 0.85em;
+    word-break: break-word;
+}
+
+@media (max-width: 1280px) {
+    .stats-container {
+        width: 90%;
+    }
+}
+
+/* Bottom sections grid layout for compact view (desktop only) */
+@media screen and (min-width: 769px) {
+    .statistics-wrapper.compact-view .recently-added {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 15px;
+        width: 100%;
+    }
+
+    .statistics-wrapper.compact-view .recently-added-section-top,
+    .statistics-wrapper.compact-view .recently-added-section-bottom,
+    .statistics-wrapper.compact-view .recently-upgraded-section {
+        margin: 0;
+        height: auto;
+    }
+}
+
+/* Scrollable containers for both mobile and desktop */
+.statistics-wrapper.compact-view .cards-container {
+    overflow-y: visible;
+}
+
+.tmdb-info {
+    margin-top: 10px;
+    padding: 10px;
+    color: #ff4444;
+    font-size: 0.9em;
+    border-radius: 8px;
+    text-align: center;
+    background-color: rgba(255, 68, 68, 0.1);
+    border: 1px solid rgba(255, 68, 68, 0.2);
+}
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+    #compact_toggle {
+        display: none;
+    }
+    .stats-box.collection-stats .stat-items {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(183px, 1fr));
+        gap: 0.5rem;
+        /* display: grid !important; */
+    }
+
+    .stats-box.collection-stats .stat-item {
+        padding: 0.5rem;
+    }
+    .top-stats {
+        grid-template-columns: 1fr;
+    }
+
+    .recently-added {
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .stats-container {
+        width: 95%;
+    }
+
+    /* Force compact view styles on mobile */
+    .cards-container {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 1 !important;
+        width: 100% !important;
+    }
+
+    .card {
+        flex-direction: row !important;
+        justify-content: flex-start !important;
+        align-items: flex-start !important;
+        width: 100% !important;
+        padding: 12px 16px !important;
+        margin: 0 !important;
+        background-color: rgba(255, 255, 255, 0.03) !important;
+        border: 1px solid rgba(255, 255, 255, 0.04) !important;
+        border-radius: 8px !important;
+        min-height: 50px !important;
+        overflow: visible !important;
+    }
+
+    .poster-container {
+        display: none !important;
+    }
+
+    .file-details {
+        display: flex !important;
+        flex-direction: column !important;
+        width: 100% !important;
+        padding-right: 10px !important;
+        overflow: visible !important;
+    }
+
+    .file-details .title {
+        font-size: 1em !important;
+        margin-bottom: 4px !important;
+        word-break: break-word !important;
+        display: block !important;
+    }
+
+    .file-details .metadata,
+    .file-details .filename {
+        font-size: 0.85em !important;
+        word-break: break-word !important;
+        /* display: block !important; */
+        margin-bottom: 2px !important;
+    }
+
+    .toggle-container {
+        padding: 8px 4%;
+        gap: 10px;
+        margin-bottom: 10px;
+    }
+
+    .toggle-item {
+        padding: 4px 8px;
+        flex: 0 1 auto;
+    }
+
+    .toggle-label {
+        font-size: 0.9em;
+    }
+
+    .toggle-switch {
+        width: 40px;
+        height: 20px;
+    }
+
+    .toggle-slider:before {
+        height: 14px;
+        width: 14px;
+    }
+
+    input:checked + .toggle-slider:before {
+        transform: translateX(20px);
+    }
+
+    .stats-box.airing-soon .air-time,
+    .stats-box.upcoming-releases .release-date {
+        margin-left: 0px !important;
+        min-width: 0px !important;
+        text-align: left !important;
+    }
+
+    /* Stats Box Styles */
+    .stats-box.recently-aired .air-time {
+        text-align: left !important;
+        /* margin-right: 21px !important; */
+        margin-top: auto !important;
+        margin-bottom: auto !important;
+    }
+
+    .stats-box.recently-aired .show-title {
+        max-width: 180px !important;
+    }
+
+    .stats-box.airing-soon .show-title,
+    .stats-box.upcoming-releases .titles 
+    {
+        max-width: 270px !important;
+    }
+
+    .modal-content {
+        margin: 30% auto;
+        width: 90%;
+    }
+}
+
+/* Also add styles for the poster hover view */
+.poster-hover .filename[data-label]::before {
+    content: attr(data-label);
+    color: white;
+    margin-right: 4px;
+    font-family: inherit;
+}
+
+.poster-hover .filename {
+    color: #808080;
+    font-family: monospace;
+    font-size: 0.8em;
+    word-break: break-all;
+    display: block;
+    margin-top: 4px;
+}
+
+/* Recently Upgraded Section - Poster hover formatting */
+/* Note: The combining of From/To filenames is handled by JavaScript in tangerine_filename_formatter.js */
+body[data-theme="tangerine"] .recently-upgraded-section .poster-hover .filename[data-label="From:"]::before,
+body[data-theme="tangerine"] .recently-upgraded-section .poster-hover .filename[data-label="To:"]::before {
+    display: none !important;
+}
+
+
+/* Ensure the rescrape button remains clickable and doesn't trigger the modal */
+.rescrape-btn {
+    position: relative;
+    z-index: 5;
+}
+.recrape-icon::before {
+  font: var(--fa-font-solid); /* Automatically sets family and weight to 900 */
+  content: "\f021";                 /* Unicode for fa-arrows-rotate */
+}
+
+/* Modal styles for external links */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+}
+
+#external-links-modal-content {
+    background-color: rgba(255, 255, 255, 0.02);
+    backdrop-filter: blur(10px);
+    margin: 15% auto;
+    padding: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    width: 300px !important;
+    max-width: 80%;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.close-modal {
+    color: #888;
+    float: right;
+    margin-top: -18px;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    top: 0;
+    align-self: self-end;
+    transition: color 0.2s ease;
+}
+
+.close-modal:hover {
+    color: #ff6b35;
+}
+
+.external-links {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-top: 20px;
+}
+
+.external-link {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 15px;
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    text-decoration: none;
+    color: #e0e0e0;
+    transition: all 0.2s ease;
+}
+
+.external-link:hover {
+    background-color: rgba(255, 107, 53, 0.15);
+    border-color: rgba(255, 107, 53, 0.3);
+    color: #ff6b35;
+}
+
+.provider-icon {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
+}
+
+/* ========================================
+   Additional inline CSS from statistics.html
+   ======================================== */
+.stat-item p[data-label="Active Downloads"].warning,
+.stat-item p[data-label="Daily Usage"].warning {
+    color: #ffa500; /* Orange/Yellow for warning */
+}
+.stat-item p[data-label="Active Downloads"].critical,
+.stat-item p[data-label="Daily Usage"].critical {
+    color: #e17c52; /* Red for critical */
+}
+.stats-box.recently-aired .show-title.uncollected {
+    color: #e17c52; /* Red for uncollected */
+}
+.stats-box.recently-aired .show-title.checking_upgrade {
+    color: #00aeff; /* Orange/Yellow for checking upgrade */
+}
+.modal-content {
+    background-color: rgba(255, 255, 255, 0.02) !important;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+.toggle-container .toggle-item .refresh-btn { /* Style for the specific size refresh */
+    background: none;
+    border: none;
+    color: #888; /* Match icon color */
+    cursor: pointer;
+    font-size: 1em; /* Match icon size */
+    padding: 0 3px;
+    margin-left: 3px;
+    vertical-align: middle;
+}
+.toggle-container .toggle-item .refresh-btn:hover {
+    color: #fff;
+}
+.toggle-container .toggle-item .refresh-btn i.fa-spin { /* Style for spinning icon */
+    /* Optional: add animation if not default */
+}
+/* Subscription days critical color */
+.toggle-container .toggle-item #subscription-days-toggle.critical {
+    color: #ff4444;
+}
+#library-size-display {
+    margin-right: 2px; /* Add a little space before the button */
+}
+/* General page refresh button style (if keeping it) */
+ .page-refresh-btn {
+    background: none;
+    border: none;
+    color: #ccc;
+    cursor: pointer;
+    font-size: 1.1em;
+    padding: 0 5px;
+    margin-left: 5px;
+    vertical-align: middle;
+}
+.page-refresh-btn:hover {
+    color: #fff;
+}

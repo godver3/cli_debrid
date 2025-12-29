@@ -441,7 +441,7 @@ export function updateSettings() {
     }
 
     // Remove any scrapers that are not actual scrapers
-    const validScraperTypes = ['Zilean', 'MediaFusion', 'Jackett', 'Torrentio', 'Nyaa', 'OldNyaa', 'Prowlarr'];
+    const validScraperTypes = ['Zilean', 'MediaFusion', 'AIOStreams', 'Jackett', 'Torrentio', 'Nyaa', 'OldNyaa', 'Prowlarr'];
     if (settingsData['Scrapers'] && typeof settingsData['Scrapers'] === 'object') {
         Object.keys(settingsData['Scrapers']).forEach(key => {
             if (settingsData['Scrapers'][key] && settingsData['Scrapers'][key].type && !validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
@@ -1149,6 +1149,11 @@ export function updateSettings() {
         
     console.log("Updated settingsData:", JSON.stringify(settingsData, null, 2));
 
+    // Show loading overlay (hide close button for settings save)
+    if (window.Loading) {
+        window.Loading.show('Saving settings, please wait...', 'This may take a few seconds while the program restarts.', true);
+    }
+
     return fetch('/settings/api/settings', {
         method: 'POST',
         headers: {
@@ -1159,6 +1164,11 @@ export function updateSettings() {
     .then(response => response.json())
     .then(data => {
         console.log("Server response:", data);
+        // Hide loading overlay
+        if (window.Loading) {
+            window.Loading.hide();
+        }
+
         if (data.status === 'success') {
             showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: 'Settings saved successfully.<br>Program runner restarted if running.'});
         } else {
@@ -1167,6 +1177,10 @@ export function updateSettings() {
     })
     .catch(error => {
         console.error('Error:', error);
+        // Hide loading overlay on error
+        if (window.Loading) {
+            window.Loading.hide();
+        }
         showPopup({type: POPUP_TYPES.ERROR, title: 'Error', message: 'Error saving settings:' + data.message });
         throw error;
     });

@@ -136,3 +136,320 @@
     font-style: italic;
     margin-left: 5px;
 }
+/* ========================================
+   Inline CSS from queues.html
+   ======================================== */
+    .queue-container { 
+        display: flex; 
+        flex-direction: column;
+    }
+
+    .queue { 
+        margin: 10px 0; 
+        background: #444; 
+        padding: 15px; 
+        border-radius: 5px;
+    }
+
+    .queue-title { 
+        font-size: 18px; 
+        font-weight: bold; 
+        cursor: pointer; 
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .queue-title:hover { 
+        color: #007bff; 
+    }
+
+    /* Disable cursor pointer and hover effects for count-only queues */
+    .queue[data-queue-name="Collected"] .queue-title,
+    .queue[data-queue-name="Unreleased"] .queue-title,
+    .queue[data-queue-name="Blacklisted"] .queue-title {
+        cursor: default;
+    }
+
+    .queue[data-queue-name="Collected"] .queue-title:hover,
+    .queue[data-queue-name="Unreleased"] .queue-title:hover,
+    .queue[data-queue-name="Blacklisted"] .queue-title:hover {
+        color: inherit;
+    }
+
+    .queue-count {
+        margin-left: auto;
+    }
+
+    .queue-items { 
+        display: none; 
+        margin-top: 10px; 
+    }
+
+    .item { 
+        margin-left: 20px; 
+        padding: 5px 0;
+        word-wrap: break-word;
+        word-break: break-all;
+        overflow-wrap: break-word;
+        max-width: 100%;
+        cursor: pointer;
+        position: relative;
+        transition: background-color 0.2s;
+    }
+
+    .item.copied {
+        animation: flash-copied 0.5s;
+    }
+
+    @keyframes flash-copied {
+        0% { background-color: #4CAF50; }
+        100% { background-color: transparent; }
+    }
+
+    .copy-tooltip {
+        position: absolute;
+        background: #333;
+        color: white;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.2s;
+        z-index: 1000;
+    }
+
+    .item-content {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .item-detail {
+        display: block;
+        padding-left: 20px;
+    }
+
+    .filename-toggle {
+        cursor: pointer;
+        margin: 0 5px;
+        font-size: 1em;
+        transition: transform 0.3s ease;
+    }
+
+    .filename-toggle.active i {
+        transform: rotate(45deg);
+    }
+
+    .filename-content {
+        display: none;
+    }
+
+    .item-progress {
+        margin-left: 10px;
+        display: inline-flex;
+        align-items: center;
+        min-width: 200px;
+        width: calc(100% - 20px);
+    }
+
+    .progress {
+        flex-grow: 1;
+        height: 20px;
+        background-color: #444;
+        border-radius: 4px;
+        overflow: hidden;
+        position: relative;
+        width: 100%;
+    }
+
+    .progress-bar {
+        height: 100%;
+        background-color: #4CAF50;
+        transition: width 0.3s ease;
+        min-width: 24px;
+    }
+
+    .progress-text {
+        position: absolute;
+        left: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: white;
+        white-space: nowrap;
+        z-index: 1;
+    }
+
+    .group-progress {
+        margin-top: 10px;
+        margin-left: 20px;
+    }
+
+    .checking-group h5 {
+        color: #aaa;
+        margin-bottom: 15px;
+        border-bottom: 1px solid #666;
+        padding-bottom: 5px;
+    }
+
+    #loading-indicator {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        text-align: center;
+    }
+
+    #loading-indicator p {
+        margin-top: 10px;
+        margin-bottom: 0;
+    }
+    
+    .container {
+        position: relative;
+        min-height: 200px;  /* Give some minimum height for the loading indicator to center in */
+    }
+
+    .pagination-controls {
+        margin-top: 10px;
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+    }
+    
+    .pagination-controls button {
+        padding: 5px 10px;
+        background: #444;
+        border: none;
+        border-radius: 3px;
+        color: white;
+        cursor: pointer;
+    }
+    
+    .pagination-controls button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    
+    .pagination-info {
+        margin: 0 10px;
+        align-self: center;
+    }
+
+
+    .hidden-items-summary {
+        margin-top: 20px;
+        padding: 15px;
+        background: #444;
+        border-radius: 5px;
+    }
+
+    .hidden-items-summary h5 {
+        color: #aaa;
+        margin-bottom: 15px;
+        border-bottom: 1px solid #666;
+        padding-bottom: 5px;
+    }
+
+    .hidden-items-summary ul {
+        list-style: none;
+        padding-left: 0;
+        margin-bottom: 0;
+    }
+
+    .hidden-items-summary li {
+        color: #ddd;
+        margin: 5px 0;
+    }
+
+    .parse-error {
+        font-family: monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+    
+    .error-details {
+        margin-top: 10px;
+        padding: 10px;
+        background: #2d2d2d;
+        border-radius: 4px;
+    }
+    
+    .error-details pre {
+        margin: 10px 0;
+        padding: 10px;
+        background: #1d1d1d;
+        border-radius: 4px;
+        overflow-x: auto;
+    }
+
+    .processing-indicator {
+        margin-left: 10px;
+        color: #007bff; /* Or any color you prefer */
+        display: inline-block; /* Keep it inline */
+    }
+
+    .processing-indicator .fa-spin {
+        animation-duration: 1.5s; /* Adjust spin speed if needed */
+    }
+
+    /* Style for item currently being processed */
+    .item.is-processing {
+        /* Optional: Add a subtle background or border */
+         background-color: rgba(0, 123, 255, 0.1); /* Light blue background */
+         /* border-left: 3px solid #007bff; */
+    }
+
+    /* Style for force priority items */
+    .item.force-priority-item {
+        border-left: 3px solid #ffc107; /* Amber border */
+        padding-left: 17px; /* Adjust padding to account for border */
+    }
+
+    /* Subtle connection status notification */
+    .connection-status {
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 12px;
+        z-index: 1000;
+        max-width: 300px;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+        pointer-events: none;
+    }
+
+    .connection-status.show {
+        opacity: 1;
+    }
+
+    .connection-status.reconnecting {
+        background-color: #fff3cd;
+        color: #856404;
+        border: 1px solid #ffeaa7;
+    }
+
+    .connection-status.error {
+        background-color: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+    }
+
+    .connection-status.success {
+        background-color: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+    }
+
+    /* Processing stats styling */
+    .processing-stats {
+        background: #444;
+        padding: 10px;
+        border-radius: 5px;
+        color: #ddd;
+        font-size: 14px;
+    }
+

@@ -1,7 +1,21 @@
 {% extends "base.html" %}
+
+{% block head %}
+<script>
+    // Dynamically load the correct CSS based on theme cookie
+    (function() {
+        const theme = document.cookie.split('; ').find(row => row.startsWith('selectedTheme='))?.split('=')[1] || 'classic';
+        const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_database.css' : 'css/database.css';
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        // Add cache-busting parameter based on theme to force reload when theme changes
+        link.href = '{{ url_for("static", filename="") }}' + cssFile + '?v=' + theme + '_' + Date.now();
+        document.head.appendChild(link);
+    })();
+</script>
+{% endblock %}
 {% block title %}Database{% endblock %}
 {% block content %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/database.css') }}">
 <div class="stats-panel">
     <button class="stats-toggle" title="Toggle Statistics">
         <i class="fas fa-chart-bar"></i>

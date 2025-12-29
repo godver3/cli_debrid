@@ -1,87 +1,10 @@
 {% extends "base.html" %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/inline.css') }}">
+{% endblock %}
 {% block title %}Manage Users{% endblock %}
 {% block content %}
-<style>
-    /* Manage Users styles */
-    .manage-users {
-        max-width: 800px;
-        margin: 0 auto;
-        padding: 20px;
-    }
-
-    .user-list {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 20px;
-    }
-
-    .user-list th, .user-list td {
-        padding: 10px;
-        border: 1px solid #555;
-        text-align: left;
-    }
-
-    .user-list th {
-        background-color: #2a2a2a;
-        color: #f4f4f4;
-    }
-
-    .user-list tr:nth-child(even) {
-        background-color: #333;
-    }
-
-    .add-user-form {
-        margin-top: 30px;
-        background-color: #2a2a2a;
-        padding: 20px;
-        border-radius: 5px;
-    }
-
-    .add-user-form h3 {
-        margin-top: 0;
-        color: #f4f4f4;
-    }
-
-    .add-user-form input[type="text"],
-    .add-user-form input[type="password"],
-    .add-user-form select {
-        width: 100%;
-        padding: 10px;
-        margin-bottom: 15px;
-        border: 1px solid #555;
-        border-radius: 3px;
-        background-color: #333;
-        color: #f4f4f4;
-        font-size: 16px;
-        box-sizing: border-box;
-    }
-
-    .add-user-form input[type="submit"] {
-        width: 100%;
-        padding: 10px;
-        border: none;
-        border-radius: 3px;
-        background-color: #4CAF50;
-        color: white;
-        cursor: pointer;
-        font-size: 16px;
-        transition: background-color 0.3s;
-    }
-
-    .delete-button {
-        background-color: #f44336;
-        color: white;
-        padding: 5px 10px;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-    }
-
-    .add-user-form input[type="submit"]:hover {
-        background-color: #45a049;
-    }
-</style>
-
 <div class="manage-users">
     <h2>Manage Users</h2>
     {% with messages = get_flashed_messages(with_categories=true) %}

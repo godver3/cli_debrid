@@ -283,3 +283,112 @@ export function showPopup(options) {
 function capitalizeFirstLetter(string) {
     return string.charAt(0).toUpperCase() + string.slice(1);
 }
+
+// Loading spinner popup
+let loadingPopup = null;
+
+export function showLoading(message = 'Loading...') {
+    // Remove any existing loading popup
+    if (loadingPopup) {
+        loadingPopup.remove();
+    }
+
+    loadingPopup = document.createElement('div');
+    loadingPopup.className = 'universal-popup loading-popup';
+
+    loadingPopup.innerHTML = `
+        <div class="popup-content loading">
+            <div class="loading-spinner"></div>
+            <p>${message}</p>
+        </div>
+    `;
+
+    document.body.appendChild(loadingPopup);
+
+    // Add loading spinner styles
+    const style = document.createElement('style');
+    style.id = 'loading-popup-style';
+    style.textContent = `
+        .loading-popup {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1001;
+        }
+        .loading-popup .popup-content {
+            background-color: #2a2a2a;
+            padding: 35px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            max-width: 400px;
+            color: #f4f4f4;
+            text-align: center;
+        }
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            margin: 0 auto 20px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #ff6b35;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .loading-popup .popup-content p {
+            margin: 0;
+            font-size: 1.1em;
+            color: #f4f4f4;
+        }
+
+        /* Tangerine theme overrides */
+        body[data-theme="tangerine"] .loading-popup {
+            background-color: rgba(0, 0, 0, 0.85) !important;
+            backdrop-filter: blur(8px);
+        }
+        body[data-theme="tangerine"] .loading-popup .popup-content {
+            background: linear-gradient(145deg, rgba(30, 30, 30, 0.98), rgba(20, 20, 20, 0.98)) !important;
+            border: 1px solid rgba(255, 107, 53, 0.3) !important;
+            border-radius: 16px !important;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 107, 53, 0.1) !important;
+            padding: 2.5rem !important;
+        }
+        body[data-theme="tangerine"] .loading-spinner {
+            border: 4px solid rgba(255, 107, 53, 0.2) !important;
+            border-top: 4px solid #ff6b35 !important;
+            width: 60px;
+            height: 60px;
+        }
+        body[data-theme="tangerine"] .loading-popup .popup-content p {
+            color: rgba(255, 255, 255, 0.9) !important;
+            font-size: 1.1rem !important;
+            font-weight: 500 !important;
+        }
+    `;
+    document.head.appendChild(style);
+
+    return loadingPopup;
+}
+
+export function hideLoading() {
+    if (loadingPopup) {
+        loadingPopup.remove();
+        loadingPopup = null;
+    }
+    const style = document.getElementById('loading-popup-style');
+    if (style) {
+        style.remove();
+    }
+}
+
+// Make functions available globally
+window.showLoading = showLoading;
+window.hideLoading = hideLoading;
