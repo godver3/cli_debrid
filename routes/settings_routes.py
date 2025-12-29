@@ -1191,7 +1191,8 @@ def index():
         current_app.logger.info(f"Settings route - All cookies: {dict(request.cookies)}")
         current_app.logger.info(f"Settings route - Theme cookie: {theme}, Template: {template_name}")
 
-        return render_template(template_name,
+        # Create response with template
+        response = current_app.make_response(render_template(template_name,
                                settings=config,
                                notification_settings=config['Notifications'],
                                scraper_types=scraper_types,
@@ -1202,7 +1203,19 @@ def index():
                                settings_schema=SETTINGS_SCHEMA,
                                is_windows=is_windows,
                                allow_windows_symlinks=allow_windows_symlinks_value,
-                               environment_mode=environment_mode)
+                               environment_mode=environment_mode))
+
+        # Disable caching for settings page to ensure fresh data
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+
+        # Disable Flask-Compress for this response by removing Accept-Encoding handling
+        # This tells Flask-Compress to skip compression for this specific response
+        if 'Content-Encoding' not in response.headers:
+            response.headers['Content-Length'] = str(len(response.get_data()))
+
+        return response
     except Exception as e:
         current_app.logger.error(f"Error in settings route: {str(e)}")
         current_app.logger.error(traceback.format_exc())
