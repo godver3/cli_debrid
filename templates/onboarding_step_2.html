@@ -164,6 +164,7 @@
         </div>
         <select id="debrid_provider" name="debrid_provider" required class="onboarding-input">
             <option value="RealDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'RealDebrid' %}selected{% endif %}>RealDebrid</option>
+            <option value="AllDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'AllDebrid' %}selected{% endif %}>AllDebrid</option>
         </select>
 
         <label for="debrid_api_key" class="onboarding-label">Debrid API Key:</label>
