@@ -56,6 +56,7 @@ class AllDebridProvider(DebridProvider):
         self._cached_torrent_ids = {}  # Store torrent IDs for cached content
         self._cached_torrent_titles = {}  # Store torrent titles for cached content
         self._all_torrent_ids = {}  # Store all torrent IDs for tracking
+        self._upload_ready_status = {}  # Store 'ready' field from upload responses (torrent_id -> bool)
         # Only initialize phalanx cache if enabled
         self.phalanx_enabled = get_setting('UI Settings', 'enable_phalanx_db', default=False)
         self.phalanx_cache = PhalanxDBClassManager() if self.phalanx_enabled else None
@@ -270,6 +271,10 @@ class AllDebridProvider(DebridProvider):
                             logging.error(f"{log_prefix} Failed to update PhalanxDB: {str(e)}")
                     continue
 
+                # Get the 'ready' status that was stored during add_torrent
+                upload_indicated_ready = self._upload_ready_status.get(torrent_id, False)
+                logging.debug(f"{log_prefix} add_torrent returned: id={torrent_id}, stored ready={upload_indicated_ready}")
+
                 # Get torrent info
                 info = self.get_torrent_info(torrent_id)
                 if not info:
@@ -304,6 +309,18 @@ class AllDebridProvider(DebridProvider):
                 video_files = [f for f in files if is_video_file(f.get('path', '') or f.get('name', ''))]
                 logging.debug(f"{log_prefix} Found {len(files)} files, {len(video_files)} video files")
                 if not video_files:
+                    # If torrent is not ready (statusCode 0-3), files may not be available yet
+                    # In this case, we know it's not cached, so return False instead of None
+                    if status_code in [0, 1, 2, 3]:
+                        logging.debug(f"{log_prefix} No video files found but torrent is still processing (statusCode={status_code}), treating as uncached")
+                        # Remove the uncached torrent
+                        try:
+                            self.remove_torrent(torrent_id, "Torrent is not cached - removed after cache check")
+                        except Exception as e:
+                            logging.error(f"{log_prefix} Error removing uncached torrent: {str(e)}")
+                        results[hash_value] = False
+                        continue
+                    # If torrent is ready (statusCode 4) but no video files, it's an error case
                     logging.error(f"{log_prefix} No video files found in torrent")
                     self.update_status(torrent_id, TorrentStatus.ERROR)
                     try:
@@ -315,8 +332,10 @@ class AllDebridProvider(DebridProvider):
                     results[hash_value] = None
                     continue
 
-                # Status code 4 = Ready/Downloaded
-                is_cached = status_code == 4
+                # Use upload 'ready' field OR status code 4 = Ready/Downloaded
+                # The 'ready' field from upload response is authoritative for cache status
+                is_cached = upload_indicated_ready or status_code == 4
+                logging.debug(f"{log_prefix} Cache determination: upload_ready={upload_indicated_ready}, status_code={status_code}, is_cached={is_cached}")
 
                 # Check against DB using filenames before deciding on removal
                 is_in_db = False
@@ -488,7 +507,12 @@ class AllDebridProvider(DebridProvider):
             return []
 
     def add_torrent(self, magnet_link: Optional[str], temp_file_path: Optional[str] = None) -> Optional[str]:
-        """Add a torrent to AllDebrid"""
+        """Add a torrent to AllDebrid.
+
+        Returns:
+            The torrent ID if successful, None otherwise.
+            Also stores the 'ready' status from upload response in self._upload_ready_status[torrent_id].
+        """
         try:
             hash_value = None
 
@@ -529,9 +553,13 @@ class AllDebridProvider(DebridProvider):
                 if hash_value:
                     existing = self._find_existing_torrent(hash_value)
                     if existing:
-                        logging.info(f"Torrent already exists with ID {existing['id']}")
+                        existing_id = str(existing['id'])
+                        logging.info(f"Torrent already exists with ID {existing_id}")
                         self._cached_torrent_titles[hash_value] = existing.get('filename', '')
-                        return str(existing['id'])
+                        # Existing torrent - check if it's ready (statusCode 4)
+                        existing_ready = existing.get('statusCode', 0) == 4
+                        self._upload_ready_status[existing_id] = existing_ready
+                        return existing_id
 
                 # Add magnet link
                 data = {'magnets[]': magnet_link}
@@ -557,6 +585,9 @@ class AllDebridProvider(DebridProvider):
 
             item_info = items[0]
             torrent_id = str(item_info.get('id', ''))
+            # Capture the 'ready' field - indicates if torrent is already cached/instant
+            is_ready = item_info.get('ready', False)
+            logging.debug(f"Upload response - torrent_id: {torrent_id}, ready: {is_ready}")
 
             if not torrent_id:
                 logging.error("No torrent ID in response")
@@ -628,6 +659,9 @@ class AllDebridProvider(DebridProvider):
                     except Exception as track_err:
                         logging.error(f"Failed to record torrent addition: {str(track_err)}")
 
+                    # Store ready status: is_ready from upload response OR statusCode 4 means cached
+                    final_ready = is_ready or status_code == 4
+                    self._upload_ready_status[torrent_id] = final_ready
                     return torrent_id
 
                 # Still queued, wait
@@ -795,6 +829,19 @@ class AllDebridProvider(DebridProvider):
                 info['progress'] = 100
             else:
                 info['progress'] = (downloaded / size * 100) if size > 0 else 0
+
+            # Normalize status field to match Real-Debrid format expected by rest of codebase
+            # AllDebrid: 'Ready' (statusCode 4) -> 'downloaded'
+            # AllDebrid: 'Downloading'/'In queue' etc -> 'downloading'
+            # Also check _upload_ready_status in case the upload response indicated ready
+            # but the status API hasn't caught up yet
+            upload_indicated_ready = self._upload_ready_status.get(torrent_id, False)
+            if status_code == 4 or upload_indicated_ready:
+                info['status'] = 'downloaded'
+            elif status_code in [0, 1, 2, 3]:
+                info['status'] = 'downloading'
+            else:
+                info['status'] = 'error'
 
             return info
 
