@@ -87,7 +87,7 @@ def validate_debrid_api_key(api_key, provider="RealDebrid"):
     """Validate Debrid API key format and basic authentication."""
     if not api_key:
         return False, "API key is required"
-    
+
     if provider == "RealDebrid":
         try:
             # Make a test request to the user endpoint
@@ -96,7 +96,7 @@ def validate_debrid_api_key(api_key, provider="RealDebrid"):
                 headers={'Authorization': f'Bearer {api_key}'},
                 timeout=10
             )
-            
+
             if response.status_code == 200:
                 return True, "RealDebrid API key is valid"
             elif response.status_code == 401:
@@ -109,7 +109,35 @@ def validate_debrid_api_key(api_key, provider="RealDebrid"):
             return False, "Timeout while validating RealDebrid API key"
         except requests.exceptions.RequestException as e:
             return False, f"Error validating RealDebrid API key: {str(e)}"
-    
+
+    elif provider == "AllDebrid":
+        try:
+            # AllDebrid uses query parameter auth for the /user endpoint
+            response = requests.get(
+                f"https://api.alldebrid.com/v4/user?agent=cli_debrid&apikey={api_key}",
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('status') == 'success':
+                    return True, "AllDebrid API key is valid"
+                elif data.get('error', {}).get('code') == 'AUTH_BAD_APIKEY':
+                    return False, "Invalid AllDebrid API key"
+                else:
+                    error_msg = data.get('error', {}).get('message', 'Unknown error')
+                    return False, f"AllDebrid API error: {error_msg}"
+            elif response.status_code == 401:
+                return False, "Invalid AllDebrid API key"
+            elif response.status_code == 403:
+                return False, "Access denied - please check your AllDebrid API key"
+            else:
+                return False, f"AllDebrid API error (HTTP {response.status_code})"
+        except requests.exceptions.Timeout:
+            return False, "Timeout while validating AllDebrid API key"
+        except requests.exceptions.RequestException as e:
+            return False, f"Error validating AllDebrid API key: {str(e)}"
+
     return False, f"Unsupported debrid provider: {provider}"
 
 def validate_trakt_credentials(client_id, client_secret):

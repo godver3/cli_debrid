@@ -1,0 +1,3 @@
+from .client import AllDebridProvider
+
+__all__ = ['AllDebridProvider']
