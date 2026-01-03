@@ -148,7 +148,7 @@ class APITracker:
         self.current_url = None
         self._args = None
         self.rate_limiter = APIRateLimiter()
-        self.monitored_domains = {'api.real-debrid.com', 'api.trakt.tv', 'torrentio.strem.fun'}
+        self.monitored_domains = {'api.real-debrid.com', 'api.alldebrid.com', 'api.trakt.tv', 'torrentio.strem.fun'}
 
     @property
     def args(self):
