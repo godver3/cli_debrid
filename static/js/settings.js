@@ -72,21 +72,20 @@ function handleDescriptions() {
 // Function to toggle Plex section visibility
 function togglePlexSection() {
     console.log('togglePlexSection called');
-    
+
     const fileManagementSelect = document.getElementById('file management-file_collection_management');
     const plexSettingsInFileManagement = document.getElementById('plex-settings-in-file-management');
-    
+
     console.log('File Management Select element:', fileManagementSelect);
     console.log('Plex Settings element:', plexSettingsInFileManagement);
-    
+
     if (fileManagementSelect && plexSettingsInFileManagement) {
         const shouldDisplay = fileManagementSelect.value === 'Plex';
         console.log('Should display Plex settings:', shouldDisplay);
         plexSettingsInFileManagement.style.display = shouldDisplay ? 'block' : 'none';
         console.log('Set display style to:', plexSettingsInFileManagement.style.display);
-    } else {
-        console.warn('Missing required elements - fileManagementSelect or plexSettingsInFileManagement not found');
     }
+    // Removed warning - this function may be called from pages that don't have these elements
 
     // Toggle path input fields and Plex symlink settings
     const originalFilesPath = document.getElementById('file management-original_files_path');
@@ -95,7 +94,7 @@ function togglePlexSection() {
 
     if (fileManagementSelect) {
         const isSymlinked = fileManagementSelect.value === 'Symlinked/Local';
-        
+
         // Handle path fields
         const pathElements = [
             originalFilesPath?.closest('.settings-form-group'),
@@ -110,7 +109,7 @@ function togglePlexSection() {
         if (isSymlinked) {
             const mediaServerType = document.getElementById('media-server-type');
             const shouldShowPlexFields = mediaServerType && mediaServerType.value === 'plex';
-            
+
             plexSymlinkSettings.forEach(element => {
                 element.style.display = shouldShowPlexFields ? 'block' : 'none';
             });
@@ -308,10 +307,33 @@ export function updateSettings() {
 
             section.querySelectorAll('input, select, textarea').forEach(input => {
                 const nameParts = input.name.split('.');
-                const fieldName = nameParts[nameParts.length - 1];
-                console.log(`Processing field: ${fieldName}, Type: ${input.type}, Value: ${input.value}, Checked: ${input.checked}`);
-                
-                if (input.type === 'checkbox') {
+                // nameParts = ['Content Sources', 'Trakt Lists_1', 'plex_labels', 'enabled']
+                // We need everything after the source ID (index 2+)
+                const fieldPath = nameParts.slice(2); // ['plex_labels', 'enabled']
+                const fieldName = nameParts[nameParts.length - 1]; // 'enabled'
+
+                console.log(`Processing field: ${fieldPath.join('.')}, Type: ${input.type}, Value: ${input.value}, Checked: ${input.checked}`);
+
+                // Handle nested fields like plex_labels.enabled
+                if (fieldPath.length > 1) {
+                    // This is a nested field (e.g., plex_labels.enabled)
+                    let current = sourceData;
+                    for (let i = 0; i < fieldPath.length - 1; i++) {
+                        if (!current[fieldPath[i]]) {
+                            current[fieldPath[i]] = {};
+                        }
+                        current = current[fieldPath[i]];
+                    }
+
+                    // Set the final value
+                    const finalKey = fieldPath[fieldPath.length - 1];
+                    if (input.type === 'checkbox') {
+                        current[finalKey] = input.checked;
+                    } else {
+                        current[finalKey] = input.value;
+                    }
+                } else if (input.type === 'checkbox') {
+                    // Top-level checkbox field
                     if (fieldName === 'versions') {
                         if (input.checked) {
                             sourceData.versions.push(input.value);
@@ -441,7 +463,7 @@ export function updateSettings() {
     }
 
     // Remove any scrapers that are not actual scrapers
-    const validScraperTypes = ['Zilean', 'MediaFusion', 'AIOStreams', 'Jackett', 'Torrentio', 'Nyaa', 'OldNyaa', 'Prowlarr'];
+    const validScraperTypes = ['Zilean', 'MediaFusion', 'AIOStreams', 'AIOStreams-API', 'Jackett', 'Torrentio', 'Nyaa', 'OldNyaa', 'Prowlarr'];
     if (settingsData['Scrapers'] && typeof settingsData['Scrapers'] === 'object') {
         Object.keys(settingsData['Scrapers']).forEach(key => {
             if (settingsData['Scrapers'][key] && settingsData['Scrapers'][key].type && !validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
@@ -1229,14 +1251,13 @@ function initializeSettingsTabs() {
     const tabButtons = document.querySelectorAll('.settings-tab-button');
     const tabContents = document.querySelectorAll('.settings-tab-content');
     const tabSelect = document.querySelector('.settings-tab-select');
-    
+
+    // Silently return if tabs don't exist on this page
     if (!tabButtons.length || !tabContents.length || !tabSelect) {
-        console.warn('Settings tabs elements not found');
         return;
     }
-    
+
     // Tab switching is handled in settings_base.html
-    console.log('Settings tabs initialized');
 }
 
 // Update the DOMContentLoaded event listener
@@ -1293,9 +1314,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     updateContentSourceCheckPeriod(this);
                 });
             });
-        } else {
-            console.warn("Element with id 'content-source-check-periods' not found. Make sure it exists in your HTML.");
         }
+        // Removed warning - this code may run on pages that don't have this element
         
         // Hide hybrid mode and jackett seeders only checkboxes
         hideHybridModeCheckboxes();

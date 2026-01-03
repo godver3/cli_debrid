@@ -1,0 +1,260 @@
+/* ========================================
+   Mobile Navigation - Tangerine Theme
+   Exact copy of Settings Sidebar Style
+   VERSION: 2024-12-29
+
+   TO DISABLE: Comment out the link to this file in theme_switcher.js
+   ======================================== */
+
+/* Hide nav search by default (only show on Tangerine mobile) */
+.nav-search-container {
+    display: none;
+}
+
+/* Only apply when Tangerine theme is active AND in mobile view */
+@media (max-width: 1045px) {
+    /* Navigation Search Bar - matches statistics page search */
+    body.tangerine-theme .nav-search-container {
+        margin: 0 1.5rem 1rem 1.5rem;
+        padding-top: 0.5rem;
+    }
+
+    body.tangerine-theme .nav-search-form {
+        position: relative;
+        width: 100%;
+    }
+
+    body.tangerine-theme .nav-search-icon {
+        position: absolute;
+        left: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: #888;
+        font-size: 0.9rem;
+        pointer-events: none;
+        z-index: 1;
+    }
+
+    body.tangerine-theme .nav-search-input {
+        width: 100%;
+        padding: 10px 12px 10px 36px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 10px;
+        color: #fff;
+        font-size: 0.8rem;
+        transition: all 0.3s ease;
+        outline: none;
+        box-sizing: border-box;
+    }
+
+    body.tangerine-theme .nav-search-input:focus {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 107, 53, 0.5);
+        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+    }
+
+    body.tangerine-theme .nav-search-input:focus + .nav-search-icon {
+        color: #e17c52;
+    }
+
+    body.tangerine-theme .nav-search-input::placeholder {
+        color: #666;
+    }
+
+    /* Show search on Tangerine mobile */
+    body.tangerine-theme .nav-search-container {
+        display: block;
+    }
+
+    /* Sidebar - exact copy from settings */
+    body.tangerine-theme #navMenu {
+        position: fixed;
+        left: -280px;
+        top: 0;
+        width: 280px;
+        height: 100vh;
+        background: rgba(255, 255, 255, 0.02);
+        backdrop-filter: blur(10px);
+        /* border-right: 1px solid rgba(255, 255, 255, 0.08); */
+        padding: 2rem 0;
+        overflow-y: auto;
+        transition: left 0.3s ease;
+        z-index: 100;
+        pointer-events: none;
+    }
+
+    body.tangerine-theme #navMenu.show,
+    body.tangerine-theme #navMenu.active {
+        left: 0;
+        padding-top: 60px;
+        pointer-events: auto;
+    }
+
+    /* Section groups */
+    body.tangerine-theme #navMenu li.menu-group {
+        display: flex;
+        flex-direction: column;
+        /* margin-bottom: 1.5rem; */
+        border-bottom: none;
+    }
+
+    /* Section titles (MAIN, SYSTEM, TOOLS) - clickable with arrow */
+    body.tangerine-theme #navMenu li.menu-group > a.group-title {
+        font-size: .8rem;
+        color: #adadad;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        font-weight: 700;
+        padding: .75rem 1.5rem .75rem;
+        background-color: transparent;
+    }
+
+    body.tangerine-theme #navMenu li.menu-group > a.group-title:hover {
+        background: rgba(255, 255, 255, 0.03);
+        color: #888;
+    }
+
+    body.tangerine-theme #navMenu li.menu-group > a.group-title.active {
+        color: #e17c52;
+    }
+
+    /* Arrow icon - show and rotate on expand */
+    body.tangerine-theme #navMenu li.menu-group > a.group-title i {
+        display: inline-block;
+        transition: transform 0.3s ease;
+        font-size: 0.8rem;
+        opacity: 0.6;
+    }
+
+    body.tangerine-theme #navMenu li.menu-group > a.group-title.active i {
+        transform: rotate(180deg);
+        opacity: 1;
+    }
+
+    /* Dropdown - collapsible */
+    body.tangerine-theme #navMenu li.menu-group .dropdown {
+        display: flex;
+        flex-direction: column;
+        position: static;
+        background: transparent;
+        box-shadow: none;
+        border: none;
+        padding: 0;
+        margin: 0;
+        max-height: 0;
+        overflow: hidden;
+        opacity: 0;
+        transition: max-height 0.3s ease, opacity 0.3s ease;
+    }
+
+    body.tangerine-theme #navMenu li.menu-group.expanded .dropdown {
+        max-height: 1000px;
+        opacity: 1;
+    }
+
+    body.tangerine-theme #navMenu li.menu-group .dropdown li {
+        display: block;
+    }
+
+    /* Navigation items - exact copy from .settings-nav-item */
+    body.tangerine-theme #navMenu li.menu-group .dropdown li a {
+        padding: 0.875rem 1.5rem;
+        color: #888;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        border-left: 3px solid transparent;
+        font-size: 0.95rem;
+        font-weight: 500;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        position: relative;
+        text-decoration: none;
+    }
+
+    /* SVG Icons */
+    body.tangerine-theme #navMenu li.menu-group .dropdown li a .settings-nav-icon {
+        width: 18px;
+        height: 18px;
+        opacity: 0.6;
+        transition: opacity 0.3s ease;
+        flex-shrink: 0;
+    }
+
+    /* Hover state - exact copy from .settings-nav-item:hover */
+    body.tangerine-theme #navMenu li.menu-group .dropdown li a:hover {
+        background: rgba(255, 255, 255, 0.03);
+        color: #e0e0e0;
+        border-left-color: rgba(255, 107, 53, 0.3);
+    }
+
+    body.tangerine-theme #navMenu li.menu-group .dropdown li a:hover .settings-nav-icon {
+        opacity: 1;
+    }
+
+    /* Active state - exact copy from .settings-nav-item.active */
+    body.tangerine-theme #navMenu li.menu-group .dropdown li a.active {
+        background: rgba(255, 107, 53, 0.1) !important;
+        color: #fff !important;
+        border-left-color: #e17c52 !important;
+    }
+
+    body.tangerine-theme #navMenu li.menu-group .dropdown li a.active .settings-nav-icon {
+        opacity: 1;
+    }
+
+    /* Active indicator dot - exact copy from .settings-nav-item.active::after */
+    body.tangerine-theme #navMenu li.menu-group .dropdown li a.active::after {
+        content: '';
+        display: block;
+        position: absolute;
+        left: auto;
+        right: 1.5rem;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 6px;
+        height: 6px;
+        background: #e17c52;
+        border-radius: 50%;
+        z-index: 10;
+    }
+
+    /* Scrollbar - exact copy from settings sidebar */
+    body.tangerine-theme #navMenu::-webkit-scrollbar {
+        width: 6px;
+    }
+
+    body.tangerine-theme #navMenu::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.02);
+    }
+
+    body.tangerine-theme #navMenu::-webkit-scrollbar-thumb {
+        background: rgba(255, 107, 53, 0.3);
+        border-radius: 3px;
+    }
+
+    body.tangerine-theme #navMenu::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 107, 53, 0.5);
+    }
+
+    /* Overlay */
+    body.tangerine-theme .nav-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        backdrop-filter: blur(8px);
+        z-index: 99;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    body.tangerine-theme .nav-overlay.active {
+        display: block;
+        opacity: 1;
+    }
+}

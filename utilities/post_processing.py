@@ -160,6 +160,16 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                 
             # Run custom script if enabled
             run_custom_script(dict(fresh_item))
+
+            # Apply Plex labels based on content source configuration
+            try:
+                logging.info(f"POST-PROCESSING: About to apply Plex labels for item {fresh_item.get('id')} ({fresh_item.get('title')})")
+                from plex.plex_label_manager import apply_labels_for_item
+                result = apply_labels_for_item(dict(fresh_item))
+                logging.info(f"POST-PROCESSING: Plex labels application returned {result} for item {fresh_item.get('id')}")
+            except Exception as e:
+                logging.error(f"Failed to apply Plex labels: {str(e)}")
+                logging.exception("Plex labels traceback:")
         else:
             logging.warning(f"Unhandled state {state} in post-processing")
 

@@ -1,0 +1,280 @@
+<div class="ui-settings-page">
+    <h2 class="ui-settings-title">UI Settings</h2>
+    <p class="ui-settings-subtitle">Configure user interface preferences and appearance</p>
+
+    <div class="content-section">
+        <div class="ui-settings-header section-header">
+            <h3 class="ui-settings-settings-title section-title">
+                <span class="title-bar"></span>
+                Settings
+            </h3>
+            <div class="ui-settings-actions action-buttons settings-expand-collapse-buttons">
+                <button type="button" class="ui-settings-btn btn-secondary settings-collapse-all">Collapse All</button>
+                <button type="button" class="ui-settings-btn btn-secondary settings-expand-all">Expand All</button>
+            </div>
+        </div>
+
+        <div class="settings-list">
+
+<!-- Appearance Settings -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Appearance</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <!-- Program Logo -->
+        <div class="settings-form-group">
+            <label class="settings-title">Program Logo:</label>
+            {% set logo_value = settings.get('UI Settings', {}).get('program_logo', 'Default') %}
+            <div class="logo-selection-container">
+                <div class="logo-option">
+                    <input type="radio" id="logo-default" name="UI Settings.program_logo"
+                        value="Default" data-section="UI Settings" data-key="program_logo"
+                        {% if logo_value == 'Default' %}checked{% endif %}>
+                    <label for="logo-default">
+                        <img src="{{ url_for('static', filename='white-icon-32x32.png') }}" alt="Default Logo" class="logo-preview">
+                        <span class="logo-label">Default</span>
+                    </label>
+                </div>
+                <div class="logo-option">
+                    <input type="radio" id="logo-plex-inspired" name="UI Settings.program_logo"
+                        value="Plex-Inspired" data-section="UI Settings" data-key="program_logo"
+                        {% if logo_value == 'Plex-Inspired' %}checked{% endif %}>
+                    <label for="logo-plex-inspired">
+                        <img src="{{ url_for('static', filename='plex-icon-32x32.png') }}" alt="Plex-Inspired Logo" class="logo-preview">
+                        <span class="logo-label">Plex-Inspired</span>
+                    </label>
+                </div>
+                <div class="logo-option">
+                    <input type="radio" id="logo-color-icon" name="UI Settings.program_logo"
+                        value="Color Icon" data-section="UI Settings" data-key="program_logo"
+                        {% if logo_value == 'Color Icon' %}checked{% endif %}>
+                    <label for="logo-color-icon">
+                        <img src="{{ url_for('static', filename='color-icon-32x32.png') }}" alt="Color Icon Logo" class="logo-preview">
+                        <span class="logo-label">Color Icon</span>
+                    </label>
+                </div>
+            </div>
+            <p class="settings-description">Select the program logo to display in the UI. Credits to @mrcuriousny for Plex-Inspired logo</p>
+        </div>
+
+        <!-- Compact View -->
+        <div class="settings-form-group">
+            <label class="settings-title">
+                <input type="checkbox" id="ui-settings-compact_view" name="UI Settings.compact_view"
+                       data-section="UI Settings" data-key="compact_view"
+                       {% if settings.get('UI Settings', {}).get('compact_view') %}checked{% endif %}>
+                Compact View
+            </label>
+            <p class="settings-description">Use compact view for statistics page</p>
+        </div>
+
+        <!-- Hide Support Message -->
+        <div class="settings-form-group">
+            <label class="settings-title">
+                <input type="checkbox" id="ui-settings-hide_support_message" name="UI Settings.hide_support_message"
+                       data-section="UI Settings" data-key="hide_support_message"
+                       {% if settings.get('UI Settings', {}).get('hide_support_message') %}checked{% endif %}>
+                Hide Support Message
+            </label>
+            <p class="settings-description">Hide the Patreon support message in the header</p>
+        </div>
+    </div>
+</div>
+
+<!-- Date & Time Formatting -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Date & Time Formatting</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <!-- Use 24 Hour Format -->
+        <div class="settings-form-group">
+            <label class="settings-title">
+                <input type="checkbox" id="ui-settings-use_24hour_format" name="UI Settings.use_24hour_format"
+                       data-section="UI Settings" data-key="use_24hour_format"
+                       {% if settings.get('UI Settings', {}).get('use_24hour_format') %}checked{% endif %}>
+                Use 24-Hour Format
+            </label>
+            <p class="settings-description">Use 24-hour time format instead of 12-hour</p>
+        </div>
+
+        <!-- Date Format -->
+        <div class="settings-form-group">
+            <label for="ui-settings-date_format" class="settings-title">Date Format:</label>
+            <div class="date-time-format-wrapper">
+                <input type="text" id="ui-settings-date_format" name="UI Settings.date_format"
+                       value="{{ settings.get('UI Settings', {}).get('date_format', '%b %d, %Y') }}"
+                       class="settings-input" data-section="UI Settings" data-key="date_format">
+                <button type="button" class="date-time-format-info-btn" title="View format options">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </button>
+            </div>
+            <p class="settings-description">Set your preferred date format. Click the info button to see available parameters.</p>
+        </div>
+
+        <!-- Time Format -->
+        <div class="settings-form-group">
+            <label for="ui-settings-time_format" class="settings-title">Time Format:</label>
+            <div class="date-time-format-wrapper">
+                <input type="text" id="ui-settings-time_format" name="UI Settings.time_format"
+                       value="{{ settings.get('UI Settings', {}).get('time_format', '%H:%M:%S') }}"
+                       class="settings-input" data-section="UI Settings" data-key="time_format">
+                <button type="button" class="date-time-format-info-btn" title="View format options">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                </button>
+            </div>
+            <p class="settings-description">Set your preferred time format. Click the info button to see available parameters.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Statistics Display -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Statistics Display</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <!-- Recently Added Limit -->
+        <div class="settings-form-group">
+            <label for="ui-settings-recently_added_limit" class="settings-title">Recently Added Limit:</label>
+            <input type="number" id="ui-settings-recently_added_limit" name="UI Settings.recently_added_limit"
+                   value="{{ settings.get('UI Settings', {}).get('recently_added_limit', 14) }}"
+                   class="settings-input" data-section="UI Settings" data-key="recently_added_limit">
+            <p class="settings-description">Amount of items displayed for recently added on statistics page</p>
+        </div>
+
+        <!-- Recently Upgraded Limit -->
+        <div class="settings-form-group">
+            <label for="ui-settings-recently_upgraded_limit" class="settings-title">Recently Upgraded Limit:</label>
+            <input type="number" id="ui-settings-recently_upgraded_limit" name="UI Settings.recently_upgraded_limit"
+                   value="{{ settings.get('UI Settings', {}).get('recently_upgraded_limit', 7) }}"
+                   class="settings-input" data-section="UI Settings" data-key="recently_upgraded_limit">
+            <p class="settings-description">Amount of items displayed for recently upgraded on statistics page</p>
+        </div>
+
+        <!-- Upcoming Releases Start Limit -->
+        <div class="settings-form-group">
+            <label for="ui-settings-upcoming_releases_start_limit" class="settings-title">Upcoming Releases Start Limit:</label>
+            <input type="number" id="ui-settings-upcoming_releases_start_limit" name="UI Settings.upcoming_releases_start_limit"
+                   value="{{ settings.get('UI Settings', {}).get('upcoming_releases_start_limit', 7) }}"
+                   class="settings-input" data-section="UI Settings" data-key="upcoming_releases_start_limit">
+            <p class="settings-description">How many days back should be displayed on statistics page (0 = today, 7 = a week back)</p>
+        </div>
+
+        <!-- Upcoming Releases End Limit -->
+        <div class="settings-form-group">
+            <label for="ui-settings-upcoming_releases_end_limit" class="settings-title">Upcoming Releases End Limit:</label>
+            <input type="number" id="ui-settings-upcoming_releases_end_limit" name="UI Settings.upcoming_releases_end_limit"
+                   value="{{ settings.get('UI Settings', {}).get('upcoming_releases_end_limit', 365) }}"
+                   class="settings-input" data-section="UI Settings" data-key="upcoming_releases_end_limit">
+            <p class="settings-description">How many days forward should be displayed on statistics page</p>
+        </div>
+    </div>
+</div>
+
+<!-- System Behavior -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>System Behavior</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <!-- Enable User System -->
+        <div class="settings-form-group">
+            <label class="settings-title">
+                <input type="checkbox" id="ui-settings-enable_user_system" name="UI Settings.enable_user_system"
+                       data-section="UI Settings" data-key="enable_user_system"
+                       {% if settings.get('UI Settings', {}).get('enable_user_system') %}checked{% endif %}>
+                Enable User System
+            </label>
+            <p class="settings-description">Enable user account system</p>
+        </div>
+
+        <!-- Auto Run Program -->
+        <div class="settings-form-group">
+            <label class="settings-title">
+                <input type="checkbox" id="auto-run-program" name="UI Settings.auto_run_program"
+                       data-section="UI Settings" data-key="auto_run_program"
+                       {% if settings.get('UI Settings', {}).get('auto_run_program', True) %}checked{% endif %}>
+                Auto Run Program
+            </label>
+            <p class="settings-description">When enabled, the program will automatically start running when the application starts</p>
+        </div>
+
+        <!-- Disable Initialization -->
+        <div class="settings-form-group">
+            <label class="settings-title">
+                <input type="checkbox" id="disable-initialization" name="UI Settings.disable_initialization"
+                       data-section="UI Settings" data-key="disable_initialization"
+                       {% if settings.get('UI Settings', {}).get('disable_initialization', False) %}checked{% endif %}>
+                Disable Initialization
+            </label>
+            <p class="settings-description">When enabled, the program will skip the initialization process on startup. Useful for testing or manual control</p>
+        </div>
+
+        <!-- Disable Auto Browser -->
+        <div class="settings-form-group">
+            <label class="settings-title">
+                <input type="checkbox" id="ui-settings-disable_auto_browser" name="UI Settings.disable_auto_browser"
+                       data-section="UI Settings" data-key="disable_auto_browser"
+                       {% if settings.get('UI Settings', {}).get('disable_auto_browser') %}checked{% endif %}>
+                Disable Auto Browser
+            </label>
+            <p class="settings-description">Disable automatic browser launch on Windows systems</p>
+        </div>
+
+        <!-- Enable Caching -->
+        <div class="settings-form-group">
+            <label class="settings-title">
+                <input type="checkbox" id="ui-settings-enable_caching" name="UI Settings.enable_caching"
+                       data-section="UI Settings" data-key="enable_caching"
+                       {% if settings.get('UI Settings', {}).get('enable_caching') %}checked{% endif %}>
+                Enable Caching
+            </label>
+            <p class="settings-description">Enable web caching and compression for faster page loads. This improves performance by caching static assets (CSS, JavaScript, images) and compressing responses. Disable if experiencing issues with updates not appearing</p>
+        </div>
+    </div>
+</div>
+
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Handle date/time format info buttons
+    const dateTimeInfoBtns = document.querySelectorAll('.date-time-format-info-btn');
+    dateTimeInfoBtns.forEach(btn => {
+        btn.addEventListener('click', function() {
+            const modal = document.getElementById('dateTimeFormatModal');
+            if (modal) {
+                modal.style.display = 'flex';
+            }
+        });
+    });
+});
+</script>

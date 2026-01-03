@@ -44,7 +44,8 @@
             <button id="select-all" class="select-all-btn">Select All</button>
             <button id="bulk-delete" class="bulk-action-btn" disabled>Delete Selected</button>
             <button id="bulk-rescrape" class="bulk-action-btn" disabled>Rescrape Selected</button>
-            <select id="bulk-move-queue" class="bulk-action-select" disabled>
+            <label for="bulk-move-queue" class="sr-only">Move Selected to Queue</label>
+            <select id="bulk-move-queue" name="bulk_move_queue" class="bulk-action-select" disabled>
                 <option value="">Move Selected to Queue...</option>
                 <option value="Adding">Adding</option>
                 <option value="Blacklisted">Blacklisted</option>
@@ -58,7 +59,8 @@
                 <option value="Wanted">Wanted</option>
                 <option value="ghostlist">Ghostlist</option>
             </select>
-            <select id="bulk-change-version" class="bulk-action-select" disabled>
+            <label for="bulk-change-version" class="sr-only">Change Selected Version</label>
+            <select id="bulk-change-version" name="bulk_change_version" class="bulk-action-select" disabled>
                 <option value="">Change Selected Version...</option>
             </select>
             <button id="bulk-early-release" class="bulk-action-btn" disabled>Early Release</button>
@@ -74,8 +76,8 @@
         <div id="column-selector" class="hidden">
             <div class="column-selector-container">
                 <div class="column-list">
-                    <h4>Available Columns</h4>
-                    <select id="available-columns" multiple>
+                    <label for="available-columns"><h4>Available Columns</h4></label>
+                    <select id="available-columns" name="available_columns" multiple>
                         {% for column in all_columns %}
                             {% if column not in selected_columns %}
                                 <option value="{{ column }}">{{ column }}</option>
@@ -88,8 +90,8 @@
                     <button id="remove-column">&lt;</button>
                 </div>
                 <div class="column-list">
-                    <h4>Selected Columns</h4>
-                    <select id="selected-columns" multiple>
+                    <label for="selected-columns"><h4>Selected Columns</h4></label>
+                    <select id="selected-columns" name="selected_columns" multiple>
                         {% for column in selected_columns %}
                             <option value="{{ column }}">{{ column }}</option>
                         {% endfor %}
@@ -190,7 +192,7 @@
                 {% for item in items %}
                     <tr>
                         <td>
-                            <input type="checkbox" class="item-select" data-item-id="{{ item['id'] }}">
+                            <input type="checkbox" id="item-select-{{ item['id'] }}" name="item_select" class="item-select" data-item-id="{{ item['id'] }}" aria-label="Select item {{ item['id'] }}">
                         </td>
                         <td>
                             <a href="/video/${item['id']}" class="play-item" title="Play" style="margin-right: 6px;">
@@ -373,7 +375,8 @@ document.addEventListener('DOMContentLoaded', function() {
         SELECTED_COLUMNS: 'db_selected_columns',
         CONTENT_TYPE: 'db_content_type',
         FILTER_LOGIC: 'db_filter_logic',
-        LETTER: 'db_current_letter' // Persist current letter
+        LETTER: 'db_current_letter', // Persist current letter
+        COLUMN_WIDTHS: 'db_column_widths' // Persist custom column widths
     };
 
     // Function to validate and sanitize localStorage data
@@ -413,10 +416,13 @@ document.addEventListener('DOMContentLoaded', function() {
     function createFilterRow(filter = null) {
         const row = document.createElement('div');
         row.className = 'filter-row';
+        const uniqueId = `filter-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
         // Column select - use templateData.all_columns but filter out 'size' for filtering
         const filterableColumns = templateData.all_columns.filter(col => col !== 'size').sort();
         const columnSelect = document.createElement('select');
+        columnSelect.id = `${uniqueId}-column`;
+        columnSelect.name = `filter_column`;
         columnSelect.className = 'filter-column';
         columnSelect.innerHTML = `
             <option value="">Select Column</option>
@@ -429,6 +435,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Operator select
         const operatorSelect = document.createElement('select');
+        operatorSelect.id = `${uniqueId}-operator`;
+        operatorSelect.name = `filter_operator`;
         operatorSelect.className = 'filter-operator';
         operatorSelect.innerHTML = templateData.operators.map(op => `
             <option value="${op.value}" ${filter && filter.operator === op.value ? 'selected' : ''}>
@@ -439,7 +447,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // Value input/select
         const valueContainer = document.createElement('div');
         valueContainer.className = 'filter-value-container';
-        updateValueInput(valueContainer, filter?.column, filter?.value, contentSourceDisplayMap);
+        updateValueInput(valueContainer, filter?.column, filter?.value, contentSourceDisplayMap, uniqueId);
 
         // Remove button
         const removeBtn = document.createElement('button');
@@ -456,17 +464,19 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Add event listeners
         columnSelect.addEventListener('change', () => {
-            updateValueInput(valueContainer, columnSelect.value, '', contentSourceDisplayMap);
+            updateValueInput(valueContainer, columnSelect.value, '', contentSourceDisplayMap, uniqueId);
         });
 
         return row;
     }
 
-    function updateValueInput(container, column, value = '', displayMap = {}) {
+    function updateValueInput(container, column, value = '', displayMap = {}, uniqueId = '') {
         container.innerHTML = '';
 
         if (column === 'content_source' && templateData.columnValues[column]) {
             const select = document.createElement('select');
+            select.id = `${uniqueId}-value`;
+            select.name = 'filter_value';
             select.className = 'filter-value';
             let optionsHTML = '<option value="">Select Source</option>';
 
@@ -492,6 +502,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         else if (templateData.columnValues[column]) {
             const select = document.createElement('select');
+            select.id = `${uniqueId}-value`;
+            select.name = 'filter_value';
             select.className = 'filter-value';
             select.innerHTML = `
                 <option value="">Select Value</option>
@@ -512,6 +524,8 @@ document.addEventListener('DOMContentLoaded', function() {
         else {
             const input = document.createElement('input');
             input.type = 'text';
+            input.id = `${uniqueId}-value`;
+            input.name = 'filter_value';
             input.className = 'filter-value';
             input.value = value || '';
             container.appendChild(input);
@@ -2299,6 +2313,168 @@ document.addEventListener('DOMContentLoaded', function() {
                 localStorage.setItem('statsPanelOpen', 'false');
             }
         });
+
+        // ========================================
+        // Column Resize Functionality
+        // ========================================
+
+        // Store resize state globally to prevent multiple initializations
+        let columnResizeState = {
+            resizingColumn: null,
+            startX: 0,
+            startWidth: 0,
+            listenersAttached: false
+        };
+
+        // Helper function to stop resizing (defined once at global scope)
+        function stopResize() {
+            if (columnResizeState.resizingColumn) {
+                const table = document.querySelector('.table-container table');
+                if (table) {
+                    const headers = table.querySelectorAll('thead th');
+                    const widths = {};
+                    headers.forEach((header, index) => {
+                        if (header.style.width) {
+                            widths[index] = parseInt(header.style.width);
+                        }
+                    });
+                    localStorage.setItem('db_column_widths', JSON.stringify(widths));
+                }
+                columnResizeState.resizingColumn = null;
+                document.body.style.userSelect = '';
+            }
+        }
+
+        // Global event handlers (defined once)
+        function handleMouseMove(e) {
+            if (!columnResizeState.resizingColumn) return;
+
+            const diff = e.pageX - columnResizeState.startX;
+            const newWidth = Math.max(50, columnResizeState.startWidth + diff);
+
+            columnResizeState.resizingColumn.style.width = newWidth + 'px';
+            columnResizeState.resizingColumn.style.minWidth = newWidth + 'px';
+
+            e.preventDefault();
+        }
+
+        function handleMouseUp(e) {
+            stopResize();
+        }
+
+        // Attach global event listeners only once
+        if (!columnResizeState.listenersAttached) {
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+            window.addEventListener('mouseup', handleMouseUp); // Backup listener
+            columnResizeState.listenersAttached = true;
+        }
+
+        function initColumnResize() {
+            const table = document.querySelector('.table-container table');
+            if (!table) return;
+
+            const headers = table.querySelectorAll('thead th');
+
+            // Load saved column widths from localStorage
+            function loadColumnWidths() {
+                const savedWidths = localStorage.getItem('db_column_widths');
+                if (savedWidths) {
+                    try {
+                        const widths = JSON.parse(savedWidths);
+                        headers.forEach((header, index) => {
+                            if (widths[index]) {
+                                header.style.width = widths[index] + 'px';
+                                header.style.minWidth = widths[index] + 'px';
+                            }
+                        });
+                    } catch (e) {
+                        console.error('Error loading column widths:', e);
+                    }
+                }
+            }
+
+            // Save column widths to localStorage
+            function saveColumnWidths() {
+                const widths = {};
+                headers.forEach((header, index) => {
+                    if (header.style.width) {
+                        widths[index] = parseInt(header.style.width);
+                    }
+                });
+                localStorage.setItem('db_column_widths', JSON.stringify(widths));
+            }
+
+            // Create resize handle for each header
+            headers.forEach((header, index) => {
+                // Don't add resize to the last column
+                if (index === headers.length - 1) return;
+
+                // Remove existing resize handle if present
+                const existingHandle = header.querySelector('.column-resize-handle');
+                if (existingHandle) {
+                    existingHandle.remove();
+                }
+
+                const resizeHandle = document.createElement('div');
+                resizeHandle.className = 'column-resize-handle';
+                resizeHandle.style.cssText = `
+                    position: absolute;
+                    right: 0;
+                    top: 0;
+                    width: 5px;
+                    height: 100%;
+                    cursor: col-resize;
+                    user-select: none;
+                    z-index: 1;
+                `;
+
+                header.style.position = 'relative';
+                header.appendChild(resizeHandle);
+
+                resizeHandle.addEventListener('mousedown', function(e) {
+                    columnResizeState.resizingColumn = header;
+                    columnResizeState.startX = e.pageX;
+                    columnResizeState.startWidth = header.offsetWidth;
+
+                    // Only disable text selection during resize
+                    document.body.style.userSelect = 'none';
+
+                    e.preventDefault();
+                    e.stopPropagation();
+                });
+            });
+
+            // Load saved widths on init
+            loadColumnWidths();
+        }
+
+        // Initialize column resize when table is present
+        if (document.querySelector('.table-container table')) {
+            initColumnResize();
+        }
+
+        // Watch for table changes and re-initialize resize
+        const tableContainer = document.querySelector('.table-container');
+        if (tableContainer) {
+            const observer = new MutationObserver(function(mutations) {
+                mutations.forEach(function(mutation) {
+                    if (mutation.type === 'childList' && document.querySelector('.table-container table')) {
+                        // Table was added/replaced, re-initialize after a short delay
+                        setTimeout(() => {
+                            if (document.querySelector('.table-container table')) {
+                                initColumnResize();
+                            }
+                        }, 100);
+                    }
+                });
+            });
+
+            observer.observe(tableContainer, {
+                childList: true,
+                subtree: true
+            });
+        }
     });
 </script>
 {% endblock %}

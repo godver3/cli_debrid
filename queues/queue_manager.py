@@ -848,6 +848,13 @@ class QueueManager:
             if from_queue in self.queues:
                 self.queues[from_queue].remove_item(item)
             logging.debug(f"Successfully moved item {item_identifier} to Collected state")
+
+            # Apply Plex labels if configured
+            try:
+                from plex.plex_label_manager import apply_labels_for_item
+                apply_labels_for_item(updated_item)
+            except Exception as label_error:
+                logging.error(f"Error applying Plex labels to item {item_identifier}: {label_error}")
             
             # Log completion of move to Collected
             log_data = {

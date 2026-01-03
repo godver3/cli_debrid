@@ -16,6 +16,37 @@
     --transition-speed: 0.3s;
 }
 
+td#scraper-source {
+    font-size: 13px;
+    padding: 8px;
+}
+
+/* Container for source badges */
+td#scraper-source .source-container {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-start;
+}
+
+/* Style for each badge/tag */
+td#scraper-source .source-badge {
+    display: block;
+    padding: 0px 12px;
+    background: linear-gradient(135deg, rgb(53 129 255 / 21%) 0%, rgb(30 141 247 / 34%) 100%);
+    border: 1px solid rgb(53 155 255 / 40%);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-weight: 500;
+    font-size: 12px;
+    text-align: center;
+    width: 120px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: all 0.2s ease;
+}
+
 html, body {
     min-height: 100vh;
     height: auto;
@@ -1164,6 +1195,10 @@ p.torresult-item {
     line-height: 1.3rem;
     color: rgb(191 191 190);
     text-align: center;
+    word-break: normal;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    hyphens: none;
 }
 
 p.torresult-title {
@@ -2438,3 +2473,91 @@ tr.filtered-out-item:hover {
             display: none !important;
         }
     }
+
+/* ==================================================
+   DRAG AND DROP SCRAPER PRIORITY STYLES
+   ================================================== */
+
+/* Drag handle */
+.drag-handle {
+    cursor: grab;
+    font-size: 18px;
+    color: rgba(255, 255, 255, 0.4);
+    margin-right: 12px;
+    padding: 4px 8px;
+    user-select: none;
+    transition: color 0.2s ease, transform 0.2s ease;
+    display: inline-block;
+    line-height: 1;
+}
+
+.drag-handle:hover {
+    color: rgba(255, 255, 255, 0.7);
+    transform: scale(1.1);
+}
+
+.drag-handle:active {
+    cursor: grabbing;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+/* Sortable ghost (element being dragged) */
+.sortable-ghost {
+    opacity: 0.4;
+    background-color: rgba(76, 175, 80, 0.1);
+    border: 2px dashed rgba(76, 175, 80, 0.5);
+}
+
+/* Sortable chosen (element selected for dragging) */
+.sortable-chosen {
+    background-color: rgba(76, 175, 80, 0.05);
+}
+
+/* Sortable drag (the actual dragging element) */
+.sortable-drag {
+    opacity: 0.8;
+    cursor: grabbing !important;
+    transform: rotate(2deg);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+}
+
+/* Mobile responsive styles */
+@media (max-width: 768px) {
+    .drag-handle {
+        font-size: 20px;
+        padding: 8px 12px;
+        margin-right: 8px;
+    }
+
+    /* Larger touch target for mobile */
+    .drag-handle::before {
+        content: '';
+        position: absolute;
+        top: -10px;
+        left: -10px;
+        right: -10px;
+        bottom: -10px;
+    }
+}
+
+/* Touch device specific */
+@media (hover: none) and (pointer: coarse) {
+    .drag-handle {
+        color: rgba(255, 255, 255, 0.6);
+    }
+
+    .sortable-ghost {
+        opacity: 0.6;
+    }
+}
+
+/* Ensure drag handle is positioned correctly in header */
+.settings-section-header {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.settings-section-header .drag-handle {
+    position: relative;
+}

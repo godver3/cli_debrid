@@ -34,7 +34,7 @@
                     {% if key != 'enabled' and key != 'versions' %}
                         <div class="setting-item">
                             <label class="onboarding-text">{{ key|capitalize }}:</label>
-                            <input type="text" value="{{ value }}" readonly class="setting-value">
+                            <input type="text" id="content-source-{{ loop.parent.loop.index0 }}-{{ key }}" value="{{ value }}" readonly class="setting-value">
                         </div>
                     {% endif %}
                 {% endfor %}
@@ -272,7 +272,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                     settingsHtml += `
                                         <div class="setting-item">
                                             <label class="onboarding-text">${key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:</label>
-                                            <input type="text" value="${displayValue}" readonly class="setting-value">
+                                            <input type="text" id="content-source-js-${id}-${key}" value="${displayValue}" readonly class="setting-value">
                                         </div>
                                     `;
                                 }

@@ -425,7 +425,8 @@
 </style>
 <div class="settings-container">
     <h2>Settings</h2>
-    <select class="settings-tab-select">
+    <label for="settings-tab-select" class="sr-only">Select Settings Tab</label>
+    <select id="settings-tab-select" name="settings_tab" class="settings-tab-select">
         <option value="required">Required Settings</option>
         <option value="scrapers">Scrapers</option>
         <option value="scraping">Version Settings</option>
@@ -584,7 +585,7 @@
 <script type="module">
     import { updateSettings } from '/static/js/settings.js';
     import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
-    
+
     // Make POPUP_TYPES available globally for other scripts
     window.POPUP_TYPES = POPUP_TYPES;
     

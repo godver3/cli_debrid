@@ -662,6 +662,32 @@ def check_scraper_connection(scraper_id, scraper_config):
                 base_response['connected'] = False
                 base_response['error'] = str(e)
 
+        elif scraper_type == 'AIOStreams-API':
+            from scraper.aiostreams import scrape_aiostreams_api
+
+            # Test with a known movie (The Dark Knight)
+            try:
+                results = scrape_aiostreams_api(
+                    instance='AIOStreams-API',
+                    settings=scraper_config,
+                    imdb_id='tt0468569',
+                    title='The Dark Knight',
+                    year=2008,
+                    content_type='movie'
+                )
+                base_response['connected'] = len(results) > 0
+                if not base_response['connected']:
+                    base_response['error'] = 'No results found from test search'
+                base_response['details'].update({
+                    'test_movie': 'The Dark Knight (tt0468569)',
+                    'results_found': len(results),
+                    'url': scraper_config.get('url', ''),
+                    'api_key': scraper_config.get('api_key', '')[:10] + '...' if scraper_config.get('api_key') else 'Not set'
+                })
+            except Exception as e:
+                base_response['connected'] = False
+                base_response['error'] = str(e)
+
         else:
             base_response['error'] = f'Unknown scraper type: {scraper_type}'
             

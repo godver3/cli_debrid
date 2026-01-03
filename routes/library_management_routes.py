@@ -185,7 +185,9 @@ def get_library_show_details(imdb_id):
                                             arrow_dt = None
                                             try:
                                                 dt_attempt = arrow.get(first_aired_str)
-                                                if dt_attempt.tzinfo is not None and dt_attempt.tzinfo.utcoffset(dt_attempt) is not None:
+                                                # Convert Arrow to datetime for tzinfo check
+                                                dt_native = dt_attempt.datetime
+                                                if dt_native.tzinfo is not None and dt_native.tzinfo.utcoffset(dt_native) is not None:
                                                     arrow_dt = dt_attempt
                                                 else:
                                                     raise arrow.parser.ParserError("Handled as naive, needs explicit TZ")

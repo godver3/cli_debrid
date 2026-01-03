@@ -314,4 +314,11 @@
     .symlink-form {
         padding: 20px;
     }
+
+    .btn-secondary {
+        margin-left: 0;
+    }
+    .file-input-group {
+        display: grid;
+    }
 }

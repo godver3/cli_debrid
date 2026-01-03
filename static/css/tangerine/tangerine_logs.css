@@ -13,11 +13,8 @@
         overflow: hidden;
         display: flex;
         flex-direction: column;
-        background-color: #222;
-        /* border: 1px solid rgba(255, 255, 255, 0.15); */
-        /* border-radius: 10px; */
+        background-color: #0f0700;
         position: relative;
-        /* margin-top: 25px; */
     }
 
     .log-controls {

@@ -72,6 +72,10 @@
         font-size: 0.9rem;
         margin: 5px 0;
         color: #e17c52;
+        word-break: normal;
+        overflow-wrap: anywhere;
+        white-space: normal;
+        hyphens: none;
     }
     .torresult .assign-magnet-icon {
         position: absolute;
@@ -284,8 +288,7 @@
         line-height: 1.1rem;
         margin: 4px 0;
         white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
+        text-wrap: auto;
     }
 
     p.episode-sub {
@@ -950,6 +953,10 @@
         font-size: 0.9rem;
         margin: 5px 0;
         color: #e17c52;
+        word-break: normal;
+        overflow-wrap: anywhere;
+        white-space: normal;
+        hyphens: none;
     }
     .torresult .assign-magnet-icon {
         position: absolute;

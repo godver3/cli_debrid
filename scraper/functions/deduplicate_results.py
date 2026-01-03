@@ -33,9 +33,13 @@ def deduplicate_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             if len(result) > len(existing_result):
                 unique_results[unique_id] = result
                 title_size_map[f"{title}_{rounded_size}"] = result
-            elif len(result) == len(existing_result) and result.get('seeders', 0) > existing_result.get('seeders', 0):
-                unique_results[unique_id] = result
-                title_size_map[f"{title}_{rounded_size}"] = result
+            elif len(result) == len(existing_result):
+                # Handle None seeders by treating them as 0
+                result_seeders = result.get('seeders', 0) or 0
+                existing_seeders = existing_result.get('seeders', 0) or 0
+                if result_seeders > existing_seeders:
+                    unique_results[unique_id] = result
+                    title_size_map[f"{title}_{rounded_size}"] = result
         else:
             unique_results[unique_id] = result
             title_size_map[f"{title}_{rounded_size}"] = result

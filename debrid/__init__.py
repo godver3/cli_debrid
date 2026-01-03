@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 from utilities.settings import get_setting, ensure_settings_file
 from .base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError
@@ -20,22 +21,26 @@ def get_debrid_provider() -> DebridProvider:
     Uses singleton pattern to maintain one instance per provider.
     """
     global _provider_instance
-
+    
     if _provider_instance is not None:
         return _provider_instance
-
+    
     # Ensure settings file exists and is properly initialized
     ensure_settings_file()
 
-    provider_name = get_setting("Debrid Provider", "provider", "").lower()
+    provider_name_raw = get_setting("Debrid Provider", "provider", "")
+    provider_name = provider_name_raw.lower()
+    logging.info(f"[DEBRID FACTORY] Loading debrid provider: raw='{provider_name_raw}', lower='{provider_name}'")
 
     if provider_name == 'realdebrid':
+        logging.info("[DEBRID FACTORY] Instantiating RealDebridProvider")
         _provider_instance = RealDebridProvider()
     elif provider_name == 'alldebrid':
+        logging.info("[DEBRID FACTORY] Instantiating AllDebridProvider")
         _provider_instance = AllDebridProvider()
     else:
         raise ValueError(f"Unknown debrid provider: {provider_name}")
-
+        
     return _provider_instance
 
 def reset_provider() -> None:

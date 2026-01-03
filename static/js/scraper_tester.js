@@ -493,7 +493,9 @@ document.addEventListener('DOMContentLoaded', function() {
             'filter_in',
             'filter_out',
             'preferred_filter_in',
-            'preferred_filter_out'
+            'preferred_filter_out',
+            'enable_scraper_priorities',
+            'scraper_priorities'
         ];
     
         // Sort the settings according to the defined order
@@ -606,6 +608,17 @@ document.addEventListener('DOMContentLoaded', function() {
         } else if (['preferred_filter_in', 'preferred_filter_out'].includes(key)) {
             originalInput = createPreferredFilterList(key, value, true);
             modifiedInput = createPreferredFilterList(key, value, false);
+        } else if (key === 'scraper_priorities') {
+            // Treat scraper_priorities as a JSON object display
+            originalInput = document.createElement('textarea');
+            originalInput.value = JSON.stringify(value || {}, null, 2);
+            originalInput.rows = 5;
+            originalInput.disabled = true;
+
+            modifiedInput = document.createElement('textarea');
+            modifiedInput.value = JSON.stringify(value || {}, null, 2);
+            modifiedInput.rows = 5;
+            modifiedInput.className = 'scraper-priorities-textarea';
         } else if (key === 'max_size_gb' || key === 'min_size_gb' || key === 'max_bitrate_mbps' || key === 'min_bitrate_mbps') {
             // Size and bitrate fields
             originalInput = document.createElement('input');
@@ -766,6 +779,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     const weight = parseInt(item.querySelector('.filter-weight').value);
                     return term && !isNaN(weight) ? [term, weight] : null;
                 }).filter(Boolean);
+            } else if (settingKey === 'scraper_priorities') {
+                // Parse the JSON from the textarea
+                try {
+                    settings[settingKey] = JSON.parse(input.value || '{}');
+                } catch (e) {
+                    console.error('Error parsing scraper_priorities JSON:', e);
+                    settings[settingKey] = {};
+                }
             } else if (settingKey === 'max_size_gb' || settingKey === 'min_size_gb' || settingKey === 'max_bitrate_mbps' || settingKey === 'min_bitrate_mbps') {
                 // Handle size and bitrate fields
                 if (input.value === '' || input.value === null) {
@@ -1080,8 +1101,29 @@ document.addEventListener('DOMContentLoaded', function() {
         if (result.score_breakdown) {
             const breakdownList = document.createElement('ul');
             breakdownList.className = 'score-breakdown-list';
-    
-            for (const [key, value] of Object.entries(result.score_breakdown)) {
+
+            // Define the display order - priority scores near the bottom, total_score last
+            const keyOrder = [
+                'similarity_score', 'resolution_score', 'hdr_score', 'size_score', 'bitrate_score',
+                'country_score', 'language_score', 'year_match_score', 'season_match_score',
+                'episode_match_score', 'multi_pack_score', 'single_episode_score',
+                'preferred_filter_score', 'preferred_filter_in_breakdown', 'preferred_filter_out_breakdown',
+                'content_type_score', 'language_code_penalty', 'is_multi_pack', 'num_items',
+                'version', 'scraper_priority_score', 'version_scraper_priority_score', 'total_score'
+            ];
+
+            // Sort entries according to keyOrder
+            const sortedEntries = Object.entries(result.score_breakdown).sort((a, b) => {
+                const aIndex = keyOrder.indexOf(a[0]);
+                const bIndex = keyOrder.indexOf(b[0]);
+                // If not in keyOrder, put at the end
+                if (aIndex === -1 && bIndex === -1) return 0;
+                if (aIndex === -1) return 1;
+                if (bIndex === -1) return -1;
+                return aIndex - bIndex;
+            });
+
+            for (const [key, value] of sortedEntries) {
                 const breakdownItem = document.createElement('li');
                 breakdownItem.className = 'score-breakdown-item';
     
