@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request, render_template, Response, current_app
+from flask import Blueprint, jsonify, request, render_template, Response, current_app, make_response
 from utilities.settings import load_config, validate_url, save_config
 from utilities.settings_schema import SETTINGS_SCHEMA
 import logging
@@ -21,11 +21,139 @@ import time
 from content_checkers.trakt import fetch_liked_trakt_lists_details
 from database.database_writing import update_version_name # Ensure this is imported
 import sys
+import threading
 
 settings_bp = Blueprint('settings', __name__)
 
+# Migration function to auto-assign priorities to scrapers
+def migrate_scraper_priorities():
+    """
+    Auto-assign priority scores to scrapers that don't have them.
+    Last enabled scraper gets priority 0, incrementing by 10 going up the list.
+    """
+    try:
+        config = load_config()
+        scrapers = config.get('Scrapers', {})
+
+        # Check if migration is needed
+        needs_migration = False
+        for scraper_id, scraper_config in scrapers.items():
+            if 'priority' not in scraper_config:
+                needs_migration = True
+                break
+
+        if not needs_migration:
+            return
+
+        logging.info("Migrating scraper priorities...")
+
+        # Get list of all scrapers in current order
+        scraper_list = list(scrapers.items())
+
+        # Get enabled scrapers in current order
+        enabled_scrapers = [(scraper_id, cfg) for scraper_id, cfg in scraper_list if cfg.get('enabled', False)]
+
+        # Assign priorities: last enabled = 0, increment by 10 going up
+        if enabled_scrapers:
+            for index, (scraper_id, _) in enumerate(reversed(enabled_scrapers)):
+                priority = index * 10
+                scrapers[scraper_id]['priority'] = priority
+                logging.info(f"Assigned priority {priority} to scraper '{scraper_id}'")
+
+        # Assign priority 0 to disabled scrapers
+        for scraper_id, scraper_config in scrapers.items():
+            if 'priority' not in scraper_config:
+                scrapers[scraper_id]['priority'] = 0
+                logging.info(f"Assigned default priority 0 to disabled scraper '{scraper_id}'")
+
+        # Save the config
+        config['Scrapers'] = scrapers
+        save_config(config)
+        logging.info("Scraper priority migration completed successfully")
+
+    except Exception as e:
+        logging.error(f"Error during scraper priority migration: {e}", exc_info=True)
+
 # Helper to reload components and restart if program was running
-def _reload_components_after_settings_change():
+def _reload_components_after_settings_change(change_type='full'):
+    """
+    Reload components after settings change with granular control.
+
+    Args:
+        change_type (str): Type of change that occurred. Options:
+            - 'full': Complete reinitialization (default, for major setting changes)
+            - 'scraper': Only reload scraping components (for scraper add/delete/reorder)
+            - 'content_source': Only reload content source tasks (for content source add/delete)
+            - 'version': Only reload version settings (for version add/delete/rename/duplicate)
+            - 'notification': Minimal reload for notification changes
+            - 'ui': No component reload needed (for UI-only settings)
+    """
+    logging.info(f"Reloading components after settings change (type: {change_type})")
+
+    # For UI-only changes, no reinitialization needed
+    if change_type == 'ui':
+        logging.info("UI-only change, skipping component reinitialization")
+        return
+
+    # For notification changes, minimal reinitialization
+    if change_type == 'notification':
+        logging.info("Notification change, no component reinitialization needed")
+        return
+
+    # For version changes, settings are loaded on-demand during scraping, so no reinit needed
+    if change_type == 'version':
+        logging.info("Version change, settings will be picked up on next scrape")
+        return
+
+    # For scraper changes, only reinitialize scraping-related components
+    if change_type == 'scraper':
+        try:
+            from queues.queue_manager import QueueManager
+            # Only reinitialize the Scraping queue, not all queues
+            QueueManager().reinitialize_queue('Scraping')
+            logging.info("Scraping queue reinitialized after scraper change")
+            return
+        except Exception as e:
+            logging.error(f"Error reinitializing Scraping queue: {e}", exc_info=True)
+            # Fall through to full reinit on error
+
+    # For content source changes, reinitialize ProgramRunner to reload content source tasks
+    if change_type == 'content_source':
+        try:
+            from routes.program_operation_routes import get_program_runner
+            runner = get_program_runner()
+            was_running = bool(runner and runner.is_running())
+        except Exception as e:
+            logging.warning(f"Could not check program status before content source reinitialization: {e}")
+            was_running = False
+
+        try:
+            from queues.run_program import ProgramRunner
+            # Reinitialize ProgramRunner to invalidate content source cache and reload tasks
+            # This is necessary because content sources are cached in memory
+            ProgramRunner().reinitialize()
+            logging.info("ProgramRunner reinitialized after content source change")
+        except Exception as reinit_e:
+            logging.error(f"Error reinitializing ProgramRunner for content source change: {reinit_e}", exc_info=True)
+            # Fall through to full reinit on error
+            pass  # Will fall through to full reinit below
+
+        # Restart program if it was running before
+        if was_running:
+            try:
+                from routes.program_operation_routes import _execute_start_program
+                _execute_start_program(skip_connectivity_check=True, is_restart=True)
+                logging.info("Program restarted successfully after content source change.")
+                return
+            except Exception as restart_e:
+                logging.error(f"Error restarting program after content source change: {restart_e}", exc_info=True)
+                # Fall through to full reinit on error
+        else:
+            # Program wasn't running, we're done
+            return
+
+    # Full reinitialization for 'full' type or if targeted reload failed
+    logging.info("Performing full component reinitialization")
     try:
         from routes.program_operation_routes import get_program_runner
         runner = get_program_runner()
@@ -669,9 +797,9 @@ def content_sources_content():
     current_app.logger.info(f"Content Sources route - Theme cookie: {theme}, Template: {template_name}")
 
     return render_template(template_name,
-                           settings=config,
-                           source_types=source_types,
-                           settings_schema=SETTINGS_SCHEMA)
+                          settings=config,
+                          source_types=source_types,
+                          settings_schema=SETTINGS_SCHEMA)
 
 @settings_bp.route('/content-sources/types')
 def content_sources_types():
@@ -744,12 +872,12 @@ def add_content_source_route():
             elif not isinstance(source_config['versions'], dict):
                  logging.warning(f"Invalid 'versions' format for {source_type}: {source_config['versions']}. Resetting to empty dict.")
                  source_config['versions'] = {}
-        
+
         new_source_id = add_content_source(source_type, source_config)
-        
+
         # Reload components so the change takes effect mid-run
-        _reload_components_after_settings_change()
-        
+        _reload_components_after_settings_change('content_source')
+
         return jsonify({'success': True, 'source_id': new_source_id})
     except Exception as e:
         logging.error(f"Error adding content source: {str(e)}", exc_info=True)
@@ -772,10 +900,10 @@ def delete_content_source_route():
         if 'Content Sources' in config and source_id in config['Content Sources']:
             del config['Content Sources'][source_id]
             save_config(config)
-        
+
         # Reload components so the change takes effect mid-run
-        _reload_components_after_settings_change()
-        
+        _reload_components_after_settings_change('content_source')
+
         logging.info(f"Content source {source_id} deleted successfully")
         return jsonify({'success': True})
     else:
@@ -807,10 +935,10 @@ def add_scraper_route():
         # Log the updated config after adding the scraper
         updated_config = load_config()
         logging.info(f"Updated config after adding scraper: {updated_config}")
-        
+
         # Reload components so the change takes effect mid-run
-        _reload_components_after_settings_change()
-        
+        _reload_components_after_settings_change('scraper')
+
         return jsonify({'success': True, 'scraper_id': new_scraper_id})
     except Exception as e:
         logging.error(f"Error adding scraper: {str(e)}", exc_info=True)
@@ -819,6 +947,9 @@ def add_scraper_route():
 @settings_bp.route('/scrapers/content')
 def scrapers_content():
     try:
+        # Run migration to ensure all scrapers have priority field
+        migrate_scraper_priorities()
+
         settings = load_config()
         scraper_types = list(SETTINGS_SCHEMA["Scrapers"]["schema"].keys())
         scraper_settings = {scraper: list(SETTINGS_SCHEMA["Scrapers"]["schema"][scraper].keys()) for scraper in SETTINGS_SCHEMA["Scrapers"]["schema"]}
@@ -860,25 +991,80 @@ def get_content_source_types():
 def delete_scraper():
     data = request.json
     scraper_id = data.get('scraper_id')
-    
+
     if not scraper_id:
         return jsonify({'success': False, 'error': 'No scraper ID provided'}), 400
 
     config = load_config()
     scrapers = config.get('Scrapers', {})
-    
+
     if scraper_id in scrapers:
         del scrapers[scraper_id]
         config['Scrapers'] = scrapers
         save_config(config)
-        
+
         # Reload components so the change takes effect mid-run
-        _reload_components_after_settings_change()
-        
+        _reload_components_after_settings_change('scraper')
+
         return jsonify({'success': True})
     else:
         return jsonify({'success': False, 'error': 'Scraper not found'}), 404
-    
+
+@settings_bp.route('/scrapers/reorder', methods=['POST'])
+@admin_required
+def reorder_scrapers():
+    """
+    Reorder scrapers and recalculate priorities.
+    Expects: {scraper_order: ['scraper1', 'scraper2', ...]}
+    """
+    try:
+        data = request.json
+        scraper_order = data.get('scraper_order', [])
+
+        if not scraper_order:
+            return jsonify({'success': False, 'error': 'No scraper order provided'}), 400
+
+        config = load_config()
+        scrapers = config.get('Scrapers', {})
+
+        # Create new ordered dict based on the provided order
+        reordered_scrapers = {}
+        for scraper_id in scraper_order:
+            if scraper_id in scrapers:
+                reordered_scrapers[scraper_id] = scrapers[scraper_id]
+
+        # Add any scrapers not in the order list at the end (shouldn't happen, but safety check)
+        for scraper_id, scraper_config in scrapers.items():
+            if scraper_id not in reordered_scrapers:
+                reordered_scrapers[scraper_id] = scraper_config
+
+        # Recalculate priorities: last enabled = 0, increment by 10 going up
+        enabled_scrapers_in_order = [(sid, cfg) for sid, cfg in reordered_scrapers.items() if cfg.get('enabled', False)]
+
+        # Reset all priorities to 0 first
+        for scraper_id in reordered_scrapers:
+            reordered_scrapers[scraper_id]['priority'] = 0
+
+        # Assign priorities to enabled scrapers
+        if enabled_scrapers_in_order:
+            for index, (scraper_id, _) in enumerate(reversed(enabled_scrapers_in_order)):
+                priority = index * 10
+                reordered_scrapers[scraper_id]['priority'] = priority
+                logging.info(f"Reordered: Assigned priority {priority} to scraper '{scraper_id}'")
+
+        # Save the reordered scrapers
+        config['Scrapers'] = reordered_scrapers
+        save_config(config)
+
+        # Reload components so the change takes effect mid-run
+        _reload_components_after_settings_change('scraper')
+
+        return jsonify({'success': True, 'message': 'Scrapers reordered successfully'})
+
+    except Exception as e:
+        logging.error(f"Error reordering scrapers: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @settings_bp.route('/notifications/delete', methods=['POST'])
 @admin_required
 def delete_notification():
@@ -891,10 +1077,10 @@ def delete_notification():
         if 'Notifications' in config and notification_id in config['Notifications']:
             del config['Notifications'][notification_id]
             save_config(config)
-            
+
             # Reload components so the change takes effect mid-run
-            _reload_components_after_settings_change()
-            
+            _reload_components_after_settings_change('notification')
+
             logging.info(f"Notification {notification_id} deleted successfully")
             return jsonify({'success': True})
         else:
@@ -979,7 +1165,7 @@ def add_notification():
         save_config(config)
 
         # Reload components so the change takes effect mid-run
-        _reload_components_after_settings_change()
+        _reload_components_after_settings_change('notification')
 
         logging.info(f"Notification {notification_id} added successfully")
         return jsonify({'success': True, 'notification_id': notification_id})
@@ -1383,8 +1569,13 @@ def update_settings():
                 logging.info("Plex URL detected but Media Server Type is not Plex, keeping Jellyfin/Emby settings")
 
         # Function to recursively update the main config dictionary
-        def update_nested_dict(current, new):
+        def update_nested_dict(current, new, parent_key=None):
             for key, value in new.items():
+                # Special handling: preserve 'enabled' field in Content Sources (managed by Task Manager)
+                if parent_key == 'Content Sources' and key == 'enabled':
+                    # Skip updating the 'enabled' field - it's managed by Task Manager
+                    continue
+
                 if isinstance(value, dict) and key in current and isinstance(current[key], dict):
                      # Handle specific nested structures like 'Content Sources' or 'versions' if needed,
                      # otherwise, just recurse.
@@ -1393,8 +1584,13 @@ def update_settings():
                          # Current behavior seems to merge/update existing and add new
                          for source_id, source_config in value.items():
                              if source_id in current[key]:
+                                 # Preserve the enabled field when updating
+                                 existing_enabled = current[key][source_id].get('enabled')
                                  # Recursively update existing source config
-                                 update_nested_dict(current[key][source_id], source_config)
+                                 update_nested_dict(current[key][source_id], source_config, parent_key='Content Sources')
+                                 # Restore the enabled field if it existed
+                                 if existing_enabled is not None and 'enabled' not in source_config:
+                                     current[key][source_id]['enabled'] = existing_enabled
                              else:
                                  # Add new source config
                                  current[key][source_id] = source_config
@@ -1456,7 +1652,7 @@ def update_settings():
             cache_files = get_cache_files()
             if cache_files:
                 db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-                for filename in cache_files:
+                for filename, _ in cache_files:  # Unpack tuple (filename, display_label)
                     file_path = os.path.join(db_content_dir, filename)
                     if os.path.exists(file_path):
                         try:
@@ -1479,37 +1675,64 @@ def update_settings():
                 logging.info("Program was running before settings save. Will restart after reinitialization.")
         except Exception as e:
             logging.warning(f"Could not check program status before reinitialization: {e}")
-        
-        # Reinitialize components that depend on the config
-        try:
-            from debrid import reset_provider
-            reset_provider()
-            from queues.queue_manager import QueueManager
-            QueueManager().reinitialize()
-            from queues.run_program import ProgramRunner
-            ProgramRunner().reinitialize()
-            logging.info("Relevant components reinitialized.")
-        except Exception as reinit_e:
-             logging.error(f"Error during component reinitialization after settings save: {reinit_e}", exc_info=True)
-             # Consider if the response should indicate partial success/failure
-             # return jsonify({"status": "warning", "message": f"Settings updated but failed to reinitialize components: {reinit_e}"}), 500
 
-        # Restart program if it was running before
-        if was_program_running:
-            try:
-                from routes.program_operation_routes import _execute_start_program
-                start_result = _execute_start_program(skip_connectivity_check=True, is_restart=True)
-                if start_result.get("status") == "success":
-                    logging.info("Program restarted successfully after settings save.")
-                    return jsonify({"status": "success", "message": "Settings updated successfully and program restarted"})
-                else:
-                    logging.warning(f"Failed to restart program after settings save: {start_result.get('message', 'Unknown error')}")
-                    return jsonify({"status": "warning", "message": f"Settings updated successfully but failed to restart program: {start_result.get('message', 'Unknown error')}"})
-            except Exception as restart_e:
-                logging.error(f"Error restarting program after settings save: {restart_e}", exc_info=True)
-                return jsonify({"status": "warning", "message": f"Settings updated successfully but failed to restart program: {str(restart_e)}"})
+        # Capture Flask app context for background thread
+        app = current_app._get_current_object()
 
-        return jsonify({"status": "success", "message": "Settings updated successfully"})
+        # Define background reinitialization function
+        def async_reinitialize():
+            """Run component reinitialization in background thread"""
+            with app.app_context():
+                try:
+                    logging.info("Starting background reinitialization of components...")
+
+                    # Reinitialize components that depend on the config
+                    from debrid import reset_provider
+                    reset_provider()
+                    logging.info("Debrid provider reset complete")
+
+                    from queues.queue_manager import QueueManager
+                    QueueManager().reinitialize()
+                    logging.info("QueueManager reinitialized")
+
+                    # Restart program if it was running before
+                    if was_program_running:
+                        try:
+                            # Stop the program first
+                            from routes.program_operation_routes import stop_program, _execute_start_program
+                            logging.info("Stopping program before restart...")
+                            stop_result = stop_program()
+                            if stop_result.get("status") != "success":
+                                logging.warning(f"Stop returned non-success: {stop_result.get('message', 'Unknown')}")
+
+                            # Wait a moment for clean shutdown
+                            import time
+                            time.sleep(2)
+
+                            # Start the program
+                            logging.info("Starting program after settings change...")
+                            start_result = _execute_start_program(skip_connectivity_check=True, is_restart=True)
+                            if start_result.get("status") == "success":
+                                logging.info("Program restarted successfully after settings save.")
+                            else:
+                                logging.warning(f"Failed to restart program after settings save: {start_result.get('message', 'Unknown error')}")
+                        except Exception as restart_e:
+                            logging.error(f"Error restarting program after settings save: {restart_e}", exc_info=True)
+
+                    logging.info("Background reinitialization completed successfully")
+
+                except Exception as reinit_e:
+                    logging.error(f"Error during background component reinitialization: {reinit_e}", exc_info=True)
+
+        # Start reinitialization in background thread
+        reinit_thread = threading.Thread(target=async_reinitialize, daemon=True, name="SettingsReinitThread")
+        reinit_thread.start()
+        logging.info("Settings saved successfully. Component reinitialization started in background.")
+
+        return jsonify({
+            "status": "success",
+            "message": "Settings updated successfully. Changes are being applied in the background."
+        })
     except Exception as e:
         logging.error(f"Error updating settings: {str(e)}", exc_info=True)
         return jsonify({"status": "error", "message": f"An unexpected error occurred: {str(e)}"}), 500
@@ -1616,10 +1839,10 @@ def add_version():
     }
 
     save_config(config)
-    
+
     # Reload components so the change takes effect mid-run
-    _reload_components_after_settings_change()
-    
+    _reload_components_after_settings_change('version')
+
     return jsonify({'success': True, 'version_id': version_name})
 
 @settings_bp.route('/versions/delete', methods=['POST'])
@@ -1680,10 +1903,10 @@ def delete_version():
             # Delete the actual version
             del versions[version_id]
             save_config(config) # Save config with updated fallbacks and deleted version
-            
+
             # Reload components so the change takes effect mid-run
-            _reload_components_after_settings_change()
-            
+            _reload_components_after_settings_change('version')
+
             message = f"Version '{version_id}' deleted."
             if updated_count > 0:
                 message += f" {updated_count} items reassigned to '{target_version_id or 'versionless'}'."
@@ -1828,7 +2051,7 @@ def rename_version():
             save_config(config)
 
             # Reload components so the change takes effect mid-run
-            _reload_components_after_settings_change()
+            _reload_components_after_settings_change('version')
 
             return jsonify({'success': True})
         else:
@@ -1872,10 +2095,10 @@ def duplicate_version():
     config['Scraping']['versions'][new_version_id]['display_name'] = new_version_id
 
     save_config(config)
-    
+
     # Reload components so the change takes effect mid-run
-    _reload_components_after_settings_change()
-    
+    _reload_components_after_settings_change('version')
+
     return jsonify({'success': True, 'new_version_id': new_version_id})
 
 @settings_bp.route('/scraping/content')
@@ -2466,6 +2689,16 @@ def api_settings_schema():
         return jsonify(SETTINGS_SCHEMA)
     except Exception as e:
         return jsonify({"error": "An error occurred while loading settings schema."}), 500
+
+@settings_bp.route('/api/scrapers', methods=['GET'])
+def api_get_scrapers():
+    """API endpoint to get scrapers configuration as JSON"""
+    try:
+        config = load_config()
+        return jsonify(config.get('Scrapers', {}))
+    except Exception as e:
+        logging.error(f"Error getting scrapers: {str(e)}", exc_info=True)
+        return jsonify({"error": "An error occurred while loading scrapers."}), 500
 
 @settings_bp.route('/api/phalanx-disclaimer-status')
 def get_phalanx_disclaimer_status():

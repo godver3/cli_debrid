@@ -1306,3 +1306,229 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
     except Exception as e:
         logger.error(f"Error updating item in Plex via scan: {str(e)}")
         return False
+
+
+def get_plex_item(item_id: int):
+    """
+    Get a Plex item object by database ID
+
+    Args:
+        item_id: Database ID of the media item (can be int or dict with 'id' key)
+
+    Returns:
+        PlexAPI item object if found in Plex, None otherwise
+    """
+    # Handle both int and dict input
+    if isinstance(item_id, dict):
+        item_data = item_id
+        item_id = item_data.get('id')
+    else:
+        item_data = get_media_item_by_id(item_id)
+
+    if not item_data:
+        logger.debug(f"Item {item_id} not found in database")
+        return None
+
+    try:
+        # Get Plex connection details
+        plex_url = get_setting('Plex', 'url')
+        plex_token = get_setting('Plex', 'token')
+
+        if not plex_url or not plex_token:
+            logger.debug("Plex URL or token not configured")
+            return None
+
+        # Connect to Plex
+        plex = PlexServer(plex_url, plex_token, timeout=10)
+
+        # Determine item type
+        item_type = item_data.get('type')
+        imdb_id = item_data.get('imdb_id')
+        tmdb_id = item_data.get('tmdb_id')
+        title = item_data.get('title')
+        year = item_data.get('year')
+
+        # Search for item
+        if item_type == 'movie':
+            # Search in all movie libraries
+            for section in plex.library.sections():
+                if section.type == 'movie':
+                    try:
+                        # Try searching by IMDb ID first
+                        if imdb_id:
+                            logger.debug(f"Searching Plex for '{title}' by IMDb ID: {imdb_id}")
+                            # Try guid__contains first (searches primary GUID)
+                            results = section.search(guid__contains=imdb_id)
+                            if results:
+                                logger.debug(f"Found by IMDb ID (guid__contains): {results[0].title}")
+                                return results[0]
+
+                            # If not found, try searching by title and checking all GUIDs
+                            # This handles cases where IMDb ID is in secondary GUIDs, not primary
+                            # Only do this expensive search if title has apostrophes (common mismatch)
+                            if title and ("'" in title or "'" in title or "'" in title):
+                                logger.debug(f"IMDb search failed via guid__contains, trying title search with GUID filtering (title has apostrophes)")
+
+                                # Try multiple title variations to handle Plex's inconsistent title handling
+                                # Example: "O'Malley" in DB might be "O Malley" (space) or "OMalley" (removed) in Plex
+                                title_variations = [
+                                    title,  # Original title
+                                    title.replace("'", " "),  # Replace straight apostrophe with space
+                                    title.replace("'", ""),   # Remove straight apostrophe entirely
+                                    title.replace("'", " "),  # Replace curly apostrophe with space
+                                    title.replace("'", ""),   # Remove curly apostrophe entirely
+                                ]
+
+                                # Remove duplicates while preserving order
+                                seen = set()
+                                title_variations = [t for t in title_variations if not (t in seen or seen.add(t))]
+
+                                for title_var in title_variations:
+                                    title_results = section.search(title=title_var)
+                                    if title_results:
+                                        for item in title_results:
+                                            # Check if any of the item's GUIDs contain the IMDb ID
+                                            if hasattr(item, 'guids'):
+                                                for guid in item.guids:
+                                                    if imdb_id in guid.id:
+                                                        logger.info(f"Found by IMDb ID in secondary GUIDs (title variation: '{title_var}'): {item.title}")
+                                                        return item
+
+                                logger.debug(f"No match found after trying {len(title_variations)} title variations")
+
+                        # Try searching by TMDb ID
+                        if tmdb_id:
+                            logger.debug(f"Searching Plex for '{title}' by TMDb ID: {tmdb_id}")
+                            # Try different TMDb GUID formats
+                            tmdb_formats = [
+                                f'tmdb://{tmdb_id}',
+                                f'themoviedb://{tmdb_id}',
+                                tmdb_id
+                            ]
+                            found_via_guid = False
+                            for tmdb_format in tmdb_formats:
+                                try:
+                                    logger.debug(f"Trying TMDb format: {tmdb_format}")
+                                    results = section.search(guid__contains=tmdb_format)
+                                    if results:
+                                        logger.debug(f"Found by TMDb ID ({tmdb_format}): {results[0].title}")
+                                        return results[0]
+                                except Exception as e:
+                                    logger.debug(f"TMDb search failed for {tmdb_format}: {e}")
+                                    continue
+
+                            # If not found via guid__contains, try title search with GUID filtering
+                            # Only do this expensive search if title has apostrophes
+                            if title and ("'" in title or "'" in title or "'" in title):
+                                logger.debug(f"TMDb search failed via guid__contains, trying title search with GUID filtering (title has apostrophes)")
+
+                                # Try multiple title variations (same as IMDb search above)
+                                title_variations = [
+                                    title,
+                                    title.replace("'", " "),
+                                    title.replace("'", ""),
+                                    title.replace("'", " "),
+                                    title.replace("'", ""),
+                                ]
+                                seen = set()
+                                title_variations = [t for t in title_variations if not (t in seen or seen.add(t))]
+
+                                for title_var in title_variations:
+                                    title_results = section.search(title=title_var)
+                                    if title_results:
+                                        for item in title_results:
+                                            if hasattr(item, 'guids'):
+                                                for guid in item.guids:
+                                                    if str(tmdb_id) in guid.id or f'tmdb://{tmdb_id}' in guid.id:
+                                                        logger.info(f"Found by TMDb ID in secondary GUIDs (title variation: '{title_var}'): {item.title}")
+                                                        return item
+
+                                logger.debug(f"No TMDb match found after trying {len(title_variations)} title variations")
+
+                        # Fallback to title and year with fuzzy matching
+                        if title and year:
+                            # Try exact title first
+                            logger.debug(f"Searching Plex for '{title}' ({year}) by title+year")
+                            results = section.search(title=title, year=year)
+                            if results:
+                                logger.debug(f"Found by title+year: {results[0].title}")
+                                return results[0]
+
+                            # Try with normalized apostrophes (replace curly quotes with straight quotes)
+                            if "'" in title or "'" in title or "'" in title:
+                                title_normalized = title.replace("'", "'").replace("'", "'").replace("'", "'")
+                                logger.debug(f"Searching Plex with normalized apostrophes: '{title_normalized}' ({year})")
+                                results = section.search(title=title_normalized, year=year)
+                                if results:
+                                    logger.debug(f"Found by normalized title: {results[0].title}")
+                                    return results[0]
+
+                            # Try without year as last resort for title match
+                            logger.debug(f"Searching Plex for '{title}' without year (fallback)")
+                            results = section.search(title=title)
+                            if results:
+                                # Filter by year if multiple results
+                                for result in results:
+                                    if getattr(result, 'year', None) == year:
+                                        logger.debug(f"Found by title (year matched): {result.title}")
+                                        return result
+                                # Return first result if no year match
+                                if results:
+                                    logger.debug(f"Found by title (no year match, using first result): {results[0].title}")
+                                    return results[0]
+
+                        logger.debug(f"No Plex match found for '{title}' ({year}) in section {section.title}")
+                    except Exception as e:
+                        logger.debug(f"Error searching section {section.title}: {e}")
+                        continue
+
+        elif item_type == 'episode':
+            season_number = item_data.get('season_number')
+            episode_number = item_data.get('episode_number')
+
+            # Search in all TV libraries
+            for section in plex.library.sections():
+                if section.type == 'show':
+                    try:
+                        # Try searching show by IMDb ID first
+                        if imdb_id:
+                            shows = section.search(guid__contains=imdb_id)
+                            if shows:
+                                show = shows[0]
+                                try:
+                                    episode = show.episode(season=season_number, episode=episode_number)
+                                    return episode
+                                except NotFound:
+                                    continue
+
+                        # Try searching by TMDb ID
+                        if tmdb_id:
+                            shows = section.search(guid__contains=f'tmdb://{tmdb_id}')
+                            if shows:
+                                show = shows[0]
+                                try:
+                                    episode = show.episode(season=season_number, episode=episode_number)
+                                    return episode
+                                except NotFound:
+                                    continue
+
+                        # Fallback to title and year
+                        if title and year:
+                            shows = section.search(title=title, year=year)
+                            if shows:
+                                show = shows[0]
+                                try:
+                                    episode = show.episode(season=season_number, episode=episode_number)
+                                    return episode
+                                except NotFound:
+                                    continue
+                    except Exception as e:
+                        logger.debug(f"Error searching section {section.title}: {e}")
+                        continue
+
+        logger.debug(f"Item {item_id} ({title}) not found in Plex")
+        return None
+
+    except Exception as e:
+        logger.error(f"Error getting Plex item for {item_id}: {e}", exc_info=True)
+        return None

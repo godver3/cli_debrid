@@ -35,7 +35,7 @@
                         {% endfor %}
                     </select>
                 {% else %}
-                    <input type="{{ value.type }}" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}" 
+                    <input type="{% if value.sensitive %}password{% else %}{{ value.type }}{% endif %}" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}" 
                            value="{{ settings.get('Debrid Provider', {}).get(key, '') }}" class="settings-input"
                            data-section="Debrid Provider" data-key="{{ key }}"
                            {% if value.sensitive %}type="password"{% endif %}>
@@ -276,7 +276,7 @@
                         {% endfor %}
                     </select>
                 {% else %}
-                    <input type="{% if key in ['client_id', 'client_secret'] and environment_mode != 'full' %}password{% else %}{{ value.type }}{% endif %}"
+                    <input type="{% if value.sensitive or key in ['client_id', 'client_secret'] and environment_mode != 'full' %}password{% else %}{{ value.type }}{% endif %}"
                            id="trakt-{{ key }}" name="Trakt.{{ key }}"
                            value="{{ settings.get('Trakt', {}).get(key, '') }}" class="settings-input"
                            data-section="Trakt" data-key="{{ key }}"

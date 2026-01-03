@@ -88,6 +88,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     let currentDefaultVersion;
     let isFilteringDefault = {{ 'true' if filter_default else 'false' }};
+    let currentItems = []; // Store current items for apply operation
 
     // Initialization
     initializeTooltips();
@@ -125,24 +126,49 @@ document.addEventListener('DOMContentLoaded', function() {
             fetch('/settings/get_scraping_versions').then(response => response.json()),
             fetch('/settings/api/reverse_parser_settings').then(response => response.json())
         ]).then(([versionsData, reverseParserData]) => {
+            // Check if versionsData has an error or versions is missing
+            if (versionsData.error || !versionsData.versions) {
+                console.error("Error loading scraping versions:", versionsData.error || "No versions found");
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error',
+                    message: 'Failed to load scraping versions: ' + (versionsData.error || 'No versions configured')
+                });
+                return;
+            }
             setupDefaultVersion(versionsData.versions, reverseParserData);
         }).catch(error => {
             console.error("Error loading version data:", error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error',
+                message: 'Failed to load version data: ' + error.message
+            });
         });
     }
 
     function setupDefaultVersion(allScrapingVersions, reverseParserData) {
-        updateDefaultVersionOptions(allScrapingVersions, reverseParserData.default_version);
-        currentDefaultVersion = reverseParserData.default_version || (allScrapingVersions.length > 0 ? allScrapingVersions[0] : '');
+        // Safety check: ensure allScrapingVersions is an array
+        const versions = Array.isArray(allScrapingVersions) ? allScrapingVersions : [];
+
+        updateDefaultVersionOptions(versions, reverseParserData.default_version);
+        currentDefaultVersion = reverseParserData.default_version || (versions.length > 0 ? versions[0] : '');
         defaultVersionSelect.value = currentDefaultVersion;
 
         assignVersions();
     }
 
     function updateDefaultVersionOptions(versions, currentConfiguredDefault) {
+        // Safety check: ensure versions is an array
+        if (!Array.isArray(versions) || versions.length === 0) {
+            console.warn("No versions available to populate dropdown");
+            defaultVersionSelect.innerHTML = '<option value="">No versions configured</option>';
+            return;
+        }
+
         const currentSelection = defaultVersionSelect.value || currentConfiguredDefault;
         defaultVersionSelect.innerHTML = versions.map(v => `<option value="${v}">${v}</option>`).join('');
-        
+
         if (versions.includes(currentSelection)) {
             defaultVersionSelect.value = currentSelection;
         } else if (currentConfiguredDefault && versions.includes(currentConfiguredDefault)) {
@@ -228,8 +254,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const queryString = new URLSearchParams(params).toString();
         url += '?' + queryString;
 
-        console.log("Fetching URL:", url);
-
         setUpdatingContent(true);
 
         fetch(url)
@@ -238,15 +262,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (data.error) {
                     throw new Error(data.error);
                 }
-                
-                console.log("Received data:", data);
 
                 const tableContainer = document.querySelector('.table-container');
                 if (tableContainer) {
                     if (data.items && data.items.length > 0) {
+                        currentItems = data.items; // Store items for later use
                         tableContainer.innerHTML = renderTable(data.items, data.selected_columns);
                         assignVersions();  // Call this after rendering the table
                     } else {
+                        currentItems = []; // Clear items if none found
                         tableContainer.innerHTML = '<p>No collected items found in the database.</p>';
                     }
                 } else {
@@ -301,11 +325,29 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function handleApplyParsedVersions() {
+        if (!currentItems || currentItems.length === 0) {
+            showPopup({
+                type: POPUP_TYPES.WARNING,
+                title: 'No Items',
+                message: 'No items available to apply parsed versions to.'
+            });
+            return;
+        }
+
+        // Prepare items with required fields for backend
+        const itemsToUpdate = currentItems.map(item => ({
+            id: item.id,
+            filled_by_file: item.filled_by_file,
+            version: item.version,
+            state: 'Collected' // All items from reverse parser are in Collected state
+        }));
+
         fetch('{{ url_for('database.apply_parsed_versions') }}', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-            }
+            },
+            body: JSON.stringify({ items_to_update: itemsToUpdate })
         })
         .then(response => response.json())
         .then(data => {
@@ -313,7 +355,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 showPopup({
                     type: POPUP_TYPES.SUCCESS,
                     title: 'Success',
-                    message: 'Parsed versions have been applied to all items.'
+                    message: data.message || 'Parsed versions have been applied to all items.'
                 });
                 // Refresh the content to show updated versions
                 updateContent('{{ url_for('database.reverse_parser') }}', { filter_default: isFilteringDefault, page: 1 });
@@ -321,7 +363,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 showPopup({
                     type: POPUP_TYPES.ERROR,
                     title: 'Error',
-                    message: 'Failed to apply parsed versions: ' + data.error
+                    message: 'Failed to apply parsed versions: ' + (data.error || 'Unknown error')
                 });
             }
         })
@@ -330,7 +372,7 @@ document.addEventListener('DOMContentLoaded', function() {
             showPopup({
                 type: POPUP_TYPES.ERROR,
                 title: 'Error',
-                message: 'An error occurred while applying parsed versions.'
+                message: 'An error occurred while applying parsed versions: ' + error.message
             });
         });
     }

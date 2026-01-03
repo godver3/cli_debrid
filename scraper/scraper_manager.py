@@ -9,7 +9,7 @@ import time
 from .nyaa import scrape_nyaa
 from .jackett import scrape_jackett_instance
 from .mediafusion import scrape_mediafusion_instance
-from .aiostreams import scrape_aiostreams_instance
+from .aiostreams import scrape_aiostreams_instance, scrape_aiostreams_api
 from .prowlarr import scrape_prowlarr_instance
 from .torrentio import scrape_torrentio_instance
 from .zilean import scrape_zilean_instance
@@ -24,6 +24,7 @@ class ScraperManager:
             'Jackett': scrape_jackett_instance,
             'MediaFusion': scrape_mediafusion_instance,
             'AIOStreams': scrape_aiostreams_instance,
+            'AIOStreams-API': scrape_aiostreams_api,
             'Prowlarr': scrape_prowlarr_instance,
             'Torrentio': scrape_torrentio_instance,
             'Zilean': scrape_zilean_instance,
@@ -492,6 +493,11 @@ class ScraperManager:
             scraper_type = instance_to_type.get(instance_name)
             parsed_info = result.get('parsed_info', {}) # Get parsed_info once
 
+            # Add scraper priority to result (using instance_name to get the settings)
+            scraper_settings = self.config.get('Scrapers', {}).get(instance_name, {})
+            scraper_priority = scraper_settings.get('priority', 0)
+            result['scraper_priority'] = scraper_priority
+
             if scraper_type == 'MediaFusion':
                 filename = parsed_info.get('filename')
                 binge_group = parsed_info.get('bingeGroup')
@@ -503,7 +509,7 @@ class ScraperManager:
                     if binge_group:
                         additional_metadata['bingeGroup'] = binge_group
             
-            elif scraper_type == 'AIOStreams':
+            elif scraper_type in ('AIOStreams', 'AIOStreams-API'):
                 filename = parsed_info.get('filename')
                 binge_group = parsed_info.get('bingeGroup')
 

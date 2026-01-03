@@ -87,7 +87,7 @@
 
 /* Individual Items */
 .item {
-    margin-left: 20px;
+    /* margin-left: 20px; */
     padding: 0.75rem 1rem;
     word-wrap: break-word;
     word-break: break-all;
@@ -462,4 +462,45 @@
 .processing-stats strong {
     color: #ff6b35;
     font-weight: 700;
+}
+
+/* Color the label text in queue items (desktop and mobile) */
+.queue-items .item .item-label {
+    color: #e17c52;
+}
+
+/* Mobile-specific formatting for queue items */
+@media (max-width: 768px) {
+    .queue-items .item {
+        line-height: 1.8;
+        font-size: 0.85rem;
+    }
+
+    /* Make separators display as line breaks on mobile */
+    .queue-items .item .item-separator {
+        display: block;
+        height: 0;
+        overflow: hidden;
+    }
+
+    .queue-items .item .item-separator::before {
+        content: '\A';
+        white-space: pre;
+    }
+
+    /* Add some indentation for wrapped lines */
+    .queue-items .item .item-version,
+    .queue-items .item .item-release,
+    .queue-items .item .item-time,
+    .queue-items .item .item-magnet,
+    .queue-items .item .item-scrape-time,
+    .queue-items .item .item-source {
+        display: block;
+        /* padding-left: 0.5rem; */
+    }
+
+    /* Color the label text (text before colons) in Tangerine theme */
+    .queue-items .item .item-label {
+        color: #e17c52;
+    }
 }

@@ -15,6 +15,16 @@
             </div>
         </div>
 
+        <div class="info-box" style="margin-bottom: 20px;">
+            <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <div>
+                <p><strong>Scraper Priority:</strong></p>
+                <p>Drag and drop scrapers using the ⋮⋮ handle to set their priority order. Scrapers at the top of the list receive higher priority scores, making their results rank better in search results. The last enabled scraper receives a score of 0, with each scraper above it getting +10 points. This helps you prioritize trusted or faster scrapers without changing other settings.</p>
+            </div>
+        </div>
+
         <div class="scraper-list">
 
 <script>
@@ -26,7 +36,7 @@
     }
 
     function updateAllScraperHeaderColors() {
-        document.querySelectorAll('.settings-section').forEach(section => {
+        document.querySelectorAll('#scrapers .settings-section').forEach(section => {
             const checkbox = section.querySelector('input[type="checkbox"][id$="-enabled"]');
             if (checkbox) {
                 updateScraperHeaderColor(section, checkbox.checked);
@@ -46,7 +56,7 @@
     }
 
     function initializeScraperEnabledListeners() {
-        document.querySelectorAll('input[type="checkbox"][id$="-enabled"]').forEach(checkbox => {
+        document.querySelectorAll('#scrapers input[type="checkbox"][id$="-enabled"]').forEach(checkbox => {
             checkbox.addEventListener('change', function() {
                 const section = this.closest('.settings-section');
                 updateScraperHeaderColor(section, this.checked);
@@ -74,7 +84,8 @@
             dropdownOptions: [
                 { value: 'Zilean', text: 'Zilean' },
                 { value: 'MediaFusion', text: 'MediaFusion' },
-                { value: 'AIOStreams', text: 'AIOStreams' },
+                { value: 'AIOStreams', text: 'AIOStreams (Stremio Endpoint)' },
+                { value: 'AIOStreams-API', text: 'AIOStreams (API)' },
                 { value: 'Jackett', text: 'Jackett' },
                 { value: 'Torrentio', text: 'Torrentio' },
                 { value: 'Nyaa', text: 'Nyaa' },
@@ -102,8 +113,8 @@
             confirmText: 'Add',
             cancelText: 'Cancel',
             onConfirm: () => {
-                // Show loading dialog
-                window.showLoading('Adding scraper...');
+                // Show loading dialog immediately after confirmation
+                window.Loading.show('Adding scraper...', 'Please wait while the scraper is being added.', true);
 
                 fetch('/settings/scrapers/add', {
                     method: 'POST',
@@ -117,16 +128,16 @@
                     if (data.success) {
                         if (typeof window.reloadTabContent === 'function') {
                             window.reloadTabContent('scrapers', () => {
-                                window.hideLoading(); // Hide loading dialog
-                                window.initializeExpandCollapse(); // Reinitialize expand/collapse
-                                initializeScrapersFunctionality(); // Reinitialize scraper functionality
+                                window.Loading.hide();
+                                window.initializeExpandCollapse();
+                                initializeScrapersFunctionality();
                                 window.showPopup({
                                     type: POPUP_TYPES.SUCCESS,
                                     message: 'Scraper added and tab content reloaded successfully',
                                 });
                             });
                         } else {
-                            window.hideLoading(); // Hide loading dialog
+                            window.Loading.hide();
                             console.error('reloadTabContent is not a function');
                             window.showPopup({
                                 type: POPUP_TYPES.ERROR,
@@ -134,12 +145,12 @@
                             });
                         }
                     } else {
-                        window.hideLoading(); // Hide loading dialog
+                        window.Loading.hide();
                         throw new Error(data.error || 'Unknown error');
                     }
                 })
                 .catch(error => {
-                    window.hideLoading(); // Hide loading dialog
+                    window.Loading.hide();
                     console.error('Error adding scraper:', error);
                     window.showPopup({
                         type: POPUP_TYPES.ERROR,
@@ -160,8 +171,8 @@
             confirmText: 'Delete',
             cancelText: 'Cancel',
             onConfirm: () => {
-                // Show loading dialog
-                window.showLoading('Deleting scraper...');
+                // Show loading dialog immediately after confirmation
+                window.Loading.show('Deleting scraper...', 'Please wait while the scraper is being deleted.', true);
 
                 fetch('/settings/scrapers/delete', {
                     method: 'POST',
@@ -175,16 +186,16 @@
                     if (data.success) {
                         if (typeof window.reloadTabContent === 'function') {
                             window.reloadTabContent('scrapers', () => {
-                                window.hideLoading(); // Hide loading dialog
-                                window.initializeExpandCollapse(); // Reinitialize expand/collapse
-                                initializeScrapersFunctionality(); // Reinitialize scraper functionality
+                                window.Loading.hide();
+                                window.initializeExpandCollapse();
+                                initializeScrapersFunctionality();
                                 window.showPopup({
                                     type: POPUP_TYPES.SUCCESS,
                                     message: 'Scraper deleted and tab content reloaded successfully',
                                 });
                             });
                         } else {
-                            window.hideLoading(); // Hide loading dialog
+                            window.Loading.hide();
                             console.error('reloadTabContent is not a function');
                             window.showPopup({
                                 type: POPUP_TYPES.ERROR,
@@ -192,12 +203,12 @@
                             });
                         }
                     } else {
-                        window.hideLoading(); // Hide loading dialog
+                        window.Loading.hide();
                         throw new Error(data.error || 'Unknown error');
                     }
                 })
                 .catch(error => {
-                    window.hideLoading(); // Hide loading dialog
+                    window.Loading.hide();
                     console.error('Error deleting scraper:', error);
                     window.showPopup({
                         type: POPUP_TYPES.ERROR,
@@ -218,14 +229,69 @@
         });
     }
 
+    function initializeSortable() {
+        const scraperList = document.getElementById('scraper-sortable-list');
+        if (scraperList && typeof Sortable !== 'undefined') {
+            new Sortable(scraperList, {
+                animation: 150,
+                handle: '.drag-handle',
+                ghostClass: 'sortable-ghost',
+                chosenClass: 'sortable-chosen',
+                dragClass: 'sortable-drag',
+                onEnd: function(evt) {
+                    // Get the new order of scraper IDs
+                    const scraperOrder = [];
+                    const sections = document.querySelectorAll('#scraper-sortable-list .settings-section');
+                    sections.forEach(section => {
+                        const scraperId = section.getAttribute('data-scraper-id');
+                        if (scraperId) {
+                            scraperOrder.push(scraperId);
+                        }
+                    });
+
+                    // Send the new order to the backend
+                    fetch('/settings/scrapers/reorder', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ scraper_order: scraperOrder })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            console.log('Scrapers reordered successfully');
+                        } else {
+                            console.error('Error reordering scrapers:', data.error);
+                            window.showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: 'Error reordering scrapers: ' + (data.error || 'Unknown error')
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error reordering scrapers:', error);
+                        window.showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            message: 'Error reordering scrapers: ' + error.message
+                        });
+                    });
+                }
+            });
+        }
+    }
+
     document.addEventListener('dashboardInitialized', function() {
         initializeScrapersFunctionality();
+        initializeSortable();
     });
 </script>
 
+<div id="scraper-sortable-list">
 {% for scraper_id, config in settings.Scrapers.items() %}
 <div class="settings-section scraper-card scraper-item" data-scraper-id="{{ scraper_id }}">
     <div class="settings-section-header scraper-header scraper-info{% if not config.enabled %} scraper-disabled{% endif %}">
+        <span class="drag-handle" title="Drag to reorder">⋮⋮</span>
         <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
         </svg>
@@ -255,6 +321,23 @@
             <label for="{{ scraper_id }}-url" class="settings-title">URL:</label>
             <input type="text" id="{{ scraper_id }}-url" name="Scrapers.{{ scraper_id }}.url" value="{{ config.url | default('') }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.url">
         </div>
+        {% elif config.type == 'AIOStreams-API' %}
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-base_url" class="settings-title">Base URL:</label>
+            <input type="text" id="{{ scraper_id }}-base_url" name="Scrapers.{{ scraper_id }}.base_url" value="{{ config.base_url | default('') }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.base_url" placeholder="https://aiostreams.example.com">
+            <small class="settings-description">AIOStreams instance base URL (without /api/v1)</small>
+        </div>
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-uuid" class="settings-title">UUID:</label>
+            <input type="text" id="{{ scraper_id }}-uuid" name="Scrapers.{{ scraper_id }}.uuid" value="{{ config.uuid | default('') }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.uuid">
+            <small class="settings-description">Your AIOStreams user UUID</small>
+        </div>
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-password" class="settings-title">Password:</label>
+            <input type="password" id="{{ scraper_id }}-password" name="Scrapers.{{ scraper_id }}.password" value="{{ config.password | default('') }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.password">
+            <small class="settings-description">Your AIOStreams password</small>
+        </div>
+        {% endif %}
         {% if config.type == 'AIOStreams' %}
         <!-- AIOStreams Setup Information -->
         <div class="aiostreams-info-box">
@@ -262,7 +345,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
             </svg>
             <div class="aiostreams-info-box-content">
-                <p><strong>AIOStreams Configuration Requirements:</strong></p>
+                <p><strong>AIOStreams Stremio Endpoint Configuration Requirements:</strong></p>
                 <p>AIOStreams requires specific configuration in <b>ADVANCED</b> mode to work properly with CLI-Debrid. Follow these steps in your AIOStreams settings:</p>
 
                 <p><strong>1. Install P2P-Compatible Addons</strong></p>
@@ -325,6 +408,39 @@
                 </p>
             </div>
         </div>
+        {% elif config.type == 'AIOStreams-API' %}
+        <div class="aiostreams-info-box">
+            <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <div class="aiostreams-info-box-content">
+                <p><strong>AIOStreams API Configuration Requirements:</strong></p>
+                <p>AIOStreams requires specific configuration in <b>ADVANCED</b> mode to work properly with CLI-Debrid. Follow these steps in your AIOStreams settings:</p>
+
+                <p><strong>1. Optimize Your Filters</strong></p>
+                <ul>
+                    <li>Fine-tune your resolution, quality, and content filters to reduce scraping time</li>
+                    <li>Really take the time to look at each filter section and modify to your use case</li>
+                    <li>Disable addons or sources you don't need to speed up responses</li>
+                    <li>If scraping remains slow after optimization, proceed to <strong>Step 2</strong> below</li>
+                </ul>
+
+                <p><strong>2. Increase Scraper Timeout (Important!)</strong></p>
+                <ul>
+                    <li>AIOStreams can be slow when checking multiple addons and sources</li>
+                    <li>Go to <strong>cli_debrid Settings → Version Settings → Other Scraping Settings</strong></li>
+                    <li>Find the <strong>"Scraper Timeout"</strong> setting</li>
+                    <li>Set it to <strong>15 seconds minimum</strong> (20-30 seconds recommended for best results)</li>
+                </ul>
+
+                <p style="margin-top: 15px; display: flex; gap: 8px; align-items: flex-start;">
+                    <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width: 20px; height: 20px; flex-shrink: 0; color: #fbbf24;">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                    <span><strong>Note:</strong> Without proper configuration, AIOStreams will not return usable results.</span>
+                </p>
+            </div>
+        </div>
         {% elif config.type == 'Jackett' %}
         <div class="settings-form-group">
             <label for="{{ scraper_id }}-api" class="settings-title">API Key:</label>
@@ -346,7 +462,7 @@
             <small class="settings-description">Comma-separated list of numeric Prowlarr Indexer IDs. If provided, searches will only use these indexers, otherwise all indexers will be used.</small>
         </div>
         {% endif %}
-        {% elif config.type == 'Torrentio' %}
+        {% if config.type == 'Torrentio' %}
         <div class="settings-form-group">
             <label for="{{ scraper_id }}-opts" class="settings-title">Options:</label>
             <input type="text" id="{{ scraper_id }}-opts" name="Scrapers.{{ scraper_id }}.opts" value="{{ config.opts }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.opts">
@@ -356,6 +472,7 @@
     </div>
 </div>
 {% endfor %}
+</div>
 
         </div>
     </div>

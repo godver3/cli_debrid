@@ -34,7 +34,7 @@
                     {% if key != 'enabled' %}
                         <div class="setting-item">
                             <label class="onboarding-text">{{ key|capitalize }}:</label>
-                            <input type="text" value="{{ value }}" readonly class="setting-value">
+                            <input type="text" id="scraper-{{ loop.parent.loop.index0 }}-{{ key }}" value="{{ value }}" readonly class="setting-value">
                         </div>
                     {% endif %}
                 {% endfor %}
@@ -272,7 +272,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 settingsHtml += `
                                     <div class="setting-item">
                                         <label class="onboarding-text">${key.charAt(0).toUpperCase() + key.slice(1)}:</label>
-                                        <input type="text" value="${value}" readonly class="setting-value">
+                                        <input type="text" id="scraper-js-${scraper}-${key}" value="${value}" readonly class="setting-value">
                                     </div>
                                 `;
                             }

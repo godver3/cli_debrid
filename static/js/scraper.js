@@ -552,7 +552,11 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                         </div>
                     </td>
                     <td style="color: rgb(191 191 190); text-align: right;" data-bitrate="${bitrateTooltip}">${(torrent.size || 0).toFixed(1)} GB</td>
-                    <td style="color: rgb(191 191 190);">${torrent.source || 'N/A'}</td>
+                    <td id="scraper-source" style="color: rgb(191 191 190);">
+                        <div class="source-container">
+                            ${(torrent.source || 'N/A').split(' - ').map(part => `<span class="source-badge">${part.trim()}</span>`).join('')}
+                        </div>
+                    </td>
                     <td style="color: rgb(191 191 190); text-align: right;" ${isFilteredOut ? `data-tooltip="${torrent.filter_reason || 'Filtered'}"` : ''}>${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</td>
                     <td style="color: rgb(191 191 190); text-align: center;">
                         <span class="cache-status ${cacheStatusClass}" data-index="${index}">${cacheStatus}</span>

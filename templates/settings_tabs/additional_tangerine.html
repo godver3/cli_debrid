@@ -17,7 +17,7 @@
         <div class="settings-list">
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" %}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "UI Settings" %}
     <div class="settings-section settings-card">
         <div class="settings-section-header">
             <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -65,13 +65,13 @@
                         </select>
                     {% elif value.type == 'integer' %}
                          <input type="number" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
-                                value="{{ settings.get(section, {}).get(key, value.default) }}" class="settings-input"
+                                value="{% set val = settings.get(section, {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
                                 data-section="{{ section }}" data-key="{{ key }}"
                                 {% if value.min is defined %}min="{{ value.min }}"{% endif %}
                                 {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
                     {% elif value.type == 'float' %}
                         <input type="number" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
-                                value="{{ settings.get(section, {}).get(key, value.default) }}" class="settings-input"
+                                value="{% set val = settings.get(section, {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
                                 data-section="{{ section }}" data-key="{{ key }}"
                                 {% if value.min is defined %}min="{{ value.min }}"{% endif %}
                                 step="0.1">
@@ -237,9 +237,14 @@
         </div>
         <div class="settings-section-content">
             <div class="settings-form-group">
-                <div class="settings-warning-text" style="background: #fff3cd; color: #856404; border: 1px solid #ffeeba; padding: 10px; border-radius: 4px; margin-bottom: 15px; display: block !important;">
-                    <i class="fas fa-exclamation-triangle" style="margin-right: 6px;"></i>
-                    Sorting is applied first by <strong>Content Source</strong>, then <strong>Type</strong>, then <strong>Release Date</strong>, then finally <strong>Alphabetical Title</strong>. If any are disabled, sorting will be done within enabled categories.
+                <div class="settings-warning-text">
+                   <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                </svg>
+                <div class="info-banner-content">
+             Sorting is applied first by <strong>Content Source</strong>, then <strong>Type</strong>, then <strong>Release Date</strong>, then finally <strong>Alphabetical Title</strong>. If any are disabled, sorting will be done within enabled categories.
+        </div>
+                   
                 </div>
             </div>
 
@@ -265,13 +270,13 @@
                                data-section="{{ section }}" data-key="{{ key }}">
                     {% elif value.type == 'integer' %}
                          <input type="number" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
-                                value="{{ settings.get(section, {}).get(key, value.default) }}" class="settings-input"
+                                value="{% set val = settings.get(section, {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
                                 data-section="{{ section }}" data-key="{{ key }}"
                                 {% if value.min is defined %}min="{{ value.min }}"{% endif %}
                                 {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
                     {% elif value.type == 'float' %}
                         <input type="number" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
-                                value="{{ settings.get(section, {}).get(key, value.default) }}" class="settings-input"
+                                value="{% set val = settings.get(section, {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
                                 data-section="{{ section }}" data-key="{{ key }}"
                                 {% if value.min is defined %}min="{{ value.min }}"{% endif %}
                                 step="0.1">

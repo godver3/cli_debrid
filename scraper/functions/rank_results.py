@@ -447,6 +447,36 @@ def rank_result_key(
         logging.info(f"Applied language code unexpected penalty: {result['language_code_unexpected_penalty']} for '{torrent_title}'")
     # --- End Language Code Penalties ---
 
+    # Get scraper priority (global)
+    scraper_priority = result.get('scraper_priority', 0)
+
+    # Get per-version scraper priority
+    version_scraper_priority = 0
+    enable_priorities = version_settings.get('enable_scraper_priorities', False)
+    if enable_priorities:
+        # Get the scraper instance name from the source field (format: "instance_name - scraper_type")
+        source_parts = result.get('source', '').split(' - ')
+        instance_name = source_parts[0] if source_parts else None
+
+        if instance_name:
+            # Try nested dict first (proper structure), then flat structure (current implementation)
+            scraper_priorities = version_settings.get('scraper_priorities', {})
+            if scraper_priorities and isinstance(scraper_priorities, dict):
+                # Nested structure: {'scraper_priorities': {'Zilean_1': 1000}}
+                version_scraper_priority = scraper_priorities.get(instance_name, 0)
+            else:
+                # Flat structure: {'Zilean_1': '1000'} - stored directly in version_settings
+                priority_value = version_settings.get(instance_name, 0)
+                # Convert string to int if needed, ignore if it's not a valid number
+                try:
+                    version_scraper_priority = int(priority_value) if priority_value else 0
+                except (ValueError, TypeError):
+                    # Not a valid number, ignore
+                    version_scraper_priority = 0
+
+            if version_scraper_priority != 0:
+                logging.info(f"Applied version scraper priority: {version_scraper_priority} for scraper '{instance_name}' to '{torrent_title}'")
+
     # Combine scores
     total_score = (
         weighted_similarity +
@@ -463,7 +493,9 @@ def rank_result_key(
         single_episode_score +
         preferred_filter_score +
         language_code_penalty +
-        indexer_bonus
+        indexer_bonus +
+        scraper_priority +
+        version_scraper_priority
     )
 
     # Add points based on num_items
@@ -627,6 +659,8 @@ def rank_result_key(
         'preferred_filter_out_breakdown': preferred_filter_out_breakdown, # Contains original patterns that matched
         'content_type_score': content_type_score,
         'language_code_penalty': language_code_penalty, # Add language code penalties
+        'version_scraper_priority_score': version_scraper_priority, # Add per-version scraper priority score
+        'scraper_priority_score': scraper_priority, # Add global scraper priority score
         'total_score': round(total_score, 2)
     }
     # Add multi-pack information to the score breakdown

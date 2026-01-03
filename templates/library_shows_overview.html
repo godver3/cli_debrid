@@ -46,7 +46,7 @@
         <strong>Filter by Version:</strong>
         {% for version_name in version_names %}
             <label>
-                <input type="checkbox" class="version-checkbox" value="{{ version_name }}" checked> {{ version_name }}
+                <input type="checkbox" name="version-filter" class="version-checkbox" value="{{ version_name }}" checked> {{ version_name }}
             </label>
         {% endfor %}
     </div>

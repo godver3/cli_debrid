@@ -49,13 +49,13 @@
                         </select>
                     {% elif value.type == 'integer' %}
                          <input type="number" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
-                                value="{{ settings.get(section, {}).get(key, value.default) }}" class="settings-input"
+                                value="{% set val = settings.get(section, {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
                                 data-section="{{ section }}" data-key="{{ key }}"
                                 {% if value.min is defined %}min="{{ value.min }}"{% endif %}
                                 {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
                     {% elif value.type == 'float' %}
                         <input type="number" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
-                                value="{{ settings.get(section, {}).get(key, value.default) }}" class="settings-input"
+                                value="{% set val = settings.get(section, {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
                                 data-section="{{ section }}" data-key="{{ key }}"
                                 {% if value.min is defined %}min="{{ value.min }}"{% endif %}
                                 step="0.1">
@@ -247,13 +247,13 @@
                                data-section="{{ section }}" data-key="{{ key }}">
                     {% elif value.type == 'integer' %}
                          <input type="number" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
-                                value="{{ settings.get(section, {}).get(key, value.default) }}" class="settings-input"
+                                value="{% set val = settings.get(section, {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
                                 data-section="{{ section }}" data-key="{{ key }}"
                                 {% if value.min is defined %}min="{{ value.min }}"{% endif %}
                                 {% if value.max is defined %}max="{{ value.max }}"{% endif %}>
                     {% elif value.type == 'float' %}
                         <input type="number" id="additional-{{ key }}" name="{{ section }}.{{ key }}"
-                                value="{{ settings.get(section, {}).get(key, value.default) }}" class="settings-input"
+                                value="{% set val = settings.get(section, {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
                                 data-section="{{ section }}" data-key="{{ key }}"
                                 {% if value.min is defined %}min="{{ value.min }}"{% endif %}
                                 step="0.1">

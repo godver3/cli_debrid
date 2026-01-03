@@ -83,6 +83,12 @@
                 <option value="tangerine">Tangerine</option>
             </select>
         </div>
+        <div class="toggle-item search-box-item" id="stats-search-box" style="display: none;">
+            <form id="stats-search-form" class="stats-search-form">
+                <i class="fas fa-search stats-search-icon"></i>
+                <input type="text" id="stats-search-input" placeholder="Search movies/shows..." class="stats-search-input">
+            </form>
+        </div>
     </div>
 
     <script>
@@ -92,6 +98,76 @@
             if (window.innerWidth <= 768) {
                 // Add compact-view class to statistics-wrapper
                 document.querySelector('.statistics-wrapper').classList.add('compact-view');
+            }
+
+            // Show/hide search box based on theme
+            function toggleSearchBox() {
+                const currentTheme = localStorage.getItem('selectedTheme') || 'classic';
+                const searchBox = document.getElementById('stats-search-box');
+                if (searchBox) {
+                    searchBox.style.display = currentTheme === 'tangerine' ? 'flex' : 'none';
+                }
+            }
+
+            // Initial check
+            toggleSearchBox();
+
+            // Listen for theme changes
+            const themeSelector = document.getElementById('theme-selector');
+            if (themeSelector) {
+                themeSelector.addEventListener('change', function() {
+                    setTimeout(toggleSearchBox, 100);
+                });
+            }
+
+            // Handle search form submission
+            const searchForm = document.getElementById('stats-search-form');
+            if (searchForm) {
+                searchForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    const searchInput = document.getElementById('stats-search-input');
+                    const searchTerm = searchInput.value.trim();
+                    if (searchTerm) {
+                        // Create and show loading overlay to prevent white flash
+                        const overlay = document.createElement('div');
+                        overlay.style.cssText = `
+                            position: fixed;
+                            top: 0;
+                            left: 0;
+                            width: 100%;
+                            height: 100%;
+                            background: #0a0a0a;
+                            z-index: 99999;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                        `;
+
+                        const spinner = document.createElement('div');
+                        spinner.style.cssText = `
+                            border: 4px solid rgba(255, 255, 255, 0.1);
+                            border-top: 4px solid #ff6b35;
+                            border-radius: 50%;
+                            width: 40px;
+                            height: 40px;
+                            animation: spin 1s linear infinite;
+                        `;
+
+                        overlay.appendChild(spinner);
+                        document.body.appendChild(overlay);
+
+                        // Add keyframes for spinner if not already present
+                        if (!document.querySelector('#spinner-keyframes')) {
+                            const style = document.createElement('style');
+                            style.id = 'spinner-keyframes';
+                            style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
+                            document.head.appendChild(style);
+                        }
+
+                        // Navigate immediately
+                        window.location.href = `/scraper?search_term=${encodeURIComponent(searchTerm)}`;
+                    }
+                });
             }
 
             // Initialize toggles based on session state
@@ -361,9 +437,9 @@
                 const upgradeHtml = data.recently_upgraded.map(item => {
                     console.log('Processing upgraded item:', item);
                     const yearInfo = item.year ? ` (${item.year})` : '';
-                    const episodeInfo = (item.type === 'episode' && item.season_number !== null && item.episode_number !== null) ? 
+                    const episodeInfo = (item.type === 'episode' && item.season_number !== null && item.episode_number !== null && ' - ') ? 
                         `S${String(item.season_number).padStart(2, '0')}E${String(item.episode_number).padStart(2, '0')}` : '';
-                    const versionInfo = item.version ? ` - Version: ${item.version}` : '';
+                    const versionInfo = item.version ? `Version: ${item.version}` : '';
                     
                     // Ensure dates are properly formatted
                     const toDate = item.formatted_date || 'Unknown';
@@ -794,7 +870,7 @@
                         {% if compact_view %}
                         <div class="file-details">
                             <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
-                            <span class="metadata">{% if item.type == 'episode' and item.season_number is not none and item.episode_number is not none %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }}{% endif %}{% if item.version %} - Version: {{ item.version }}{% endif %} - {{ item.formatted_date }}</span>
+                            <span class="metadata">{% if item.type == 'episode' and item.season_number is not none and item.episode_number is not none %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number)}} -{% endif %}{% if item.version %} Version: {{ item.version }}{% endif %} - {{ item.formatted_date }}</span>
                             <span class="filename" data-label="From:">{{ item.upgrading_from }}</span>
                             <span class="filename" data-label="To:">{{ item.filled_by_file }}</span>
                         </div>

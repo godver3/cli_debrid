@@ -30,7 +30,6 @@
 <script>
     let contentSourceSettingsLoaded = false;
     let scrapingVersionsLoaded = false;
-    let contentSourceTaskStates = {};
     // Initialize with value from Jinja template
     window.currentFileManagementModeForSymlinkVisibility = "{{ settings.get('File Management', {}).get('file_collection_management', '') }}";
 
@@ -41,27 +40,8 @@
     function loadSettings() {
         Promise.all([
             fetch('/settings/get_content_source_settings').then(response => response.json()),
-            fetch('/settings/get_scraping_versions').then(response => response.json()),
-            fetch('/program_operation/api/task_timings').then(response => response.json())
-        ]).then(([contentSourceSettings, scrapingVersions, taskData]) => {
-            // Store task enabled states
-            console.log('[ContentSource] Task data received:', taskData);
-            if (taskData.success && taskData.tasks) {
-                // Check if tasks is an array or an object
-                if (Array.isArray(taskData.tasks)) {
-                    taskData.tasks.forEach(task => {
-                        contentSourceTaskStates[task.name] = task.enabled;
-                    });
-                } else if (typeof taskData.tasks === 'object') {
-                    // If tasks is an object, iterate over its entries
-                    Object.entries(taskData.tasks).forEach(([taskName, taskInfo]) => {
-                        contentSourceTaskStates[taskName] = taskInfo.enabled;
-                    });
-                }
-                console.log('[ContentSource] Task states:', contentSourceTaskStates);
-            } else {
-                console.warn('[ContentSource] No task data available:', taskData);
-            }
+            fetch('/settings/get_scraping_versions').then(response => response.json())
+        ]).then(([contentSourceSettings, scrapingVersions]) => {
             window.contentSourceSettings = contentSourceSettings;
             window.scrapingVersions = scrapingVersions.versions;
             contentSourceSettingsLoaded = true;
@@ -76,6 +56,7 @@
         initializeAddSourceButton();
         initializeSourceButtons();
         initializeAssignUserButtons();
+        initializePlexLabelsFields();
 
         const settingsContainer = document.querySelector('.settings-container');
         if (settingsContainer) {
@@ -102,11 +83,6 @@
             }
         });
         // Note: Header colors are set by Jinja template based on config.enabled
-    }
-
-    // This function is no longer needed - colors are set by Jinja template
-    function updateContentSourceHeaderColor(sourceId) {
-        // Removed - header colors are now set server-side in the template
     }
 
     function updateSymlinkSubfolderVisibility(sourceId, fileManagementValue) {
@@ -352,8 +328,8 @@
     }
 
     function addContentSource(sourceData) {
-        // Show loading dialog
-        window.showLoading('Adding content source...');
+        // Show loading dialog immediately
+        window.Loading.show('Adding content source...', 'Please wait while the content source is being added.', true);
 
         fetch('/settings/content_sources/add', {
             method: 'POST',
@@ -366,7 +342,7 @@
         .then(data => {
             if (data.success) {
                 window.reloadTabContent('content-sources', () => {
-                    window.hideLoading(); // Hide loading dialog
+                    window.Loading.hide();
                     window.initializeExpandCollapse();
                     initializeContentSourcesFunctionality();
                     window.showPopup({
@@ -375,12 +351,12 @@
                     });
                 });
             } else {
-                window.hideLoading(); // Hide loading dialog
+                window.Loading.hide();
                 throw new Error(data.error || 'Unknown error');
             }
         })
         .catch(error => {
-            window.hideLoading(); // Hide loading dialog
+            window.Loading.hide();
             console.error('Error adding content source:', error);
             window.showPopup({
                 type: POPUP_TYPES.ERROR,
@@ -407,8 +383,8 @@
             confirmText: 'Delete',
             cancelText: 'Cancel',
             onConfirm: () => {
-                // Show loading dialog
-                window.showLoading('Deleting content source...');
+                // Show loading dialog immediately after confirmation
+                window.Loading.show('Deleting content source...', 'Please wait while the content source is being deleted.', true);
 
                 fetch('/settings/content_sources/delete', {
                     method: 'POST',
@@ -421,7 +397,7 @@
                 .then(data => {
                     if (data.success) {
                         window.reloadTabContent('content-sources', () => {
-                            window.hideLoading(); // Hide loading dialog
+                            window.Loading.hide();
                             window.initializeExpandCollapse();
                             initializeContentSourcesFunctionality();
                             showPopup({
@@ -430,12 +406,12 @@
                             });
                         });
                     } else {
-                        window.hideLoading(); // Hide loading dialog
+                        window.Loading.hide();
                         throw new Error(data.error || 'Unknown error');
                     }
                 })
                 .catch(error => {
-                    window.hideLoading(); // Hide loading dialog
+                    window.Loading.hide();
                     console.error('Error deleting content source:', error);
                     showPopup({
                         type: POPUP_TYPES.ERROR,
@@ -687,6 +663,53 @@
                     warningElement.style.display = 'none';
                 }
             }
+        }
+    }
+
+    function initializePlexLabelsFields() {
+        // Initialize all Plex Labels fields on page load
+        document.querySelectorAll('[id^="content-sources-"][id$="-plex_labels-enabled"]').forEach(checkbox => {
+            // Extract source ID from checkbox ID
+            const match = checkbox.id.match(/content-sources-(.+)-plex_labels-enabled/);
+            if (match) {
+                const sourceId = match[1];
+                togglePlexLabelsFields(sourceId);
+            }
+        });
+    }
+
+    function togglePlexLabelsFields(sourceId) {
+        const checkbox = document.getElementById(`content-sources-${sourceId}-plex_labels-enabled`);
+        if (!checkbox) return;
+
+        const isEnabled = checkbox.checked;
+        const dependentContainer = document.getElementById(`plex-labels-dependent-${sourceId}`);
+        const labelModeSelect = document.getElementById(`content-sources-${sourceId}-plex_labels-label_mode`);
+        const fixedLabelInput = document.getElementById(`content-sources-${sourceId}-plex_labels-fixed_label`);
+
+        // Enable/disable the dependent fields
+        if (labelModeSelect) labelModeSelect.disabled = !isEnabled;
+        if (fixedLabelInput) fixedLabelInput.disabled = !isEnabled;
+
+        // Add/remove visual styling for disabled state
+        if (dependentContainer) {
+            if (isEnabled) {
+                dependentContainer.classList.remove('disabled-fields');
+            } else {
+                dependentContainer.classList.add('disabled-fields');
+            }
+        }
+    }
+
+    function updatePlexLabelsVisibility(sourceId) {
+        const dropdown = document.getElementById(`content-sources-${sourceId}-plex_labels-label_mode`);
+        if (!dropdown) return;
+
+        const selectedMode = dropdown.value;
+        const fixedContainer = document.getElementById(`plex-labels-fixed-${sourceId}`);
+
+        if (fixedContainer) {
+            fixedContainer.style.display = (selectedMode === 'fixed') ? 'block' : 'none';
         }
     }
 </script>
@@ -1054,6 +1077,10 @@
                                          </button>
                                     {% elif key == 'enabled' %}
                                         {# Skip enabled field - it's handled in Task Manager #}
+                                    {% elif key == 'plex_labels' %}
+                                        {# Skip plex_labels - it's handled by a dedicated block later #}
+                                    {% elif key in ['label_mode', 'fixed_label', 'label_template'] %}
+                                        {# Skip plex_labels nested fields - they're part of plex_labels dict #}
                                     {% elif key == 'allow_specials' %}
                                         {# This key is handled by a dedicated block later (around lines 735-751) for non-'Other Plex Watchlist' types. #}
                                         {# Doing nothing here prevents it from being rendered as a text input by the 'else' block below. #}
@@ -1193,6 +1220,75 @@
                                  {% endif %}
                              </div>
                          {% endif %}
+
+                        {# Render Plex Labels configuration if available for this source type #}
+                        {% if settings_schema['Content Sources'].schema is defined and
+                              source_type in settings_schema['Content Sources'].schema and
+                              'plex_labels' in settings_schema['Content Sources'].schema[source_type] %}
+                            {% set plex_labels_config = config.get('plex_labels', {}) %}
+                            {% set plex_labels_schema = settings_schema['Content Sources'].schema[source_type]['plex_labels'].schema %}
+
+                            <div class="settings-form-group" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
+                                <h5 style="margin-bottom: 10px; color: #f4f4f4;">Plex Labels Configuration</h5>
+                                <p class="settings-description" style="margin-bottom: 15px;">
+                                    Configure automatic Plex label assignment for items from this source. Labels help organize your Plex library and can be used for collections or filtering. More Plex label functions can be found on debug functions page.
+                                </p>
+
+                                {# Enabled checkbox #}
+                                <div class="settings-form-group">
+                                    <label class="settings-title">
+                                        <input type="checkbox"
+                                               id="content-sources-{{ source_id }}-plex_labels-enabled"
+                                               name="Content Sources.{{ source_id }}.plex_labels.enabled"
+                                               data-section="Content Sources"
+                                               data-key="{{ source_id }}.plex_labels.enabled"
+                                               onchange="togglePlexLabelsFields('{{ source_id }}')"
+                                               {% if plex_labels_config.get('enabled', False) %}checked{% endif %}>
+                                        Enable Plex Labels
+                                    </label>
+                                    <p class="settings-description">{{ plex_labels_schema.enabled.description }}</p>
+                                </div>
+
+                                {# Plex Labels dependent fields - indented and disabled when Enable Plex Labels is unchecked #}
+                                <div class="plex-labels-dependent-fields" id="plex-labels-dependent-{{ source_id }}" style="margin-left: 10px;">
+                                    {# Label Mode dropdown #}
+                                    <div class="settings-form-group">
+                                        <label for="content-sources-{{ source_id }}-plex_labels-label_mode" class="settings-title">Label Mode:</label>
+                                        <select id="content-sources-{{ source_id }}-plex_labels-label_mode"
+                                                name="Content Sources.{{ source_id }}.plex_labels.label_mode"
+                                                class="settings-input"
+                                                data-section="Content Sources"
+                                                data-key="{{ source_id }}.plex_labels.label_mode"
+                                                onchange="updatePlexLabelsVisibility('{{ source_id }}')"
+                                                {% if not plex_labels_config.get('enabled', False) %}disabled{% endif %}>
+                                            {% for choice in plex_labels_schema.label_mode.choices %}
+                                                <option value="{{ choice }}"
+                                                        {% if plex_labels_config.get('label_mode', plex_labels_schema.label_mode.default) == choice %}selected{% endif %}>
+                                                    {{ choice|title }}
+                                                </option>
+                                            {% endfor %}
+                                        </select>
+                                        <p class="settings-description">{{ plex_labels_schema.label_mode.description }}</p>
+                                    </div>
+
+                                    {# Fixed Label input (shown when label_mode is 'fixed') #}
+                                    <div class="settings-form-group plex-labels-fixed" id="plex-labels-fixed-{{ source_id }}"
+                                         style="display: {% if plex_labels_config.get('label_mode', plex_labels_schema.label_mode.default) == 'fixed' %}block{% else %}none{% endif %};">
+                                        <label for="content-sources-{{ source_id }}-plex_labels-fixed_label" class="settings-title">Fixed Label:</label>
+                                        <input type="text"
+                                               id="content-sources-{{ source_id }}-plex_labels-fixed_label"
+                                               name="Content Sources.{{ source_id }}.plex_labels.fixed_label"
+                                               value="{{ plex_labels_config.get('fixed_label', '') }}"
+                                               class="settings-input"
+                                               data-section="Content Sources"
+                                               data-key="{{ source_id }}.plex_labels.fixed_label"
+                                               placeholder="e.g., Kids Content"
+                                               {% if not plex_labels_config.get('enabled', False) %}disabled{% endif %}>
+                                        <p class="settings-description">{{ plex_labels_schema.fixed_label.description }}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endif %}
 
                     {% endif %}
                     {# --- END: Conditional Rendering based on Type --- #}

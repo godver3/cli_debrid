@@ -424,6 +424,8 @@ button.delete-scraper-btn:disabled,
         align-items: center;
         font-size: 1.1em;
         transition: background-color 0.3s ease;
+        gap: .75rem;
+        caret-color: transparent;
     }
 
     /* Disabled scraper/source header style */
@@ -1400,4 +1402,23 @@ div#trakt-auth-status {
     background: #0056b3;
     transform: translateY(-2px);
     box-shadow: 0 8px 24px rgba(0, 123, 255, 0.4);
+}
+
+/* Plex Labels Disabled Fields Styling */
+.disabled-fields {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.disabled-fields label,
+.disabled-fields .settings-description {
+    color: rgba(255, 255, 255, 0.4) !important;
+}
+
+.disabled-fields .settings-input,
+.disabled-fields select {
+    background-color: rgba(255, 255, 255, 0.03) !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    color: rgba(255, 255, 255, 0.4) !important;
+    cursor: not-allowed !important;
 }

@@ -164,28 +164,21 @@
     function combineRecentlyUpgradedFilenames() {
         // Check if we're using Tangerine theme
         const currentTheme = document.body.getAttribute('data-theme');
-        console.log('Current theme:', currentTheme);
         if (currentTheme !== 'tangerine') {
             return;
         }
 
         // Find all Recently Upgraded sections
         const upgradedSections = document.querySelectorAll('.recently-upgraded-section .file-details, .recently-upgraded-section .poster-hover');
-        console.log('Found upgraded sections:', upgradedSections.length);
 
         upgradedSections.forEach(container => {
             const fromElement = container.querySelector('.filename[data-label="From:"]');
             const toElement = container.querySelector('.filename[data-label="To:"]');
 
-            console.log('From element:', fromElement);
-            console.log('To element:', toElement);
-
             // Only combine if both elements exist and haven't been combined yet
             if (fromElement && toElement && !fromElement.hasAttribute('data-combined')) {
                 const fromText = fromElement.textContent.trim();
                 const toText = toElement.textContent.trim();
-
-                console.log('Combining:', fromText, '>>', toText);
 
                 // Clear the From element and rebuild with styled arrow
                 fromElement.textContent = '';
@@ -208,8 +201,6 @@
 
                 // Hide the To element
                 toElement.style.display = 'none';
-
-                console.log('Combined successfully');
             }
         });
     }

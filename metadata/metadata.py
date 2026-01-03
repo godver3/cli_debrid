@@ -7,7 +7,6 @@ import time
 from utilities.settings import get_setting
 import re
 import pytz
-import time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import requests
 from collections import defaultdict
@@ -15,8 +14,6 @@ import iso8601
 from collections import Counter
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from utilities.settings import get_setting
 from cli_battery.app.direct_api import DirectAPI
 from cli_battery.app.trakt_metadata import TraktMetadata
 from cli_battery.app.database import DatabaseManager
@@ -339,15 +336,10 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
 def _get_local_timezone():
     """Get the local timezone in a cross-platform way with multiple fallbacks."""
     # Suppress tzlocal debug messages
-    import logging
     logging.getLogger('tzlocal').setLevel(logging.WARNING)
-    
+
     from tzlocal import get_localzone
-    from utilities.settings import get_setting
-    from datetime import timezone
-    import os
-    import re
-    
+
     try:
         def is_valid_timezone(tz_str):
             """Check if a timezone string is valid by attempting to create a ZoneInfo object."""
@@ -1069,7 +1061,12 @@ def refresh_release_dates():
     from database import get_all_media_items, update_release_date_and_state
     import content_checkers.trakt as trakt
     logging.info("Starting refresh_release_dates function")
-    
+
+    # Load IMDB→Trakt ID cache
+    imdb_trakt_cache = trakt.load_imdb_trakt_cache()
+    cache_hits = 0
+    cache_misses = 0
+
     logging.info("Fetching items to refresh")
     items_to_refresh = list(get_all_media_items(state="Unreleased")) \
                      + list(get_all_media_items(state="Wanted")) \
@@ -1098,6 +1095,10 @@ def refresh_release_dates():
 
             if not imdb_id:
                 logging.warning(f"Skipping item {index} (DB ID: {db_item_id}) due to missing imdb_id")
+                continue
+
+            if not media_type or media_type == 'unknown type':
+                logging.warning(f"Skipping item {index} (DB ID: {db_item_id}) due to missing or invalid type")
                 continue
 
             new_release_date = None
@@ -1131,29 +1132,67 @@ def refresh_release_dates():
                 item_dict['theatrical_release_date_original'] = item_dict.get('theatrical_release_date')
                 trakt_early_releases = get_setting('Scraping', 'trakt_early_releases', False)
                 skip_early_release_check = item_dict.get('no_early_release', False)
-                if trakt_early_releases and not skip_early_release_check:
-                    logging.info(f"Checking Trakt for early releases for {title} ({imdb_id})")
-                    trakt_id = trakt.fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
-                    if trakt_id and isinstance(trakt_id, list) and len(trakt_id) > 0:
-                        found_movie = False
-                        for result in trakt_id:
-                            if result.get('type') == 'movie':
-                                trakt_movie_data = result.get('movie')
-                                if trakt_movie_data and trakt_movie_data.get('ids') and trakt_movie_data['ids'].get('trakt'):
-                                    trakt_id_num = str(trakt_movie_data['ids']['trakt'])
-                                    logging.debug(f"Found Trakt movie ID {trakt_id_num} for {imdb_id}")
-                                    trakt_lists = trakt.fetch_items_from_trakt(f"/movies/{trakt_id_num}/lists/personal/popular")
-                                    if trakt_lists:
-                                        for trakt_list in trakt_lists:
-                                            if re.search(r'(latest|new).*?(releases)', trakt_list['name'], re.IGNORECASE):
-                                                logging.info(f"Movie {title} ({imdb_id}) found in early release list: {trakt_list['name']}")
-                                                item_dict['early_release'] = True
-                                                found_movie = True
-                                                break
-                                    if found_movie:
+
+                # Skip early release checks for movies older than 2 years
+                # Old movies won't have "early releases" - saves API calls
+                # Use physical/digital release date (not theatrical) since that's what matters for availability
+                is_old_movie = False
+                check_date = new_physical_release_date if new_physical_release_date and new_physical_release_date != 'Unknown' else new_theatrical_release_date
+                if check_date and check_date != 'Unknown':
+                    try:
+                        release_year = int(check_date[:4])
+                        current_year = datetime.now().year
+                        if current_year - release_year > 2:
+                            is_old_movie = True
+                            date_type = "physical" if new_physical_release_date and new_physical_release_date != 'Unknown' else "theatrical"
+                            logging.info(f"Skipping early release check for old movie {title} ({release_year} {date_type} release)")
+                    except (ValueError, TypeError):
+                        pass  # If we can't parse year, proceed with check
+
+                if trakt_early_releases and not skip_early_release_check and not is_old_movie:
+                    # Check cache first
+                    cached_entry = imdb_trakt_cache.get(imdb_id)
+                    trakt_id_num = None
+                    current_state = item_dict.get('state', 'Unknown')
+
+                    if cached_entry and trakt.is_cache_entry_valid(cached_entry, imdb_id, current_state):
+                        # Cache hit
+                        trakt_id_num = cached_entry.get('trakt_id')
+                        cache_hits += 1
+                        logging.debug(f"Cache hit for {imdb_id}: Trakt ID {trakt_id_num}")
+                    else:
+                        # Cache miss - make API call
+                        cache_misses += 1
+                        logging.info(f"Checking Trakt for early releases for {title} ({imdb_id})")
+                        trakt_id = trakt.fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
+                        if trakt_id and isinstance(trakt_id, list) and len(trakt_id) > 0:
+                            for result in trakt_id:
+                                if result.get('type') == 'movie':
+                                    trakt_movie_data = result.get('movie')
+                                    if trakt_movie_data and trakt_movie_data.get('ids') and trakt_movie_data['ids'].get('trakt'):
+                                        trakt_id_num = str(trakt_movie_data['ids']['trakt'])
+                                        logging.debug(f"Found Trakt movie ID {trakt_id_num} for {imdb_id}")
+
+                                        # Update cache
+                                        imdb_trakt_cache[imdb_id] = {
+                                            'trakt_id': trakt_id_num,
+                                            'cached_at': datetime.now().isoformat(),
+                                            'release_date': check_date if check_date != 'Unknown' else None,
+                                            'state': current_state
+                                        }
                                         break
-                                else:
-                                     logging.warning(f"Trakt search result for {imdb_id} did not contain expected movie ID structure: {result}")
+
+                    # If we have a Trakt ID (from cache or API), check early release lists
+                    if trakt_id_num:
+                        found_movie = False
+                        trakt_lists = trakt.fetch_items_from_trakt(f"/movies/{trakt_id_num}/lists/personal/popular")
+                        if trakt_lists:
+                            for trakt_list in trakt_lists:
+                                if re.search(r'(latest|new).*?(releases)', trakt_list['name'], re.IGNORECASE):
+                                    logging.info(f"Movie {title} ({imdb_id}) found in early release list: {trakt_list['name']}")
+                                    item_dict['early_release'] = True
+                                    found_movie = True
+                                    break
                         if not found_movie:
                              logging.info(f"Did not find {title} ({imdb_id}) in any relevant Trakt early release lists.")
                     else:
@@ -1298,10 +1337,29 @@ def refresh_release_dates():
             else:
                 logging.info(f"No changes needed for {title} (DB ID: {db_item_id})")
 
+            # Periodic cache save every 100 items
+            # Rate limiting is now handled per-request in trakt.py (0.2s delay between requests)
+            batch_size = 100
+            batch_delay = 2  # Short pause for cache I/O
+
+            if index % batch_size == 0:
+                logging.info(f"Progress: {index}/{len(items_to_refresh)} - Saving cache")
+                # Save cache periodically
+                trakt.save_imdb_trakt_cache(imdb_trakt_cache)
+                logging.debug(f"Cache saved at index {index} (Hits: {cache_hits}, Misses: {cache_misses})")
+                time.sleep(batch_delay)
+
         except Exception as e:
             logging.error(f"Error processing item {index} (DB ID: {item_dict.get('id', 'N/A')}): {str(e)}", exc_info=True)
             continue
 
+    # Save final cache state
+    trakt.save_imdb_trakt_cache(imdb_trakt_cache)
+
+    # Log cache statistics
+    total_cache_checks = cache_hits + cache_misses
+    hit_rate = (cache_hits / total_cache_checks * 100) if total_cache_checks > 0 else 0
+    logging.info(f"Trakt cache statistics: {cache_hits} hits, {cache_misses} misses ({hit_rate:.1f}% hit rate)")
     logging.info("Finished refresh_release_dates function")
 
 def get_episode_count_for_seasons(imdb_id: str, seasons: List[int]) -> int:

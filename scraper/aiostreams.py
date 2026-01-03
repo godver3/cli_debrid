@@ -6,6 +6,7 @@ from database.database_reading import get_imdb_aliases
 import time
 import random
 from http.client import RemoteDisconnected
+import base64
 
 def scrape_aiostreams_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     """
@@ -364,3 +365,226 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
             continue
 
     return results
+
+
+def scrape_aiostreams_api(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
+    """
+    Scrape AIOStreams API endpoint for streams.
+    Uses the new AIOStreams API with basic authentication.
+
+    Settings should contain:
+    - base_url: AIOStreams instance base URL (e.g., https://aiostreams.example.com)
+    - uuid: User UUID for authentication
+    - password: User password for authentication
+    """
+    base_url = settings.get('base_url', '').rstrip('/')
+    uuid = settings.get('uuid', '')
+    password = settings.get('password', '')
+
+    if not all([base_url, uuid, password]):
+        logging.error(f"Missing required settings for AIOStreams API: {instance}")
+        return []
+
+    try:
+        # Get all IMDB aliases for this ID
+        imdb_ids = get_imdb_aliases(imdb_id)
+        all_results = []
+
+        # Scrape for each IMDB ID (original + aliases)
+        for current_imdb_id in imdb_ids:
+            # Ensure IMDB ID has 'tt' prefix
+            if not current_imdb_id.startswith('tt'):
+                current_imdb_id = f'tt{current_imdb_id}'
+
+            url = construct_api_url(base_url, current_imdb_id, content_type, season, episode)
+            response = fetch_api_data(url, uuid, password)
+
+            if not response or not response.get('success'):
+                continue
+
+            data = response.get('data', {})
+            results_list = data.get('results', [])
+
+            if not results_list:
+                continue
+
+            parsed_results = parse_api_results(results_list, instance)
+            all_results.extend(parsed_results)
+
+        # Remove duplicates based on info_hash
+        seen_hashes = set()
+        unique_results = []
+        for result in all_results:
+            info_hash = result.get('info_hash', '')
+            if info_hash and info_hash not in seen_hashes:
+                seen_hashes.add(info_hash)
+                unique_results.append(result)
+
+        return unique_results
+    except Exception as e:
+        logging.error(f"Error in scrape_aiostreams_api for {instance}: {str(e)}", exc_info=True)
+        return []
+
+
+def construct_api_url(base_url: str, imdb_id: str, content_type: str, season: int = None, episode: int = None) -> str:
+    """
+    Construct AIOStreams API URL.
+    Format: /api/v1/search?type={type}&id={id}&requiredFields=infoHash
+    For series: id=tt12637874:1:5 (imdb:season:episode)
+    For movies: id=tt0099785
+    """
+    if season is not None and episode is None:
+        episode = 1
+
+    api_type = "movie" if content_type == "movie" else "series"
+
+    if content_type == "movie":
+        search_id = imdb_id
+    elif content_type == "episode" and season is not None and episode is not None:
+        search_id = f"{imdb_id}:{season}:{episode}"
+    else:
+        logging.error("Invalid content type or missing season/episode for series")
+        return ""
+
+    # Required fields for the API - only infoHash is required
+    required_fields = "requiredFields=infoHash"
+
+    return f"{base_url}/api/v1/search?type={api_type}&id={search_id}&{required_fields}"
+
+
+def fetch_api_data(url: str, uuid: str, password: str) -> Dict:
+    """
+    Fetch data from AIOStreams API with basic authentication and retry logic.
+    """
+    max_retries = 4
+    base_backoff_seconds = 0.5
+
+    try:
+        # Create basic auth header
+        credentials = f"{uuid}:{password}"
+        encoded_credentials = base64.b64encode(credentials.encode('utf-8')).decode('utf-8')
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Authorization': f'Basic {encoded_credentials}'
+        }
+
+        for attempt in range(max_retries):
+            try:
+                response = api.get(url, headers=headers, timeout=30)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    return data
+
+                # Handle authentication errors
+                if response.status_code == 401:
+                    logging.error(f"Authentication failed for AIOStreams API - check UUID and password")
+                    return {}
+
+                # Retry on server errors (5xx)
+                if 500 <= response.status_code < 600:
+                    if attempt < max_retries - 1:
+                        sleep_seconds = base_backoff_seconds * (2 ** attempt) + random.uniform(0, 0.25)
+                        logging.warning(
+                            f"Server error {response.status_code} while fetching {url} (attempt {attempt + 1}/{max_retries}). "
+                            f"Retrying in {sleep_seconds:.2f}s"
+                        )
+                        time.sleep(sleep_seconds)
+                        continue
+
+                # Non-retriable status codes
+                logging.warning(f"Non-200 status ({response.status_code}) for URL {url}")
+                return {}
+
+            except (api.exceptions.RequestException, RemoteDisconnected) as e:
+                if attempt < max_retries - 1:
+                    sleep_seconds = base_backoff_seconds * (2 ** attempt) + random.uniform(0, 0.25)
+                    logging.warning(
+                        f"Error fetching data: {e} (attempt {attempt + 1}/{max_retries}) for {url}. "
+                        f"Retrying in {sleep_seconds:.2f}s"
+                    )
+                    time.sleep(sleep_seconds)
+                    continue
+                logging.error(f"Error fetching API data: {str(e)}")
+                return {}
+
+    except Exception as e:
+        logging.error(f"Unexpected error in fetch_api_data: {str(e)}", exc_info=True)
+
+    return {}
+
+
+def parse_api_results(results: List[Dict[str, Any]], instance: str) -> List[Dict[str, Any]]:
+    """
+    Parse AIOStreams API response into standardized format.
+    Returns magnet links like other scrapers.
+    """
+    parsed_results = []
+
+    for result in results:
+        try:
+            # Extract info hash
+            info_hash = result.get('infoHash', '')
+            if not info_hash:
+                continue
+
+            # Get filename - prefer filename over folderName
+            filename = result.get('filename', result.get('folderName', ''))
+            if not filename:
+                continue
+
+            # Get size in bytes and convert to GB
+            size_bytes = result.get('size', 0)
+            size_gb = size_bytes / (1024 * 1024 * 1024) if size_bytes > 0 else 0.0
+
+            # Get seeders (optional - may be None if not provided by API)
+            seeders = result.get('seeders', None)
+
+            # Get addon and indexer info
+            addon = result.get('addon', '')
+            indexer = result.get('indexer', '')
+
+            # Construct source string
+            source_parts = [instance]
+            if addon:
+                source_parts.append(addon)
+            if indexer:
+                source_parts.append(indexer)
+            source = ' - '.join(source_parts)
+
+            # Create magnet link
+            magnet = f"magnet:?xt=urn:btih:{info_hash}"
+
+            # Get parsed file info if available
+            parsed_info = {}
+            parsed_file = result.get('parsedFile', {})
+            if parsed_file:
+                parsed_info['resolution'] = parsed_file.get('resolution')
+                parsed_info['quality'] = parsed_file.get('quality')
+                parsed_info['encode'] = parsed_file.get('encode')
+                parsed_info['audio'] = parsed_file.get('audioTags', [])
+                parsed_info['visual'] = parsed_file.get('visualTags', [])
+                parsed_info['languages'] = parsed_file.get('languages', [])
+
+            parsed_result = {
+                'title': filename,
+                'size': round(size_gb, 2),
+                'seeders': seeders,
+                'source': source,
+                'magnet': magnet,
+                'info_hash': info_hash,
+                'parsed_info': parsed_info
+            }
+
+            # Add languages if available
+            if parsed_info.get('languages'):
+                parsed_result['languages'] = parsed_info['languages']
+
+            parsed_results.append(parsed_result)
+
+        except Exception as e:
+            logging.error(f"Error parsing AIOStreams API result: {str(e)}", exc_info=True)
+            continue
+
+    return parsed_results
