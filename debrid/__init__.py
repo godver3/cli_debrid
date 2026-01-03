@@ -2,6 +2,7 @@ from typing import Optional
 from utilities.settings import get_setting, ensure_settings_file
 from .base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError
 from .real_debrid import RealDebridProvider
+from .alldebrid import AllDebridProvider
 from .common import (
     extract_hash_from_magnet,
     download_and_extract_hash,
@@ -19,20 +20,22 @@ def get_debrid_provider() -> DebridProvider:
     Uses singleton pattern to maintain one instance per provider.
     """
     global _provider_instance
-    
+
     if _provider_instance is not None:
         return _provider_instance
-    
+
     # Ensure settings file exists and is properly initialized
     ensure_settings_file()
-    
+
     provider_name = get_setting("Debrid Provider", "provider", "").lower()
-    
+
     if provider_name == 'realdebrid':
         _provider_instance = RealDebridProvider()
+    elif provider_name == 'alldebrid':
+        _provider_instance = AllDebridProvider()
     else:
         raise ValueError(f"Unknown debrid provider: {provider_name}")
-        
+
     return _provider_instance
 
 def reset_provider() -> None:
@@ -48,6 +51,7 @@ __all__ = [
     'TooManyDownloadsError',
     'ProviderUnavailableError',
     'RealDebridProvider',
+    'AllDebridProvider',
     'extract_hash_from_magnet',
     'download_and_extract_hash',
     'timed_lru_cache',
