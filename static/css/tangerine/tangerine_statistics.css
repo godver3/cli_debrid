@@ -674,7 +674,7 @@ body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[
 
     .toggle-item {
         padding: 4px 8px;
-        flex: 0 1 auto;
+        flex: auto;
     }
 
     .toggle-label {
@@ -891,4 +891,83 @@ body[data-theme="tangerine"] .recently-upgraded-section .poster-hover .filename[
 }
 .page-refresh-btn:hover {
     color: #fff;
+}
+
+/* Search box in toggle container */
+.search-box-item {
+    /* flex-grow: 1;
+    max-width: 300px;
+    margin-left: auto; */
+    padding: 0 !important;
+    background-color: transparent !important;
+    border: none !important;
+}
+
+.stats-search-form {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 8px 12px;
+    transition: all 0.3s ease;
+}
+
+.stats-search-icon {
+    color: #e17c52;
+    font-size: 0.95em;
+    flex-shrink: 0;
+}
+
+.stats-search-form {
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    margin-right: 0;
+    padding: 5px 10px;
+    border-radius: 12px;
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+input[type="text"], input[type="number"], input[type="email"], input[type="password"], input[type="url"], input[type="search"], input[type="tel"], input[type="date"], input[type="time"], input[type="datetime-local"], textarea {
+    width: auto;
+    padding: 0.75rem 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    color: #e0e0e0;
+    font-size: 0.95rem;
+    transition: all 0.3s ease;
+    padding: 6px 10px;
+}
+
+.stats-search-input {
+    flex: 1;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: #e0e0e0;
+    font-size: 0.9em;
+    outline: none;
+}
+
+.stats-search-input::placeholder {
+    color: rgba(255, 255, 255, 0.4);
+}
+
+/* Responsive adjustments for search box */
+@media (max-width: 768px) {
+    .search-box-item {
+        flex-grow: 1;
+        max-width: 100%;
+        width: 100%;
+        margin-left: 0;
+    }
+
+    .stats-search-input {
+        font-size: 16px; /* Prevents zoom on mobile */
+    }
 }

@@ -177,15 +177,26 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
                 if ignore_tags and not item_tags.isdisjoint(ignore_tags):
                     ignored_by_tag += 1
                     continue
-                
+
                 media = item.get('media', {})
 
                 if media.get('mediaType') in ['movie', 'tv']:
+                    # Extract requester information
+                    requested_by = item.get('requestedBy', {})
+                    requester_display_name = requested_by.get('displayName') or requested_by.get('email') or 'Unknown'
+                    request_id = item.get('id')  # Overseerr's request ID
+                    tmdb_id = media.get('tmdbId')
+
+                    # Debug logging for ALL requests to see what we're getting
+                    logging.info(f"DEBUG Overseerr: Request {request_id} (TMDB: {tmdb_id}) - requestedBy: {requested_by}")
+                    logging.info(f"DEBUG Overseerr: Extracted requester_display_name: {repr(requester_display_name)}")
+
                     wanted_item = {
                         'tmdb_id': media.get('tmdbId'),
                         'media_type': media.get('mediaType'),
                         'content_source': item.get('content_source'),
-                        'content_source_detail': item.get('content_source_detail')
+                        'content_source_detail': requester_display_name,  # Store requester name
+                        'overseerr_request_id': request_id  # Store request ID for tracking
                     }
 
                     # Handle season information for TV shows when partial requests are allowed

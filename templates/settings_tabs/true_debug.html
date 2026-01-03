@@ -194,11 +194,11 @@
             <div class="settings-form-group">
                 <label for="debug-max_upgrading_score" class="settings-title">Max Upgrading Score:</label>
                 <input type="number" step="any" id="debug-max_upgrading_score" name="Debug.max_upgrading_score"
-                       value="{{ settings.get('Debug', {}).get('max_upgrading_score', settings_schema.Debug.max_upgrading_score.default) }}" class="settings-input"
+                       value="{% set val = settings.get('Debug', {}).get('max_upgrading_score', settings_schema.Debug.max_upgrading_score.default) %}{{ val if val != None else '' }}" class="settings-input"
                        data-section="Debug" data-key="max_upgrading_score">
                 <p class="settings-description">{{ settings_schema.Debug.max_upgrading_score.description }}</p>
             </div>
-            
+
             <!-- Delayed Scrape Based On Score -->
             <div class="settings-form-group">
                 <label for="debug-delayed_scrape_based_on_score" class="settings-title">Delayed Scrape Based On Score:</label>
@@ -212,7 +212,7 @@
             <div class="settings-form-group">
                 <label for="debug-delayed_scrape_time_limit" class="settings-title">Delayed Scrape Time Limit (Hours):</label>
                 <input type="number" step="any" min="0.1" id="debug-delayed_scrape_time_limit" name="Debug.delayed_scrape_time_limit"
-                       value="{{ settings.get('Debug', {}).get('delayed_scrape_time_limit', settings_schema.Debug.delayed_scrape_time_limit.default) }}" class="settings-input"
+                       value="{% set val = settings.get('Debug', {}).get('delayed_scrape_time_limit', settings_schema.Debug.delayed_scrape_time_limit.default) %}{{ val if val != None else '' }}" class="settings-input"
                        data-section="Debug" data-key="delayed_scrape_time_limit">
                 <p class="settings-description">Time limit (in hours) to only accept results above the minimum scrape score before accepting lower scored releases.</p>
             </div>
@@ -221,7 +221,7 @@
             <div class="settings-form-group">
                 <label for="debug-minimum_scrape_score" class="settings-title">Minimum Scrape Score:</label>
                 <input type="number" step="any" min="0.0" id="debug-minimum_scrape_score" name="Debug.minimum_scrape_score"
-                       value="{{ settings.get('Debug', {}).get('minimum_scrape_score', settings_schema.Debug.minimum_scrape_score.default) }}" class="settings-input"
+                       value="{% set val = settings.get('Debug', {}).get('minimum_scrape_score', settings_schema.Debug.minimum_scrape_score.default) %}{{ val if val != None else '' }}" class="settings-input"
                        data-section="Debug" data-key="minimum_scrape_score">
                 <p class="settings-description">Minimum scrape score to accept results above.</p>
             </div>
@@ -237,8 +237,8 @@
             <div class="settings-form-group">
                 <label for="debug-alternate_scrape_time_24h" class="settings-title">Alternate Scrape Time (24h format):</label>
                 <input type="text" id="debug-alternate_scrape_time_24h" name="Debug.alternate_scrape_time_24h"
-                       value="{{ settings.get('Debug', {}).get('alternate_scrape_time_24h', settings_schema.Debug.alternate_scrape_time_24h.default) }}"
-                       class="settings-input" data-section="Debug" data-key="alternate_scrape_time_24h">
+                       value="{{ settings.get('Debug', {}).get('alternate_scrape_time_24h', '00:00') if settings.get('Debug', {}).get('alternate_scrape_time_24h') != None else '00:00' }}"
+                       class="settings-input" data-section="Debug" data-section="Debug" data-key="alternate_scrape_time_24h">
                 <p class="settings-description">24-hour time (HH:MM) to use as the daily scrape time for the alternate scraping strategy. Only used if alternate strategy is enabled.</p>
             </div>
             
@@ -330,7 +330,7 @@
             header.addEventListener('click', function() {
                 const content = this.nextElementSibling;
                 const icon = this.querySelector('.settings-toggle-icon');
-                
+
                 if (content.style.display === 'none' || !content.style.display) {
                     content.style.display = 'block';
                     icon.textContent = '-';

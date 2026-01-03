@@ -220,11 +220,9 @@ function setupTaskStream() {
         return;
     }
     if (eventSource) {
-        console.log("setupTaskStream: Closing existing EventSource.");
         eventSource.close();
     }
 
-    console.log("setupTaskStream: Creating new EventSource.");
     eventSource = new EventSource('/base/api/task-stream');
 
     eventSource.onmessage = (event) => {
@@ -368,8 +366,7 @@ function toggleTaskMonitor() {
 export function initializeTaskMonitor() {
     // --- START: Add Initialization Guard ---
     if (isTaskMonitorInitialized) {
-        console.warn("initializeTaskMonitor called again after already initialized. Skipping.");
-        return; 
+        return; // Silently skip re-initialization
     }
     // --- END: Add Initialization Guard ---
 

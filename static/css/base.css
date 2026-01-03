@@ -59,6 +59,9 @@ body.has-top-overlay {
     padding-top: 90px;
 }
 
+.nav-search-container {
+    display: none;
+}
 @media (max-width: 1045px) {
     body {
         padding-top: 60px !important;
@@ -765,10 +768,24 @@ tr:hover {
         width: 100%;
         display: flex;
         align-items: center;
+        gap: 0.75rem;
         color: #f4f4f4;
         transition: all 0.2s ease;
         font-size: 0.95em;
         opacity: 0.9;
+    }
+
+    /* SVG Icons in Mobile Navigation (Classic) */
+    .dropdown li a .settings-nav-icon {
+        width: 18px;
+        height: 18px;
+        opacity: 0.6;
+        transition: opacity 0.3s ease;
+        flex-shrink: 0;
+    }
+
+    .dropdown li a:hover .settings-nav-icon {
+        opacity: 1;
     }
 
     .dropdown li a:hover {
@@ -1000,11 +1017,26 @@ h2 {
 
 .dropdown li a {
     padding: 12px 16px;
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
     white-space: nowrap;
     background-color: #1a1a1a;
     width: 100%; /* Ensure the anchor takes full width */
     font-size: small;
+}
+
+/* SVG Icons in Desktop Navigation (Classic) */
+.dropdown li a .settings-nav-icon {
+    width: 18px;
+    height: 18px;
+    opacity: 0.6;
+    transition: opacity 0.3s ease;
+    flex-shrink: 0;
+}
+
+.dropdown li a:hover .settings-nav-icon {
+    opacity: 1;
 }
 
 .dropdown li a:hover {
@@ -3874,4 +3906,60 @@ body[data-notifications-disabled="true"] #notifications_button.has-notifications
 
 .toast-stack.falling {
     animation: stackFall 0.6s ease-in-out forwards;
+}
+
+/* Scraper Priorities Section */
+.scraper-priorities-section {
+    margin-left: 30px;
+    padding: 20px;
+    background-color: rgba(0, 0, 0, 0.2);
+    border-left: 3px solid rgba(76, 175, 80, 0.3);
+    border-radius: 4px;
+    margin-top: 15px;
+    margin-bottom: 15px;
+    transition: opacity 0.3s ease, pointer-events 0.3s ease;
+}
+
+.scraper-priorities-section h5 {
+    color: #4CAF50;
+    margin-bottom: 10px;
+    font-size: 1.1em;
+}
+
+.scraper-priorities-section .settings-description {
+    margin-bottom: 20px;
+}
+
+/* Grid layout for scraper priority inputs on desktop */
+.scraper-priorities-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 15px 20px;
+    margin-top: 15px;
+}
+
+.scraper-priorities-grid .settings-form-group {
+    margin-bottom: 0;
+}
+
+.scraper-priorities-grid .settings-form-group label {
+    display: block;
+    margin-bottom: 5px;
+}
+
+.scraper-priorities-grid .settings-form-group input {
+    width: 100%;
+}
+
+/* Mobile responsive - stack vertically on small screens */
+@media (max-width: 768px) {
+    .scraper-priorities-section {
+        margin-left: 15px;
+        padding: 15px;
+    }
+
+    .scraper-priorities-grid {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
 }

@@ -1,3 +1,21 @@
+/* Alert styles */
+.alert {
+    padding: 12px;
+    margin-bottom: 15px;
+    border: none;
+    border-radius: 4px;
+    color: #fff;
+}
+
+.alert-success {
+    background-color: #4CAF50;
+}
+
+.alert-error {
+    background-color: #f44336;
+}
+
+
 select#media_type,
 input#imdb_id, button.btn.btn-primary, button.btn.btn-danger {
     padding: 10px;

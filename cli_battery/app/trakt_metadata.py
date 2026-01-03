@@ -54,39 +54,52 @@ class TraktMetadata:
         self.get_time_window = 300  # 5 minutes in seconds
         self.post_requests = deque()  # Track POST requests separately
         self.post_time_window = 1  # 1 second for POST requests
+        # Minimum interval between requests to avoid Cloudflare rate limiting
+        self.min_request_interval = 0.5  # 500ms between requests (2 req/sec max)
+        self.last_request_time = 0
         # Threaded retry configuration
         self.enable_threaded_retries = getattr(self.settings, 'enable_threaded_retries', True)
         self.max_threaded_retry_workers = getattr(self.settings, 'max_threaded_retry_workers', 5)
 
     def _check_rate_limit(self, method='GET'):
         current_time = time.time()
-        
+
+        # Enforce minimum interval between ALL requests to avoid Cloudflare blocking
+        time_since_last = current_time - self.last_request_time
+        if time_since_last < self.min_request_interval:
+            sleep_time = self.min_request_interval - time_since_last
+            logger.debug(f"Throttling request - sleeping for {sleep_time:.3f}s to maintain minimum interval")
+            time.sleep(sleep_time)
+            current_time = time.time()
+
+        self.last_request_time = current_time
+
         if method.upper() == 'GET':
             # Remove old GET requests from the deque
             while self.request_times and current_time - self.request_times[0] > self.get_time_window:
                 self.request_times.popleft()
-            
+
             # Check if we've hit the GET rate limit
             if len(self.request_times) >= self.max_get_requests:
                 logger.warning(f"GET rate limit reached. Currently at {len(self.request_times)} requests in the last {self.get_time_window} seconds.")
                 return False
-            
+
             # Add the current request time
             self.request_times.append(current_time)
-            
+
         else:  # POST, PUT, DELETE
             # Remove old POST requests from the deque
             while self.post_requests and current_time - self.post_requests[0] > self.post_time_window:
                 self.post_requests.popleft()
-            
+
             # Check if we've hit the POST rate limit (1 per second)
             if len(self.post_requests) >= 1:
                 logger.warning(f"POST rate limit reached. Currently at {len(self.post_requests)} requests in the last {self.post_time_window} second.")
                 return False
-            
+
             # Add the current request time
             self.post_requests.append(current_time)
-        
+
         return True
 
     def _format_updates_start_date(self, since_iso: str) -> str:

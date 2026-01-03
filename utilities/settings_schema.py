@@ -110,7 +110,12 @@ SETTINGS_SCHEMA = {
              "type": "string",
              "description": "Set your preferred time format. <a href='#' class='format-help-link' data-modal='dateTimeFormatModal'>Click here</a> to see the parameter list.",
              "default": "%H:%M:%S"
-         }
+         },
+        "enable_caching": {
+            "type": "boolean",
+            "description": "Enable web caching and compression for faster page loads. This improves performance by caching static assets (CSS, JavaScript, images) and compressing responses. Disable if experiencing issues with updates not appearing.",
+            "default": False
+        }
     },
     "Plex": {
         "tab": "Required Settings",
@@ -433,6 +438,11 @@ SETTINGS_SCHEMA = {
             "description": "Check Trakt for early releases",
             "default": False
         },
+        "trakt_rate_limit_enabled": {
+            "type": "boolean",
+            "description": "Enable Trakt API rate limiting to prevent 429 errors. Automatically detects VIP/Free tier and adjusts limits. Recommended: enabled.",
+            "default": True
+        },
         "scraper_timeout": {
             "type": "integer",
             "description": "Timeout in seconds for scraping process (0 to disable)",
@@ -546,6 +556,16 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "default": "en",
                     "description": "Preferred language code (ISO 639-1) for metadata like titles."
+                },
+                "enable_scraper_priorities": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Enable version-specific scraper priority scoring"
+                },
+                "scraper_priorities": {
+                    "type": "dict",
+                    "default": {},
+                    "description": "Per-scraper priority scores for this version. Higher scores = higher priority."
                 }
             }
         },
@@ -917,16 +937,19 @@ SETTINGS_SCHEMA = {
         "schema": {
             "Zilean": {
                 "enabled": {"type": "boolean", "default": False},
+                "priority": {"type": "integer", "default": 0, "description": "Scraper priority score (higher = better priority)"},
                 "url": {"type": "string", "default": "", "validate": "url"}
             },
             "Jackett": {
                 "enabled": {"type": "boolean", "default": False},
+                "priority": {"type": "integer", "default": 0, "description": "Scraper priority score (higher = better priority)"},
                 "url": {"type": "string", "default": "", "validate": "url"},
                 "api": {"type": "string", "default": "", "sensitive": True},
                 "enabled_indexers": {"type": "string", "default": ""}
             },
             "Prowlarr": {
                 "enabled": {"type": "boolean", "default": False},
+                "priority": {"type": "integer", "default": 0, "description": "Scraper priority score (higher = better priority)"},
                 "url": {"type": "string", "default": "", "validate": "url"},
                 "api": {"type": "string", "default": "", "sensitive": True},
                 "tags": {
@@ -937,21 +960,33 @@ SETTINGS_SCHEMA = {
             },
             "Torrentio": {
                 "enabled": {"type": "boolean", "default": False},
+                "priority": {"type": "integer", "default": 0, "description": "Scraper priority score (higher = better priority)"},
                 "opts": {"type": "string", "default": ""}
             },
             "Nyaa": {
-                "enabled": {"type": "boolean", "default": False}
+                "enabled": {"type": "boolean", "default": False},
+                "priority": {"type": "integer", "default": 0, "description": "Scraper priority score (higher = better priority)"}
             },
             "OldNyaa": {
-                "enabled": {"type": "boolean", "default": False}
+                "enabled": {"type": "boolean", "default": False},
+                "priority": {"type": "integer", "default": 0, "description": "Scraper priority score (higher = better priority)"}
             },
             "MediaFusion": {
                 "enabled": {"type": "boolean", "default": False},
+                "priority": {"type": "integer", "default": 0, "description": "Scraper priority score (higher = better priority)"},
                 "url": {"type": "string", "default": "", "validate": "url"},
             },
             "AIOStreams": {
                 "enabled": {"type": "boolean", "default": False},
+                "priority": {"type": "integer", "default": 0, "description": "Scraper priority score (higher = better priority)"},
                 "url": {"type": "string", "default": "", "validate": "url"}
+            },
+            "AIOStreams-API": {
+                "enabled": {"type": "boolean", "default": False},
+                "priority": {"type": "integer", "default": 0, "description": "Scraper priority score (higher = better priority)"},
+                "base_url": {"type": "string", "default": "", "validate": "url"},
+                "uuid": {"type": "string", "default": ""},
+                "password": {"type": "string", "default": "", "sensitive": True}
             }
         }
     },
@@ -1099,6 +1134,29 @@ SETTINGS_SCHEMA = {
                     "type": "integer",
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'list_name' uses the list name automatically, 'fixed' uses a static label you specify",
+                            "default": "list_name",
+                            "choices": ["list_name", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
                 }
             },
             "Trakt Collection": {
@@ -1130,6 +1188,29 @@ SETTINGS_SCHEMA = {
                     "type": "integer",
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'list_name' uses the source name automatically, 'fixed' uses a static label you specify",
+                            "default": "list_name",
+                            "choices": ["list_name", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
                 }
             },
             "Overseerr": {
@@ -1168,6 +1249,29 @@ SETTINGS_SCHEMA = {
                     "type": "integer",
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'requester' uses requester display name automatically, 'fixed' uses a static label you specify",
+                            "default": "requester",
+                            "choices": ["requester", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
                 }
             },
             "My Plex Watchlist": {
@@ -1199,6 +1303,29 @@ SETTINGS_SCHEMA = {
                     "type": "integer",
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'list_name' uses the source name automatically, 'fixed' uses a static label you specify",
+                            "default": "list_name",
+                            "choices": ["list_name", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
                 }
             },
             "Other Plex Watchlist": {
@@ -1232,6 +1359,29 @@ SETTINGS_SCHEMA = {
                     "type": "integer",
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'list_name' uses the source name automatically, 'fixed' uses a static label you specify",
+                            "default": "list_name",
+                            "choices": ["list_name", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
                 }
             },
             "My Plex RSS Watchlist": {
@@ -1264,6 +1414,29 @@ SETTINGS_SCHEMA = {
                     "type": "integer",
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'list_name' uses the source name automatically, 'fixed' uses a static label you specify",
+                            "default": "list_name",
+                            "choices": ["list_name", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
                 }
             },
             "My Friends Plex RSS Watchlist": {
@@ -1296,6 +1469,29 @@ SETTINGS_SCHEMA = {
                     "type": "integer",
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'list_name' uses the source name automatically, 'fixed' uses a static label you specify",
+                            "default": "list_name",
+                            "choices": ["list_name", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
                 }
             },
             "Friends Trakt Watchlist": {
@@ -1324,6 +1520,29 @@ SETTINGS_SCHEMA = {
                     "type": "list",
                     "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
                     "default": []
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'list_name' uses the source name automatically, 'fixed' uses a static label you specify",
+                            "default": "list_name",
+                            "choices": ["list_name", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
                 }
             },
             "Special Trakt Lists": {
@@ -1375,6 +1594,29 @@ SETTINGS_SCHEMA = {
                     "type": "integer",
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'list_name' uses the source name automatically, 'fixed' uses a static label you specify",
+                            "default": "list_name",
+                            "choices": ["list_name", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
                 }
             }
         }

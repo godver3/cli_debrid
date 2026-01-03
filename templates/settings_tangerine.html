@@ -24,7 +24,8 @@
 
             <!-- Settings Search Bar -->
             <div class="settings-search-container">
-                <input type="text" id="settingsSearch" class="settings-search-input" placeholder="Search settings..." autocomplete="off">
+                <label for="settingsSearch" class="sr-only">Search Settings</label>
+                <input type="text" id="settingsSearch" name="settings_search" class="settings-search-input" placeholder="Search settings..." autocomplete="off">
                 <button type="button" id="clearSearch" class="settings-search-clear" style="display: none;">
                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
@@ -36,6 +37,12 @@
         <nav>
             <div class="settings-nav-section">
                 <div class="settings-nav-section-title">General</div>
+                <div class="settings-nav-item" data-tab="ui-settings">
+                    <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/>
+                    </svg>
+                    UI Settings
+                </div>
                 <div class="settings-nav-item active" data-tab="required">
                     <svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
@@ -111,6 +118,9 @@
     <main class="settings-main-content">
         <div class="settings-container">
             <div id="settingsForm">
+                <div id="ui-settings" class="settings-tab-content" style="display: none;">
+                    {% include 'settings_tabs/ui_settings_tangerine.html' %}
+                </div>
                 <div id="required" class="settings-tab-content active">
                     {% include 'settings_tabs/required_tangerine.html' %}
                 </div>
@@ -367,6 +377,23 @@
             sidebar.classList.toggle('mobile-open');
             mobileOverlay.classList.toggle('active');
             document.body.style.overflow = sidebar.classList.contains('mobile-open') ? 'hidden' : '';
+
+            // Close nav menu when settings sidebar is opened
+            if (sidebar.classList.contains('mobile-open')) {
+                const navMenu = document.getElementById('navMenu');
+                const hamburger = document.querySelector('.hamburger-menu');
+                const navOverlay = document.getElementById('navOverlay');
+
+                if (navMenu && navMenu.classList.contains('show')) {
+                    navMenu.classList.remove('show');
+                    if (hamburger) {
+                        hamburger.classList.remove('active');
+                    }
+                    if (navOverlay) {
+                        navOverlay.classList.remove('active');
+                    }
+                }
+            }
         }
 
         mobileMenuToggle.addEventListener('click', toggleMobileMenu);

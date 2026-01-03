@@ -70,9 +70,8 @@
         if (importButton) {
             importButton.removeEventListener('click', importVersionsHandler);
             importButton.addEventListener('click', importVersionsHandler);
-        } else {
-            console.error('Import button not found');
         }
+        // Button intentionally hidden in settings page, only exists in onboarding
     }
 
     function initializeDefaultVersionButton() {
@@ -180,6 +179,9 @@
     }
 
     function addVersion(versionName) {
+        // Show loading dialog immediately after confirmation
+        window.Loading.show('Adding version...', 'Please wait while the version is being added.', true);
+
         fetch('/settings/versions/add', {
             method: 'POST',
             headers: {
@@ -191,6 +193,7 @@
         .then(data => {
             if (data.success) {
                 window.reloadTabContent('scraping', () => {
+                    window.Loading.hide();
                     window.initializeExpandCollapse();
                     initializeScrapingFunctionality();
                     window.showPopup({
@@ -199,10 +202,12 @@
                     });
                 });
             } else {
+                window.Loading.hide();
                 throw new Error(data.error || 'Unknown error');
             }
         })
         .catch(error => {
+            window.Loading.hide();
             console.error('Error adding version:', error);
             window.showPopup({
                 type: POPUP_TYPES.ERROR,
@@ -248,6 +253,8 @@
             cancelText: 'Cancel',
             onConfirm: (newName) => {
                 if (newName) {
+                    window.Loading.show('Renaming version...', 'Please wait while the version is being renamed.', true);
+
                     fetch('/settings/versions/rename', {
                         method: 'POST',
                         headers: {
@@ -259,6 +266,7 @@
                     .then(data => {
                         if (data.success) {
                             window.reloadTabContent('scraping', () => {
+                                window.Loading.hide();
                                 window.initializeExpandCollapse();
                                 window.showPopup({
                                     type: POPUP_TYPES.SUCCESS,
@@ -266,10 +274,12 @@
                                 });
                             });
                         } else {
+                            window.Loading.hide();
                             throw new Error(data.error || 'Unknown error');
                         }
                     })
                     .catch(error => {
+                        window.Loading.hide();
                         console.error('Error renaming version:', error);
                         window.showPopup({
                             type: POPUP_TYPES.ERROR,
@@ -289,6 +299,8 @@
             confirmText: 'Duplicate',
             cancelText: 'Cancel',
             onConfirm: () => {
+                window.Loading.show('Duplicating version...', 'Please wait while the version is being duplicated.', true);
+
                 fetch('/settings/versions/duplicate', {
                     method: 'POST',
                     headers: {
@@ -300,6 +312,7 @@
                 .then(data => {
                     if (data.success) {
                         window.reloadTabContent('scraping', () => {
+                            window.Loading.hide();
                             window.initializeExpandCollapse();
                             initializeScrapingFunctionality();
                             window.showPopup({
@@ -308,10 +321,12 @@
                             });
                         });
                     } else {
+                        window.Loading.hide();
                         throw new Error(data.error || 'Unknown error');
                     }
                 })
                 .catch(error => {
+                    window.Loading.hide();
                     console.error('Error duplicating version:', error);
                     window.showPopup({
                         type: POPUP_TYPES.ERROR,
@@ -393,6 +408,9 @@
     }
 
     function performDelete(versionId, targetVersionId = null) {
+        // Show loading dialog immediately after confirmation
+        window.Loading.show('Deleting version...', 'Please wait while the version is being deleted.', true);
+
         fetch('/settings/versions/delete', {
             method: 'POST',
             headers: {
@@ -404,18 +422,21 @@
         .then(data => {
             if (data.success) {
                 window.reloadTabContent('scraping', () => {
+                    window.Loading.hide();
                     window.initializeExpandCollapse();
-                    initializeScrapingFunctionality(); // Re-initialize buttons after reload
+                    initializeScrapingFunctionality();
                     window.showPopup({
                         type: POPUP_TYPES.SUCCESS,
                         message: data.message || 'Version deleted successfully.',
                     });
                 });
             } else {
+                window.Loading.hide();
                 throw new Error(data.error || 'Unknown error');
             }
         })
         .catch(error => {
+            window.Loading.hide();
             console.error('Error deleting version:', error);
             window.showPopup({
                 type: POPUP_TYPES.ERROR,
@@ -468,15 +489,18 @@
         const newItem = document.createElement('div');
         newItem.className = 'filter-item';
 
+        // Generate unique ID using timestamp and random number
+        const uniqueId = `${filterType}-${version}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
         if (filterType.startsWith('preferred_')) {
             newItem.innerHTML = `
-                <input type="text" class="filter-term" placeholder="Term">
-                <input type="number" class="filter-weight" min="1" value="1" placeholder="Weight">
+                <input type="text" id="${uniqueId}-term" name="filter-term" class="filter-term" placeholder="Term">
+                <input type="number" id="${uniqueId}-weight" name="filter-weight" class="filter-weight" min="1" value="1" placeholder="Weight">
                 <button type="button" class="remove-filter">Remove</button>
             `;
         } else {
             newItem.innerHTML = `
-                <input type="text" class="filter-term" placeholder="Term">
+                <input type="text" id="${uniqueId}" name="filter-term" class="filter-term" placeholder="Term">
                 <button type="button" class="remove-filter">Remove</button>
             `;
         }
@@ -485,6 +509,9 @@
     }
 
     function addDefaultVersion() {
+        // Show loading dialog immediately
+        window.Loading.show('Adding default version...', 'Please wait while the default version is being added.', true);
+
         fetch('/settings/versions/add_default', {
             method: 'POST',
             headers: {
@@ -495,6 +522,7 @@
         .then(data => {
             if (data.success) {
                 window.reloadTabContent('scraping', () => {
+                    window.Loading.hide();
                     window.initializeExpandCollapse();
                     initializeScrapingFunctionality();
                     showPopup({
@@ -503,10 +531,12 @@
                     });
                 });
             } else {
+                window.Loading.hide();
                 throw new Error(data.error || 'Unknown error');
             }
         })
         .catch(error => {
+            window.Loading.hide();
             console.error('Error adding default version:', error);
             showPopup({
                 type: POPUP_TYPES.ERROR,
@@ -516,6 +546,9 @@
     }
 
     function addSeparateVersions() {
+        // Show loading dialog immediately
+        window.Loading.show('Adding separate versions...', 'Please wait while separate versions are being added.', true);
+
         fetch('/settings/versions/add_separate_versions', {
             method: 'POST',
             headers: {
@@ -526,6 +559,7 @@
         .then(data => {
             if (data.success) {
                 window.reloadTabContent('scraping', () => {
+                    window.Loading.hide();
                     window.initializeExpandCollapse();
                     initializeScrapingFunctionality();
                     showPopup({
@@ -534,10 +568,12 @@
                     });
                 });
             } else {
+                window.Loading.hide();
                 throw new Error(data.error || 'Unknown error');
             }
         })
         .catch(error => {
+            window.Loading.hide();
             console.error('Error adding separate versions:', error);
             showPopup({
                 type: POPUP_TYPES.ERROR,
@@ -580,6 +616,42 @@
 </script>
 
 <script>
+    function initializeScraperPriorityToggles() {
+        // Find all enable_scraper_priorities checkboxes
+        document.querySelectorAll('input[id^="scraping-"][id$="-enable_scraper_priorities"]').forEach(checkbox => {
+            // Get the version from the checkbox ID
+            const version = checkbox.id.replace('scraping-', '').replace('-enable_scraper_priorities', '');
+            const prioritiesSection = document.getElementById(`scraper-priorities-${version}`);
+
+            if (prioritiesSection) {
+                // Set initial state
+                if (checkbox.checked) {
+                    prioritiesSection.style.opacity = '1';
+                    prioritiesSection.style.pointerEvents = 'auto';
+                } else {
+                    prioritiesSection.style.opacity = '0.5';
+                    prioritiesSection.style.pointerEvents = 'none';
+                }
+
+                // Add change event listener
+                checkbox.addEventListener('change', function() {
+                    if (this.checked) {
+                        prioritiesSection.style.opacity = '1';
+                        prioritiesSection.style.pointerEvents = 'auto';
+                    } else {
+                        prioritiesSection.style.opacity = '0.5';
+                        prioritiesSection.style.pointerEvents = 'none';
+                    }
+                });
+            }
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', initializeScraperPriorityToggles);
+    document.addEventListener('scrapingContentLoaded', initializeScraperPriorityToggles);
+</script>
+
+<script>
     document.addEventListener('DOMContentLoaded', initializeScrapingFunctionality);
     document.addEventListener('scrapingContentLoaded', initializeScrapingFunctionality);
 </script>
@@ -618,8 +690,10 @@
         
         {# Sort config items based on settings_order #}
         {% set sorted_keys = (settings_order + config.keys()|list)|unique|list %}
+        {# Get list of scraper IDs to exclude from automatic rendering #}
+        {% set scraper_ids = settings.Scrapers.keys()|list %}
         {% for key in sorted_keys %}
-            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out', 'hybrid_mode', 'jackett_seeders_only', 'fallback_version'] %}
+            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out', 'hybrid_mode', 'jackett_seeders_only', 'fallback_version', 'enable_scraper_priorities', 'scraper_priorities'] and key not in scraper_ids %}
                 {% set value = config[key] %}
                 <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'jackett_seeders_only' %}style="display: none !important;"{% endif %}>
                     {% if value is boolean %}
@@ -687,9 +761,9 @@
                         <p class="settings-description">Override global wake count limit. Leave empty to use global setting. Set to -1 to disable sleeping queue (only search once).</p>
                     {% elif key == 'max_size_gb' %}
                         <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                        <input type="number" id="scraping-{{ version }}-{{ key }}" 
-                               name="Scraping.versions.{{ version }}.{{ key }}" 
-                               value="{{ '' if value|is_infinite else value }}" 
+                        <input type="number" id="scraping-{{ version }}-{{ key }}"
+                               name="Scraping.versions.{{ version }}.{{ key }}"
+                               value="{{ '' if value|is_infinite or value == None else value }}" 
                                class="settings-input" 
                                step="0.01" 
                                min="0" 
@@ -701,8 +775,8 @@
                         <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                         <input type="number" id="scraping-{{ version }}-{{ key }}" 
                                name="Scraping.versions.{{ version }}.{{ key }}" 
-                               value="{{ value }}" 
-                               class="settings-input" 
+                               value="{{ value if value != None else '' }}"
+                               class="settings-input"
                                step="0.01" 
                                min="0"
                                data-section="Scraping" 
@@ -710,22 +784,22 @@
                         <p class="settings-description">Minimum size per file in GB.</p>
                     {% elif key == 'max_bitrate_mbps' %}
                         <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                        <input type="number" id="scraping-{{ version }}-{{ key }}" 
-                               name="Scraping.versions.{{ version }}.{{ key }}" 
-                               value="{{ '' if value|is_infinite else value }}" 
-                               class="settings-input" 
-                               step="0.01" 
-                               min="0" 
+                        <input type="number" id="scraping-{{ version }}-{{ key }}"
+                               name="Scraping.versions.{{ version }}.{{ key }}"
+                               value="{{ '' if value|is_infinite or value == None else value }}"
+                               class="settings-input"
+                               step="0.01"
+                               min="0"
                                placeholder="Infinite"
-                               data-section="Scraping" 
+                               data-section="Scraping"
                                data-key="versions.{{ version }}.{{ key }}">
                         <p class="settings-description">Maximum bitrate per file in Mbps. Leave empty for no limit.</p>
                     {% elif key == 'min_bitrate_mbps' %}
                         <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                         <input type="number" id="scraping-{{ version }}-{{ key }}" 
                                name="Scraping.versions.{{ version }}.{{ key }}" 
-                               value="{{ value }}" 
-                               class="settings-input" 
+                               value="{{ value if value != None else '' }}"
+                               class="settings-input"
                                step="0.01" 
                                min="0"
                                data-section="Scraping" 
@@ -733,13 +807,13 @@
                         <p class="settings-description">Minimum bitrate per file in Mbps.</p>
                     {% else %}
                         <label for="scraping-{{ version }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
-                        <input type="{{ 'number' if value is number else 'text' }}" 
-                               id="scraping-{{ version }}-{{ key }}" 
-                               name="Scraping.versions.{{ version }}.{{ key }}" 
-                               value="{{ value }}" 
+                        <input type="{{ 'number' if value is number else 'text' }}"
+                               id="scraping-{{ version }}-{{ key }}"
+                               name="Scraping.versions.{{ version }}.{{ key }}"
+                               value="{{ value if value != None else '' }}"
                                class="settings-input"
                                {% if key == 'language_code' %}placeholder="en"{% endif %}
-                               data-section="Scraping" 
+                               data-section="Scraping"
                                data-key="versions.{{ version }}.{{ key }}">
                         {% if key == 'language_code' %}
                             <p class="settings-description">Preferred language code(s), comma-separated (e.g., fr, es, ja). The first language found will be used. See ISO 639-1.</p>
@@ -775,7 +849,7 @@
             <div class="filter-list" data-version="{{ version }}" data-filter-type="filter_in">
                 {% for filter in config.filter_in %}
                 <div class="filter-item">
-                    <input type="text" class="filter-term" value="{{ filter }}"
+                    <input type="text" id="filter-in-{{ version }}-{{ loop.index0 }}" name="filter-in-term" class="filter-term" value="{{ filter }}"
                            data-section="Scraping"
                            data-key="versions.{{ version }}.filter_in.{{ loop.index0 }}">
                     <button type="button" class="remove-filter">Remove</button>
@@ -786,7 +860,7 @@
             <div class="filter-list" data-version="{{ version }}" data-filter-type="filter_out">
                 {% for filter in config.filter_out %}
                 <div class="filter-item">
-                    <input type="text" class="filter-term" value="{{ filter }}"
+                    <input type="text" id="filter-out-{{ version }}-{{ loop.index0 }}" name="filter-out-term" class="filter-term" value="{{ filter }}"
                            data-section="Scraping"
                            data-key="versions.{{ version }}.filter_out.{{ loop.index0 }}">
                     <button type="button" class="remove-filter">Remove</button>
@@ -801,10 +875,10 @@
             <div class="filter-list" data-version="{{ version }}" data-filter-type="preferred_filter_in">
                 {% for filter, weight in config.preferred_filter_in %}
                 <div class="filter-item">
-                    <input type="text" class="filter-term" value="{{ filter }}"
+                    <input type="text" id="preferred-filter-in-term-{{ version }}-{{ loop.index0 }}" name="preferred-filter-in-term" class="filter-term" value="{{ filter }}"
                            data-section="Scraping"
                            data-key="versions.{{ version }}.preferred_filter_in.{{ loop.index0 }}.term">
-                    <input type="number" class="filter-weight" min="1" value="{{ weight }}"
+                    <input type="number" id="preferred-filter-in-weight-{{ version }}-{{ loop.index0 }}" name="preferred-filter-in-weight" class="filter-weight" min="1" value="{{ weight }}"
                            data-section="Scraping"
                            data-key="versions.{{ version }}.preferred_filter_in.{{ loop.index0 }}.weight">
                     <button type="button" class="remove-filter">Remove</button>
@@ -815,14 +889,53 @@
             <div class="filter-list" data-version="{{ version }}" data-filter-type="preferred_filter_out">
                 {% for filter, weight in config.preferred_filter_out %}
                 <div class="filter-item">
-                    <input type="text" class="filter-term" value="{{ filter }}"
+                    <input type="text" id="preferred-filter-out-term-{{ version }}-{{ loop.index0 }}" name="preferred-filter-out-term" class="filter-term" value="{{ filter }}"
                            data-section="Scraping"
                            data-key="versions.{{ version }}.preferred_filter_out.{{ loop.index0 }}.term">
-                    <input type="number" class="filter-weight" min="1" value="{{ weight }}"
+                    <input type="number" id="preferred-filter-out-weight-{{ version }}-{{ loop.index0 }}" name="preferred-filter-out-weight" class="filter-weight" min="1" value="{{ weight }}"
                            data-section="Scraping"
                            data-key="versions.{{ version }}.preferred_filter_out.{{ loop.index0 }}.weight">
                     <button type="button" class="remove-filter">Remove</button>
                 </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        {# Scraper Priority Section #}
+        <div class="settings-form-group">
+            <label class="settings-title">
+                <input type="checkbox"
+                       id="scraping-{{ version }}-enable_scraper_priorities"
+                       name="Scraping.versions.{{ version }}.enable_scraper_priorities"
+                       data-section="Scraping"
+                       data-key="versions.{{ version }}.enable_scraper_priorities"
+                       {% if config.get('enable_scraper_priorities', False) %}checked{% endif %}>
+                Enable Scraper Priorities
+            </label>
+            <p class="settings-description">Enable version-specific scraper priority scoring. When enabled, these scores are added to the global scraper priority scores. This allows you to fine-tune scraper preferences per version without changing global settings.</p>
+        </div>
+
+        <div class="scraper-priorities-section" id="scraper-priorities-{{ version }}" {% if not config.get('enable_scraper_priorities', False) %}style="opacity: 0.5; pointer-events: none;"{% endif %}>
+            <h5>Scraper Priorities</h5>
+            <p class="settings-description">Add bonus score for results from specific scrapers. These scores are added on top of the global scraper priority scores. Higher total scores = higher priority. Only enabled scrapers are shown.</p>
+
+            <div class="scraper-priorities-grid">
+                {% for scraper_id, scraper_config in settings.Scrapers.items() %}
+                    {% if scraper_config.enabled %}
+                    <div class="settings-form-group">
+                        <label for="scraping-{{ version }}-scraper-priority-{{ scraper_id }}" class="settings-title">
+                            {{ scraper_id }} Priority:
+                        </label>
+                        <input type="number"
+                               id="scraping-{{ version }}-scraper-priority-{{ scraper_id }}"
+                               name="Scraping.versions.{{ version }}.{{ scraper_id }}"
+                               value="{{ config.get(scraper_id, 0) }}"
+                               class="settings-input"
+                               step="1"
+                               data-section="Scraping"
+                               data-key="versions.{{ version }}.{{ scraper_id }}">
+                    </div>
+                    {% endif %}
                 {% endfor %}
             </div>
         </div>
@@ -871,13 +984,13 @@
                             {% endif %}
                         {% elif value.type == 'integer' and key in ['scraper_timeout'] %}
                             <input type="number" id="scraping-{{ key }}" name="Scraping.{{ key }}"
-                                   value="{{ settings.get('Scraping', {}).get(key, value.default) }}" class="settings-input"
+                                   value="{% set val = settings.get('Scraping', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
                                    data-section="Scraping" data-key="{{ key }}"
                                    min="{{ value.min }}" step="1">
                             <p class="settings-description">{{ value.description }}</p>
                         {% elif value.type == 'integer' and key == 'delayed_upgrade_scrape_days' %}
                             <input type="number" id="scraping-{{ key }}" name="Scraping.{{ key }}"
-                                   value="{{ settings.get('Scraping', {}).get(key, value.default) }}" class="settings-input"
+                                   value="{% set val = settings.get('Scraping', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
                                    data-section="Scraping" data-key="{{ key }}"
                                    min="{{ value.min }}" step="1" placeholder="0">
                         {% else %}
@@ -886,7 +999,7 @@
                                 {% set input_field_type = 'number' %}
                             {% endif %}
                             <input type="{{ input_field_type }}" id="scraping-{{ key }}" name="Scraping.{{ key }}"
-                                   value="{{ settings.get('Scraping', {}).get(key, value.default) }}" class="settings-input"
+                                   value="{% set val = settings.get('Scraping', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
                                    data-section="Scraping" data-key="{{ key }}"
                                    {% if value.sensitive %}type="password"{% endif %}
                                    {% if value.type == 'float' %}{% if value.min is defined %}min="{{ value.min }}"{% endif %} {% if value.max is defined %}max="{{ value.max }}"{% endif %} step="{{ value.step | default('any') }}"{% endif %} {# Use 'any' for float steps #}

@@ -558,6 +558,9 @@ h6 {
     .card {
         margin-bottom: 1rem;
     }
+    .header {
+        flex-direction: column;
+    }
 }
 
 .memory-metrics {

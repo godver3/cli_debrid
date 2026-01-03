@@ -895,10 +895,17 @@ class ProgramRunner:
 
 
     # *** START EDIT: Use _get_task_target in _schedule_task ***
-    def _schedule_task(self, task_name: str, interval_seconds: int, initial_run: bool = False):
-        """Schedules a single task in APScheduler, wrapped for duration measurement."""
+    def _schedule_task(self, task_name: str, interval_seconds: int, initial_run: bool = False, initial_delay_seconds: int = 0):
+        """Schedules a single task in APScheduler, wrapped for duration measurement.
+
+        Args:
+            task_name: Name of the task to schedule
+            interval_seconds: Interval in seconds between task runs
+            initial_run: Whether this is the initial scheduling run
+            initial_delay_seconds: Delay in seconds before first run (for staggering startup tasks)
+        """
         current_thread_id_outer = threading.get_ident()
-        logging.debug(f"Attempting to schedule task: '{task_name}' with interval {interval_seconds}s (initial_run: {initial_run}) (Thread: {current_thread_id_outer})")
+        logging.debug(f"Attempting to schedule task: '{task_name}' with interval {interval_seconds}s (initial_run: {initial_run}, initial_delay: {initial_delay_seconds}s) (Thread: {current_thread_id_outer})")
         lock_acquired = False # Flag to track lock acquisition
         try:
             current_thread_id = threading.get_ident()
@@ -932,30 +939,41 @@ class ProgramRunner:
                         # For regular tasks, actual_job_id and task_name_for_logging are the same (job_id)
                         wrapped_func = functools.partial(self._run_and_measure_task, job_id, task_name, target_func, args, kwargs)
 
-                        trigger = IntervalTrigger(seconds=interval_seconds)
-
                         # *** START EDIT: Explicitly pass scheduler's timezone to add_job ***
                         # This should prevent the IntervalTrigger from calling tzlocal.get_localzone()
                         resolved_timezone = self.scheduler.timezone
                         logging.debug(f"Passing timezone '{resolved_timezone}' explicitly to add_job for task '{job_id}'")
                         # *** END EDIT ***
 
-                        self.scheduler.add_job(
-                            func=wrapped_func,
-                            trigger=trigger,
-                            id=job_id,
-                            name=job_id,
-                            replace_existing=True,
-                            misfire_grace_time=None,  # No grace limit – run even if very late
-                            # *** START EDIT: Allow 1 concurrent instance ***
-                            max_instances=1,
-                            # *** END EDIT ***
-                            # *** START EDIT: Add timezone argument ***
-                            timezone=resolved_timezone
-                            # *** END EDIT ***
-                        )
-                        # *** START EDIT: Updated log message ***
-                        logging.info(f"Scheduled task '{job_id}' to run every {interval_seconds} seconds (max_instances=1, wrapped for duration measurement).") # Reverted max_instances to 1
+                        # *** START STAGGER EDIT: Support initial delay for startup staggering ***
+                        # Create trigger with start_date if delay is specified
+                        if initial_delay_seconds > 0:
+                            from datetime import datetime, timedelta
+                            first_run_time = datetime.now(resolved_timezone) + timedelta(seconds=initial_delay_seconds)
+                            trigger = IntervalTrigger(seconds=interval_seconds, start_date=first_run_time, timezone=resolved_timezone)
+                            logging.info(f"Task '{job_id}' will start in {initial_delay_seconds}s (at {first_run_time.strftime('%H:%M:%S')}) for startup staggering")
+                        else:
+                            trigger = IntervalTrigger(seconds=interval_seconds, timezone=resolved_timezone)
+                        # *** END STAGGER EDIT ***
+
+                        add_job_kwargs = {
+                            'func': wrapped_func,
+                            'trigger': trigger,
+                            'id': job_id,
+                            'name': job_id,
+                            'replace_existing': True,
+                            'misfire_grace_time': None,  # No grace limit – run even if very late
+                            'max_instances': 1,
+                            'timezone': resolved_timezone
+                        }
+
+                        self.scheduler.add_job(**add_job_kwargs)
+
+                        # *** START EDIT: Updated log message with stagger info ***
+                        if initial_delay_seconds > 0:
+                            logging.info(f"Scheduled task '{job_id}' to run every {interval_seconds}s (staggered start: +{initial_delay_seconds}s, max_instances=1)")
+                        else:
+                            logging.info(f"Scheduled task '{job_id}' to run every {interval_seconds} seconds (max_instances=1, wrapped for duration measurement).")
                         # *** END EDIT ***
                         return True
                     except Exception as e:
@@ -983,6 +1001,34 @@ class ProgramRunner:
         # Iterate over a copy of the set to allow modification of the original self.enabled_tasks
         tasks_to_process = list(self.enabled_tasks)
 
+        # *** START STAGGER EDIT: Calculate stagger delays for Trakt tasks ***
+        # Identify all enabled Trakt tasks that need staggering on startup
+        trakt_tasks_to_stagger = sorted([
+            task for task in tasks_to_process
+            if task.startswith('task_Trakt Lists_') or task == 'task_Trakt Collection_1'
+        ])
+
+        # Check if any Trakt tasks are already scheduled - if so, don't apply stagger delays (this is a re-schedule)
+        already_scheduled = False
+        if self.scheduler and trakt_tasks_to_stagger:
+            already_scheduled = any(self.scheduler.get_job(task) is not None for task in trakt_tasks_to_stagger)
+
+        # Build a map of task_name -> initial_delay_seconds
+        trakt_task_stagger_map = {}
+        if not already_scheduled:
+            for idx, task_name in enumerate(trakt_tasks_to_stagger):
+                delay_seconds = (idx + 1) * 60  # 60s, 120s, 180s, etc.
+                trakt_task_stagger_map[task_name] = delay_seconds
+
+            # Log stagger plan
+            if trakt_task_stagger_map:
+                logging.info(f"Staggering {len(trakt_task_stagger_map)} enabled Trakt tasks on startup to prevent concurrent API calls:")
+                for task_name, delay in sorted(trakt_task_stagger_map.items(), key=lambda x: x[1]):
+                    logging.info(f"  - {task_name}: +{delay}s delay")
+        else:
+            logging.info("Trakt tasks already scheduled - skipping stagger delays for re-schedule")
+        # *** END STAGGER EDIT ***
+
         for task_name in tasks_to_process:
             # Ensure task is still in self.enabled_tasks; it might have been removed if tasks_to_process had duplicates
             # and one was already processed and removed. However, list(set) makes duplicates unlikely.
@@ -993,9 +1039,13 @@ class ProgramRunner:
 
             interval = self.task_intervals.get(task_name)
             if interval is not None:
-                # Attempt to schedule
-                if self._schedule_task(task_name, interval, initial_run=True):
+                # *** START STAGGER EDIT: Apply stagger delay for Trakt tasks ***
+                # Get the stagger delay for this task (0 if not a Trakt task)
+                delay = trakt_task_stagger_map.get(task_name, 0)
+                # Attempt to schedule with the appropriate delay
+                if self._schedule_task(task_name, interval, initial_run=True, initial_delay_seconds=delay):
                     scheduled_count += 1
+                # *** END STAGGER EDIT ***
                 else:
                     # Scheduling failed. _schedule_task already logged a warning if it was due to target_func being None.
                     # Now, specifically check if it was an obsolete content source task.
@@ -5190,14 +5240,20 @@ def process_overseerr_webhook(data):
     imdb_id = media.get('imdbId')
     tvdb_id = media.get('tvdbId')
     title = data.get('subject') # Title might be in subject
-    requester_email = data.get('request', {}).get('requestedBy', {}).get('email') # Requester info
+
+    # Extract requester information from webhook payload
+    # Webhook payload has flat structure: requestedBy_username, requestedBy_email, etc.
+    request_data = data.get('request', {})
+    requester_display_name = request_data.get('requestedBy_username', 'Unknown')
+    requester_email = request_data.get('requestedBy_email')
+    request_id = request_data.get('request_id')  # Overseerr's request ID for tracking
 
 
     if not media_type or not tmdb_id:
         logging.error(f"Invalid Overseerr webhook data: missing media_type or tmdbId. Data: {data}")
         return
 
-    logging.info(f"Processing Overseerr webhook: Type={media_type}, TMDB={tmdb_id}, Title='{title}', Requester='{requester_email}'")
+    logging.info(f"Processing Overseerr webhook: Type={media_type}, TMDB={tmdb_id}, Title='{title}', Requester='{requester_display_name}' (email: {requester_email}), Request ID={request_id}")
 
     wanted_item = {
         'tmdb_id': tmdb_id,
@@ -5250,12 +5306,16 @@ def process_overseerr_webhook(data):
         if all_items:
              for item in all_items:
                  item['content_source'] = source_name # Use determined source name
+                 # Store requester information in content_source_detail
+                 item['content_source_detail'] = requester_display_name
+                 # Store request ID for removal tracking
+                 item['overseerr_request_id'] = request_id
                  from content_checkers.content_source_detail import append_content_source_detail
                  item = append_content_source_detail(item, source_type='Overseerr') # Keep source type generic
 
              from database import add_collected_items, add_wanted_items
              add_wanted_items(all_items, versions) # Pass the determined versions
-             logging.info(f"Processed and added {len(all_items)} wanted item(s) from Overseerr webhook (TMDB ID: {tmdb_id}).")
+             logging.info(f"Processed and added {len(all_items)} wanted item(s) from Overseerr webhook (TMDB ID: {tmdb_id}). Requester: {requester_display_name}")
         else:
              logging.warning(f"Metadata processing for Overseerr webhook (TMDB ID: {tmdb_id}) resulted in no items to add.")
 

@@ -457,7 +457,14 @@ def task_stream():
             with app.app_context():
                 try:
                     program_runner = get_program_runner()
-                    tz = program_runner.scheduler.timezone if program_runner and program_runner.scheduler else pytz.utc
+                    # Safely get timezone with proper None checks
+                    if program_runner and hasattr(program_runner, 'scheduler') and program_runner.scheduler:
+                        try:
+                            tz = program_runner.scheduler.timezone
+                        except (AttributeError, RuntimeError):
+                            tz = pytz.utc
+                    else:
+                        tz = pytz.utc
                     current_time_dt = datetime.now(tz)
 
                     # Renamed to reflect its purpose before filtering
@@ -512,9 +519,14 @@ def task_stream():
                             pause_info_to_send = program_runner.pause_info.copy()
 
                         # Get scheduled task list (this part remains the same)
-                        if program_running_state and program_runner.scheduler:
+                        if program_running_state:
                             with program_runner.scheduler_lock:
-                                jobs = program_runner.scheduler.get_jobs()
+                                # Check scheduler inside lock to prevent race condition
+                                if program_runner.scheduler is not None:
+                                    jobs = program_runner.scheduler.get_jobs()
+                                else:
+                                    jobs = []
+
                                 for job in jobs:
                                     interval = None
                                     if isinstance(job.trigger, IntervalTrigger):

@@ -80,19 +80,51 @@ riven_analysis_progress = {}
 
 # --- Helper function to get cache files ---
 def get_cache_files():
-    """Returns a list of content source cache filenames."""
+    """Returns a list of tuples (filename, display_label) for content source cache files."""
     try:
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
         if not os.path.isdir(db_content_dir):
             logging.error(f"Cache directory not found: {db_content_dir}")
             return []
-        
+
         # Find files matching the pattern
         pattern = os.path.join(db_content_dir, 'content_source_*.pkl')
         cache_files = [os.path.basename(f) for f in glob.glob(pattern)]
-        return sorted(cache_files)
+
+        # Get content sources settings to map filenames to display names
+        content_sources = get_all_settings().get('Content Sources', {})
+
+        # Create list of (filename, display_label) tuples
+        cache_files_with_labels = []
+        for filename in sorted(cache_files):
+            # Extract source_id from filename: content_source_{source_id}_cache.pkl
+            if filename.startswith('content_source_') and filename.endswith('_cache.pkl'):
+                source_id = filename[15:-10]  # Remove 'content_source_' prefix and '_cache.pkl' suffix
+
+                # Try to find matching content source and get display name
+                display_label = None
+                for source_key, source_config in content_sources.items():
+                    # Check if this source matches the cache file
+                    # The source_id in cache file uses the source_key with '/' replaced by '_'
+                    safe_source_key = source_key.replace('/', '_').replace('\\', '_')
+                    if source_id == safe_source_key or source_id.startswith(safe_source_key + '_'):
+                        if isinstance(source_config, dict):
+                            display_name = source_config.get('display_name', source_key)
+                            display_label = f"{display_name} ({source_id})"
+                            break
+
+                # If no match found, just show the source_id
+                if not display_label:
+                    display_label = f"{source_id} ({source_id})"
+
+                cache_files_with_labels.append((filename, display_label))
+            else:
+                # If filename doesn't match expected pattern, just show filename
+                cache_files_with_labels.append((filename, filename))
+
+        return cache_files_with_labels
     except Exception as e:
-        logging.error(f"Error getting cache files: {str(e)}")
+        logging.error(f"Error getting cache files: {str(e)}", exc_info=True)
         return []
 # --- End Helper function ---
 
@@ -192,10 +224,10 @@ def async_get_collected_from_plex(collection_type):
 def debug_functions():
     content_sources = get_all_settings().get('Content Sources', {})
     enabled_sources = {source: data for source, data in content_sources.items() if data.get('enabled', False)}
-    cache_files = get_cache_files() # Fetch cache files
+    cache_files = get_cache_files()
     environment_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
     return render_template(
-        'debug_functions.html', 
+        'debug_functions.html',
         content_sources=enabled_sources,
         cache_files=cache_files,
         environment_mode=environment_mode

@@ -195,6 +195,12 @@ def migrate_schema():
         if 'content_source_detail' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN content_source_detail TEXT')
             logging.info("Successfully added content_source_detail column to media_items table.")
+        if 'content_sources' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN content_sources TEXT')
+            logging.info("Successfully added content_sources column to media_items table.")
+        if 'plex_labels' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_labels TEXT')
+            logging.info("Successfully added plex_labels column to media_items table.")
         if 'physical_release_date' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN physical_release_date DATE')
             logging.info("Successfully added physical_release_date column to media_items table.")
@@ -328,6 +334,22 @@ def migrate_schema():
             logging.info("Attempting to create index idx_media_items_state_ghostlisted...")
             conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_state_ghostlisted ON media_items(state, ghostlisted);')
             logging.info("Successfully executed CREATE INDEX for idx_media_items_state_ghostlisted.")
+
+        # Composite index for database page sorting by content_source_detail
+        # This helps with queries that filter by state and sort by content_source_detail
+        if 'idx_media_items_type_state_content_source_detail' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_type_state_content_source_detail...")
+            conn.execute('''
+                CREATE INDEX IF NOT EXISTS idx_media_items_type_state_content_source_detail
+                ON media_items(type, state, content_source_detail)
+            ''')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_type_state_content_source_detail.")
+
+        # Index for content_source_detail alone (helps with IS NULL / IS NOT NULL queries)
+        if 'idx_media_items_content_source_detail' not in existing_indexes:
+            logging.info("Attempting to create index idx_media_items_content_source_detail...")
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_content_source_detail ON media_items(content_source_detail);')
+            logging.info("Successfully executed CREATE INDEX for idx_media_items_content_source_detail.")
 
         # Add triggers for location_basename
         cursor.execute("DROP TRIGGER IF EXISTS trigger_media_items_insert_location_basename")

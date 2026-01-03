@@ -29,12 +29,161 @@ LAST_ACTIVITY_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_last_activity.pkl
 TRAKT_WATCHLIST_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_watchlist_cache.pkl')
 TRAKT_LISTS_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_lists_cache.pkl')
 TRAKT_COLLECTION_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_collection_cache.pkl')
+TRAKT_IMDB_ID_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_imdb_id_cache.pkl')
 CACHE_EXPIRY_DAYS = 7
 
 # Get config directory from environment variable with fallback
 CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
 TRAKT_CONFIG_FILE = os.path.join(CONFIG_DIR, '.pytrakt.json')
 TRAKT_FRIENDS_DIR = os.path.join(CONFIG_DIR, 'trakt_friends')
+
+# IMDB→Trakt ID Cache Functions
+def load_imdb_trakt_cache():
+    """Load IMDB→Trakt ID cache with smart expiration"""
+    if os.path.exists(TRAKT_IMDB_ID_CACHE_FILE):
+        try:
+            with open(TRAKT_IMDB_ID_CACHE_FILE, 'rb') as f:
+                return pickle.load(f)
+        except Exception as e:
+            logging.warning(f"Failed to load IMDB→Trakt ID cache: {e}")
+            return {}
+    return {}
+
+def save_imdb_trakt_cache(cache):
+    """Save IMDB→Trakt ID cache"""
+    try:
+        with open(TRAKT_IMDB_ID_CACHE_FILE, 'wb') as f:
+            pickle.dump(cache, f)
+    except Exception as e:
+        logging.error(f"Failed to save IMDB→Trakt ID cache: {e}")
+
+def is_cache_entry_valid(cache_entry, imdb_id, current_state=None):
+    """
+    Determine if a cache entry is still valid based on smart expiration rules.
+
+    Args:
+        cache_entry: Dict with 'trakt_id', 'cached_at', 'release_date'
+        imdb_id: IMDB ID for logging
+        current_state: Current state of the item ('Unreleased', 'Wanted', etc.)
+
+    Returns:
+        bool: True if cache is valid, False if expired
+    """
+    if not cache_entry or 'cached_at' not in cache_entry:
+        return False
+
+    try:
+        cached_date = datetime.fromisoformat(cache_entry['cached_at'])
+        now = datetime.now()
+        age_days = (now - cached_date).days
+
+        # Rule 1: Trakt IDs never expire (but check release date for freshness)
+        trakt_id = cache_entry.get('trakt_id')
+        if not trakt_id:
+            return False
+
+        # Rule 2: If state is "Unreleased", cache for 1 day only
+        if current_state == 'Unreleased':
+            if age_days > 1:
+                logging.debug(f"Cache expired for {imdb_id}: Unreleased item older than 1 day")
+                return False
+            return True
+
+        # Rule 3: Check release date age
+        release_date = cache_entry.get('release_date')
+        if release_date and release_date != 'Unknown':
+            try:
+                release_year = int(release_date[:4])
+                current_year = datetime.now().year
+                years_since_release = current_year - release_year
+
+                # Recent movies (<2 years): Cache 7 days
+                if years_since_release < 2:
+                    if age_days > 7:
+                        logging.debug(f"Cache expired for {imdb_id}: Recent movie cache older than 7 days")
+                        return False
+                # Old movies (>2 years): Cache 90 days
+                else:
+                    if age_days > 90:
+                        logging.debug(f"Cache expired for {imdb_id}: Old movie cache older than 90 days")
+                        return False
+            except (ValueError, TypeError):
+                # Can't parse release date, default to 30 day expiry
+                if age_days > 30:
+                    logging.debug(f"Cache expired for {imdb_id}: Unknown age, default 30 day expiry")
+                    return False
+        else:
+            # No release date info, default to 30 day expiry
+            if age_days > 30:
+                logging.debug(f"Cache expired for {imdb_id}: No release date, default 30 day expiry")
+                return False
+
+        return True
+
+    except Exception as e:
+        logging.warning(f"Error validating cache entry for {imdb_id}: {e}")
+        return False
+
+# Global rate limiter for Trakt API
+class TraktRateLimiter:
+    """
+    Global rate limiter to prevent hitting Trakt API limits.
+
+    Per Trakt API documentation:
+    - AUTHED_API_GET_LIMIT: 1000 calls every 5 minutes (same for all authenticated users)
+    - VIP vs Free does NOT affect API rate limits (only affects account limits like list counts)
+    """
+    def __init__(self):
+        from threading import Lock
+        self.lock = Lock()
+        # Authenticated users get 1000/5min regardless of VIP status
+        # Use 90% to be conservative
+        self.requests_per_window = 900  # 90% of 1000 req/5min for authenticated users
+        self.window_seconds = 300  # 5 minutes
+        self.request_times = []
+        self.enabled = get_setting('Scraping', 'trakt_rate_limit_enabled', True)
+        # Per-request delay to prevent bursts (1.0s = 1 req/sec = 300 req/5min)
+        # Increased from 0.2s to avoid Cloudflare rate limiting when multiple tasks overlap
+        self.per_request_delay = 1.0
+        self.last_request_time = 0
+
+        # Log the rate limiting strategy
+        logging.info(f"Trakt rate limiter initialized: {self.requests_per_window} requests/5min limit, 1.0s per-request delay")
+
+    def wait_if_needed(self):
+        """Wait if we're approaching the rate limit"""
+        if not self.enabled:
+            return
+
+        with self.lock:
+            now = time.time()
+
+            # Add per-request delay to prevent bursts
+            time_since_last = now - self.last_request_time
+            if time_since_last < self.per_request_delay:
+                delay = self.per_request_delay - time_since_last
+                time.sleep(delay)
+                now = time.time()
+
+            # Remove requests older than the window
+            self.request_times = [t for t in self.request_times if now - t < self.window_seconds]
+
+            if len(self.request_times) >= self.requests_per_window:
+                # Calculate how long to wait
+                oldest_in_window = self.request_times[0]
+                wait_time = self.window_seconds - (now - oldest_in_window) + 1
+                logging.warning(f"Trakt rate limit approaching ({len(self.request_times)}/{self.requests_per_window}). Waiting {wait_time:.1f}s")
+                time.sleep(wait_time)
+                # Clear old requests after waiting
+                now = time.time()
+                self.request_times = [t for t in self.request_times if now - t < self.window_seconds]
+
+            # Record this request
+            self.request_times.append(now)
+            self.last_request_time = now
+
+# Global rate limiter instance
+_trakt_rate_limiter = TraktRateLimiter()
 
 def load_trakt_credentials() -> Dict[str, str]:
     try:
@@ -254,11 +403,14 @@ def make_trakt_request(method, endpoint, data=None, max_retries=5, initial_delay
 
     for attempt in range(max_retries):
         try:
+            # Wait if rate limit is approaching (global rate limiter)
+            _trakt_rate_limiter.wait_if_needed()
+
             if method.lower() == 'get':
                 response = api.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
             else:  # post
                 response = api.post(url, headers=headers, json=data, timeout=REQUEST_TIMEOUT)
-            
+
             # Check if response is HTML instead of JSON
             content_type = response.headers.get('content-type', '')
             if 'html' in content_type.lower():
@@ -270,7 +422,7 @@ def make_trakt_request(method, endpoint, data=None, max_retries=5, initial_delay
                     continue
                 else:
                     raise ValueError("Received HTML response from Trakt API after all retries")
-            
+
             response.raise_for_status()
             return response
             
@@ -281,10 +433,32 @@ def make_trakt_request(method, endpoint, data=None, max_retries=5, initial_delay
                     # Get retry-after header or use exponential backoff
                     retry_after = int(e.response.headers.get('Retry-After', 0))
                     delay = retry_after if retry_after > 0 else initial_delay * (2 ** attempt) + random.uniform(0, 1)
-                    
-                    logging.warning(f"Rate limit hit. Waiting {delay:.2f} seconds before retry {attempt + 1}/{max_retries}")
+
+                    logging.warning(f"Rate limit hit (429). Waiting {delay:.2f} seconds before retry {attempt + 1}/{max_retries}")
                     sleep(delay)
                     continue
+                elif status_code == 420:  # VIP Enhanced - Account limit exceeded
+                    # Account limit exceeded (list count, item count, etc)
+                    is_vip = e.response.headers.get('X-VIP-User', 'false') == 'true'
+                    account_limit = e.response.headers.get('X-Account-Limit', 'unknown')
+                    upgrade_url = e.response.headers.get('X-Upgrade-URL', 'https://trakt.tv/vip')
+
+                    retry_after = int(e.response.headers.get('Retry-After', 0))
+                    delay = retry_after if retry_after > 0 else initial_delay * (2 ** attempt) + random.uniform(0, 1)
+
+                    if is_vip:
+                        logging.warning(f"Account limit exceeded (420). Limit: {account_limit}. Waiting {delay:.2f}s before retry {attempt + 1}/{max_retries}")
+                    else:
+                        logging.warning(f"Account limit exceeded (420). Upgrade to VIP at {upgrade_url} for higher limits. Waiting {delay:.2f}s before retry {attempt + 1}/{max_retries}")
+                    sleep(delay)
+                    continue
+                elif status_code == 423:  # Locked User Account
+                    logging.error("Trakt account is locked or deactivated. Please contact Trakt support.")
+                    raise ValueError("Trakt account is locked or deactivated")
+                elif status_code == 426:  # VIP Only
+                    upgrade_url = e.response.headers.get('X-Upgrade-URL', 'https://trakt.tv/vip')
+                    logging.error(f"This API method requires Trakt VIP. Upgrade at {upgrade_url}")
+                    raise ValueError(f"VIP required: {upgrade_url}")
                 elif status_code == 502:  # Bad Gateway
                     logging.warning(f"Trakt API Bad Gateway error (attempt {attempt + 1}/{max_retries})")
                 elif status_code == 504:  # Gateway Timeout
@@ -333,6 +507,9 @@ def fetch_items_from_trakt(
 
     for attempt in range(max_retries):
         try:
+            # Wait if rate limit is approaching (global rate limiter)
+            _trakt_rate_limiter.wait_if_needed()
+
             response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
 
             # Detect HTML responses that sometimes appear instead of JSON
@@ -351,14 +528,40 @@ def fetch_items_from_trakt(
 
             if status_code == 429:  # Too Many Requests – rate-limited
                 retry_after = int(http_err.response.headers.get("Retry-After", 0)) if http_err.response else 0
-                delay = (
-                    retry_after
-                    if retry_after > 0
-                    else initial_delay * (2 ** attempt) + random.uniform(0, 1)
-                )
-                logging.warning(
-                    f"Rate limit hit (429). Waiting {delay:.2f} seconds before retry {attempt + 1}/{max_retries}"
-                )
+                if retry_after > 0:
+                    # Cloudflare/Trakt explicitly told us how long to wait - respect it exactly
+                    delay = retry_after
+                    logging.warning(
+                        f"Rate limit hit (429). Cloudflare requires {delay}s wait. Retrying {attempt + 1}/{max_retries}"
+                    )
+                else:
+                    # No Retry-After header, use exponential backoff
+                    delay = initial_delay * (2 ** attempt) + random.uniform(0, 1)
+                    logging.warning(
+                        f"Rate limit hit (429). Waiting {delay:.2f}s before retry {attempt + 1}/{max_retries}"
+                    )
+
+            elif status_code == 420:  # VIP Enhanced - Account limit exceeded
+                is_vip = http_err.response.headers.get('X-VIP-User', 'false') == 'true' if http_err.response else False
+                account_limit = http_err.response.headers.get('X-Account-Limit', 'unknown') if http_err.response else 'unknown'
+                upgrade_url = http_err.response.headers.get('X-Upgrade-URL', 'https://trakt.tv/vip') if http_err.response else 'https://trakt.tv/vip'
+
+                retry_after = int(http_err.response.headers.get("Retry-After", 0)) if http_err.response else 0
+                delay = retry_after if retry_after > 0 else initial_delay * (2 ** attempt) + random.uniform(0, 1)
+
+                if is_vip:
+                    logging.warning(f"Account limit exceeded (420). Limit: {account_limit}. Waiting {delay:.2f}s before retry {attempt + 1}/{max_retries}")
+                else:
+                    logging.warning(f"Account limit exceeded (420). Upgrade to VIP at {upgrade_url} for higher limits. Waiting {delay:.2f}s before retry {attempt + 1}/{max_retries}")
+
+            elif status_code == 423:  # Locked User Account
+                logging.error("Trakt account is locked or deactivated. Please contact Trakt support.")
+                return []
+
+            elif status_code == 426:  # VIP Only
+                upgrade_url = http_err.response.headers.get('X-Upgrade-URL', 'https://trakt.tv/vip') if http_err.response else 'https://trakt.tv/vip'
+                logging.error(f"This API method requires Trakt VIP. Upgrade at {upgrade_url}")
+                return []
 
             elif status_code in (502, 504):  # Temporary gateway issues
                 delay = initial_delay * (2 ** attempt) + random.uniform(0, 1)

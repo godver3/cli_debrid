@@ -87,7 +87,7 @@ def validate_debrid_api_key(api_key, provider="RealDebrid"):
     """Validate Debrid API key format and basic authentication."""
     if not api_key:
         return False, "API key is required"
-
+    
     if provider == "RealDebrid":
         try:
             # Make a test request to the user endpoint
@@ -112,21 +112,23 @@ def validate_debrid_api_key(api_key, provider="RealDebrid"):
 
     elif provider == "AllDebrid":
         try:
-            # AllDebrid uses query parameter auth for the /user endpoint
+            # Make a test request to the user endpoint
             response = requests.get(
-                f"https://api.alldebrid.com/v4/user?agent=cli_debrid&apikey={api_key}",
+                "https://api.alldebrid.com/v4.1/user",
+                headers={'Authorization': f'Bearer {api_key}'},
                 timeout=10
             )
 
             if response.status_code == 200:
-                data = response.json()
-                if data.get('status') == 'success':
-                    return True, "AllDebrid API key is valid"
-                elif data.get('error', {}).get('code') == 'AUTH_BAD_APIKEY':
-                    return False, "Invalid AllDebrid API key"
-                else:
-                    error_msg = data.get('error', {}).get('message', 'Unknown error')
-                    return False, f"AllDebrid API error: {error_msg}"
+                # AllDebrid returns JSON with status field
+                try:
+                    data = response.json()
+                    if data.get('status') == 'success':
+                        return True, "AllDebrid API key is valid"
+                    else:
+                        return False, "Invalid AllDebrid API response"
+                except ValueError:
+                    return False, "Invalid AllDebrid API response format"
             elif response.status_code == 401:
                 return False, "Invalid AllDebrid API key"
             elif response.status_code == 403:
