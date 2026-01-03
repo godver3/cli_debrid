@@ -551,3 +551,50 @@
         font-size: 14px;
         color: #666;
     }
+
+    /* ========================================
+       Column Resize Functionality
+       ======================================== */
+
+    /* Resize handle styling */
+    .column-resize-handle {
+        position: absolute;
+        right: 0;
+        top: 0;
+        width: 5px;
+        height: 100%;
+        cursor: col-resize;
+        user-select: none;
+        z-index: 1;
+        background-color: rgba(76, 175, 80, 0.15);
+    }
+
+    .column-resize-handle:hover {
+        background-color: rgba(76, 175, 80, 0.4);
+    }
+
+    .column-resize-handle:active {
+        background-color: rgba(76, 175, 80, 0.6);
+    }
+
+    /* Ensure headers can contain the resize handle */
+    .table-container th {
+        position: relative;
+        border-right: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    /* Remove border from last header */
+    .table-container th:last-child {
+        border-right: none;
+    }
+
+    /* Hide resize handles and separators on mobile */
+    @media (max-width: 768px) {
+        .column-resize-handle {
+            display: none !important;
+        }
+
+        .table-container th {
+            border-right: none !important;
+        }
+    }

@@ -1,5 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Add Media{% endblock %}
+{% block head %}
+<style>
+    /* Prevent white flash on page load */
+    html {
+        background-color: #0a0a0a !important;
+    }
+    body {
+        background: linear-gradient(to bottom, #333 0px, #333 450px, #000 650px) !important;
+    }
+</style>
+{% endblock %}
 {% block content %}
 <meta name="theme-color" content="#333333">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -150,5 +161,5 @@
     </div>
     <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
     <script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/notifications.js') }} "></script>
+    <script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
 {% endblock %}

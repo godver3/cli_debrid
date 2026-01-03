@@ -26,7 +26,10 @@ def add_collected_items(media_items_batch, recent=False):
     conn = get_db_connection()
     try:
         conn.execute('BEGIN TRANSACTION')
-        
+
+        # Collect items that need post-processing after transaction commits
+        items_for_post_processing = []
+
         existing_collected_files = set()
         upgrading_from_files = set()
         existing_file_map = {}
@@ -364,12 +367,12 @@ def add_collected_items(media_items_batch, recent=False):
                             ''', (new_state, datetime.now(), collected_at, existing_collected_at, 
                                   current_plex_location, is_upgrade, item.get('resolution'), db_item_id))
 
-                            # Add post-processing call after state update
+                            # Queue items for post-processing AFTER transaction commits
+                            # This prevents database lock issues when post-processing tries to write to DB
                             # start_handle_state = time.time()
-                            if new_state == 'Collected':
-                                handle_state_change(dict(conn.execute('SELECT * FROM media_items WHERE id = ?', (db_item_id,)).fetchone()))
-                            elif new_state == 'Upgrading':
-                                handle_state_change(dict(conn.execute('SELECT * FROM media_items WHERE id = ?', (db_item_id,)).fetchone()))
+                            if new_state in ('Collected', 'Upgrading'):
+                                item_for_processing = dict(conn.execute('SELECT * FROM media_items WHERE id = ?', (db_item_id,)).fetchone())
+                                items_for_post_processing.append(item_for_processing)
                             # logging.debug(f"handle_state_change for item {db_item_id} took {time.time() - start_handle_state:.4f} seconds.")
 
                             cursor = conn.execute('SELECT * FROM media_items WHERE id = ?', (db_item_id,))
@@ -553,6 +556,17 @@ def add_collected_items(media_items_batch, recent=False):
             # logging.info(f"Finished post-loop cleanup in {time.time() - start_cleanup_time:.4f} seconds.")
 
         conn.commit()
+
+        # Process post-processing tasks AFTER transaction commits
+        # This prevents database lock issues from Plex label application and other operations
+        if items_for_post_processing:
+            logging.info(f"Running post-processing for {len(items_for_post_processing)} items")
+            for item in items_for_post_processing:
+                try:
+                    handle_state_change(item)
+                except Exception as e:
+                    logging.error(f"Error in post-processing for item {item.get('id')}: {str(e)}", exc_info=True)
+
     except Exception as e:
         logging.error(f"Error adding collected items: {str(e)}", exc_info=True)
         conn.rollback()

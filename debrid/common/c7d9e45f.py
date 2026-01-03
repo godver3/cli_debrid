@@ -28,9 +28,9 @@ _v = {
         'supports_uncached': b'gAAAAABnfA_Kt_BI1l3hWU4xwCXwuY3owcWYzkHHQVo5cs6QcC7e3Q3T4H8aqwDFDzlckIsddvJaQdbHG2G8mfPZQC0YFIS8NA=='
     },
     'AllDebridProvider': {
-        'direct_cache': b'gAAAAABpV-cSLRFtIrBbKJ3TPOa58lR_CCiDCK82GIvUpxGsT8pvlPuQArpaihI7gJA2qkK53fzZgH61ZwLKNIu1ww5y4BsyBQ==',
-        'bulk_cache': b'gAAAAABpV-cSWHQWZ1GDYeUMhdWf3hrfL9o_wiEcWrsTo9mO_EEOnr19AP7LiRV4yQl_OwVtPmaRXmDxrXArOFhszzKhafDENA==',
-        'supports_uncached': b'gAAAAABpV-cSTTIheNkgJrY8MjxNc9y1-OXOHS2vshqIqdI3lkW6R2tf_dlXhXlrWx7fwYcEVtBFvJTiGzzRrwEHiaD-DkvIig=='
+        'direct_cache': b'gAAAAABpWFBI5LpjoXHHD0M88gTWFJJWWF11I1WnE_R9QSKqdGH-SyKWb_T5GRqQdSRnsmckU2Tj34jDtXD_19qECoTcRaWI5A==',
+        'bulk_cache': b'gAAAAABpWFBI-B0QZv1rn7ieePQt1aF2oEz82kz8xtXWFuTWotjEcgDNTi5SObW4gkTZC-Syosv-FpdZKcsfFp4uA6EJkfpBsQ==',
+        'supports_uncached': b'gAAAAABpWFBICGPRNPbZGs_xgeF8eq78USs8nSgoZtkwbHN9lfQx-qI7Elm94EKrUFWoYNwu9x2dhNGZJ_PAu9T3FJds2QMHqg=='
     }
 }
 

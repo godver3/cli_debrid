@@ -36,7 +36,7 @@ class ToastManager {
             this.container.style.display = 'block';
         }
 
-        if (window.title && window.title.includes('Debug Functions')) {
+        if (document.title && document.title.includes('Debug Functions')) {
             this.container.style.display = 'none';
         }
     }
@@ -52,7 +52,6 @@ class ToastManager {
 
         if (this.toasts.size >= this.maxToasts) {
             this.toastQueue.push({ title, message, type });
-            console.log(`Toast queued. Queue length: ${this.toastQueue.length}`);
             return;
         }
 
@@ -65,8 +64,6 @@ class ToastManager {
 
         this.stack.insertBefore(toast, this.stack.children[1]);
         this.toasts.set(toastId, toast);
-
-        console.log(`Created toast ${toastId}, total toasts: ${this.toasts.size}`);
 
         this.updateStackCount();
 
@@ -90,14 +87,11 @@ class ToastManager {
         const additionalDelay = (toastArray.length - 1 - toastIndex) * this.removalDelay;
         const totalDelay = baseDelay + additionalDelay;
 
-        console.log(`Scheduling removal for ${toastId}: index=${toastIndex}, position=${toastArray.length - 1 - toastIndex}, delay=${totalDelay}ms`);
-
         if (this.removalTimers.has(toastId)) {
             clearTimeout(this.removalTimers.get(toastId));
         }
 
         const timer = setTimeout(() => {
-            console.log(`Removing toast ${toastId} after ${totalDelay}ms`);
             this.hide(toastId);
             this.removalTimers.delete(toastId);
         }, totalDelay);
@@ -110,12 +104,10 @@ class ToastManager {
         this.removalTimers.clear();
 
         const allToasts = Array.from(this.toasts.keys());
-        console.log(`Rescheduling ${allToasts.length} toasts:`, allToasts);
 
         allToasts.forEach((toastId, index) => {
             const position = allToasts.length - 1 - index;
             const delay = this.toastDuration + (position * this.removalDelay);
-            console.log(`Toast ${toastId}: index=${index}, position=${position}, delay=${delay}ms`);
 
             const timer = setTimeout(() => {
                 this.hide(toastId);
@@ -246,7 +238,6 @@ class ToastManager {
     processQueue() {
         while (this.toasts.size < this.maxToasts && this.toastQueue.length > 0) {
             const queuedToast = this.toastQueue.shift();
-            console.log(`Processing queued toast. Remaining in queue: ${this.toastQueue.length}`);
             this.createAndShowToast(queuedToast.title, queuedToast.message, queuedToast.type);
         }
     }

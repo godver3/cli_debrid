@@ -75,6 +75,34 @@
             </form>
         </div>
         <div class="debug_item">
+            <h3>Test Plex Item Lookup</h3>
+            <p class="description">Test if a database item can be found in Plex. Shows IMDb ID, TMDb ID, title, year, and whether Plex match was successful.</p>
+            <form id="test-item-lookup-form" onsubmit="return false;">
+                <div class="form-group">
+                    <label for="test_lookup_item_id">Item ID:</label>
+                    <input type="number" id="test_lookup_item_id" name="item_id" placeholder="e.g., 98080" required>
+                </div>
+                <button type="button" onclick="testItemLookup()">Test Lookup</button>
+                <div id="test-lookup-results" class="results-area" style="margin-top: 15px;"></div>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Fix Missing IMDb ID</h3>
+            <p class="description">Add or update the IMDb ID for a media item. Useful when Plex has the IMDb ID but it's missing from the database, preventing Plex label matching.</p>
+            <form id="fix-imdb-form" onsubmit="return false;">
+                <div class="form-group">
+                    <label for="fix_imdb_item_id">Item ID:</label>
+                    <input type="number" id="fix_imdb_item_id" name="item_id" placeholder="e.g., 98080" required>
+                </div>
+                <div class="form-group">
+                    <label for="fix_imdb_id">IMDb ID:</label>
+                    <input type="text" id="fix_imdb_id" name="imdb_id" placeholder="e.g., tt37212066" required pattern="tt\d+">
+                </div>
+                <button type="button" onclick="fixImdbId()">Update IMDb ID</button>
+                <div id="fix-imdb-results" class="results-area" style="margin-top: 15px;"></div>
+            </form>
+        </div>
+        <div class="debug_item">
             <h3>Run Task Manually</h3>
             <form id="run-task-form">
                 <div class="form-group">
@@ -99,7 +127,7 @@
             </div>
             <div class="verification-actions">
                 <button type="button" id="refresh-verification-queue" class="btn">Refresh Queue</button>
-                <button type="button" id="run-verification-scan" class="btn">Run Verification Scan</button>
+                <button type="button" id="run-verification-scan" class="btn">Verification Scan</button>
             </div>
             <div id="verification-queue-container" class="verification-queue-container">
                 <div class="queue-loading">Loading verification queue...</div>
@@ -253,10 +281,10 @@
                     </div>
                     <div id="cache_files_list">
                         {% if cache_files %}
-                            {% for filename in cache_files %}
+                            {% for filename, display_label in cache_files %}
                                 <div class="cache-file-item">
                                     <input type="checkbox" name="selected_files" value="{{ filename }}" id="cache_file_{{ loop.index }}">
-                                    <label for="cache_file_{{ loop.index }}">{{ filename }}</label>
+                                    <label for="cache_file_{{ loop.index }}">{{ display_label }}</label>
                                 </div>
                             {% endfor %}
                         {% else %}
@@ -364,9 +392,86 @@
             <h3>Manual Blacklist</h3>
             <a href="{{ url_for('debug.manual_blacklist') }}" class="btn">Manage Manual Blacklist</a>
         </div>
+
+        <!-- Plex Labels Management -->
+        <div class="debug_item" style="grid-column: 1 / -1;">
+            <h3>Plex Labels Management</h3>
+            <p class="description">
+                Manage Plex labels for your content. These utilities allow you to view, apply, and remove labels manually, as well as sync labels from configured content sources.
+            </p>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 20px; margin-top: 20px;">
+                <!-- View Items by Label -->
+                <div class="label-items">
+                    <h4 style="margin-bottom: 10px;">View Items by Label</h4>
+                    <p class="description" style="margin-bottom: 10px;">
+                        Search for items that have a specific Plex label applied.
+                    </p>
+                    <input type="text" id="label-search-input" placeholder="Enter label name">
+                    <button type="button" onclick="searchItemsByLabel()" class="btn"
+                            style="padding: 8px 16px; width: 100%;">Search</button>
+                    <div id="label-search-results" style="margin-top: 15px; max-height: 300px; overflow-y: auto;"></div>
+                </div>
+
+                <!-- Bulk Label Application -->
+                <div class="label-items">
+                    <h4 style="margin-bottom: 10px;">Bulk Apply Labels from Source</h4>
+                    <p class="description" style="margin-bottom: 10px;">
+                        Apply Plex labels to all existing items from a specific content source. This is useful for retroactively labeling content that was added before labels were configured.
+                    </p>
+                    <select id="bulk-apply-source">
+                        <option value="">Select a content source...</option>
+                    </select>
+                    <button type="button" onclick="previewBulkApply()" class="btn"
+                            style="padding: 8px 16px; width: 100%; margin-bottom: 5px;">Preview</button>
+                    <button type="button" onclick="executeBulkApply()" class="btn"
+                            style="padding: 8px 16px; width: 100%; background-color: #007bff;" disabled id="bulk-apply-execute-btn">Apply Labels</button>
+                    <div id="bulk-apply-preview" style="margin-top: 15px;"></div>
+                </div>
+
+                <!-- Bulk Label Removal -->
+                <div class="label-items">
+                    <h4 style="margin-bottom: 10px;">Bulk Remove Labels</h4>
+                    <p class="description" style="margin-bottom: 10px;">
+                        Remove a specific label from all items in the database and Plex.
+                    </p>
+                    <input type="text" id="bulk-remove-label-input" placeholder="Enter label name to remove">
+                    <button type="button" onclick="previewBulkRemove()" class="btn"
+                            style="padding: 8px 16px; width: 100%; margin-bottom: 5px;">Preview</button>
+                    <button type="button" onclick="executeBulkRemove()" class="btn"
+                            style="padding: 8px 16px; width: 100%; background-color: #dc3545;" disabled id="bulk-remove-execute-btn">Remove Label</button>
+                    <div id="bulk-remove-preview" style="margin-top: 15px;"></div>
+                </div>
+
+                <!-- Orphaned Label Cleanup -->
+                <div class="label-items">
+                    <h4 style="margin-bottom: 10px;">Orphaned Label Cleanup</h4>
+                    <p class="description" style="margin-bottom: 10px;">
+                        Find and remove labels that are tracked in the database but no longer exist on any content source configuration.
+                    </p>
+                    <button type="button" onclick="findOrphanedLabels()" class="btn"
+                            style="padding: 8px 16px; width: 100%; margin-bottom: 5px;">Find Orphaned Labels</button>
+                    <button type="button" onclick="cleanupOrphanedLabels()" class="btn"
+                            style="padding: 8px 16px; width: 100%; background-color: #dc3545;" disabled id="orphaned-cleanup-btn">Cleanup</button>
+                    <div id="orphaned-labels-results" style="margin-top: 15px;"></div>
+                </div>
+
+                <!-- Sync Labels Now -->
+                <div class="label-items">
+                    <h4 style="margin-bottom: 10px;">Sync Labels from Content Sources</h4>
+                    <p class="description" style="margin-bottom: 10px;">
+                        Re-sync all labels based on current content source configurations. This will apply labels to all Collected items from sources that have Plex labels enabled.
+                    </p>
+                    <button type="button" onclick="syncAllLabels()" class="btn"
+                            style="padding: 8px 16px; width: 100%; background-color: #28a745;">Sync All Labels</button>
+                    <div id="sync-labels-status" style="margin-top: 15px;"></div>
+                </div>
+            </div>
+        </div>
+
         </div>
     </div>
-    
+
     <!-- Monitoring Tab -->
     <div id="monitoring-tab" class="debug-tab-content">
         <div class="debug_items">
@@ -471,7 +576,7 @@ function restoreActiveTab() {
             // Find and activate the corresponding tab button
             const tabButtons = document.querySelectorAll('.debug-tab');
             tabButtons.forEach(button => {
-                if (button.textContent.toLowerCase() === savedTab) {
+                if (button.textContent && button.textContent.toLowerCase() === savedTab) {
                     button.classList.add('active');
                 }
             });
@@ -1805,7 +1910,7 @@ if (document.readyState === 'loading') {
                     });
                 }
                 button.disabled = false;
-                button.textContent = 'Run Verification Scan';
+                button.textContent = 'Verification Scan';
             })
             .catch(error => {
                 Loading.hide();
@@ -1816,7 +1921,7 @@ if (document.readyState === 'loading') {
                     autoClose: 5000
                 });
                 button.disabled = false;
-                button.textContent = 'Run Verification Scan';
+                button.textContent = 'Verification Scan';
             });
         }
         
@@ -2359,7 +2464,526 @@ if (document.readyState === 'loading') {
             });
         }
         // --- End Remove Duplicate Database Items Logic ---
+
+        // --- Plex Labels Management Functions ---
+        loadContentSourcesForLabels();
     });
+
+    window.loadContentSourcesForLabels = function() {
+        fetch('/debug/plex-labels/sources-list')
+            .then(response => response.json())
+            .then(data => {
+                const select = document.getElementById('bulk-apply-source');
+                if (!select) return;
+
+                // Clear existing options except the first placeholder
+                while (select.options.length > 1) {
+                    select.remove(1);
+                }
+
+                if (data.success && data.sources) {
+                    // Add content sources that have plex_labels enabled
+                    data.sources.forEach(source => {
+                        const option = document.createElement('option');
+                        option.value = source.id;
+                        option.textContent = `${source.name} (${source.type})`;
+                        select.appendChild(option);
+                    });
+                }
+            })
+            .catch(error => console.error('Error loading content sources:', error));
+    }
+
+    window.searchItemsByLabel = function() {
+        const label = document.getElementById('label-search-input').value.trim();
+        const resultsDiv = document.getElementById('label-search-results');
+
+        if (!label) {
+            resultsDiv.innerHTML = '<p style="color: #ff6b6b;">Please enter a label name</p>';
+            return;
+        }
+
+        resultsDiv.innerHTML = '<p>Searching...</p>';
+
+        fetch(`/debug/plex-labels/search?label=${encodeURIComponent(label)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.items && data.items.length > 0) {
+                    let html = `<p style="color: #4ecdc4;">Found ${data.items.length} item(s) with label "${label}":</p><ul style="margin-top: 10px;">`;
+                    data.items.forEach(item => {
+                        html += `<li style="padding: 5px 0;">${item.title} (${item.type}, ID: ${item.id})</li>`;
+                    });
+                    html += '</ul>';
+                    resultsDiv.innerHTML = html;
+                } else {
+                    resultsDiv.innerHTML = `<p style="color: #ffd93d;">No items found with label "${label}"</p>`;
+                }
+            })
+            .catch(error => {
+                resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+            });
+    }
+
+    window.previewBulkApply = function() {
+        const sourceId = document.getElementById('bulk-apply-source').value;
+        const previewDiv = document.getElementById('bulk-apply-preview');
+        const executeBtn = document.getElementById('bulk-apply-execute-btn');
+
+        if (!sourceId) {
+            previewDiv.innerHTML = '<p style="color: #ff6b6b;">Please select a content source</p>';
+            executeBtn.disabled = true;
+            return;
+        }
+
+        previewDiv.innerHTML = '<p>Loading preview...</p>';
+
+        fetch(`/debug/plex-labels/bulk-apply-preview?source_id=${encodeURIComponent(sourceId)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    let html = `<p style="color: #4ecdc4;">Preview: ${data.count} item(s) will have labels applied</p>`;
+                    if (data.labels && data.labels.length > 0) {
+                        html += `<p>Labels to apply: <strong>${data.labels.join(', ')}</strong></p>`;
+                    }
+                    previewDiv.innerHTML = html;
+                    executeBtn.disabled = false;
+                } else {
+                    previewDiv.innerHTML = `<p style="color: #ff6b6b;">${data.message || 'Error loading preview'}</p>`;
+                    executeBtn.disabled = true;
+                }
+            })
+            .catch(error => {
+                previewDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+                executeBtn.disabled = true;
+            });
+    }
+
+    // Helper function for streaming progress updates
+    window.handleStreamingProgress = function(url, body, previewDiv, executeBtn, config) {
+        const {
+            actionVerb = 'Processing', // e.g., "Removing", "Syncing", "Cleaning"
+            countKey = 'applied',      // e.g., "removed", "synced", "cleaned"
+            itemKey = 'item_title'
+        } = config;
+
+        fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        })
+        .then(response => {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            function processText({ done, value }) {
+                if (done) {
+                    executeBtn.disabled = false;
+                    return;
+                }
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+
+                            if (data.error) {
+                                previewDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${data.error}</p>`;
+                                executeBtn.disabled = false;
+                                return;
+                            }
+
+                            if (data.status === 'started') {
+                                previewDiv.innerHTML = `
+                                    <div class="progress-message">
+                                        <span class="operation-spinner"></span>
+                                        <span>${actionVerb} ${data.total} item(s)...</span>
+                                    </div>
+                                    <div style="margin-top: 10px;">
+                                        <div style="color: #95a5a6; font-size: 12px;">Progress: 0/${data.total}</div>
+                                    </div>
+                                `;
+                            }
+
+                            if (data.status === 'progress') {
+                                const percent = Math.round((data.current / data.total) * 100);
+                                const estMinutes = Math.floor(data.estimated_remaining_seconds / 60);
+                                const estSeconds = data.estimated_remaining_seconds % 60;
+                                const elapsedMinutes = Math.floor(data.elapsed_seconds / 60);
+                                const elapsedSeconds = data.elapsed_seconds % 60;
+
+                                previewDiv.innerHTML = `
+                                    <div class="progress-message">
+                                        <span class="operation-spinner"></span>
+                                        <span>${actionVerb}: ${data[itemKey] || 'Unknown'}</span>
+                                    </div>
+                                    <div style="margin-top: 10px;">
+                                        <div style="background: #2a2a2a; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+                                            <div style="background: #4ecdc4; height: 6px; width: ${percent}%; transition: width 0.3s;"></div>
+                                        </div>
+                                        <div style="color: #95a5a6; font-size: 12px;">Progress: ${data.current}/${data.total} (${percent}%) - ${countKey}: ${data[countKey]}</div>
+                                        <div style="color: #95a5a6; font-size: 12px;">Elapsed: ${elapsedMinutes}m ${elapsedSeconds}s | Remaining: ~${estMinutes}m ${estSeconds}s</div>
+                                    </div>
+                                `;
+                            }
+
+                            if (data.status === 'complete') {
+                                let message = `<p style="color: #4ecdc4;">Success! ${actionVerb} ${data[countKey]} out of ${data.total} item(s)</p>`;
+                                message += `<p style="color: #95a5a6; font-size: 12px;">Total time: ${Math.floor(data.elapsed_seconds / 60)}m ${data.elapsed_seconds % 60}s</p>`;
+
+                                if (data.failed_items && data.failed_items.length > 0) {
+                                    message += `<p style="color: #ffa500;">Warning: ${data.failed_count} item(s) failed</p>`;
+                                }
+
+                                previewDiv.innerHTML = message;
+                                executeBtn.disabled = false;
+                            }
+
+                            if (data.status === 'error') {
+                                previewDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${data.error}</p>`;
+                                executeBtn.disabled = false;
+                            }
+                        } catch (e) {
+                            console.error('Error parsing SSE data:', e);
+                        }
+                    }
+                }
+
+                return reader.read().then(processText);
+            }
+
+            return reader.read().then(processText);
+        })
+        .catch(error => {
+            previewDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+            executeBtn.disabled = false;
+        });
+    };
+
+    window.executeBulkApply = function() {
+        const sourceId = document.getElementById('bulk-apply-source').value;
+        const previewDiv = document.getElementById('bulk-apply-preview');
+        const executeBtn = document.getElementById('bulk-apply-execute-btn');
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Bulk Apply',
+            message: 'Are you sure you want to apply labels to all items from this source?',
+            confirmText: 'Apply Labels',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                executeBtn.disabled = true;
+                previewDiv.innerHTML = '<div class="progress-message"><span class="operation-spinner"></span><span>Starting...</span></div>';
+
+                handleStreamingProgress(
+                    '/debug/plex-labels/bulk-apply-stream',
+                    { source_id: sourceId },
+                    previewDiv,
+                    executeBtn,
+                    { actionVerb: 'Applying labels to', countKey: 'applied', itemKey: 'item_title' }
+                );
+            }
+        });
+    }
+
+    window.previewBulkRemove = function() {
+        const label = document.getElementById('bulk-remove-label-input').value.trim();
+        const previewDiv = document.getElementById('bulk-remove-preview');
+        const executeBtn = document.getElementById('bulk-remove-execute-btn');
+
+        if (!label) {
+            previewDiv.innerHTML = '<p style="color: #ff6b6b;">Please enter a label name</p>';
+            executeBtn.disabled = true;
+            return;
+        }
+
+        previewDiv.innerHTML = '<p>Loading preview...</p>';
+
+        fetch(`/debug/plex-labels/bulk-remove-preview?label=${encodeURIComponent(label)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.count > 0) {
+                    previewDiv.innerHTML = `<p style="color: #ffd93d;">Warning: ${data.count} item(s) will have label "${label}" removed</p>`;
+                    executeBtn.disabled = false;
+                } else if (data.count === 0) {
+                    previewDiv.innerHTML = `<p style="color: #4ecdc4;">No items found with label "${label}"</p>`;
+                    executeBtn.disabled = true;
+                } else {
+                    previewDiv.innerHTML = `<p style="color: #ff6b6b;">${data.message || 'Error loading preview'}</p>`;
+                    executeBtn.disabled = true;
+                }
+            })
+            .catch(error => {
+                previewDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+                executeBtn.disabled = true;
+            });
+    }
+
+    window.executeBulkRemove = function() {
+        const label = document.getElementById('bulk-remove-label-input').value.trim();
+        const previewDiv = document.getElementById('bulk-remove-preview');
+        const executeBtn = document.getElementById('bulk-remove-execute-btn');
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Bulk Remove',
+            message: `Are you sure you want to remove label "${label}" from all items? This cannot be undone.`,
+            confirmText: 'Remove Label',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                executeBtn.disabled = true;
+                previewDiv.innerHTML = '<div class="progress-message"><span class="operation-spinner"></span><span>Starting...</span></div>';
+
+                handleStreamingProgress(
+                    '/debug/plex-labels/bulk-remove-stream',
+                    { label: label },
+                    previewDiv,
+                    executeBtn,
+                    { actionVerb: 'Removing label from', countKey: 'removed', itemKey: 'item_title' }
+                );
+            }
+        });
+    }
+
+    window.findOrphanedLabels = function() {
+        const resultsDiv = document.getElementById('orphaned-labels-results');
+        const cleanupBtn = document.getElementById('orphaned-cleanup-btn');
+
+        resultsDiv.innerHTML = '<p>Searching for orphaned labels...</p>';
+
+        fetch('/debug/plex-labels/find-orphaned')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.orphaned_labels && data.orphaned_labels.length > 0) {
+                    let html = `<p style="color: #ffd93d;">Found ${data.orphaned_labels.length} orphaned label(s):</p><ul style="margin-top: 10px;">`;
+                    data.orphaned_labels.forEach(label => {
+                        html += `<li style="padding: 5px 0;">${label.label} (${label.item_count} items)</li>`;
+                    });
+                    html += '</ul>';
+                    resultsDiv.innerHTML = html;
+                    cleanupBtn.disabled = false;
+                } else if (data.orphaned_labels && data.orphaned_labels.length === 0) {
+                    resultsDiv.innerHTML = '<p style="color: #4ecdc4;">No orphaned labels found!</p>';
+                    cleanupBtn.disabled = true;
+                } else {
+                    resultsDiv.innerHTML = `<p style="color: #ff6b6b;">${data.message || 'Error finding orphaned labels'}</p>`;
+                    cleanupBtn.disabled = true;
+                }
+            })
+            .catch(error => {
+                resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+                cleanupBtn.disabled = true;
+            });
+    }
+
+    window.cleanupOrphanedLabels = function() {
+        const resultsDiv = document.getElementById('orphaned-labels-results');
+        const cleanupBtn = document.getElementById('orphaned-cleanup-btn');
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Cleanup',
+            message: 'Are you sure you want to cleanup orphaned labels? This will remove them from all items and cannot be undone.',
+            confirmText: 'Cleanup',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                // Get orphaned labels data from current display
+                const orphanedText = resultsDiv.textContent;
+                const match = orphanedText.match(/Found (\d+) orphaned/);
+
+                if (match && match[1]) {
+                    const count = parseInt(match[1]);
+                    const estimatedSeconds = count * 10; // ~10 seconds per orphaned label (affects multiple items)
+                    const estimatedMinutes = Math.ceil(estimatedSeconds / 60);
+                    resultsDiv.innerHTML = `
+                        <div class="progress-message">
+                            <span class="operation-spinner"></span>
+                            <span>Cleaning up ${count} orphaned label(s)...</span>
+                        </div>
+                        <div class="progress-estimate">Estimated time: ${estimatedMinutes} minute(s)</div>
+                    `;
+                } else {
+                    resultsDiv.innerHTML = '<div class="progress-message"><span class="operation-spinner"></span><span>Cleaning up orphaned labels...</span></div>';
+                }
+
+                cleanupBtn.disabled = true;
+
+                handleStreamingProgress(
+                    '/debug/plex-labels/cleanup-orphaned-stream',
+                    {},
+                    resultsDiv,
+                    cleanupBtn,
+                    { actionVerb: 'Cleaning up', countKey: 'cleaned', itemKey: 'item_title' }
+                );
+            }
+        });
+    }
+
+    window.syncAllLabels = function() {
+        const statusDiv = document.getElementById('sync-labels-status');
+
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm Sync',
+            message: 'This will re-sync all labels based on current content source configurations. Continue?',
+            confirmText: 'Sync Labels',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                statusDiv.innerHTML = '<div class="progress-message"><span class="operation-spinner"></span><span>Starting...</span></div>';
+
+                // Create a dummy button for the helper (sync doesn't have a button)
+                const dummyBtn = { disabled: false };
+
+                handleStreamingProgress(
+                    '/debug/plex-labels/sync-all-stream',
+                    {},
+                    statusDiv,
+                    dummyBtn,
+                    { actionVerb: 'Syncing labels for', countKey: 'synced', itemKey: 'item_title' }
+                );
+            }
+        });
+    }
+    // --- End Plex Labels Management Functions ---
+
+    // --- Test Plex Item Lookup Function ---
+    window.testItemLookup = function() {
+        const itemId = document.getElementById('test_lookup_item_id').value.trim();
+        const resultsDiv = document.getElementById('test-lookup-results');
+
+        if (!itemId) {
+            resultsDiv.innerHTML = '<p style="color: #ff6b6b;">Please enter an Item ID</p>';
+            return;
+        }
+
+        resultsDiv.innerHTML = '<p>Testing Plex lookup...</p>';
+
+        fetch(`/debug/plex-labels/test-item-lookup/${itemId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                let html = '';
+
+                // Database info
+                const dbInfo = data.database_info || {};
+                html += `<div style="margin-bottom: 15px; padding: 10px; background: #2a2a2a; border-radius: 4px;">`;
+                html += `<div style="margin-bottom: 8px;"><strong>Database Info:</strong></div>`;
+                html += `<div><strong>ID:</strong> ${data.item_id}</div>`;
+                html += `<div><strong>Title:</strong> ${dbInfo.title || 'N/A'}</div>`;
+                html += `<div><strong>Type:</strong> ${dbInfo.type || 'N/A'}</div>`;
+                html += `<div><strong>Year:</strong> ${dbInfo.year || 'N/A'}</div>`;
+                html += `<div><strong>IMDb ID:</strong> ${dbInfo.imdb_id || 'None'}</div>`;
+                html += `<div><strong>TMDb ID:</strong> ${dbInfo.tmdb_id || 'None'}</div>`;
+                html += `</div>`;
+
+                // Plex match result
+                if (data.plex_found) {
+                    const plexInfo = data.plex_info || {};
+                    const plexLabels = plexInfo.labels || [];
+                    html += `<p style="color: #4ecdc4;">✓ Item found in Plex!</p>`;
+                    html += `<div style="padding: 10px; background: #2a2a2a; border-radius: 4px;">`;
+                    html += `<div><strong>Plex Title:</strong> ${plexInfo.title || 'N/A'}</div>`;
+                    html += `<div><strong>Plex Year:</strong> ${plexInfo.year || 'N/A'}</div>`;
+                    html += `<div><strong>Plex GUID:</strong> ${plexInfo.guid || 'N/A'}</div>`;
+                    html += `<div><strong>Plex Labels:</strong> ${plexLabels.length > 0 ? plexLabels.join(', ') : 'None'}</div>`;
+                    html += `</div>`;
+                } else {
+                    html += `<p style="color: #ffa500;">✗ Item NOT found in Plex</p>`;
+                    html += `<p style="color: #95a5a6; font-size: 12px;">This item exists in the database but couldn't be matched to Plex. Possible reasons:</p>`;
+                    html += `<ul style="color: #95a5a6; font-size: 12px; margin-left: 20px;">`;
+                    html += `<li>Item not in Plex library yet</li>`;
+                    html += `<li>Missing or incorrect IMDb/TMDb ID</li>`;
+                    html += `<li>Title mismatch (check for apostrophes, special characters)</li>`;
+                    html += `</ul>`;
+                }
+
+                resultsDiv.innerHTML = html;
+            } else {
+                resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${data.message}</p>`;
+            }
+        })
+        .catch(error => {
+            resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+        });
+    };
+    // --- End Test Plex Item Lookup Function ---
+
+    // --- Fix Missing IMDb ID Function ---
+    window.fixImdbId = function() {
+        const itemId = document.getElementById('fix_imdb_item_id').value.trim();
+        const imdbId = document.getElementById('fix_imdb_id').value.trim();
+        const resultsDiv = document.getElementById('fix-imdb-results');
+
+        if (!itemId || !imdbId) {
+            resultsDiv.innerHTML = '<p style="color: #ff6b6b;">Please fill in both Item ID and IMDb ID</p>';
+            return;
+        }
+
+        if (!imdbId.match(/^tt\d+$/)) {
+            resultsDiv.innerHTML = '<p style="color: #ff6b6b;">IMDb ID must start with "tt" followed by numbers (e.g., tt37212066)</p>';
+            return;
+        }
+
+        resultsDiv.innerHTML = '<p>Updating IMDb ID...</p>';
+
+        fetch(`/debug/plex-labels/fix-imdb/${itemId}/${imdbId}`, {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                let html = `<p style="color: #4ecdc4;">✓ Success! Updated IMDb ID</p>`;
+                html += `<div style="margin-top: 10px; padding: 10px; background: #2a2a2a; border-radius: 4px;">`;
+                html += `<div><strong>Item ID:</strong> ${data.item_id}</div>`;
+                html += `<div><strong>Title:</strong> ${data.title}</div>`;
+                html += `<div><strong>IMDb ID Before:</strong> ${data.imdb_id_before || 'None'}</div>`;
+                html += `<div><strong>IMDb ID After:</strong> ${data.imdb_id_after}</div>`;
+                html += `</div>`;
+                resultsDiv.innerHTML = html;
+            } else {
+                resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${data.message}</p>`;
+            }
+        })
+        .catch(error => {
+            resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+        });
+    };
+    // --- End Fix Missing IMDb ID Function ---
 </script>
+
+<style>
+    /* Simple spinner for progress indication */
+    .operation-spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(78, 205, 196, 0.3);
+        border-top-color: #4ecdc4;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        margin-right: 8px;
+        vertical-align: middle;
+    }
+
+    @keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    .progress-message {
+        display: flex;
+        align-items: center;
+        font-size: 14px;
+    }
+
+    .progress-estimate {
+        font-size: 12px;
+        opacity: 0.8;
+        margin-top: 5px;
+    }
+</style>
 
 {% endblock %}

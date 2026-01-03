@@ -88,7 +88,7 @@
         <div class="settings-form-group">
             <label for="debug-delayed_scrape_time_limit" class="settings-title">Delayed Scrape Time Limit (Hours):</label>
             <input type="number" step="any" min="0.1" id="debug-delayed_scrape_time_limit" name="Debug.delayed_scrape_time_limit"
-                   value="{{ settings.get('Debug', {}).get('delayed_scrape_time_limit', settings_schema.Debug.delayed_scrape_time_limit.default) }}" class="settings-input"
+                   value="{% set val = settings.get('Debug', {}).get('delayed_scrape_time_limit', settings_schema.Debug.delayed_scrape_time_limit.default) %}{{ val if val != None else '' }}" class="settings-input"
                    data-section="Debug" data-key="delayed_scrape_time_limit">
             <p class="settings-description">Time limit (in hours) to only accept results above the minimum scrape score before accepting lower scored releases.</p>
         </div>
@@ -97,7 +97,7 @@
         <div class="settings-form-group">
             <label for="debug-minimum_scrape_score" class="settings-title">Minimum Scrape Score:</label>
             <input type="number" step="any" min="0.0" id="debug-minimum_scrape_score" name="Debug.minimum_scrape_score"
-                   value="{{ settings.get('Debug', {}).get('minimum_scrape_score', settings_schema.Debug.minimum_scrape_score.default) }}" class="settings-input"
+                   value="{% set val = settings.get('Debug', {}).get('minimum_scrape_score', settings_schema.Debug.minimum_scrape_score.default) %}{{ val if val != None else '' }}" class="settings-input"
                    data-section="Debug" data-key="minimum_scrape_score">
             <p class="settings-description">Minimum scrape score to accept results above.</p>
         </div>
@@ -173,9 +173,9 @@
             <p class="settings-description">Enable alternate scraping time strategy: Instead of scraping based on queue offsets/airtime/release date, scrape all items with release dates and airtimes within the past 24 hours of the user-identified time each day.</p>
         </div>
         <div class="settings-form-group">
-            <label for="debug-alternate_scrape_time_24h" class="settings-title">Alternate Scrape Time (24h format):</label>
-            <input type="text" id="debug-alternate_scrape_time_24h" name="Debug.alternate_scrape_time_24h"
-                   value="{{ settings.get('Debug', {}).get('alternate_scrape_time_24h', settings_schema.Debug.alternate_scrape_time_24h.default) }}"
+            <label for="debug-alternate_scrape_time_24h-tangerine" class="settings-title">Alternate Scrape Time (24h format):</label>
+            <input type="text" id="debug-alternate_scrape_time_24h-tangerine" name="Debug.alternate_scrape_time_24h"
+                   value="{{ settings.get('Debug', {}).get('alternate_scrape_time_24h', '00:00') if settings.get('Debug', {}).get('alternate_scrape_time_24h') != None else '00:00' }}"
                    class="settings-input" data-section="Debug" data-key="alternate_scrape_time_24h">
             <p class="settings-description">24-hour time (HH:MM) to use as the daily scrape time for the alternate scraping strategy. Only used if alternate strategy is enabled.</p>
         </div>
@@ -213,8 +213,8 @@
 
         <!-- Timezone Override -->
         <div class="settings-form-group">
-            <label for="debug-timezone_override" class="settings-title">Timezone Override:</label>
-            <input type="text" id="debug-timezone_override" name="Debug.timezone_override"
+            <label for="debug-timezone_override-tangerine" class="settings-title">Timezone Override:</label>
+            <input type="text" id="debug-timezone_override-tangerine" name="Debug.timezone_override"
                    value="{{ settings.get('Debug', {}).get('timezone_override', '') }}" class="settings-input"
                    data-section="Debug" data-key="timezone_override">
             <p class="settings-description">Override the system timezone (e.g. 'America/New_York')</p>
@@ -222,8 +222,8 @@
 
         <!-- Cinesync Path -->
         <div class="settings-form-group">
-            <label for="debug-cinesync_path" class="settings-title">Cinesync Path:</label>
-            <input type="text" id="debug-cinesync_path" name="Debug.cinesync_path"
+            <label for="debug-cinesync_path-tangerine" class="settings-title">Cinesync Path:</label>
+            <input type="text" id="debug-cinesync_path-tangerine" name="Debug.cinesync_path"
                    value="{{ settings.get('Debug', {}).get('cinesync_path', '') }}" class="settings-input"
                    data-section="Debug" data-key="cinesync_path">
             <p class="settings-description">Path to Cinesync installation</p>
@@ -293,8 +293,8 @@
     <div class="settings-section-content">
         <!-- Sanitizer Replacement Character -->
         <div class="settings-form-group">
-            <label for="debug-sanitizer_replacement_character" class="settings-title">Sanitizer Replacement Character:</label>
-            <input type="text" id="debug-sanitizer_replacement_character" name="Debug.sanitizer_replacement_character"
+            <label for="debug-sanitizer_replacement_character-tangerine" class="settings-title">Sanitizer Replacement Character:</label>
+            <input type="text" id="debug-sanitizer_replacement_character-tangerine" name="Debug.sanitizer_replacement_character"
                    value="{{ settings.get('Debug', {}).get('sanitizer_replacement_character', '_') }}" class="settings-input"
                    data-section="Debug" data-key="sanitizer_replacement_character" maxlength="1">
             <p class="settings-description">Character to use when replacing invalid characters in filenames (default: '_'). Must be a valid character for both Windows and Linux filesystems.</p>
@@ -305,7 +305,7 @@
         <div class="settings-form-group">
             <label for="debug-max_upgrading_score" class="settings-title">Max Upgrading Score:</label>
             <input type="number" step="any" id="debug-max_upgrading_score" name="Debug.max_upgrading_score"
-                   value="{{ settings.get('Debug', {}).get('max_upgrading_score', settings_schema.Debug.max_upgrading_score.default) }}" class="settings-input"
+                   value="{% set val = settings.get('Debug', {}).get('max_upgrading_score', settings_schema.Debug.max_upgrading_score.default) %}{{ val if val != None else '' }}" class="settings-input"
                    data-section="Debug" data-key="max_upgrading_score">
             <p class="settings-description">{{ settings_schema.Debug.max_upgrading_score.description }}</p>
         </div>

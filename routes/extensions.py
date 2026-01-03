@@ -7,6 +7,7 @@ from flask_login import current_user
 import logging
 from routes.utils import is_user_system_enabled
 from flask_cors import CORS
+from utilities.settings import load_config
 try:
     from flask_compress import Compress
     COMPRESS_AVAILABLE = True
@@ -270,13 +271,18 @@ app = Flask(__name__,
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 app.wsgi_app = SameSiteMiddleware(app.wsgi_app)
 
-# Enable gzip/brotli compression for better performance (only if available)
-if COMPRESS_AVAILABLE:
+# Enable gzip/brotli compression for better performance (only if available and enabled in settings)
+config = load_config()
+enable_caching = config.get('UI Settings', {}).get('enable_caching', False)
+
+if enable_caching and COMPRESS_AVAILABLE:
     compress = Compress()
     compress.init_app(app)
     logging.info("Flask-Compress enabled for gzip/brotli compression")
-else:
-    logging.warning("Flask-Compress not available. Install with: pip install Flask-Compress==1.15")
+elif enable_caching and not COMPRESS_AVAILABLE:
+    logging.warning("Caching enabled in settings but Flask-Compress not available. Install with: pip install Flask-Compress==1.15")
+elif not enable_caching:
+    logging.info("Web caching is disabled in settings (UI Settings > Enable Caching)")
 
 # Configure Flask session settings
 app.config['SESSION_TYPE'] = 'filesystem'  # Using a valid type for Flask-Session
@@ -413,28 +419,31 @@ def add_security_headers(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
 
-    # Add cache control headers for static assets
-    if request.path.startswith('/static/'):
-        # Special handling for CSS files - shorter cache with revalidation to support theme switching
-        if request.path.endswith('.css'):
-            response.headers['Cache-Control'] = 'public, max-age=300, must-revalidate'  # 5 minutes with revalidation
+    # Only add cache control headers if caching is enabled in settings
+    if enable_caching:
+        # Add cache control headers for static assets
+        if request.path.startswith('/static/'):
+            # Special handling for CSS files - shorter cache with revalidation to support theme switching
+            if request.path.endswith('.css'):
+                response.headers['Cache-Control'] = 'public, max-age=300, must-revalidate'  # 5 minutes with revalidation
+                if not response.headers.get('ETag'):
+                    response.add_etag()
+            else:
+                # Cache other static assets for 1 year (immutable assets like images, fonts, etc.)
+                response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+                if not response.headers.get('ETag'):
+                    response.add_etag()
+        elif request.path.endswith(('.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.woff', '.woff2', '.ttf', '.eot')):
+            # Cache other static-like assets for 1 week
+            response.headers['Cache-Control'] = 'public, max-age=604800'
             if not response.headers.get('ETag'):
                 response.add_etag()
-        else:
-            # Cache other static assets for 1 year (immutable assets like images, fonts, etc.)
-            response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
-            if not response.headers.get('ETag'):
-                response.add_etag()
-    elif request.path.endswith(('.js', '.css', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.ico', '.woff', '.woff2', '.ttf', '.eot')):
-        # Cache other static-like assets for 1 week
-        response.headers['Cache-Control'] = 'public, max-age=604800'
-        if not response.headers.get('ETag'):
-            response.add_etag()
-    elif response.mimetype and response.mimetype.startswith('text/html'):
-        # Cache HTML for 1 hour but revalidate
-        response.headers['Cache-Control'] = 'public, max-age=3600, must-revalidate'
-    elif request.path.startswith('/api/') or request.path.startswith('/base/api/') or request.path.startswith('/settings/api/'):
-        # Don't cache API responses
+        elif response.mimetype and response.mimetype.startswith('text/html'):
+            # Cache HTML for 1 hour but revalidate
+            response.headers['Cache-Control'] = 'public, max-age=3600, must-revalidate'
+
+    # Always prevent caching of API responses regardless of caching setting
+    if request.path.startswith('/api/') or request.path.startswith('/base/api/') or request.path.startswith('/settings/api/'):
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
         response.headers['Pragma'] = 'no-cache'
 

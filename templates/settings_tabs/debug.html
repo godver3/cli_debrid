@@ -31,7 +31,7 @@
                     </select>
                 {% else %}
                     <input type="{{ value.type if value.type != 'string' else 'text' }}" id="debug-{{ key }}" name="Debug.{{ key }}"
-                           value="{{ settings.get('Debug', {}).get(key, value.default) }}" class="settings-input"
+                           value="{% set val = settings.get('Debug', {}).get(key, value.default) %}{{ val if val != None else '' }}" class="settings-input"
                            data-section="Debug" data-key="{{ key }}"
                            {% if value.sensitive %}type="password"{% endif %}
                            {% if value.min is defined %}min="{{ value.min }}"{% endif %}

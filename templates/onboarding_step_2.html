@@ -822,9 +822,11 @@ document.addEventListener('DOMContentLoaded', function() {
         // Add the provider's API key to the correct provider section based on selection
         const provider = formData.get('debrid_provider');
         const apiKey = formData.get('debrid_api_key');
-        
+
         if (provider === 'RealDebrid') {
             formData.set('realdebrid_api_key', apiKey);
+        } else if (provider === 'AllDebrid') {
+            formData.set('alldebrid_api_key', apiKey);
         }
         
         try {

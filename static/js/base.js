@@ -41,12 +41,37 @@ function initializeNavigation() {
             hamburger.classList.toggle('active');
             navMenu.classList.toggle('show');
 
+            // Toggle overlay for Tangerine theme in mobile view
+            const navOverlay = document.getElementById('navOverlay');
+            if (navOverlay) {
+                navOverlay.classList.toggle('active');
+            }
+
+            // Close settings sidebar when nav menu is opened
+            if (navMenu.classList.contains('show')) {
+                const settingsSidebar = document.getElementById('settingsSidebar');
+                const settingsMobileOverlay = document.getElementById('settingsMobileOverlay');
+
+                if (settingsSidebar && settingsSidebar.classList.contains('mobile-open')) {
+                    settingsSidebar.classList.remove('mobile-open');
+                    if (settingsMobileOverlay) {
+                        settingsMobileOverlay.classList.remove('active');
+                    }
+                    document.body.style.overflow = '';
+                }
+            }
+
             // Close all dropdowns when closing the menu
             if (!navMenu.classList.contains('show')) {
                 const allDropdowns = navMenu.querySelectorAll('.dropdown');
                 const allGroupTitles = navMenu.querySelectorAll('.group-title');
                 allDropdowns.forEach(dropdown => dropdown.classList.remove('show'));
                 allGroupTitles.forEach(title => title.classList.remove('active'));
+
+                // Hide overlay
+                if (navOverlay) {
+                    navOverlay.classList.remove('active');
+                }
             }
         });
 
@@ -57,6 +82,7 @@ function initializeNavigation() {
                 // On desktop (tangerine theme), also use click-based navigation
                 const isTangerine = document.body.getAttribute('data-theme') === 'tangerine';
                 const isMobile = window.innerWidth <= 1045;
+                const isTangerineMobile = isTangerine && window.innerWidth <= 1045;
 
                 if (isMobile || isTangerine) {
                     e.preventDefault();
@@ -64,21 +90,56 @@ function initializeNavigation() {
 
                     const menuGroup = this.closest('.menu-group');
                     const dropdown = this.nextElementSibling;
-                    const wasActive = menuGroup.classList.contains('active');
 
-                    // Close all dropdowns and remove active states
-                    const allMenuGroups = navMenu.querySelectorAll('.menu-group');
-                    const allDropdowns = navMenu.querySelectorAll('.dropdown');
-                    const allGroupTitles = navMenu.querySelectorAll('.group-title');
-                    allMenuGroups.forEach(g => g.classList.remove('active'));
-                    allDropdowns.forEach(d => d.classList.remove('show'));
-                    allGroupTitles.forEach(t => t.classList.remove('active'));
+                    // For Tangerine mobile, use expanded class
+                    if (isTangerineMobile) {
+                        const wasExpanded = menuGroup.classList.contains('expanded');
+                        const groupName = this.textContent.trim();
 
-                    // Toggle current if it wasn't active
-                    if (!wasActive) {
-                        menuGroup.classList.add('active');
-                        this.classList.add('active');
-                        dropdown.classList.add('show');
+                        // Close all dropdowns and remove states
+                        const allMenuGroups = navMenu.querySelectorAll('.menu-group');
+                        const allGroupTitles = navMenu.querySelectorAll('.group-title');
+                        allMenuGroups.forEach(g => {
+                            g.classList.remove('expanded');
+                            g.classList.remove('active');
+                        });
+                        allGroupTitles.forEach(t => t.classList.remove('active'));
+
+                        // Toggle current if it wasn't expanded
+                        if (!wasExpanded) {
+                            menuGroup.classList.add('expanded');
+                            this.classList.add('active');
+                            // Save state
+                            try {
+                                localStorage.setItem('tangerine-mobile-nav-expanded', groupName);
+                            } catch (e) {
+                                console.error('Error saving nav state:', e);
+                            }
+                        } else {
+                            try {
+                                localStorage.setItem('tangerine-mobile-nav-expanded', '');
+                            } catch (e) {
+                                console.error('Error saving nav state:', e);
+                            }
+                        }
+                    } else {
+                        // Original behavior for non-Tangerine mobile
+                        const wasActive = menuGroup.classList.contains('active');
+
+                        // Close all dropdowns and remove active states
+                        const allMenuGroups = navMenu.querySelectorAll('.menu-group');
+                        const allDropdowns = navMenu.querySelectorAll('.dropdown');
+                        const allGroupTitles = navMenu.querySelectorAll('.group-title');
+                        allMenuGroups.forEach(g => g.classList.remove('active'));
+                        allDropdowns.forEach(d => d.classList.remove('show'));
+                        allGroupTitles.forEach(t => t.classList.remove('active'));
+
+                        // Toggle current if it wasn't active
+                        if (!wasActive) {
+                            menuGroup.classList.add('active');
+                            this.classList.add('active');
+                            dropdown.classList.add('show');
+                        }
                     }
                 }
             };
@@ -95,12 +156,16 @@ function initializeNavigation() {
         document.addEventListener('click', function(e) {
             const isTangerine = document.body.getAttribute('data-theme') === 'tangerine';
             const isMobile = window.innerWidth <= 1045;
+            const navOverlay = document.getElementById('navOverlay');
 
             if (!navMenu.contains(e.target) && !hamburger.contains(e.target)) {
                 // Close mobile menu
                 if (isMobile) {
                     navMenu.classList.remove('show');
                     hamburger.classList.remove('active');
+                    if (navOverlay) {
+                        navOverlay.classList.remove('active');
+                    }
                 }
                 // Close all dropdowns (mobile and tangerine desktop)
                 if (isMobile || isTangerine) {
@@ -114,6 +179,23 @@ function initializeNavigation() {
             }
         });
 
+        // Close menu when clicking overlay
+        const navOverlay = document.getElementById('navOverlay');
+        if (navOverlay) {
+            navOverlay.addEventListener('click', function() {
+                navMenu.classList.remove('show');
+                navMenu.classList.remove('active');
+                hamburger.classList.remove('active');
+                navOverlay.classList.remove('active');
+
+                // Close all dropdowns
+                const allDropdowns = navMenu.querySelectorAll('.dropdown');
+                const allGroupTitles = navMenu.querySelectorAll('.group-title');
+                allDropdowns.forEach(dropdown => dropdown.classList.remove('show'));
+                allGroupTitles.forEach(title => title.classList.remove('active'));
+            });
+        }
+
         // Close mobile menu when any link is clicked
         const navLinks = navMenu.querySelectorAll('a');
         navLinks.forEach(link => {
@@ -121,12 +203,152 @@ function initializeNavigation() {
                 if (window.innerWidth <= 1045) {
                     navMenu.classList.remove('show');
                     hamburger.classList.remove('active');
+                    const navOverlay = document.getElementById('navOverlay');
+                    if (navOverlay) {
+                        navOverlay.classList.remove('active');
+                    }
                     allDropdowns.forEach(dropdown => dropdown.classList.remove('show'));
                     allGroupTitles.forEach(title => title.classList.remove('active'));
                 }
             });
         });
     }
+}
+
+// Mark active page in navigation (universal - all themes and screen sizes)
+function markActivePageInNav() {
+    const navMenu = document.querySelector('#navMenu');
+    if (!navMenu) return;
+
+    const currentPath = window.location.pathname;
+    const allLinks = navMenu.querySelectorAll('.dropdown li a');
+
+    allLinks.forEach(link => {
+        const linkPath = new URL(link.href, window.location.origin).pathname;
+        if (linkPath === currentPath) {
+            link.classList.add('active');
+        }
+    });
+}
+
+// Initialize Navigation Search (Tangerine mobile only)
+function initializeNavSearch() {
+    const searchForm = document.getElementById('nav-search-form');
+
+    if (!searchForm) return;
+
+    // Handle search form submission
+    searchForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const searchInput = document.getElementById('navSearch');
+        const searchTerm = searchInput.value.trim();
+
+        if (searchTerm) {
+            // Create and show loading overlay to prevent white flash
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: #0a0a0a;
+                z-index: 99999;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            `;
+
+            const spinner = document.createElement('div');
+            spinner.style.cssText = `
+                border: 4px solid rgba(255, 255, 255, 0.1);
+                border-top: 4px solid #ff6b35;
+                border-radius: 50%;
+                width: 40px;
+                height: 40px;
+                animation: spin 1s linear infinite;
+            `;
+
+            overlay.appendChild(spinner);
+            document.body.appendChild(overlay);
+
+            // Add keyframes for spinner if not already present
+            if (!document.querySelector('#spinner-keyframes')) {
+                const style = document.createElement('style');
+                style.id = 'spinner-keyframes';
+                style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
+                document.head.appendChild(style);
+            }
+
+            // Navigate immediately
+            window.location.href = `/scraper?search_term=${encodeURIComponent(searchTerm)}`;
+        }
+    });
+}
+
+// Initialize Tangerine mobile nav - restore state and mark active page
+function initializeTangerineMobileNav() {
+    const isTangerine = document.body.classList.contains('tangerine-theme');
+    if (!isTangerine || window.innerWidth > 1045) return;
+
+    const navMenu = document.querySelector('#navMenu');
+    if (!navMenu) return;
+
+    const menuGroups = navMenu.querySelectorAll('li.menu-group');
+
+    // Function to mark active page and expand parent group
+    function markActivePageAndExpand() {
+        const currentPath = window.location.pathname;
+        const allLinks = navMenu.querySelectorAll('.dropdown li a');
+
+        allLinks.forEach(link => {
+            const linkPath = new URL(link.href, window.location.origin).pathname;
+            if (linkPath === currentPath) {
+                link.classList.add('active');
+                // Expand parent menu group
+                const parentGroup = link.closest('li.menu-group');
+                if (parentGroup) {
+                    parentGroup.classList.add('expanded');
+                    const groupTitle = parentGroup.querySelector('a.group-title');
+                    if (groupTitle) {
+                        groupTitle.classList.add('active');
+                        // Save this as the expanded state
+                        try {
+                            localStorage.setItem('tangerine-mobile-nav-expanded', groupTitle.textContent.trim());
+                        } catch (e) {
+                            console.error('Error saving nav state:', e);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Function to restore last expanded state from localStorage (if no active page)
+    function restoreExpandedState() {
+        try {
+            const expandedGroup = localStorage.getItem('tangerine-mobile-nav-expanded');
+            if (expandedGroup) {
+                // Only restore if no menu is already expanded (no active page found)
+                const alreadyExpanded = Array.from(menuGroups).some(g => g.classList.contains('expanded'));
+                if (!alreadyExpanded) {
+                    menuGroups.forEach(group => {
+                        const groupTitle = group.querySelector('a.group-title');
+                        if (groupTitle && groupTitle.textContent.trim() === expandedGroup) {
+                            group.classList.add('expanded');
+                            groupTitle.classList.add('active');
+                        }
+                    });
+                }
+            }
+        } catch (e) {
+            console.error('Error restoring nav state:', e);
+        }
+    }
+
+    // Initialize: mark active page first, then restore state if needed
+    markActivePageAndExpand();
+    restoreExpandedState();
 }
 
 // Release notes functionality
@@ -498,7 +720,10 @@ document.addEventListener('DOMContentLoaded', function() {
     setUpdatingContent(false);
     
     // Initialize all components
+    initializeTangerineMobileNav();
     initializeNavigation();
+    markActivePageInNav(); // Mark active page for all themes
+    initializeNavSearch(); // Initialize navigation search
     initializeReleaseNotes();
     initializeTaskMonitor();
     // Only initialize tooltips on non-mobile screens
@@ -683,11 +908,13 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             // Show toast for new notification
-            toastManager.show(
-                notificationData.title,
-                notificationData.message,
-                toastType
-            );
+            if (window.toastManager) {
+                toastManager.show(
+                    notificationData.title,
+                    notificationData.message,
+                    toastType
+                );
+            }
         }
         
         updateNotificationDisplay();

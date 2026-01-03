@@ -150,6 +150,12 @@ body[data-theme="tangerine"] .debug_items {
     margin-bottom: 1.25rem;
 }
 
+.label-items {
+    padding: 15px;
+    background-color: #45414145;
+    border-radius: 8px;
+}
+
 .form-group label,
 .form-label {
     display: block;
@@ -409,6 +415,7 @@ body[data-theme="tangerine"] .debug_items {
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
     background-color: rgba(255, 255, 255, 0.02);
+    margin-top: 25px;
 }
 
 .verification-table {
@@ -626,19 +633,19 @@ body[data-theme="tangerine"] .debug_items {
 }
 
 .toast.success {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    background: #1a1a1a;
 }
 
 .toast.error {
-    background: linear-gradient(135deg, #ff4757 0%, #ff3838 100%);
+    background: #1a1a1a;
 }
 
 .toast.info {
-    background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+    background: #1a1a1a;
 }
 
 .toast.warning {
-    background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);
+    background: #1a1a1a;
 }
 
 /* Responsive */

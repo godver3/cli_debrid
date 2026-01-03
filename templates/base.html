@@ -556,8 +556,8 @@
             document.addEventListener('keydown', (e) => {
                 if (!easterEggModal) return; // Do nothing if modal element isn't there
 
-                const key = e.key.toLowerCase();
-                const expectedKey = konamiSequence[konamiCurrentIndex].toLowerCase();
+                const key = e.key;
+                const expectedKey = konamiSequence[konamiCurrentIndex];
 
                 if (key === expectedKey) {
                     konamiCurrentIndex++;
@@ -751,6 +751,11 @@
         setTimeout(function() {
             document.body.classList.add('transitions-enabled');
         }, 100);
+
+        // Helper function to safely get current theme (prevents toLowerCase errors)
+        window.getCurrentTheme = function() {
+            return (document.body.getAttribute('data-theme') || 'classic').toLowerCase();
+        };
     </script>
 
     <header>
@@ -804,6 +809,13 @@
             </div>
             {% endif %}
             <ul id="navMenu">
+                <!-- Navigation Search Bar (Tangerine Mobile Only) -->
+                <div class="nav-search-container">
+                    <form id="nav-search-form" class="nav-search-form">
+                        <i class="fas fa-search nav-search-icon"></i>
+                        <input type="text" id="navSearch" class="nav-search-input" placeholder="Search movies/shows..." autocomplete="off">
+                    </form>
+                </div>
                 {% set menu_groups = {
                     'Main': [
                         ('root.root', 'Home'),
@@ -818,7 +830,7 @@
                         ('settings.index', 'Settings'),
                         ('database.index', 'Database'),
                         ('database.phalanxdb_status', 'Phalanx DB'),
-                        ('performance.performance_dashboard', 'Performance Dashboard')] + 
+                        ('performance.performance_dashboard', 'Performance Dashboard')] +
                         ([] if is_limited_environment() else [('torrent_status.torrent_status', 'Torrent Status')]) + [
                         ('connections.index', 'Connections'),
                         ('api_summary.index', 'API Summary'),
@@ -838,6 +850,36 @@
                         ('metadata.metadata_debug', 'Metadata Debug')
                     ]
                 } %}
+
+                {% set menu_icons = {
+                    'Home': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>',
+                    'Add Media': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>',
+                    'Queues': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>',
+                    'Task Manager': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>',
+                    'Calendar': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>',
+                    'Wiki': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>',
+                    'Logs': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>',
+                    'Settings': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>',
+                    'Database': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>',
+                    'Phalanx DB': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>',
+                    'Performance Dashboard': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>',
+                    'Torrent Status': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>',
+                    'Connections': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>',
+                    'API Summary': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>',
+                    'Real Time API': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>',
+                    'Shows Library Status': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>',
+                    'Tester': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>',
+                    'Debug': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
+                    'R. Parser': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>',
+                    'M. Assign': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg>',
+                    'M. Blacklist': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>',
+                    'T. Tracker': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/></svg>',
+                    'Trakt Friends': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/></svg>',
+                    'Plex User Token M.': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>',
+                    'Symlink Tools': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>',
+                    'Metadata Debug': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>',
+                    'Manage Users': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>'
+                } %}
                 
                 {% if is_user_system_enabled() %}
                     {% if current_user.is_authenticated %}
@@ -848,9 +890,9 @@
                                 <ul class="dropdown">
                                     {% for item in items %}
                                         {% if item|length > 2 %}
-                                            <li><a href="{{ item[2] }}" target="_blank">{{ item[1] }}</a></li>
+                                            <li><a href="{{ item[2] }}" target="_blank">{{ menu_icons[item[1]]|safe }}{{ item[1] }}</a></li>
                                         {% else %}
-                                            <li><a href="{{ url_for(item[0]) }}">{{ item[1] }}</a></li>
+                                            <li><a href="{{ url_for(item[0]) }}">{{ menu_icons[item[1]]|safe }}{{ item[1] }}</a></li>
                                         {% endif %}
                                     {% endfor %}
                                 </ul>
@@ -859,7 +901,7 @@
                             <li class="menu-group">
                                 <a href="#" class="group-title">Users <i class="fas fa-caret-down"></i></a>
                                 <ul class="dropdown">
-                                    <li><a href="{{ url_for('user_management.manage_users') }}">Manage Users</a></li>
+                                    <li><a href="{{ url_for('user_management.manage_users') }}">{{ menu_icons['Manage Users']|safe }}Manage Users</a></li>
                                 </ul>
                             </li>
                         {% else %}
@@ -869,9 +911,9 @@
                                 <ul class="dropdown">
                                     {% for item in items %}
                                         {% if item|length > 2 %}
-                                            <li><a href="{{ item[2] }}" target="_blank">{{ item[1] }}</a></li>
+                                            <li><a href="{{ item[2] }}" target="_blank">{{ menu_icons[item[1]]|safe }}{{ item[1] }}</a></li>
                                         {% else %}
-                                            <li><a href="{{ url_for(item[0]) }}">{{ item[1] }}</a></li>
+                                            <li><a href="{{ url_for(item[0]) }}">{{ menu_icons[item[1]]|safe }}{{ item[1] }}</a></li>
                                         {% endif %}
                                     {% endfor %}
                                 </ul>
@@ -886,9 +928,9 @@
                         <ul class="dropdown">
                             {% for item in items %}
                                 {% if item|length > 2 %}
-                                    <li><a href="{{ item[2] }}" target="_blank">{{ item[1] }}</a></li>
+                                    <li><a href="{{ item[2] }}" target="_blank">{{ menu_icons[item[1]]|safe }}{{ item[1] }}</a></li>
                                 {% else %}
-                                    <li><a href="{{ url_for(item[0]) }}">{{ item[1] }}</a></li>
+                                    <li><a href="{{ url_for(item[0]) }}">{{ menu_icons[item[1]]|safe }}{{ item[1] }}</a></li>
                                 {% endif %}
                             {% endfor %}
                         </ul>
@@ -897,7 +939,6 @@
                 {% endif %}
             </ul>
         </nav>
-
         <div class="header-controls">
             {% if is_user_system_enabled() %}
                 {% if current_user.is_authenticated %}
@@ -1051,6 +1092,8 @@
     {% endif %}
 
     <main>
+        <!-- Overlay for mobile nav (Tangerine theme) -->
+        <div class="nav-overlay" id="navOverlay"></div>
         {% block content %}{% endblock %}
     </main>
 
@@ -1094,6 +1137,7 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
     <script type="module" src="{{ url_for('static', filename='js/program_controls.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/tooltips.js') }}"></script>

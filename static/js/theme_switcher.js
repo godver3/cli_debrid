@@ -39,13 +39,19 @@
         localStorage.setItem(STORAGE_KEY, theme);
         // Also save as cookie so backend can access it
         document.cookie = `selectedTheme=${theme}; path=/; max-age=31536000`; // 1 year
-        console.log(`Theme saved: ${theme}, Cookie set: selectedTheme=${theme}`);
     }
 
     // Apply the selected theme
     function applyTheme(theme) {
         // Set data attribute on body for CSS targeting
         document.body.setAttribute('data-theme', theme);
+
+        // Add/remove tangerine-theme class for mobile nav styling
+        if (theme === THEMES.TANGERINE) {
+            document.body.classList.add('tangerine-theme');
+        } else {
+            document.body.classList.remove('tangerine-theme');
+        }
 
         if (theme === THEMES.CLASSIC) {
             // Classic theme: Enable all classic CSS files, remove theme CSS files
@@ -126,6 +132,19 @@
                 }
             }
         });
+
+        // Load mobile nav styles for Tangerine theme
+        if (themeName === THEMES.TANGERINE) {
+            const mobileNavId = 'theme-tangerine-mobile-nav';
+            if (!document.getElementById(mobileNavId)) {
+                const mobileNavLink = document.createElement('link');
+                mobileNavLink.id = mobileNavId;
+                mobileNavLink.rel = 'stylesheet';
+                mobileNavLink.href = '/static/css/tangerine/tangerine_mobile_nav.css';
+                mobileNavLink.setAttribute('data-theme-css', themeName);
+                document.head.appendChild(mobileNavLink);
+            }
+        }
     }
 
     // Remove all theme-specific CSS files

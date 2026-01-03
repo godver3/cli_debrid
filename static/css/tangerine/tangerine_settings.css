@@ -5,10 +5,17 @@
    ======================================== */
 
 /* Settings Container Layout */
-.settings-page-container {
+
+.info-box {
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
     display: flex;
-    min-height: calc(100vh - 60px);
-    position: relative;
+    gap: 0.75rem;
+    align-items: flex-start;
+    caret-color: transparent
 }
 
 /* Sidebar Navigation */
@@ -19,7 +26,8 @@
     border-right: 1px solid rgba(255, 255, 255, 0.08);
     padding: 2rem 0;
     position: fixed;
-    height: calc(100vh - 60px);
+    top: 50px;
+    height: calc(100vh);
     overflow-y: auto;
     transition: all 0.3s ease;
     z-index: 100;
@@ -267,10 +275,21 @@
     display: none;
 }
 
-.settings-tab-content.active {
+.settings-warning-text {
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-start;
+}
+
+/* .settings-tab-content.active {
     display: block;
     animation: fadeIn 0.3s ease;
-}
+} */
 
 @keyframes fadeIn {
     from {
@@ -348,50 +367,11 @@
     background: rgba(255, 107, 53, 0.3);
 }
 
-/* Help Button Override for Settings Page Only - Right Side */
-.settings-page-container ~ .help-button,
-body:has(.settings-page-container) .help-button {
-    position: fixed;
-    top: 100px;
-    left: auto;
-    right: -15px; /* Partially hidden off-screen on right */
-    z-index: 999;
-    background-color: #ff6b35;
-    color: white;
-    border: none;
-    border-radius: 50% 0 0 50%; /* Round only the left corners */
-    width: 40px;
-    height: 40px;
-    font-size: 20px;
-    cursor: pointer;
-    box-shadow: -2px 2px 5px rgba(0,0,0,0.2); /* Shadow on left side */
-    transition: right 0.3s ease-in-out, background-color 0.3s ease;
-    padding-right: 10px; /* Push icon left */
-    padding-left: 0;
-}
-
-body:has(.settings-page-container) .help-button:hover {
-    background-color: #0056b3;
-    right: 0px; /* Fully visible on hover */
-}
-
-body:has(.settings-page-container) .help-button i {
-    margin: 0;
-}
-
-/* Keep original position on mobile */
-@media (max-width: 768px) {
-    .settings-page-container ~ .help-button,
-    body:has(.settings-page-container) .help-button {
-        top: 60px;
-    }
-}
-
 /* Common styles */
 .settings-container {
     width: 100%;
-    max-width: 100%;
-    margin: 0;
+    max-width: 1400px;
+    margin: 0 auto;
     padding: 0;
 }
 
@@ -698,6 +678,95 @@ body:has(.settings-page-container) .help-button i {
     box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
 }
 
+/* Logo Selection Styles */
+.logo-selection-container {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+}
+
+.logo-option {
+    position: relative;
+}
+
+.logo-option input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.logo-option label {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 1rem;
+    width: 120px;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.02);
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.logo-option input[type="radio"]:checked + label {
+    border-color: #ff6b35;
+    background: rgba(255, 107, 53, 0.1);
+}
+
+.logo-option label:hover {
+    border-color: rgba(255, 107, 53, 0.5);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.logo-preview {
+    width: 48px;
+    height: 48px;
+    object-fit: contain;
+}
+
+.logo-label {
+    font-size: 0.875rem;
+    color: #e0e0e0;
+}
+
+/* Date & Time Format Styles */
+.date-time-format-wrapper {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    width: 100%;
+}
+
+.date-time-format-wrapper .settings-input {
+    flex: 1;
+}
+
+.date-time-format-info-btn {
+    background: rgba(255, 107, 53, 0.1);
+    border: 1px solid rgba(255, 107, 53, 0.3);
+    color: #ff6b35;
+    padding: 0.5rem;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+    flex-shrink: 0;
+}
+
+.date-time-format-info-btn:hover {
+    background: rgba(255, 107, 53, 0.2);
+    border-color: #ff6b35;
+}
+
+.date-time-format-info-btn svg {
+    width: 20px;
+    height: 20px;
+}
 
 /* Override for settings pages to remove borders from inputs */
 .scraping-settings-page .settings-section-content input,
@@ -709,6 +778,9 @@ body:has(.settings-page-container) .help-button i {
 .additional-settings-page .settings-section-content input,
 .additional-settings-page .settings-section-content textarea,
 .additional-settings-page .settings-section-content select,
+.ui-settings-page .settings-section-content input,
+.ui-settings-page .settings-section-content textarea,
+.ui-settings-page .settings-section-content select,
 .notifications-settings-page .settings-section-content input,
 .notifications-settings-page .settings-section-content textarea,
 .notifications-settings-page .settings-section-content select,
@@ -735,6 +807,9 @@ body:has(.settings-page-container) .help-button i {
 .additional-settings-page .settings-section-content input:focus,
 .additional-settings-page .settings-section-content textarea:focus,
 .additional-settings-page .settings-section-content select:focus,
+.ui-settings-page .settings-section-content input:focus,
+.ui-settings-page .settings-section-content textarea:focus,
+.ui-settings-page .settings-section-content select:focus,
 .notifications-settings-page .settings-section-content input:focus,
 .notifications-settings-page .settings-section-content textarea:focus,
 .notifications-settings-page .settings-section-content select:focus,
@@ -2452,7 +2527,6 @@ div#trakt-auth-status {
 }
 
 /* CRITICAL: Show tangerine-specific elements that classic CSS might hide */
-.content-sources-title,
 .content-sources-subtitle,
 .title-bar,
 .info-icon,
@@ -2848,7 +2922,7 @@ div#trakt-auth-status {
     background-color: rgba(255, 255, 255, 0.05) !important;
 }
 
-/* Additional Settings */
+/* Additional Settings & UI Settings */
 .additional-settings-page .settings-list .settings-section .settings-section-content input[type="text"],
 .additional-settings-page .settings-list .settings-section .settings-section-content input[type="number"],
 .additional-settings-page .settings-list .settings-section .settings-section-content input[type="email"],
@@ -2856,7 +2930,15 @@ div#trakt-auth-status {
 .additional-settings-page .settings-list .settings-section .settings-section-content input[type="url"],
 .additional-settings-page .settings-list .settings-section .settings-section-content textarea,
 .additional-settings-page .settings-list .settings-section .settings-section-content select,
-.additional-settings-page .settings-list .settings-section .settings-section-content .settings-input {
+.additional-settings-page .settings-list .settings-section .settings-section-content .settings-input,
+.ui-settings-page .settings-list .settings-section .settings-section-content input[type="text"],
+.ui-settings-page .settings-list .settings-section .settings-section-content input[type="number"],
+.ui-settings-page .settings-list .settings-section .settings-section-content input[type="email"],
+.ui-settings-page .settings-list .settings-section .settings-section-content input[type="password"],
+.ui-settings-page .settings-list .settings-section .settings-section-content input[type="url"],
+.ui-settings-page .settings-list .settings-section .settings-section-content textarea,
+.ui-settings-page .settings-list .settings-section .settings-section-content select,
+.ui-settings-page .settings-list .settings-section .settings-section-content .settings-input {
     border: none !important;
     border-width: 0 !important;
     border-color: transparent !important;
@@ -2866,7 +2948,11 @@ div#trakt-auth-status {
 .additional-settings-page .settings-list .settings-section .settings-section-content input:focus,
 .additional-settings-page .settings-list .settings-section .settings-section-content textarea:focus,
 .additional-settings-page .settings-list .settings-section .settings-section-content select:focus,
-.additional-settings-page .settings-list .settings-section .settings-section-content .settings-input:focus {
+.additional-settings-page .settings-list .settings-section .settings-section-content .settings-input:focus,
+.ui-settings-page .settings-list .settings-section .settings-section-content input:focus,
+.ui-settings-page .settings-list .settings-section .settings-section-content textarea:focus,
+.ui-settings-page .settings-list .settings-section .settings-section-content select:focus,
+.ui-settings-page .settings-list .settings-section .settings-section-content .settings-input:focus {
     border: none !important;
     border-width: 0 !important;
     border-color: transparent !important;
@@ -3045,6 +3131,7 @@ div#trakt-auth-status {
 .scraping-settings-page .settings-form-group:hover,
 .required-settings-page .settings-form-group:hover,
 .additional-settings-page .settings-form-group:hover,
+.ui-settings-page .settings-form-group:hover,
 .notifications-settings-page .settings-form-group:hover,
 .reverse-parser-settings-page .settings-form-group:hover,
 .debug-settings-page .settings-form-group:hover,
@@ -3092,6 +3179,18 @@ div#trakt-auth-status {
 .additional-settings-page input[type="datetime-local"],
 .additional-settings-page textarea,
 .additional-settings-page select,
+.ui-settings-page input[type="text"],
+.ui-settings-page input[type="number"],
+.ui-settings-page input[type="email"],
+.ui-settings-page input[type="password"],
+.ui-settings-page input[type="url"],
+.ui-settings-page input[type="search"],
+.ui-settings-page input[type="tel"],
+.ui-settings-page input[type="date"],
+.ui-settings-page input[type="time"],
+.ui-settings-page input[type="datetime-local"],
+.ui-settings-page textarea,
+.ui-settings-page select,
 .notifications-settings-page input[type="text"],
 .notifications-settings-page input[type="number"],
 .notifications-settings-page input[type="email"],
@@ -3155,6 +3254,9 @@ div#trakt-auth-status {
 .additional-settings-page input:focus,
 .additional-settings-page textarea:focus,
 .additional-settings-page select:focus,
+.ui-settings-page input:focus,
+.ui-settings-page textarea:focus,
+.ui-settings-page select:focus,
 .notifications-settings-page input:focus,
 .notifications-settings-page textarea:focus,
 .notifications-settings-page select:focus,
@@ -3183,6 +3285,9 @@ div#trakt-auth-status {
 .additional-settings-page input:hover,
 .additional-settings-page textarea:hover,
 .additional-settings-page select:hover,
+.ui-settings-page input:hover,
+.ui-settings-page textarea:hover,
+.ui-settings-page select:hover,
 .notifications-settings-page input:hover,
 .notifications-settings-page textarea:hover,
 .notifications-settings-page select:hover,
@@ -3207,6 +3312,8 @@ div#trakt-auth-status {
 .required-settings-page .settings-card,
 .additional-settings-page .settings-section,
 .additional-settings-page .settings-card,
+.ui-settings-page .settings-section,
+.ui-settings-page .settings-card,
 .notifications-settings-page .settings-section,
 .notifications-settings-page .settings-card,
 .reverse-parser-settings-page .settings-section,
@@ -3224,6 +3331,8 @@ div#trakt-auth-status {
 .required-settings-page .settings-card:hover,
 .additional-settings-page .settings-section:hover,
 .additional-settings-page .settings-card:hover,
+.ui-settings-page .settings-section:hover,
+.ui-settings-page .settings-card:hover,
 .notifications-settings-page .settings-section:hover,
 .notifications-settings-page .settings-card:hover,
 .reverse-parser-settings-page .settings-section:hover,
@@ -3255,7 +3364,7 @@ ease;
     border-radius: 20px;
     margin-bottom: 20px;
     overflow: hidden;
-    transition: all 0.3s 
+    transition: all 0.3s
 ease;
 }
 
@@ -3266,6 +3375,8 @@ ease;
 .required-settings-page .settings-card.expanded,
 .additional-settings-page .settings-section.expanded,
 .additional-settings-page .settings-card.expanded,
+.ui-settings-page .settings-section.expanded,
+.ui-settings-page .settings-card.expanded,
 .notifications-settings-page .settings-section.expanded,
 .notifications-settings-page .settings-card.expanded,
 .reverse-parser-settings-page .settings-section.expanded,
@@ -3285,6 +3396,8 @@ ease;
 .required-settings-page .settings-card.expanded .settings-toggle-icon,
 .additional-settings-page .settings-section.expanded .expand-icon,
 .additional-settings-page .settings-card.expanded .settings-toggle-icon,
+.ui-settings-page .settings-section.expanded .expand-icon,
+.ui-settings-page .settings-card.expanded .settings-toggle-icon,
 .notifications-settings-page .settings-section.expanded .expand-icon,
 .notifications-settings-page .settings-card.expanded .settings-toggle-icon,
 .reverse-parser-settings-page .settings-section.expanded .expand-icon,
@@ -3301,6 +3414,7 @@ ease;
 .scraping-settings-page .settings-section-header h4,
 .required-settings-page .settings-section-header h4,
 .additional-settings-page .settings-section-header h4,
+.ui-settings-page .settings-section-header h4,
 .notifications-settings-page .settings-section-header h4,
 .reverse-parser-settings-page .settings-section-header h4,
 .debug-settings-page .settings-section-header h4,
@@ -3318,6 +3432,7 @@ ease;
 .scraping-settings-page .settings-section-header h4::before,
 .required-settings-page .settings-section-header h4::before,
 .additional-settings-page .settings-section-header h4::before,
+.ui-settings-page .settings-section-header h4::before,
 .notifications-settings-page .settings-section-header h4::before,
 .reverse-parser-settings-page .settings-section-header h4::before,
 .debug-settings-page .settings-section-header h4::before,
@@ -3332,6 +3447,8 @@ ease;
 .required-settings-page .settings-card,
 .additional-settings-page .settings-section,
 .additional-settings-page .settings-card,
+.ui-settings-page .settings-section,
+.ui-settings-page .settings-card,
 .notifications-settings-page .settings-section,
 .notifications-settings-page .settings-card,
 .reverse-parser-settings-page .settings-section,
@@ -3355,7 +3472,8 @@ ease;
 .notifications-settings-title,
 .reverse-parser-settings-title,
 .debug-settings-title,
-.true-debug-settings-title {
+.true-debug-settings-title,
+.content-sources-title {
     font-size: 2rem;
     font-weight: 700;
     color: #fff;
@@ -3368,7 +3486,8 @@ ease;
 .notifications-settings-subtitle,
 .reverse-parser-settings-subtitle,
 .debug-settings-subtitle,
-.true-debug-settings-subtitle {
+.true-debug-settings-subtitle,
+.ui-settings-subtitle {
     font-size: 1rem;
     color: #666;
     margin-bottom: 2.5rem;
@@ -3426,7 +3545,7 @@ ease;
 /* ========================================
    Sidebar Responsive Design
    ======================================== */
-@media (max-width: 1024px) {
+@media (max-width: 1045px) {
     .settings-sidebar {
         width: 240px;
     }
@@ -3440,12 +3559,26 @@ ease;
     .test-notification-btn {
         padding: 0.5rem;
     }
+    .logo-option label {
+        width: 99px;
+    }
+    .logo-label {
+        font-size: 0.67rem;
+    }
+    .filter-item {
+        display: grid;
+        gap: 1rem;
+    }
 }
 
 @media (max-width: 768px) {
     .settings-page-container{
         display: block !important;
 
+    }
+
+    .date-time-format-wrapper {
+        display: grid;
     }
     .rename-version-btn,
     .duplicate-version-btn,
@@ -3508,6 +3641,7 @@ ease;
         left: 0;
         padding-top: 60px;
         pointer-events: auto; /* Re-enable interaction when open */
+        caret-color: transparent
     }
 
     /* Mobile search adjustments */
@@ -3550,14 +3684,6 @@ ease;
 
     .settings-nav-section {
         margin-bottom: 0.5rem;
-    }
-
-    /* Help button on mobile for settings page */
-    body:has(.settings-page-container) .help-button {
-        bottom: 1.5rem;
-        left: auto;
-        right: 1.5rem;
-        z-index: 102;
     }
 
     /* Content responsive */
@@ -3653,13 +3779,14 @@ ease;
 
 @media (max-width: 480px) {
     .settings-sidebar {
-        width: 85vw;
+        width: 66vw;
         left: -85vw;
     }
 
     .settings-mobile-menu-toggle {
         top: 70px;
         left: 1rem;
+        z-index: 2;
     }
 
     .settings-main-content {
@@ -3811,6 +3938,10 @@ ease;
         gap: 0.5rem 0.75rem;
         align-items: start;
         padding: 0 !important;
+    }
+
+    .settings-form-group {
+        overflow-wrap: anywhere;
     }
 
     /* Expand icon on left, spans both rows */
@@ -4013,7 +4144,7 @@ button#trakt-auth-btn {
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 20px;
     max-width: 900px;
-    max-height: 90vh;
+    max-height: 80vh;
     width: 90%;
     overflow: hidden;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
@@ -4209,8 +4340,12 @@ input#settingsSearch {
 @media (max-width: 768px) {
     .format-modal-content {
         width: 95%;
-        max-height: 95vh;
+        max-height: 86sssssvh;
         border-radius: 16px;
+    }
+
+    #notifications-general-enabled-content-sources option {
+        text-wrap: auto;
     }
 
     .format-modal-header {
@@ -4323,4 +4458,58 @@ input#settingsSearch {
 .close-loading:hover {
     transform: translateY(-2px);
     box-shadow: 0 8px 24px rgba(255, 107, 53, 0.4);
+}
+
+/* Plex Labels Disabled Fields Styling */
+.disabled-fields {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.disabled-fields label,
+.disabled-fields .settings-description {
+    color: rgba(255, 255, 255, 0.4) !important;
+}
+
+.disabled-fields .settings-input,
+.disabled-fields select {
+    background-color: rgba(255, 255, 255, 0.03) !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    color: rgba(255, 255, 255, 0.4) !important;
+    cursor: not-allowed !important;
+}
+
+/* ========================================
+   Mobile/Touch Device Optimizations
+   Targets all touch-capable devices regardless of screen size
+   ======================================== */
+
+/* Primary touch detection - pointer:coarse detects touch input */
+@media (hover: none) and (pointer: coarse) {
+    .content-section {
+        backdrop-filter: none;
+    }
+    .settings-section {
+        transition: none;
+    }
+}
+
+/* Secondary touch detection - any-pointer detects if any input is touch */
+@media (any-pointer: coarse) {
+    .content-section {
+        backdrop-filter: none;
+    }
+    .settings-section {
+        transition: none;
+    }
+}
+
+/* Tertiary detection - touch-enabled devices */
+@media (hover: none) {
+    .content-section {
+        backdrop-filter: none;
+    }
+    .settings-section {
+        transition: none;
+    }
 }

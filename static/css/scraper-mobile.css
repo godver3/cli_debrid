@@ -447,6 +447,10 @@
     p.torresult-item {
         font-size: 0.9rem;
         margin: 5px 0;
+        word-break: normal;
+        overflow-wrap: anywhere;
+        white-space: normal;
+        hyphens: none;
     }
 
     .cache-status {

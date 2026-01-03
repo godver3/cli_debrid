@@ -143,6 +143,7 @@ def index():
         'column_values': {},
         'operators': [
             {'value': 'contains', 'label': 'Contains'},
+            {'value': 'not_contains', 'label': 'Not Contains'},
             {'value': 'equals', 'label': 'Equals'},
             {'value': 'not_equals', 'label': 'Not Equals'},
             {'value': 'starts_with', 'label': 'Starts With'},
@@ -292,7 +293,7 @@ def index():
                     logging.warning(f"Ignoring filter on 'size' column: '{column}' as it's dynamically calculated.")
                     continue
 
-                if raw_value == '' and operator in ['contains', 'starts_with', 'ends_with', 'greater_than', 'less_than']:
+                if raw_value == '' and operator in ['contains', 'not_contains', 'starts_with', 'ends_with', 'greater_than', 'less_than']:
                     logging.warning(f"Ignoring filter condition: Column '{column}', Operator '{operator}' with empty value.")
                     continue
 
@@ -308,6 +309,8 @@ def index():
                 # State / Type columns to leverage indexes and avoid full scans.
                 if column in ('state', 'type') and operator == 'contains':
                     operator = 'equals'
+                if column in ('state', 'type') and operator == 'not_contains':
+                    operator = 'not_equals'
 
                 clause_added_in_this_iteration = False
                 if column == 'content_source':
@@ -367,6 +370,7 @@ def index():
                             filter_where_clauses.append('1 = 0')
                         clause_added_in_this_iteration = True
                     elif operator == 'contains': filter_where_clauses.append(f'"{column}" LIKE ?'); filter_params.append(f"%{value}%")
+                    elif operator == 'not_contains': filter_where_clauses.append(f'("{column}" IS NULL OR "{column}" NOT LIKE ?)'); filter_params.append(f"%{value}%")
                     elif operator == 'equals': filter_where_clauses.append(f'"{column}" = ?'); filter_params.append(value)
                     elif operator == 'not_equals': filter_where_clauses.append(f'"{column}" IS NOT ?'); filter_params.append(value) # Changed to IS NOT
                     elif operator == 'starts_with': filter_where_clauses.append(f'"{column}" LIKE ?'); filter_params.append(f"{value}%")

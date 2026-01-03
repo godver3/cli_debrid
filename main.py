@@ -1429,6 +1429,7 @@ def main():
     set_setting('Scraping', 'jackett_seeders_only', True)
     set_setting('Scraping', 'enable_upgrading_cleanup', True)
     set_setting('Sync Deletions', 'sync_deletions', True)
+    #set_setting('Debrid Provider', 'provider', 'RealDebrid')
     set_setting('Debug', 'rescrape_missing_files', False)
     set_setting('Debug', 'anime_renaming_using_anidb', True)
     set_setting('Debug', 'symlink_organize_by_type', True)
