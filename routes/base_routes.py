@@ -591,14 +591,35 @@ def task_stream():
 def path_to_filename(page_path):
     if not page_path or page_path == '/':
         return 'root_index' # Or just 'index', 'home', etc.
-    
-    # Remove leading/trailing slashes and replace others with underscores
-    filename = page_path.strip('/').replace('/', '_')
-    
+
+    # Remove leading/trailing slashes and split into parts
+    path_parts = page_path.strip('/').split('/')
+
+    # Normalize dynamic route parameters (e.g., /library/movie/123 -> library_movie)
+    # Keep only non-numeric, non-UUID path segments (route names)
+    normalized_parts = []
+    for part in path_parts:
+        # Skip numeric IDs like "614696"
+        if part.isdigit():
+            continue
+        # Skip IMDB IDs (tt followed by numbers)
+        if part.startswith('tt') and len(part) > 2 and part[2:].isdigit():
+            continue
+        # Skip TMDB IDs (just numbers, already handled above) or UUID-like patterns
+        if '-' in part and len(part) > 20 and all(c.isalnum() or c == '-' for c in part):
+            continue
+        # Keep path segments that contain letters (route names like "library", "movie", "show")
+        if part and any(c.isalpha() for c in part):
+            normalized_parts.append(part)
+
+    # Join parts with underscores and sanitize
+    filename = '_'.join(normalized_parts)
+
     # Basic sanitization (allow alphanumeric, underscore, hyphen)
     filename = "".join(c for c in filename if c.isalnum() or c in ('_', '-')).rstrip('_')
-    
-    return filename if filename else 'root_index' # Fallback if sanitization resulted in empty string
+
+    return filename if filename else 'root_index'
+
 
 def get_resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """

@@ -527,10 +527,37 @@ def ensure_settings_file():
             except OSError as e:
                  logging.error(f"ensure_settings_file: Failed to remove corrupt config file {config_file_path}: {e}")
         else:
-            # Optionally, merge defaults into existing config here if needed, then save
-            # This could ensure older configs get new default keys.
-            # Example: config = merge_defaults_into_existing(config, SETTINGS_SCHEMA)
-            # save_config(config)
-            pass # For now, just assume existing config is okay if loaded non-empty
+            # Merge new defaults from schema into existing config
+            # This ensures older configs get new default keys from updated schema
+            logging.debug(f"ensure_settings_file: Merging new schema defaults into existing config.")
+            config_updated = False
+
+            for section, section_data in SETTINGS_SCHEMA.items():
+                # Skip sections that should start empty or are handled specially
+                if section in ['Scrapers', 'Content Sources', 'Notifications', 'Jackett']:
+                    continue
+
+                # Ensure section exists in config
+                if section not in config:
+                    config[section] = {}
+                    config_updated = True
+                    logging.debug(f"ensure_settings_file: Added missing section '{section}'")
+
+                # Determine where the actual schema items are (could be nested under 'schema')
+                schema_items = section_data.get('schema', section_data)
+
+                if isinstance(schema_items, dict):
+                    for key, value_schema in schema_items.items():
+                        # Ensure value_schema is a dict and has 'default'
+                        if isinstance(value_schema, dict) and 'default' in value_schema:
+                            if key != 'tab' and key not in config[section]:
+                                config[section][key] = value_schema.get('default')
+                                config_updated = True
+                                logging.info(f"ensure_settings_file: Added new default setting ['{section}']['{key}'] = {value_schema.get('default')}")
+
+            # Save config if we added any new defaults
+            if config_updated:
+                save_config(config)
+                logging.info(f"ensure_settings_file: Saved config with new schema defaults to {config_file_path}")
 
     

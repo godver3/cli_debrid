@@ -47,7 +47,7 @@ def cache_plex_removal(item_title: str, item_path: str, episode_title: Optional[
     # Check if caching is enabled
     if not get_setting('Debug', 'enable_plex_removal_caching', default=True):
         logging.info(f"Plex removal caching is disabled. Processing immediate removal for {item_title} ({item_path}).")
-        from utilities.plex_functions import remove_file_from_plex
+        from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
         
         can_attempt_plex_removal = True
 
@@ -68,8 +68,17 @@ def cache_plex_removal(item_title: str, item_path: str, episode_title: Optional[
         if can_attempt_plex_removal:
             try:
                 logging.info(f"Immediate removal: Attempting Plex removal for {item_title} ({item_path}).")
-                remove_file_from_plex(item_title, item_path, episode_title)
-                logging.info(f"Immediate removal: Successfully processed Plex removal for {item_title} ({item_path}).")
+                result = remove_file_from_plex(item_title, item_path, episode_title)
+                if result:
+                    logging.info(f"Immediate removal: Successfully processed Plex removal for {item_title} ({item_path}).")
+                else:
+                    # Direct removal failed (possibly 400 error) - try scan & empty trash as fallback
+                    logging.warning(f"Immediate removal: Direct Plex removal failed for {item_title}. Trying scan & empty trash...")
+                    try:
+                        scan_and_empty_plex_trash()
+                        logging.info(f"Immediate removal: Triggered library scan and trash empty for {item_title}.")
+                    except Exception as scan_err:
+                        logging.warning(f"Immediate removal: Scan & empty trash also failed for {item_title}: {scan_err}.")
             except Exception as e:
                 logging.error(f"Immediate removal: Error during Plex removal for {item_title} ({item_path}): {str(e)}.")
         else:
@@ -102,7 +111,7 @@ def process_removal_cache(min_age_hours: int = 6) -> None:
     Args:
         min_age_hours: Minimum age in hours before processing a cached removal (This parameter is now unused and will be overridden by the setting value)
     """
-    from utilities.plex_functions import remove_file_from_plex
+    from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
     
     cache = _load_cache()
     if not cache:
@@ -168,9 +177,19 @@ def process_removal_cache(min_age_hours: int = 6) -> None:
                 if can_attempt_plex_removal:
                     try:
                         logging.info(f"Attempting Plex removal for {item_title} ({item_path}).")
-                        remove_file_from_plex(item_title, item_path, episode_title)
-                        logging.info(f"Successfully processed Plex removal for {item_title} ({item_path}).")
-                        entry_should_be_kept_in_cache = False # Successfully processed, so don't keep this entry.
+                        result = remove_file_from_plex(item_title, item_path, episode_title)
+                        if result:
+                            logging.info(f"Successfully processed Plex removal for {item_title} ({item_path}).")
+                            entry_should_be_kept_in_cache = False # Successfully processed, so don't keep this entry.
+                        else:
+                            # Direct removal failed (possibly 400 error) - try scan & empty trash as fallback
+                            logging.warning(f"Direct Plex removal failed for {item_title}. Trying scan & empty trash...")
+                            try:
+                                scan_and_empty_plex_trash()
+                                logging.info(f"Triggered library scan and trash empty for {item_title}.")
+                                entry_should_be_kept_in_cache = False # Processed via fallback, don't keep.
+                            except Exception as scan_err:
+                                logging.warning(f"Scan & empty trash also failed for {item_title}: {scan_err}. Keeping in cache.")
                     except Exception as e:
                         logging.error(f"Error during Plex removal for {item_title} ({item_path}): {str(e)}. Keeping in cache.")
                         # entry_should_be_kept_in_cache remains True if Plex removal fails.

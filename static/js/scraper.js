@@ -1,3 +1,6 @@
+// SEARCH OPTIMIZATION VERSION: 2026-01-11-v2
+console.log('🔧 Scraper.js loaded - Search Optimizations ACTIVE (v2026-01-11-v2)');
+
 function addToRealDebrid(magnetLink, torrent) {
     // Check if user is a requester before making the request
     const isRequesterEl = document.getElementById('is_requester');
@@ -210,36 +213,229 @@ function hideLoadingState() {
     }
 }
 
+// PHASE 1.1: Client-side episode cache (in-memory with 60-minute TTL)
+const episodeCache = new Map();
+const EPISODE_CACHE_TTL = 60 * 60 * 1000; // 60 minutes in milliseconds
+
+function getCachedEpisodes(cacheKey) {
+    const cached = episodeCache.get(cacheKey);
+    if (!cached) return null;
+
+    const now = Date.now();
+    if (now - cached.timestamp > EPISODE_CACHE_TTL) {
+        episodeCache.delete(cacheKey);
+        return null;
+    }
+
+    console.log('Episode cache HIT for:', cacheKey);
+    return cached.data;
+}
+
+function setCachedEpisodes(cacheKey, data) {
+    episodeCache.set(cacheKey, {
+        data: data,
+        timestamp: Date.now()
+    });
+    console.log('Episode cache SET for:', cacheKey);
+}
+
+// Client-side trending cache (in-memory with 15-minute TTL)
+const trendingCache = new Map();
+const TRENDING_CACHE_TTL = 15 * 60 * 1000; // 15 minutes in milliseconds
+
+function getCachedTrending(cacheKey) {
+    const cached = trendingCache.get(cacheKey);
+    if (!cached) return null;
+
+    const now = Date.now();
+    if (now - cached.timestamp > TRENDING_CACHE_TTL) {
+        trendingCache.delete(cacheKey);
+        return null;
+    }
+
+    console.log('Trending cache HIT for:', cacheKey);
+    return cached.data;
+}
+
+function setCachedTrending(cacheKey, data) {
+    trendingCache.set(cacheKey, {
+        data: data,
+        timestamp: Date.now()
+    });
+    console.log('Trending cache SET for:', cacheKey);
+}
+
+// OPTIMIZATION: Prefetch all trending data in parallel for instant display
+function prefetchTrendingData() {
+    console.log('🚀 Prefetching trending data in background...');
+
+    // Fetch all three trending categories in parallel
+    const fetchPromises = [
+        fetch('/scraper/movies_trending', { method: 'GET' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.trendingMovies) {
+                    setCachedTrending('trending_movies', data.trendingMovies);
+                    console.log('✅ Prefetched trending movies:', data.trendingMovies.length, 'items');
+                }
+            })
+            .catch(error => console.warn('Failed to prefetch movies:', error)),
+
+        fetch('/scraper/shows_trending', { method: 'GET' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.trendingShows) {
+                    setCachedTrending('trending_shows', data.trendingShows);
+                    console.log('✅ Prefetched trending shows:', data.trendingShows.length, 'items');
+                }
+            })
+            .catch(error => console.warn('Failed to prefetch shows:', error)),
+
+        fetch('/scraper/anime_trending', { method: 'GET' })
+            .then(response => response.json())
+            .then(data => {
+                if (data.trendingAnime) {
+                    setCachedTrending('trending_anime', data.trendingAnime);
+                    console.log('✅ Prefetched trending anime:', data.trendingAnime.length, 'items');
+                }
+            })
+            .catch(error => console.warn('Failed to prefetch anime:', error))
+    ];
+
+    // Wait for all to complete
+    Promise.all(fetchPromises).then(() => {
+        console.log('🎉 All trending data prefetched and cached!');
+
+        // PHASE 1 FIX #3: Prefetch common searches after trending data loads
+        setTimeout(prefetchCommonSearches, 2000); // 2 second delay
+    });
+}
+
+// PHASE 1 FIX #3: Prefetch common/popular search terms for instant results
+async function prefetchCommonSearches() {
+    console.log('🔍 Prefetching common searches...');
+
+    const commonSearches = [
+        'Marvel',
+        'Star Wars',
+        'Game of Thrones',
+        'Stranger Things',
+        'The Last of Us',
+        'The Walking Dead',
+        'Breaking Bad',
+        'Wednesday'
+    ];
+
+    let prefetchedCount = 0;
+
+    for (const term of commonSearches) {
+        try {
+            const response = await fetch('/scraper/live_search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ search_term: term, year: null })
+            });
+
+            if (response.ok) {
+                prefetchedCount++;
+                console.log(`✅ Prefetched: "${term}"`);
+            }
+        } catch (err) {
+            console.debug(`Prefetch skipped: "${term}"`);
+        }
+
+        // Small delay between requests to avoid hammering the server
+        await new Promise(resolve => setTimeout(resolve, 300));
+    }
+
+    console.log(`🎉 Prefetched ${prefetchedCount}/${commonSearches.length} common searches!`);
+}
+
+// Infinite scroll state for episodes
+let episodeScrollState = {
+    allEpisodes: [],
+    renderedCount: 0,
+    batchSize: 12,
+    isLoading: false,
+    container: null,
+    metadata: null
+};
+
 function displayEpisodeResults(episodeResults, title, year, version, mediaId, mediaType, season, episode, genre_ids) {
     if (!episodeResults) {
         displayError('No episode results found');
         return;
     }
-    
+
     // Get requester status
     const isRequesterEl = document.getElementById('is_requester');
     const isRequester = isRequesterEl && isRequesterEl.value === 'True';
-    
+
     toggleResultsVisibility('displayEpisodeResults');
     const episodeResultsDiv = document.getElementById('episodeResults');
     episodeResultsDiv.innerHTML = '';
-    
+
+    // Update URL state with season selection
+    updateEpisodeURLState(mediaId, title, season);
+
     // Create a container for the grid layout
     const gridContainer = document.createElement('div');
     gridContainer.style.display = 'flex';
     gridContainer.style.flexWrap = 'wrap';
     gridContainer.style.gap = '20px';
     gridContainer.style.justifyContent = 'center';
+    gridContainer.id = 'episodeGridContainer';
 
-    episodeResults.forEach(item => {
+    // Initialize infinite scroll state
+    episodeScrollState.allEpisodes = episodeResults;
+    episodeScrollState.renderedCount = 0;
+    episodeScrollState.isLoading = false;
+    episodeScrollState.container = gridContainer;
+    episodeScrollState.metadata = {
+        title, year, version, mediaId, mediaType, season, episode, genre_ids, isRequester
+    };
+
+    episodeResultsDiv.appendChild(gridContainer);
+
+    // Render initial batch
+    renderEpisodeBatch();
+
+    // Set up scroll listener for infinite scroll
+    setupEpisodeScrollListener();
+}
+
+// Render a batch of episodes using infinite scroll
+function renderEpisodeBatch() {
+    if (episodeScrollState.isLoading) return;
+    if (episodeScrollState.renderedCount >= episodeScrollState.allEpisodes.length) return;
+
+    episodeScrollState.isLoading = true;
+
+    const start = episodeScrollState.renderedCount;
+    const end = Math.min(start + episodeScrollState.batchSize, episodeScrollState.allEpisodes.length);
+    const batch = episodeScrollState.allEpisodes.slice(start, end);
+    const metadata = episodeScrollState.metadata;
+    const gridContainer = episodeScrollState.container;
+
+    // Use DocumentFragment for batch DOM updates
+    const fragment = document.createDocumentFragment();
+
+    batch.forEach((item, batchIndex) => {
         const episodeDiv = document.createElement('div');
         episodeDiv.className = 'episode';
         var options = {year: 'numeric', month: 'long', day: 'numeric' };
         var date = item.air_date ? new Date(item.air_date) : null;
+
+        // Calculate global index for eager loading (first 12 episodes total)
+        const globalIndex = start + batchIndex;
+        const loadingAttr = globalIndex < 12 ? 'eager' : 'lazy';
+
+        // PHASE: Keep all posters - no filtering, show placeholders for missing images
         episodeDiv.innerHTML = `
-            <button ${isRequester ? 'disabled' : ''}><span class="episode-rating">${(item.vote_average || 0).toFixed(1)}</span>
+            <button ${metadata.isRequester ? 'disabled' : ''}><span class="episode-rating">${(item.vote_average || 0).toFixed(1)}</span>
             <img src="${item.still_path ? `/scraper/tmdb_image/w300${item.still_path}` : '/static/image/placeholder-horizontal.png'}"
                 alt="${item.episode_title || ''}"
+                loading="${loadingAttr}"
                 class="${item.still_path ? '' : 'placeholder-episode'}">
             <div class="episode-info">
                 <h2 class="episode-title">${item.episode_num}. ${item.episode_title || ''}</h2>
@@ -248,7 +444,7 @@ function displayEpisodeResults(episodeResults, title, year, version, mediaId, me
         `;
 
         // Only add click handler for non-requester users
-        if (!isRequester) {
+        if (!metadata.isRequester) {
             episodeDiv.onclick = function() {
                 const content = {
                     mediaId: item.id,
@@ -258,7 +454,7 @@ function displayEpisodeResults(episodeResults, title, year, version, mediaId, me
                     season: item.season_num,
                     episode: item.episode_num,
                     multi: item.multi,
-                    genre_ids: genre_ids
+                    genre_ids: metadata.genre_ids
                 };
                 showScrapeVersionModal(content);
             };
@@ -268,10 +464,50 @@ function displayEpisodeResults(episodeResults, title, year, version, mediaId, me
             episodeDiv.style.opacity = '0.8';
         }
 
-        gridContainer.appendChild(episodeDiv);
+        fragment.appendChild(episodeDiv);
     });
 
-    episodeResultsDiv.appendChild(gridContainer);
+    // Append all episodes at once using DocumentFragment
+    gridContainer.appendChild(fragment);
+
+    episodeScrollState.renderedCount = end;
+    episodeScrollState.isLoading = false;
+
+    console.log(`Rendered episodes ${start + 1}-${end} of ${episodeScrollState.allEpisodes.length}`);
+}
+
+// Handle infinite scroll - load more episodes when nearing bottom
+let episodeScrollListener = null;
+function setupEpisodeScrollListener() {
+    // Remove previous listener if exists
+    if (episodeScrollListener) {
+        window.removeEventListener('scroll', episodeScrollListener);
+    }
+
+    // Simple scroll handler - load more when 500px from bottom
+    episodeScrollListener = function() {
+        const scrollPosition = window.innerHeight + window.scrollY;
+        const pageHeight = document.documentElement.scrollHeight;
+        const triggerDistance = 500;
+
+        if (scrollPosition >= pageHeight - triggerDistance) {
+            renderEpisodeBatch();
+        }
+    };
+
+    window.addEventListener('scroll', episodeScrollListener);
+}
+
+// PHASE 2.3: Update URL state for episode view
+function updateEpisodeURLState(mediaId, title, season) {
+    const url = new URL(window.location);
+    url.searchParams.set('media_id', mediaId);
+    url.searchParams.set('title', title);
+    url.searchParams.set('season', season);
+    url.searchParams.set('view', 'episodes');
+
+    window.history.pushState({}, '', url);
+    console.log('Episode URL state updated:', url.search);
 }
 
 // Back button functionality
@@ -791,22 +1027,17 @@ function closeOverlay() {
 
 // Add event listeners when DOM content is loaded
 document.addEventListener('DOMContentLoaded', async function() {
-    // Set up search form behavior 
-    const searchForm = document.getElementById('search-form');
-    if (searchForm) {
-        searchForm.addEventListener('submit', function(event) {
-            searchMedia(event);
-        });
-    
-        // Bind the button click as well
-        const searchButton = document.getElementById('searchformButton');
-        if (searchButton) {
-            searchButton.addEventListener('click', function(event) {
-                searchMedia(event);
-            });
-        }
+    // Only run scraper page initialization if we're on the scraper page
+    // Check if scraper-specific elements exist
+    const scraperContainer = document.getElementById('scraper-container');
+    if (!scraperContainer) {
+        // We're not on the scraper page, skip initialization
+        return;
     }
-    
+
+    // NOTE: Search form behavior is now handled by Phase 2.3 live search below
+    // The old searchMedia() function is replaced by performLiveSearch() for faster results
+
     // Set up version modal buttons
     const confirmVersionsButton = document.getElementById('confirmVersions');
     if (confirmVersionsButton) {
@@ -1026,18 +1257,14 @@ document.addEventListener('DOMContentLoaded', async function() {
         })
         .then(status => {
             if (status.status == 'authorized') {
-                get_trendingMovies(); // Call overridden function
-                get_trendingShows();  // Call overridden function
-                get_trendingAnime();  // Call anime function
+                get_allTrending(); // Single combined call
             } else {
                 displayTraktAuthMessage();
             }
         })
         .catch(error => {
             console.error('Trakt Auth Check Error:', error);
-            get_trendingMovies(); // Fallback
-            get_trendingShows();  // Fallback
-            get_trendingAnime();  // Fallback
+            get_allTrending(); // Fallback uses combined call
         });
     
     // Setup scroll buttons using already declared variables
@@ -1165,7 +1392,174 @@ document.addEventListener('DOMContentLoaded', async function() {
             searchButton.click();
         }
     }
+
+    // PHASE 2.3: Search on Enter key press (like Mydia)
+    const searchInput = document.querySelector('#search-form input[name="search_term"]');
+    if (searchInput) {
+        searchInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault(); // Prevent form submission
+                const searchTerm = e.target.value.trim();
+
+                if (searchTerm.length === 0) {
+                    // Clear results if search is empty
+                    const resultsContainer = document.getElementById('search-results');
+                    if (resultsContainer) {
+                        resultsContainer.innerHTML = '';
+                    }
+                    // Clear URL when search is cleared
+                    const url = new URL(window.location);
+                    url.searchParams.delete('q');
+                    url.searchParams.delete('v');
+                    window.history.pushState({}, '', url);
+                    return;
+                }
+
+                // Perform search when Enter is pressed
+                if (searchTerm.length >= 3) {
+                    performLiveSearch(searchTerm);
+                }
+            }
+        });
+
+        // Also handle search button click and form submit
+        const searchForm = document.getElementById('search-form');
+        if (searchForm) {
+            searchForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                e.stopPropagation(); // Prevent any other submit handlers
+                const searchTerm = searchInput.value.trim();
+                if (searchTerm.length >= 3) {
+                    performLiveSearch(searchTerm);
+                }
+            });
+        }
+
+        // Explicitly handle search button click
+        const searchButton = document.getElementById('searchformButton');
+        if (searchButton) {
+            searchButton.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation(); // Prevent form submission
+                const searchTerm = searchInput.value.trim();
+                if (searchTerm.length >= 3) {
+                    performLiveSearch(searchTerm);
+                }
+            });
+        }
+    }
+
+    // PHASE 2.3: Restore search from URL on page load
+    // Note: urlParams already declared above for old search_term parameter
+    const searchQuery = urlParams.get('q');
+    const versionParam = urlParams.get('v');
+
+    if (searchQuery && searchInput) {
+        console.log('Restoring search from URL:', searchQuery);
+        searchInput.value = searchQuery;
+
+        // Restore version if present
+        const versionSelect = document.getElementById('version-select');
+        if (versionParam && versionSelect) {
+            versionSelect.value = versionParam;
+        }
+
+        // Perform the search (don't update URL since we're loading from URL)
+        performLiveSearch(searchQuery, false);
+    }
+
+    // OPTIMIZATION: Prefetch trending data in background for instant display
+    prefetchTrendingData();
 }); // End of DOMContentLoaded
+
+// PHASE 2.3: Handle browser back/forward navigation
+window.addEventListener('popstate', function(event) {
+    console.log('Popstate event:', event.state);
+
+    const searchInput = document.querySelector('#search-form input[name="search_term"]');
+    if (!searchInput) return;
+
+    // Get search term from URL
+    const popstateUrlParams = new URLSearchParams(window.location.search);
+    const searchQuery = popstateUrlParams.get('q');
+    const versionParam = popstateUrlParams.get('v');
+
+    if (searchQuery) {
+        // Restore search input value
+        searchInput.value = searchQuery;
+
+        // Restore version if present
+        const versionSelect = document.getElementById('version-select');
+        if (versionParam && versionSelect) {
+            versionSelect.value = versionParam;
+        }
+
+        // Perform search (don't update URL again)
+        performLiveSearch(searchQuery, false);
+    } else {
+        // Clear search if no query in URL
+        searchInput.value = '';
+        const resultsContainer = document.getElementById('search-results');
+        if (resultsContainer) {
+            resultsContainer.innerHTML = '';
+        }
+    }
+});
+
+// PHASE 1.2 & 2.3: Live Search Function with URL state management
+function performLiveSearch(searchTerm, updateURL = true) {
+    console.log('Performing live search for:', searchTerm);
+
+    // Get current version selection
+    const versionSelect = document.getElementById('version-select');
+    const version = versionSelect ? versionSelect.value : '';
+
+    // INSTANT FEEDBACK: Show loading with existing loading system
+    Loading.show(`Searching for "${searchTerm}"...`, '', true, false);
+
+    // PHASE 2.3: Update URL with search query (but don't trigger popstate)
+    if (updateURL && searchTerm) {
+        const url = new URL(window.location);
+        url.searchParams.set('q', searchTerm);
+        window.history.pushState({ search: searchTerm }, '', url);
+    }
+
+    fetch('/scraper/live_search', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            search_term: searchTerm,
+            year: null
+        })
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        // Hide loading overlay
+        Loading.hide();
+
+        if (data.error) {
+            console.error('Live search error:', data.error);
+            return;
+        }
+
+        // Display results using existing display function with version parameter
+        if (data.results) {
+            displaySearchResults(data.results);
+        }
+    })
+    .catch(error => {
+        // Hide loading overlay on error
+        Loading.hide();
+        console.error('Live search failed:', error);
+    });
+}
 
 // Available versions and selected content
 let availableVersions = [];
@@ -1514,10 +1908,10 @@ function displayTraktAuthMessage() {
     trendingContainer.innerHTML = '<p>Please authenticate with Trakt to see trending movies and shows.</p>';
 }
 
-function createMovieElement(data) {
+function createMovieElement(data, index = 999) {
     const movieElement = document.createElement('div');
     movieElement.className = 'media-card';
-    
+
     // Get the isRequester value from the DOM
     const isRequesterEl = document.getElementById('is_requester');
     const isRequester = isRequesterEl && isRequesterEl.value === 'True';
@@ -1555,8 +1949,9 @@ function createMovieElement(data) {
             <span id="trending-rating">${(data.rating).toFixed(1)}</span>
             <span id="trending-watchers">👁 ${data.watcher_count}</span>
             <div class="poster-container">
-                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" 
-                    alt="${data.title}" 
+                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}"
+                    alt="${data.title}"
+                    loading="${index < 8 ? 'eager' : 'lazy'}"
                     class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
                 <div class="poster-overlay">
                     <h3>${data.title}</h3>
@@ -1659,7 +2054,7 @@ function createMovieElement(data) {
     return movieElement;
 }
 
-function createShowElement(data) {
+function createShowElement(data, index = 999) {
     const showElement = document.createElement('div');
     showElement.className = 'media-card';
     
@@ -1700,8 +2095,9 @@ function createShowElement(data) {
             <span id="trending-rating">${(data.rating).toFixed(1)}</span>
             <span id="trending-watchers">👁 ${data.watcher_count}</span>
             <div class="poster-container">
-                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" 
-                    alt="${data.title}" 
+                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}"
+                    alt="${data.title}"
+                    loading="${index < 8 ? 'eager' : 'lazy'}"
                     class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
                 <div class="poster-overlay">
                     <h3>${data.title}</h3>
@@ -1740,7 +2136,7 @@ function createShowElement(data) {
             showMobileActionModal(item);
         } else {
             // Desktop behavior - direct scrape
-            selectSeason(data.tmdb_id, data.title, data.year, 'tv', null, null, true, data.genre_ids, data.rating, data.backdrop_path, data.show_overview, data.tmdb_api_key_set);
+            selectSeason(data.tmdb_id, data.title, data.year, 'tv', null, null, true, data.genre_ids, data.vote_average || data.rating, data.backdrop_path, data.show_overview, data.tmdb_api_key_set, data.rating);
         }
     };
     
@@ -1786,10 +2182,153 @@ function createShowElement(data) {
     return showElement;
 }
 
+// Combined function to fetch all trending data in one request
+function get_allTrending() {
+    toggleResultsVisibility('get_trendingMovies');
+    const container_mv = document.getElementById('movieContainer');
+    const container_tv = document.getElementById('showContainer');
+    const container_anime = document.getElementById('animeContainer');
+
+    // PRIORITY 1: Check for SSR data (instant rendering)
+    if (window.SCRAPER_SSR_ENABLED) {
+        const ssrDataElement = document.getElementById('ssr-trending-data');
+        if (ssrDataElement) {
+            try {
+                const data = JSON.parse(ssrDataElement.textContent);
+                console.log('✅ SSR: Using embedded trending data (0ms delay)');
+
+                // Process movies
+                if (data.trendingMovies && data.trendingMovies.length > 0) {
+                    setCachedTrending('trending_movies', data.trendingMovies);
+                    const movieFrag = document.createDocumentFragment();
+                    data.trendingMovies.forEach((item, index) => {
+                        movieFrag.appendChild(createMovieElement(item, index));
+                    });
+                    container_mv.appendChild(movieFrag);
+                }
+
+                // Process shows
+                if (data.trendingShows && data.trendingShows.length > 0) {
+                    setCachedTrending('trending_shows', data.trendingShows);
+                    const showFrag = document.createDocumentFragment();
+                    data.trendingShows.forEach((item, index) => {
+                        showFrag.appendChild(createShowElement(item, index));
+                    });
+                    container_tv.appendChild(showFrag);
+                }
+
+                // Process anime
+                if (data.trendingAnime && data.trendingAnime.length > 0) {
+                    setCachedTrending('trending_anime', data.trendingAnime);
+                    const animeFrag = document.createDocumentFragment();
+                    data.trendingAnime.forEach((item, index) => {
+                        animeFrag.appendChild(createAnimeElement(item, index));
+                    });
+                    container_anime.appendChild(animeFrag);
+                }
+
+                return; // SSR successful, exit early
+            } catch (error) {
+                console.error('⚠️ SSR: Failed to parse embedded data, falling back to fetch:', error);
+                // Fall through to client-side cache or fetch
+            }
+        }
+    }
+
+    // PRIORITY 2: Check if all data is cached client-side
+    const moviesCached = getCachedTrending('trending_movies');
+    const showsCached = getCachedTrending('trending_shows');
+    const animeCached = getCachedTrending('trending_anime');
+
+    if (moviesCached && showsCached && animeCached) {
+        // All data is cached, render immediately
+        console.log('✅ Client cache: Using cached trending data');
+        const movieFrag = document.createDocumentFragment();
+        moviesCached.forEach((item, index) => {
+            movieFrag.appendChild(createMovieElement(item, index));
+        });
+        container_mv.appendChild(movieFrag);
+
+        const showFrag = document.createDocumentFragment();
+        showsCached.forEach((item, index) => {
+            showFrag.appendChild(createShowElement(item, index));
+        });
+        container_tv.appendChild(showFrag);
+
+        const animeFrag = document.createDocumentFragment();
+        animeCached.forEach((item, index) => {
+            animeFrag.appendChild(createAnimeElement(item, index));
+        });
+        container_anime.appendChild(animeFrag);
+
+        return;
+    }
+
+    // PRIORITY 3: Fetch combined data from server
+    console.log('⏳ Fetching trending data via AJAX...');
+    fetch('/scraper/all_trending', { method: 'GET' })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                displayError(data.error);
+                return;
+            }
+
+            // Process movies
+            if (data.trendingMovies && data.trendingMovies.length > 0) {
+                setCachedTrending('trending_movies', data.trendingMovies);
+                const movieFrag = document.createDocumentFragment();
+                data.trendingMovies.forEach((item, index) => {
+                    movieFrag.appendChild(createMovieElement(item, index));
+                });
+                container_mv.appendChild(movieFrag);
+            }
+
+            // Process shows
+            if (data.trendingShows && data.trendingShows.length > 0) {
+                setCachedTrending('trending_shows', data.trendingShows);
+                const showFrag = document.createDocumentFragment();
+                data.trendingShows.forEach((item, index) => {
+                    showFrag.appendChild(createShowElement(item, index));
+                });
+                container_tv.appendChild(showFrag);
+            }
+
+            // Process anime
+            if (data.trendingAnime && data.trendingAnime.length > 0) {
+                setCachedTrending('trending_anime', data.trendingAnime);
+                const animeFrag = document.createDocumentFragment();
+                data.trendingAnime.forEach((item, index) => {
+                    animeFrag.appendChild(createAnimeElement(item, index));
+                });
+                container_anime.appendChild(animeFrag);
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching all trending:', error);
+            displayError('An error occurred while fetching trending content.');
+        });
+}
+
 function get_trendingMovies() {
     toggleResultsVisibility('get_trendingMovies');
     const container_mv = document.getElementById('movieContainer');
-    
+
+    // Check client-side cache first
+    const cacheKey = 'trending_movies';
+    const cachedData = getCachedTrending(cacheKey);
+
+    if (cachedData) {
+        // Display cached results immediately using DocumentFragment
+        const fragment = document.createDocumentFragment();
+        cachedData.forEach((item, index) => {
+            const movieElement = createMovieElement(item, index);
+            fragment.appendChild(movieElement);
+        });
+        container_mv.appendChild(fragment);
+        return;
+    }
+
     fetch('/scraper/movies_trending', {
         method: 'GET'
     })
@@ -1799,10 +2338,17 @@ function get_trendingMovies() {
             displayError(data.error);
         } else {
             const trendingMovies = data.trendingMovies;
-            trendingMovies.forEach(item => {
-                const movieElement = createMovieElement(item);
-                container_mv.appendChild(movieElement);
+
+            // Cache the results
+            setCachedTrending(cacheKey, trendingMovies);
+
+            // Use DocumentFragment for batch DOM updates
+            const fragment = document.createDocumentFragment();
+            trendingMovies.forEach((item, index) => {
+                const movieElement = createMovieElement(item, index);
+                fragment.appendChild(movieElement);
             });
+            container_mv.appendChild(fragment);
         }
     })
     .catch(error => {
@@ -1814,7 +2360,22 @@ function get_trendingMovies() {
 function get_trendingShows() {
     toggleResultsVisibility('get_trendingMovies');
     const container_tv = document.getElementById('showContainer');
-    
+
+    // Check client-side cache first
+    const cacheKey = 'trending_shows';
+    const cachedData = getCachedTrending(cacheKey);
+
+    if (cachedData) {
+        // Display cached results immediately using DocumentFragment
+        const fragment = document.createDocumentFragment();
+        cachedData.forEach((item, index) => {
+            const showElement = createShowElement(item, index);
+            fragment.appendChild(showElement);
+        });
+        container_tv.appendChild(fragment);
+        return;
+    }
+
     fetch('/scraper/shows_trending', {
         method: 'GET'
     })
@@ -1824,10 +2385,17 @@ function get_trendingShows() {
             displayError(data.error);
         } else {
             const trendingShows = data.trendingShows;
-            trendingShows.forEach(item => {
-                const showElement = createShowElement(item);
-                container_tv.appendChild(showElement);
+
+            // Cache the results
+            setCachedTrending(cacheKey, trendingShows);
+
+            // Use DocumentFragment for batch DOM updates
+            const fragment = document.createDocumentFragment();
+            trendingShows.forEach((item, index) => {
+                const showElement = createShowElement(item, index);
+                fragment.appendChild(showElement);
             });
+            container_tv.appendChild(fragment);
         }
     })
     .catch(error => {
@@ -1836,7 +2404,7 @@ function get_trendingShows() {
     });
 }
 
-function createAnimeElement(data) {
+function createAnimeElement(data, index = 999) {
     const animeElement = document.createElement('div');
     animeElement.className = 'media-card';
     
@@ -1877,8 +2445,9 @@ function createAnimeElement(data) {
             <span id="trending-rating">${(data.rating).toFixed(1)}</span>
             <span id="trending-watchers">👁 ${data.watcher_count}</span>
             <div class="poster-container">
-                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}" 
-                    alt="${data.title}" 
+                <img src="${data.poster_path.startsWith('static/') ? '/' + data.poster_path : '/scraper/tmdb_image/w300' + data.poster_path}"
+                    alt="${data.title}"
+                    loading="${index < 8 ? 'eager' : 'lazy'}"
                     class="media-poster-img ${data.poster_path.startsWith('static/') ? 'placeholder-poster' : ''}">
                 <div class="poster-overlay">
                     <h3>${data.title}</h3>
@@ -1917,7 +2486,7 @@ function createAnimeElement(data) {
             showMobileActionModal(item);
         } else {
             // Desktop behavior - direct scrape
-            selectSeason(data.tmdb_id, data.title, data.year, 'tv', null, null, true, data.genre_ids, data.rating, data.backdrop_path, data.show_overview, data.tmdb_api_key_set);
+            selectSeason(data.tmdb_id, data.title, data.year, 'tv', null, null, true, data.genre_ids, data.vote_average || data.rating, data.backdrop_path, data.show_overview, data.tmdb_api_key_set, data.rating);
         }
     };
     
@@ -1966,7 +2535,22 @@ function createAnimeElement(data) {
 function get_trendingAnime() {
     toggleResultsVisibility('get_trendingMovies');
     const container_anime = document.getElementById('animeContainer');
-    
+
+    // Check client-side cache first
+    const cacheKey = 'trending_anime';
+    const cachedData = getCachedTrending(cacheKey);
+
+    if (cachedData) {
+        // Display cached results immediately using DocumentFragment
+        const fragment = document.createDocumentFragment();
+        cachedData.forEach((item, index) => {
+            const animeElement = createAnimeElement(item, index);
+            fragment.appendChild(animeElement);
+        });
+        container_anime.appendChild(fragment);
+        return;
+    }
+
     fetch('/scraper/anime_trending', {
         method: 'GET'
     })
@@ -1976,10 +2560,17 @@ function get_trendingAnime() {
             displayError(data.error);
         } else {
             const trendingAnime = data.trendingAnime;
-            trendingAnime.forEach(item => {
-                const animeElement = createAnimeElement(item);
-                container_anime.appendChild(animeElement);
+
+            // Cache the results
+            setCachedTrending(cacheKey, trendingAnime);
+
+            // Use DocumentFragment for batch DOM updates
+            const fragment = document.createDocumentFragment();
+            trendingAnime.forEach((item, index) => {
+                const animeElement = createAnimeElement(item, index);
+                fragment.appendChild(animeElement);
             });
+            container_anime.appendChild(fragment);
         }
     })
     .catch(error => {
@@ -2084,48 +2675,74 @@ function searchMedia(event) {
     });
 }
 
+// Infinite scroll state for search results
+window.searchScrollState = {
+    allResults: [],
+    renderedCount: 0,
+    batchSize: 20,
+    isLoading: false,
+    version: null
+};
+
 function displaySearchResults(results, version) {
     console.log('Displaying results. First item:', results.length > 0 ? JSON.stringify(results[0]) : 'No results'); // Log the first item as JSON
-    
+
     // First hide trending container and show search results
     toggleResultsVisibility('displaySearchResults');
-    
+
     // Get the search results container
     const searchResultsDiv = document.getElementById('searchResults');
     const resultsList = document.getElementById('resultsList');
-    
+
     if (!searchResultsDiv || !resultsList) {
         console.error('Search result elements not found!');
         return;
     }
-    
+
     // Clear previous results
     resultsList.innerHTML = '';
-    
+
     // Show the search results container
     searchResultsDiv.style.display = 'block';
-    
+
     // Validate that results is an array
     if (!Array.isArray(results)) {
         console.error('Expected results to be an array but got:', typeof results);
         displayError('Invalid response format, likely Trakt connection issue');
         return;
     }
-    
+
     // Check if we have results
     if (results.length === 0) {
         console.log('No results found');
         resultsList.innerHTML = '<p>No results found. Try a different search term.</p>';
         return;
     }
-    
-    // Get TMDB API key status
-    const tmdb_api_key_set = document.getElementById('tmdb_api_key_set').value === 'True';
-    // Check if user is a requester
+
+    // Initialize infinite scroll
+    searchScrollState.allResults = results;
+    searchScrollState.renderedCount = 0;
+    searchScrollState.version = version;
+    searchScrollState.isLoading = false;
+
+    // Render initial batch
+    renderResultsBatch();
+
+    // Set up scroll listener for infinite scroll
+    setupSearchScrollListener();
+}
+
+// OLD RENDERING CODE BELOW - DEPRECATED BY VIRTUAL SCROLLING (Phase 3.2)
+// This is kept as a fallback but should not be called anymore
+function displaySearchResults_OLD(results, version) {
+    // Deprecated - kept for reference only
+    const resultsList = document.getElementById('resultsList');
+    if (!resultsList) return;
+
+    const tmdb_api_key_set = document.getElementById('tmdb_api_key_set')?.value === 'True';
     const isRequesterEl = document.getElementById('is_requester');
     const isRequester = isRequesterEl && isRequesterEl.value === 'True';
 
-    // Request icon HTML
     const requestIconHTML = `
         <div class="request-icon" title="Request this content">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2136,7 +2753,6 @@ function displaySearchResults(results, version) {
         </div>
     `;
 
-    // Tester icon HTML
     const testerIconHTML = `
         <div class="tester-icon" title="Test this content">
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2146,7 +2762,6 @@ function displaySearchResults(results, version) {
         </div>
     `;
 
-    // Assign Magnet icon HTML
     const assignMagnetIconHTML = `
     <div class="assign-magnet-icon assign-magnet-mobile" title="Assign Magnet Link">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2253,7 +2868,7 @@ function displaySearchResults(results, version) {
                     showScrapeVersionModal(content);
                 } else {
                         // Make sure to pass the correct poster path key if needed by selectSeason
-                    selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.voteAverage, item.backdrop_path, item.show_overview, tmdb_api_key_set);
+                    selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average || item.voteAverage, item.backdrop_path, item.show_overview, tmdb_api_key_set, item.rating);
                 }
             }
         };
@@ -2340,6 +2955,286 @@ function displaySearchResults(results, version) {
     });
 }
 
+// Render a batch of search results using infinite scroll
+function renderResultsBatch() {
+    if (searchScrollState.isLoading) return;
+    if (searchScrollState.renderedCount >= searchScrollState.allResults.length) return;
+
+    searchScrollState.isLoading = true;
+
+    const resultsList = document.getElementById('resultsList');
+    if (!resultsList) {
+        searchScrollState.isLoading = false;
+        return;
+    }
+
+    const start = searchScrollState.renderedCount;
+    const end = Math.min(start + searchScrollState.batchSize, searchScrollState.allResults.length);
+    const batch = searchScrollState.allResults.slice(start, end);
+
+    console.log(`Rendering batch: ${start}-${end} of ${searchScrollState.allResults.length}`);
+
+    // Get settings
+    const tmdb_api_key_set = document.getElementById('tmdb_api_key_set')?.value === 'True';
+    const isRequesterEl = document.getElementById('is_requester');
+    const isRequester = isRequesterEl && isRequesterEl.value === 'True';
+    const version = searchScrollState.version;
+
+    // Request icon HTML
+    const requestIconHTML = `
+        <div class="request-icon" title="Request this content">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="16"></line>
+                <line x1="8" y1="12" x2="16" y2="12"></line>
+            </svg>
+        </div>
+    `;
+
+    // Tester icon HTML
+    const testerIconHTML = `
+        <div class="tester-icon" title="Test this content">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 3h6v4H9zM6 7h12l-3 10H9z"></path>
+                <path d="M10 17h4v4h-4z"></path>
+            </svg>
+        </div>
+    `;
+
+    // Assign Magnet icon HTML
+    const assignMagnetIconHTML = `
+    <div class="assign-magnet-icon assign-magnet-mobile" title="Assign Magnet Link">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+        </svg>
+    </div>
+    `;
+
+    // Use DocumentFragment for batch DOM updates
+    const fragment = document.createDocumentFragment();
+
+    // Render each item in the batch
+    batch.forEach((item, batchIndex) => {
+        // Calculate global index for eager loading (first 12 results total)
+        const globalIndex = start + batchIndex;
+        const searchResDiv = createResultElement(item, tmdb_api_key_set, isRequester, version, requestIconHTML, testerIconHTML, assignMagnetIconHTML, globalIndex);
+        fragment.appendChild(searchResDiv);
+    });
+
+    // Append all results at once using DocumentFragment
+    resultsList.appendChild(fragment);
+
+    searchScrollState.renderedCount = end;
+    searchScrollState.isLoading = false;
+
+    console.log(`Rendered ${end} of ${searchScrollState.allResults.length} results`);
+}
+
+// Handle infinite scroll - load more results when nearing bottom
+let searchScrollListener = null;
+function setupSearchScrollListener() {
+    // Remove previous listener if exists
+    if (searchScrollListener) {
+        window.removeEventListener('scroll', searchScrollListener);
+    }
+
+    // Simple scroll handler - load more when 500px from bottom
+    searchScrollListener = function() {
+        const scrollPosition = window.innerHeight + window.scrollY;
+        const pageHeight = document.documentElement.scrollHeight;
+        const triggerDistance = 500;
+
+        if (scrollPosition >= pageHeight - triggerDistance) {
+            renderResultsBatch();
+        }
+    };
+
+    window.addEventListener('scroll', searchScrollListener);
+}
+
+// Extract the result element creation into a separate function for reusability
+function createResultElement(item, tmdb_api_key_set, isRequester, version, requestIconHTML, testerIconHTML, assignMagnetIconHTML, index = 999) {
+    console.log('Processing item for display:', JSON.stringify(item, null, 2));
+    const searchResDiv = document.createElement('div');
+    searchResDiv.className = 'sresult';
+    let posterUrl = '/static/images/placeholder.png'; // Default placeholder
+    let isPlaceholder = true;
+
+    // --- Use item.poster_path (lowercase with underscore) ---
+    if (item.poster_path && typeof item.poster_path === 'string' && item.poster_path.trim() !== '') {
+         const pathToCheck = item.poster_path.trim(); // Use correct key here
+         console.log('Checking poster_path:', pathToCheck); // Log correct key
+
+         // --- Logic remains the same, just uses pathToCheck from correct key ---
+         if (pathToCheck.startsWith('static/')) {
+             posterUrl = pathToCheck.startsWith('/') ? pathToCheck : `/${pathToCheck}`;
+             isPlaceholder = pathToCheck.includes('placeholder.png');
+             console.log(`Poster type: static, Placeholder: ${isPlaceholder}`);
+         } else if (pathToCheck.startsWith('http')) {
+             posterUrl = pathToCheck;
+             isPlaceholder = false;
+              console.log('Poster type: http');
+         } else if (pathToCheck.startsWith('/scraper/tmdb_image')) {
+              posterUrl = pathToCheck.startsWith('/') ? pathToCheck : `/${pathToCheck}`;
+              isPlaceholder = false;
+              console.log('Poster type: proxy');
+         } else if (pathToCheck.startsWith('/')) { // Assume TMDB path
+             posterUrl = `/scraper/tmdb_image/w300${pathToCheck}`; // Use proxy route
+             isPlaceholder = false;
+              console.log('Poster type: assumed TMDB, using proxy');
+         } else {
+             console.warn(`Unknown poster_path format, using placeholder: ${pathToCheck}`);
+         }
+    } else {
+         console.warn('Missing, empty, or invalid poster_path, using placeholder. Value:', item.poster_path); // Log correct key
+    }
+    console.log('Final poster URL:', posterUrl);
+    // --- End Poster Path Logic ---
+
+    // --- Create DB Status Pip HTML ---
+    let dbStatusPipHTML = '';
+    if (item.db_status && item.db_status !== 'missing') {
+        dbStatusPipHTML = `<div class="db-status-pip db-status-${item.db_status}" title="Status: ${item.db_status.charAt(0).toUpperCase() + item.db_status.slice(1)}"></div>`;
+    }
+    // --- End DB Status Pip HTML ---
+
+    // --- Prioritize item.year for display ---
+    const displayYear = item.year || (item.release_date ? String(item.release_date).substring(0, 4) : 'N/A');
+    // --- End Year Display Fix ---
+
+    searchResDiv.innerHTML = `
+        <div class="media-poster">
+                ${item.media_type === 'show' || item.media_type === 'tv' ? '<span class="mediatype-tv">TV</span>' : '<span class="mediatype-mv">MOVIE</span>'}
+                <div class="poster-container">
+                    <img src="${posterUrl}"
+                        alt="${item.title}"
+                        loading="${index < 12 ? 'eager' : 'lazy'}"
+                        class="${isPlaceholder ? 'placeholder-poster' : ''}">
+                    <div class="poster-overlay">
+                        <h3>${item.title}</h3>
+                        <p>${displayYear}</p>
+                    </div>
+                    ${requestIconHTML}
+                    ${testerIconHTML}
+                    ${dbStatusPipHTML}
+                </div>
+                <div class="searchresult-info" style="display: ${!tmdb_api_key_set ? 'block' : 'none'}">
+                    <h2 class="searchresult-item">${item.title}</h2>
+                    <p class="searchresult-year">${displayYear}</p>
+                </div>
+            ${assignMagnetIconHTML}
+        </div>
+    `;
+
+     // Add click handler for the main content area
+     // Add click handlers for the poster
+    searchResDiv.onclick = function() {
+        if (isRequester) { return; }
+
+        if (window.innerWidth <= 768) {
+            item.tmdb_api_key_set = tmdb_api_key_set;
+            item.version = version;
+            showMobileActionModal(item);
+        } else {
+            if (item.media_type === 'movie') {
+                const content = {
+                    mediaId: item.id,
+                    title: item.title,
+                    year: item.year,
+                    mediaType: 'movie',
+                    season: null,
+                    episode: null,
+                    multi: false,
+                    genre_ids: item.genre_ids
+                };
+                showScrapeVersionModal(content);
+            } else {
+                    // Pass all metadata to selectSeason (use snake_case field names from API)
+                selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average || item.rating, item.backdrop_path, item.show_overview, tmdb_api_key_set, item.rating);
+            }
+        }
+    };
+
+
+    // Add click handler for the request icon
+    const requestIcon = searchResDiv.querySelector('.request-icon');
+    if (requestIcon) {
+        requestIcon.onclick = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            // Show version modal with content info
+            showVersionModal({
+                id: item.id,
+                title: item.title,
+                mediaType: item.media_type === 'show' ? 'tv' : item.media_type,
+                year: item.year
+            });
+
+            return false;
+        };
+    }
+
+    // Add click handler for the tester icon
+    const testerIcon = searchResDiv.querySelector('.tester-icon');
+    if (testerIcon) {
+        testerIcon.onclick = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const params = new URLSearchParams({
+                title: item.title,
+                year: item.year,
+                media_type: item.media_type === 'show' ? 'tv' : item.media_type,
+                id: item.id
+            });
+            window.location.href = `/scraper/scraper_tester?${params.toString()}`;
+
+            return false;
+        };
+    }
+
+    // --- Add click handler for the assign magnet icon ---
+    const assignMagnetIcon = searchResDiv.querySelector('.assign-magnet-icon');
+    if (assignMagnetIcon) {
+        // Store data on the icon element itself for easy access
+        assignMagnetIcon.dataset.id = item.id;
+        assignMagnetIcon.dataset.title = item.title;
+        assignMagnetIcon.dataset.year = item.year; // Use item.year
+        assignMagnetIcon.dataset.mediaType = item.media_type === 'show' ? 'tv' : item.media_type; // Normalize to 'tv'
+
+        assignMagnetIcon.onclick = function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const id = this.dataset.id;
+            const title = encodeURIComponent(this.dataset.title);
+            const year = this.dataset.year;
+            const mediaType = this.dataset.mediaType;
+            const currentVersion = document.getElementById('version-select')?.value || ''; // Get current version
+
+            // Construct the URL for the magnet assigner page
+            const assignUrlParams = new URLSearchParams({
+                prefill_id: id,
+                prefill_type: mediaType,
+                prefill_title: title,
+                prefill_year: year,
+                prefill_version: currentVersion
+            });
+            const assignUrl = `/magnet/assign_magnet?${assignUrlParams.toString()}`;
+
+            // Redirect the user
+            window.location.href = assignUrl;
+
+            return false;
+        };
+    }
+    // --- END Assign Magnet Icon Handler ---
+
+    return searchResDiv;
+}
+
 async function selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, version) {
     // Check if user is a requester before making the request
     const isRequesterEl = document.getElementById('is_requester');
@@ -2396,7 +3291,7 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
         // No need to do additional cache checking since displayTorrentResults already does it
     })
     .catch(error => {
-        hideLoadingState(); 1
+        hideLoadingState();
         console.error('Error:', error);
         displayError('An error occurred while processing your request.');
     });
@@ -2589,18 +3484,18 @@ function checkCacheStatusInBackground(hashes, results) {
     processNextItems();
 }
 
-function selectSeason(mediaId, title, year, mediaType, season, episode, multi, genre_ids, vote_average, backdrop_path, show_overview, tmdb_api_key_set) {
+function selectSeason(mediaId, title, year, mediaType, season, episode, multi, genre_ids, vote_average, backdrop_path, show_overview, tmdb_api_key_set, rating) {
     showLoadingState();
     const resultsDiv = document.getElementById('seasonResults');
     const dropdown = document.getElementById('seasonDropdown');
     const seasonPackButton = document.getElementById('seasonPackButton');
     const requestSeasonButton = document.getElementById('requestSeasonButton');
     const version = document.getElementById('version-select').value;
-    
+
     // Get requester status for later use
     const isRequesterEl = document.getElementById('is_requester');
     const isRequester = isRequesterEl && isRequesterEl.value === 'True';
-    
+
     // Show/hide buttons based on requester status
     if (isRequester) {
         // For requesters: hide season pack button, show request season button
@@ -2611,7 +3506,7 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
         if (seasonPackButton) seasonPackButton.style.display = 'inline-block';
         if (requestSeasonButton) requestSeasonButton.style.display = 'inline-block';
     }
-    
+
     let formData = new FormData();
     formData.append('media_id', mediaId);
     formData.append('title', title);
@@ -2622,6 +3517,9 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
     formData.append('multi', multi);
     formData.append('version', version);
     formData.append('allow_specials', localStorage.getItem('allowSpecials') === 'true'); // Add allow_specials flag
+    if (rating) formData.append('rating', rating); // Pass rating to backend
+    if (vote_average) formData.append('vote_average', vote_average); // Pass vote_average to backend
+    if (genre_ids) formData.append('genre_ids', JSON.stringify(genre_ids)); // Pass genres to backend
 
     fetch('/scraper/select_season', {
         method: 'POST',
@@ -2841,6 +3739,7 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, 
 
     // Get Allow Specials preference
     const allowSpecials = localStorage.getItem('allowSpecials') === 'true';
+    const version = document.getElementById('version-select').value;
 
     console.log('selectEpisode called with:', {
         mediaId: mediaId,
@@ -2853,8 +3752,19 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, 
         genre_ids: genre_ids
     });
 
+    // PHASE 1.1: Check cache first
+    const cacheKey = `episodes:${mediaId}:${season}:${version}:${allowSpecials}`;
+    const cachedEpisodes = getCachedEpisodes(cacheKey);
+
+    if (cachedEpisodes) {
+        console.log('Using cached episodes for season', season);
+        displayEpisodeResults(cachedEpisodes, title, year, version, mediaId, mediaType, season, episode, genre_ids);
+        return;
+    }
+
+    console.log('Episode cache MISS for:', cacheKey, '- fetching fresh data');
     showLoadingState();
-    const version = document.getElementById('version-select').value;
+
     let formData = new FormData();
     formData.append('media_id', mediaId);
     formData.append('title', title);
@@ -2882,13 +3792,16 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, 
     .then(data => {
         // Skip further processing if aborted
         if (data && data.abort) return;
-        
+
         hideLoadingState();
         if (data.error) {
             displayError(data.error);
         } else if (!data.episode_results) {
             displayError('No episode results found');
         } else {
+            // PHASE 1.1: Cache the results
+            setCachedEpisodes(cacheKey, data.episode_results);
+
             // Allow requesters to view episodes, but they won't be able to select them
             displayEpisodeResults(data.episode_results, title, year, version, mediaId, mediaType, season, episode, genre_ids);
         }
@@ -3019,7 +3932,7 @@ function showMobileActionModal(item) {
             };
             showScrapeVersionModal(content);
         } else {
-            selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average || item.voteAverage, item.backdrop_path, item.show_overview, item.tmdb_api_key_set);
+            selectSeason(item.id, item.title, item.year, item.media_type, null, null, true, item.genre_ids, item.vote_average || item.voteAverage, item.backdrop_path, item.show_overview, item.tmdb_api_key_set, item.rating);
         }
     };
     

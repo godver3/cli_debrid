@@ -30,7 +30,7 @@ def row_to_dict(row: Row) -> Dict[str, Any]:
     return result
 
 # --- Retry Decorator --- Moved UP ---
-def retry_on_db_lock(max_attempts=5, initial_wait=0.1, backoff_factor=2,
+def retry_on_db_lock(max_attempts=10, initial_wait=0.2, backoff_factor=2,
                      long_execution_threshold_seconds=DEFAULT_LONG_EXECUTION_THRESHOLD_SECONDS):
     def decorator(func):
         @wraps(func)
@@ -181,8 +181,22 @@ def get_db_connection(db_path=None):
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
         db_path = os.path.join(db_content_dir, 'media_items.db')
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=10)  # Increased timeout slightly
-    conn.execute('PRAGMA journal_mode=WAL')  # Enable WAL mode
+
+    # Increased timeout to 30 seconds for better concurrent access handling
+    conn = sqlite3.connect(db_path, timeout=30)
+
+    # Enable WAL mode for concurrent reads during writes
+    conn.execute('PRAGMA journal_mode=WAL')
+
+    # Set busy timeout at connection level (30 seconds)
+    conn.execute('PRAGMA busy_timeout = 30000')
+
+    # Optimize WAL checkpoint behavior
+    conn.execute('PRAGMA wal_autocheckpoint = 1000')
+
+    # Enable synchronous=NORMAL for better performance with WAL
+    conn.execute('PRAGMA synchronous = NORMAL')
+
     conn.row_factory = sqlite3.Row
     
     # REMOVED: Initialization moved to schema_management.py

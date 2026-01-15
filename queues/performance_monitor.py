@@ -155,9 +155,9 @@ class PerformanceMonitor:
         """Log basic CPU and memory metrics"""
         try:
             process = psutil.Process(os.getpid())
-            
-            # Get CPU info with longer interval for more accurate measurement
-            cpu_percent = process.cpu_percent(interval=2)
+
+            # Get CPU info - non-blocking (uses time since last call)
+            cpu_percent = process.cpu_percent(interval=None)
             cpu_times = process.cpu_times()
             
             # Get memory info with deltas

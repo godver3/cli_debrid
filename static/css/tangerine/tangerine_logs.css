@@ -18,7 +18,7 @@
     }
 
     .log-controls {
-        padding: 5px 10px;
+        padding: 5px 25px;
         background-color: #141414;
         border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         display: flex;

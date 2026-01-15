@@ -212,9 +212,16 @@ def async_get_collected_from_plex(collection_type):
             else:
                 get_and_add_recent_collected_from_plex()
             message = 'Successfully retrieved and added recent collected items from Library'
+        elif collection_type == 'backfill':
+            # Backfill works in all modes - it updates existing records with Plex metadata
+            # (location_on_disk, resolution, size, imdb_id, tmdb_id, collected_at)
+            # without adding new items based on file presence
+            logging.info("Running backfill to update existing records with Plex metadata")
+            get_and_add_all_collected_from_plex(backfill=True)
+            message = 'Successfully backfilled Plex data for already-Collected items'
         else:
             raise ValueError('Invalid collection type')
-        
+
         return {'success': True, 'message': message}
     except Exception as e:
         return {'success': False, 'error': str(e)}
@@ -591,8 +598,8 @@ def manual_blacklist():
 @admin_required
 def get_collected_from_plex():
     collection_type = request.json.get('collection_type', 'recent')
-    
-    if collection_type not in ['all', 'recent']:
+
+    if collection_type not in ['all', 'recent', 'backfill']:
         return jsonify({'success': False, 'error': 'Invalid collection type'}), 400
 
     from routes.extensions import task_queue

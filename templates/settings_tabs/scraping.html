@@ -849,7 +849,7 @@
             <div class="filter-list" data-version="{{ version }}" data-filter-type="filter_in">
                 {% for filter in config.filter_in %}
                 <div class="filter-item">
-                    <input type="text" id="filter-in-{{ version }}-{{ loop.index0 }}" name="filter-in-term" class="filter-term" value="{{ filter }}"
+                    <input type="text" class="filter-term" value="{{ filter }}"
                            data-section="Scraping"
                            data-key="versions.{{ version }}.filter_in.{{ loop.index0 }}">
                     <button type="button" class="remove-filter">Remove</button>
@@ -860,7 +860,7 @@
             <div class="filter-list" data-version="{{ version }}" data-filter-type="filter_out">
                 {% for filter in config.filter_out %}
                 <div class="filter-item">
-                    <input type="text" id="filter-out-{{ version }}-{{ loop.index0 }}" name="filter-out-term" class="filter-term" value="{{ filter }}"
+                    <input type="text" class="filter-term" value="{{ filter }}"
                            data-section="Scraping"
                            data-key="versions.{{ version }}.filter_out.{{ loop.index0 }}">
                     <button type="button" class="remove-filter">Remove</button>
@@ -875,12 +875,26 @@
             <div class="filter-list" data-version="{{ version }}" data-filter-type="preferred_filter_in">
                 {% for filter, weight in config.preferred_filter_in %}
                 <div class="filter-item">
-                    <input type="text" id="preferred-filter-in-term-{{ version }}-{{ loop.index0 }}" name="preferred-filter-in-term" class="filter-term" value="{{ filter }}"
+                    <input type="text" class="filter-term" value="{{ filter }}"
                            data-section="Scraping"
                            data-key="versions.{{ version }}.preferred_filter_in.{{ loop.index0 }}.term">
-                    <input type="number" id="preferred-filter-in-weight-{{ version }}-{{ loop.index0 }}" name="preferred-filter-in-weight" class="filter-weight" min="1" value="{{ weight }}"
+                    <input type="number" class="filter-weight" min="1" value="{{ weight }}"
                            data-section="Scraping"
                            data-key="versions.{{ version }}.preferred_filter_in.{{ loop.index0 }}.weight">
+                    <button type="button" class="remove-filter">Remove</button>
+                </div>
+                {% endfor %}
+            </div>
+            <button type="button" class="add-filter-btn" data-version-id="{{ version }}" data-filter-type="preferred_filter_out">Add Preferred Filter Out</button>
+            <div class="filter-list" data-version="{{ version }}" data-filter-type="preferred_filter_out">
+                {% for filter, weight in config.preferred_filter_out %}
+                <div class="filter-item">
+                    <input type="text" class="filter-term" value="{{ filter }}"
+                           data-section="Scraping"
+                           data-key="versions.{{ version }}.preferred_filter_out.{{ loop.index0 }}.term">
+                    <input type="number" class="filter-weight" min="1" value="{{ weight }}"
+                           data-section="Scraping"
+                           data-key="versions.{{ version }}.preferred_filter_out.{{ loop.index0 }}.weight">
                     <button type="button" class="remove-filter">Remove</button>
                 </div>
                 {% endfor %}

@@ -518,11 +518,6 @@ form#search-form input:-ms-input-placeholder {
     transform: none !important;
 }
 
-/* Remove hover effect for overlay as it now moves with the container */
-.media-poster:hover .poster-overlay {
-    /* No separate transform needed */
-}
-
 /* Enhanced media poster image box-shadow on hover (keep this enhancement) */
 .media-poster:hover .media-poster-img {
     /* No separate box-shadow needed as it's on the container */
@@ -715,10 +710,11 @@ h2.searchresult-item {
     padding-top: 20px;
     padding-bottom: 20px;
     border-radius: 10px;
+    height: 300px;
 }
 
 .season-poster {
-    height: 200px;
+    height: 100%;
     object-fit: cover;
     margin-right: 20px;
     flex-shrink: 0;
@@ -731,7 +727,7 @@ h2.searchresult-item {
     background-color: rgba(0, 0, 0, 0.3);
     padding: 1rem;
     border-radius: 4px;
-    max-height: 200px;
+    max-height: 300px;
     position: relative;
 }
 
@@ -1538,6 +1534,91 @@ tr.filtered-out-item:hover {
 /* Ensure normal items don't get overridden if they also match a generic 'tr' hover */
 .overlay-content tbody tr:not(.filtered-out-item):hover {
     background-color: rgba(255, 255, 255, 0.05); /* Or your default hover color */
+}
+
+/* ========================================
+   Optimized Torrent Overlay Styles
+   ======================================== */
+
+/* Torrent Table Structure */
+.torrent-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.torrent-table-header {
+    color: rgb(191 191 190);
+}
+
+.torrent-name-cell {
+    width: 38%;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: rgb(191 191 190);
+    word-wrap: break-word;
+    white-space: normal;
+    padding: 10px;
+}
+
+.torrent-name-wrapper {
+    display: block;
+    line-height: 1.4;
+    min-height: fit-content;
+}
+
+.torrent-size-cell {
+    width: 12%;
+    text-align: right;
+    color: rgb(191 191 190);
+}
+
+.torrent-source-cell {
+    width: 10%;
+    color: rgb(191 191 190);
+}
+
+.torrent-score-cell {
+    width: 10%;
+    text-align: right;
+    color: rgb(191 191 190);
+}
+
+.torrent-cache-cell {
+    width: 10%;
+    text-align: center;
+    color: rgb(191 191 190);
+}
+
+.torrent-action-cell {
+    width: 10%;
+    text-align: center;
+    color: rgb(191 191 190);
+}
+
+/* Mobile Torrent Grid */
+.torrent-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    justify-content: center;
+}
+
+/* Virtualization container */
+.torrent-results-container {
+    position: relative;
+    min-height: 200px;
+}
+
+.torrent-results-spacer {
+    width: 100%;
+}
+
+/* Loading more indicator */
+.loading-more-torrents {
+    text-align: center;
+    padding: 20px;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 14px;
 }
 
 #version-select {
@@ -2560,4 +2641,140 @@ tr.filtered-out-item:hover {
 
 .settings-section-header .drag-handle {
     position: relative;
+}
+
+/* ========================================
+   SKELETON PLACEHOLDERS FOR SSR
+   ======================================== */
+
+/* Skeleton shimmer animation */
+@keyframes shimmer {
+    0% {
+        background-position: -1000px 0;
+    }
+    100% {
+        background-position: 1000px 0;
+    }
+}
+
+/* Apply shimmer to images while loading */
+.media-poster-img {
+    background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.05) 0%,
+        rgba(255, 255, 255, 0.1) 50%,
+        rgba(255, 255, 255, 0.05) 100%
+    );
+    background-size: 1000px 100%;
+    animation: shimmer 2s infinite linear;
+}
+
+/* Remove shimmer once image is loaded */
+.media-poster-img[src]:not([src=""]) {
+    animation: none;
+    background: none;
+}
+
+/* Skeleton placeholder for poster containers */
+.poster-container.loading {
+    background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.05) 0%,
+        rgba(255, 255, 255, 0.1) 50%,
+        rgba(255, 255, 255, 0.05) 100%
+    );
+    background-size: 1000px 100%;
+    animation: shimmer 2s infinite linear;
+    border-radius: var(--border-radius-md);
+}
+
+/* Smooth fade-in when content loads */
+.media-poster {
+    opacity: 0;
+    animation: fadeIn 0.3s ease-in forwards;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Stagger animation for trending items */
+.scroll-container .media-poster:nth-child(1) { animation-delay: 0ms; }
+.scroll-container .media-poster:nth-child(2) { animation-delay: 50ms; }
+.scroll-container .media-poster:nth-child(3) { animation-delay: 100ms; }
+.scroll-container .media-poster:nth-child(4) { animation-delay: 150ms; }
+.scroll-container .media-poster:nth-child(5) { animation-delay: 200ms; }
+.scroll-container .media-poster:nth-child(6) { animation-delay: 250ms; }
+.scroll-container .media-poster:nth-child(7) { animation-delay: 300ms; }
+.scroll-container .media-poster:nth-child(8) { animation-delay: 350ms; }
+.scroll-container .media-poster:nth-child(9) { animation-delay: 400ms; }
+.scroll-container .media-poster:nth-child(10) { animation-delay: 450ms; }
+
+/* Skeleton state for empty containers during SSR */
+.scroll-container:empty::before {
+    content: '';
+    display: block;
+    width: 100%;
+    height: 300px;
+    background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.05) 0%,
+        rgba(255, 255, 255, 0.1) 50%,
+        rgba(255, 255, 255, 0.05) 100%
+    );
+    background-size: 1000px 100%;
+    animation: shimmer 2s infinite linear;
+    border-radius: var(--border-radius-md);
+}
+
+/* Performance optimization: reduce animation complexity on lower-end devices */
+@media (prefers-reduced-motion: reduce) {
+    .media-poster-img,
+    .poster-container.loading,
+    .scroll-container:empty::before {
+        animation: none;
+    }
+
+    .media-poster {
+        animation: none;
+        opacity: 1;
+        transform: none;
+    }
+}
+
+/* ========================================
+   INSTANT SEARCH FEEDBACK
+   ======================================== */
+
+/* Spinner animation for search loading */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Search loading state */
+.search-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+    opacity: 0;
+    animation: fadeIn 0.2s ease-in forwards;
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(255, 255, 255, 0.2);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
 }

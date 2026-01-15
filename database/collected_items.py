@@ -12,7 +12,224 @@ from cli_battery.app.direct_api import DirectAPI
 import sqlite3
 import time
 
-def add_collected_items(media_items_batch, recent=False):
+def _cache_plex_artwork(media_items_batch):
+    """
+    Cache poster and backdrop URLs from Plex or TMDB based on user preference.
+    Priority determined by 'primary_artwork_source' setting (Plex or TMDB).
+    Uses the non-primary source as fallback.
+    Only caches items that are not already in cache or have expired.
+    Plex URLs are proxied through /library/plex_image endpoint.
+    """
+    from routes.poster_cache import load_cache, save_cache, normalize_media_type, CACHE_EXPIRY_DAYS
+    from utilities.web_scraper import get_media_meta
+    from utilities.settings import get_setting
+
+    # Get primary artwork source preference
+    primary_source = get_setting('Library Manager', 'primary_artwork_source', default='Plex')
+
+    # Load cache once for the entire batch
+    cache = load_cache()
+    cache_updated = False
+    cached_count = 0
+    skipped_count = 0
+    tmdb_fallback_count = 0
+    plex_fallback_count = 0
+
+    for item in media_items_batch:
+        tmdb_id = item.get('tmdb_id')
+        if not tmdb_id:
+            continue
+
+        # Determine media type for cache
+        item_type = item.get('type', 'movie')
+        if item_type == 'episode':
+            media_type = 'tv'
+        else:
+            media_type = 'movie'
+
+        normalized_type = normalize_media_type(media_type)
+
+        # Get URLs from Plex and TMDB based on priority
+        thumb_url = item.get('thumb')  # Plex poster
+        art_url = item.get('art')  # Plex backdrop
+
+        # Check and cache poster
+        poster_key = f"{tmdb_id}_{normalized_type}"
+
+        # Check if already cached and not expired
+        cache_item = cache.get(poster_key)
+        if cache_item:
+            url, timestamp = cache_item
+            if datetime.now() - timestamp < timedelta(days=CACHE_EXPIRY_DAYS):
+                skipped_count += 1
+            else:
+                # Expired, update it based on primary source
+                final_poster_url = None
+
+                if primary_source == 'TMDB':
+                    # Try TMDB first
+                    try:
+                        media_meta = get_media_meta(str(tmdb_id), media_type)
+                        if media_meta and media_meta[0]:
+                            final_poster_url = media_meta[0]
+                    except Exception as e:
+                        logging.debug(f"TMDB failed for poster {tmdb_id}: {e}")
+
+                    # Fallback to Plex if TMDB failed
+                    if not final_poster_url and thumb_url:
+                        final_poster_url = thumb_url
+                        plex_fallback_count += 1
+                else:
+                    # Try Plex first (default)
+                    if thumb_url:
+                        final_poster_url = thumb_url
+                    else:
+                        # Fallback to TMDB if Plex doesn't have it
+                        try:
+                            media_meta = get_media_meta(str(tmdb_id), media_type)
+                            if media_meta and media_meta[0]:
+                                final_poster_url = media_meta[0]
+                                tmdb_fallback_count += 1
+                        except Exception as e:
+                            logging.debug(f"TMDB fallback failed for poster {tmdb_id}: {e}")
+
+                if final_poster_url:
+                    cache[poster_key] = (final_poster_url, datetime.now())
+                    cache_updated = True
+                    cached_count += 1
+        else:
+            # Not in cache, add it based on primary source
+            final_poster_url = None
+
+            if primary_source == 'TMDB':
+                # Try TMDB first
+                try:
+                    media_meta = get_media_meta(str(tmdb_id), media_type)
+                    if media_meta and media_meta[0]:
+                        final_poster_url = media_meta[0]
+                except Exception as e:
+                    logging.debug(f"TMDB failed for poster {tmdb_id}: {e}")
+
+                # Fallback to Plex if TMDB failed
+                if not final_poster_url and thumb_url:
+                    final_poster_url = thumb_url
+                    plex_fallback_count += 1
+            else:
+                # Try Plex first (default)
+                if thumb_url:
+                    final_poster_url = thumb_url
+                else:
+                    # Fallback to TMDB if Plex doesn't have it
+                    try:
+                        media_meta = get_media_meta(str(tmdb_id), media_type)
+                        if media_meta and media_meta[0]:
+                            final_poster_url = media_meta[0]
+                            tmdb_fallback_count += 1
+                    except Exception as e:
+                        logging.debug(f"TMDB fallback failed for poster {tmdb_id}: {e}")
+
+            if final_poster_url:
+                cache[poster_key] = (final_poster_url, datetime.now())
+                cache_updated = True
+                cached_count += 1
+
+        # Check and cache backdrop (art) based on primary source
+        backdrop_key = f"{tmdb_id}_backdrop_{normalized_type}"
+
+        # Check if already cached and not expired
+        cache_item = cache.get(backdrop_key)
+        if cache_item:
+            url, timestamp = cache_item
+            if datetime.now() - timestamp < timedelta(days=CACHE_EXPIRY_DAYS):
+                skipped_count += 1
+            else:
+                # Expired, update it based on primary source
+                final_backdrop_url = None
+
+                if primary_source == 'TMDB':
+                    # Try TMDB first
+                    try:
+                        media_meta = get_media_meta(str(tmdb_id), media_type)
+                        if media_meta and media_meta[4]:
+                            final_backdrop_url = media_meta[4]
+                    except Exception as e:
+                        logging.debug(f"TMDB failed for backdrop {tmdb_id}: {e}")
+
+                    # Fallback to Plex if TMDB failed
+                    if not final_backdrop_url and art_url:
+                        final_backdrop_url = art_url
+                        plex_fallback_count += 1
+                else:
+                    # Try Plex first (default)
+                    if art_url:
+                        final_backdrop_url = art_url
+                    else:
+                        # Fallback to TMDB if Plex doesn't have it
+                        try:
+                            media_meta = get_media_meta(str(tmdb_id), media_type)
+                            if media_meta and media_meta[4]:
+                                final_backdrop_url = media_meta[4]
+                                tmdb_fallback_count += 1
+                        except Exception as e:
+                            logging.debug(f"TMDB fallback failed for backdrop {tmdb_id}: {e}")
+
+                if final_backdrop_url:
+                    cache[backdrop_key] = (final_backdrop_url, datetime.now())
+                    cache_updated = True
+                    cached_count += 1
+        else:
+            # Not in cache, add it based on primary source
+            final_backdrop_url = None
+
+            if primary_source == 'TMDB':
+                # Try TMDB first
+                try:
+                    media_meta = get_media_meta(str(tmdb_id), media_type)
+                    if media_meta and media_meta[4]:
+                        final_backdrop_url = media_meta[4]
+                except Exception as e:
+                    logging.debug(f"TMDB failed for backdrop {tmdb_id}: {e}")
+
+                # Fallback to Plex if TMDB failed
+                if not final_backdrop_url and art_url:
+                    final_backdrop_url = art_url
+                    plex_fallback_count += 1
+            else:
+                # Try Plex first (default)
+                if art_url:
+                    final_backdrop_url = art_url
+                else:
+                    # Fallback to TMDB if Plex doesn't have it
+                    try:
+                        media_meta = get_media_meta(str(tmdb_id), media_type)
+                        if media_meta and media_meta[4]:
+                            final_backdrop_url = media_meta[4]
+                            tmdb_fallback_count += 1
+                    except Exception as e:
+                        logging.debug(f"TMDB fallback failed for backdrop {tmdb_id}: {e}")
+
+            if final_backdrop_url:
+                cache[backdrop_key] = (final_backdrop_url, datetime.now())
+                cache_updated = True
+                cached_count += 1
+
+    # Save cache only once if any updates were made
+    if cache_updated:
+        save_cache(cache)
+        fallback_msg = []
+        if tmdb_fallback_count > 0:
+            fallback_msg.append(f"{tmdb_fallback_count} from TMDB")
+        if plex_fallback_count > 0:
+            fallback_msg.append(f"{plex_fallback_count} from Plex")
+
+        if fallback_msg:
+            logging.info(f"[Artwork Cache - {primary_source} primary] Cached {cached_count} items ({', '.join(fallback_msg)} fallback), skipped {skipped_count}")
+        else:
+            logging.info(f"[Artwork Cache - {primary_source} primary] Cached {cached_count} new/expired items, skipped {skipped_count} already cached")
+    else:
+        logging.debug(f"[Artwork Cache] All {skipped_count} items already cached, no updates needed")
+
+def add_collected_items(media_items_batch, recent=False, backfill=False):
     from datetime import datetime, timedelta
     from utilities.settings import get_setting
     from queues.upgrading_queue import log_successful_upgrade
@@ -23,9 +240,13 @@ def add_collected_items(media_items_batch, recent=False):
         logging.info("Plex library checks disabled - using simplified collection process")
         return plex_collection_disabled(media_items_batch)
 
+    # Cache posters and backdrops from Plex data
+    # Plex URLs are proxied through /library/plex_image endpoint
+    _cache_plex_artwork(media_items_batch)
+
     conn = get_db_connection()
     try:
-        conn.execute('BEGIN TRANSACTION')
+        conn.execute('BEGIN IMMEDIATE')
 
         # Collect items that need post-processing after transaction commits
         items_for_post_processing = []
@@ -76,13 +297,15 @@ def add_collected_items(media_items_batch, recent=False):
                 filled_by_file = row['filled_by_file']
                 upgrading_from = os.path.basename(row['upgrading_from'] or '')
                 location_basename = row['location_basename']
-                location_on_disk = os.path.basename(row['location_on_disk'] or '')
+                location_on_disk_basename = os.path.basename(row['location_on_disk'] or '')
+                location_on_disk_full = row['location_on_disk'] or ''  # Keep full path for symlink mode matching
                 state = row['state']
 
                 if state == 'Collected':
                     if filled_by_file: existing_collected_files.add(filled_by_file)
                     if location_basename: existing_collected_files.add(location_basename)
-                    if location_on_disk: existing_collected_files.add(location_on_disk)
+                    if location_on_disk_basename: existing_collected_files.add(location_on_disk_basename)
+                    if location_on_disk_full: existing_collected_files.add(location_on_disk_full)  # Add full path too
                 if state == 'Upgrading':
                     if filled_by_file:
                         existing_collected_files.add(filled_by_file)
@@ -96,8 +319,12 @@ def add_collected_items(media_items_batch, recent=False):
                     existing_file_map[upgrading_from] = dict_row
                 if location_basename:
                     existing_file_map[location_basename] = dict_row
-                if location_on_disk:
-                    existing_file_map[location_on_disk] = dict_row
+                if location_on_disk_basename:
+                    existing_file_map[location_on_disk_basename] = dict_row
+                # IMPORTANT: Also add full path for symlink mode - allows different versions
+                # with same filename in different folders to be tracked separately
+                if location_on_disk_full:
+                    existing_file_map[location_on_disk_full] = dict_row
 
         filtered_out_files = set()
         filtered_media_items_batch = []
@@ -105,18 +332,27 @@ def add_collected_items(media_items_batch, recent=False):
             locations = item.get('location', [])
             if isinstance(locations, str):
                 locations = [locations]
-            
+
             new_locations = []
             for location in locations:
                 filename = os.path.basename(location)
                 if recent:
-                    if filename and filename not in existing_collected_files and filename not in upgrading_from_files:
+                    # Check both full path and filename - full path takes precedence (symlink mode)
+                    # This allows different versions with same filename but different paths to be tracked
+                    is_full_path_collected = location in existing_collected_files
+                    is_filename_collected = filename and filename in existing_collected_files
+                    is_upgrading_from = filename and filename in upgrading_from_files
+
+                    # If full path is NOT collected AND (filename is NOT collected OR filename not set)
+                    # then include this location
+                    if not is_full_path_collected and not is_filename_collected and not is_upgrading_from:
                         new_locations.append(location)
                     else:
-                        filtered_out_files.add(filename)
+                        filtered_out_files.add(location)  # Track full path, not just filename
+                        logging.debug(f"[Collection Filter] Skipping '{location}' - full_path_collected={is_full_path_collected}, filename_collected={is_filename_collected}, upgrading_from={is_upgrading_from}")
                 else:
                     new_locations.append(location)
-            
+
             if new_locations:
                 item['location'] = new_locations
                 filtered_media_items_batch.append(item)
@@ -205,16 +441,19 @@ def add_collected_items(media_items_batch, recent=False):
 
         # --- End Pre-fetch Airtime Logic ---
 
-        # logging.info(f"Starting processing of {len(filtered_media_items_batch)} filtered media items.")
+        logging.info(f"[Collection Debug] Starting processing of {len(filtered_media_items_batch)} filtered media items.")
         # start_time_batch = time.time()
 
         for index, item in enumerate(filtered_media_items_batch):
             item_identifier = generate_identifier(item)
             # start_time_item = time.time()
-            
+
             plex_locations = item.get('location', [])
             if isinstance(plex_locations, str):
                 plex_locations = [plex_locations]
+
+            # Debug: Log each item being processed with its location
+            logging.debug(f"[Collection Debug] Processing item {index+1}/{len(filtered_media_items_batch)}: {item_identifier}, locations: {plex_locations}")
 
             # Enhanced logging: Count existing 'Checking' items for this Plex item's identifiers
             checking_items_count = 0
@@ -255,11 +494,13 @@ def add_collected_items(media_items_batch, recent=False):
                 # The original 'locations' variable was for Plex item locations.
                 # We iterate through these locations to process each file.
                 # Renaming to avoid confusion if 'location' is used later for DB item's location.
-                
+
                 for plex_file_location in plex_locations:
                     filename = os.path.basename(plex_file_location)
-                    if filename and filename not in filtered_out_files:
+                    # Track both filename and full path for cleanup logic
+                    if plex_file_location not in filtered_out_files:
                         all_valid_filenames.add(filename)
+                        all_valid_filenames.add(plex_file_location)  # Also add full path
                         
                 imdb_id = item.get('imdb_id') or None
                 tmdb_id = item.get('tmdb_id') or None
@@ -281,10 +522,23 @@ def add_collected_items(media_items_batch, recent=False):
                         collected_at = datetime.now()
                     genres = json.dumps(item.get('genres', []))
 
-                    if filename in existing_file_map:
-                        existing_db_item = existing_file_map[filename]
+                    # Check for existing item - prefer full path match (symlink mode with multiple versions)
+                    # then fall back to filename match (backwards compatibility)
+                    lookup_key = None
+                    if current_plex_location in existing_file_map:
+                        lookup_key = current_plex_location
+                        logging.debug(f"[Collection Debug] Full path match for '{current_plex_location}'")
+                    elif filename in existing_file_map:
+                        lookup_key = filename
+                        logging.debug(f"[Collection Debug] Filename match for '{filename}'")
+                    else:
+                        logging.debug(f"[Collection Debug] No match found for '{current_plex_location}' (filename: '{filename}')")
+
+                    if lookup_key is not None:
+                        existing_db_item = existing_file_map[lookup_key]
                         db_item_id = existing_db_item['id']
-                        
+                        logging.debug(f"[Collection Debug] Found existing DB item ID {db_item_id} for lookup_key '{lookup_key}', state: {existing_db_item['state']}")
+
                         is_this_db_item_checking = existing_db_item['state'] == 'Checking'
                         # other_checking_items_exist = checking_items_count > 0 and (not is_this_db_item_checking or checking_items_count > 1)
 
@@ -360,12 +614,12 @@ def add_collected_items(media_items_batch, recent=False):
 
                             conn.execute('''
                                 UPDATE media_items
-                                SET state = ?, last_updated = ?, collected_at = ?, 
+                                SET state = ?, last_updated = ?, collected_at = ?,
                                     original_collected_at = COALESCE(original_collected_at, ?),
-                                    location_on_disk = ?, upgraded = ?, resolution = ?
+                                    location_on_disk = ?, upgraded = ?, resolution = ?, size = ?
                                 WHERE id = ?
-                            ''', (new_state, datetime.now(), collected_at, existing_collected_at, 
-                                  current_plex_location, is_upgrade, item.get('resolution'), db_item_id))
+                            ''', (new_state, datetime.now(), collected_at, existing_collected_at,
+                                  current_plex_location, is_upgrade, item.get('resolution'), item.get('size_gb'), db_item_id))
 
                             # Queue items for post-processing AFTER transaction commits
                             # This prevents database lock issues when post-processing tries to write to DB
@@ -394,19 +648,51 @@ def add_collected_items(media_items_batch, recent=False):
                                 # logging.debug(f"add_to_collected_notifications for item {db_item_id} took {time.time() - start_notification_time:.4f} seconds.")
                             else:
                                 logging.warning(f"Could not fetch updated item with ID {db_item_id} after update for notification.")
-                        # else:
-                             # logging.debug(
-                             #     f"DB Item ID {db_item_id} ({item_identifier}, file: {existing_db_item['filled_by_file']}) "
-                             #     f"is already '{existing_db_item['state']}'. Skipping state update and notification. "
-                             #     f"Plex item location: {current_plex_location}."
-                             # )
+                        else:
+                            # Item is already Collected/Upgrading
+                            # Always update Plex-sourced fields (location, resolution, size) if they're missing or different
+                            existing_location = existing_db_item.get('location_on_disk')
+                            existing_size = existing_db_item.get('size')
+                            existing_resolution = existing_db_item.get('resolution')
+                            existing_imdb_id = existing_db_item.get('imdb_id')
+                            existing_tmdb_id = existing_db_item.get('tmdb_id')
+                            existing_collected_at = existing_db_item.get('collected_at')
+                            new_size = item.get('size_gb')
+                            new_resolution = item.get('resolution')
+
+                            # Update if any Plex-sourced field is missing or location changed
+                            should_update = (
+                                existing_location != current_plex_location or
+                                (existing_size is None and new_size is not None) or
+                                (existing_resolution is None and new_resolution is not None) or
+                                (not existing_imdb_id and imdb_id) or
+                                (not existing_tmdb_id and tmdb_id) or
+                                (existing_collected_at is None and collected_at is not None)
+                            )
+
+                            if should_update:
+                                if backfill:
+                                    logging.info(f"[Backfill] Updating Plex fields for already-{existing_db_item['state']} item {db_item_id} ({item_identifier})")
+                                else:
+                                    logging.debug(f"Updating missing Plex fields for already-{existing_db_item['state']} item {db_item_id} ({item_identifier})")
+                                conn.execute('''
+                                    UPDATE media_items
+                                    SET location_on_disk = ?,
+                                        resolution = COALESCE(resolution, ?),
+                                        size = COALESCE(size, ?),
+                                        imdb_id = COALESCE(NULLIF(imdb_id, ''), ?),
+                                        tmdb_id = COALESCE(NULLIF(tmdb_id, ''), ?),
+                                        collected_at = COALESCE(collected_at, ?),
+                                        last_updated = ?
+                                    WHERE id = ?
+                                ''', (current_plex_location, new_resolution, new_size, imdb_id, tmdb_id, collected_at, datetime.now(), db_item_id))
 
                     else:
                         # --- NEW ITEM INSERT ---
+                        # This item doesn't exist in DB (neither full path nor filename match)
                         logging.info(
                             f"Plex item {item_identifier} (location: {current_plex_location}, filename: {filename}) not found in existing_file_map. "
-                            f"Proceeding to insert as new DB entry. "
-                            # f"Found {checking_items_count} existing 'Checking' item(s) for these identifiers (IDs: {checking_item_ids_for_plex_item})."
+                            f"Proceeding to insert as new DB entry."
                         )
                         
                         # Check if there are any items in 'Checking' state with matching identifiers
@@ -436,12 +722,12 @@ def add_collected_items(media_items_batch, recent=False):
                         if item_type == 'movie':
                             conn.execute('''
                                 INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution, physical_release_date)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution, physical_release_date, size)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'movie',
-                                datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime'), current_plex_location, False, item.get('country', '').lower(), item.get('resolution'), item.get('physical_release_date')
+                                datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime'), current_plex_location, False, item.get('country', '').lower(), item.get('resolution'), item.get('physical_release_date'), item.get('size_gb')
                             ))
                         else:
                             if imdb_id not in airtime_cache:
@@ -454,13 +740,13 @@ def add_collected_items(media_items_batch, recent=False):
                             airtime = airtime_cache[imdb_id]
                             conn.execute('''
                                 INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution, size)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'episode',
                                 item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                                datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime'), current_plex_location, False, item.get('country', '').lower(), item.get('resolution')
+                                datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime'), current_plex_location, False, item.get('country', '').lower(), item.get('resolution'), item.get('size_gb')
                             ))
                         # logging.debug(f"Inserting new item {item_identifier} (from Plex file: {filename}, location: {current_plex_location}) took {time.time() - start_insert_time:.4f} seconds.")
                         logging.info(f"Added new item {item_identifier} (file: {filename}) to collection.")
@@ -475,28 +761,43 @@ def add_collected_items(media_items_batch, recent=False):
         # logging.info(f"Finished processing main batch loop in {time.time() - start_time_batch:.4f} seconds.")
 
         # --- Post-loop cleanup ---
-        if not recent:
+        # Skip cleanup during backfill - backfill only updates existing records with Plex metadata
+        # and should not delete items that Plex might not have scanned yet
+        if not recent and not backfill:
             # logging.info("Starting post-loop cleanup for missing files.")
             # start_cleanup_time = time.time()
             cursor = conn.execute('''
-                SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version, 
-                       filled_by_file, collected_at, release_date, upgrading_from, location_basename
+                SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version,
+                       filled_by_file, collected_at, release_date, upgrading_from, location_basename, location_on_disk
                 FROM media_items
                 WHERE state = 'Collected'
             ''')
             for row in cursor:
                 item = row_to_dict(row)
                 item_identifier = generate_identifier(item)
-                
+
                 filled_by = item.get('filled_by_file')
                 location_base = item.get('location_basename')
+                location_on_disk = item.get('location_on_disk')
 
-                # A file is considered present if either its 'filled_by_file' or 'location_basename' is in the scan results
+                # A file is considered present if any of these are in the scan results:
+                # - filled_by_file (filename)
+                # - location_basename (filename)
+                # - location_on_disk (full path - important for symlink mode with multiple versions)
                 is_present_on_disk = (filled_by and filled_by in all_valid_filenames) or \
-                                     (location_base and location_base in all_valid_filenames)
+                                     (location_base and location_base in all_valid_filenames) or \
+                                     (location_on_disk and location_on_disk in all_valid_filenames)
 
-                # A file is considered expected if it has at least one filename associated with it
-                is_expected_on_disk = filled_by or location_base
+                # A file is considered expected if it has at least one filename/path associated with it
+                is_expected_on_disk = filled_by or location_base or location_on_disk
+
+                # Debug: Log cleanup check for items that might be deleted
+                if is_expected_on_disk and not is_present_on_disk:
+                    logging.debug(f"[Cleanup Debug] Item {item['id']} ({item_identifier}) NOT found in Plex scan:")
+                    logging.debug(f"  filled_by_file: '{filled_by}' - in valid? {filled_by in all_valid_filenames if filled_by else 'N/A'}")
+                    logging.debug(f"  location_basename: '{location_base}' - in valid? {location_base in all_valid_filenames if location_base else 'N/A'}")
+                    logging.debug(f"  location_on_disk: '{location_on_disk}' - in valid? {location_on_disk in all_valid_filenames if location_on_disk else 'N/A'}")
+                    logging.debug(f"  all_valid_filenames sample (first 5): {list(all_valid_filenames)[:5]}")
 
                 if is_expected_on_disk and not is_present_on_disk:
                     file_to_log = location_base or filled_by
@@ -608,7 +909,7 @@ def plex_collection_disabled(media_items_batch: List[Dict[str, Any]]) -> bool:
 
     conn = get_db_connection()
     try:
-        conn.execute('BEGIN TRANSACTION')
+        conn.execute('BEGIN IMMEDIATE')
         
         for item in media_items_batch:
             # Get filename from either location or filled_by_file
@@ -874,16 +1175,17 @@ def add_or_update_tv_show(imdb_id: str, tmdb_id: Optional[str] = None, title: Op
         # We specifically DO NOT update is_complete or total_episodes here.
         # last_status_check is also not updated here.
         # Using COALESCE prevents overwriting existing values with NULL if new metadata is missing fields.
+        # Use NULLIF to treat empty strings as NULL for proper COALESCE behavior.
         cursor.execute("""
             INSERT INTO tv_shows (
                 imdb_id, tmdb_id, title, year, status, is_complete,
                 total_episodes, last_status_check, added_at, last_updated
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(imdb_id) DO UPDATE SET
-                tmdb_id = COALESCE(excluded.tmdb_id, tmdb_id),
-                title = COALESCE(excluded.title, title),
+                tmdb_id = COALESCE(NULLIF(excluded.tmdb_id, ''), tmdb_id),
+                title = COALESCE(NULLIF(excluded.title, ''), title),
                 year = COALESCE(excluded.year, year),
-                status = COALESCE(excluded.status, status),
+                status = COALESCE(NULLIF(excluded.status, ''), status),
                 last_updated = excluded.last_updated
             WHERE imdb_id = excluded.imdb_id;
         """, insert_data)

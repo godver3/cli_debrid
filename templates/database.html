@@ -97,6 +97,10 @@
                         {% endfor %}
                     </select>
                 </div>
+                <div class="column-buttons">
+                    <button id="move-up" title="Move selected column up">▲</button>
+                    <button id="move-down" title="Move selected column down">▼</button>
+                </div>
             </div>
             <button id="update-columns">Update View</button>
         </div>
@@ -106,12 +110,18 @@
         <div class="result-count">
             Showing {{ result_count }} results
             <span class="unique-count">(Unique: {{ unique_result_count }})</span>
+            | Total pages: {{ total_pages }}
         </div>
         <form id="filter-form" class="mb-3">
 
             
             <div class="filter-section">
                 <button type="button" id="add-filter" class="btn btn-secondary">Add Filter</button>
+                <button type="button" class="btn btn-secondary quick-filter" data-column="title">Title</button>
+                <button type="button" class="btn btn-secondary quick-filter" data-column="state">State</button>
+                <button type="button" class="btn btn-secondary quick-filter" data-column="version">Version</button>
+                <button type="button" class="btn btn-secondary quick-filter" data-column="imdb_id">IMDB ID</button>
+                <button type="button" class="btn btn-secondary quick-filter" data-column="type">Type</button>
             </div>
             <div id="filters-container">
                 <!-- Filter rows will be added here dynamically -->
@@ -154,11 +164,13 @@
         </form>
     </div>
     <div class="content-type-filter">
+        <a href="#" data-content-type="all" class="content-type-link {% if content_type == 'all' %}active{% endif %}">All</a>
         <a href="#" data-content-type="movie" class="content-type-link {% if content_type == 'movie' %}active{% endif %}">Movies</a>
         <a href="#" data-content-type="episode" class="content-type-link {% if content_type == 'episode' %}active{% endif %}">Episodes</a>
     </div>
     <div class="pagination">
         {% if alphabet %}
+            <a href="#" data-letter="" class="pagination-link {% if current_letter == '' %}active{% endif %}">All</a>
             <a href="#" data-letter="#" class="pagination-link {% if current_letter == '#' %}active{% endif %}">#</a>
             {% for letter in alphabet %}
             <a href="#" data-letter="{{ letter }}" class="pagination-link {% if letter == current_letter %}active{% endif %}">{{ letter }}</a>
@@ -178,8 +190,8 @@
         <table>
             <thead>
                 <tr>
+                    <th>#</th>
                     <th>Select</th>
-                    <th>Play</th>
                     <th>Delete</th>
                     <th>Rescrape</th>
                     {% for column in selected_columns %}
@@ -190,14 +202,10 @@
             </thead>
             <tbody>
                 {% for item in items %}
-                    <tr>
+                    <tr data-page="{{ current_page | default(1) }}">
+                        <td>{{ loop.index }}</td>
                         <td>
                             <input type="checkbox" id="item-select-{{ item['id'] }}" name="item_select" class="item-select" data-item-id="{{ item['id'] }}" aria-label="Select item {{ item['id'] }}">
-                        </td>
-                        <td>
-                            <a href="/video/${item['id']}" class="play-item" title="Play" style="margin-right: 6px;">
-                                ▶️
-                            </a>
                         </td>
                         <td>
                             <button class="delete-item" data-item-id="{{ item['id'] }}">X</button>
@@ -239,9 +247,9 @@
     const DEFAULTS = {
         SORT_COLUMN: 'id',
         SORT_ORDER: 'asc',
-        CONTENT_TYPE: 'movie',
+        CONTENT_TYPE: 'all',
         FILTER_LOGIC: 'AND',
-        LETTER: 'A' // Default letter, adjust if empty is preferred
+        LETTER: '' // Empty string means "All"
     };
 
     function getQueryParam(param) {
@@ -300,7 +308,7 @@
     queryParams.set('sort_order', sortOrder);
 
     // Content Type
-    const contentType = (savedContentType === 'movie' || savedContentType === 'episode') ? savedContentType : DEFAULTS.CONTENT_TYPE;
+    const contentType = (savedContentType === 'movie' || savedContentType === 'episode' || savedContentType === 'all') ? savedContentType : DEFAULTS.CONTENT_TYPE;
     if (getQueryParam('content_type') !== contentType) needsRedirect = true;
     queryParams.set('content_type', contentType);
 
@@ -309,8 +317,8 @@
     if (getQueryParam('filter_logic') !== filterLogic) needsRedirect = true;
     queryParams.set('filter_logic', filterLogic);
 
-    // Letter
-    const letter = savedLetter || DEFAULTS.LETTER;
+    // Letter (use !== null check to allow empty string)
+    const letter = (savedLetter !== null) ? savedLetter : DEFAULTS.LETTER;
     if (getQueryParam('letter') !== letter) needsRedirect = true;
     queryParams.set('letter', letter);
 
@@ -349,9 +357,122 @@
     };
 </script>
 
-<script type="module">
-import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
-import { initializeDatabaseTooltips } from '/static/js/tooltips.js';
+<script>
+// Import statements removed - using global functions from loaded scripts instead
+// showPopup and POPUP_TYPES are available globally from notifications.js
+// Database tooltips are automatically initialized through tooltips.js event delegation
+
+// Configuration Constants
+const CONFIG = {
+    BATCH_SIZE: 450,              // Number of items to process in each batch
+    ITEMS_PER_PAGE: {{ per_page | default(250) }},  // Items per page for pagination
+    MAX_PAGES_IN_DOM: 2,          // Keep only 2 pages in DOM (for windowing)
+    SCROLL_TRIGGER_PX: 3000,      // Pixels from edge to trigger scroll load
+    BATCH_DELAY_MS: 100,          // Delay between batch processing
+    PERFORMANCE_WARNING_MS: 1000  // Warn if operation takes longer than this
+};
+
+// Performance Metrics Tracking
+const performanceMetrics = {
+    pageLoadTime: 0,
+    filterApplyTime: 0,
+    scrollLoadTime: 0,
+    columnValueLoadTime: 0,
+
+    measure(name, fn) {
+        const start = performance.now();
+        const result = fn();
+        const duration = performance.now() - start;
+        this[name] = duration;
+        if (duration > CONFIG.PERFORMANCE_WARNING_MS) {
+            console.warn(`[PERFORMANCE] Slow operation: ${name} took ${duration.toFixed(2)}ms`);
+        } else {
+            console.log(`[PERFORMANCE] ${name}: ${duration.toFixed(2)}ms`);
+        }
+        return result;
+    },
+
+    async measureAsync(name, fn) {
+        const start = performance.now();
+        const result = await fn();
+        const duration = performance.now() - start;
+        this[name] = duration;
+        if (duration > CONFIG.PERFORMANCE_WARNING_MS) {
+            console.warn(`[PERFORMANCE] Slow async operation: ${name} took ${duration.toFixed(2)}ms`);
+        } else {
+            console.log(`[PERFORMANCE] ${name}: ${duration.toFixed(2)}ms`);
+        }
+        return result;
+    },
+
+    logSummary() {
+        console.log('[PERFORMANCE SUMMARY]');
+        console.log(`  Page Load: ${this.pageLoadTime.toFixed(2)}ms`);
+        console.log(`  Filter Apply: ${this.filterApplyTime.toFixed(2)}ms`);
+        console.log(`  Scroll Load: ${this.scrollLoadTime.toFixed(2)}ms`);
+        console.log(`  Column Value Load: ${this.columnValueLoadTime.toFixed(2)}ms`);
+    }
+};
+
+// Cache for lazy-loaded column values (stores Promises to prevent duplicate requests)
+const columnValuesCache = {};
+
+// Fetch column values on-demand
+async function fetchColumnValues(columnName) {
+    // Return cached promise if request is already in flight or completed
+    if (columnValuesCache[columnName]) {
+        return await columnValuesCache[columnName];
+    }
+
+    // Cache the promise immediately to prevent duplicate requests
+    columnValuesCache[columnName] = performanceMetrics.measureAsync(`columnValueLoad_${columnName}`, async () => {
+        try {
+            const response = await fetch(`/database/get_column_values/${columnName}`);
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            const errorMsg = errorData.error || `Failed to load filter values (HTTP ${response.status})`;
+
+            if (response.status === 503 || errorData.database_locked) {
+                showPopup({
+                    type: POPUP_TYPES.WARNING,
+                    title: 'Database Busy',
+                    message: errorMsg
+                });
+            } else {
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Error Loading Filter Values',
+                    message: errorMsg
+                });
+            }
+            return [];
+        }
+        const data = await response.json();
+        if (data.success) {
+            return data.values;
+        } else {
+            console.error(`Failed to fetch column values for ${columnName}:`, data.error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Error Loading Filter Values',
+                message: data.error || `Failed to load values for ${columnName}`
+            });
+            return [];
+        }
+    } catch (error) {
+        console.error(`Error fetching column values for ${columnName}:`, error);
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            title: 'Network Error',
+            message: `Unable to load filter values for ${columnName}. Please check your connection and try again.`
+        });
+        return [];
+        }
+    });
+
+    // Return the cached promise
+    return await columnValuesCache[columnName];
+}
 
 document.addEventListener('DOMContentLoaded', function() {
     // Get data from window object
@@ -360,8 +481,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize state variables at the top
     let currentContentType = templateData.contentType;
-    if (currentContentType !== 'movie' && currentContentType !== 'episode') {
-        currentContentType = 'movie';
+    if (currentContentType !== 'movie' && currentContentType !== 'episode' && currentContentType !== 'all') {
+        currentContentType = 'all';
     }
     let currentLetter = '{{ current_letter }}';
     let lastChecked = null;
@@ -382,9 +503,18 @@ document.addEventListener('DOMContentLoaded', function() {
     // Function to validate and sanitize localStorage data
     function cleanupLocalStorage() {
         const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE);
-        if (savedContentType !== 'movie' && savedContentType !== 'episode') {
-            console.log('Removing invalid content type from localStorage:', savedContentType);
-            localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, 'movie');
+        const savedLetter = localStorage.getItem(STORAGE_KEYS.LETTER);
+
+        // Migrate old defaults to new defaults
+        if (savedContentType === 'movie') {
+            localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, 'all');
+        } else if (savedContentType !== 'episode' && savedContentType !== 'all') {
+            localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, 'all');
+        }
+
+        // Migrate old letter default 'A' to empty (All)
+        if (savedLetter === 'A') {
+            localStorage.setItem(STORAGE_KEYS.LETTER, '');
         }
 
         try {
@@ -394,7 +524,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 JSON.parse(savedFilters); // Will throw if invalid JSON
             }
         } catch (e) {
-            console.log('Removing invalid filters from localStorage');
             localStorage.removeItem(STORAGE_KEYS.FILTERS);
         }
 
@@ -405,7 +534,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 JSON.parse(savedColumns); // Will throw if invalid JSON
             }
         } catch (e) {
-            console.log('Removing invalid selected columns from localStorage');
             localStorage.removeItem(STORAGE_KEYS.SELECTED_COLUMNS);
         }
     }
@@ -424,25 +552,39 @@ document.addEventListener('DOMContentLoaded', function() {
         columnSelect.id = `${uniqueId}-column`;
         columnSelect.name = `filter_column`;
         columnSelect.className = 'filter-column';
-        columnSelect.innerHTML = `
-            <option value="">Select Column</option>
-            ${filterableColumns.map(column => `
-                <option value="${column}" ${filter && filter.column === column ? 'selected' : ''}>
-                    ${column}
-                </option>
-            `).join('')}
-        `;
+
+        // Use DocumentFragment for better performance
+        const columnFragment = document.createDocumentFragment();
+        const defaultColOption = document.createElement('option');
+        defaultColOption.value = '';
+        defaultColOption.textContent = 'Select Column';
+        columnFragment.appendChild(defaultColOption);
+
+        filterableColumns.forEach(column => {
+            const option = document.createElement('option');
+            option.value = column;
+            option.textContent = column;
+            if (filter && filter.column === column) option.selected = true;
+            columnFragment.appendChild(option);
+        });
+        columnSelect.appendChild(columnFragment);
 
         // Operator select
         const operatorSelect = document.createElement('select');
         operatorSelect.id = `${uniqueId}-operator`;
         operatorSelect.name = `filter_operator`;
         operatorSelect.className = 'filter-operator';
-        operatorSelect.innerHTML = templateData.operators.map(op => `
-            <option value="${op.value}" ${filter && filter.operator === op.value ? 'selected' : ''}>
-                ${op.label}
-            </option>
-        `).join('');
+
+        // Use DocumentFragment for better performance
+        const operatorFragment = document.createDocumentFragment();
+        templateData.operators.forEach(op => {
+            const option = document.createElement('option');
+            option.value = op.value;
+            option.textContent = op.label;
+            if (filter && filter.operator === op.value) option.selected = true;
+            operatorFragment.appendChild(option);
+        });
+        operatorSelect.appendChild(operatorFragment);
 
         // Value input/select
         const valueContainer = document.createElement('div');
@@ -464,50 +606,82 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Add event listeners
         columnSelect.addEventListener('change', () => {
-            updateValueInput(valueContainer, columnSelect.value, '', contentSourceDisplayMap, uniqueId);
+            // Use requestAnimationFrame for smoother UI update
+            requestAnimationFrame(() => {
+                updateValueInput(valueContainer, columnSelect.value, '', contentSourceDisplayMap, uniqueId);
+            });
         });
 
         return row;
     }
 
-    function updateValueInput(container, column, value = '', displayMap = {}, uniqueId = '') {
+    async function updateValueInput(container, column, value = '', displayMap = {}, uniqueId = '') {
         container.innerHTML = '';
 
-        if (column === 'content_source' && templateData.columnValues[column]) {
-            const select = document.createElement('select');
-            select.id = `${uniqueId}-value`;
-            select.name = 'filter_value';
-            select.className = 'filter-value';
-            let optionsHTML = '<option value="">Select Source</option>';
+        // Define which columns should use dropdowns (only specific columns)
+        const dropdownColumns = ['state', 'type', 'version', 'content_source', 'upgraded', 'early_release'];
 
-            const availableSourceIds = templateData.columnValues[column] || [];
+        // Only fetch column values for dropdown columns
+        if (dropdownColumns.includes(column)) {
+            container.innerHTML = '<span>Loading...</span>';
+            const columnValues = await fetchColumnValues(column);
+            container.innerHTML = '';
 
-            if (availableSourceIds.includes("None") || availableSourceIds.includes("")) {
-                 optionsHTML += `<option value="None" ${value === "None" ? 'selected' : ''}>None</option>`;
+            if (column === 'content_source' && columnValues.length > 0) {
+                const select = document.createElement('select');
+                select.id = `${uniqueId}-value`;
+                select.name = 'filter_value';
+                select.className = 'filter-value';
+
+                // Use DocumentFragment for better performance
+                const fragment = document.createDocumentFragment();
+
+                // Add default option
+                const defaultOption = document.createElement('option');
+                defaultOption.value = '';
+                defaultOption.textContent = 'Select Source';
+                fragment.appendChild(defaultOption);
+
+                const availableSourceIds = columnValues || [];
+
+                if (availableSourceIds.includes("None") || availableSourceIds.includes("")) {
+                    const noneOption = document.createElement('option');
+                    noneOption.value = 'None';
+                    noneOption.textContent = 'None';
+                    if (value === "None") noneOption.selected = true;
+                    fragment.appendChild(noneOption);
+                }
+
+                availableSourceIds.forEach(sourceId => {
+                    if (sourceId === "None" || sourceId === "") return;
+
+                    const displayName = displayMap[sourceId] || sourceId;
+                    const option = document.createElement('option');
+                    option.value = sourceId;
+                    option.textContent = displayName;
+                    if (value === sourceId) option.selected = true;
+                    fragment.appendChild(option);
+                });
+
+                select.appendChild(fragment);
+                container.appendChild(select);
             }
+            else if (columnValues && columnValues.length > 0) {
+                const select = document.createElement('select');
+                select.id = `${uniqueId}-value`;
+                select.name = 'filter_value';
+                select.className = 'filter-value';
 
-            availableSourceIds.forEach(sourceId => {
-                 if (sourceId === "None" || sourceId === "") return;
+                // Use DocumentFragment for better performance
+                const fragment = document.createDocumentFragment();
 
-                const displayName = displayMap[sourceId] || sourceId;
-                optionsHTML += `
-                    <option value="${sourceId}" ${value === sourceId ? 'selected' : ''}>
-                        ${displayName}
-                    </option>
-                `;
-            });
+                // Add default option
+                const defaultOption = document.createElement('option');
+                defaultOption.value = '';
+                defaultOption.textContent = 'Select Value';
+                fragment.appendChild(defaultOption);
 
-            select.innerHTML = optionsHTML;
-            container.appendChild(select);
-        }
-        else if (templateData.columnValues[column]) {
-            const select = document.createElement('select');
-            select.id = `${uniqueId}-value`;
-            select.name = 'filter_value';
-            select.className = 'filter-value';
-            select.innerHTML = `
-                <option value="">Select Value</option>
-                ${templateData.columnValues[column].map(val => {
+                columnValues.forEach(val => {
                     let displayVal = val;
                     if (column === 'state' && val === 'Final_Check') {
                         displayVal = 'Final Scrape';
@@ -516,12 +690,29 @@ document.addEventListener('DOMContentLoaded', function() {
                     } else if (column === 'state' && val === 'all_blacklisted') {
                         displayVal = 'All Versions Blacklisted';
                     }
-                    return `<option value="${val}" ${value === val ? 'selected' : ''}>${displayVal}</option>`;
-                }).join('')}
-            `;
-            container.appendChild(select);
+                    const option = document.createElement('option');
+                    option.value = val;
+                    option.textContent = displayVal;
+                    if (value === val) option.selected = true;
+                    fragment.appendChild(option);
+                });
+
+                select.appendChild(fragment);
+                container.appendChild(select);
+            }
+            else {
+                // No values returned, use text input as fallback
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.id = `${uniqueId}-value`;
+                input.name = 'filter_value';
+                input.className = 'filter-value';
+                input.value = value || '';
+                container.appendChild(input);
+            }
         }
         else {
+            // For all other columns, use text input
             const input = document.createElement('input');
             input.type = 'text';
             input.id = `${uniqueId}-value`;
@@ -540,29 +731,44 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // Function to save settings to localStorage
-    function saveSettings() {
-        const filters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
+    // Debounced save to prevent excessive localStorage writes
+    let saveSettingsTimeout = null;
+    function collectFilters() {
+        return Array.from(document.querySelectorAll('.filter-row')).map(row => ({
             column: row.querySelector('.filter-column').value,
             operator: row.querySelector('.filter-operator').value,
             value: row.querySelector('.filter-value').value
         })).filter(f => f.column);
+    }
 
-        const sortColumn = document.getElementById('sort-column').value;
-        const sortOrder = document.getElementById('sort-order').value;
-        const filterLogic = document.querySelector('input[name="filter_logic"]:checked').value;
-        
-        // Validate content type before saving
-        const validContentType = (currentContentType === 'movie' || currentContentType === 'episode') 
-            ? currentContentType 
-            : 'movie';
+    function saveSettings() {
+        // Clear any pending save
+        if (saveSettingsTimeout) {
+            clearTimeout(saveSettingsTimeout);
+        }
 
-        localStorage.setItem(STORAGE_KEYS.FILTERS, JSON.stringify(filters));
-        localStorage.setItem(STORAGE_KEYS.SORT_COLUMN, sortColumn);
-        localStorage.setItem(STORAGE_KEYS.SORT_ORDER, sortOrder);
-        localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, validContentType);
-        localStorage.setItem(STORAGE_KEYS.FILTER_LOGIC, filterLogic);
-        localStorage.setItem(STORAGE_KEYS.LETTER, currentLetter); // Save current letter
+        // Debounce for 150ms
+        saveSettingsTimeout = setTimeout(() => {
+            const filters = collectFilters();
+
+            const sortColumn = document.getElementById('sort-column').value;
+            const sortOrder = document.getElementById('sort-order').value;
+            const filterLogic = document.querySelector('input[name="filter_logic"]:checked').value;
+
+            // Validate content type before saving
+            const validContentType = (currentContentType === 'movie' || currentContentType === 'episode' || currentContentType === 'all')
+                ? currentContentType
+                : 'all';
+
+            localStorage.setItem(STORAGE_KEYS.FILTERS, JSON.stringify(filters));
+            localStorage.setItem(STORAGE_KEYS.SORT_COLUMN, sortColumn);
+            localStorage.setItem(STORAGE_KEYS.SORT_ORDER, sortOrder);
+            localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, validContentType);
+            localStorage.setItem(STORAGE_KEYS.FILTER_LOGIC, filterLogic);
+            localStorage.setItem(STORAGE_KEYS.LETTER, currentLetter); // Save current letter
+
+            saveSettingsTimeout = null;
+        }, 150);
     }
 
     // Function to restore settings from localStorage
@@ -589,9 +795,9 @@ document.addEventListener('DOMContentLoaded', function() {
             columnValuesForUpdate = ['imdb_id', 'title', 'year', 'release_date', 'state', 'type', 'season_number', 'episode_number', 'collected_at', 'version'];
         }
 
-        const validContentType = (savedContentType === 'movie' || savedContentType === 'episode') 
-            ? savedContentType 
-            : 'movie';
+        const validContentType = (savedContentType === 'movie' || savedContentType === 'episode' || savedContentType === 'all')
+            ? savedContentType
+            : 'all';
 
         if (savedFiltersJSON) {
             try {
@@ -637,10 +843,73 @@ document.addEventListener('DOMContentLoaded', function() {
         // If these differ, the user can click "Apply" or "Update View" to synchronize.
     }
 
-    // Add filter button handler
-        document.getElementById('add-filter').addEventListener('click', () => {
+    // Add filter button handler with throttling to prevent rapid clicks from locking up
+    let isAddingFilter = false;
+    document.getElementById('add-filter').addEventListener('click', () => {
+        if (isAddingFilter) return; // Prevent rapid additions
+        isAddingFilter = true;
+
+        requestAnimationFrame(() => {
             document.getElementById('filters-container').appendChild(createFilterRow());
+            // Reset flag after a short delay
+            setTimeout(() => {
+                isAddingFilter = false;
+            }, 100);
         });
+    });
+
+    // Quick filter buttons handler with throttling
+    let isAddingQuickFilter = false;
+    document.querySelectorAll('.quick-filter').forEach(button => {
+        button.addEventListener('click', () => {
+            if (isAddingQuickFilter) return; // Prevent rapid additions
+            isAddingQuickFilter = true;
+
+            const column = button.getAttribute('data-column');
+            requestAnimationFrame(() => {
+                const newRow = createFilterRow({ column: column, operator: 'contains', value: '' });
+                document.getElementById('filters-container').appendChild(newRow);
+                // Reset flag after a short delay
+                setTimeout(() => {
+                    isAddingQuickFilter = false;
+                }, 100);
+            });
+        });
+    });
+
+    // Filter logic radio buttons - submit form on change
+    document.querySelectorAll('input[name="filter_logic"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            const filterForm = document.getElementById('filter-form');
+            if (filterForm) {
+                saveSettings();
+                filterForm.requestSubmit();
+            }
+        });
+    });
+
+    // Sort Column/Order Change - update content on change
+    const sortColumnSelect = document.getElementById('sort-column');
+    const sortOrderSelect = document.getElementById('sort-order');
+    const handleSortChange = () => {
+        saveSettings();
+        const currentFilters = collectFilters();
+        const currentSortColumn = document.getElementById('sort-column').value;
+        const currentSortOrder = document.getElementById('sort-order').value;
+        const currentFilterLogic = document.querySelector('input[name="filter_logic"]:checked').value || 'AND';
+        const currentSelectedColumns = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
+        const params = {
+            content_type: currentContentType || 'all',
+            letter: currentLetter || '',
+            selected_columns: JSON.stringify(currentSelectedColumns),
+            filter_logic: currentFilterLogic
+        };
+        if (currentFilters.length > 0) params.filters = JSON.stringify(currentFilters);
+        if (currentSortColumn) { params.sort_column = currentSortColumn; params.sort_order = currentSortOrder; }
+        updateContent('{{ url_for('database.index') }}', params);
+    };
+    if (sortColumnSelect) sortColumnSelect.addEventListener('change', handleSortChange);
+    if (sortOrderSelect) sortOrderSelect.addEventListener('change', handleSortChange);
 
     // Filter form submit (no page reset)
         const filterForm = document.getElementById('filter-form');
@@ -671,7 +940,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     filters: JSON.stringify(filters),
                     sort_column: sortColumn,
                     sort_order: sortOrder,
-                    content_type: currentContentType || 'movie',
+                    content_type: currentContentType || 'all',
                     selected_columns: JSON.stringify(selectedColumnValues),
                     filter_logic: filterLogic,
                     letter: currentLetter || ''
@@ -707,14 +976,15 @@ document.addEventListener('DOMContentLoaded', function() {
             sortOrder.value = 'asc';
         }
 
-            currentContentType = 'movie';
-            currentLetter = 'A';
-            
-        localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, 'movie');
+            currentContentType = 'all';
+            currentLetter = '';
+
+        localStorage.setItem(STORAGE_KEYS.CONTENT_TYPE, 'all');
+        localStorage.setItem(STORAGE_KEYS.LETTER, '');
 
         const contentTypeLinks = document.querySelectorAll('.content-type-link');
         contentTypeLinks.forEach(function(link) {
-            if (link.getAttribute('data-content-type') === 'movie') {
+            if (link.getAttribute('data-content-type') === 'all') {
                 link.classList.add('active');
                     } else {
                 link.classList.remove('active');
@@ -723,7 +993,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const paginationLinks = document.querySelectorAll('.pagination-link');
         paginationLinks.forEach(function(link) {
-            if (link.getAttribute('data-letter') === 'A') {
+            if (link.getAttribute('data-letter') === '') {
                 link.classList.add('active');
             } else {
                 link.classList.remove('active');
@@ -731,17 +1001,11 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         updateContent('{{ url_for('database.index') }}', {
-            content_type: 'movie',
-            letter: 'A',
+            content_type: 'all',
+            letter: '',
             filter_logic: 'AND'
         });
     }
-
-    // Add event listener for clear filter & sort button
-    document.getElementById('clear-filter-sort').addEventListener('click', function(e) {
-                e.preventDefault();
-        clearFilterAndSort();
-    });
 
     // Add CSS styles for the new filter UI
     const style = document.createElement('style');
@@ -775,8 +1039,29 @@ document.addEventListener('DOMContentLoaded', function() {
         .remove-filter:hover {
             background: #cc0000;
         }
-        #add-filter {
+        .filter-section {
             margin-bottom: 1rem;
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        #add-filter {
+            background: #007bff;
+            color: white;
+            font-weight: 500;
+        }
+        #add-filter:hover {
+            background: #0056b3;
+        }
+        .quick-filter {
+            background: #6c757d;
+            color: white;
+            font-size: 0.85rem;
+            padding: 0.35rem 0.75rem;
+        }
+        .quick-filter:hover {
+            background: #5a6268;
         }
         .sort-container {
             display: flex;
@@ -840,7 +1125,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (isMobileDevice()) {
         // Add pointer cursor to all truncated cells
         document.querySelectorAll('.truncate').forEach(cell => {
-            cell.style.cursor = 'pointer';
+            cell.classList.add('mobile-clickable');
         });
 
         // Use event delegation for cell clicks
@@ -947,7 +1232,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 sourceOfColumns = "js_defaults_due_to_empty_localstorage";
                 localStorage.setItem(STORAGE_KEYS.SELECTED_COLUMNS, JSON.stringify(columnsToUse));
             }
-            console.log(`Initializing columns from: ${sourceOfColumns}`, columnsToUse);
 
             // Clear both select elements
             availableColumns.innerHTML = '';
@@ -988,7 +1272,31 @@ document.addEventListener('DOMContentLoaded', function() {
         // Add event listeners for column selection
         addColumnBtn.addEventListener('click', () => moveOptions(availableColumns, selectedColumns));
         removeColumnBtn.addEventListener('click', () => moveOptions(selectedColumns, availableColumns));
-        
+
+        // Add event listeners for column reordering
+        const moveUpBtn = document.getElementById('move-up');
+        const moveDownBtn = document.getElementById('move-down');
+
+        moveUpBtn.addEventListener('click', () => {
+            const selectedIndex = selectedColumns.selectedIndex;
+            if (selectedIndex > 0) {
+                const option = selectedColumns.options[selectedIndex];
+                const prevOption = selectedColumns.options[selectedIndex - 1];
+                selectedColumns.insertBefore(option, prevOption);
+                option.selected = true;
+            }
+        });
+
+        moveDownBtn.addEventListener('click', () => {
+            const selectedIndex = selectedColumns.selectedIndex;
+            if (selectedIndex >= 0 && selectedIndex < selectedColumns.options.length - 1) {
+                const option = selectedColumns.options[selectedIndex];
+                const nextOption = selectedColumns.options[selectedIndex + 1];
+                selectedColumns.insertBefore(nextOption, option);
+                option.selected = true;
+            }
+        });
+
         toggleColumnSelectorBtn.addEventListener('click', function() {
             columnSelector.classList.toggle('hidden');
             this.classList.toggle('active');
@@ -1026,9 +1334,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const currentSortOrder = localStorage.getItem(STORAGE_KEYS.SORT_ORDER) || 'asc';
             const currentFilterLogic = localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC) || 'AND';
             // Ensure currentContentType is up-to-date from localStorage
-            const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE) || 'movie';
+            const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE) || 'all';
             // Use the globally tracked currentContentType, validated against saved value
-            currentContentType = (savedContentType === 'movie' || savedContentType === 'episode') ? savedContentType : 'movie';
+            currentContentType = (savedContentType === 'movie' || savedContentType === 'episode' || savedContentType === 'all') ? savedContentType : 'all';
 
             const params = {
                 selected_columns: JSON.stringify(selectedColumnValues), // Use the newly selected columns
@@ -1051,31 +1359,110 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function setUpdatingContent(isUpdating) {
         if (isUpdating) {
-            Loading.show();
+            // Show loading with progress - timer will start automatically
+            Loading.show('Loading...', null, true, false);
         } else {
             Loading.hide();
         }
     }
 
+    // Helper function to fetch with progress tracking
+    async function fetchWithProgress(url, onProgress = null) {
+        const response = await fetch(url);
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const contentLength = response.headers.get('content-length');
+
+        // If no content length, keep using automatic timer
+        if (!contentLength) {
+            return response.json();
+        }
+
+        // Don't stop the timer - let it continue running
+        // We'll override with real progress if chunks arrive gradually
+        const total = parseInt(contentLength, 10);
+        let loaded = 0;
+        let chunkCount = 0;
+
+        const reader = response.body.getReader();
+        const stream = new ReadableStream({
+            start(controller) {
+                function push() {
+                    reader.read().then(({ done, value }) => {
+                        if (done) {
+                            controller.close();
+                            // Only set to 100% if we had multiple chunks (gradual download)
+                            if (chunkCount > 1 && onProgress) {
+                                onProgress(100);
+                            }
+                            // For single-chunk responses, let the timer complete naturally
+                            return;
+                        }
+
+                        chunkCount++;
+                        loaded += value.byteLength;
+                        const progress = (loaded / total) * 100;
+
+                        // Only override timer progress if we're getting multiple chunks
+                        if (chunkCount > 1 && onProgress) {
+                            onProgress(progress);
+                        }
+
+                        controller.enqueue(value);
+                        push();
+                    });
+                }
+                push();
+            }
+        });
+
+        return new Response(stream).json();
+    }
+
     function renderTable(items, selectedColumns) {
+        // Load saved column widths
+        let savedWidths = {};
+        try {
+            const widthsData = localStorage.getItem('db_column_widths');
+            if (widthsData) {
+                savedWidths = JSON.parse(widthsData);
+            }
+        } catch (e) {
+            console.error('Error loading saved column widths:', e);
+        }
+
         let tableHTML = '<table><thead><tr>';
-        tableHTML += '<th>Select</th>';
-        tableHTML += '<th>Play</th>';
-        tableHTML += '<th>Delete</th>';
-        tableHTML += '<th>Rescrape</th>';
+        let columnIndex = 0;
+
+        // Helper to create header with optional width
+        const createHeader = (text, index) => {
+            const width = savedWidths[index];
+            const style = width ? ` style="width: ${width}px; min-width: ${width}px;"` : '';
+            return `<th${style}>${text}</th>`;
+        };
+
+        tableHTML += createHeader('#', columnIndex++);
+        tableHTML += createHeader('Select', columnIndex++);
+        tableHTML += createHeader('Delete', columnIndex++);
+        tableHTML += createHeader('Rescrape', columnIndex++);
+
         selectedColumns.forEach(column => {
             let displayName = column;
             if (column === 'season_number') displayName = 'S#';
             else if (column === 'episode_number') displayName = 'E#';
-            else if (column === 'size') displayName = 'Size (GB)'; // New
-            tableHTML += `<th>${displayName}</th>`;
+            else if (column === 'size') displayName = 'Size (GB)';
+            tableHTML += createHeader(displayName, columnIndex++);
         });
         tableHTML += '</tr></thead><tbody>';
 
-        items.forEach(item => {
-            tableHTML += '<tr>';
+        items.forEach((item, index) => {
+            const rowNumber = index + 1;
+            tableHTML += `<tr data-page="1">`;
+            tableHTML += `<td>${rowNumber}</td>`;
             tableHTML += `<td><input type="checkbox" class="item-select" data-item-id="${item['id']}"></td>`;
-            tableHTML += `<td><a href="/video/${item['id']}" class="play-item" title="Play" style="margin-right: 6px;">▶️</a></td>`;
             tableHTML += `<td><button class="delete-item" data-item-id="${item['id']}">X</button></td>`;
             tableHTML += `<td><button class="rescrape-item" data-item-id="${item['id']}">↻</button></td>`;
             selectedColumns.forEach(column => {
@@ -1114,24 +1501,26 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function updateContent(url, params = {}) {
+        const perfStart = performance.now();
+
         // Validate content type
-        if (params.content_type !== 'movie' && params.content_type !== 'episode') {
-            params.content_type = 'movie';
+        if (params.content_type !== 'movie' && params.content_type !== 'episode' && params.content_type !== 'all') {
+            params.content_type = 'all';
         }
-        
+
         // Ensure content type is always set
-        params.content_type = params.content_type || currentContentType || 'movie';
-        
+        params.content_type = params.content_type || currentContentType || 'all';
+
         // Validate again after potentially using currentContentType
-        if (params.content_type !== 'movie' && params.content_type !== 'episode') {
-            params.content_type = 'movie';
+        if (params.content_type !== 'movie' && params.content_type !== 'episode' && params.content_type !== 'all') {
+            params.content_type = 'all';
         }
-        
+
         // Update currentContentType with what we're using
         currentContentType = params.content_type;
 
-        // Ensure letter is always set
-        params.letter = params.letter || currentLetter || 'A';
+        // Ensure letter is always set (empty string means "All")
+        params.letter = (params.letter !== undefined) ? params.letter : (currentLetter !== undefined ? currentLetter : '');
 
         // Add selected columns if not present
         if (!params.selected_columns) {
@@ -1156,27 +1545,17 @@ document.addEventListener('DOMContentLoaded', function() {
 
         setUpdatingContent(true);
 
-        fetch(fetchUrl)
-            .then(response => {
-                if (!response.ok) {
-                    // Try to parse error from JSON response first for more specific messages
-                    return response.json().then(errData => {
-                        throw new Error(errData.error || `HTTP error! status: ${response.status}`);
-                    }).catch(() => {
-                        // Fallback if response is not JSON or has no 'error' field
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    });
-                }
-                return response.json();
-            })
+        fetchWithProgress(fetchUrl, (progress) => {
+            Loading.setProgress(progress);
+        })
             .then(data => {
                 if (data.error) { // Should be caught by the !response.ok above, but good as a fallback
                     throw new Error(data.error);
                 }
-                
+
                 const tableContainer = document.querySelector('.table-container');
                 if (tableContainer) {
-                    tableContainer.innerHTML = data.items.length > 0 
+                    tableContainer.innerHTML = data.items.length > 0
                         ? renderTable(data.items, data.selected_columns)
                         : '<p>No items found in the database.</p>';
                 } else {
@@ -1186,6 +1565,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 const paginationElement = document.querySelector('.pagination');
                 if (paginationElement) {
                     paginationElement.innerHTML = renderPagination(data);
+                    // Re-attach letter pagination listeners after rebuilding
+                    if (typeof window.attachLetterPaginationListeners === 'function') {
+                        window.attachLetterPaginationListeners();
+                    }
                 }
 
                 const contentTypeFilterElement = document.querySelector('.content-type-filter');
@@ -1193,10 +1576,22 @@ document.addEventListener('DOMContentLoaded', function() {
                     contentTypeFilterElement.innerHTML = renderContentTypeFilter(data);
                 }
 
+                // IMPORTANT: Check for column changes BEFORE updating templateData.all_columns!
+                const filterableColumns = data.all_columns.filter(col => col !== 'size').sort();
+                const previousAllColumns = templateData.all_columns ?
+                    templateData.all_columns.filter(col => col !== 'size').sort() : [];
+                const columnsChanged = JSON.stringify(filterableColumns) !== JSON.stringify(previousAllColumns);
+
                 // Update other states
                 currentContentType = data.content_type;
                 currentLetter = data.current_letter;
                 templateData.selectedColumns = data.selected_columns;
+                templateData.all_columns = data.all_columns;  // Track all available columns for change detection
+
+                // Reset infinite scroll state when table is rebuilt
+                if (typeof window.resetInfiniteScroll === 'function') {
+                    window.resetInfiniteScroll(data.total_pages);
+                }
                 templateData.columnValues = data.column_values;
                 templateData.contentSourceDisplayMap = data.content_source_display_map || {};
 
@@ -1205,7 +1600,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (sortColumnSelect) {
                     const currentSortValueInDropdown = sortColumnSelect.value;
                     sortColumnSelect.innerHTML = `<option value="">None</option>`; // Clear existing
-                    
+
                     // data.all_columns from JSON response (includes 'size')
                     data.all_columns.forEach(column => {
                         const option = document.createElement('option');
@@ -1228,42 +1623,47 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 }
 
-                // Update existing filter dropdowns with new columns (excluding 'size' for filter column selection)
-                const filterableColumns = data.all_columns.filter(col => col !== 'size').sort();
-                document.querySelectorAll('.filter-row').forEach(row => {
-                    const columnSelect = row.querySelector('.filter-column');
-                    const valueContainer = row.querySelector('.filter-value-container');
-                    const currentValueInput = valueContainer.querySelector('.filter-value');
-                    const currentFilterValue = currentValueInput ? currentValueInput.value : '';
+                // Only update filter dropdowns if the available columns have actually changed
 
-                    // Store the column that was selected in this filter row *before* we update its options
-                    const previouslySelectedColumnInThisFilter = columnSelect.value;
+                if (columnsChanged) {
+                    console.log('[DEBUG] Columns changed, updating filter dropdowns');
+                    document.querySelectorAll('.filter-row').forEach(row => {
+                        const columnSelect = row.querySelector('.filter-column');
+                        const valueContainer = row.querySelector('.filter-value-container');
+                        const currentValueInput = valueContainer.querySelector('.filter-value');
+                        const currentFilterValue = currentValueInput ? currentValueInput.value : '';
 
-                    // Update column dropdown options for this filter row
-                    columnSelect.innerHTML = `
-                        <option value="">Select Column</option>
-                        ${filterableColumns.map(column => `
-                            <option value="${column}" ${previouslySelectedColumnInThisFilter === column ? 'selected' : ''}>
-                                ${column}
-                            </option>
-                        `).join('')}
-                    `;
+                        // Store the column that was selected in this filter row *before* we update its options
+                        const previouslySelectedColumnInThisFilter = columnSelect.value;
 
-                    // Now, columnSelect.value reflects the actual selected column *after* the options were updated.
-                    // If previouslySelectedColumnInThisFilter is no longer in data.selected_columns,
-                    // columnSelect.value will be different (e.g., "" or the first available option).
+                        // Update column dropdown options for this filter row
+                        columnSelect.innerHTML = `
+                            <option value="">Select Column</option>
+                            ${filterableColumns.map(column => `
+                                <option value="${column}" ${previouslySelectedColumnInThisFilter === column ? 'selected' : ''}>
+                                    ${column}
+                                </option>
+                            `).join('')}
+                        `;
 
-                    let valueToUseForFilterInput = currentFilterValue;
-                    if (columnSelect.value !== previouslySelectedColumnInThisFilter) {
-                        // The column for this filter row has effectively changed because the old one
-                        // is no longer available or selected. Reset the filter value.
-                        valueToUseForFilterInput = '';
-                    }
-                    
-                    // Re-trigger value input update based on the *actual current* selected column in the dropdown
-                    // and the potentially reset filter value.
-                    updateValueInput(valueContainer, columnSelect.value, valueToUseForFilterInput, templateData.contentSourceDisplayMap);
-                });
+                        // Now, columnSelect.value reflects the actual selected column *after* the options were updated.
+                        // If previouslySelectedColumnInThisFilter is no longer in data.selected_columns,
+                        // columnSelect.value will be different (e.g., "" or the first available option).
+
+                        let valueToUseForFilterInput = currentFilterValue;
+                        if (columnSelect.value !== previouslySelectedColumnInThisFilter) {
+                            // The column for this filter row has effectively changed because the old one
+                            // is no longer available or selected. Reset the filter value.
+                            valueToUseForFilterInput = '';
+                        }
+
+                        // Re-trigger value input update based on the *actual current* selected column in the dropdown
+                        // and the potentially reset filter value.
+                        updateValueInput(valueContainer, columnSelect.value, valueToUseForFilterInput, templateData.contentSourceDisplayMap);
+                    });
+                } else {
+                    console.log('[DEBUG] Columns unchanged, skipping filter dropdown updates');
+                }
 
                 // Update UI to reflect current state
                 updateUIForCurrentState(data);
@@ -1273,13 +1673,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 attachDeleteListeners();
                 attachRescrapeListeners();
 
-                // Reinitialize tooltips for the updated content
-                initializeDatabaseTooltips();
+                // Reinitialize column resize handles
+                if (typeof window.initColumnResize === 'function') {
+                    window.initColumnResize();
+                }
+
+                // Tooltips are automatically handled by event delegation in tooltips.js
 
                 // Update result count
                 const resultCountElement = document.querySelector('.result-count');
                 if (resultCountElement && typeof data.result_count !== "undefined") {
-                    resultCountElement.innerHTML = `Showing ${data.result_count} results <span class="unique-count">(Unique: ${data.unique_result_count})</span>`;
+                    resultCountElement.innerHTML = `Showing ${data.result_count} results <span class="unique-count">(Unique: ${data.unique_result_count})</span> | Total pages: ${data.total_pages}`;
                 }
             })
             .catch(error => {
@@ -1322,6 +1726,15 @@ document.addEventListener('DOMContentLoaded', function() {
             })
             .finally(() => {
                 setUpdatingContent(false);
+
+                // Log performance metrics
+                const duration = performance.now() - perfStart;
+                performanceMetrics.filterApplyTime = duration;
+                if (duration > CONFIG.PERFORMANCE_WARNING_MS) {
+                    console.warn(`[PERFORMANCE] Slow updateContent: ${duration.toFixed(2)}ms`);
+                } else {
+                    console.log(`[PERFORMANCE] updateContent: ${duration.toFixed(2)}ms`);
+                }
             });
     }
 
@@ -1330,7 +1743,8 @@ document.addEventListener('DOMContentLoaded', function() {
             return '<p>No pagination data available</p>';
         }
 
-        let paginationHTML = '<a href="#" data-letter="#" class="pagination-link ' + (data.current_letter === '#' ? 'active' : '') + '">#</a>';
+        let paginationHTML = '<a href="#" data-letter="" class="pagination-link ' + (data.current_letter === '' ? 'active' : '') + '">All</a>';
+        paginationHTML += '<a href="#" data-letter="#" class="pagination-link ' + (data.current_letter === '#' ? 'active' : '') + '">#</a>';
         data.alphabet.forEach(letter => {
             paginationHTML += '<a href="#" data-letter="' + letter + '" class="pagination-link ' + (letter === data.current_letter ? 'active' : '') + '">' + letter + '</a>';
         });
@@ -1340,6 +1754,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function renderContentTypeFilter(data) {
         return `
+            <a href="#" data-content-type="all" class="content-type-link ${data.content_type === 'all' ? 'active' : ''}">All</a>
             <a href="#" data-content-type="movie" class="content-type-link ${data.content_type === 'movie' ? 'active' : ''}">Movies</a>
             <a href="#" data-content-type="episode" class="content-type-link ${data.content_type === 'episode' ? 'active' : ''}">Episodes</a>
         `;
@@ -1385,21 +1800,54 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // Function to attach letter pagination listeners (define globally, called after DOM updates)
+    window.attachLetterPaginationListeners = function() {
+        const links = document.querySelectorAll('.pagination-link');
+
+        links.forEach(link => {
+            // Clone and replace to remove old listeners
+            const newLink = link.cloneNode(true);
+            link.parentNode.replaceChild(newLink, link);
+
+            newLink.addEventListener('click', function(e) {
+                e.preventDefault();
+
+                currentLetter = this.getAttribute('data-letter');
+                saveSettings();
+                const currentFilters = collectFilters();
+                const currentSortColumn = document.getElementById('sort-column').value;
+                const currentSortOrder = document.getElementById('sort-order').value;
+                const currentFilterLogic = document.querySelector('input[name="filter_logic"]:checked').value || 'AND';
+                const currentSelectedColumns = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
+                const params = {
+                    content_type: currentContentType || 'all',
+                    letter: currentLetter,
+                    selected_columns: JSON.stringify(currentSelectedColumns),
+                    filter_logic: currentFilterLogic
+                };
+                if (currentFilters.length > 0) params.filters = JSON.stringify(currentFilters);
+                if (currentSortColumn) { params.sort_column = currentSortColumn; params.sort_order = currentSortOrder; }
+
+                updateContent('{{ url_for('database.index') }}', params);
+            });
+        });
+    };
+
     function attachEventListeners() {
-        document.querySelectorAll('.content-type-link').forEach(link => {
-            link.addEventListener('click', function(e) {
+        const contentTypeLinks = document.querySelectorAll('.content-type-link');
+        contentTypeLinks.forEach(link => {
+            // Clone and replace to remove old listeners
+            const newLink = link.cloneNode(true);
+            link.parentNode.replaceChild(newLink, link);
+
+            newLink.addEventListener('click', function(e) {
                 e.preventDefault();
                 if (!this.classList.contains('active')) {
                     const newContentType = this.getAttribute('data-content-type');
-                    if (newContentType === 'movie' || newContentType === 'episode') {
+                    if (newContentType === 'movie' || newContentType === 'episode' || newContentType === 'all') {
                         currentContentType = newContentType;
-                        currentLetter = ''; // Reset letter
                     saveSettings();
-                        const currentFilters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
-                            column: row.querySelector('.filter-column').value,
-                            operator: row.querySelector('.filter-operator').value,
-                            value: row.querySelector('.filter-value').value
-                        })).filter(f => f.column);
+                        const currentFilters = collectFilters();
                         const currentSortColumn = document.getElementById('sort-column').value;
                         const currentSortOrder = document.getElementById('sort-order').value;
                         const currentFilterLogic = document.querySelector('input[name="filter_logic"]:checked').value || 'AND';
@@ -1425,75 +1873,17 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
 
-        document.querySelectorAll('.pagination-link').forEach(link => {
-            link.addEventListener('click', function(e) {
-                e.preventDefault();
-                if (!this.classList.contains('active')) {
-                    currentLetter = this.getAttribute('data-letter');
-                    saveSettings();
-                    const currentFilters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
-                        column: row.querySelector('.filter-column').value,
-                        operator: row.querySelector('.filter-operator').value,
-                        value: row.querySelector('.filter-value').value
-                    })).filter(f => f.column);
-                    const currentSortColumn = document.getElementById('sort-column').value;
-                    const currentSortOrder = document.getElementById('sort-order').value;
-                    const currentFilterLogic = document.querySelector('input[name="filter_logic"]:checked').value || 'AND';
-                    const currentSelectedColumns = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
-                    const params = {
-                        content_type: currentContentType || 'movie',
-                        letter: currentLetter,
-                        selected_columns: JSON.stringify(currentSelectedColumns),
-                        filter_logic: currentFilterLogic
-                    };
-                    if (currentFilters.length > 0) params.filters = JSON.stringify(currentFilters);
-                    if (currentSortColumn) { params.sort_column = currentSortColumn; params.sort_order = currentSortOrder; }
-                    updateContent('{{ url_for('database.index') }}', params);
-                }
-            });
-        });
-
-        document.querySelectorAll('input[name="filter_logic"]').forEach(radio => {
-            radio.addEventListener('change', function() {
-                const filterForm = document.getElementById('filter-form');
-                if (filterForm) {
-                saveSettings();
-                     filterForm.requestSubmit();
-                }
-            });
-        });
-
-        // Sort Column/Order Change
-        const sortColumnSelect = document.getElementById('sort-column');
-        const sortOrderSelect = document.getElementById('sort-order');
-        const handleSortChange = () => {
-            saveSettings();
-            const currentFilters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
-                column: row.querySelector('.filter-column').value,
-                operator: row.querySelector('.filter-operator').value,
-                value: row.querySelector('.filter-value').value
-            })).filter(f => f.column);
-            const currentSortColumn = document.getElementById('sort-column').value;
-            const currentSortOrder = document.getElementById('sort-order').value;
-            const currentFilterLogic = document.querySelector('input[name="filter_logic"]:checked').value || 'AND';
-            const currentSelectedColumns = Array.from(document.getElementById('selected-columns').options).map(option => option.value);
-            const params = {
-                content_type: currentContentType || 'movie',
-                letter: currentLetter || '',
-                selected_columns: JSON.stringify(currentSelectedColumns),
-                filter_logic: currentFilterLogic
-            };
-            if (currentFilters.length > 0) params.filters = JSON.stringify(currentFilters);
-            if (currentSortColumn) { params.sort_column = currentSortColumn; params.sort_order = currentSortOrder; }
-            updateContent('{{ url_for('database.index') }}', params);
-        };
-        if (sortColumnSelect) sortColumnSelect.addEventListener('change', handleSortChange);
-        if (sortOrderSelect) sortOrderSelect.addEventListener('change', handleSortChange);
+        // Attach pagination listeners (DOM was just replaced)
+        window.attachLetterPaginationListeners();
     }
 
     function attachDeleteListeners() {
         document.querySelectorAll('.delete-item').forEach(button => {
-            button.addEventListener('click', function(e) {
+            // Clone and replace to remove old listeners
+            const newButton = button.cloneNode(true);
+            button.parentNode.replaceChild(newButton, button);
+
+            newButton.addEventListener('click', function(e) {
                 e.preventDefault();
                 const itemId = this.getAttribute('data-item-id');
                 showDeleteConfirmation(itemId);
@@ -1503,7 +1893,11 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function attachRescrapeListeners() {
         document.querySelectorAll('.rescrape-item').forEach(button => {
-            button.addEventListener('click', function(e) {
+            // Clone and replace to remove old listeners
+            const newButton = button.cloneNode(true);
+            button.parentNode.replaceChild(newButton, button);
+
+            newButton.addEventListener('click', function(e) {
                 e.preventDefault();
                 const itemId = this.getAttribute('data-item-id');
                 showRescrapeConfirmation(itemId);
@@ -1546,7 +1940,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function deleteItem(itemId, blacklistItem) {
-        Loading.show();
+        Loading.show('Deleting item...', null, true, false);
         fetch('{{ url_for('database.delete_item') }}', {
             method: 'POST',
             headers: {
@@ -1647,7 +2041,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function rescrapeItem(itemId) {
-        Loading.show();
+        Loading.show('Rescraping item...', null, true, false);
         fetch('{{ url_for('debug.rescrape_item') }}', {
             method: 'POST',
             headers: {
@@ -1656,37 +2050,25 @@ document.addEventListener('DOMContentLoaded', function() {
             body: JSON.stringify({ item_id: itemId })
         })
         .then(async response => {
-            console.log('Response received. Status:', response.status, 'Ok:', response.ok);
             if (!response.ok) {
                 let errorMsg = `Default error: Network response was not ok. Status: ${response.status}`;
                 let databaseLocked = false;
-                console.log('Response not OK. Initial errorMsg:', errorMsg);
                 try {
                     const contentType = response.headers.get("content-type");
-                    console.log('Response Content-Type:', contentType);
                     if (contentType && contentType.includes("application/json")) {
-                        console.log('Attempting to parse response as JSON...');
                         const errData = await response.json();
-                        console.log('Parsed errData from JSON:', errData);
                         if (errData && errData.error) {
                             errorMsg = errData.error;
                             if (errData.database_locked === true) {
                                 databaseLocked = true;
                             }
-                            console.log('Updated errorMsg from errData.error:', errorMsg, 'DB Locked:', databaseLocked);
                         } else if (errData) {
                             errorMsg = `Unexpected JSON error format. Status: ${response.status}`;
-                            console.log('Updated errorMsg due to unexpected JSON format:', errorMsg);
-                        } else {
-                             console.log('errData was null or undefined after parsing JSON.');
                         }
                     } else {
-                        console.log('Content-Type is not application/json. Attempting to read as text.');
                         const textError = await response.text();
-                        console.log('Response text (if not JSON):', textError.substring(0, 200)); // Log first 200 chars
                         if (textError && textError.length < 500 && !textError.toLowerCase().includes("<html")) {
                              errorMsg = textError;
-                             console.log('Updated errorMsg from textError:', errorMsg);
                         } else if (textError) {
                             console.warn("Error response was text, but seems like an HTML page or too long. Sticking with default status error.");
                         }
@@ -1695,14 +2077,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     console.error('Error parsing error response (JSON or text):', parseError);
                     // errorMsg remains the default one from above if parsing fails
                 }
-                console.log('Throwing error with message:', errorMsg);
                 const errorToThrow = new Error(errorMsg);
                 if (databaseLocked || response.status === 503) {
                     errorToThrow.database_locked = true;
                 }
                 throw errorToThrow;
             }
-            console.log('Response OK. Attempting to parse as JSON...');
             return response.json();
         })
         .then(data => {
@@ -1821,7 +2201,7 @@ document.addEventListener('DOMContentLoaded', function() {
             message: `Are you sure you want to change the version of ${selectedItems.length} item(s) to ${selectedVersion}?`,
             title: 'Confirm Version Change',
             onConfirm: async () => {
-                Loading.show();
+                Loading.show('Changing versions...', null, false, false);
                 try {
                     const result = await processBatchedItems(selectedItems, 'change_version', selectedVersion);
                     showPopup({
@@ -1915,19 +2295,20 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     async function processBatchedItems(items, action, targetQueue = null) {
-        const BATCH_SIZE = 450; 
         let totalProcessed = 0;
         let errors = [];
-        let batches = Math.ceil(items.length / BATCH_SIZE);
+        let batches = Math.ceil(items.length / CONFIG.BATCH_SIZE);
         let databaseLockedInAnyBatch = false;
 
-        Loading.show(`Processing items in ${batches} batches...`);
+        Loading.show(`Processing items in ${batches} batches...`, null, false, false);
 
-        for (let i = 0; i < items.length; i += BATCH_SIZE) {
-            const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+        for (let i = 0; i < items.length; i += CONFIG.BATCH_SIZE) {
+            const batchNumber = Math.floor(i / CONFIG.BATCH_SIZE) + 1;
+            const progress = Math.round((batchNumber / batches) * 100);
+            Loading.setProgress(progress);
             Loading.updateMessage(`Processing batch ${batchNumber}/${batches}...`);
 
-            const batch = items.slice(i, i + BATCH_SIZE);
+            const batch = items.slice(i, i + CONFIG.BATCH_SIZE);
             const formData = new FormData();
             formData.append('action', action);
             
@@ -1998,7 +2379,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             if (batchNumber < batches) {
-                 await new Promise(resolve => setTimeout(resolve, 100));
+                 await new Promise(resolve => setTimeout(resolve, CONFIG.BATCH_DELAY_MS));
             }
         }
 
@@ -2016,7 +2397,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // --- Helper to create the main logic for bulk actions to enable retry ---
     async function executeBulkAction(selectedItems, actionType, targetQueueOrBlacklist, confirmationTitle, successMessagePrefix) {
-        Loading.show();
+        Loading.show('Processing...', null, false, false); // Show progress for bulk operations
         try {
             const result = await processBatchedItems(selectedItems, actionType, targetQueueOrBlacklist);
             
@@ -2274,8 +2655,7 @@ document.addEventListener('DOMContentLoaded', function() {
     attachDeleteListeners();
     attachRescrapeListeners();
 
-    // Reinitialize tooltips after initial load/updates
-    initializeDatabaseTooltips();
+    // Tooltips are automatically handled by event delegation in tooltips.js
     updateBulkActionButtons();
 
 });
@@ -2323,25 +2703,36 @@ document.addEventListener('DOMContentLoaded', function() {
             resizingColumn: null,
             startX: 0,
             startWidth: 0,
-            listenersAttached: false
+            listenersAttached: false,
+            rafId: null
         };
 
         // Helper function to stop resizing (defined once at global scope)
         function stopResize() {
             if (columnResizeState.resizingColumn) {
+                // Cancel any pending animation frame
+                if (columnResizeState.rafId) {
+                    cancelAnimationFrame(columnResizeState.rafId);
+                    columnResizeState.rafId = null;
+                }
+
                 const table = document.querySelector('.table-container table');
                 if (table) {
+                    table.classList.remove('is-resizing');
                     const headers = table.querySelectorAll('thead th');
                     const widths = {};
-                    headers.forEach((header, index) => {
+                    headers.forEach((header) => {
+                        const columnName = header.textContent.trim();
                         if (header.style.width) {
-                            widths[index] = parseInt(header.style.width);
+                            widths[columnName] = parseInt(header.style.width);
                         }
                     });
                     localStorage.setItem('db_column_widths', JSON.stringify(widths));
                 }
+                columnResizeState.resizingColumn.classList.remove('is-resizing');
                 columnResizeState.resizingColumn = null;
                 document.body.style.userSelect = '';
+                document.body.style.cursor = '';
             }
         }
 
@@ -2349,13 +2740,20 @@ document.addEventListener('DOMContentLoaded', function() {
         function handleMouseMove(e) {
             if (!columnResizeState.resizingColumn) return;
 
-            const diff = e.pageX - columnResizeState.startX;
-            const newWidth = Math.max(50, columnResizeState.startWidth + diff);
-
-            columnResizeState.resizingColumn.style.width = newWidth + 'px';
-            columnResizeState.resizingColumn.style.minWidth = newWidth + 'px';
-
             e.preventDefault();
+
+            // Use requestAnimationFrame for smooth updates
+            if (columnResizeState.rafId) {
+                cancelAnimationFrame(columnResizeState.rafId);
+            }
+
+            columnResizeState.rafId = requestAnimationFrame(() => {
+                const diff = e.pageX - columnResizeState.startX;
+                const newWidth = Math.max(50, columnResizeState.startWidth + diff);
+
+                columnResizeState.resizingColumn.style.width = newWidth + 'px';
+                columnResizeState.resizingColumn.style.minWidth = newWidth + 'px';
+            });
         }
 
         function handleMouseUp(e) {
@@ -2370,22 +2768,24 @@ document.addEventListener('DOMContentLoaded', function() {
             columnResizeState.listenersAttached = true;
         }
 
-        function initColumnResize() {
+        // Expose to global scope so updateContent can call it
+        window.initColumnResize = function() {
             const table = document.querySelector('.table-container table');
             if (!table) return;
 
             const headers = table.querySelectorAll('thead th');
 
-            // Load saved column widths from localStorage
+            // Load saved column widths from localStorage (by column name, not index)
             function loadColumnWidths() {
                 const savedWidths = localStorage.getItem('db_column_widths');
                 if (savedWidths) {
                     try {
                         const widths = JSON.parse(savedWidths);
-                        headers.forEach((header, index) => {
-                            if (widths[index]) {
-                                header.style.width = widths[index] + 'px';
-                                header.style.minWidth = widths[index] + 'px';
+                        headers.forEach((header) => {
+                            const columnName = header.textContent.trim();
+                            if (widths[columnName]) {
+                                header.style.width = widths[columnName] + 'px';
+                                header.style.minWidth = widths[columnName] + 'px';
                             }
                         });
                     } catch (e) {
@@ -2394,12 +2794,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             }
 
-            // Save column widths to localStorage
+            // Save column widths to localStorage (by column name for consistency across reloads)
             function saveColumnWidths() {
                 const widths = {};
-                headers.forEach((header, index) => {
+                headers.forEach((header) => {
+                    const columnName = header.textContent.trim();
                     if (header.style.width) {
-                        widths[index] = parseInt(header.style.width);
+                        widths[columnName] = parseInt(header.style.width);
                     }
                 });
                 localStorage.setItem('db_column_widths', JSON.stringify(widths));
@@ -2418,18 +2819,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 const resizeHandle = document.createElement('div');
                 resizeHandle.className = 'column-resize-handle';
-                resizeHandle.style.cssText = `
-                    position: absolute;
-                    right: 0;
-                    top: 0;
-                    width: 5px;
-                    height: 100%;
-                    cursor: col-resize;
-                    user-select: none;
-                    z-index: 1;
-                `;
-
-                header.style.position = 'relative';
                 header.appendChild(resizeHandle);
 
                 resizeHandle.addEventListener('mousedown', function(e) {
@@ -2437,8 +2826,16 @@ document.addEventListener('DOMContentLoaded', function() {
                     columnResizeState.startX = e.pageX;
                     columnResizeState.startWidth = header.offsetWidth;
 
-                    // Only disable text selection during resize
+                    // Add visual feedback during resize
+                    const table = document.querySelector('.table-container table');
+                    if (table) {
+                        table.classList.add('is-resizing');
+                    }
+                    header.classList.add('is-resizing');
+
+                    // Only disable text selection during resize and set cursor
                     document.body.style.userSelect = 'none';
+                    document.body.style.cursor = 'col-resize';
 
                     e.preventDefault();
                     e.stopPropagation();
@@ -2447,33 +2844,177 @@ document.addEventListener('DOMContentLoaded', function() {
 
             // Load saved widths on init
             loadColumnWidths();
-        }
+        }; // Changed to ; because it's now an assignment
 
-        // Initialize column resize when table is present
+        // Initialize column resize when table is present on page load
         if (document.querySelector('.table-container table')) {
-            initColumnResize();
+            window.initColumnResize();
         }
 
-        // Watch for table changes and re-initialize resize
-        const tableContainer = document.querySelector('.table-container');
-        if (tableContainer) {
-            const observer = new MutationObserver(function(mutations) {
-                mutations.forEach(function(mutation) {
-                    if (mutation.type === 'childList' && document.querySelector('.table-container table')) {
-                        // Table was added/replaced, re-initialize after a short delay
-                        setTimeout(() => {
-                            if (document.querySelector('.table-container table')) {
-                                initColumnResize();
-                            }
-                        }, 100);
-                    }
-                });
+        // NOTE: MutationObserver removed - updateContent() now handles re-initialization
+        // The observer was causing infinite loops by triggering on resize handle additions
+
+        // Bidirectional infinite scroll implementation with windowing
+        let currentPage = {{ current_page | default(1) }};
+        let totalPages = {{ total_pages | default(1) }};
+        let isLoadingMore = false;
+        let isLoadingPrevious = false;
+        let loadedPages = [currentPage]; // Track which pages are currently in DOM
+        let minLoadedPage = currentPage; // Track the lowest page number loaded
+        let maxLoadedPage = currentPage; // Track the highest page number loaded
+
+        // Reset function for when table is rebuilt (filters/sorts applied)
+        window.resetInfiniteScroll = function(newTotalPages) {
+            currentPage = 1;
+            totalPages = newTotalPages || 1;
+            isLoadingMore = false;
+            isLoadingPrevious = false;
+            loadedPages = [1];
+            minLoadedPage = 1;
+            maxLoadedPage = 1;
+        };
+
+        if (totalPages > 1) {
+            window.addEventListener('scroll', function() {
+                const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+                const scrollHeight = document.documentElement.scrollHeight;
+                const clientHeight = document.documentElement.clientHeight;
+
+                // Check if scrolled near bottom (load next page) - trigger before end
+                if (scrollHeight - scrollTop - clientHeight < CONFIG.SCROLL_TRIGGER_PX && !isLoadingMore && maxLoadedPage < totalPages) {
+                    loadMoreItems();
+                }
+
+                // Check if scrolled near top (load previous page) - trigger from top
+                if (scrollTop < CONFIG.SCROLL_TRIGGER_PX && !isLoadingPrevious && minLoadedPage > 1) {
+                    loadPreviousItems();
+                }
+            });
+        }
+
+        function buildRowHTML(item, pageToLoad, index) {
+            const rowNumber = (pageToLoad - 1) * CONFIG.ITEMS_PER_PAGE + index + 1;
+            let html = `<td>${rowNumber}</td>`;
+            html += `<td><input type="checkbox" id="item-select-${item.id}" name="item_select" class="item-select" data-item-id="${item.id}" aria-label="Select item ${item.id}"></td>`;
+            html += `<td><button class="delete-item" data-item-id="${item.id}">X</button></td>`;
+            html += `<td><button class="rescrape-item" data-item-id="${item.id}">↻</button></td>`;
+
+            const selectedColumns = {{ selected_columns | tojson }};
+            selectedColumns.forEach(column => {
+                if (column === 'size') {
+                    const sizeValue = item.size_gb !== undefined && item.size_gb !== null ? item.size_gb.toFixed(2) : 'N/A';
+                    html += `<td class="truncate" data-full-content="${sizeValue}">${sizeValue}</td>`;
+                } else {
+                    const value = item[column] !== undefined && item[column] !== null ? String(item[column]) : '';
+                    html += `<td class="truncate" data-full-content="${value}">${value}</td>`;
+                }
             });
 
-            observer.observe(tableContainer, {
-                childList: true,
-                subtree: true
+            return html;
+        }
+
+        async function fetchPageData(pageToLoad) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('page', pageToLoad);
+            url.searchParams.set('ajax', '1');
+
+            const response = await fetch(url.toString());
+            return await response.json();
+        }
+
+        function createPageFragment(items, pageToLoad) {
+            const fragment = document.createDocumentFragment();
+            items.forEach((item, index) => {
+                const row = document.createElement('tr');
+                row.setAttribute('data-page', pageToLoad);
+                row.innerHTML = buildRowHTML(item, pageToLoad, index);
+                fragment.appendChild(row);
             });
+            return fragment;
+        }
+
+        async function loadMoreItems() {
+            if (isLoadingMore || maxLoadedPage >= totalPages) return;
+
+            const perfStart = performance.now();
+            isLoadingMore = true;
+            const pageToLoad = maxLoadedPage + 1;
+
+            try {
+                const data = await fetchPageData(pageToLoad);
+
+                if (data.items && data.items.length > 0) {
+                    const tbody = document.querySelector('.table-container tbody');
+                    const fragment = createPageFragment(data.items, pageToLoad);
+
+                    tbody.appendChild(fragment);
+                    loadedPages.push(pageToLoad);
+                    maxLoadedPage = pageToLoad;
+
+                    // Remove top pages if we exceed max pages in DOM
+                    if (loadedPages.length > CONFIG.MAX_PAGES_IN_DOM) {
+                        const pageToRemove = loadedPages.shift();
+                        minLoadedPage = loadedPages[0];
+                        const rowsToRemove = tbody.querySelectorAll(`tr[data-page="${pageToRemove}"]`);
+                        rowsToRemove.forEach(row => row.remove());
+                    }
+                }
+
+                // Log performance
+                const duration = performance.now() - perfStart;
+                performanceMetrics.scrollLoadTime = duration;
+                if (duration > CONFIG.PERFORMANCE_WARNING_MS) {
+                    console.warn(`[PERFORMANCE] Slow scroll load (page ${pageToLoad}): ${duration.toFixed(2)}ms`);
+                } else {
+                    console.log(`[PERFORMANCE] Scroll load (page ${pageToLoad}): ${duration.toFixed(2)}ms`);
+                }
+            } catch (error) {
+                console.error('Error loading more items:', error);
+            } finally {
+                isLoadingMore = false;
+            }
+        }
+
+        async function loadPreviousItems() {
+            if (isLoadingPrevious || minLoadedPage <= 1) return;
+
+            isLoadingPrevious = true;
+            const pageToLoad = minLoadedPage - 1;
+
+            try {
+                const data = await fetchPageData(pageToLoad);
+
+                if (data.items && data.items.length > 0) {
+                    const tbody = document.querySelector('.table-container tbody');
+                    const fragment = createPageFragment(data.items, pageToLoad);
+
+                    // Preserve scroll position when prepending content
+                    const scrollBefore = window.pageYOffset || document.documentElement.scrollTop;
+                    const heightBefore = document.documentElement.scrollHeight;
+
+                    // Prepend to tbody (add at top)
+                    tbody.insertBefore(fragment, tbody.firstChild);
+                    loadedPages.unshift(pageToLoad);
+                    minLoadedPage = pageToLoad;
+
+                    // Adjust scroll position to maintain user's view
+                    const heightAfter = document.documentElement.scrollHeight;
+                    const heightDiff = heightAfter - heightBefore;
+                    window.scrollTo(0, scrollBefore + heightDiff);
+
+                    // Remove bottom pages if we exceed max pages in DOM
+                    if (loadedPages.length > CONFIG.MAX_PAGES_IN_DOM) {
+                        const pageToRemove = loadedPages.pop();
+                        maxLoadedPage = loadedPages[loadedPages.length - 1];
+                        const rowsToRemove = tbody.querySelectorAll(`tr[data-page="${pageToRemove}"]`);
+                        rowsToRemove.forEach(row => row.remove());
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading previous items:', error);
+            } finally {
+                isLoadingPrevious = false;
+            }
         }
     });
 </script>

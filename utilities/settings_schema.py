@@ -1895,5 +1895,19 @@ SETTINGS_SCHEMA = {
             "min": 0.0,
             "step": 0.1
         }
+    },
+    "Library Manager": {
+        "tab": "Additional Settings",
+        "primary_artwork_source": {
+            "type": "string",
+            "description": "Choose where to get posters and artwork from first. Plex uses your server's artwork (requires Plex authentication). TMDB uses online movie database (requires TMDB API key). The other source will be used as backup.",
+            "default": "Plex",
+            "choices": ["Plex", "TMDB"]
+        },
+        "ghostlist_mode": {
+            "type": "boolean",
+            "description": "Add shows and movies to the ghostlist to prevent them from being re-added. When enabled, deleting content will mark it as ghosted in the database. When disabled, deleted content can be re-added by dynamic content sources.",
+            "default": False
+        }
     }
 }

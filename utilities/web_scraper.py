@@ -17,10 +17,211 @@ from debrid.base import DebridProvider
 from debrid import get_debrid_provider
 # Provider-agnostic: avoid direct Real-Debrid import
 import time
+from datetime import datetime, timedelta
+from threading import Lock
+import json
+
+# PHASE 3.1: Optional Redis support
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    logging.info("Redis not available - using in-memory cache only")
 
 # Special case handling for tt9615014 (Lego Masters US)
 # Season 5 is a special holiday season, so we ignore it and renumber subsequent seasons
 LEGO_MASTERS_US_IMDB_ID = "tt9615014"
+
+# ============================================================================
+# PHASE 1 & 3.1: SEARCH CACHE WITH REDIS SUPPORT
+# ============================================================================
+class SearchCache:
+    """
+    Thread-safe search cache with optional Redis backend.
+    Falls back to in-memory caching if Redis is unavailable.
+
+    PHASE 1: In-memory cache with TTL
+    PHASE 3.1: Optional Redis support for distributed caching
+    """
+    def __init__(self, default_ttl_minutes=60, max_size=1000, redis_url=None):
+        # In-memory cache (always available as fallback)
+        self._cache: Dict[str, Tuple[Any, datetime]] = {}
+        self._lock = Lock()
+        self.default_ttl = timedelta(minutes=default_ttl_minutes)
+        self.default_ttl_seconds = int(default_ttl_minutes * 60)
+        self.max_size = max_size
+        self.hits = 0
+        self.misses = 0
+
+        # PHASE 3.1: Redis connection (optional)
+        self.redis_client = None
+        self.use_redis = False
+
+        if REDIS_AVAILABLE and redis_url:
+            try:
+                self.redis_client = redis.from_url(
+                    redis_url,
+                    decode_responses=False,  # We'll handle JSON encoding
+                    socket_connect_timeout=2,
+                    socket_timeout=2
+                )
+                # Test connection
+                self.redis_client.ping()
+                self.use_redis = True
+                logging.info(f"Redis cache enabled at {redis_url}")
+            except Exception as e:
+                logging.warning(f"Redis connection failed, using in-memory cache: {e}")
+                self.redis_client = None
+                self.use_redis = False
+
+    def _make_key(self, search_term: str, year: Optional[int] = None) -> str:
+        """Create cache key from search parameters"""
+        return f"search:{search_term.lower()}:{year if year else 'any'}"
+
+    def get(self, search_term: str, year: Optional[int] = None) -> Optional[Any]:
+        """Get cached search results (tries Redis first, then in-memory)"""
+        key = self._make_key(search_term, year)
+
+        # PHASE 3.1: Try Redis first
+        if self.use_redis and self.redis_client:
+            try:
+                cached_value = self.redis_client.get(key)
+                if cached_value:
+                    self.hits += 1
+                    logging.info(f"Redis cache HIT for: {key} (hits={self.hits}, misses={self.misses})")
+                    return json.loads(cached_value)
+            except Exception as e:
+                logging.warning(f"Redis get error for {key}: {e}")
+
+        # Fallback to in-memory cache
+        with self._lock:
+            if key in self._cache:
+                value, expiry = self._cache[key]
+
+                # Check if expired
+                if datetime.now() < expiry:
+                    self.hits += 1
+                    logging.info(f"Memory cache HIT for: {key} (hits={self.hits}, misses={self.misses})")
+                    return value
+                else:
+                    # Expired, remove it
+                    del self._cache[key]
+                    logging.debug(f"Cache entry expired for: {key}")
+
+            self.misses += 1
+            logging.info(f"Cache MISS for: {key} (hits={self.hits}, misses={self.misses})")
+            return None
+
+    def set(self, search_term: str, value: Any, year: Optional[int] = None, ttl: Optional[timedelta] = None):
+        """Cache search results (stores in both Redis and memory if available)"""
+        key = self._make_key(search_term, year)
+        ttl_seconds = int((ttl if ttl else self.default_ttl).total_seconds())
+
+        # PHASE 3.1: Store in Redis
+        if self.use_redis and self.redis_client:
+            try:
+                serialized = json.dumps(value)
+                self.redis_client.setex(key, ttl_seconds, serialized)
+                logging.debug(f"Cached in Redis: {key} (TTL={ttl_seconds}s)")
+            except Exception as e:
+                logging.warning(f"Redis set error for {key}: {e}")
+
+        # Always store in memory cache as fallback
+        with self._lock:
+            expiry = datetime.now() + (ttl if ttl else self.default_ttl)
+
+            # Evict oldest entries if cache is full
+            if len(self._cache) >= self.max_size:
+                # Remove 10% of oldest entries
+                entries_to_remove = max(1, self.max_size // 10)
+                sorted_keys = sorted(self._cache.items(), key=lambda x: x[1][1])
+                for old_key, _ in sorted_keys[:entries_to_remove]:
+                    del self._cache[old_key]
+                logging.debug(f"Evicted {entries_to_remove} old cache entries")
+
+            self._cache[key] = (value, expiry)
+            logging.debug(f"Cached in memory: {key}, expires at {expiry}")
+
+    def clear(self):
+        """Clear all cached entries (both Redis and memory)"""
+        # Clear Redis
+        if self.use_redis and self.redis_client:
+            try:
+                # Delete all keys matching our pattern
+                for key in self.redis_client.scan_iter(match="search:*"):
+                    self.redis_client.delete(key)
+                logging.info("Redis cache cleared")
+            except Exception as e:
+                logging.warning(f"Redis clear error: {e}")
+
+        # Clear memory cache
+        with self._lock:
+            self._cache.clear()
+            self.hits = 0
+            self.misses = 0
+            logging.info("Memory cache cleared")
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get cache statistics"""
+        with self._lock:
+            hit_rate = (self.hits / (self.hits + self.misses) * 100) if (self.hits + self.misses) > 0 else 0
+
+            redis_info = {}
+            if self.use_redis and self.redis_client:
+                try:
+                    redis_info = {
+                        'redis_enabled': True,
+                        'redis_keys': len(list(self.redis_client.scan_iter(match="search:*")))
+                    }
+                except:
+                    redis_info = {'redis_enabled': False}
+            else:
+                redis_info = {'redis_enabled': False}
+
+            stats = {
+                'size': len(self._cache),
+                'max_size': self.max_size,
+                'hits': self.hits,
+                'misses': self.misses,
+                'hit_rate': round(hit_rate, 2)
+            }
+            stats.update(redis_info)
+            return stats
+
+# PHASE 3.1: Initialize global search cache with optional Redis support
+# Redis URL can be configured via environment variable or settings
+# Format: redis://host:port/db or redis://username:password@host:port/db
+def _get_redis_url() -> Optional[str]:
+    """Get Redis URL from settings or environment"""
+    import os
+
+    # Try environment variable first
+    redis_url = os.environ.get('REDIS_URL')
+    if redis_url:
+        return redis_url
+
+    # Try settings (if you have a Redis section in your config)
+    try:
+        redis_host = get_setting('Redis', 'host', default='localhost')
+        redis_port = get_setting('Redis', 'port', default='6379')
+        redis_db = get_setting('Redis', 'db', default='0')
+        redis_password = get_setting('Redis', 'password', default=None)
+
+        if redis_password:
+            return f"redis://:{redis_password}@{redis_host}:{redis_port}/{redis_db}"
+        else:
+            return f"redis://{redis_host}:{redis_port}/{redis_db}"
+    except:
+        return None
+
+# Global search cache instance (with optional Redis)
+_redis_url = _get_redis_url()
+_search_cache = SearchCache(
+    default_ttl_minutes=60,
+    max_size=500,
+    redis_url=_redis_url
+)
 
 def _apply_lego_masters_us_season_fix_to_trakt_data(trakt_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
@@ -123,10 +324,15 @@ async def _fetch_media_meta_async(session: aiohttp.ClientSession, tmdb_id: str, 
 
 
 def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
+    # PHASE 1: Check cache first
+    cached_results = _search_cache.get(search_term, year)
+    if cached_results is not None:
+        return cached_results
+
     trakt_client_id = get_setting('Trakt', 'client_id')
     tmdb_api_key = get_setting('TMDB', 'api_key')
     has_tmdb = bool(tmdb_api_key)
-    
+
     if not trakt_client_id:
         logging.error("Trakt Client ID not set. Please configure in settings.")
         return []
@@ -317,9 +523,11 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
                     else:
                         all_media_metadata_map[key] = None # Fetch returned None (e.g. details 404)
                         logging.warning(f"No metadata returned from fetch for {item_info['media_type']} {item_info['title']} (TMDB ID: {item_info['tmdb_id']})")
-        
-        asyncio.run(_run_batch_fetch())
-        logging.info("Finished batch metadata fetching.")
+
+        # DISABLED: asyncio.run() creates new event loops causing 96% CPU!
+        # asyncio.run(_run_batch_fetch())
+        # Fallback to synchronous fetching for now
+        logging.info("Batch async fetching disabled due to event loop accumulation bug.")
 
     # --- Process results using cached or newly fetched data ---
     converted_results = []
@@ -399,8 +607,75 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
     logging.info(f"  - No year: {filter_stats['no_year']}")
     logging.info(f"Final results returned after filtering & limit: {len(converted_results)}")
     logging.info("=================================")
-    
+
+    # PHASE 1: Cache the results before returning
+    _search_cache.set(search_term, converted_results, year)
+
     return converted_results
+
+def get_tmdb_id_from_imdb(imdb_id: str, media_type: str = None) -> Optional[str]:
+    """
+    Look up TMDB ID from IMDB ID using TMDB's /find endpoint.
+
+    Args:
+        imdb_id: The IMDB ID (e.g., 'tt1234567')
+        media_type: Optional hint - 'movie', 'tv', or 'show'
+
+    Returns:
+        TMDB ID as string, or None if not found
+    """
+    if not imdb_id or not imdb_id.startswith('tt'):
+        return None
+
+    tmdb_api_key = get_setting('TMDB', 'api_key')
+    if not tmdb_api_key:
+        logging.warning("TMDB API key not set - cannot look up TMDB ID from IMDB ID")
+        return None
+
+    try:
+        find_url = f"https://api.themoviedb.org/3/find/{imdb_id}?api_key={tmdb_api_key}&external_source=imdb_id"
+        response = api.get(find_url)
+        response.raise_for_status()
+        data = response.json()
+
+        # Check movie results first if media_type is movie or not specified
+        if media_type in (None, 'movie'):
+            movie_results = data.get('movie_results', [])
+            if movie_results:
+                tmdb_id = str(movie_results[0].get('id'))
+                logging.info(f"Found TMDB ID {tmdb_id} for IMDB ID {imdb_id} (movie)")
+                return tmdb_id
+
+        # Check TV results if media_type is tv/show or not specified
+        if media_type in (None, 'tv', 'show'):
+            tv_results = data.get('tv_results', [])
+            if tv_results:
+                tmdb_id = str(tv_results[0].get('id'))
+                logging.info(f"Found TMDB ID {tmdb_id} for IMDB ID {imdb_id} (tv)")
+                return tmdb_id
+
+        logging.debug(f"No TMDB ID found for IMDB ID {imdb_id}")
+        return None
+
+    except Exception as e:
+        logging.error(f"Error looking up TMDB ID for IMDB ID {imdb_id}: {e}")
+        return None
+
+def get_media_meta_by_imdb(imdb_id: str, media_type: str) -> Optional[Tuple[str, str, list, float, str]]:
+    """
+    Get media metadata using IMDB ID by first converting to TMDB ID.
+
+    Args:
+        imdb_id: The IMDB ID (e.g., 'tt1234567')
+        media_type: 'movie', 'tv', or 'show'
+
+    Returns:
+        Tuple of (poster_url, overview, genres, vote_average, backdrop_path) or None
+    """
+    tmdb_id = get_tmdb_id_from_imdb(imdb_id, media_type)
+    if tmdb_id:
+        return get_media_meta(tmdb_id, media_type)
+    return None
 
 def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, list, float, str]]:
     tmdb_api_key = get_setting('TMDB', 'api_key')
@@ -432,12 +707,16 @@ def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, li
         details_response.raise_for_status()
         details_data = details_response.json()
 
-        # Use asyncio to run the async get_poster_url function
-        async def fetch_poster_url():
-            async with aiohttp.ClientSession() as session:
-                return await get_poster_url(session, tmdb_id, media_type)
+        # DISABLED: asyncio.run() creates event loop accumulation
+        # async def fetch_poster_url():
+        #     async with aiohttp.ClientSession() as session:
+        #         return await get_poster_url(session, tmdb_id, media_type)
+        # poster_url = asyncio.run(fetch_poster_url())
 
-        poster_url = asyncio.run(fetch_poster_url())
+        # Fallback: construct poster URL synchronously
+        poster_url = None
+        if details_data.get('poster_path'):
+            poster_url = f"https://image.tmdb.org/t/p/w500{details_data['poster_path']}"
         
         overview = details_data.get('overview', '')
         genres = [genre['name'] for genre in details_data.get('genres', [])]
@@ -536,6 +815,187 @@ async def fetch_poster_url(tmdb_id, media_type):
     async with aiohttp.ClientSession() as session:
         return await get_poster_url(session, tmdb_id, media_type)
 
+def search_trakt_fast(search_term: str, year: Optional[int] = None) -> List[Dict[str, Any]]:
+    """
+    PHASE 2.2: Fast Trakt search with lightweight TMDB poster fetching.
+    Returns Trakt data with posters from TMDB details endpoint (faster than images endpoint).
+    """
+    # Check cache first - use fast_ prefix to separate from regular search cache
+    fast_search_term = f"fast_{search_term}"
+    cached_results = _search_cache.get(fast_search_term, year)
+    if cached_results is not None:
+        logging.debug(f"Fast search cache HIT for: {fast_search_term}:{year if year else 'any'} - returning {len(cached_results)} results")
+        return cached_results
+
+    trakt_client_id = get_setting('Trakt', 'client_id')
+    tmdb_api_key = get_setting('TMDB', 'api_key')
+    if not trakt_client_id:
+        logging.error("Trakt Client ID not set.")
+        return []
+
+    headers = {
+        'Content-Type': 'application/json',
+        'trakt-api-version': '2',
+        'trakt-api-key': trakt_client_id
+    }
+
+    search_url = f"https://api.trakt.tv/search/movie,show?query={api.utils.quote(search_term)}&extended=full&page=1&limit=100"
+    if year:
+        search_url += f"&years={year}"
+
+    try:
+        response = api.get(search_url, headers=headers, timeout=10)
+        response.raise_for_status()
+        raw_results = response.json()
+
+        logging.debug(f"Fast search received {len(raw_results) if raw_results else 0} raw results from Trakt")
+
+        if not raw_results:
+            logging.warning("Fast search: No results from Trakt API")
+            return []
+
+        # Quick conversion with lightweight poster fetching
+        results = []
+        for item in raw_results[:100]:  # Limit to 100 results for infinite scroll
+            media_type = item['type']
+            if media_type == 'person':
+                logging.debug(f"Fast search: Skipping person result")
+                continue
+
+            details = item.get('movie' if media_type == 'movie' else 'show', {})
+            tmdb_id = details.get('ids', {}).get('tmdb')
+            if not tmdb_id:
+                logging.debug(f"Fast search: Skipping item with no TMDB ID")
+                continue
+
+            # Get the title - handles both movies and shows
+            title = details.get('title', '')
+
+            # Fast poster fetch: use TMDB details endpoint which gives poster_path, backdrop, and genres
+            # This is faster than the /images endpoint used in full search
+            poster_path = None
+            backdrop_path = ''
+            genre_names = []
+            tmdb_vote_average = 0
+            if tmdb_api_key:
+                try:
+                    tmdb_media_type = 'tv' if media_type == 'show' else media_type
+                    details_url = f"https://api.themoviedb.org/3/{tmdb_media_type}/{tmdb_id}?api_key={tmdb_api_key}"
+                    details_response = api.get(details_url, timeout=3)
+                    if details_response.status_code == 200:
+                        tmdb_details = details_response.json()
+
+                        # Extract poster_path
+                        tmdb_poster_path = tmdb_details.get('poster_path')
+                        if tmdb_poster_path:
+                            poster_path = tmdb_poster_path  # e.g., "/abc123.jpg"
+
+                        # Extract backdrop_path
+                        tmdb_backdrop_path = tmdb_details.get('backdrop_path')
+                        if tmdb_backdrop_path:
+                            backdrop_path = tmdb_backdrop_path
+
+                        # Extract genres
+                        tmdb_genres = tmdb_details.get('genres', [])
+                        if tmdb_genres:
+                            genre_names = [genre.get('name', '') for genre in tmdb_genres]
+
+                        # Extract vote_average from TMDB (more accurate than Trakt rating)
+                        tmdb_vote_average = tmdb_details.get('vote_average', 0)
+                    else:
+                        logging.warning(f"TMDB API returned status {details_response.status_code} for {title}")
+
+                except Exception as e:
+                    logging.debug(f"Fast search: Could not fetch TMDB details for {title}: {e}")
+
+            # Skip results without posters to keep results clean
+            if not poster_path:
+                logging.debug(f"Fast search: Skipping {title} - no poster available")
+                continue
+
+            result = {
+                'id': str(tmdb_id),
+                'title': title,
+                'year': details.get('year', ''),
+                'media_type': 'show' if media_type == 'tv' else media_type,
+                'poster_path': poster_path,
+                'overview': details.get('overview', ''),
+                'show_overview': details.get('overview', ''),
+                'genre_ids': genre_names,  # Now populated from TMDB!
+                'rating': details.get('rating', 0),  # Trakt rating (matches trending format)
+                'vote_average': tmdb_vote_average if tmdb_vote_average > 0 else details.get('rating', 0),  # TMDB rating
+                'backdrop_path': backdrop_path,  # Now populated from TMDB!
+                'votes': details.get('votes', 0),
+                'imdb_id': details.get('ids', {}).get('imdb', '')
+            }
+            results.append(result)
+            logging.debug(f"Fast search: Added result - {title} ({tmdb_id}) with poster: {poster_path}")
+
+        # Cache the fast results using the same fast_ prefix
+        _search_cache.set(fast_search_term, results, year)
+        logging.debug(f"Fast search cached: {fast_search_term}:{year if year else 'any'} ({len(results)} results)")
+        return results
+
+    except Exception as e:
+        logging.error(f"Fast search error: {e}", exc_info=True)
+        return []
+
+def web_scrape_lite(search_term: str, limit: int = None) -> List[Dict[str, Any]]:
+    """
+    PHASE 2.2: Ultra-fast version for live search.
+    Uses search_trakt_fast() which skips TMDB metadata for speed.
+
+    Args:
+        search_term: The search query
+        limit: Optional limit on number of results (PHASE 2 OPTIMIZATION)
+
+    Returns:
+        List of search results
+    """
+    base_title, season, episode, year, multi = parse_search_term(search_term)
+
+    # Use fast search (no TMDB metadata)
+    search_results = search_trakt_fast(base_title, year)
+
+    if not search_results:
+        return []
+
+    # Convert to frontend format
+    detailed_results = []
+    for result in search_results:
+        if result['media_type'] != 'person':
+            poster_path = result.get('poster_path', '')  # Changed to snake_case
+            overview = result.get('show_overview', result.get('overview', ''))
+
+            detailed_result = {
+                "id": result['id'],
+                "title": result['title'],
+                "year": result['year'],
+                "media_type": result['media_type'],
+                "show_overview": overview,
+                "poster_path": poster_path,
+                "genre_ids": result.get('genre_ids', []),  # Fixed: was looking for 'genres' instead of 'genre_ids'
+                "vote_average": result.get('vote_average', 0),  # Changed to snake_case
+                "backdrop_path": result.get('backdrop_path', ''),  # Changed to snake_case
+                "season": season,
+                "episode": episode,
+                "multi": multi,
+                "imdb_id": result.get('imdb_id', '')
+            }
+            detailed_results.append(detailed_result)
+
+    # Sort by relevance
+    detailed_results.sort(key=lambda x: (
+        base_title.lower() in x['title'].lower(),
+        fuzz.ratio(base_title.lower(), x['title'].lower())
+    ), reverse=True)
+
+    # PHASE 2 OPTIMIZATION: Apply limit if specified
+    if limit and limit > 0:
+        detailed_results = detailed_results[:limit]
+
+    return detailed_results
+
 def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
     logging.info(f"Starting web scrape for search term: {search_term}, version: {version}")
     
@@ -580,7 +1040,9 @@ def web_scrape(search_term: str, version: str) -> Dict[str, Any]:
                 logging.info(f"Fetching data for {media_type} {result['title']} (TMDB ID: {tmdb_id})")
                 media_meta = get_media_meta(tmdb_id, media_type)
                 if media_meta and media_meta[0]:  # Check if media_meta exists and has a valid poster URL
-                    poster_path = asyncio.run(fetch_poster_url(tmdb_id, media_type))
+                    # DISABLED: asyncio.run() causes event loop accumulation
+                    # poster_path = asyncio.run(fetch_poster_url(tmdb_id, media_type))
+                    poster_path = media_meta[0]  # Use poster from media_meta directly
                     if has_tmdb and (not poster_path or 'placeholder' in poster_path.lower() or not poster_path.startswith('https://image.tmdb.org/')):
                         logging.info(f"web_scrape: Skipping {title_for_logging} ({tmdb_id}) - invalid or missing fetched poster URL: {poster_path}")
                         continue
@@ -751,11 +1213,17 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
 
         if season is not None:
             # Fetch episode details
+            # OPTIMIZATION: Fetch ALL episode data for the season in ONE call instead of per-episode
+            tmdb_season_for_api = adjusted_season if adjusted_season != season else season
+            season_tmdb_data = get_tmdb_data(media_id, 'tv', tmdb_season_for_api)
+            tmdb_episodes = season_tmdb_data.get('episodes', [])
+            tmdb_episodes_dict = {ep['episode_number']: ep for ep in tmdb_episodes}
+
             episode_results = []
             for episode in trakt_data:
-                # Use adjusted_season for TMDB API calls, but keep original season for display
-                tmdb_season_for_api = adjusted_season if adjusted_season != season else episode['season']
-                
+                # Get still_path from pre-fetched season data
+                tmdb_episode = tmdb_episodes_dict.get(episode['number'], {})
+
                 episode_result = {
                     "id": media_id,
                     "title": title,
@@ -765,12 +1233,12 @@ def web_scrape_tvshow(media_id: int, title: str, year: int, season: Optional[int
                     "episode_num": episode['number'],
                     "year": year,
                     "media_type": 'tv',
-                    "still_path": get_tmdb_data(media_id, 'tv', tmdb_season_for_api, episode['number']).get('still_path'),
+                    "still_path": tmdb_episode.get('still_path'),
                     "air_date": episode.get('first_aired'),
                     "vote_average": episode.get('rating', 0),
                     "multi": False
                 }
-                
+
                 # Only add if not a special episode (unless allow_specials is True)
                 if allow_specials or episode['number'] != 0:
                     episode_results.append(episode_result)
@@ -1274,18 +1742,38 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                             is_cached = cache_status[hash_value]
                             result['cached'] = 'Yes' if is_cached else 'No'
                 else:
-                    # Check hashes individually for providers that don't support bulk checking
-                    checked_count = 0
-                    for result in processed_passed_results:
-                        hash_value = result.get('hash')
-                        if hash_value and checked_count < 5:  # Limit to 5 checks
+                    # Check hashes in parallel for providers that don't support bulk checking
+                    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                    # Collect hashes to check (limit to 5)
+                    results_to_check = [r for r in processed_passed_results if r.get('hash')][:5]
+
+                    # Parallel cache checking function
+                    def check_single_hash(result_with_hash):
+                        result, hash_value = result_with_hash
+                        try:
+                            is_cached = debrid_provider.is_cached(hash_value)
+                            return (result, 'Yes' if is_cached else 'No')
+                        except Exception as e:
+                            logging.error(f"Error checking individual cache status for {hash_value}: {e}")
+                            return (result, 'Error')
+
+                    # Execute checks in parallel (max 5 workers for 5 hashes)
+                    with ThreadPoolExecutor(max_workers=5) as executor:
+                        # Submit all cache checks concurrently
+                        future_to_result = {
+                            executor.submit(check_single_hash, (result, result.get('hash'))): result
+                            for result in results_to_check
+                        }
+
+                        # Collect results as they complete
+                        for future in as_completed(future_to_result):
                             try:
-                                is_cached = debrid_provider.is_cached(hash_value)
-                                result['cached'] = 'Yes' if is_cached else 'No'
-                                checked_count += 1
+                                result, cached_status = future.result()
+                                result['cached'] = cached_status
                             except Exception as e:
-                                logging.error(f"Error checking individual cache status for {hash_value}: {e}")
-                                result['cached'] = 'Error'
+                                logging.error(f"Error in parallel cache check: {e}")
+                                future_to_result[future]['cached'] = 'Error'
                 
                 # Mark all remaining results as N/A
                 for result in processed_passed_results:

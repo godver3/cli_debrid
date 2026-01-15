@@ -155,3 +155,183 @@ button.btn.btn-primary, button.btn.btn-danger:hover {
 .ms-2 {
     margin-left: 0.5rem;
 }
+
+/* ========================================
+   MOBILE RESPONSIVE STYLES
+   ======================================== */
+
+/* Tablet and below (768px) */
+@media (max-width: 768px) {
+    .container {
+        padding: 10px;
+    }
+
+    /* Make page title and header stack nicely */
+    .d-flex.justify-content-between {
+        flex-direction: column;
+        align-items: flex-start !important;
+        gap: 10px;
+    }
+
+    /* Stack input group vertically */
+    .input-group {
+        width: 100% !important;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .input-group-prepend {
+        width: 100%;
+    }
+
+    .input-group-text {
+        width: 100%;
+        justify-content: flex-start;
+    }
+
+    .input-group .form-control,
+    .input-group .btn {
+        width: 100% !important;
+        flex: none;
+    }
+
+    /* Make buttons full width on mobile */
+    .btn {
+        width: 100%;
+        padding: 12px 15px;
+        font-size: 16px;
+    }
+
+    /* Responsive table - stack columns */
+    .table {
+        font-size: 14px;
+    }
+
+    .table thead {
+        display: none;
+    }
+
+    .table tbody tr {
+        display: block;
+        margin-bottom: 20px;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 15px;
+        background-color: rgba(0, 0, 0, 0.2);
+    }
+
+    .table tbody td {
+        display: block;
+        text-align: left;
+        padding: 8px 0;
+        border: none;
+        position: relative;
+        padding-left: 120px;
+    }
+
+    .table tbody td:before {
+        content: attr(data-label);
+        position: absolute;
+        left: 0;
+        font-weight: bold;
+        text-transform: uppercase;
+        font-size: 12px;
+        color: #999;
+    }
+
+    .table tbody td:first-child:before {
+        content: "IMDb ID";
+    }
+
+    .table tbody td:nth-child(2):before {
+        content: "Title";
+    }
+
+    .table tbody td:nth-child(3):before {
+        content: "Year";
+    }
+
+    .table tbody td:nth-child(4):before {
+        content: "Media Type";
+    }
+
+    .table tbody td:nth-child(5):before {
+        content: "Seasons";
+    }
+
+    .table tbody td:nth-child(6):before {
+        content: "Actions";
+    }
+
+    /* Adjust seasons section for mobile */
+    .seasons-form {
+        width: 100%;
+    }
+
+    .form-check.mb-2 {
+        flex-wrap: wrap;
+    }
+
+    .seasons-list {
+        max-height: 200px;
+        font-size: 14px;
+    }
+
+    /* Delete button alignment */
+    .table tbody td:last-child form {
+        display: inline-block;
+    }
+
+    .table tbody td:last-child .btn-link {
+        font-size: 20px;
+        padding: 10px 15px;
+    }
+}
+
+/* Small mobile devices (480px) */
+@media (max-width: 480px) {
+    h2 {
+        font-size: 24px;
+    }
+
+    h3 {
+        font-size: 20px;
+    }
+
+    .container {
+        padding: 5px;
+    }
+
+    .table tbody tr {
+        padding: 10px;
+    }
+
+    .table tbody td {
+        padding: 6px 0;
+        padding-left: 100px;
+        font-size: 13px;
+    }
+
+    .table tbody td:before {
+        font-size: 11px;
+    }
+
+    .btn {
+        padding: 10px 12px;
+        font-size: 14px;
+    }
+
+    .input-group {
+        gap: 8px;
+    }
+
+    .seasons-list {
+        max-height: 150px;
+        font-size: 13px;
+        padding: 8px;
+    }
+
+    .form-check-label {
+        font-size: 13px;
+    }
+}
