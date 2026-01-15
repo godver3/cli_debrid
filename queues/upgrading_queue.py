@@ -364,6 +364,12 @@ class UpgradingQueue:
                 
                 if upgrade_info:
                     collected_at = datetime.fromisoformat(item['original_collected_at']) if isinstance(item['original_collected_at'], str) else item['original_collected_at']
+
+                    # Skip if original_collected_at is None
+                    if collected_at is None:
+                        logging.warning(f"Item {item_id} has None for original_collected_at, skipping upgrade queue processing")
+                        continue
+
                     time_in_queue = current_time - collected_at
                     
                     logging.info(f"Item {item_id} has been in the Upgrading queue for {time_in_queue}.")

@@ -130,34 +130,39 @@ def handle_symlink_creation():
         return redirect(url_for('symlink_tools.index'))
 
 def add_to_database(item, symlink_path):
-    """Add the item to the database if it doesn't already exist."""
+    """Add the item to the database if it doesn't already exist.
+
+    For multi-version support: if an item with the same identifiers but a DIFFERENT
+    symlink path already exists, create a NEW entry instead of updating.
+    """
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        
-        # Check if item already exists
+
+        # Check if item already exists with the SAME symlink path
+        # This allows multiple versions (different files) for the same movie/episode
         if item['type'] == 'movie':
             cursor.execute('''
-                SELECT id FROM media_items 
-                WHERE imdb_id = ? AND type = 'movie'
-            ''', (item['imdb_id'],))
+                SELECT id, location_on_disk FROM media_items
+                WHERE imdb_id = ? AND type = 'movie' AND location_on_disk = ?
+            ''', (item['imdb_id'], symlink_path))
         else:
             cursor.execute('''
-                SELECT id FROM media_items 
-                WHERE imdb_id = ? AND type = 'episode' 
-                AND season_number = ? AND episode_number = ?
-            ''', (item['imdb_id'], item['season_number'], item['episode_number']))
-        
-        existing_item = cursor.fetchone()
-        
-        if existing_item:
-            # Update existing item with new symlink path
+                SELECT id, location_on_disk FROM media_items
+                WHERE imdb_id = ? AND type = 'episode'
+                AND season_number = ? AND episode_number = ? AND location_on_disk = ?
+            ''', (item['imdb_id'], item['season_number'], item['episode_number'], symlink_path))
+
+        exact_match = cursor.fetchone()
+
+        if exact_match:
+            # Exact path match - just update the existing item
             cursor.execute('''
-                UPDATE media_items 
-                SET location_on_disk = ?, last_updated = ?
+                UPDATE media_items
+                SET last_updated = ?
                 WHERE id = ?
-            ''', (symlink_path, datetime.now(), existing_item[0]))
-            logging.info(f"Updated existing item {existing_item[0]} with symlink path: {symlink_path}")
+            ''', (datetime.now(), exact_match[0]))
+            logging.info(f"Updated existing item {exact_match[0]} with same symlink path: {symlink_path}")
         else:
             # Insert new item
             if item['type'] == 'movie':

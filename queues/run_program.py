@@ -141,6 +141,11 @@ class ProgramRunner:
         self.connectivity_failure_time = None
         self.connectivity_retry_count = 0 # This will now primarily be for logging/timing, actual count in pause_info
         self.queue_paused = False
+
+        # PAUSE/RESUME THROTTLING: Prevent rapid pause/resume cycles
+        self.last_pause_time = None
+        self.last_resume_time = None
+        self.pause_resume_cooldown = 30  # Minimum seconds between pause/resume operations
         
         # Configure scheduler timezone using the local timezone helper
         try:
@@ -947,13 +952,20 @@ class ProgramRunner:
 
                         # *** START STAGGER EDIT: Support initial delay for startup staggering ***
                         # Create trigger with start_date if delay is specified
+                        # Add jitter to interval to prevent task alignment (±10% randomization)
+                        import random
+                        jitter_factor = random.uniform(0.9, 1.1)  # ±10% jitter
+                        jittered_interval = int(interval_seconds * jitter_factor)
+
                         if initial_delay_seconds > 0:
                             from datetime import datetime, timedelta
                             first_run_time = datetime.now(resolved_timezone) + timedelta(seconds=initial_delay_seconds)
-                            trigger = IntervalTrigger(seconds=interval_seconds, start_date=first_run_time, timezone=resolved_timezone)
-                            logging.info(f"Task '{job_id}' will start in {initial_delay_seconds}s (at {first_run_time.strftime('%H:%M:%S')}) for startup staggering")
+                            trigger = IntervalTrigger(seconds=jittered_interval, start_date=first_run_time, timezone=resolved_timezone)
+                            logging.info(f"Task '{job_id}' will start in {initial_delay_seconds}s (at {first_run_time.strftime('%H:%M:%S')}) for startup staggering, interval: {jittered_interval}s (jittered from {interval_seconds}s)")
                         else:
-                            trigger = IntervalTrigger(seconds=interval_seconds, timezone=resolved_timezone)
+                            trigger = IntervalTrigger(seconds=jittered_interval, timezone=resolved_timezone)
+                            if jittered_interval != interval_seconds:
+                                logging.debug(f"Task '{job_id}' interval jittered: {jittered_interval}s (from {interval_seconds}s)")
                         # *** END STAGGER EDIT ***
 
                         add_job_kwargs = {
@@ -1017,7 +1029,7 @@ class ProgramRunner:
         trakt_task_stagger_map = {}
         if not already_scheduled:
             for idx, task_name in enumerate(trakt_tasks_to_stagger):
-                delay_seconds = (idx + 1) * 60  # 60s, 120s, 180s, etc.
+                delay_seconds = (idx + 1) * 240  # 240s (4 min), 480s (8 min), 720s (12 min), etc.
                 trakt_task_stagger_map[task_name] = delay_seconds
 
             # Log stagger plan
@@ -1471,6 +1483,17 @@ class ProgramRunner:
             # The old logic to stop the program after 5 retries is already commented out, which is good.
 
     def pause_queue(self):
+        # THROTTLING: Prevent rapid pause operations
+        from datetime import datetime
+        now = datetime.now()
+        if self.last_pause_time:
+            elapsed = (now - self.last_pause_time).total_seconds()
+            if elapsed < self.pause_resume_cooldown:
+                logging.debug(f"Pause throttled ({elapsed:.1f}s < {self.pause_resume_cooldown}s). Skipping pause_queue().")
+                return
+
+        self.last_pause_time = now
+
         # *** START EDIT: Pause ALL running jobs ***
         with self.scheduler_lock:
             if self.scheduler.state != 1: # 1 = STATE_RUNNING
@@ -1526,9 +1549,20 @@ class ProgramRunner:
         # --- END EDIT ---
 
     def resume_queue(self):
+        # THROTTLING: Prevent rapid resume operations
+        from datetime import datetime
+        now = datetime.now()
+        if self.last_resume_time:
+            elapsed = (now - self.last_resume_time).total_seconds()
+            if elapsed < self.pause_resume_cooldown:
+                logging.debug(f"Resume throttled ({elapsed:.1f}s < {self.pause_resume_cooldown}s). Skipping resume_queue().")
+                return
+
+        self.last_resume_time = now
+
         # *** START EDIT: Resume logic remains the same, but update log context ***
         logging.info(f"[Resume Queue] Starting resume process. Queue paused: {self.queue_paused}, Pause type: {self.pause_info.get('error_type') if self.pause_info else 'None'}")
-        
+
         with self.scheduler_lock:
             if self.scheduler.state != 1: # 1 = STATE_RUNNING
                 logging.warning("Scheduler is not running, cannot resume jobs.")
@@ -2303,7 +2337,7 @@ class ProgramRunner:
                     if current_time - cpu_monitor_start >= cpu_monitor_interval:
                         try:
                             import psutil
-                            cpu_percent = psutil.cpu_percent(interval=0.1)
+                            cpu_percent = psutil.cpu_percent(interval=None)
                             memory_percent = psutil.virtual_memory().percent
                             process = psutil.Process()
                             process_cpu_percent = process.cpu_percent()
@@ -2556,74 +2590,6 @@ class ProgramRunner:
 
         self._was_idle_last_check = system_is_idle
          # --- END REFACTOR ---
-
-
-        # --- Determine idle state based on Scraping/Adding queues ---
-        # ... (rest of the code remains unchanged) ...
-
-        with self.scheduler_lock:
-            # Get the *currently configured* intervals (could be default or custom)
-            # These are stored in self.task_intervals after __init__ applies customs.
-            # We no longer need self.original_task_intervals for this task's logic.
-
-            if system_is_idle:
-                # ... (existing logging for idle state) ...
-                idle_increase_seconds = 300 # Make this configurable later?
-
-                for task_id in self.DYNAMIC_INTERVAL_TASKS: # Use the dynamic task set
-                    job = self.scheduler.get_job(task_id)
-                    # Get the base interval for this task (could be default or custom)
-                    # self.task_intervals holds the *intended* base interval after init.
-                    base_interval = self.task_intervals.get(task_id)
-
-                    if job and base_interval:
-                        current_job_interval = job.trigger.interval.total_seconds()
-                        # Increase interval relative to the *configured* base interval
-                        # Apply max limits
-                        new_interval = min(
-                             base_interval + idle_increase_seconds,
-                             base_interval * self.MAX_INTERVAL_MULTIPLIER,
-                             self.ABSOLUTE_MAX_INTERVAL
-                        )
-                        new_interval = max(new_interval, base_interval) # Ensure it doesn't go below base
-
-                        if new_interval > current_job_interval: # Only modify if increasing
-                            try:
-                                self.scheduler.modify_job(task_id, trigger=IntervalTrigger(seconds=new_interval))
-                                logging.debug(f"Adjusted interval for idle '{task_id}' to {new_interval}s (Base: {base_interval}s)")
-                            except Exception as e:
-                                logging.error(f"Error modifying job '{task_id}' interval to {new_interval}s: {e}")
-
-            else: # System is active
-                # ... (existing logging for active state) ...
-
-                needs_reset = False
-                tasks_to_reset = []
-                for task_id in self.DYNAMIC_INTERVAL_TASKS: # Use the dynamic task set
-                    job = self.scheduler.get_job(task_id)
-                    # Get the configured base interval (default or custom)
-                    base_interval = self.task_intervals.get(task_id)
-
-                    if job and base_interval:
-                        current_job_interval = job.trigger.interval.total_seconds()
-                        # Reset if current interval doesn't match the configured base
-                        if current_job_interval != base_interval:
-                            needs_reset = True
-                            tasks_to_reset.append(task_id)
-
-                if needs_reset:
-                    logging.info(f"System active: Resetting intervals for {len(tasks_to_reset)} dynamically adjusted tasks to their configured base values.")
-                    for task_id in tasks_to_reset:
-                        base_interval = self.task_intervals.get(task_id) # Get configured base again
-                        if base_interval:
-                            try:
-                                self.scheduler.modify_job(task_id, trigger=IntervalTrigger(seconds=base_interval))
-                                logging.debug(f"Reset interval for '{task_id}' to configured base {base_interval}s")
-                            except Exception as e:
-                                logging.error(f"Error resetting job '{task_id}' interval to {base_interval}s: {e}")
-
-        self._was_idle_last_check = system_is_idle
-        # --- END EDIT ---
 
 
     def check_task_health(self):
@@ -4134,6 +4100,28 @@ class ProgramRunner:
             item_title = item['item_title']
             episode_title = item.get('episode_title') # Use .get for safety
             attempts = item['attempts']
+            last_checked = item.get('last_checked_at')
+
+            # Exponential backoff: wait longer between retries based on attempt count
+            # Attempt 0: immediate, Attempt 1: 1 min, Attempt 2: 5 min, Attempt 3: 15 min, Attempt 4+: 30 min
+            backoff_minutes = [0, 1, 5, 15, 30]
+            required_wait = backoff_minutes[min(attempts, len(backoff_minutes) - 1)]
+
+            if last_checked and required_wait > 0:
+                try:
+                    from datetime import datetime, timedelta
+                    if isinstance(last_checked, str):
+                        last_checked_dt = datetime.fromisoformat(last_checked.replace('Z', '+00:00'))
+                    else:
+                        last_checked_dt = last_checked
+                    time_since_last = datetime.now() - last_checked_dt.replace(tzinfo=None)
+                    if time_since_last < timedelta(minutes=required_wait):
+                        remaining = timedelta(minutes=required_wait) - time_since_last
+                        logging.debug(f"[VERIFY] Skipping '{item_path}' - backoff not elapsed. Wait {remaining.seconds // 60}m {remaining.seconds % 60}s more.")
+                        continue
+                except Exception as backoff_err:
+                    logging.debug(f"[VERIFY] Could not check backoff for {item_id}: {backoff_err}")
+
             logging.debug(f"[VERIFY DEBUG] Processing Item: ID={item_id}, Path={item_path}, Title={item_title}, Episode={episode_title}, Attempts={attempts}")
             logging.info(f"[VERIFY] Checking path: '{item_path}' (Attempt {attempts + 1}/{max_attempts}) Title: '{item_title}', Episode: '{episode_title}'")
 
@@ -4247,16 +4235,42 @@ class ProgramRunner:
                     update_removal_status(item_id, 'Verified')
                     verified_count += 1
                 else:
-                    # Item still exists - log, attempt removal again using remove_file_from_plex, increment attempts
-                    logging.warning(f"[VERIFY] Path '{item_path}' still found in Plex. Attempting removal using remove_file_from_plex...")
-                    # Call remove_file_from_plex instead of remove_symlink_from_plex
-                    removal_successful = remove_file_from_plex(item_title, item_path, episode_title)
-                    if removal_successful:
-                        logging.info(f"[VERIFY] Successfully triggered removal via remove_file_from_plex for '{item_path}'. Will verify later.")
-                    else:
-                        logging.error(f"[VERIFY] Failed to trigger removal via remove_file_from_plex for '{item_path}'.")
+                    # Item still exists - use different strategies based on attempt count
+                    current_attempts = attempts + 1  # This will be the new attempt count
 
-                    logging.warning(f"[VERIFY] Incrementing attempt count for '{item_path}' as it still exists.")
+                    # Strategy 1: First few attempts - try direct deletion via API
+                    if current_attempts <= 2:
+                        logging.warning(f"[VERIFY] Path '{item_path}' still found in Plex. Attempting direct removal (attempt {current_attempts})...")
+                        removal_successful = remove_file_from_plex(item_title, item_path, episode_title)
+                        if removal_successful:
+                            logging.info(f"[VERIFY] Successfully triggered removal via remove_file_from_plex for '{item_path}'. Will verify later.")
+                        else:
+                            logging.warning(f"[VERIFY] Direct removal failed for '{item_path}'. Will try scan & trash on next attempts.")
+
+                    # Strategy 2: Later attempts - use scan & empty trash instead
+                    elif current_attempts <= max_attempts - 1:
+                        logging.warning(f"[VERIFY] Path '{item_path}' still in Plex after {attempts} attempts. Using scan & empty trash approach...")
+                        try:
+                            from utilities.plex_functions import scan_and_empty_plex_trash
+                            # Get the parent folder of the file to scan
+                            parent_folder = os.path.dirname(item_path)
+                            if parent_folder and os.path.exists(os.path.dirname(parent_folder)):  # Check grandparent exists
+                                scan_result = scan_and_empty_plex_trash(paths=[parent_folder])
+                                if scan_result.get('success'):
+                                    logging.info(f"[VERIFY] Triggered scan & trash for folder: {parent_folder}")
+                                else:
+                                    logging.warning(f"[VERIFY] Scan & trash had issues: {scan_result.get('errors', [])}")
+                            else:
+                                logging.warning(f"[VERIFY] Cannot scan - parent folder doesn't exist: {parent_folder}")
+                        except Exception as scan_err:
+                            logging.error(f"[VERIFY] Error during scan & trash for '{item_path}': {scan_err}")
+
+                    # Strategy 3: Final attempt - mark as failed, requires user intervention
+                    else:
+                        logging.error(f"[VERIFY] Max attempts ({max_attempts}) nearly reached for '{item_path}'. "
+                                     f"This may require manual intervention in Plex (enable 'Allow media deletion' in Settings > Library).")
+
+                    logging.warning(f"[VERIFY] Incrementing attempt count for '{item_path}' (now {current_attempts}/{max_attempts}).")
                     increment_removal_attempt(item_id)
                     failed_verification_count += 1
             except Exception as db_update_err:
@@ -4403,16 +4417,17 @@ class ProgramRunner:
                     # Upsert into tv_shows. 'is_complete' reflects if the show's status is 'ended'/'canceled'.
                     # total_episodes is updated from source metadata.
                     # Ensure COALESCE is used for fields that might not be present in new metadata fetch
+                    # Use NULLIF to treat empty strings as NULL for proper COALESCE behavior
                     cursor.execute("""
                         INSERT INTO tv_shows (
                             imdb_id, tmdb_id, title, year, status, is_complete,
                             total_episodes, last_status_check, added_at, last_updated
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT added_at FROM tv_shows WHERE imdb_id = ?), ?), ?)
                         ON CONFLICT(imdb_id) DO UPDATE SET
-                            tmdb_id = COALESCE(excluded.tmdb_id, tv_shows.tmdb_id),
-                            title = COALESCE(excluded.title, tv_shows.title),
+                            tmdb_id = COALESCE(NULLIF(excluded.tmdb_id, ''), tv_shows.tmdb_id),
+                            title = COALESCE(NULLIF(excluded.title, ''), tv_shows.title),
                             year = COALESCE(excluded.year, tv_shows.year),
-                            status = COALESCE(excluded.status, tv_shows.status),
+                            status = COALESCE(NULLIF(excluded.status, ''), tv_shows.status),
                             is_complete = excluded.is_complete, -- Set based on show_status=='ended'/'canceled'
                             total_episodes = excluded.total_episodes,
                             last_status_check = excluded.last_status_check,
@@ -4863,9 +4878,9 @@ class ProgramRunner:
         decrease_step = float(get_setting('System Load Regulation', 'regulation_decrease_step_seconds', 1.0))
         max_sleep = float(get_setting('System Load Regulation', 'regulation_max_sleep_seconds', 60.0))
 
-        # Get system usage
+        # Get system usage - non-blocking
         try:
-            cpu_usage = psutil.cpu_percent(interval=1)
+            cpu_usage = psutil.cpu_percent(interval=None)
             ram_usage = psutil.virtual_memory().percent
         except Exception as e:
             logging.error(f"Error getting system usage: {e}")
@@ -5477,12 +5492,17 @@ def append_runtime_airtime(items):
     logging.info(f"Finished appending runtime/airtime. Processed {processed_count}/{len(items)} items.")
 
 
-def get_and_add_all_collected_from_plex(bypass=False):
+def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
     collected_content = None  # Initialize here
     mode = get_setting('File Management', 'file_collection_management')
 
-    if mode == 'Plex' or bypass:
-        logging.info("Getting all collected content from Plex...")
+    # Backfill should work in ANY mode since it only updates existing DB records
+    # with Plex metadata (location_on_disk, resolution, size, imdb_id, tmdb_id, collected_at)
+    if mode == 'Plex' or bypass or backfill:
+        if backfill:
+            logging.info("Getting all collected content from Plex for BACKFILL...")
+        else:
+            logging.info("Getting all collected content from Plex...")
         try:
             collected_content = asyncio.run(run_get_collected_from_plex(bypass=bypass))
         except Exception as e:
@@ -5511,7 +5531,7 @@ def get_and_add_all_collected_from_plex(bypass=False):
         # Don't return None if some items were skipped during add_collected_items
         if len(movies) > 0 or len(episodes) > 0:
             from database import add_collected_items # Keep import local
-            add_collected_items(movies + episodes)
+            add_collected_items(movies + episodes, backfill=backfill)
             logging.info(f"Finished adding {len(movies) + len(episodes)} collected items to database.")
 
             # -------- Memory cleanup to avoid JSON blob retention --------

@@ -30,6 +30,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             'already_watched': 0,
             'media_type_mismatch': 0,
             'existing_blacklisted': 0,
+            'already_collected_or_upgrading': 0,
             'trakt_error': 0,
             'anime_filter': 0,
             'monitor_mode_no_date': 0,
@@ -283,6 +284,36 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             if is_blacklisted_in_db:
                 if not enable_granular_versions:
                     skip_stats['existing_blacklisted'] += 1; items_skipped += 1; continue
+
+            # Check if item is already Collected or Upgrading (prevent duplicate re-addition)
+            is_collected_or_upgrading_in_db = False
+            if item_type == 'movie':
+                existing_versions_states_check_collected = []
+                if imdb_id and imdb_id in existing_movies:
+                    existing_versions_states_check_collected.extend(existing_movies[imdb_id])
+                if tmdb_id and tmdb_id in existing_movies and (not imdb_id or imdb_id != tmdb_id):
+                    existing_versions_states_check_collected.extend(existing_movies[tmdb_id])
+                for _, state in existing_versions_states_check_collected:
+                    if state in ('Collected', 'Upgrading'):
+                        is_collected_or_upgrading_in_db = True; break
+            else:
+                season_number_check_collected = item.get('season_number'); episode_number_check_collected = item.get('episode_number')
+                existing_versions_states_check_collected = []
+                imdb_key_check_collected = None; tmdb_key_check_collected = None
+                if imdb_id:
+                    imdb_key_check_collected = (str(imdb_id), season_number_check_collected, episode_number_check_collected)
+                    if imdb_key_check_collected in existing_episodes: existing_versions_states_check_collected.extend(existing_episodes[imdb_key_check_collected])
+                if tmdb_id:
+                    tmdb_key_check_collected = (str(tmdb_id), season_number_check_collected, episode_number_check_collected)
+                    if tmdb_key_check_collected in existing_episodes and (not imdb_key_check_collected or imdb_key_check_collected != tmdb_key_check_collected):
+                         existing_versions_states_check_collected.extend(existing_episodes[tmdb_key_check_collected])
+                for _, state in existing_versions_states_check_collected:
+                    if state in ('Collected', 'Upgrading'):
+                        is_collected_or_upgrading_in_db = True; break
+
+            if is_collected_or_upgrading_in_db:
+                if not enable_granular_versions:
+                    skip_stats['already_collected_or_upgrading'] += 1; items_skipped += 1; continue
 
             if item_type == 'movie':
                 skip = False; media_id_vs = imdb_id or tmdb_id
@@ -599,6 +630,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
         # Add common skip reasons
         if skip_stats['existing_blacklisted'] > 0:
              skip_report.append(f"\n- {skip_stats['existing_blacklisted']} items skipped because an existing version was blacklisted in the DB")
+        if skip_stats['already_collected_or_upgrading'] > 0:
+             skip_report.append(f"- {skip_stats['already_collected_or_upgrading']} items skipped because they are already Collected or Upgrading")
         if skip_stats['missing_ids'] > 0:
             skip_report.append(f"- {skip_stats['missing_ids']} items skipped due to missing IMDb/TMDb IDs")
         if skip_stats['blacklisted'] > 0:

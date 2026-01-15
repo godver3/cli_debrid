@@ -474,11 +474,11 @@
 
 .modal-content {
     position: relative;
-    background: var(--card-bg);
+    background: #1a1a1a;
     margin: 10% auto;
     padding: 20px;
     width: 90%;
-    max-width: 500px;
+    /* max-width: 500px; */
     border-radius: 8px;
 }
 

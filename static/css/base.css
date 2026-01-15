@@ -5,6 +5,11 @@
     box-sizing: border-box;
 }
 
+/* Smooth scrolling */
+html {
+    scroll-behavior: smooth;
+}
+
     /* Scrollbar styles */
 ::-webkit-scrollbar {
     width: 16px;
@@ -1990,10 +1995,10 @@ body.modal-open {
     }
 }
 
-.help-button-animate-appear {
-    animation: helpButtonAppearBounce 1s ease-out forwards;
+/* .help-button-animate-appear {
+    animation: helpButtonAppearBounce 1s ease-out forwards; */
     /* 'forwards' ensures it stays at the animation's end state (left: 0px) */
-}
+/* } */
 /* END NEW CODE */
 
 /* Show Help Button only on Desktop (No changes made here in the last step) */

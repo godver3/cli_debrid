@@ -17,7 +17,7 @@
         <div class="settings-list">
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "UI Settings" %}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "UI Settings" and section != "Library Manager" %}
     <div class="settings-section settings-card">
         <div class="settings-section-header">
             <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -410,6 +410,47 @@
                 </div>
                 {% endif %}
             {% endfor %}
+        </div>
+    </div>
+    {% elif section == "Library Manager" %}
+    <div class="settings-section settings-card">
+        <div class="settings-section-header">
+            <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+            <div class="settings-header-left">
+                <h4>Library Manager</h4>
+            </div>
+        </div>
+        <div class="settings-section-content">
+            <!-- Primary Artwork Source -->
+            <div class="settings-form-group">
+                <label for="additional-primary_artwork_source" class="settings-title">Primary Artwork Source:</label>
+                <select id="additional-primary_artwork_source" name="Library Manager.primary_artwork_source" class="settings-input"
+                        data-section="Library Manager" data-key="primary_artwork_source">
+                    <option value="Plex" {% if settings.get('Library Manager', {}).get('primary_artwork_source', 'Plex') == 'Plex' %}selected{% endif %}>Plex</option>
+                    <option value="TMDB" {% if settings.get('Library Manager', {}).get('primary_artwork_source', 'Plex') == 'TMDB' %}selected{% endif %}>TMDB</option>
+                </select>
+                <p class="settings-description">Choose where to get posters and artwork from first. Plex uses your server's artwork (requires Plex authentication). TMDB uses online movie database (requires TMDB API key). The other source will be used as backup.</p>
+            </div>
+
+            <!-- Auto Ghostlist Deleted -->
+            <div class="settings-form-group">
+                <label for="additional-ghostlist_mode" class="settings-title">Auto Ghostlist Deleted:</label>
+                <input type="checkbox" id="additional-ghostlist_mode" name="Library Manager.ghostlist_mode"
+                       data-section="Library Manager" data-key="ghostlist_mode"
+                       {% if settings.get('Library Manager', {}).get('ghostlist_mode', False) %}checked{% endif %}>
+                <p class="settings-description">Automatically add deleted shows and movies to the ghostlist to prevent them from being re-added. When enabled, deleting a show will mark it as ghosted in the database. When disabled, deleted shows can be re-added by content sources.</p>
+            </div>
+
+            <!-- Clear Cache Button -->
+            <div class="settings-form-group">
+                <label class="settings-title">Clear Artwork Cache:</label>
+                <button type="button" id="clear-library-cache-btn" class="btn btn-danger" style="padding: 8px 16px;">
+                    Clear Cache
+                </button>
+                <p class="settings-description">Remove all cached posters and backdrops. Artwork will be re-downloaded from the primary source on next library load.</p>
+            </div>
         </div>
     </div>
     {% endif %}
@@ -1297,6 +1338,33 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .catch(error => {
             console.error('Error saving setting:', error);
+        });
+    }
+
+    // Clear Library Cache Button Handler
+    const clearCacheBtn = document.getElementById('clear-library-cache-btn');
+    if (clearCacheBtn) {
+        clearCacheBtn.addEventListener('click', function() {
+            if (confirm('Are you sure you want to clear the artwork cache? All posters and backdrops will be re-downloaded from the primary source on next library load.')) {
+                fetch('/library/clear_cache', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Cache cleared successfully! Artwork will be refreshed on next library load.');
+                    } else {
+                        alert('Failed to clear cache: ' + (data.error || 'Unknown error'));
+                    }
+                })
+                .catch(error => {
+                    console.error('Error clearing cache:', error);
+                    alert('Error clearing cache. Check console for details.');
+                });
+            }
         });
     }
 });

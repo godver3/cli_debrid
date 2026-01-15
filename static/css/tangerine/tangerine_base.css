@@ -11,7 +11,7 @@
 }
 
 ::-webkit-scrollbar-track {
-    background: rgba(255, 255, 255, 0.03);
+    background: #1a1a1a;
     border-left: 1px solid rgba(255, 255, 255, 0.08);
 }
 
@@ -28,7 +28,7 @@
 /* For Firefox */
 * {
     scrollbar-width: auto;
-    scrollbar-color: rgba(255, 107, 53, 0.3) rgba(255, 255, 255, 0.03);
+    scrollbar-color: rgba(255, 107, 53, 0.3) #1a1a1a;
 }
 
 /* Global Input Field Styling */
@@ -2143,10 +2143,10 @@ body.modal-open {
     }
 }
 
-.help-button-animate-appear {
-    animation: helpButtonAppearBounce 1s ease-out forwards;
+/* .help-button-animate-appear {
+    animation: helpButtonAppearBounce 1s ease-out forwards; */
     /* 'forwards' ensures it stays at the animation's end state (left: 0px) */
-}
+/* } */
 /* END NEW CODE */
 
 /* START EDIT: Modify Pause Status Banner Styles for Bottom Position */

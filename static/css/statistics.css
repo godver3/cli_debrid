@@ -251,11 +251,13 @@ input:checked + .toggle-slider:before {
     right: 0;
 }
 
-.rescrape-btn:hover {
+.rescrape-btn:hover,
+.search-episode-btn:hover {
     background-color: rgba(255, 165, 0, 0.2);
 }
 
-.rescrape-btn:disabled {
+.rescrape-btn:disabled,
+.search-episode-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
@@ -265,8 +267,23 @@ input:checked + .toggle-slider:before {
   content: "\f01e";                /* Unicode for fa-arrows-rotate */
 }
 
+.search-episode-btn {
+    background: none;
+    border: none;
+    color: #FFA500;
+    cursor: pointer;
+    padding: 4px 8px;
+    margin-left: 10px;
+    border-radius: 4px;
+    transition: all 0.2s ease;
+    width: 24px;
+    position: absolute;
+    right: 0;
+}
+
+
 /* Card styles */
-.cards-container {
+.stats-cards-container {
     display: grid;
     grid-template-columns: repeat(auto-fit, 200px);
     gap: 15px;
@@ -274,7 +291,7 @@ input:checked + .toggle-slider:before {
     justify-content: center;
 }
 
-.card {
+.stats-card {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -282,12 +299,12 @@ input:checked + .toggle-slider:before {
     border-bottom: 1px solid #3a3a3a;
 }
 
-.card:last-child {
+.stats-card:last-child {
     border-bottom: none;
 }
 
 /* Poster styles */
-.poster-container {
+.stats-poster-container {
     width: 200px;
     aspect-ratio: 2/3;
     position: relative;
@@ -302,7 +319,7 @@ input:checked + .toggle-slider:before {
     object-fit: cover;
 }
 
-.poster-hover {
+.stats-poster-hover {
     position: absolute;
     top: 0;
     left: 0;
@@ -318,23 +335,23 @@ input:checked + .toggle-slider:before {
     justify-content: center;
 }
 
-.poster-container:hover .poster-hover {
+.stats-poster-container:hover .stats-poster-hover {
     opacity: 1;
 }
 
-.poster-hover .title {
+.stats-poster-hover .title {
     color: #FFA500;
     font-size: 1.1em;
     margin-bottom: 8px;
 }
 
-.poster-hover .metadata {
+.stats-poster-hover .metadata {
     color: #fff;
     font-size: 0.9em;
     margin-bottom: 4px;
 }
 
-.poster-hover .filename {
+.stats-poster-hover .filename {
     color: #888;
     font-family: monospace;
     font-size: 0.8em;
@@ -406,13 +423,13 @@ input:checked + .toggle-slider:before {
 }
 
 /* Compact view modifications */
-.compact-view .cards-container {
+.compact-view .stats-cards-container {
     display: flex;
     flex-direction: column;
     gap: 0;
 }
 
-.compact-view .card {
+.compact-view .stats-card {
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
@@ -422,11 +439,11 @@ input:checked + .toggle-slider:before {
     border-bottom: 1px solid #3a3a3a;
 }
 
-.compact-view .card:last-child {
+.compact-view .stats-card:last-child {
     border-bottom: none;
 }
 
-.compact-view .poster-container {
+.compact-view .stats-poster-container {
     display: none;
 }
 
@@ -486,7 +503,7 @@ input:checked + .toggle-slider:before {
 }
 
 /* Scrollable containers for both mobile and desktop */
-.statistics-wrapper.compact-view .cards-container {
+.statistics-wrapper.compact-view .stats-cards-container {
     overflow-y: visible;
 }
 
@@ -519,14 +536,14 @@ input:checked + .toggle-slider:before {
     }
 
     /* Force compact view styles on mobile */
-    .cards-container {
+    .stats-cards-container {
         display: flex !important;
         flex-direction: column !important;
         gap: 0 !important;
         width: 100% !important;
     }
 
-    .card {
+    .stats-card {
         flex-direction: row !important;
         justify-content: flex-start !important;
         align-items: flex-start !important;
@@ -538,7 +555,7 @@ input:checked + .toggle-slider:before {
         overflow: visible !important;
     }
 
-    .poster-container {
+    .stats-poster-container {
         display: none !important;
     }
 
@@ -626,14 +643,14 @@ input:checked + .toggle-slider:before {
 }
 
 /* Also add styles for the poster hover view */
-.poster-hover .filename[data-label]::before {
+.stats-poster-hover .filename[data-label]::before {
     content: attr(data-label);
     color: white;
     margin-right: 4px;
     font-family: inherit;
 }
 
-.poster-hover .filename {
+.stats-poster-hover .filename {
     color: #808080;
     font-family: monospace;
     font-size: 0.8em;
@@ -800,8 +817,8 @@ body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[
     display: none !important;
 }
 
-body[data-theme="tangerine"] .recently-upgraded-section .poster-hover .filename[data-label="From:"]::before,
-body[data-theme="tangerine"] .recently-upgraded-section .poster-hover .filename[data-label="To:"]::before {
+body[data-theme="tangerine"] .recently-upgraded-section .stats-poster-hover .filename[data-label="From:"]::before,
+body[data-theme="tangerine"] .recently-upgraded-section .stats-poster-hover .filename[data-label="To:"]::before {
     display: none !important;
 }
 

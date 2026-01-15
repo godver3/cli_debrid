@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, flash, redirect, url_for
 import requests
 import os
+import threading
 from datetime import datetime
 from utilities.settings import get_setting, get_all_settings
 from typing import Dict, List, Any
@@ -48,6 +49,26 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
 
 from .models import user_required # Added import
+
+# Settings cache to avoid repeated config loading
+_settings_cache = {}
+_settings_cache_time = None
+
+def get_cached_setting(section, key=None, default=None):
+    """Get setting with caching to reduce repeated config loads."""
+    global _settings_cache, _settings_cache_time
+    from datetime import datetime, timedelta
+
+    # Cache for 5 seconds
+    if _settings_cache_time is None or (datetime.now() - _settings_cache_time) > timedelta(seconds=5):
+        _settings_cache = {}
+        _settings_cache_time = datetime.now()
+
+    cache_key = f"{section}:{key}" if key else section
+    if cache_key not in _settings_cache:
+        _settings_cache[cache_key] = get_setting(section, key, default)
+
+    return _settings_cache[cache_key]
 
 def check_cli_battery_connection():
     """Check connection to cli_battery service using environment variables."""
@@ -352,6 +373,38 @@ def check_jellyfin_connection():
             'details': { 'url': jellyfin_url }
         }
 
+def _check_path_with_timeout(path, timeout_sec=5):
+    """Check if a path exists with a timeout to prevent hanging on unresponsive mounts.
+
+    Uses a separate thread to perform the check, with a timeout.
+    Returns dict with exists, accessible, error, listed keys.
+    """
+    result = {'exists': False, 'accessible': False, 'error': None, 'listed': False}
+
+    def check_path():
+        try:
+            result['exists'] = os.path.exists(path)
+            if result['exists']:
+                result['accessible'] = os.access(path, os.R_OK)
+                if result['accessible']:
+                    # Quick listdir to verify mount is responsive
+                    os.listdir(path)
+                    result['listed'] = True
+        except Exception as e:
+            result['error'] = str(e)
+
+    thread = threading.Thread(target=check_path, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout_sec)
+
+    if thread.is_alive():
+        # Thread is still running - mount is unresponsive
+        result['error'] = f'Mount check timed out after {timeout_sec}s (mount may be unresponsive)'
+        return result
+
+    return result
+
+
 def check_mounted_files_connection():
     """Check if mounted files location is accessible."""
     # Try original_files_path first, then fall back to Plex mounted_file_location
@@ -361,15 +414,26 @@ def check_mounted_files_connection():
     else:
         mount_path = get_setting('Plex', 'mounted_file_location')
         source = 'Plex'
-    
+
     if not mount_path:
         return None  # No mount path configured
-        
+
     try:
-        # Check if path exists and is accessible
-        if os.path.exists(mount_path) and os.access(mount_path, os.R_OK):
-            # Try to list directory contents to verify mount is responsive
-            os.listdir(mount_path)
+        # Use timeout-protected path check to prevent hanging on unresponsive mounts
+        check_result = _check_path_with_timeout(mount_path, timeout_sec=5)
+
+        if check_result['error']:
+            return {
+                'name': 'Mounted Files',
+                'connected': False,
+                'error': check_result['error'],
+                'details': {
+                    'path': mount_path,
+                    'source': source
+                }
+            }
+
+        if check_result['exists'] and check_result['accessible'] and check_result['listed']:
             return {
                 'name': 'Mounted Files',
                 'connected': True,
@@ -703,14 +767,14 @@ def check_scraper_connection(scraper_id, scraper_config):
 def check_nyaa_scrapers_only():
     """Check only Nyaa scrapers to avoid proxy conflicts with other connection checks."""
     from queues.config_manager import load_config
-    
+
     config = load_config()
     scrapers = config.get('Scrapers', {})
     scraper_statuses = []
 
     enabled_scrapers = {
-        scraper_id: scraper_config 
-        for scraper_id, scraper_config in scrapers.items() 
+        scraper_id: scraper_config
+        for scraper_id, scraper_config in scrapers.items()
         if scraper_config.get('enabled', False) and scraper_config.get('type') == 'Nyaa'
     }
 
@@ -718,15 +782,21 @@ def check_nyaa_scrapers_only():
         return []
 
     # Run Nyaa scrapers sequentially to avoid proxy conflicts
-    for scraper_id, scraper_config in enabled_scrapers.items():
-        try:
-            status = check_scraper_connection(scraper_id, scraper_config)
-            if status:
-                scraper_statuses.append(status)
-        except Exception as exc:
-            log.error(f'Nyaa scraper {scraper_id} check generated an exception: {exc}', exc_info=True)
-            scraper_statuses.append(create_timeout_status(scraper_config.get('type'), scraper_id))
-                
+    # Use ThreadPoolExecutor with single worker to enable timeout
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        for scraper_id, scraper_config in enabled_scrapers.items():
+            future = executor.submit(check_scraper_connection, scraper_id, scraper_config)
+            try:
+                status = future.result(timeout=3)  # 5-second timeout per Nyaa scraper
+                if status:
+                    scraper_statuses.append(status)
+            except TimeoutError:
+                log.warning(f'Nyaa scraper check for {scraper_id} timed out.')
+                scraper_statuses.append(create_timeout_status(scraper_config.get('type'), scraper_id))
+            except Exception as exc:
+                log.error(f'Nyaa scraper {scraper_id} check generated an exception: {exc}', exc_info=True)
+                scraper_statuses.append(create_timeout_status(scraper_config.get('type'), scraper_id))
+
     return scraper_statuses
 
 def check_non_nyaa_scrapers():
@@ -746,7 +816,8 @@ def check_non_nyaa_scrapers():
     if not enabled_scrapers:
         return []
 
-    with ThreadPoolExecutor(max_workers=len(enabled_scrapers)) as executor:
+    # Use fixed worker limit instead of O(n) workers to prevent resource exhaustion
+    with ThreadPoolExecutor(max_workers=min(5, len(enabled_scrapers))) as executor:
         future_to_scraper = {
             executor.submit(check_scraper_connection, scraper_id, scraper_config): (scraper_id, scraper_config)
             for scraper_id, scraper_config in enabled_scrapers.items()
@@ -755,7 +826,7 @@ def check_non_nyaa_scrapers():
         for future in as_completed(future_to_scraper):
             scraper_id, scraper_config = future_to_scraper[future]
             try:
-                status = future.result(timeout=10) # 10-second timeout per scraper
+                status = future.result(timeout=3) # 3-second timeout per scraper
                 if status:
                     scraper_statuses.append(status)
             except TimeoutError:
@@ -804,9 +875,9 @@ def check_scrapers_connections():
             log.error(f'Nyaa scraper {scraper_id} check generated an exception: {exc}', exc_info=True)
             scraper_statuses.append(create_timeout_status(scraper_config.get('type'), scraper_id))
 
-    # Run all other scrapers in parallel
+    # Run all other scrapers in parallel with fixed worker limit
     if other_scrapers:
-        with ThreadPoolExecutor(max_workers=len(other_scrapers)) as executor:
+        with ThreadPoolExecutor(max_workers=min(5, len(other_scrapers))) as executor:
             future_to_scraper = {
                 executor.submit(check_scraper_connection, scraper_id, scraper_config): (scraper_id, scraper_config)
                 for scraper_id, scraper_config in other_scrapers.items()
@@ -819,7 +890,7 @@ def check_scrapers_connections():
                 scraper_id, scraper_config = future_to_scraper[future]
                 try:
                     # Use a timeout for getting the result of each future
-                    status = future.result(timeout=10) # 10-second timeout per scraper
+                    status = future.result(timeout=3) # 5-second timeout per scraper
                     if status:
                         scraper_statuses.append(status)
                 except TimeoutError:
@@ -921,36 +992,9 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 'total_urls': len(url_list),
                 'versions': source_config.get('versions', {'Default': True})
             })
-            
-            # --- Fetch Sample Data for MDBList (if connected) ---
-            if base_response['connected'] and successful_urls:
-                sample_items = []
-                try:
-                    sample_url = successful_urls[0]
-                    headers = {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                    }
-                    sample_response = requests.get(sample_url, headers=headers, timeout=5, allow_redirects=True)
-                    sample_response.raise_for_status()
-                    data = sample_response.json()
-                    
-                    if isinstance(data, list):
-                        for item in data[:3]: 
-                            title = item.get('title', 'Unknown Title')
-                            year = item.get('year')
-                            item_type = item.get('mediatype', 'unknown').lower()
-                            display_type = 'TV' if item_type in ['show', 'tv'] else item_type.capitalize()
-                            
-                            display_text = f"{title} ({year})" if year else title
-                            sample_items.append(f"[{display_type}] {display_text}")
-                    else:
-                         base_response['details']['sample_error'] = "Unexpected JSON format (not a list)"
-                    base_response['details']['sample_data'] = sample_items if sample_items else ["No items found or could not parse."]
 
-                except Exception as e:
-                    log.warning(f"Failed to fetch sample for MDBList {source_id}: {e}", exc_info=True)
-                    base_response['details']['sample_error'] = f"Failed to fetch sample: {str(e)}"
-            # --- End MDBList Sample Fetch ---
+            # Sample data fetching removed to improve performance
+            # Connection check should only verify connectivity, not fetch data
 
         # --- Trakt Sources (Watchlist, Lists, Friends, Collection, Special Lists) ---
         elif source_type in ['Trakt Watchlist', 'Trakt Lists', 'Friends Trakt Watchlist', 'Trakt Collection', 'Special Trakt Lists']:
@@ -978,184 +1022,9 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
             except Exception as e:
                 base_response['error'] = f'Trakt API error: {str(e)}'
                 base_response['connected'] = False
-            
-            # --- Fetch Sample Data for Trakt (if connected) ---
-            if base_response['connected']:
-                sample_items = []
-                try:
-                    # --- Trakt Watchlist Sample ---
-                    if source_type == 'Trakt Watchlist':
-                        # Fetch both movies and shows for the sample, limit each
-                        endpoints = {'movies': '/sync/watchlist/movies?limit=2', 'shows': '/sync/watchlist/shows?limit=2'}
-                        for media_type, endpoint in endpoints.items():
-                            items_response = make_trakt_request('get', endpoint)
-                            if items_response and items_response.status_code == 200:
-                                data = items_response.json()
-                                for item in data:
-                                    # Extract nested object ('movie' or 'show')
-                                    item_data = item.get(media_type[:-1]) 
-                                    if item_data:
-                                        title = item_data.get('title', 'Unknown Title')
-                                        year = item_data.get('year')
-                                        display_type = "Movie" if media_type == 'movies' else "Show"
-                                        display_text = f"{title} ({year})" if year else title
-                                        sample_items.append(f"[{display_type}] {display_text}")
-                            else:
-                                log.warning(f"Failed to fetch {media_type} for Trakt Watchlist sample. Status: {items_response.status_code if items_response else 'N/A'}")
-                    
-                    # --- Trakt Lists Sample ---
-                    elif source_type == 'Trakt Lists':
-                        # Corrected: Use 'trakt_lists' key instead of 'urls'
-                        list_urls_str = source_config.get('trakt_lists', '').strip()
-                        if list_urls_str:
-                             # Use the first URL for the sample
-                            first_url = list_urls_str.split(',')[0].strip()
-                            list_info = parse_trakt_list_url(first_url)
-                            if list_info:
-                                username = list_info.get('username')
-                                list_id = list_info.get('list_id')
-                                if username and list_id:
-                                    # Clean username for API use (handle email-based usernames)
-                                    from content_checkers.trakt import clean_username_for_api
-                                    clean_username = clean_username_for_api(username)
-                                    if clean_username != username:
-                                        log.info(f"Cleaned username for sample fetch: '{username}' -> '{clean_username}'")
-                                    
-                                    endpoint = f"/users/{clean_username}/lists/{list_id}/items?limit=3"
-                                    items_response = make_trakt_request('get', endpoint)
-                                    if items_response and items_response.status_code == 200:
-                                        data = items_response.json()
-                                        for item in data:
-                                            item_type_key = None
-                                            if 'movie' in item: item_type_key = 'movie'
-                                            elif 'show' in item: item_type_key = 'show'
-                                            elif 'episode' in item: item_type_key = 'episode' 
 
-                                            if item_type_key:
-                                                item_data = item.get(item_type_key)
-                                                if item_type_key == 'episode':
-                                                    item_data = item.get('show') 
-                                                    display_type = "Show" 
-                                                elif item_type_key == 'show':
-                                                    display_type = "Show"
-                                                else:
-                                                    display_type = "Movie"
-
-                                                if item_data:
-                                                    title = item_data.get('title', 'Unknown Title')
-                                                    year = item_data.get('year')
-                                                    display_text = f"{title} ({year})" if year else title
-                                                    sample_items.append(f"[{display_type}] {display_text}")
-                                    else:
-                                        log.warning(f"Failed to fetch items for Trakt List {list_id}. Status: {items_response.status_code if items_response else 'N/A'}")
-                                        # Add error to sample details if fetch failed
-                                        base_response['details']['sample_error'] = f"Failed to fetch sample from list (Status: {items_response.status_code if items_response else 'N/A'})"
-                                else:
-                                    base_response['details']['sample_error'] = "Could not parse username/list ID from URL."
-                            else:
-                                base_response['details']['sample_error'] = "Could not parse Trakt list URL."
-                        else:
-                             # This error message should now be correct if 'trakt_lists' is missing/empty
-                             base_response['details']['sample_error'] = "No URLs configured for Trakt List source."
-
-                    # --- Trakt Collection Sample (Existing - No change needed) ---
-                    elif source_type == 'Trakt Collection':
-                         movies_resp = make_trakt_request('get', '/sync/collection/movies?limit=2')
-                         shows_resp = make_trakt_request('get', '/sync/collection/shows?limit=1')
-                         if movies_resp and movies_resp.status_code == 200:
-                             for item in movies_resp.json():
-                                 movie = item.get('movie')
-                                 if movie:
-                                     title = movie.get('title', 'Unknown Title')
-                                     year = movie.get('year')
-                                     sample_items.append(f"[Movie] {title} ({year})" if year else f"[Movie] {title}")
-                         if shows_resp and shows_resp.status_code == 200:
-                              for item in shows_resp.json():
-                                  show = item.get('show')
-                                  if show:
-                                      title = show.get('title', 'Unknown Title')
-                                      year = show.get('year')
-                                      sample_items.append(f"[Show] {title} ({year})" if year else f"[Show] {title}")
-
-                    # --- Special Trakt Lists Sample ---
-                    elif source_type == 'Special Trakt Lists':
-                        selected_list_types = source_config.get('special_list_type', [])
-                        media_type_filter = source_config.get('media_type', 'All').lower()
-                        
-                        if not selected_list_types:
-                            base_response['details']['sample_error'] = "No special list types configured"
-                        else:
-                            # Sample from the first configured list type
-                            first_list_type = selected_list_types[0]
-                            sample_items = []
-                            
-                            # Define API endpoints for special lists
-                            special_list_api_details = {
-                                "Trending": {"movies": "/movies/trending", "shows": "/shows/trending"},
-                                "Popular": {"movies": "/movies/popular", "shows": "/shows/popular"},
-                                "Anticipated": {"movies": "/movies/anticipated", "shows": "/shows/anticipated"},
-                                "Box Office": {"movies": "/movies/boxoffice", "shows": None},
-                                "Played": {"movies": "/movies/played/weekly", "shows": "/shows/played/weekly"},
-                                "Watched": {"movies": "/movies/watched/weekly", "shows": "/shows/watched/weekly"},
-                                "Collected": {"movies": "/movies/collected/weekly", "shows": "/shows/collected/weekly"},
-                                "Favorited": {"movies": "/movies/favorited/weekly", "shows": "/shows/favorited/weekly"}
-                            }
-                            
-                            if first_list_type in special_list_api_details:
-                                api_paths = special_list_api_details[first_list_type]
-                                endpoints_to_call = []
-                                
-                                if media_type_filter in ['movies', 'all'] and api_paths.get("movies"):
-                                    endpoints_to_call.append(api_paths["movies"])
-                                if media_type_filter in ['shows', 'all'] and api_paths.get("shows"):
-                                    endpoints_to_call.append(api_paths["shows"])
-                                
-                                for endpoint in endpoints_to_call[:2]:  # Limit to 2 endpoints for sample
-                                    if endpoint:
-                                        sample_response = make_trakt_request('get', f"{endpoint}?limit=2")
-                                        if sample_response and sample_response.status_code == 200:
-                                            try:
-                                                data = sample_response.json()
-                                                for item in data:
-                                                    # Handle different response structures
-                                                    item_data = None
-                                                    display_type = "Unknown"
-                                                    
-                                                    if 'movie' in item:
-                                                        item_data = item.get('movie')
-                                                        display_type = "Movie"
-                                                    elif 'show' in item:
-                                                        item_data = item.get('show')
-                                                        display_type = "Show"
-                                                    
-                                                    if item_data:
-                                                        title = item_data.get('title', 'Unknown Title')
-                                                        year = item_data.get('year')
-                                                        display_text = f"{title} ({year})" if year else title
-                                                        sample_items.append(f"[{display_type}] {display_text}")
-                                            except Exception as e:
-                                                log.warning(f"Failed to parse sample data from {endpoint}: {e}")
-                            else:
-                                base_response['details']['sample_error'] = f"Unknown special list type: {first_list_type}"
-                            
-                            if sample_items:
-                                base_response['details']['sample_data'] = sample_items
-                            else:
-                                base_response['details']['sample_data'] = [f"No items found in {first_list_type} list"]
-
-                    # Add Friends Trakt Watchlist sample fetch if needed later
-
-                    base_response['details']['sample_data'] = sample_items if sample_items else ["No items found in sample."]
-                    # Only overwrite sample_error if it wasn't already set by a specific list fetch failure
-                    if not base_response['details']['sample_error'] and not sample_items:
-                        base_response['details']['sample_data'] = ["No items found in sample."]
-
-                except Exception as e:
-                    log.warning(f"Failed to fetch sample for Trakt source {source_id}: {e}", exc_info=True) 
-                    # Avoid overwriting specific errors (like URL parsing) with the general exception message
-                    if not base_response['details']['sample_error']:
-                        base_response['details']['sample_error'] = f"Failed to fetch sample: {str(e)}"
-            # --- End Trakt Sample Fetch ---
+            # Sample data fetching removed to improve performance
+            # Connection check should only verify connectivity, not fetch data
 
         # --- Overseerr ---
         elif source_type == 'Overseerr':
@@ -1180,79 +1049,9 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 'url': url,
                 'api_status': response.status_code
             })
-            
-            # --- Fetch Sample Data for Overseerr (if connected) ---
-            if base_response['connected']:
-                sample_items = []
-                try:
-                    sample_url = f"{url.rstrip('/')}/api/v1/request?take=3&skip=0&sort=added&filter=available"
-                    headers = {'X-Api-Key': api_key}
-                    sample_response = requests.get(sample_url, headers=headers, timeout=5)
-                    sample_response.raise_for_status()
-                    data = sample_response.json()
-                    results = data.get('results', [])
-                    
-                    for request in results:
-                         media_info = request.get('media', {})
-                         media_type = media_info.get('mediaType') # 'movie' or 'tv'
-                         
-                         title = None
-                         year = None
-                         display_type = 'Unknown'
-                         tmdb_id_for_log = media_info.get('tmdbId', 'N/A') 
 
-                         if media_type == 'movie':
-                             title = media_info.get('title') or media_info.get('originalTitle')
-                             year = media_info.get('releaseDate', '')[:4] if media_info.get('releaseDate') else ''
-                             display_type = "Movie"
-                         elif media_type == 'tv':
-                             title = media_info.get('name') or media_info.get('originalName')
-                             year = media_info.get('firstAirDate', '')[:4] if media_info.get('firstAirDate') else ''
-                             display_type = "TV"
-                         else:
-                             title = media_info.get('title') or media_info.get('name') or media_info.get('originalTitle') or media_info.get('originalName')
-                             year = (media_info.get('releaseDate') or media_info.get('firstAirDate') or '')[:4]
-
-                         # --- Fallback using DirectAPI if title is missing ---
-                         if (not title or title == "Unknown Title") and tmdb_id_for_log != 'N/A' and direct_api_instance:
-                             log.warning(f"Overseerr sample: Title missing for {media_type} TMDB ID {tmdb_id_for_log}. Attempting fallback lookup.")
-                             try:
-                                 # Convert TMDB to IMDb
-                                 conversion_media_type = 'show' if media_type == 'tv' else media_type
-                                 imdb_id, _ = direct_api_instance.tmdb_to_imdb(str(tmdb_id_for_log), media_type=conversion_media_type)
-                                 
-                                 if imdb_id:
-                                     # Fetch metadata using IMDb ID
-                                     metadata = None
-                                     if media_type == 'movie':
-                                         metadata, _ = direct_api_instance.get_movie_metadata(imdb_id)
-                                     elif media_type == 'tv':
-                                         metadata, _ = direct_api_instance.get_show_metadata(imdb_id)
-                                     
-                                     if metadata and isinstance(metadata, dict) and metadata.get('title'):
-                                         fetched_title = metadata.get('title')
-                                         log.info(f"Fallback successful: Found title '{fetched_title}' for TMDB ID {tmdb_id_for_log} (IMDb: {imdb_id})")
-                                         title = fetched_title # Update the title
-                                     else:
-                                         log.warning(f"Fallback failed: Could not fetch metadata or title for IMDb ID {imdb_id}")
-                                 else:
-                                     log.warning(f"Fallback failed: Could not convert TMDB ID {tmdb_id_for_log} to IMDb ID.")
-                             except Exception as fallback_e:
-                                 log.error(f"Error during Overseerr sample title fallback lookup: {fallback_e}", exc_info=True)
-                         # --- End Fallback ---
-
-                         # Ensure title is not None or empty before formatting
-                         title = title if title else "Unknown Title"
-
-                         display_text = f"{title} ({year})" if year else title
-                         sample_items.append(f"[{display_type}] {display_text}")
-
-                    base_response['details']['sample_data'] = sample_items if sample_items else ["No available requests found in sample."]
-
-                except Exception as e:
-                    log.warning(f"Failed to fetch sample for Overseerr {source_id}: {e}", exc_info=True) 
-                    base_response['details']['sample_error'] = f"Failed to fetch sample: {str(e)}"
-            # --- End Overseerr Sample Fetch ---
+            # Sample data fetching removed to improve performance
+            # Connection check should only verify connectivity, not fetch data
 
         # --- Plex Watchlist (My/Other) ---
         elif source_type in ['My Plex Watchlist', 'Other Plex Watchlist']:
@@ -1302,35 +1101,8 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 return base_response
             # --- End Connection Check ---
 
-            # --- Fetch Sample Data for Plex Watchlist (if connection seems okay) ---
-            # We attempt sample fetch even if username mismatch occurred, but connection itself worked
-            if account: # Check if account object was created
-                sample_items = []
-                try:
-                    # Call watchlist() directly on the MyPlexAccount instance
-                    # Pass maxresults=3 to limit the sample size
-                    watchlist_items = account.watchlist(sort='addedAt:desc', maxresults=3) # Corrected call
-
-                    for item in watchlist_items:
-                         title = getattr(item, 'title', 'Unknown Title')
-                         year = getattr(item, 'year', None)
-                         item_type = getattr(item, 'type', 'unknown').capitalize()
-                         display_text = f"{title} ({year})" if year else title
-                         sample_items.append(f"[{item_type}] {display_text}")
-
-                    base_response['details']['sample_data'] = sample_items if sample_items else ["Watchlist is empty or could not fetch sample."]
-
-                except AttributeError as ae:
-                     # Handle case where MyPlexAccount doesn't have watchlist method
-                     log.error(f"MyPlexAccount object for {source_id} is missing the 'watchlist' method: {ae}", exc_info=True)
-                     base_response['details']['sample_error'] = "Internal Error: Watchlist method not found."
-                except Exception as e:
-                    # Catch specific plexapi exceptions if known, otherwise general Exception
-                    log.warning(f"Failed to fetch sample for Plex Watchlist {source_id}: {e}", exc_info=True) # Log traceback
-                    base_response['details']['sample_error'] = f"Failed to fetch sample: {str(e)}"
-            elif not base_response['connected']:
-                 base_response['details']['sample_error'] = "Cannot fetch sample, connection failed."
-            # --- End Plex Watchlist Sample Fetch ---
+            # Sample data fetching removed to improve performance
+            # Connection check should only verify connectivity, not fetch data
 
         # --- Plex RSS Watchlist ---
         elif source_type in ['My Plex RSS Watchlist', 'My Friends Plex RSS Watchlist']:
@@ -1348,27 +1120,9 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
                 'url': url,
                 'rss_status': response.status_code
             })
-            
-            # --- Fetch Sample Data for Plex RSS (if connected) ---
-            if base_response['connected']:
-                sample_items = []
-                try:
-                    import feedparser # Import here to avoid making it a hard dependency if RSS isn't used
-                    url = source_config.get('url', '').strip()
-                    feed = feedparser.parse(url)
 
-                    for entry in feed.entries[:3]: # Get first 3 entries
-                        title = entry.get('title', 'Unknown Title')
-                        sample_items.append(title)
-
-                    base_response['details']['sample_data'] = sample_items if sample_items else ["RSS feed empty or could not parse."]
-
-                except ImportError:
-                     base_response['details']['sample_error'] = "feedparser library not installed."
-                except Exception as e:
-                    log.warning(f"Failed to fetch sample for Plex RSS {source_id}: {e}")
-                    base_response['details']['sample_error'] = f"Failed to fetch sample: {e}"
-            # --- End Plex RSS Sample Fetch ---
+            # Sample data fetching removed to improve performance
+            # Connection check should only verify connectivity, not fetch data
 
     except requests.Timeout:
         base_response['error'] = 'Connection timed out'
@@ -1402,17 +1156,18 @@ def check_content_sources_connections():
     if not selected_sources:
         return []
 
-    with ThreadPoolExecutor(max_workers=len(selected_sources)) as executor:
+    # Use fixed worker limit instead of O(n) workers to prevent resource exhaustion
+    with ThreadPoolExecutor(max_workers=min(10, len(selected_sources))) as executor:
         future_to_source = {
             executor.submit(check_content_source_connection, source_id, source_config): (source_id, source_config)
             for source_id, source_config in selected_sources.items()
         }
-        
+
         for future in as_completed(future_to_source):
             source_id, source_config = future_to_source[future]
             try:
-                # Individual timeout per source check
-                status = future.result(timeout=10) 
+                # Individual timeout per source check (increased to 20s for slow Trakt API)
+                status = future.result(timeout=20)
                 if status:
                     source_statuses.append(status)
             except TimeoutError:
@@ -1421,7 +1176,7 @@ def check_content_sources_connections():
                 source_statuses.append({
                     'name': source_config.get('display_name', source_id),
                     'connected': False,
-                    'error': 'Connection check timed out after 10 seconds.',
+                    'error': 'Connection check timed out after 20 seconds.',
                     'details': {'type': source_id.split('_')[0]}
                 })
             except Exception as exc:
@@ -1467,19 +1222,17 @@ def index():
         'content_source_statuses': [],
     }
 
-    # Run Nyaa scraper checks first to avoid proxy conflicts
-    nyaa_scraper_statuses = check_nyaa_scrapers_only()
-    results['scraper_statuses'].extend(nyaa_scraper_statuses)
+    # Determine which media server check to run (use cached settings)
+    jellyfin_url = get_cached_setting('Debug', 'emby_jellyfin_url')
+    jellyfin_token = get_cached_setting('Debug', 'emby_jellyfin_token')
 
-    # Determine which media server check to run
-    jellyfin_url = get_setting('Debug', 'emby_jellyfin_url')
-    jellyfin_token = get_setting('Debug', 'emby_jellyfin_token')
-    
-    # Define tasks for all other connection checks (excluding Nyaa scrapers)
+    # Define tasks for ALL connection checks (including Nyaa scrapers now)
+    # Running Nyaa in parallel reduces total time despite potential proxy conflicts
     tasks = {
         'cli_battery_status': check_cli_battery_connection,
         'mounted_files_status': check_mounted_files_connection,
         'phalanx_db_status': check_phalanx_db_connection,
+        'nyaa_scraper_statuses': check_nyaa_scrapers_only,
         'non_nyaa_scraper_statuses': check_non_nyaa_scrapers,
         'content_source_statuses': check_content_sources_connections,
     }
@@ -1489,29 +1242,29 @@ def index():
     else:
         tasks['plex_status'] = check_plex_connection
 
-    # Run all other connection checks in parallel
-    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+    # Run all other connection checks in parallel with fixed worker limit
+    with ThreadPoolExecutor(max_workers=min(6, len(tasks))) as executor:
         future_to_task = {executor.submit(func): name for name, func in tasks.items()}
-        
+
         try:
-            # Wait for all futures to complete, with a total timeout of 5 seconds
-            for future in as_completed(future_to_task, timeout=5):
+            # Wait for all futures to complete, with a total timeout of 25 seconds
+            for future in as_completed(future_to_task, timeout=25):
                 task_name = future_to_task[future]
                 try:
                     task_result = future.result()
-                    if task_name == 'non_nyaa_scraper_statuses':
-                        # Add non-Nyaa scraper results to the scraper_statuses list
+                    if task_name in ['nyaa_scraper_statuses', 'non_nyaa_scraper_statuses']:
+                        # Add scraper results to the scraper_statuses list
                         results['scraper_statuses'].extend(task_result)
                     else:
                         results[task_name] = task_result
                 except Exception as exc:
                     log.error(f"Task {task_name} generated an exception: {exc}", exc_info=True)
                     # Optionally create an error status for the failed task
-                    if task_name not in ['non_nyaa_scraper_statuses', 'content_source_statuses']:
+                    if task_name not in ['nyaa_scraper_statuses', 'non_nyaa_scraper_statuses', 'content_source_statuses']:
                         results[task_name] = {'name': task_name, 'connected': False, 'error': str(exc), 'details': {}}
 
         except TimeoutError:
-            log.warning("Connections page render timed out after 5 seconds. Rendering with available data.")
+            log.warning("Connections page render timed out after 25 seconds. Rendering with available data.")
             # The loop is broken, results will contain only completed tasks.
 
     # Collect failing connections from the results we have
@@ -1519,14 +1272,14 @@ def index():
     for key, status in results.items():
         if not status: # Skip if status is None or empty list
             continue
-            
+
         if key in ['scraper_statuses', 'content_source_statuses']:
             failing_connections.extend([s for s in status if not s.get('connected')])
         elif isinstance(status, dict) and not status.get('connected'):
             failing_connections.append(status)
 
     # Add a flash message if the page timed out
-    if (datetime.now() - start_time).total_seconds() >= 5:
+    if (datetime.now() - start_time).total_seconds() >= 25:
         flash("Some connection checks timed out and may not be displayed. The page was loaded with available data.", "warning")
 
     return render_template('connections.html', 

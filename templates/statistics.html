@@ -3,6 +3,7 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/statistics.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper.css') }}">
 <script src="{{ url_for('static', filename='js/tangerine_filename_formatter.js') }}"></script>
 {% endblock %}
 {% block title %}Home{% endblock %}
@@ -165,7 +166,7 @@
                         }
 
                         // Navigate immediately
-                        window.location.href = `/scraper?search_term=${encodeURIComponent(searchTerm)}`;
+                        window.location.href = `/scraper?q=${encodeURIComponent(searchTerm)}`;
                     }
                 });
             }
@@ -288,12 +289,14 @@
                     } else if (item.display_status === 'checking_upgrade') {
                         statusClass = ' checking_upgrade';
                     }
-                    // Determine if the rescrape button should be shown
-                    let showRescrape = item.display_status === 'collected' || item.display_status === 'checking_upgrade';
+                    // Determine which buttons to show (matching template logic)
+                    let showSearchButton = item.display_status === 'uncollected' || item.display_status === 'checking_upgrade';
+                    let showMoveToWanted = item.display_status === 'checking_upgrade';
+                    let showRescrape = item.display_status === 'collected';
 
                     return `
                     <li>
-                        <div class="show-info clickable" 
+                        <div class="show-info clickable"
                              data-title="${item.title}"
                              data-imdb-id="${item.imdb_id}"
                              data-tmdb-id="${item.tmdb_id}"
@@ -302,8 +305,36 @@
                             <span class="show-title${statusClass}">${item.title}</span>
                             <span class="air-time">${item.formatted_datetime}</span>
                         </div>
+                        <div class="episode-actions">
+                            ${showSearchButton ? `
+                                <button class="search-episode-btn"
+                                    data-imdb-id="${item.imdb_id}"
+                                    data-tmdb-id="${item.tmdb_id}"
+                                    data-season="${item.season_number}"
+                                    data-episode="${item.episode_number}"
+                                    title="Search for this episode">
+                                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" width="20" height="20">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M10 21h7a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v11m0 5l4.879-4.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242z"></path>
+                                    </svg>
+                                </button>
+                            ` : ''}
+                            ${showMoveToWanted ? `
+                                <button class="refresh-btn"
+                                    data-imdb-id="${item.imdb_id}"
+                                    data-tmdb-id="${item.tmdb_id}"
+                                    data-season="${item.season_number}"
+                                    data-episode="${item.episode_number}"
+                                    title="Move back to Wanted state">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M12 15V3"></path>
+                                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                        <path d="m7 10 5 5 5-5"></path>
+                                    </svg>
+                                </button>
+                            ` : ''}
+                        </div>
                         ${showRescrape ? `
-                            <button class="rescrape-btn" 
+                            <button class="rescrape-btn"
                                 data-imdb-id="${item.imdb_id}"
                                 data-tmdb-id="${item.tmdb_id}"
                                 data-season="${item.season_number}"
@@ -316,7 +347,13 @@
                 `;
                 }).join('');
 
-                // Re-attach event listeners to new buttons
+                // Re-attach event listeners to all button types
+                recentlyAiredList.querySelectorAll('.search-episode-btn').forEach(button => {
+                    button.addEventListener('click', handleSearchEpisode);
+                });
+                recentlyAiredList.querySelectorAll('.refresh-btn').forEach(button => {
+                    button.addEventListener('click', handleRefreshClick);
+                });
                 recentlyAiredList.querySelectorAll('.rescrape-btn').forEach(button => {
                     button.addEventListener('click', handleRescrapeClick);
                 });
@@ -356,7 +393,7 @@
             }
 
             // Update recently added movies
-            const recentMoviesContainer = document.querySelector('#recently_added_movies .cards-container');
+            const recentMoviesContainer = document.querySelector('#recently_added_movies .stats-cards-container');
             if (recentMoviesContainer && data.recently_added && data.recently_added.movies) {
                 console.log('Updating recently added movies');
                 console.log('Recently added movies data:', JSON.stringify(data.recently_added.movies, null, 2));
@@ -364,7 +401,7 @@
                     console.log('Processing movie:', movie);
                     const collectedAt = movie.formatted_collected_at || movie.formatted_date || 'Unknown';
                     return `
-                    <div class="card">
+                    <div class="stats-card">
                         ${document.querySelector('.statistics-wrapper').classList.contains('compact-view') ? `
                             <div class="file-details">
                                 <span class="title">${movie.title} (${movie.year})</span>
@@ -372,9 +409,9 @@
                                 <span class="filename">${movie.filled_by_file}</span>
                             </div>
                         ` : `
-                            <div class="poster-container">
+                            <div class="stats-poster-container">
                                 <img src="${movie.poster_url}" alt="${movie.title} poster" class="poster" loading="lazy">
-                                <div class="poster-hover">
+                                <div class="stats-poster-hover">
                                     <span class="title">${movie.title} (${movie.year})</span>
                                     <span class="metadata">Version: ${movie.version} - ${collectedAt}</span>
                                     <span class="filename">${movie.filled_by_file}</span>
@@ -387,7 +424,7 @@
             }
 
             // Update recently added shows
-            const recentShowsContainer = document.querySelector('#recently_added_shows .cards-container');
+            const recentShowsContainer = document.querySelector('#recently_added_shows .stats-cards-container');
             if (recentShowsContainer && data.recently_added && data.recently_added.shows) {
                 console.log('Updating recently added shows');
                 console.log('Recently added shows data:', JSON.stringify(data.recently_added.shows, null, 2));
@@ -395,7 +432,7 @@
                     console.log('Processing show:', show);
                     const collectedAt = show.formatted_collected_at || show.formatted_date || 'Unknown';
                     return `
-                    <div class="card">
+                    <div class="stats-card">
                         ${document.querySelector('.statistics-wrapper').classList.contains('compact-view') ? `
                             <div class="file-details">
                                 <span class="title">${show.title}</span>
@@ -403,9 +440,9 @@
                                 <span class="filename">${show.filled_by_file}</span>
                             </div>
                         ` : `
-                            <div class="poster-container">
+                            <div class="stats-poster-container">
                                 <img src="${show.poster_url}" alt="${show.title} poster" class="poster" loading="lazy">
-                                <div class="poster-hover">
+                                <div class="stats-poster-hover">
                                     <span class="title">${show.title}</span>
                                     <span class="metadata">${show.season_number && show.episode_number ? `S${String(show.season_number).padStart(2, '0')}E${String(show.episode_number).padStart(2, '0')}` : ''}${show.year ? ` (${show.year})` : ''}${show.version ? ` - Version: ${show.version}` : ''} - ${collectedAt}</span>
                                     <span class="filename">${show.filled_by_file}</span>
@@ -418,7 +455,7 @@
             }
 
             // Update recently upgraded items if they exist
-            const recentlyUpgradedContainer = document.querySelector('#recently_upgraded .cards-container');
+            const recentlyUpgradedContainer = document.querySelector('#recently_upgraded .stats-cards-container');
             if (recentlyUpgradedContainer && data.recently_upgraded) {
                 console.log('Updating recently upgraded items');
                 console.log('Recently upgraded items data:', JSON.stringify(data.recently_upgraded, null, 2));
@@ -446,7 +483,7 @@
                     const fromDate = item.original_collected_at || 'Unknown';
                     
                     if (document.querySelector('.statistics-wrapper').classList.contains('compact-view')) {
-                        return `<div class="card">
+                        return `<div class="stats-card">
                             <div class="file-details">
                                 <span class="title">${item.title}${yearInfo}</span>
                                 <span class="metadata">${episodeInfo}${versionInfo} - ${toDate}</span>
@@ -455,10 +492,10 @@
                             </div>
                         </div>`;
                     } else {
-                        return `<div class="card">
-                            <div class="poster-container">
+                        return `<div class="stats-card">
+                            <div class="stats-poster-container">
                                 <img src="${item.poster_url || ''}" alt="${item.title} poster" class="poster" loading="lazy">
-                                <div class="poster-hover">
+                                <div class="stats-poster-hover">
                                     <span class="title">${item.title}${yearInfo}</span>
                                     <span class="metadata">${episodeInfo}${versionInfo} - ${toDate}</span>
                                     <span class="filename" data-label="From:">${item.upgrading_from || 'Unknown'}</span>
@@ -621,10 +658,10 @@
                 season_number: parseInt(btn.dataset.season),
                 episode_number: parseInt(btn.dataset.episode)
             };
-            
+
             // Disable button while processing
             btn.disabled = true;
-            
+
             fetch('/statistics/move_to_wanted', {
                 method: 'POST',
                 headers: {
@@ -649,6 +686,127 @@
                 btn.disabled = false;
             });
         }
+
+        // Handle search episode button click
+        async function handleSearchEpisode(event) {
+            const btn = event.currentTarget;
+            const showInfo = btn.closest('li').querySelector('.show-info');
+
+            const title = showInfo.dataset.title;
+            const imdbId = btn.dataset.imdbId;
+            const tmdbId = btn.dataset.tmdbId;
+            const season = parseInt(btn.dataset.season);
+            const episode = parseInt(btn.dataset.episode);
+
+            // Call selectMedia from scraper.js to search for this specific episode
+            // Note: We need to extract year from title if present (format: "Show Title (2020)")
+            const yearMatch = title.match(/\((\d{4})\)$/);
+            // Use current year as fallback if no year in title (required by endpoint)
+            const year = yearMatch ? yearMatch[1] : new Date().getFullYear().toString();
+            // Remove year if present, and also remove S##E## pattern
+            let cleanTitle = yearMatch ? title.replace(/\s*\(\d{4}\)$/, '') : title;
+            cleanTitle = cleanTitle.replace(/\s+S\d+E\d+$/i, ''); // Remove season/episode from end
+
+            // Get version from show data if available (default to 'Default')
+            const version = 'Default';
+
+            // Debug logging
+            console.log('[Statistics] Search episode click - data:', {
+                title: cleanTitle,
+                year: year,
+                imdbId: imdbId,
+                tmdbId: tmdbId,
+                mediaId: tmdbId || imdbId,
+                season: season,
+                episode: episode,
+                version: version
+            });
+
+            // Use selectMedia function from scraper.js
+            if (typeof selectMedia === 'function') {
+                await selectMedia(
+                    tmdbId || imdbId,
+                    cleanTitle,
+                    year,
+                    'tv',
+                    season,
+                    episode,
+                    false, // multi = false for single episode
+                    null, // genre_ids
+                    version
+                );
+            } else {
+                console.error('[Statistics] selectMedia function not found - scraper.js may not be loaded');
+                alert('Error: Search functionality not available');
+            }
+        }
+
+        // Handle refresh button click (move back to wanted)
+        function handleRefreshClick(event) {
+            const btn = event.currentTarget;
+            const data = {
+                imdb_id: btn.dataset.imdbId,
+                tmdb_id: btn.dataset.tmdbId,
+                season_number: parseInt(btn.dataset.season),
+                episode_number: parseInt(btn.dataset.episode)
+            };
+
+            // Disable button while processing
+            btn.disabled = true;
+
+            fetch('/statistics/move_to_wanted', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Reload the page to reflect the updated state
+                    window.location.reload();
+                } else {
+                    throw new Error(data.error || 'Failed to move item to Wanted state');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Error moving item to Wanted state: ' + error.message);
+                btn.disabled = false;
+            });
+        }
+
+        // Function to attach event listeners - will be called after DOM is ready
+        function attachRecentlyAiredListeners() {
+            console.log('[Statistics] Attaching recently aired button listeners');
+
+            // Attach event listeners to recently aired action buttons
+            const searchBtns = document.querySelectorAll('.recently-aired .search-episode-btn');
+            console.log('[Statistics] Found', searchBtns.length, 'search episode buttons');
+            searchBtns.forEach(btn => {
+                btn.addEventListener('click', handleSearchEpisode);
+            });
+
+            const refreshBtns = document.querySelectorAll('.recently-aired .refresh-btn');
+            console.log('[Statistics] Found', refreshBtns.length, 'refresh buttons');
+            refreshBtns.forEach(btn => {
+                btn.addEventListener('click', handleRefreshClick);
+            });
+
+            // Attach event listeners to old rescrape buttons for collected episodes
+            const rescrapeBtns = document.querySelectorAll('.recently-aired .rescrape-btn');
+            console.log('[Statistics] Found', rescrapeBtns.length, 'rescrape buttons');
+            rescrapeBtns.forEach(btn => {
+                btn.addEventListener('click', handleRescrapeClick);
+            });
+        }
+
+        // Call the function to attach listeners after DOM is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('[Statistics] DOM Content Loaded - attaching recently aired listeners');
+            attachRecentlyAiredListeners();
+        });
 
         document.getElementById('compact-toggle').addEventListener('change', function() {
             const isChecked = this.checked;
@@ -748,14 +906,49 @@
                             {% elif item.display_status == 'checking_upgrade' %}
                                 {% set status_class = ' checking_upgrade' %}
                             {% endif %}
-                            {# Determine if rescrape button should be shown #}
-                            {% set show_rescrape = item.display_status == 'collected' or item.display_status == 'checking_upgrade' %}
-                            
+                            {# Determine which buttons to show #}
+                            {# Uncollected episodes: show search button only #}
+                            {# Checking_upgrade episodes: show both search and move-to-wanted buttons #}
+                            {# Collected episodes: show old rescrape button only #}
+                            {% set show_search_button = item.display_status == 'uncollected' or item.display_status == 'checking_upgrade' %}
+                            {% set show_move_to_wanted = item.display_status == 'checking_upgrade' %}
+                            {% set show_rescrape = item.display_status == 'collected' %}
+
                             <span class="show-title{{ status_class }}">{{ item.title }}</span>
                             <span class="air-time">{{ item.formatted_datetime }}</span>
                         </div>
+                        {# Action buttons - Search button for uncollected/checking_upgrade episodes #}
+                        <div class="episode-actions">
+                            {% if show_search_button %}
+                            <button class="search-episode-btn"
+                                    data-imdb-id="{{ item.imdb_id }}"
+                                    data-tmdb-id="{{ item.tmdb_id }}"
+                                    data-season="{{ item.season_number }}"
+                                    data-episode="{{ item.episode_number }}"
+                                    title="Search for this episode">
+                                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" width="20" height="20">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M10 21h7a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v11m0 5l4.879-4.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242z"></path>
+                                </svg>
+                            </button>
+                            {% endif %}
+                            {% if show_move_to_wanted %}
+                            <button class="refresh-btn"
+                                    data-imdb-id="{{ item.imdb_id }}"
+                                    data-tmdb-id="{{ item.tmdb_id }}"
+                                    data-season="{{ item.season_number }}"
+                                    data-episode="{{ item.episode_number }}"
+                                    title="Move back to Wanted state">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 15V3"></path>
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                    <path d="m7 10 5 5 5-5"></path>
+                                </svg>
+                            </button>
+                            {% endif %}
+                        </div>
+                        {# Rescrape button for collected episodes (normal text) #}
                         {% if show_rescrape %}
-                        <button class="rescrape-btn" 
+                        <button class="rescrape-btn"
                                 data-imdb-id="{{ item.imdb_id }}"
                                 data-tmdb-id="{{ item.tmdb_id }}"
                                 data-season="{{ item.season_number }}"
@@ -812,9 +1005,9 @@
         <div class="recently-added">
             <div class="stats-box recently-added-section-top" id="recently_added_movies">
                 <h3>Recently Added Movies</h3>
-                <div class="cards-container">
+                <div class="stats-cards-container">
                     {% for movie in recently_added.movies %}
-                    <div class="card">
+                    <div class="stats-card">
                         {% if compact_view %}
                         <div class="file-details">
                             <span class="title">{{ movie.title }} ({{ movie.year }})</span>
@@ -822,9 +1015,9 @@
                             <span class="filename">{{ movie.filled_by_file }}</span>
                         </div>
                         {% else %}
-                        <div class="poster-container">
+                        <div class="stats-poster-container">
                             <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster" class="poster" loading="lazy">
-                            <div class="poster-hover">
+                            <div class="stats-poster-hover">
                                 <span class="title">{{ movie.title }} ({{ movie.year }})</span>
                                 <span class="metadata">Version: {{ movie.version }} - {{ movie.formatted_collected_at or movie.formatted_date or 'Unknown' }}</span>
                                 <span class="filename">{{ movie.filled_by_file }}</span>
@@ -838,9 +1031,9 @@
             
             <div class="stats-box recently-added-section-bottom" id="recently_added_shows">
                 <h3>Recently Added Shows</h3>
-                <div class="cards-container">
+                <div class="stats-cards-container">
                     {% for show in recently_added.shows %}
-                    <div class="card">
+                    <div class="stats-card">
                         {% if compact_view %}
                         <div class="file-details">
                             <span class="title">{{ show.title }}</span>
@@ -848,9 +1041,9 @@
                             <span class="filename">{{ show.filled_by_file }}</span>
                         </div>
                         {% else %}
-                        <div class="poster-container">
+                        <div class="stats-poster-container">
                             <img src="{{ show.poster_url }}" alt="{{ show.title }} poster" class="poster" loading="lazy">
-                            <div class="poster-hover">
+                            <div class="stats-poster-hover">
                                 <span class="title">{{ show.title }}</span>
                                 <span class="metadata">{% if show.season_number is not none and show.episode_number is not none %}S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }}{% endif %}{% if show.year %} ({{ show.year }}){% endif %}{% if show.version %} - Version: {{ show.version }}{% endif %} - {{ show.formatted_collected_at or show.formatted_date or 'Unknown' }}</span>
                                 <span class="filename">{{ show.filled_by_file }}</span>
@@ -864,9 +1057,9 @@
             
             <div class="stats-box recently-upgraded-section" id="recently_upgraded">
                 <h3>Recently Upgraded</h3>
-                <div class="cards-container">
+                <div class="stats-cards-container">
                     {% for item in recently_upgraded %}
-                    <div class="card">
+                    <div class="stats-card">
                         {% if compact_view %}
                         <div class="file-details">
                             <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
@@ -875,9 +1068,9 @@
                             <span class="filename" data-label="To:">{{ item.filled_by_file }}</span>
                         </div>
                         {% else %}
-                        <div class="poster-container">
+                        <div class="stats-poster-container">
                             <img src="{{ item.poster_url }}" alt="{{ item.title }} poster" class="poster" loading="lazy">
-                            <div class="poster-hover">
+                            <div class="stats-poster-hover">
                                 <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
                                 <span class="metadata">{% if item.type == 'episode' and item.season_number is not none and item.episode_number is not none %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }}{% endif %}{% if item.version %} - Version: {{ item.version }}{% endif %} - {{ item.formatted_date }}</span>
                                 <span class="filename" data-label="From:">{{ item.upgrading_from }}</span>
@@ -1203,6 +1396,15 @@
                                     console.error('Error reattaching external links listeners:', err);
                                 }
                             }
+                            // Reattach recently aired action button listeners after refresh
+                            if (typeof attachRecentlyAiredListeners === 'function') {
+                                try {
+                                    attachRecentlyAiredListeners();
+                                    console.log('Reattached recently aired listeners after auto-refresh');
+                                } catch (err) {
+                                    console.error('Error reattaching recently aired listeners:', err);
+                                }
+                            }
                         }
                         
                         console.log('Stats refreshed successfully');
@@ -1236,4 +1438,19 @@
         console.log('Auto-refresh setup complete');
     })(); // Self-executing function
 </script>
+
+<!-- Include loading.js for loading overlay used by scraper -->
+<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
+
+<!-- Include scraper.js for search episode functionality -->
+<script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
+
+<!-- Scraper overlay for episode search -->
+<div id="overlay" class="overlay">
+    <div class="overlay-content">
+        <button class="close-btn" aria-label="Close">&times;</button>
+        <div id="overlayContent"></div>
+    </div>
+</div>
+
 {% endblock %}

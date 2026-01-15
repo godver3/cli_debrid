@@ -26,6 +26,18 @@ export function showPopup(options) {
         onHiddenClose = null  // Callback for hidden close button
     } = options;
 
+    // Remove existing non-interactive popups (success/error/info/warning) before showing a new one
+    if (type !== POPUP_TYPES.CONFIRM && type !== POPUP_TYPES.PROMPT) {
+        const existingPopups = document.querySelectorAll('.universal-popup');
+        existingPopups.forEach(existing => {
+            const popupContent = existing.querySelector('.popup-content');
+            // Only remove if it's a non-interactive popup (no buttons except close)
+            if (popupContent && !popupContent.classList.contains('confirm') && !popupContent.classList.contains('prompt')) {
+                existing.remove();
+            }
+        });
+    }
+
     const popup = document.createElement('div');
     popup.className = 'universal-popup';
     
@@ -389,6 +401,175 @@ export function hideLoading() {
     }
 }
 
+// Deletion-specific loading box with progress tracking
+let deletionLoadingPopup = null;
+
+// Store cleanup callback for continue button
+let deletionLoadingCleanup = null;
+
+export function showDeletionLoading(title = 'Deleting...', onContinueBackground = null) {
+    // Remove any existing deletion loading popup
+    if (deletionLoadingPopup) {
+        deletionLoadingPopup.remove();
+    }
+
+    // Store cleanup callback
+    deletionLoadingCleanup = onContinueBackground;
+
+    deletionLoadingPopup = document.createElement('div');
+    deletionLoadingPopup.className = 'universal-popup deletion-loading-popup';
+
+    deletionLoadingPopup.innerHTML = `
+        <div class="popup-content deletion-loading">
+            <h3>${title}</h3>
+            <div class="spinner"></div>
+            <p id="deletionCurrentStep">Preparing deletion...</p>
+            <div id="deletionProgress" style="margin-top: 15px; font-size: 0.9em; color: #aaa;">
+                <span id="deletionProgressText"></span>
+            </div>
+            <pre id="deletionDetails" style="text-align: left; margin-top: 15px; white-space: pre-wrap; color: #ccc; font-size: 0.85em; display: none;"></pre>
+            <button id="deletionContinueBackground" class="close-loading" style="margin-top: 20px; display: none; padding: 10px 20px; background: #ff6b35; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95em;">Continue in background</button>
+        </div>
+    `;
+
+    document.body.appendChild(deletionLoadingPopup);
+
+    // Add deletion loading styles
+    const style = document.createElement('style');
+    style.id = 'deletion-loading-popup-style';
+    style.textContent = `
+        .deletion-loading-popup {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1001;
+        }
+        .deletion-loading-popup .popup-content {
+            background-color: #2a2a2a;
+            padding: 35px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            min-width: 400px;
+            max-width: 500px;
+            color: #f4f4f4;
+            text-align: center;
+        }
+        .deletion-loading-popup .popup-content h3 {
+            margin: 0 0 20px 0;
+            font-size: 1.3em;
+            color: #ff6b35;
+        }
+        .deletion-loading-popup #deletionCurrentStep {
+            margin: 20px 0 0 0;
+            font-size: 1.05em;
+            color: #f4f4f4;
+            min-height: 24px;
+        }
+        .deletion-loading-popup #deletionProgressText {
+            color: #aaa;
+            font-style: italic;
+        }
+        .deletion-loading-popup .spinner {
+            width: 40px;
+            height: 40px;
+            margin: 0 auto 15px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #ff6b35;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Tangerine theme overrides */
+        body[data-theme="tangerine"] .deletion-loading-popup {
+            background-color: rgba(0, 0, 0, 0.85) !important;
+            backdrop-filter: blur(8px);
+        }
+        body[data-theme="tangerine"] .deletion-loading-popup .popup-content {
+            background: linear-gradient(145deg, rgba(30, 30, 30, 0.98), rgba(20, 20, 20, 0.98)) !important;
+            border: 1px solid rgba(255, 107, 53, 0.3) !important;
+            border-radius: 16px !important;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 107, 53, 0.1) !important;
+            padding: 2.5rem !important;
+        }
+    `;
+    document.head.appendChild(style);
+
+    // Add click handler for continue in background button
+    const continueButton = deletionLoadingPopup.querySelector('#deletionContinueBackground');
+    if (continueButton) {
+        continueButton.addEventListener('click', () => {
+            // Call cleanup callback if provided (clears intervals)
+            if (deletionLoadingCleanup) {
+                deletionLoadingCleanup();
+                deletionLoadingCleanup = null;
+            }
+            hideDeletionLoading();
+        });
+    }
+
+    return deletionLoadingPopup;
+}
+
+export function updateDeletionLoading(step, progress = null, details = null, showContinueButton = false) {
+    if (!deletionLoadingPopup) return;
+
+    const stepElement = deletionLoadingPopup.querySelector('#deletionCurrentStep');
+    if (stepElement) {
+        stepElement.textContent = step;
+    }
+
+    if (progress) {
+        const progressElement = deletionLoadingPopup.querySelector('#deletionProgressText');
+        if (progressElement) {
+            progressElement.textContent = progress;
+        }
+    }
+
+    // Update details text
+    const detailsElement = deletionLoadingPopup.querySelector('#deletionDetails');
+    if (detailsElement) {
+        if (details) {
+            detailsElement.textContent = details;
+            detailsElement.style.display = 'block';
+        } else {
+            detailsElement.textContent = '';
+            detailsElement.style.display = 'none';
+        }
+    }
+
+    // Show/hide continue button
+    const continueButton = deletionLoadingPopup.querySelector('#deletionContinueBackground');
+    if (continueButton) {
+        continueButton.style.display = showContinueButton ? 'inline-block' : 'none';
+    }
+}
+
+export function hideDeletionLoading() {
+    if (deletionLoadingPopup) {
+        deletionLoadingPopup.remove();
+        deletionLoadingPopup = null;
+    }
+    const style = document.getElementById('deletion-loading-popup-style');
+    if (style) {
+        style.remove();
+    }
+}
+
 // Make functions available globally
 window.showLoading = showLoading;
 window.hideLoading = hideLoading;
+window.showDeletionLoading = showDeletionLoading;
+window.updateDeletionLoading = updateDeletionLoading;
+window.hideDeletionLoading = hideDeletionLoading;
+window.showPopup = showPopup;
+window.POPUP_TYPES = POPUP_TYPES;

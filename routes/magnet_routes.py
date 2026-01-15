@@ -19,11 +19,19 @@ from content_checkers.trakt import get_trakt_headers, TRAKT_API_URL, REQUEST_TIM
 import json
 from fuzzywuzzy import fuzz
 import asyncio
-from utilities.web_scraper import get_media_meta
+from utilities.web_scraper import get_media_meta, SearchCache
 from utilities.settings import get_setting
 from typing import List, Dict, Optional, Any
 
 magnet_bp = Blueprint('magnet', __name__)
+
+# PHASE 1.1 & 3.1: Initialize cache for season/episode data
+# 60-minute TTL, max 500 entries, with optional Redis support
+_season_cache = SearchCache(
+    default_ttl_minutes=60,
+    max_size=500,
+    redis_url=get_setting('Redis', 'url', None) or os.environ.get('REDIS_URL')
+)
 
 async def _fetch_media_details_for_assigner(id_value: str, id_kind: str, content_type_hint: Optional[str] = None) -> List[Dict[str, Any]]:
     """
@@ -212,13 +220,26 @@ def get_versions():
 
 @magnet_bp.route('/get_season_data')
 def get_season_data():
+    """
+    PHASE 1.1 & 3.1: Enhanced with caching support (in-memory + optional Redis)
+    Fetches season data for a TV show with 60-minute cache TTL
+    """
     tmdb_id = request.args.get('tmdb_id')
     allow_specials_str = request.args.get('allow_specials', 'true').lower()
     allow_specials = allow_specials_str == 'true'
 
     if not tmdb_id:
         return jsonify({'error': 'tmdb_id is required'}), 400
-    
+
+    # PHASE 1.1: Check cache first
+    cache_key = f"season_data:{tmdb_id}:{allow_specials}"
+    cached_data = _season_cache.get_by_key(cache_key)
+    if cached_data is not None:
+        logging.info(f"Season data cache HIT for TMDB ID {tmdb_id} (allow_specials={allow_specials})")
+        return jsonify(cached_data)
+
+    logging.info(f"Season data cache MISS for TMDB ID {tmdb_id} - fetching fresh data")
+
     try:
         from metadata.metadata import get_imdb_id_if_missing
         imdb_id = get_imdb_id_if_missing({'tmdb_id': int(tmdb_id), 'media_type': 'show'})
@@ -243,6 +264,10 @@ def get_season_data():
                     if allow_specials or season_num != 0:
                         formatted_seasons[str(season_num)] = season_data.get('episode_count', 0)
                 logging.info(f"Returning {len(formatted_seasons)} seasons from battery for IMDb ID {imdb_id} (Allow Specials: {allow_specials}). Original count: {len(seasons_data)}")
+
+                # PHASE 1.1: Cache the result
+                _season_cache.set_by_key(cache_key, formatted_seasons)
+
                 return jsonify(formatted_seasons)
             else:
                 logging.info(f"Could not fetch season data from battery for {imdb_id}, trying Trakt directly.")
@@ -256,6 +281,10 @@ def get_season_data():
                         if allow_specials or season_num != 0:
                             formatted_seasons[str(season_num)] = season.get('episode_count', 0)
                     logging.info(f"Returning {len(formatted_seasons)} seasons from Trakt for IMDb ID {imdb_id} (Allow Specials: {allow_specials}). Original count: {len(season_data)}")
+
+                    # PHASE 1.1: Cache the result
+                    _season_cache.set_by_key(cache_key, formatted_seasons)
+
                     return jsonify(formatted_seasons)
                 else:
                     logging.error(f"Could not fetch season data directly from Trakt for IMDb ID: {imdb_id}")
@@ -263,7 +292,7 @@ def get_season_data():
         except Exception as e:
             logging.error(f"An unexpected error occurred while fetching season data for IMDb ID {imdb_id}: {e}", exc_info=True)
             return jsonify({"error": "An unexpected error occurred"}), 500
-        
+
     except Exception as e:
         logging.error(f"Error in get_season_data endpoint: {str(e)}", exc_info=True)
         return jsonify({'error': 'An internal error occurred'}), 500
