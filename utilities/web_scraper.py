@@ -526,8 +526,29 @@ def search_trakt(search_term: str, year: Optional[int] = None) -> List[Dict[str,
 
         # DISABLED: asyncio.run() creates new event loops causing 96% CPU!
         # asyncio.run(_run_batch_fetch())
-        # Fallback to synchronous fetching for now
-        logging.info("Batch async fetching disabled due to event loop accumulation bug.")
+        # FIXED: Synchronous fallback to avoid event loop accumulation
+        logging.info(f"Fetching metadata synchronously for {len(items_to_fetch_concurrently)} items...")
+
+        for item_to_fetch in items_to_fetch_concurrently:
+            tmdb_id = item_to_fetch['tmdb_id']
+            media_type = item_to_fetch['media_type']
+            title = item_to_fetch['title']
+            key = (tmdb_id, media_type)
+
+            try:
+                # Use the existing synchronous get_media_meta function
+                media_meta = get_media_meta(tmdb_id, media_type)
+                if media_meta:
+                    all_media_metadata_map[key] = media_meta
+                    logging.debug(f"Fetched metadata for {media_type} {title} (TMDB ID: {tmdb_id})")
+                else:
+                    all_media_metadata_map[key] = None
+                    logging.debug(f"No metadata returned for {media_type} {title} (TMDB ID: {tmdb_id})")
+            except Exception as e:
+                logging.error(f"Failed to fetch metadata for {title} (TMDB ID: {tmdb_id}): {e}")
+                all_media_metadata_map[key] = None
+
+        logging.info(f"Finished synchronous metadata fetching for {len(items_to_fetch_concurrently)} items.")
 
     # --- Process results using cached or newly fetched data ---
     converted_results = []
