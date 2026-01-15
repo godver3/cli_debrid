@@ -281,7 +281,7 @@ function initializeNavSearch() {
             }
 
             // Navigate immediately
-            window.location.href = `/scraper?search_term=${encodeURIComponent(searchTerm)}`;
+            window.location.href = `/scraper?q=${encodeURIComponent(searchTerm)}`;
         }
     });
 }

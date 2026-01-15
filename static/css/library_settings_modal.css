@@ -1,0 +1,313 @@
+/**
+ * Library Settings Modal Styles
+ * Quick-access modal for Library Manager settings
+ */
+
+.library-settings-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.library-settings-modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+}
+
+.library-settings-modal-content {
+    position: relative;
+    background-color: var(--panel-bg, #1e1e1e);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 90vh;
+    overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    animation: slideUp 0.3s ease-out;
+    display: flex;
+    flex-direction: column;
+}
+
+@keyframes slideUp {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.library-settings-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border-color, #333);
+}
+
+.library-settings-modal-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text-color, #fff);
+}
+
+.library-settings-modal-close {
+    background: none;
+    border: none;
+    font-size: 2rem;
+    line-height: 1;
+    color: var(--text-color-secondary, #999);
+    cursor: pointer;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.library-settings-modal-close:hover {
+    background-color: var(--hover-bg, rgba(255, 255, 255, 0.1));
+    color: var(--text-color, #fff);
+}
+
+.library-settings-modal-body {
+    padding: 24px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.library-setting-group {
+    margin-bottom: 24px;
+}
+
+.library-setting-group:last-child {
+    margin-bottom: 0;
+}
+
+.library-setting-group > label {
+    display: block;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-color, #fff);
+    margin-bottom: 8px;
+}
+
+.library-setting-group > label[for="autoGhostlistDeleted"] {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+}
+
+.library-setting-description {
+    font-size: 0.85rem;
+    color: var(--text-color-secondary, #999);
+    line-height: 1.5;
+    margin: 8px 0;
+}
+
+.library-setting-input {
+    width: 100%;
+    padding: 10px 14px;
+    background-color: var(--input-bg, #2a2a2a);
+    border: 1px solid var(--border-color, #444);
+    border-radius: 6px;
+    color: var(--text-color, #fff);
+    font-size: 0.95rem;
+    transition: all 0.2s ease;
+}
+
+.library-setting-input:focus {
+    outline: none;
+    border-color: var(--primary-color, #4a9eff);
+    box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.1);
+}
+
+.library-setting-checkbox {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    accent-color: var(--primary-color, #4a9eff);
+}
+
+.library-settings-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 24px;
+    border-top: 1px solid var(--border-color, #333);
+}
+
+.library-settings-btn-cancel,
+.library-settings-btn-save {
+    padding: 10px 20px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.library-settings-btn-cancel {
+    background-color: transparent;
+    color: var(--text-color-secondary, #999);
+    border: 1px solid var(--border-color, #444);
+}
+
+.library-settings-btn-cancel:hover {
+    background-color: var(--hover-bg, rgba(255, 255, 255, 0.05));
+    color: var(--text-color, #fff);
+}
+
+.library-settings-btn-save {
+    background-color: var(--primary-color, #4a9eff);
+    color: #fff;
+}
+
+.library-settings-btn-save:hover:not(:disabled) {
+    background-color: var(--primary-color-hover, #3a8eef);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(74, 158, 255, 0.3);
+}
+
+.library-settings-btn-save:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.library-settings-btn-clear-cache {
+    padding: 10px 20px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background-color: #dc3545;
+    color: #fff;
+    margin-top: 8px;
+}
+
+.library-settings-btn-clear-cache:hover:not(:disabled) {
+    background-color: #c82333;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
+}
+
+.library-settings-btn-clear-cache:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+    .library-settings-modal-content {
+        width: 95%;
+        max-width: none;
+        border-radius: 12px 12px 0 0;
+        max-height: 80vh;
+        margin-top: auto;
+    }
+
+    .library-settings-modal-header {
+        padding: 16px 20px;
+    }
+
+    .library-settings-modal-header h2 {
+        font-size: 1.25rem;
+    }
+
+    .library-settings-modal-body {
+        padding: 20px;
+    }
+
+    .library-settings-modal-footer {
+        padding: 12px 20px;
+    }
+
+    .library-settings-btn-cancel,
+    .library-settings-btn-save {
+        flex: 1;
+    }
+}
+
+/* Dark mode adjustments (if using light theme) */
+@media (prefers-color-scheme: light) {
+    .library-settings-modal-content {
+        background-color: #fff;
+    }
+
+    .library-settings-modal-header {
+        border-bottom-color: #e0e0e0;
+    }
+
+    .library-settings-modal-header h2 {
+        color: #333;
+    }
+
+    .library-settings-modal-close {
+        color: #666;
+    }
+
+    .library-settings-modal-close:hover {
+        background-color: #f0f0f0;
+        color: #333;
+    }
+
+    .library-setting-group > label {
+        color: #333;
+    }
+
+    .library-setting-description {
+        color: #666;
+    }
+
+    .library-setting-input {
+        background-color: #f5f5f5;
+        border-color: #ddd;
+        color: #333;
+    }
+
+    .library-settings-modal-footer {
+        border-top-color: #e0e0e0;
+    }
+
+    .library-settings-btn-cancel {
+        color: #666;
+        border-color: #ddd;
+    }
+
+    .library-settings-btn-cancel:hover {
+        background-color: #f0f0f0;
+        color: #333;
+    }
+}

@@ -1,10 +1,11 @@
 from flask import jsonify, request, render_template, session, Blueprint
+import copy
 import logging
 from debrid import get_debrid_provider
 # Provider-agnostic: avoid direct Real-Debrid import
 from .models import user_required, onboarding_required, admin_required, scraper_permission_required, scraper_view_access_required
 from utilities.settings import get_setting, get_all_settings, load_config, save_config
-from database.database_reading import get_all_season_episode_counts, get_media_item_presence_overall
+from database.database_reading import get_all_season_episode_counts, get_media_item_presence_overall, get_media_items_presence_batch
 from utilities.web_scraper import trending_movies, trending_shows, trending_anime, web_scrape, web_scrape_tvshow, process_media_selection, process_torrent_selection
 from utilities.web_scraper import get_media_details
 from scraper.scraper import scrape
@@ -31,11 +32,16 @@ from utilities.web_scraper import get_media_meta
 from typing import List, Dict, Any, Optional
 import iso8601
 from utilities.reverse_parser import parse_filename_for_version # Added import
+from utilities.tmdb_cache import cache_response, get_from_cache, set_in_cache, get_cached_db_statuses # Caching support
+from concurrent.futures import ThreadPoolExecutor, as_completed # Parallel API calls
 
 scraper_bp = Blueprint('scraper', __name__)
 
 # Initialize cache manager only if enabled
 _phalanx_cache_manager = PhalanxDBClassManager() if get_setting('UI Settings', 'enable_phalanx_db', default=False) else None
+
+# PHASE 2 OPTIMIZATION: Search analytics for data-driven prefetching
+_search_analytics = {}
 
 @scraper_bp.route('/convert_tmdb_to_imdb/<int:tmdb_id>')
 def convert_tmdb_to_imdb(tmdb_id):
@@ -750,7 +756,7 @@ def anime_trending():
 
     versions = get_available_versions()
     is_requester = current_user.is_authenticated and current_user.role == 'requester'
-    
+
     if request.method == 'GET':
         trendingAnimeData = trending_anime() # Get trending anime data
         if trendingAnimeData and 'trendingAnime' in trendingAnimeData:
@@ -763,7 +769,7 @@ def anime_trending():
                         db_state = get_media_item_presence_overall(tmdb_id=tmdb_id_int)
                     except (ValueError, TypeError):
                          db_state = 'Missing'
-                         
+
                     # Map state to frontend status
                     if db_state == 'Collected':
                         item['db_status'] = 'collected'
@@ -771,42 +777,193 @@ def anime_trending():
                         item['db_status'] = 'partial'
                     elif db_state == 'Blacklisted':
                         item['db_status'] = 'blacklisted'
-                    elif db_state not in ['Missing', 'Ignored', None]: 
+                    elif db_state not in ['Missing', 'Ignored', None]:
                         item['db_status'] = 'processing'
                     else:
                         item['db_status'] = 'missing'
                 else:
                     item['db_status'] = 'missing' # Default if no ID
                 processed_anime.append(item)
-                
+
             # Return processed data under the original key
             return jsonify({'trendingAnime': processed_anime})
         else:
             # Return original error structure or a default one
             return jsonify(trendingAnimeData if trendingAnimeData else {'error': 'Error retrieving trending anime'})
-            
+
     return render_template('scraper.html', versions=versions, is_requester=is_requester)
+
+def fetch_all_trending_parallel():
+    """
+    Fetch all trending data in parallel for faster loading
+    Uses ThreadPoolExecutor to make API calls simultaneously
+    """
+    start_time = time.time()
+
+    # Try cache first
+    cache_key = 'scraper:all_trending:v2'
+    cached_data = get_from_cache(cache_key)
+    if cached_data:
+        logging.info(f"✅ Cache HIT: all_trending ({time.time() - start_time:.0f}ms)")
+        return cached_data
+
+    logging.info("📡 Cache MISS: Fetching trending data in parallel...")
+
+    results = {
+        'trendingMovies': [],
+        'trendingShows': [],
+        'trendingAnime': []
+    }
+
+    # Fetch all three in parallel
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            'movies': executor.submit(trending_movies),
+            'shows': executor.submit(trending_shows),
+            'anime': executor.submit(trending_anime)
+        }
+
+        for key, future in futures.items():
+            try:
+                data = future.result(timeout=10)  # 10 second timeout
+                if key == 'movies' and data and 'trendingMovies' in data:
+                    results['trendingMovies'] = data['trendingMovies']
+                elif key == 'shows' and data and 'trendingShows' in data:
+                    results['trendingShows'] = data['trendingShows']
+                elif key == 'anime' and data and 'trendingAnime' in data:
+                    results['trendingAnime'] = data['trendingAnime']
+            except Exception as e:
+                logging.error(f"Error fetching trending {key}: {e}")
+
+    # Cache for 60 seconds
+    set_in_cache(cache_key, results, 60)
+
+    duration = (time.time() - start_time) * 1000
+    logging.info(f"✅ Fetched all trending in parallel: {duration:.0f}ms")
+
+    return results
+
+@scraper_bp.route('/all_trending', methods=['GET'])
+@user_required
+@scraper_view_access_required
+def all_trending():
+    """Combined endpoint that returns all trending data in a single request - NOW WITH PARALLEL FETCHING"""
+    from routes.poster_cache import get_cached_trending_response, cache_trending_response
+
+    try:
+        # OPTIMIZATION: Use parallel fetching with caching
+        trending_data = fetch_all_trending_parallel()
+
+        # Extract data from parallel fetch results
+        trendingMoviesData = {'trendingMovies': trending_data.get('trendingMovies', [])}
+        trendingShowsData = {'trendingShows': trending_data.get('trendingShows', [])}
+        trendingAnimeData = {'trendingAnime': trending_data.get('trendingAnime', [])}
+
+        # Collect all items
+        all_items = []
+        all_items.extend(trending_data.get('trendingMovies', []))
+        all_items.extend(trending_data.get('trendingShows', []))
+        all_items.extend(trending_data.get('trendingAnime', []))
+
+        # Extract all TMDB IDs for batch lookup
+        tmdb_ids = []
+        for item in all_items:
+            tmdb_id = item.get('tmdb_id')
+            if tmdb_id:
+                try:
+                    tmdb_ids.append(int(tmdb_id))
+                except (ValueError, TypeError):
+                    pass
+
+        # Single batch database query for all trending items
+        db_statuses = get_media_items_presence_batch(tmdb_ids) if tmdb_ids else {}
+
+        # Helper function to process trending items with db_status (using batch results)
+        def process_trending_items(items):
+            processed = []
+            for item in items:
+                tmdb_id = item.get('tmdb_id')
+                if tmdb_id:
+                    try:
+                        tmdb_id_int = int(tmdb_id)
+                        db_state = db_statuses.get(tmdb_id_int, 'Missing')
+                    except (ValueError, TypeError):
+                        db_state = 'Missing'
+
+                    # Map state to frontend status
+                    if db_state == 'Collected':
+                        item['db_status'] = 'collected'
+                    elif db_state == 'Partial':
+                        item['db_status'] = 'partial'
+                    elif db_state == 'Blacklisted':
+                        item['db_status'] = 'blacklisted'
+                    elif db_state not in ['Missing', 'Ignored', None]:
+                        item['db_status'] = 'processing'
+                    else:
+                        item['db_status'] = 'missing'
+                else:
+                    item['db_status'] = 'missing'
+                processed.append(item)
+            return processed
+
+        # Process each type
+        processed_movies = []
+        if trendingMoviesData and 'trendingMovies' in trendingMoviesData:
+            processed_movies = process_trending_items(trendingMoviesData['trendingMovies'])
+
+        processed_shows = []
+        if trendingShowsData and 'trendingShows' in trendingShowsData:
+            processed_shows = process_trending_items(trendingShowsData['trendingShows'])
+
+        processed_anime = []
+        if trendingAnimeData and 'trendingAnime' in trendingAnimeData:
+            processed_anime = process_trending_items(trendingAnimeData['trendingAnime'])
+
+        # Combine all trending data
+        combined_result = {
+            'trendingMovies': processed_movies,
+            'trendingShows': processed_shows,
+            'trendingAnime': processed_anime
+        }
+
+        # Cache the response for 15 minutes
+        cache_trending_response(combined_result)
+
+        return jsonify(combined_result)
+
+    except Exception as e:
+        logging.error(f"Error in all_trending endpoint: {e}", exc_info=True)
+        # Return empty arrays with proper structure instead of HTML error page
+        return jsonify({
+            'error': 'Failed to fetch trending data',
+            'trendingMovies': [],
+            'trendingShows': [],
+            'trendingAnime': []
+        }), 500
 
 @scraper_bp.route('/', methods=['GET', 'POST'])
 @user_required
 @scraper_view_access_required
 @onboarding_required
 def index():
-    from utilities.web_scraper import get_available_versions, web_scrape
+    from utilities.web_scraper import get_available_versions, search_trakt_fast, parse_search_term
 
     versions = get_available_versions()
     # Check if the user is a requester
     is_requester = current_user.is_authenticated and current_user.role == 'requester'
-    
+
     if request.method == 'POST':
         search_term = request.form.get('search_term')
         version = request.form.get('version')
         if search_term:
             session['search_term'] = search_term  # Store the search term in the session
             session['version'] = version  # Store the version in the session
-            
-            # Allow requesters to search and see results
-            results = web_scrape(search_term, version)
+
+            # Parse search term to extract year if present
+            base_title, season, episode, year, multi = parse_search_term(search_term)
+
+            # Use fast search to get up to 100 results quickly
+            results = search_trakt_fast(base_title, year)
             
             # --- Add status check ---
             if isinstance(results, list):
@@ -846,9 +1003,244 @@ def index():
     # For GET requests, check if TMDB API key is set
     tmdb_api_key = get_setting('TMDB', 'api_key', '')
     tmdb_api_key_set = bool(tmdb_api_key)
-    
-    # Pass the is_requester flag to the template
-    return render_template('scraper.html', versions=versions, tmdb_api_key_set=tmdb_api_key_set, is_requester=is_requester)
+
+    # SSR OPTIMIZATION: Fetch trending data server-side for instant page load
+    trending_data_ssr = None
+    try:
+        logging.info("🚀 SSR: Fetching trending data for initial page load...")
+        start_time = time.time()
+
+        # Use our parallel cached fetcher
+        # IMPORTANT: Deep copy the cached data to avoid mutating the cache
+        # When we add db_status to items, we don't want those modifications
+        # to persist in the cache (which would show stale db_status on subsequent requests)
+        trending_raw = copy.deepcopy(fetch_all_trending_parallel())
+
+        # Get all TMDB IDs for batch database lookup
+        all_items = []
+        all_items.extend(trending_raw.get('trendingMovies', []))
+        all_items.extend(trending_raw.get('trendingShows', []))
+        all_items.extend(trending_raw.get('trendingAnime', []))
+
+        tmdb_ids = []
+        for item in all_items:
+            tmdb_id = item.get('tmdb_id')
+            if tmdb_id:
+                try:
+                    tmdb_ids.append(int(tmdb_id))
+                except (ValueError, TypeError):
+                    pass
+
+        # Single batch database query for all trending items
+        db_statuses = get_media_items_presence_batch(tmdb_ids) if tmdb_ids else {}
+
+        # Helper function to add db_status to items
+        def add_db_status(items):
+            for item in items:
+                tmdb_id = item.get('tmdb_id')
+                if tmdb_id:
+                    try:
+                        tmdb_id_int = int(tmdb_id)
+                        db_state = db_statuses.get(tmdb_id_int, 'Missing')
+                    except (ValueError, TypeError):
+                        db_state = 'Missing'
+
+                    # Map state to frontend status
+                    if db_state == 'Collected':
+                        item['db_status'] = 'collected'
+                    elif db_state == 'Partial':
+                        item['db_status'] = 'partial'
+                    elif db_state == 'Blacklisted':
+                        item['db_status'] = 'blacklisted'
+                    elif db_state not in ['Missing', 'Ignored', None]:
+                        item['db_status'] = 'processing'
+                    else:
+                        item['db_status'] = 'missing'
+                else:
+                    item['db_status'] = 'missing'
+            return items
+
+        # Process all three types
+        trending_data_ssr = {
+            'trendingMovies': add_db_status(trending_raw.get('trendingMovies', [])),
+            'trendingShows': add_db_status(trending_raw.get('trendingShows', [])),
+            'trendingAnime': add_db_status(trending_raw.get('trendingAnime', []))
+        }
+
+        duration = (time.time() - start_time) * 1000
+        logging.info(f"✅ SSR: Trending data prepared in {duration:.0f}ms")
+
+    except Exception as e:
+        logging.error(f"❌ SSR: Failed to fetch trending data: {e}")
+        # Fallback to client-side if SSR fails
+        trending_data_ssr = None
+
+    # Pass the is_requester flag and SSR data to the template
+    return render_template('scraper.html',
+                         versions=versions,
+                         tmdb_api_key_set=tmdb_api_key_set,
+                         is_requester=is_requester,
+                         trending_data_ssr=trending_data_ssr,
+                         enable_ssr=True)
+
+@scraper_bp.route('/live_search', methods=['POST'])
+@user_required
+@scraper_view_access_required
+def live_search():
+    """
+    Ultra-fast live search endpoint for instant results.
+    Uses web_scrape_lite() which skips heavy TMDB metadata fetching.
+    """
+    from utilities.web_scraper import web_scrape_lite
+
+    data = request.get_json()
+    search_term = data.get('search_term', '')
+    limit = data.get('limit', 30)  # PHASE 2: Progressive loading - default 30 results
+
+    if not search_term:
+        return jsonify({'error': 'No search term provided'}), 400
+
+    # PHASE 2 OPTIMIZATION: Track search analytics
+    _search_analytics[search_term] = _search_analytics.get(search_term, 0) + 1
+
+    # Use lite version for fast results with optional limit
+    results = web_scrape_lite(search_term, limit=limit)
+
+    # Add status check for each result - OPTIMIZED: Use batch query instead of N+1
+    if isinstance(results, list):
+        # PHASE 1 FIX #1: Collect all tmdb_ids first for batch query
+        tmdb_ids = []
+        for item in results:
+            if item.get('id'):
+                try:
+                    tmdb_ids.append(int(item.get('id')))
+                except (ValueError, TypeError):
+                    pass
+
+        # Single batch database query with caching (20x → 1x query, cached on repeat)
+        db_states = get_cached_db_statuses(tmdb_ids) if tmdb_ids else {}
+
+        # Map results back to items and normalize field names
+        processed_results = []
+        tmdb_api_key_set = bool(get_setting('TMDB', 'api_key'))
+
+        for item in results:
+            tmdb_id = item.get('id')
+            if tmdb_id:
+                try:
+                    tmdb_id_int = int(tmdb_id)
+                    db_state = db_states.get(tmdb_id_int, 'Missing')
+                except (ValueError, TypeError):
+                    db_state = 'Missing'
+
+                # Map state to frontend status
+                if db_state == 'Collected':
+                    item['db_status'] = 'collected'
+                elif db_state == 'Partial':
+                    item['db_status'] = 'partial'
+                elif db_state == 'Blacklisted':
+                    item['db_status'] = 'blacklisted'
+                elif db_state not in ['Missing', 'Ignored', None]:
+                    item['db_status'] = 'processing'
+                else:
+                    item['db_status'] = 'missing'
+            else:
+                item['db_status'] = 'missing'
+
+            # Normalize field names to match trending format EXACTLY
+            # Trending has: tmdb_id, rating, vote_average, watcher_count, tmdb_api_key_set
+            # Search has: id, vote_average
+
+            # 1. Ensure tmdb_id exists (search returns 'id')
+            if 'id' in item and 'tmdb_id' not in item:
+                item['tmdb_id'] = item['id']
+
+            # 2. Ensure rating exists (Trakt rating, search has vote_average)
+            if 'vote_average' in item and 'rating' not in item:
+                item['rating'] = item['vote_average']
+
+            # 3. Ensure vote_average exists (keep if present)
+            if 'vote_average' not in item and 'rating' in item:
+                item['vote_average'] = item['rating']
+
+            # 4. Add tmdb_api_key_set (frontend flag)
+            item['tmdb_api_key_set'] = tmdb_api_key_set
+
+            # 5. Add watcher_count (search doesn't have this, default to 0)
+            if 'watcher_count' not in item:
+                item['watcher_count'] = 0
+
+            # Note: backdrop_path and genre_ids are now populated directly by search_trakt_fast()
+            # from the TMDB API response (no extra API call needed)
+
+            # PHASE 2 OPTIMIZATION: Remove only None values (keep empty strings for compatibility)
+            cleaned_item = {k: v for k, v in item.items() if v is not None}
+            processed_results.append(cleaned_item)
+        results = processed_results
+
+    return jsonify({'results': results})
+
+@scraper_bp.route('/search_analytics', methods=['GET'])
+@admin_required
+def search_analytics():
+    """
+    PHASE 2 OPTIMIZATION: View search analytics to identify popular searches.
+    Admin-only endpoint for monitoring search patterns.
+    """
+    # Sort by frequency (most searched first)
+    sorted_analytics = sorted(_search_analytics.items(), key=lambda x: x[1], reverse=True)
+
+    # Top 20 searches
+    top_searches = [{'term': term, 'count': count} for term, count in sorted_analytics[:20]]
+
+    return jsonify({
+        'total_unique_searches': len(_search_analytics),
+        'total_searches': sum(_search_analytics.values()),
+        'top_searches': top_searches
+    })
+
+@scraper_bp.route('/optimization_status', methods=['GET'])
+def optimization_status():
+    """
+    Quick diagnostic endpoint to verify optimizations are loaded.
+    Access: /scraper/optimization_status
+    """
+    import sys
+    import inspect
+
+    # Check if get_cached_db_statuses function exists
+    try:
+        from utilities.tmdb_cache import get_cached_db_statuses, get_cache_stats
+        has_cached_function = True
+        cache_stats = get_cache_stats()
+    except ImportError:
+        has_cached_function = False
+        cache_stats = {}
+
+    # Check if web_scrape_lite has limit parameter
+    from utilities.web_scraper import web_scrape_lite
+    sig = inspect.signature(web_scrape_lite)
+    has_limit_param = 'limit' in sig.parameters
+
+    # Check analytics tracking
+    has_analytics = '_search_analytics' in globals()
+
+    return jsonify({
+        'optimization_status': 'ENABLED' if all([
+            has_cached_function,
+            has_limit_param,
+            has_analytics
+        ]) else 'PARTIAL',
+        'checks': {
+            'batch_caching': has_cached_function,
+            'progressive_loading': has_limit_param,
+            'analytics_tracking': has_analytics
+        },
+        'cache_stats': cache_stats,
+        'analytics_count': len(_search_analytics) if has_analytics else 0,
+        'message': 'All optimizations loaded!' if all([has_cached_function, has_limit_param, has_analytics])
+                   else 'Some optimizations missing - restart app may be needed'
+    })
 
 @scraper_bp.route('/select_season', methods=['GET', 'POST'])
 @user_required
@@ -1450,13 +1842,18 @@ def tmdb_image_proxy(image_path):
             response.iter_content(chunk_size=8192),
             content_type=response.headers['Content-Type']
         )
-        
-        # Set cache control headers - cache for 7 days
-        proxy_response.headers['Cache-Control'] = 'public, max-age=604800'  # 7 days in seconds
-        proxy_response.headers['Expires'] = (datetime.utcnow() + timedelta(days=7)).strftime('%a, %d %b %Y %H:%M:%S GMT')
-        
-        # Add ETag for cache validation
-        proxy_response.headers['ETag'] = response.headers.get('ETag', '')
+
+        # Set cache control headers - only cache if web caching is enabled in settings
+        config = load_config()
+        enable_caching = config.get('UI Settings', {}).get('enable_caching', False)
+
+        if enable_caching:
+            proxy_response.headers['Cache-Control'] = 'public, max-age=604800'  # 7 days in seconds
+            proxy_response.headers['Expires'] = (datetime.utcnow() + timedelta(days=7)).strftime('%a, %d %b %Y %H:%M:%S GMT')
+            # Add ETag for cache validation
+            proxy_response.headers['ETag'] = response.headers.get('ETag', '')
+        else:
+            proxy_response.headers['Cache-Control'] = 'no-cache'
         
         # Log successful image fetch
         logging.info(f"Successfully fetched and cached image from TMDB: {image_path}")

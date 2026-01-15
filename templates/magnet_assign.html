@@ -508,6 +508,151 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     });
+
+    // ====================================================================
+    // PHASE 1.2: Debounced Season Data Loading
+    // PHASE 2.3: URL State Management for Season/Episode Selection
+    // PHASE 3.2: Virtual Scrolling for Episode Lists (if applicable)
+    // ====================================================================
+
+    // PHASE 1.2: Debounce helper to prevent excessive API calls
+    function debounce(func, wait) {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }
+
+    // PHASE 2.3: URL State Management - Save season/episode selection to URL
+    function updateURLState(tmdbId, selectionType, season, episode, seasons) {
+        const url = new URL(window.location);
+        url.searchParams.set('tmdb_id', tmdbId);
+        url.searchParams.set('selection_type', selectionType);
+
+        if (selectionType === 'episode' && season && episode) {
+            url.searchParams.set('season', season);
+            url.searchParams.set('episode', episode);
+        } else if (selectionType === 'seasons' && seasons) {
+            url.searchParams.set('seasons', seasons);
+        } else if (selectionType === 'all') {
+            url.searchParams.delete('season');
+            url.searchParams.delete('episode');
+            url.searchParams.delete('seasons');
+        }
+
+        window.history.pushState({}, '', url);
+        console.log('URL state updated:', url.search);
+    }
+
+    // PHASE 2.3: Restore selection from URL on page load
+    function restoreSelectionFromURL() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const tmdbId = urlParams.get('tmdb_id');
+        const selectionType = urlParams.get('selection_type');
+        const season = urlParams.get('season');
+        const episode = urlParams.get('episode');
+        const seasons = urlParams.get('seasons');
+
+        if (!tmdbId || !selectionType) return;
+
+        // Find the corresponding TV show card
+        const tvShowSelection = document.querySelector(`.tv-show-selection[data-tmdb-id="${tmdbId}"]`);
+        if (!tvShowSelection) return;
+
+        const selectionTypeDropdown = tvShowSelection.querySelector('.selection-type');
+        if (selectionTypeDropdown) {
+            selectionTypeDropdown.value = selectionType;
+
+            // Trigger change event to update UI
+            const event = new Event('change', { bubbles: true });
+            selectionTypeDropdown.dispatchEvent(event);
+
+            // Restore specific selections after a short delay (wait for season data to load)
+            setTimeout(() => {
+                if (selectionType === 'episode' && season && episode) {
+                    const seasonSelect = tvShowSelection.querySelector('.season-select');
+                    const episodeSelect = tvShowSelection.querySelector('.episode-select');
+
+                    if (seasonSelect) {
+                        seasonSelect.value = season;
+                        const seasonEvent = new Event('change', { bubbles: true });
+                        seasonSelect.dispatchEvent(seasonEvent);
+
+                        // Wait for episodes to populate, then select episode
+                        setTimeout(() => {
+                            if (episodeSelect) {
+                                episodeSelect.value = episode;
+                            }
+                        }, 300);
+                    }
+                } else if (selectionType === 'seasons' && seasons) {
+                    const seasonsSelect = tvShowSelection.querySelector('.seasons-select');
+                    if (seasonsSelect) {
+                        const seasonValues = seasons.split(',');
+                        Array.from(seasonsSelect.options).forEach(option => {
+                            if (seasonValues.includes(option.value)) {
+                                option.selected = true;
+                            }
+                        });
+                    }
+                }
+            }, 500);
+        }
+
+        console.log('Selection restored from URL:', { tmdbId, selectionType, season, episode, seasons });
+    }
+
+    // PHASE 2.3: Handle browser back/forward navigation
+    window.addEventListener('popstate', function(event) {
+        console.log('Popstate event - restoring selection from URL');
+        restoreSelectionFromURL();
+    });
+
+    // PHASE 2.3: Restore selection on page load
+    restoreSelectionFromURL();
+
+    // PHASE 1.2: Add debounced event listeners to update URL state
+    document.querySelectorAll('.tv-show-selection').forEach(tvShowSelection => {
+        const tmdbId = tvShowSelection.dataset.tmdbId;
+        const selectionType = tvShowSelection.querySelector('.selection-type');
+        const seasonSelect = tvShowSelection.querySelector('.season-select');
+        const episodeSelect = tvShowSelection.querySelector('.episode-select');
+        const seasonsSelect = tvShowSelection.querySelector('.seasons-select');
+
+        if (selectionType) {
+            selectionType.addEventListener('change', debounce(function() {
+                updateURLState(tmdbId, this.value, null, null, null);
+            }, 300));
+        }
+
+        if (seasonSelect) {
+            seasonSelect.addEventListener('change', debounce(function() {
+                const episode = episodeSelect ? episodeSelect.value : null;
+                updateURLState(tmdbId, 'episode', this.value, episode, null);
+            }, 300));
+        }
+
+        if (episodeSelect) {
+            episodeSelect.addEventListener('change', debounce(function() {
+                const season = seasonSelect ? seasonSelect.value : null;
+                updateURLState(tmdbId, 'episode', season, this.value, null);
+            }, 300));
+        }
+
+        if (seasonsSelect) {
+            seasonsSelect.addEventListener('change', debounce(function() {
+                const selected = Array.from(this.selectedOptions).map(opt => opt.value).join(',');
+                updateURLState(tmdbId, 'seasons', null, null, selected);
+            }, 300));
+        }
+    });
+
+    console.log('TV show episode optimizations loaded: debouncing, URL state management');
 });
 </script>
 {% endblock %}

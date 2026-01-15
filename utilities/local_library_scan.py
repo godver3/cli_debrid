@@ -536,11 +536,62 @@ def create_symlink(source_path: str, dest_path: str, media_item_id: int = None, 
     
     return symlink_ok_or_created
 
+def _get_video_extensions() -> set:
+    """Return a set of common video file extensions."""
+    return {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg', '.ts', '.m2ts'}
+
+
+def _find_all_video_files_in_folder(folder_path: str, primary_file: str) -> List[str]:
+    """
+    Find all video files in the same folder as the primary file.
+    Returns a list of full paths to all video files found.
+
+    Args:
+        folder_path: The folder containing the primary file
+        primary_file: The primary file that was already found (will be included in results)
+
+    Returns:
+        List of full paths to all video files in the folder
+    """
+    video_extensions = _get_video_extensions()
+    video_files = []
+
+    try:
+        if not os.path.isdir(folder_path):
+            logging.debug(f"[MultiFile] Folder path is not a directory: {folder_path}")
+            return [primary_file] if primary_file else []
+
+        for filename in os.listdir(folder_path):
+            file_path = os.path.join(folder_path, filename)
+            if os.path.isfile(file_path):
+                _, ext = os.path.splitext(filename)
+                if ext.lower() in video_extensions:
+                    video_files.append(file_path)
+
+        if video_files:
+            logging.info(f"[MultiFile] Found {len(video_files)} video file(s) in folder {folder_path}: {[os.path.basename(f) for f in video_files]}")
+        else:
+            # If no video files found but we have the primary file, return it
+            if primary_file:
+                video_files = [primary_file]
+
+    except Exception as e:
+        logging.error(f"[MultiFile] Error scanning folder {folder_path}: {e}")
+        if primary_file:
+            return [primary_file]
+        return []
+
+    return video_files
+
+
 def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False, on_success_callback: Optional[Callable[[str], None]] = None) -> bool:
     """
     Check if the local file for the item exists and create symlink if needed.
     When called from webhook endpoint, will retry up to 5 times with 1 second delay.
     Calls on_success_callback(relative_path) upon successful processing.
+
+    For movies, this function will also scan for additional video files in the same folder
+    and create separate database entries for each file (similar to Plex mode behavior).
 
     Args:
         item: Dictionary containing item details
@@ -553,14 +604,14 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
     """
     max_retries = 10 if is_webhook else 1
     retry_delay = 3  # second
-    
+
     for attempt in range(max_retries):
         try:
             if not item.get('filled_by_file'):
                 return False
-                
+
             original_path = get_setting('File Management', 'original_files_path')
-            
+
             # --- Get potential folder names ---
             filled_by_title = item.get('filled_by_title', '')
             original_torrent_title = item.get('original_scraped_torrent_title', '')
@@ -569,15 +620,18 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
 
             found_file = False
             source_file = None # Initialize source_file
+            source_folder = None # Track the folder where the file was found
 
             # --- Check Order: Original Torrent Title -> Filled By Title ---
 
             # 1. Check original_scraped_torrent_title (raw)
             if original_torrent_title:
-                potential_path = os.path.join(original_path, original_torrent_title, current_filename)
+                potential_folder = os.path.join(original_path, original_torrent_title)
+                potential_path = os.path.join(potential_folder, current_filename)
                 logging.debug(f"Attempt 1: Checking path using original_scraped_torrent_title: {potential_path}")
                 if os.path.exists(potential_path):
                     source_file = potential_path
+                    source_folder = potential_folder
                     found_file = True
                     logging.info(f"Found file using original_scraped_torrent_title (raw): {source_file}")
 
@@ -585,39 +639,47 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             if not found_file and original_torrent_title:
                 original_torrent_title_trimmed = os.path.splitext(original_torrent_title)[0]
                 if original_torrent_title_trimmed != original_torrent_title: # Only check if trimming actually changed the name
-                    potential_path = os.path.join(original_path, original_torrent_title_trimmed, current_filename)
+                    potential_folder = os.path.join(original_path, original_torrent_title_trimmed)
+                    potential_path = os.path.join(potential_folder, current_filename)
                     logging.debug(f"Attempt 2: Checking path using trimmed original_scraped_torrent_title: {potential_path}")
                     if os.path.exists(potential_path):
                         source_file = potential_path
+                        source_folder = potential_folder
                         found_file = True
                         logging.info(f"Found file using original_scraped_torrent_title (trimmed): {source_file}")
 
             # 3. Check real_debrid_original_title (raw) (NEW)
             if not found_file and real_debrid_original_title:
-                potential_path = os.path.join(original_path, real_debrid_original_title, current_filename)
+                potential_folder = os.path.join(original_path, real_debrid_original_title)
+                potential_path = os.path.join(potential_folder, current_filename)
                 logging.debug(f"Attempt 3 (New): Checking path using real_debrid_original_title: {potential_path}")
                 if os.path.exists(potential_path):
                     source_file = potential_path
+                    source_folder = potential_folder
                     found_file = True
                     logging.info(f"Found file using real_debrid_original_title (raw): {source_file}")
-            
+
             # 4. Check real_debrid_original_title (trimmed) (NEW)
             if not found_file and real_debrid_original_title:
                 real_debrid_original_title_trimmed = os.path.splitext(real_debrid_original_title)[0]
                 if real_debrid_original_title_trimmed != real_debrid_original_title:
-                    potential_path = os.path.join(original_path, real_debrid_original_title_trimmed, current_filename)
+                    potential_folder = os.path.join(original_path, real_debrid_original_title_trimmed)
+                    potential_path = os.path.join(potential_folder, current_filename)
                     logging.debug(f"Attempt 4 (New): Checking path using trimmed real_debrid_original_title: {potential_path}")
                     if os.path.exists(potential_path):
                         source_file = potential_path
+                        source_folder = potential_folder
                         found_file = True
                         logging.info(f"Found file using real_debrid_original_title (trimmed): {source_file}")
 
             # 5. Check filled_by_title (raw)
             if not found_file and filled_by_title:
-                potential_path = os.path.join(original_path, filled_by_title, current_filename)
+                potential_folder = os.path.join(original_path, filled_by_title)
+                potential_path = os.path.join(potential_folder, current_filename)
                 logging.debug(f"Attempt 5: Checking path using filled_by_title: {potential_path}")
                 if os.path.exists(potential_path):
                     source_file = potential_path
+                    source_folder = potential_folder
                     found_file = True
                     logging.info(f"Found file using filled_by_title (raw): {source_file}")
 
@@ -625,10 +687,12 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             if not found_file and filled_by_title:
                 filled_by_title_trimmed = os.path.splitext(filled_by_title)[0]
                 if filled_by_title_trimmed != filled_by_title: # Only check if trimming actually changed the name
-                    potential_path = os.path.join(original_path, filled_by_title_trimmed, current_filename)
+                    potential_folder = os.path.join(original_path, filled_by_title_trimmed)
+                    potential_path = os.path.join(potential_folder, current_filename)
                     logging.debug(f"Attempt 6: Checking path using trimmed filled_by_title: {potential_path}")
                     if os.path.exists(potential_path):
                         source_file = potential_path
+                        source_folder = potential_folder
                         found_file = True
                         logging.info(f"Found file using filled_by_title (trimmed): {source_file}")
 
@@ -638,6 +702,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                  logging.debug(f"Attempt 7: Checking direct path under original_files_path: {potential_path}")
                  if os.path.exists(potential_path):
                      source_file = potential_path
+                     source_folder = original_path  # The folder is the original_path itself
                      found_file = True
                      logging.info(f"Found file directly under original_files_path: {source_file}")
 
@@ -809,8 +874,16 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                                             from utilities.emby_functions import remove_file_from_emby
                                             remove_file_from_emby(item['title'], old_dest, episode_title)
                                         elif media_server_type == 'plex':
-                                            from utilities.plex_functions import remove_file_from_plex
-                                            remove_file_from_plex(item['title'], old_dest, episode_title)
+                                            from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
+                                            success = remove_file_from_plex(item['title'], old_dest, episode_title)
+                                            # If direct removal failed (possibly 400 error), try scan & empty trash as fallback
+                                            if not success:
+                                                logging.warning(f"[UPGRADE] Direct Plex removal failed for '{item['title']}'. Trying scan & empty trash...")
+                                                try:
+                                                    scan_and_empty_plex_trash()
+                                                    logging.info(f"[UPGRADE] Triggered library scan and trash empty for '{item['title']}'.")
+                                                except Exception as scan_err:
+                                                    logging.warning(f"[UPGRADE] Scan & empty trash also failed for '{item['title']}': {scan_err}")
                                     except Exception as media_server_remove_err:
                                          logging.error(f"[UPGRADE] Failed removing old file {old_dest} from {media_server_type}: {media_server_remove_err}")
 
@@ -916,6 +989,146 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     except Exception as cb_err:
                         logging.error(f"Error executing on_success_callback for {relative_path_to_remove}: {cb_err}")
                 # --- END EDIT ---
+
+                # --- MULTIFILE SUPPORT FOR SYMLINK MODE ---
+                # For both movies and episodes, scan the source folder for additional video files and create
+                # separate database entries for each (similar to how Plex mode handles multiple files)
+                # This ensures all files from a torrent are properly tracked in the database
+                if source_folder:
+                    try:
+                        all_video_files = _find_all_video_files_in_folder(source_folder, source_file)
+                        # Filter out the primary file we already processed
+                        additional_files = [f for f in all_video_files if f != source_file]
+
+                        if additional_files:
+                            item_type = item.get('type', 'movie')
+                            logging.info(f"[MultiFile] Found {len(additional_files)} additional video file(s) for {item_type} '{item.get('title')}'")
+
+                            for additional_source_file in additional_files:
+                                additional_filename = os.path.basename(additional_source_file)
+                                logging.info(f"[MultiFile] Processing additional file: {additional_filename}")
+
+                                # Create a copy of the item for this additional file
+                                additional_item = item.copy()
+                                additional_item['filled_by_file'] = additional_filename
+
+                                # Generate symlink path for this additional file
+                                additional_dest_file = get_symlink_path(additional_item, additional_source_file, skip_jikan_lookup=True)
+                                if not additional_dest_file:
+                                    logging.warning(f"[MultiFile] Failed to generate symlink path for additional file: {additional_filename}")
+                                    continue
+
+                                # Create symlink for the additional file (no verification queue, skip_verification=True)
+                                additional_success = create_symlink(additional_source_file, additional_dest_file, media_item_id=None, skip_verification=True)
+                                if not additional_success:
+                                    logging.warning(f"[MultiFile] Failed to create symlink for additional file: {additional_filename}")
+                                    continue
+
+                                # Insert a new database entry for this additional file
+                                # Use the same metadata as the primary item but with different file info
+                                try:
+                                    from database.core import get_db_connection
+                                    conn = get_db_connection()
+                                    try:
+                                        # Check if this file already exists in the database
+                                        cursor = conn.execute(
+                                            'SELECT id FROM media_items WHERE filled_by_file = ? AND type = ?',
+                                            (additional_filename, item_type)
+                                        )
+                                        existing = cursor.fetchone()
+                                        cursor.close()
+
+                                        if existing:
+                                            logging.debug(f"[MultiFile] File {additional_filename} already exists in DB (ID: {existing['id']}), updating location")
+                                            conn.execute('''
+                                                UPDATE media_items
+                                                SET location_on_disk = ?, original_path_for_symlink = ?, last_updated = ?
+                                                WHERE id = ?
+                                            ''', (additional_dest_file, additional_source_file, current_time, existing['id']))
+                                        else:
+                                            # Insert new entry with same identifiers but different file
+                                            # Handle both movies and episodes
+                                            if item_type == 'episode':
+                                                conn.execute('''
+                                                    INSERT INTO media_items (
+                                                        imdb_id, tmdb_id, title, year, release_date, state, type,
+                                                        season_number, episode_number, episode_title,
+                                                        last_updated, version, collected_at, original_collected_at,
+                                                        genres, filled_by_file, filled_by_title, filled_by_magnet,
+                                                        filled_by_torrent_id, location_on_disk, original_path_for_symlink,
+                                                        resolution, content_source, airtime
+                                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                ''', (
+                                                    item.get('imdb_id'),
+                                                    item.get('tmdb_id'),
+                                                    item.get('title'),
+                                                    item.get('year'),
+                                                    item.get('release_date'),
+                                                    new_state,
+                                                    'episode',
+                                                    item.get('season_number'),
+                                                    item.get('episode_number'),
+                                                    item.get('episode_title'),
+                                                    current_time,
+                                                    item.get('version'),
+                                                    current_time,
+                                                    current_time,
+                                                    item.get('genres'),
+                                                    additional_filename,
+                                                    item.get('filled_by_title'),
+                                                    item.get('filled_by_magnet'),
+                                                    item.get('filled_by_torrent_id'),
+                                                    additional_dest_file,
+                                                    additional_source_file,
+                                                    item.get('resolution'),
+                                                    item.get('content_source'),
+                                                    item.get('airtime')
+                                                ))
+                                            else:  # movie
+                                                conn.execute('''
+                                                    INSERT INTO media_items (
+                                                        imdb_id, tmdb_id, title, year, release_date, state, type,
+                                                        last_updated, version, collected_at, original_collected_at,
+                                                        genres, filled_by_file, filled_by_title, filled_by_magnet,
+                                                        filled_by_torrent_id, location_on_disk, original_path_for_symlink,
+                                                        resolution, content_source
+                                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                ''', (
+                                                    item.get('imdb_id'),
+                                                    item.get('tmdb_id'),
+                                                    item.get('title'),
+                                                    item.get('year'),
+                                                    item.get('release_date'),
+                                                    new_state,
+                                                    'movie',
+                                                    current_time,
+                                                    item.get('version'),
+                                                    current_time,
+                                                    current_time,
+                                                    item.get('genres'),
+                                                    additional_filename,
+                                                    item.get('filled_by_title'),
+                                                    item.get('filled_by_magnet'),
+                                                    item.get('filled_by_torrent_id'),
+                                                    additional_dest_file,
+                                                    additional_source_file,
+                                                    item.get('resolution'),
+                                                    item.get('content_source')
+                                                ))
+                                            logging.info(f"[MultiFile] Created new DB entry for additional file: {additional_filename}")
+
+                                        conn.commit()
+                                    except Exception as db_err:
+                                        logging.error(f"[MultiFile] Database error for {additional_filename}: {db_err}")
+                                        conn.rollback()
+                                    finally:
+                                        conn.close()
+                                except Exception as e:
+                                    logging.error(f"[MultiFile] Error creating DB entry for {additional_filename}: {e}")
+
+                    except Exception as multifile_err:
+                        logging.error(f"[MultiFile] Error processing additional files: {multifile_err}")
+                # --- END MULTIFILE SUPPORT FOR SYMLINK MODE ---
 
                 logging.debug(f"check_local_file_for_item succeeded.")
                 return True

@@ -657,24 +657,13 @@ def migrate_verification_database() -> bool:
             """)
             logger.info("Added failure_reason column to symlinked_files_verification")
             
-        # Check and add columns to media_items table
-        cursor.execute("PRAGMA table_info(media_items)")
-        existing_columns = [column[1] for column in cursor.fetchall()]
-        
-        if 'verification_failed' not in existing_columns:
-            cursor.execute("""
-                ALTER TABLE media_items 
-                ADD COLUMN verification_failed BOOLEAN DEFAULT FALSE
-            """)
-            logger.info("Added verification_failed column to media_items")
-            
-        if 'verification_failure_reason' not in existing_columns:
-            cursor.execute("""
-                ALTER TABLE media_items 
-                ADD COLUMN verification_failure_reason TEXT
-            """)
-            logger.info("Added verification_failure_reason column to media_items")
-            
+        # NOTE: Migrations for verification_failed and verification_failure_reason columns
+        # have been moved to database/schema_management.py (lines 254-259) for centralized
+        # schema management. This ensures consistent column creation order and prevents
+        # race conditions during initialization. The schema_management.py migrations run
+        # during app startup and handle both fresh installations and upgrades.
+        logger.info("Verification columns (verification_failed, verification_failure_reason) managed by schema_management.py")
+
         conn.commit()
         logger.info("Database migration completed successfully")
         return True
@@ -1127,7 +1116,7 @@ def migrate_plex_removal_database() -> bool:
 
         if needs_recreation:
             cursor.execute("PRAGMA foreign_keys=off") # Disable FK constraints temporarily
-            cursor.execute("BEGIN TRANSACTION")
+            cursor.execute("BEGIN IMMEDIATE")
             
             try:
                 # 1. Rename old table

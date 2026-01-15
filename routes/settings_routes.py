@@ -3,7 +3,7 @@ from utilities.settings import load_config, validate_url, save_config
 from utilities.settings_schema import SETTINGS_SCHEMA
 import logging
 from queues.config_manager import add_scraper, clean_notifications, get_content_source_settings, update_content_source, get_version_settings, add_content_source, delete_content_source, save_config, get_enabled_content_sources
-from routes.models import admin_required, onboarding_required
+from routes.models import admin_required, onboarding_required, user_required
 from .utils import is_user_system_enabled
 import traceback
 import json
@@ -1459,6 +1459,17 @@ def get_scraping_settings():
     config = load_config()
     scraping_settings = config.get('Scraping', {})
     return jsonify(scraping_settings)
+
+@settings_bp.route('/api/config', methods=['GET'])
+@user_required
+def get_full_config():
+    """Get full configuration for modal/API access"""
+    try:
+        config = load_config()
+        return jsonify(config)
+    except Exception as e:
+        logging.error(f"Error loading config: {str(e)}", exc_info=True)
+        return jsonify({"error": "Failed to load configuration"}), 500
 
 @settings_bp.route('/api/settings', methods=['POST'])
 @admin_required

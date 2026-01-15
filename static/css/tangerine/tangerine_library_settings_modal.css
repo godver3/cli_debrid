@@ -1,0 +1,289 @@
+/**
+ * Tangerine Theme - Library Settings Modal Styles
+ * Quick-access modal for Library Manager settings with Tangerine styling
+ */
+
+.library-settings-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.library-settings-modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+}
+
+.library-settings-modal-content {
+    position: relative;
+    background-color: #1a1a1a;
+    border-radius: 16px;
+    border: 2px solid rgba(225, 124, 82, 0.2);
+    width: 90%;
+    max-width: 600px;
+    max-height: 90vh;
+    overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5),
+                0 0 20px rgba(225, 124, 82, 0.1);
+    animation: slideUp 0.3s ease-out;
+    display: flex;
+    flex-direction: column;
+}
+
+@keyframes slideUp {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.library-settings-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px;
+    border-bottom: 2px solid rgba(225, 124, 82, 0.3);
+    background: linear-gradient(135deg, rgba(225, 124, 82, 0.1) 0%, transparent 100%);
+}
+
+.library-settings-modal-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #e17c52;
+}
+
+.library-settings-modal-close {
+    background: none;
+    border: none;
+    font-size: 2rem;
+    line-height: 1;
+    color: #999;
+    cursor: pointer;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+}
+
+.library-settings-modal-close:hover {
+    background-color: rgba(225, 124, 82, 0.2);
+    color: #e17c52;
+}
+
+.library-settings-modal-body {
+    padding: 24px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.library-setting-group {
+    margin-bottom: 24px;
+}
+
+.library-setting-group:last-child {
+    margin-bottom: 0;
+}
+
+.library-setting-group > label {
+    display: block;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #e17c52;
+    margin-bottom: 8px;
+}
+
+.library-setting-group > label[for="autoGhostlistDeleted"] {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+}
+
+.library-setting-description {
+    font-size: 0.85rem;
+    color: #aaa;
+    line-height: 1.5;
+    margin: 8px 0;
+}
+
+.library-setting-input {
+    width: 100%;
+    padding: 10px 14px;
+    background-color: #2a2a2a;
+    border: 2px solid rgba(225, 124, 82, 0.3);
+    border-radius: 12px;
+    color: #fff;
+    font-size: 0.95rem;
+    transition: all 0.2s ease;
+}
+
+.library-setting-input:focus {
+    outline: none;
+    border-color: #e17c52;
+    box-shadow: 0 0 0 3px rgba(225, 124, 82, 0.1);
+    background-color: #2f2f2f;
+}
+
+.library-setting-checkbox {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    accent-color: #e17c52;
+}
+
+.library-settings-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 24px;
+    /* border-top: 2px solid rgba(225, 124, 82, 0.3); */
+    background: linear-gradient(0deg, rgba(225, 124, 82, 0.05) 0%, transparent 100%);
+}
+
+.library-settings-btn-cancel,
+.library-settings-btn-save {
+    padding: 10px 20px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    border-radius: 12px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.library-settings-btn-cancel {
+    background-color: transparent;
+    color: #999;
+    border: 2px solid rgba(225, 124, 82, 0.3);
+}
+
+.library-settings-btn-cancel:hover {
+    background-color: rgba(225, 124, 82, 0.1);
+    border-color: rgba(225, 124, 82, 0.5);
+    color: #e17c52;
+}
+
+.library-settings-btn-save {
+    background: linear-gradient(135deg, #e17c52 0%, #c96b47 100%);
+    color: #fff;
+    border: 2px solid transparent;
+    box-shadow: 0 2px 8px rgba(225, 124, 82, 0.3);
+}
+
+.library-settings-btn-save:hover:not(:disabled) {
+    background: linear-gradient(135deg, #f08c62 0%, #d97b57 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(225, 124, 82, 0.4);
+}
+
+.library-settings-btn-save:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.library-settings-btn-clear-cache {
+    padding: 10px 20px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    border-radius: 12px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+    color: #fff;
+    margin-top: 8px;
+    box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
+}
+
+.library-settings-btn-clear-cache:hover:not(:disabled) {
+    background: linear-gradient(135deg, #e74c5c 0%, #d73343 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 16px rgba(220, 53, 69, 0.5);
+}
+
+.library-settings-btn-clear-cache:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Scrollbar styling for modal body */
+.library-settings-modal-body::-webkit-scrollbar {
+    width: 8px;
+}
+
+.library-settings-modal-body::-webkit-scrollbar-track {
+    background: #1a1a1a;
+    border-radius: 4px;
+}
+
+.library-settings-modal-body::-webkit-scrollbar-thumb {
+    background: rgba(225, 124, 82, 0.3);
+    border-radius: 4px;
+}
+
+.library-settings-modal-body::-webkit-scrollbar-thumb:hover {
+    background: rgba(225, 124, 82, 0.5);
+}
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+    .library-settings-modal-content {
+        width: 95%;
+        max-width: none;
+        border-radius: 16px 16px 0 0;
+        max-height: 80vh;
+        margin-top: auto;
+    }
+
+    .library-settings-modal-header {
+        padding: 16px 20px;
+    }
+
+    .library-settings-modal-header h2 {
+        font-size: 1.25rem;
+    }
+
+    .library-settings-modal-body {
+        padding: 20px;
+    }
+
+    .library-settings-modal-footer {
+        padding: 12px 20px;
+    }
+
+    .library-settings-btn-cancel,
+    .library-settings-btn-save {
+        flex: 1;
+    }
+}

@@ -1238,6 +1238,63 @@ def get_media_item_presence_overall(imdb_id: str | None = None, tmdb_id: str | N
     finally:
         conn.close()
 
+def get_media_items_presence_batch(tmdb_ids: list[int]) -> dict[int, str]:
+    """Batch version of get_media_item_presence_overall for multiple TMDB IDs.
+
+    Returns a dictionary mapping tmdb_id -> status string.
+    Uses a single query with IN clause for maximum performance.
+
+    Args:
+        tmdb_ids: List of TMDB IDs to check
+
+    Returns:
+        Dict mapping tmdb_id to status ('Collected', 'Partial', 'Blacklisted', 'Missing', etc.)
+    """
+    if not tmdb_ids:
+        return {}
+
+    conn = get_db_connection()
+    try:
+        # Convert to strings for query since tmdb_id is stored as TEXT in the database
+        tmdb_ids_str = [str(tid) for tid in tmdb_ids]
+
+        # Build placeholders for IN clause
+        placeholders = ','.join('?' * len(tmdb_ids_str))
+        query = f'SELECT tmdb_id, state FROM media_items WHERE tmdb_id IN ({placeholders})'
+
+        cursor = conn.execute(query, tmdb_ids_str)
+
+        # Group states by tmdb_id
+        tmdb_states = {}
+        for row in cursor.fetchall():
+            tmdb_id, state = row
+            if tmdb_id not in tmdb_states:
+                tmdb_states[tmdb_id] = set()
+            tmdb_states[tmdb_id].add(state)
+
+        # Apply the same logic as get_media_item_presence_overall for each ID
+        result = {}
+        for tmdb_id in tmdb_ids:
+            # Look up using string key since database returns tmdb_id as TEXT
+            states = tmdb_states.get(str(tmdb_id), set())
+
+            if not states:
+                result[tmdb_id] = "Missing"
+            elif 'Blacklisted' in states:
+                result[tmdb_id] = 'Blacklisted'
+            elif 'Collected' in states:
+                result[tmdb_id] = 'Collected' if len(states) == 1 else 'Partial'
+            else:
+                result[tmdb_id] = next(iter(states))
+
+        return result
+    except Exception as e:
+        logging.error(f"Error retrieving batch media item status: {e}")
+        # Return Missing for all IDs on error
+        return {tmdb_id: 'Missing' for tmdb_id in tmdb_ids}
+    finally:
+        conn.close()
+
 def is_any_file_in_db_for_item(imdb_id: str, filenames: List[str]) -> bool:
     """
     Check if any of the provided filenames match a 'filled_by_file' entry
@@ -1465,6 +1522,112 @@ def get_items_with_all_blacklisted_versions() -> List[int]:
         if conn:
             conn.close()
 
+# =============================================================================
+# Deletion Helper Functions (for DeletionManager)
+# =============================================================================
+
+def get_item_by_id(item_id: int) -> Optional[Dict]:
+    """
+    Get single media item by database ID
+    Used by DeletionManager for deletion operations
+
+    Args:
+        item_id: Database ID of the item
+
+    Returns:
+        Dict with item data or None if not found
+    """
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,))
+        result = cursor.fetchone()
+        return dict(result) if result else None
+    except Exception as e:
+        logging.error(f"Error getting item by ID {item_id}: {e}")
+        return None
+    finally:
+        conn.close()
+
+def get_items_by_ids(item_ids: List[int]) -> List[Dict]:
+    """
+    Get multiple media items by database IDs
+    Used for bulk deletion operations
+
+    Args:
+        item_ids: List of database IDs
+
+    Returns:
+        List of item dicts
+    """
+    if not item_ids:
+        return []
+
+    conn = get_db_connection()
+    try:
+        placeholders = ','.join(['?'] * len(item_ids))
+        query = f'SELECT * FROM media_items WHERE id IN ({placeholders})'
+        cursor = conn.execute(query, item_ids)
+        return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        logging.error(f"Error getting items by IDs: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_all_episodes_for_show(imdb_id: str) -> List[Dict]:
+    """
+    Get all episodes for a show by IMDB ID
+    Used by multi-level deletion (delete entire show)
+
+    Args:
+        imdb_id: IMDB identifier of the show
+
+    Returns:
+        List of episode dicts sorted by season and episode number
+    """
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('''
+            SELECT * FROM media_items
+            WHERE imdb_id = ?
+            AND type = 'episode'
+            ORDER BY season_number, episode_number
+        ''', (imdb_id,))
+        return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        logging.error(f"Error getting episodes for show {imdb_id}: {e}")
+        return []
+    finally:
+        conn.close()
+
+def get_all_episodes_for_season(imdb_id: str, season_number: int) -> List[Dict]:
+    """
+    Get all episodes for a specific season
+    Used by multi-level deletion (delete entire season)
+
+    Args:
+        imdb_id: IMDB identifier of the show
+        season_number: Season number
+
+    Returns:
+        List of episode dicts sorted by episode number
+    """
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute('''
+            SELECT * FROM media_items
+            WHERE imdb_id = ?
+            AND season_number = ?
+            AND type = 'episode'
+            ORDER BY episode_number
+        ''', (imdb_id, season_number))
+        return [dict(row) for row in cursor.fetchall()]
+    except Exception as e:
+        logging.error(f"Error getting episodes for season {imdb_id} S{season_number}: {e}")
+        return []
+    finally:
+        conn.close()
+
 # Define __all__ for explicit exports
 __all__ = [
     'normalize_string_for_comparison',
@@ -1497,9 +1660,15 @@ __all__ = [
     'get_collected_episodes_count',
     'get_collected_episode_numbers',
     'get_media_item_presence_overall',
+    'get_media_items_presence_batch',
     'get_distinct_imdb_ids',
     'is_any_file_in_db_for_item',
     'get_season_year',
     'get_items_with_all_blacklisted_versions',
-    'cleanup_duplicate_episodes'
+    'cleanup_duplicate_episodes',
+    # Deletion helpers
+    'get_item_by_id',
+    'get_items_by_ids',
+    'get_all_episodes_for_show',
+    'get_all_episodes_for_season'
 ]

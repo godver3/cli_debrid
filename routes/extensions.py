@@ -438,14 +438,17 @@ def add_security_headers(response):
             response.headers['Cache-Control'] = 'public, max-age=604800'
             if not response.headers.get('ETag'):
                 response.add_etag()
-        elif response.mimetype and response.mimetype.startswith('text/html'):
-            # Cache HTML for 1 hour but revalidate
-            response.headers['Cache-Control'] = 'public, max-age=3600, must-revalidate'
+        # REMOVED: HTML caching block - was causing stale data issues
+        # Users were seeing deleted items until hard refresh due to 1-hour HTML cache
 
     # Always prevent caching of API responses regardless of caching setting
     if request.path.startswith('/api/') or request.path.startswith('/base/api/') or request.path.startswith('/settings/api/'):
         response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
         response.headers['Pragma'] = 'no-cache'
+
+    # Always prevent caching of HTML pages to avoid stale data (deleted items showing, etc.)
+    if response.mimetype and response.mimetype.startswith('text/html'):
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
 
     origin = request.headers.get('Origin')
     if origin:

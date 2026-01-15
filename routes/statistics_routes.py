@@ -93,7 +93,7 @@ def get_airing_soon():
     
     return grouped_results
 
-#@cache_for_seconds(300)  # Cache for 5 minutes since releases don't change frequently
+@cache_for_seconds(300)  # Cache for 5 minutes since releases don't change frequently
 def get_upcoming_releases():
     from database import get_db_connection
     conn = get_db_connection()
@@ -159,7 +159,7 @@ def get_upcoming_releases():
     
     return formatted_results
 
-#@cache_for_seconds(300) # Consider caching if appropriate
+@cache_for_seconds(300) # Consider caching if appropriate
 def get_movies_for_calendar(days_past: int = 7, days_future: int = 28, start_date_override_iso: Optional[str] = None, end_date_override_iso: Optional[str] = None):
     from database import get_db_connection
     conn = get_db_connection()
@@ -211,7 +211,7 @@ def get_movies_for_calendar(days_past: int = 7, days_future: int = 28, start_dat
         })
     return movies_data
 
-#@cache_for_seconds(600)  # Increase cache to 10 minutes since show airtimes don't change frequently
+@cache_for_seconds(600)  # Increase cache to 10 minutes since show airtimes don't change frequently
 def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1, start_date_override_iso: Optional[str] = None, end_date_override_iso: Optional[str] = None):
     from metadata.metadata import get_show_airtime_by_imdb_id, _get_local_timezone
     from database import get_db_connection
@@ -1156,6 +1156,30 @@ def index_api():
         'use_24hour_format': use_24hour_format
     })
 
+@statistics_bp.route('/api/refresh_downloads', methods=['GET'])
+@user_required
+def refresh_downloads():
+    """Targeted endpoint to refresh only download stats (Phase 2.2)"""
+    try:
+        from database import get_cached_download_stats
+        active_downloads, _ = get_cached_download_stats()
+        return jsonify({'active_downloads': active_downloads})
+    except Exception as e:
+        logging.error(f"Error refreshing downloads: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@statistics_bp.route('/api/refresh_usage', methods=['GET'])
+@user_required
+def refresh_usage():
+    """Targeted endpoint to refresh only usage stats (Phase 2.2)"""
+    try:
+        from database import get_cached_download_stats
+        _, usage_stats = get_cached_download_stats()
+        return jsonify({'usage_stats': usage_stats})
+    except Exception as e:
+        logging.error(f"Error refreshing usage: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @statistics_bp.route('/move_to_wanted', methods=['POST'])
 @user_required
 def move_to_wanted():
@@ -1194,9 +1218,9 @@ def move_to_wanted():
                     version = TRIM(version, '*'),
                     upgrading = NULL
                 WHERE (imdb_id = ? OR tmdb_id = ?)
-                AND season_number = ? 
+                AND season_number = ?
                 AND episode_number = ?
-                AND state IN ('Collected', 'Upgrading')
+                AND state IN ('Collected', 'Upgrading', 'Blacklisted')
             """
             params = (datetime.now(), imdb_id, tmdb_id, season_number, episode_number)
         else:
@@ -1219,7 +1243,7 @@ def move_to_wanted():
                     upgrading = NULL
                 WHERE (imdb_id = ? OR tmdb_id = ?)
                 AND type = 'movie'
-                AND state IN ('Collected', 'Upgrading')
+                AND state IN ('Collected', 'Upgrading', 'Blacklisted')
             """
             params = (datetime.now(), imdb_id, tmdb_id)
             

@@ -67,6 +67,7 @@
     <!-- <link rel="stylesheet" href="{{ url_for('static', filename='css/onboarding.css') }}"> -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/rate_limits.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/library_management.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/library_settings_modal.css') }}">
 
     <!-- Load theme switcher early to prevent FOUC -->
     <script src="{{ url_for('static', filename='js/theme_switcher.js') }}"></script>
@@ -820,6 +821,7 @@
                     'Main': [
                         ('root.root', 'Home'),
                         ('scraper.index', 'Add Media'),
+                        ('library.index', 'Library'),
                         ('queues.index', 'Queues'),
                         ('program_operation.task_timings', 'Task Manager'),
                         ('statistics.calendar_view', 'Calendar'),
@@ -854,6 +856,7 @@
                 {% set menu_icons = {
                     'Home': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>',
                     'Add Media': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>',
+                    'Library': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>',
                     'Queues': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>',
                     'Task Manager': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>',
                     'Calendar': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>',
@@ -1143,7 +1146,8 @@
     <script type="module" src="{{ url_for('static', filename='js/tooltips.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/task_monitor.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/base.js') }}"></script>
-    
+    <script src="{{ url_for('static', filename='js/library_settings_modal.js') }}"></script>
+
     <!-- Support Modal -->
     <div id="supportModal" class="modal">
         <div class="modal-content support-modal">
@@ -1193,6 +1197,45 @@
     
     <!-- Toast Container (will be populated by JavaScript) -->
     <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Library Settings Modal -->
+    <div id="librarySettingsModal" class="library-settings-modal" style="display: none;">
+        <div class="library-settings-modal-overlay"></div>
+        <div class="library-settings-modal-content">
+            <div class="library-settings-modal-header">
+                <h2>Library Manager Settings</h2>
+                <button class="library-settings-modal-close" aria-label="Close">&times;</button>
+            </div>
+            <div class="library-settings-modal-body">
+                <div class="library-setting-group">
+                    <label for="primaryArtworkSource">Primary Artwork Source</label>
+                    <p class="library-setting-description">Choose where to get posters and artwork from first. Plex uses your server's artwork (requires Plex authentication). TMDB uses online movie database (requires TMDB API key). The other source will be used as backup.</p>
+                    <select id="primaryArtworkSource" class="library-setting-input">
+                        <option value="Plex">Plex</option>
+                        <option value="TMDB">TMDB</option>
+                    </select>
+                </div>
+
+                <div class="library-setting-group">
+                    <label for="autoGhostlistDeleted">
+                        <input type="checkbox" id="autoGhostlistDeleted" class="library-setting-checkbox">
+                        Ghostlist Mode
+                    </label>
+                    <p class="library-setting-description">Add shows and movies to the ghostlist to prevent them from being re-added. When enabled, deleting content will mark it as ghosted in the database. When disabled, deleted content can be re-added by dynamic content sources.</p>
+                </div>
+
+                <div class="library-setting-group">
+                    <label>Clear Artwork Cache</label>
+                    <p class="library-setting-description">Remove all cached posters and backdrops. Artwork will be re-downloaded from the primary source on next library load.</p>
+                    <button type="button" id="clearLibraryCacheBtn" class="library-settings-btn-clear-cache">Clear Cache</button>
+                </div>
+            </div>
+            <div class="library-settings-modal-footer">
+                <button class="library-settings-btn-cancel">Cancel</button>
+                <button class="library-settings-btn-save">Save Settings</button>
+            </div>
+        </div>
+    </div>
 
     {% block scripts %}{% endblock %}
 </body>

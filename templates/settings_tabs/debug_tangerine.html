@@ -87,7 +87,7 @@
         </div>
     </div>
     <div class="settings-section-content">
-        {% for key in ['skip_initial_plex_update', 'plex_removal_cache_delay_minutes', 'emby_jellyfin_url', 'emby_jellyfin_token', 'cinesync_path'] %}
+        {% for key in ['skip_initial_plex_update', 'plex_removal_cache_delay_minutes', 'cinesync_path'] %}
             {% set value = settings_schema.Debug.get(key) %}
             {% if value %}
             <div class="settings-form-group">

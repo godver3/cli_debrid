@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+
+{% block title %}Show Details - Library{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/library_show.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="show-container" data-media-id="{{ media_id }}" data-plex-configured="{{ plex_configured|lower }}" data-tmdb-configured="{{ tmdb_configured|lower }}">
+
+    <!-- Full Page Backdrop -->
+    <div id="page-backdrop" class="page-backdrop" style="display: none;">
+        <img id="page-backdrop-img" src="" alt="Backdrop" class="page-backdrop-image">
+        <div class="page-backdrop-overlay"></div>
+    </div>
+
+    <!-- Content Wrapper -->
+    <div class="show-content-wrapper">
+        <!-- Configuration Error Message -->
+        {% if not plex_configured and not tmdb_configured %}
+        <div class="error-message" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 0.5rem; padding: 1.5rem; margin-bottom: 2rem; text-align: center;">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 3rem; height: 3rem; margin: 0 auto 1rem; color: #ef4444;">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+            </svg>
+            <h3 style="margin: 0 0 0.5rem 0; font-size: 1.5rem;">Library Not Configured</h3>
+            <p style="margin: 0 0 1rem 0; opacity: 0.9;">
+                The Library page requires either <strong>Plex authentication</strong> or a <strong>TMDB API key</strong> to display artwork.
+            </p>
+            <p style="margin: 0;">
+                Please configure at least one source in <a href="/settings" style="color: #3b82f6; text-decoration: underline;">Settings</a> → Additional Settings → Library Manager
+            </p>
+        </div>
+        {% endif %}
+
+
+        <!-- Main Content Grid: Left (Header + Seasons) | Right (Sidebar) -->
+        <div id="show-main-grid" class="show-main-grid" style="display: none;">
+            <!-- Left Column: Header + Seasons -->
+            <div class="show-left-column">
+                <!-- Show Header -->
+                <div id="show-header" class="show-header">
+                    <div class="show-header-content">
+                        <!-- Poster -->
+                        <div class="show-poster-container">
+                            <img id="poster-img" src="/static/images/placeholder.png" alt="Poster" class="show-poster">
+                        </div>
+
+                        <!-- Title and Info Section -->
+                        <div class="show-info">
+                            <div class="show-title-row">
+                                <div class="show-title-content">
+                                    <h1 id="show-title" class="show-title"></h1>
+                                    <div class="show-meta">
+                                        <span id="show-status-badge" class="status-badge">Ended</span>
+                                        <span id="show-rating-text">-</span>
+                                        <span id="show-rating-separator" class="separator" style="display: none;">•</span>
+                                        <span id="show-network-text">-</span>
+                                        <span class="separator">•</span>
+                                        <span id="show-genres-text">-</span>
+                                    </div>
+                                </div>
+                                <div class="show-actions">
+                                    <button id="btn-get-missing" class="action-btn primary-btn" title="Search for missing episodes" aria-label="Search for missing episodes">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M12 15V3"></path>
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                            <path d="m7 10 5 5 5-5"></path>
+                                        </svg>
+                                        <span class="action-text">Get Missing</span>
+                                        <span id="missing-badge" class="action-badge">42</span>
+                                    </button>
+                                    <button id="btn-season-packs" class="action-btn ghost-btn" title="Search for complete series or multi-season packs" aria-label="Search for complete series or multi-season packs">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"></path>
+                                            <path d="M12 22V12"></path>
+                                            <polyline points="3.29 7 12 12 20.71 7"></polyline>
+                                            <path d="m7.5 4.27 9 5.15"></path>
+                                        </svg>
+                                        <span class="action-text">Season Packs</span>
+                                    </button>
+                                    <button id="btn-refresh-tmdb" class="action-btn ghost-btn" title="Refresh from TMDB" aria-label="Refresh metadata from TMDB">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                                            <path d="M21 3v5h-5"></path>
+                                            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                                            <path d="M8 16H3v5"></path>
+                                        </svg>
+                                    </button>
+                                    <button id="btn-settings" class="action-btn ghost-btn" title="Settings" aria-label="Show settings">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path>
+                                            <circle cx="12" cy="12" r="3"></circle>
+                                        </svg>
+                                    </button>
+                                    <button id="delete-show-btn" class="action-btn danger-btn" title="Delete Show" aria-label="Delete entire show" data-imdb-id="">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M10 11v6"></path>
+                                            <path d="M14 11v6"></path>
+                                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+                                            <path d="M3 6h18"></path>
+                                            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="progress-section">
+                                <div class="progress-info">
+                                    <span id="seasons-count">0 Seasons</span>
+                                    <span id="progress-text">0 / 42 Episodes</span>
+                                    <span id="progress-percent">(0% complete)</span>
+                                </div>
+                                <div class="progress-bar">
+                                    <div id="progress-fill" class="progress-fill" style="width: 0%"></div>
+                                </div>
+                            </div>
+
+                            <div class="details-row">
+                                <div><span class="label">Version:</span> <span id="quality-value">Balanced</span></div>
+                                <div><span class="label">Path:</span> <span id="path-value">-</span></div>
+                                <div><span class="label">Added:</span> <span id="added-value">-</span></div>
+                            </div>
+
+                            <div class="links-row">
+                                <a id="link-tmdb" href="#" target="_blank" rel="noopener noreferrer" class="link-btn">
+                                    TMDB
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M15 3h6v6"></path>
+                                        <path d="M10 14 21 3"></path>
+                                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                    </svg>
+                                </a>
+                                <a id="link-imdb" href="#" target="_blank" rel="noopener noreferrer" class="link-btn">
+                                    IMDb
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M15 3h6v6"></path>
+                                        <path d="M10 14 21 3"></path>
+                                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                    </svg>
+                                </a>
+                                <a id="link-trakt" href="#" target="_blank" rel="noopener noreferrer" class="link-btn">
+                                    Trakt
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M15 3h6v6"></path>
+                                        <path d="M10 14 21 3"></path>
+                                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                                    </svg>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Seasons & Episodes -->
+                <div id="seasons-container" class="seasons-container">
+
+                    <!-- Season Tabs -->
+                    <div class="season-tabs">
+                        <div id="season-tabs-nav" class="season-tabs-nav"></div>
+                        <div id="season-tabs-content" class="season-tabs-content"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Sidebar Info Boxes -->
+            <div class="show-sidebar">
+                <!-- Overview Box -->
+                <div class="info-box">
+                    <h3 class="info-box-title">Overview</h3>
+                    <p id="show-overview" class="info-box-text">-</p>
+                </div>
+
+                <!-- Info Box -->
+                <div class="info-box">
+                    <h3 class="info-box-title">Info</h3>
+                    <div class="info-box-content">
+                        <div class="detail-row">
+                            <span class="detail-label">Network</span>
+                            <span id="show-network" class="detail-value">-</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Status</span>
+                            <span id="show-status" class="detail-value">-</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Size</span>
+                            <span id="size-value" class="detail-value">-</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Genres</span>
+                            <span id="show-genres" class="detail-value">-</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">IMDb</span>
+                            <a id="imdb-link-detail" href="#" target="_blank" class="detail-link">-</a>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">TMDB ID</span>
+                            <a id="tmdb-link-detail" href="#" target="_blank" class="detail-link">-</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Details Box -->
+                <div class="info-box">
+                    <h3 class="info-box-title">Details</h3>
+                    <div class="info-box-content">
+                        <div class="detail-row">
+                            <span class="detail-label">Sources</span>
+                            <span id="show-sources" class="detail-value">-</span>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Mount</span>
+                            <code id="show-rclone" class="detail-code">-</code>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Library</span>
+                            <code id="show-path" class="detail-code">-</code>
+                        </div>
+                        <div class="detail-row">
+                            <span class="detail-label">Season Folders</span>
+                            <span id="show-season-folders" class="detail-value">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Empty State -->
+        <div id="empty-state" class="empty-state" style="display: none;">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="empty-icon">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0112 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125M13.125 12h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125M20.625 12c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5M12 14.625v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 14.625c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m0 1.5v-1.5m0 0c0-.621.504-1.125 1.125-1.125m0 0h7.5" />
+            </svg>
+            <h3>No Episodes Found</h3>
+            <p>This show doesn't have any episodes in your library yet.</p>
+        </div>
+
+        <!-- Torrent Results Overlay -->
+        <div id="overlay" class="overlay">
+            <div class="overlay-content">
+                <button class="close-btn" aria-label="Close">&times;</button>
+                <div id="overlayContent"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/deletion_common.js') }}"></script>
+<script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
+<script src="{{ url_for('static', filename='js/library_show.js') }}"></script>
+{% endblock %}

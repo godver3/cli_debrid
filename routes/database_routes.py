@@ -9,7 +9,7 @@ import json
 from utilities.reverse_parser import get_version_settings, get_default_version, get_version_order, parse_filename_for_version
 from .models import admin_required
 from utilities.plex_removal_cache import cache_plex_removal
-from utilities.plex_functions import remove_file_from_plex
+from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
 from database.database_reading import get_media_item_by_id
 import os
 from datetime import datetime
@@ -23,13 +23,105 @@ from database import update_media_item_state
 from utilities.local_library_scan import convert_item_to_symlink
 from database.database_writing import update_media_item
 from database.symlink_verification import add_symlinked_file_for_verification
-# import math # Removed unused import
 database_bp = Blueprint('database', __name__)
+
+def translate_plex_path_to_local(plex_path: str) -> str:
+    """
+    Translate a Plex path to the local filesystem path.
+
+    Plex stores paths as it sees them (e.g., /movies/Title/file.mkv),
+    but the local filesystem may have these at a different location
+    (e.g., /mnt/symlinked/movies/Title/file.mkv).
+
+    This function attempts to find the local path by checking if the
+    plex_path exists, and if not, prepending the symlinked_files_path.
+
+    Args:
+        plex_path: The path as stored in location_on_disk (Plex's view)
+
+    Returns:
+        The local filesystem path where the symlink actually exists
+    """
+    if not plex_path:
+        return plex_path
+
+    # First, check if the path already exists (it might already be a local path)
+    if os.path.exists(plex_path) or os.path.islink(plex_path):
+        return plex_path
+
+    # Get the symlinked files path setting
+    symlinked_files_path = get_setting('File Management', 'symlinked_files_path', '')
+    if not symlinked_files_path:
+        logging.debug(f"No symlinked_files_path setting found, returning original path: {plex_path}")
+        return plex_path
+
+    # Try to construct the local path by prepending symlinked_files_path
+    # The plex_path might be something like /movies/Title/file.mkv
+    # and we need /mnt/symlinked/movies/Title/file.mkv
+
+    # Remove leading slash from plex_path if present for joining
+    relative_path = plex_path.lstrip('/')
+    local_path = os.path.join(symlinked_files_path, relative_path)
+
+    if os.path.exists(local_path) or os.path.islink(local_path):
+        logging.debug(f"Translated Plex path '{plex_path}' to local path '{local_path}'")
+        return local_path
+
+    # If that didn't work, try matching by filename in the symlinked directory
+    # This handles cases where folder structure differs between Plex and local
+    filename = os.path.basename(plex_path)
+
+    # Try to find the file recursively in symlinked_files_path (limited depth)
+    try:
+        for root, dirs, files in os.walk(symlinked_files_path):
+            # Limit depth to avoid searching too deep
+            depth = root.replace(symlinked_files_path, '').count(os.sep)
+            if depth > 4:  # Max 4 levels deep
+                dirs[:] = []  # Don't recurse further
+                continue
+            if filename in files:
+                found_path = os.path.join(root, filename)
+                if os.path.islink(found_path):
+                    logging.debug(f"Found symlink by filename search: '{found_path}' for Plex path '{plex_path}'")
+                    return found_path
+    except Exception as e:
+        logging.debug(f"Error searching for file in symlinked_files_path: {e}")
+
+    # Return original path if no translation found
+    logging.debug(f"Could not translate Plex path '{plex_path}', returning as-is")
+    return plex_path
+
+# Configuration Constants
+BATCH_SIZE = 450  # Number of items to process in each batch
+PER_PAGE = 250  # Number of items per page for pagination
+STATS_CACHE_DURATION_SECONDS = 60  # Cache statistics for 60 seconds
 
 # Module-level cache for statistics
 cached_stats_data = None
 stats_cache_timestamp = 0
-STATS_CACHE_DURATION_SECONDS = 60  # Cache statistics for 60 seconds
+
+def queue_plex_removal_for_item(item_db_data, file_management, item_id):
+    """Helper function to queue Plex removal for an item based on file management mode.
+
+    Args:
+        item_db_data: Dictionary containing item data from database
+        file_management: String indicating file management mode ('Plex' or 'Symlinked/Local')
+        item_id: ID of the item being processed
+    """
+    if file_management == 'Plex' and item_db_data.get('filled_by_file'):
+        if item_db_data['type'] == 'movie':
+            cache_plex_removal(item_db_data['title'], item_db_data['filled_by_file'])
+        elif item_db_data['type'] == 'episode':
+            cache_plex_removal(item_db_data['title'], item_db_data['filled_by_file'], item_db_data.get('episode_title'))
+        logging.info(f"Rescrape: Queued Plex removal for item {item_id} (Plex mode).")
+    elif file_management == 'Symlinked/Local' and item_db_data.get('location_on_disk'):
+        # Path for symlinked items should be location_on_disk, which is the symlink path
+        path_to_remove = item_db_data['location_on_disk']
+        if item_db_data['type'] == 'movie':
+            cache_plex_removal(item_db_data['title'], path_to_remove)
+        elif item_db_data['type'] == 'episode':
+            cache_plex_removal(item_db_data['title'], path_to_remove, item_db_data.get('episode_title'))
+        logging.info(f"Rescrape: Queued Plex removal for item {item_id} (Symlinked/Local mode with Plex URL). Path: {path_to_remove}")
 
 def get_item_size_gb(location_on_disk, original_path_for_symlink):
     file_path_to_check = None
@@ -137,8 +229,8 @@ def index():
         'sort_column': 'id',
         'sort_order': 'asc',
         'alphabet': list(string.ascii_uppercase),
-        'current_letter': 'A',
-        'content_type': 'movie',
+        'current_letter': '',
+        'content_type': 'all',
         'filter_logic': 'AND',
         'column_values': {},
         'operators': [
@@ -230,6 +322,8 @@ def index():
         current_letter_req = request.args.get('letter')
         filter_logic = request.args.get('filter_logic', 'AND').upper()
 
+        logging.info(f"Received params - content_type: {repr(content_type_req)}, letter: {repr(current_letter_req)}")
+
         # 3. Determine current selected columns for display
         current_selected_columns_for_display = [col for col in raw_selected_columns if col in all_columns_for_ui]
         if not current_selected_columns_for_display:
@@ -259,13 +353,17 @@ def index():
         data['sort_order'] = sort_order_req   # Store validated sort order for the template
         
         # Continue with setting up SQL query columns
-        columns_for_sql_query = set(['id']) 
+        columns_for_sql_query = set(['id'])
         for col in current_selected_columns_for_display: # Use the finalized display columns
-            if col != 'size' and col in db_actual_columns:
+            if col in db_actual_columns:  # Include size if it exists in DB
                 columns_for_sql_query.add(col)
-        
+
         needs_size_data = (sort_column_req == 'size' or 'size' in current_selected_columns_for_display)
         if needs_size_data:
+            # Always include size column if it exists in DB
+            if 'size' in db_actual_columns:
+                columns_for_sql_query.add('size')
+            # Also include location fields for fallback calculation if size is NULL
             if 'location_on_disk' in db_actual_columns:
                 columns_for_sql_query.add('location_on_disk')
             if 'original_path_for_symlink' in db_actual_columns:
@@ -289,8 +387,9 @@ def index():
                 raw_value = filter_item.get('value')
                 operator = filter_item.get('operator', 'contains')
 
-                if column == 'size': # Size column cannot be filtered via SQL
-                    logging.warning(f"Ignoring filter on 'size' column: '{column}' as it's dynamically calculated.")
+                # Size column CAN be filtered if it exists in the database as a real column
+                if column == 'size' and 'size' not in db_actual_columns:
+                    logging.warning(f"Ignoring filter on 'size' column: '{column}' as it doesn't exist in database.")
                     continue
 
                 if raw_value == '' and operator in ['contains', 'not_contains', 'starts_with', 'ends_with', 'greater_than', 'less_than']:
@@ -395,8 +494,10 @@ def index():
         
         final_where_clause = ""
         final_params = []
-        effective_content_type = content_type_req if content_type_req is not None else 'movie'
-        effective_current_letter = current_letter_req if current_letter_req is not None else 'A'
+        effective_content_type = content_type_req if content_type_req is not None else 'all'
+        effective_current_letter = current_letter_req if current_letter_req is not None else ''
+
+        logging.info(f"Effective values - content_type: {repr(effective_content_type)}, letter: {repr(effective_current_letter)}")
 
         # Check if user is specifically filtering for ghostlisted items
         show_ghostlisted = any(
@@ -404,31 +505,45 @@ def index():
             for f in filters
         )
 
-        if filter_where_clauses:
-            filter_combination_operator = f" {filter_logic} "
-            final_where_clause = "WHERE (" + filter_combination_operator.join(filter_where_clauses) + ")"
-            final_params = filter_params
-            content_type_for_template = 'all' # Filters take precedence
-            current_letter_for_template = ''    # Filters take precedence
-        else:
-            default_clauses = []
-            default_params = []
-            if effective_content_type != 'all':
-                default_clauses.append("\"type\" = ?")
-                default_params.append(effective_content_type)
-            if effective_current_letter:
-                if effective_current_letter == '#':
-                    numeric_likes = " OR ".join([f"title LIKE '{i}%'" for i in range(10)])
-                    symbol_likes = " OR ".join([f"title LIKE '{s}%'" for s in ['[', '(', '{']]) # Example symbols
-                    default_clauses.append(f"({numeric_likes} OR {symbol_likes})")
-                elif effective_current_letter.isalpha() and len(effective_current_letter) == 1:
-                    default_clauses.append("title LIKE ?")
-                    default_params.append(f"{effective_current_letter.upper()}%")
-            if default_clauses:
+        # Build default clauses for content_type and letter (always apply these)
+        default_clauses = []
+        default_params = []
+        if effective_content_type != 'all':
+            default_clauses.append("\"type\" = ?")
+            default_params.append(effective_content_type)
+        if effective_current_letter:
+            if effective_current_letter == '#':
+                numeric_likes = " OR ".join([f"title LIKE '{i}%'" for i in range(10)])
+                symbol_likes = " OR ".join([f"title LIKE '{s}%'" for s in ['[', '(', '{']]) # Example symbols
+                default_clauses.append(f"({numeric_likes} OR {symbol_likes})")
+            elif effective_current_letter.isalpha() and len(effective_current_letter) == 1:
+                default_clauses.append("title LIKE ?")
+                default_params.append(f"{effective_current_letter.upper()}%")
+
+        # Combine default clauses (content_type + letter) with user filters
+        all_clauses = default_clauses + filter_where_clauses
+        all_params = default_params + filter_params
+
+        if all_clauses:
+            if filter_where_clauses:
+                # If there are user filters, combine them with default clauses
+                filter_combination_operator = f" {filter_logic} "
+                combined_filter_clause = filter_combination_operator.join(filter_where_clauses)
+                # AND the default clauses with the combined filter clause
+                final_where_clause = "WHERE " + " AND ".join(default_clauses + [f"({combined_filter_clause})"])
+            else:
+                # Only default clauses (no user filters)
                 final_where_clause = "WHERE " + " AND ".join(default_clauses)
-                final_params = default_params
-            content_type_for_template = effective_content_type
-            current_letter_for_template = effective_current_letter
+            final_params = all_params
+        else:
+            final_where_clause = ""
+            final_params = []
+
+        # Always use the effective values for the template
+        content_type_for_template = effective_content_type
+        current_letter_for_template = effective_current_letter
+
+        logging.info(f"Template values - content_type: {repr(content_type_for_template)}, letter: {repr(current_letter_for_template)}")
 
         # Add ghostlisted filter unless user is specifically looking for ghostlisted items
         if not show_ghostlisted:
@@ -455,72 +570,57 @@ def index():
         items_dict_list = [dict(zip(final_columns_for_sql_query_list, item_row)) for item_row in items_from_db]
 
         if needs_size_data:
+            # PERFORMANCE FIX: Only use database size values, skip slow disk I/O
+            # Disk-based size calculation with os.path.exists() and os.path.getsize()
+            # is extremely slow for symlink mode with remote/mounted filesystems.
+            # This was causing multi-second delays when displaying size column.
             for item_dict in items_dict_list:
-                loc = item_dict.get('location_on_disk')
-                orig_path = item_dict.get('original_path_for_symlink')
-                item_dict['size_gb'] = get_item_size_gb(loc, orig_path)
+                db_size = item_dict.get('size')
+                if db_size is not None:
+                    item_dict['size_gb'] = db_size
+                else:
+                    # Don't calculate from disk - it's too slow for remote filesystems
+                    # Size will be populated when item is collected/processed
+                    item_dict['size_gb'] = 0.0
         
         if sort_column_req == 'size':
             items_dict_list.sort(key=lambda x: x.get('size_gb', 0.0), reverse=(sort_order_req == 'desc'))
         timings['item_data_processing_done'] = time.perf_counter()
 
-        logging.info("Starting to fetch distinct column values for filters.")
-        time_before_all_distinct_values = time.perf_counter()
-        column_values = {}
-        
-        for column_for_distinct_fetch in db_actual_columns: # Only fetch for actual DB columns
-            loop_iteration_start_time = time.perf_counter()
-            if column_for_distinct_fetch == 'content_source':
-                try:
-                    cursor.execute(f"SELECT DISTINCT \"{column_for_distinct_fetch}\" FROM media_items WHERE \"{column_for_distinct_fetch}\" IS NOT NULL")
-                    distinct_source_ids = [row[0] for row in cursor.fetchall()]
-                    column_values[column_for_distinct_fetch] = distinct_source_ids
-                    logging.info(f"Fetched {len(distinct_source_ids)} distinct values for 'content_source' in {time.perf_counter() - loop_iteration_start_time:.4f}s.")
-                except Exception as e:
-                    logging.error(f"Error fetching distinct content_source IDs for '{column_for_distinct_fetch}': {e}")
-                    column_values[column_for_distinct_fetch] = [] 
-            elif column_for_distinct_fetch == 'state' or column_for_distinct_fetch == 'type':
-                try:
-                    cursor.execute(f"SELECT DISTINCT \"{column_for_distinct_fetch}\" FROM media_items ORDER BY \"{column_for_distinct_fetch}\"")
-                    values = [row[0] if row[0] is not None else "None" for row in cursor.fetchall()]
-                    # Add special state options
-                    if column_for_distinct_fetch == 'state':
-                        values.append('ghostlisted')
-                        values.append('all_blacklisted')
-                    column_values[column_for_distinct_fetch] = values
-                    logging.info(f"Fetched {len(values)} distinct values for '{column_for_distinct_fetch}' in {time.perf_counter() - loop_iteration_start_time:.4f}s.")
-                except Exception as e:
-                    logging.error(f"Error fetching distinct values for '{column_for_distinct_fetch}': {e}")
-                    column_values[column_for_distinct_fetch] = []
-            elif column_for_distinct_fetch == 'version':
-                version_fetch_start_time = time.perf_counter()
-                try:
-                    cursor.execute(f"SELECT DISTINCT \"{column_for_distinct_fetch}\" FROM media_items")
-                    db_versions_raw = [row[0] for row in cursor.fetchall()]
-                    version_list_for_dropdown = []
-                    has_actual_none_or_empty = False
-                    for v_name_raw in db_versions_raw:
-                        if v_name_raw is None or v_name_raw == "":
-                            has_actual_none_or_empty = True; continue
-                        v_name = str(v_name_raw) 
-                        version_list_for_dropdown.append(v_name)
-                    if has_actual_none_or_empty: version_list_for_dropdown.append("None")
-                    column_values[column_for_distinct_fetch] = sorted(list(set(version_list_for_dropdown)))
-                    logging.info(f"Fetched and generated {len(column_values[column_for_distinct_fetch])} distinct values for 'version' from DB in {time.perf_counter() - version_fetch_start_time:.4f}s.")
-                except Exception as e:
-                    logging.error(f"Error fetching distinct versions from DB: {e}", exc_info=True)
-                    column_values[column_for_distinct_fetch] = ["None"]
-        
-        logging.info(f"Finished fetching all distinct column values in {time.perf_counter() - time_before_all_distinct_values:.4f}s.")
-        timings['distinct_values_fetched'] = time.perf_counter()
-        
+        # OPTIMIZATION: Column values are now lazy-loaded on-demand via /database/get_column_values/<column>
+        # This significantly improves initial page load performance
+        column_values = {}  # Empty dict - values fetched on-demand by frontend
+        logging.info("Column values will be lazy-loaded on-demand (performance optimization)")
+        timings['distinct_values_skipped'] = time.perf_counter()
+
+        # Pagination: items per page for infinite scroll
+        total_count = len(items_dict_list)
+        try:
+            page = int(request.args.get('page', 1))
+        except (ValueError, TypeError):
+            page = 1
+
+        per_page = PER_PAGE
+        total_pages = max(1, (total_count + per_page - 1) // per_page)
+        page = max(1, min(page, total_pages))  # Clamp to valid range
+
+        start_idx = (page - 1) * per_page
+        end_idx = min(start_idx + per_page, total_count)
+        paginated_items = items_dict_list[start_idx:end_idx]
+
+        logging.info(f"Pagination: page {page}/{total_pages}, items {start_idx+1}-{end_idx} of {total_count}")
+
         from routes.queues_routes import consolidate_items
-        unique_items, _ = consolidate_items(items_dict_list)
+        unique_items, _ = consolidate_items(paginated_items)
         timings['items_consolidated'] = time.perf_counter()
 
         data.update({
-            'items': items_dict_list,
-            'result_count': len(items_dict_list),
+            'items': paginated_items,
+            'result_count': len(paginated_items),
+            'total_count': total_count,
+            'current_page': page,
+            'total_pages': total_pages,
+            'per_page': per_page,
             'filters': filters,
             'current_letter': current_letter_for_template,
             'content_type': content_type_for_template,
@@ -531,17 +631,29 @@ def index():
 
         timings['data_updated_for_template'] = time.perf_counter()
 
-        # Calculate and log durations
+        # Calculate and log durations with performance warnings
         timing_log = "Database index route timing breakdown:\n"
         last_timing = request_start_time
+        slow_operations = []
         for key, timestamp in timings.items():
             if key != 'overall_start':
                 duration = timestamp - last_timing
                 timing_log += f"  - {key}: {duration:.4f} seconds\n"
+                # Flag operations taking longer than 1 second
+                if duration > 1.0:
+                    slow_operations.append(f"{key} ({duration:.2f}s)")
                 last_timing = timestamp
         total_duration = time.perf_counter() - request_start_time
         timing_log += f"Total processing time for request: {total_duration:.4f} seconds."
-        logging.info(timing_log)
+
+        if slow_operations:
+            logging.warning(f"PERFORMANCE WARNING - Slow operations detected: {', '.join(slow_operations)}")
+
+        if total_duration > 2.0:
+            logging.warning(f"PERFORMANCE WARNING - Slow request: {total_duration:.2f}s total")
+            logging.info(timing_log)
+        else:
+            logging.info(timing_log)
         data['timings'] = {k: v - request_start_time for k, v in timings.items() if k != 'overall_start'} # Relative timings for template
         data['total_request_time'] = total_duration
 
@@ -552,9 +664,23 @@ def index():
             logging.info(f"Database index route finished (HTML). Total time: {time.perf_counter() - request_start_time:.4f} seconds.")
             return render_template('database.html', **data)
 
+    except sqlite3.OperationalError as e:
+        logging.error(f"SQLite operational error in database route: {str(e)}")
+        if "database is locked" in str(e).lower():
+            error_message = "The database is currently busy processing another request. Please try again in a few moments."
+            status_code = 503
+        else:
+            error_message = f"Database operation failed: {str(e)}. Please check your filters and try again."
+            status_code = 500
+        logging.info(f"Database index route finished with SQLite operational error. Total time: {time.perf_counter() - request_start_time:.4f} seconds.")
+        if request.args.get('ajax') == '1':
+            return jsonify({'error': error_message, 'database_locked': 'locked' in str(e).lower()}), status_code
+        else:
+            flash(error_message, "error")
+            return render_template('database.html', **data)
     except sqlite3.Error as e:
         logging.error(f"SQLite error in database route: {str(e)}")
-        error_message = f"Database error: {str(e)}"
+        error_message = f"A database error occurred. This might be due to invalid filter values or a database issue. Please check your input and try again."
         logging.info(f"Database index route finished with SQLite error. Total time: {time.perf_counter() - request_start_time:.4f} seconds.")
         if request.args.get('ajax') == '1':
             return jsonify({'error': error_message}), 500
@@ -562,8 +688,8 @@ def index():
             flash(error_message, "error")
             return render_template('database.html', **data)
     except Exception as e:
-        logging.error(f"Unexpected error in database route: {str(e)}", exc_info=True) 
-        error_message = "An unexpected error occurred. Please try again later."
+        logging.error(f"Unexpected error in database route: {str(e)}", exc_info=True)
+        error_message = "An unexpected error occurred while loading the database page. Please refresh the page and try again. If the problem persists, check the logs."
         logging.info(f"Database index route finished with unexpected error. Total time: {time.perf_counter() - request_start_time:.4f} seconds.")
         if request.args.get('ajax') == '1':
             return jsonify({'error': error_message}), 500
@@ -594,7 +720,7 @@ def bulk_queue_action():
         logging.warning("Bulk action returning error: Action or selected items missing.")
         return jsonify({'success': False, 'error': 'Action and selected items are required'})
 
-    BATCH_SIZE = 450
+    batch_size = BATCH_SIZE
     total_processed = 0
     error_count = 0
     errors = []
@@ -630,9 +756,9 @@ def bulk_queue_action():
             logging.info(log_message)
 
 
-        for i in range(0, len(selected_items), BATCH_SIZE):
-            batch = selected_items[i:i + BATCH_SIZE]
-            logging.info(f"Processing batch {i//BATCH_SIZE + 1}. Action: '{action}'")
+        for i in range(0, len(selected_items), batch_size):
+            batch = selected_items[i:i + batch_size]
+            logging.info(f"Processing batch {i//batch_size + 1}. Action: '{action}'")
 
             if action == 'delete':
                 logging.info("Entering 'delete' block.")
@@ -701,13 +827,13 @@ def bulk_queue_action():
                     else:
                         error_count += 1
                         conn.rollback()
-                        errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
-                        logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                        errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
                 except Exception as e:
                     error_count += 1
                     conn.rollback()
-                    errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
-                    logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                    errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                    logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
                 finally:
                     conn.close()
             elif action == 'change_version' and target_queue:  # target_queue contains the version in this case
@@ -730,13 +856,13 @@ def bulk_queue_action():
                     else:
                         error_count += 1
                         conn.rollback()
-                        errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
-                        logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                        errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
                 except Exception as e:
                     error_count += 1
                     conn.rollback()
-                    errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
-                    logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                    errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                    logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
                 finally:
                     conn.close()
             elif action == 'early_release':
@@ -760,13 +886,13 @@ def bulk_queue_action():
                     else:
                         error_count += 1
                         conn.rollback()
-                        errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
-                        logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                        errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
                 except Exception as e:
                     error_count += 1
                     conn.rollback()
-                    errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
-                    logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                    errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                    logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
                 finally:
                     conn.close()
             elif action == 'rescrape':
@@ -798,7 +924,7 @@ def bulk_queue_action():
                 
                 except Exception as e:
                     logging.error(f"Error fetching batch details for rescrape: {str(e)}", exc_info=True)
-                    errors.append(f"Error fetching details for batch {i//BATCH_SIZE + 1}: {str(e)}")
+                    errors.append(f"Error fetching details for batch {i//batch_size + 1}: {str(e)}")
                     if conn_rescape_batch: conn_rescape_batch.close()
                     continue # Skip to the next BATCH_SIZE chunk of selected_items
                 
@@ -811,40 +937,11 @@ def bulk_queue_action():
 
                         # --- Start: File Deletion & Plex Removal Logic (using item_db_data) ---
                         if item_db_data['state'] in ['Collected', 'Upgrading']:
-                            if file_management == 'Plex' and item_db_data.get('filled_by_file'):
-                                if item_db_data['type'] == 'movie':
-                                    cache_plex_removal(item_db_data['title'], item_db_data['filled_by_file'])
-                                elif item_db_data['type'] == 'episode':
-                                    cache_plex_removal(item_db_data['title'], item_db_data['filled_by_file'], item_db_data.get('episode_title'))
-                                logging.info(f"Rescrape: Queued Plex removal for item {item_id} (Plex mode).")
-                            elif file_management == 'Symlinked/Local' and item_db_data.get('location_on_disk'): # Check location_on_disk for path
-                                # Path for symlinked items should be location_on_disk, which is the symlink path
-                                path_to_remove = item_db_data['location_on_disk']
-                                if item_db_data['type'] == 'movie':
-                                    cache_plex_removal(item_db_data['title'], path_to_remove)
-                                elif item_db_data['type'] == 'episode':
-                                    cache_plex_removal(item_db_data['title'], path_to_remove, item_db_data.get('episode_title'))
-                                logging.info(f"Rescrape: Queued Plex removal for item {item_id} (Symlinked/Local mode with Plex URL). Path: {path_to_remove}")
-                        
+                            queue_plex_removal_for_item(item_db_data, file_management, item_id)
+
                         if item_db_data['state'] in ['Collected', 'Upgrading'] and \
                            (item_db_data.get('location_on_disk') or item_db_data.get('original_path_for_symlink')):
-                            sleep(0.5) 
-
-                        if item_db_data['state'] in ['Collected', 'Upgrading']:
-                            if file_management == 'Plex' and item_db_data.get('filled_by_file'):
-                                if item_db_data['type'] == 'movie':
-                                    cache_plex_removal(item_db_data['title'], item_db_data['filled_by_file'])
-                                elif item_db_data['type'] == 'episode':
-                                    cache_plex_removal(item_db_data['title'], item_db_data['filled_by_file'], item_db_data.get('episode_title'))
-                                logging.info(f"Rescrape: Queued Plex removal for item {item_id} (Plex mode).")
-                            elif file_management == 'Symlinked/Local' and item_db_data.get('location_on_disk'): # Check location_on_disk for path
-                                # Path for symlinked items should be location_on_disk, which is the symlink path
-                                path_to_remove = item_db_data['location_on_disk']
-                                if item_db_data['type'] == 'movie':
-                                    cache_plex_removal(item_db_data['title'], path_to_remove)
-                                elif item_db_data['type'] == 'episode':
-                                    cache_plex_removal(item_db_data['title'], path_to_remove, item_db_data.get('episode_title'))
-                                logging.info(f"Rescrape: Queued Plex removal for item {item_id} (Symlinked/Local mode with Plex URL). Path: {path_to_remove}")
+                            sleep(0.5)
                         # --- End: File Deletion & Plex Removal Logic ---
 
                         current_version_val = item_db_data.get('version')
@@ -925,17 +1022,17 @@ def bulk_queue_action():
                         if rows_affected_by_update == len(item_ids_for_update_clause):
                             conn_rescape_batch.commit()
                             total_processed += rows_affected_by_update
-                            logging.info(f"Rescrape: Successfully committed DB update for {rows_affected_by_update} items for batch {i//BATCH_SIZE + 1}.")
+                            logging.info(f"Rescrape: Successfully committed DB update for {rows_affected_by_update} items for batch {i//batch_size + 1}.")
                         else:
                             conn_rescape_batch.rollback()
-                            mismatch_error_msg = f"Rescrape DB Update: Expected to affect {len(item_ids_for_update_clause)} items, but DB reported {rows_affected_by_update}. Rolled back changes for this group of items in batch {i//BATCH_SIZE + 1}."
+                            mismatch_error_msg = f"Rescrape DB Update: Expected to affect {len(item_ids_for_update_clause)} items, but DB reported {rows_affected_by_update}. Rolled back changes for this group of items in batch {i//batch_size + 1}."
                             logging.error(mismatch_error_msg)
                             errors.append(mismatch_error_msg)
                             error_count += len(item_ids_for_update_clause) 
                     
                     except sqlite3.OperationalError as e_db_update:
                         if "database is locked" in str(e_db_update):
-                            logging.error(f"Database is locked during bulk rescrape update for batch {i//BATCH_SIZE + 1}.")
+                            logging.error(f"Database is locked during bulk rescrape update for batch {i//batch_size + 1}.")
                             if conn_rescape_batch: conn_rescape_batch.rollback()
                             # Specific error response for database locked
                             return jsonify({'success': False, 'error': 'database is locked', 'database_locked': True}), 503
@@ -946,7 +1043,7 @@ def bulk_queue_action():
                                 except Exception as e_rollback:
                                     logging.error(f"Rescrape: Error during rollback attempt: {e_rollback}", exc_info=True)
 
-                            db_update_err_msg = f"Error during batch database update for rescrape (batch {i//BATCH_SIZE + 1}): {str(e_db_update)}"
+                            db_update_err_msg = f"Error during batch database update for rescrape (batch {i//batch_size + 1}): {str(e_db_update)}"
                             errors.append(db_update_err_msg)
                             logging.error(f"Rescrape: {db_update_err_msg}", exc_info=True)
                             error_count += len(prepared_items_for_db_update)
@@ -957,13 +1054,13 @@ def bulk_queue_action():
                             except Exception as e_rollback:
                                 logging.error(f"Rescrape: Error during rollback attempt: {e_rollback}", exc_info=True)
 
-                        db_update_err_msg = f"Error during batch database update for rescrape (batch {i//BATCH_SIZE + 1}): {str(e_db_update)}"
+                        db_update_err_msg = f"Error during batch database update for rescrape (batch {i//batch_size + 1}): {str(e_db_update)}"
                         errors.append(db_update_err_msg)
                         logging.error(f"Rescrape: {db_update_err_msg}", exc_info=True)
                         error_count += len(prepared_items_for_db_update) 
                 
                 elif items_in_batch_details_raw: 
-                    logging.info(f"Rescrape: No items from batch {i//BATCH_SIZE + 1} were successfully prepared for database update (e.g., all had file/Plex processing errors).")
+                    logging.info(f"Rescrape: No items from batch {i//batch_size + 1} were successfully prepared for database update (e.g., all had file/Plex processing errors).")
 
                 if conn_rescape_batch:
                     conn_rescape_batch.close()
@@ -988,13 +1085,13 @@ def bulk_queue_action():
                     else:
                         error_count += 1
                         conn.rollback()
-                        errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
-                        logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                        errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
                 except Exception as e:
                     error_count += 1
                     conn.rollback()
-                    errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
-                    logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                    errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                    logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
                 finally:
                     conn.close()
             elif action == 'ghostlist':
@@ -1017,13 +1114,13 @@ def bulk_queue_action():
                     else:
                         error_count += 1
                         conn.rollback()
-                        errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
-                        logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                        errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                        logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
                 except Exception as e:
                     error_count += 1
                     conn.rollback()
-                    errors.append(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
-                    logging.error(f"Error in batch {i//BATCH_SIZE + 1}: {str(e)}")
+                    errors.append(f"Error in batch {i//batch_size + 1}: {str(e)}")
+                    logging.error(f"Error in batch {i//batch_size + 1}: {str(e)}")
                 finally:
                     conn.close()
             elif action == 'resync':
@@ -1214,26 +1311,49 @@ def delete_item():
                 if path_to_remove_from_plex:
                     try:
                         logging.info(f"Delete item: Attempting immediate Plex removal for {item['title']} ({path_to_remove_from_plex}).")
-                        remove_file_from_plex(item['title'], path_to_remove_from_plex, item.get('episode_title'))
-                        logging.info(f"Delete item: Successfully processed immediate Plex removal for {item['title']} ({path_to_remove_from_plex}).")
+                        plex_removal_result = remove_file_from_plex(item['title'], path_to_remove_from_plex, item.get('episode_title'))
+                        if plex_removal_result:
+                            logging.info(f"Delete item: Successfully removed {item['title']} from Plex ({path_to_remove_from_plex}).")
+                        else:
+                            # Direct removal failed - try scan & empty trash as fallback
+                            logging.warning(f"Delete item: Direct Plex removal failed for {item['title']}. Trying scan & empty trash...")
+                            try:
+                                scan_and_empty_plex_trash()
+                                logging.info(f"Delete item: Triggered library scan and trash empty for {item['title']}.")
+                            except Exception as scan_err:
+                                logging.warning(f"Delete item: Scan & empty trash also failed for {item['title']}: {scan_err}. Item may need manual removal from Plex.")
                     except Exception as e:
                         logging.error(f"Delete item: Error during immediate Plex removal for {item['title']} ({path_to_remove_from_plex}): {str(e)}.")
                 else:
                     logging.warning(f"Delete item: No 'filled_by_file' path for item {item_id} ({item['title']}). Skipping Plex removal.")
 
             elif file_management == 'Symlinked/Local':
-                symlink_path_to_remove_disk = item.get('location_on_disk')
+                symlink_path_from_db = item.get('location_on_disk')
                 original_file_path_to_remove_disk = item.get('original_path_for_symlink')
-                
-                # Determine the path Plex uses, prioritizing the symlink path
-                path_for_plex_api_call = None
+
+                # Translate the Plex path to local path for symlink deletion
+                # location_on_disk may contain Plex's view of the path (e.g., /movies/...)
+                # but the actual symlink is at the local path (e.g., /mnt/symlinked/movies/...)
+                symlink_path_to_remove_disk = translate_plex_path_to_local(symlink_path_from_db) if symlink_path_from_db else None
+
+                if symlink_path_to_remove_disk and symlink_path_to_remove_disk != symlink_path_from_db:
+                    logging.info(f"Delete item: Translated path '{symlink_path_from_db}' to local path '{symlink_path_to_remove_disk}'")
+
+                # Determine the path Plex uses (keep the original Plex path for API call)
+                path_for_plex_api_call = symlink_path_from_db
+
                 if symlink_path_to_remove_disk:
-                    path_for_plex_api_call = symlink_path_to_remove_disk
                     # Always remove symlinks (they're just pointers)
                     try:
                         if os.path.exists(symlink_path_to_remove_disk) and os.path.islink(symlink_path_to_remove_disk):
                             os.unlink(symlink_path_to_remove_disk)
                             logging.info(f"Delete item: Removed symlink {symlink_path_to_remove_disk} (Symlinked/Local mode).")
+                        elif os.path.islink(symlink_path_to_remove_disk):
+                            # Broken symlink - still remove it
+                            os.unlink(symlink_path_to_remove_disk)
+                            logging.info(f"Delete item: Removed broken symlink {symlink_path_to_remove_disk} (Symlinked/Local mode).")
+                        else:
+                            logging.warning(f"Delete item: Path {symlink_path_to_remove_disk} is not a symlink or doesn't exist. Skipping symlink removal.")
                     except Exception as e:
                         logging.error(f"Error removing symlink at {symlink_path_to_remove_disk}: {str(e)}")
                 
@@ -1258,8 +1378,17 @@ def delete_item():
                 if path_for_plex_api_call:
                     try:
                         logging.info(f"Delete item: Attempting immediate Plex removal for {item['title']} using path {path_for_plex_api_call} (Symlinked/Local mode).")
-                        remove_file_from_plex(item['title'], path_for_plex_api_call, item.get('episode_title'))
-                        logging.info(f"Delete item: Successfully processed immediate Plex removal for {item['title']} ({path_for_plex_api_call}).")
+                        plex_removal_result = remove_file_from_plex(item['title'], path_for_plex_api_call, item.get('episode_title'))
+                        if plex_removal_result:
+                            logging.info(f"Delete item: Successfully removed {item['title']} from Plex ({path_for_plex_api_call}).")
+                        else:
+                            # Direct removal failed - try scan & empty trash as fallback
+                            logging.warning(f"Delete item: Direct Plex removal failed for {item['title']}. Trying scan & empty trash...")
+                            try:
+                                scan_and_empty_plex_trash()
+                                logging.info(f"Delete item: Triggered library scan and trash empty for {item['title']}.")
+                            except Exception as scan_err:
+                                logging.warning(f"Delete item: Scan & empty trash also failed for {item['title']}: {scan_err}. Item may need manual removal from Plex.")
                     except Exception as e:
                         logging.error(f"Delete item: Error during immediate Plex removal for {item['title']} ({path_for_plex_api_call}): {str(e)}.")
                 else:
@@ -1306,8 +1435,6 @@ def perform_database_migration():
 @database_bp.route('/reverse_parser', methods=['GET', 'POST'])
 @admin_required
 def reverse_parser():
-    # config = load_config() # Not strictly needed here anymore for version_settings
-    # version_settings = config.get('Scraping', {}).get('versions', {}) # Unused in this route directly
     logging.debug("Entering reverse_parser function")
     data = {
         'selected_columns': ['title', 'filled_by_file', 'version'],
@@ -1789,6 +1916,83 @@ def visual_data():
     except Exception as e:
         logging.error(f"Unexpected error in visual_data route: {str(e)}", exc_info=True) # Log full traceback
         return jsonify({'success': False, 'error': "An unexpected error occurred."}), 500
+    finally:
+        if conn:
+            conn.close()
+
+@database_bp.route('/get_column_values/<column_name>', methods=['GET'])
+@admin_required
+def get_column_values(column_name):
+    """Lazy-load distinct values for a specific column.
+
+    This endpoint returns distinct values for filter dropdowns on-demand,
+    instead of loading all columns upfront. Improves initial page load performance.
+    """
+    conn = None
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Validate column name to prevent SQL injection
+        cursor.execute("PRAGMA table_info(media_items)")
+        valid_columns = [row[1] for row in cursor.fetchall()]
+
+        if column_name not in valid_columns:
+            return jsonify({'success': False, 'error': f'Invalid column name: "{column_name}". Please select a valid column from the available options.'}), 400
+
+        values = []
+
+        # Special handling for different column types
+        if column_name == 'content_source':
+            cursor.execute(f"SELECT DISTINCT \"{column_name}\" FROM media_items WHERE \"{column_name}\" IS NOT NULL")
+            distinct_source_ids = [row[0] for row in cursor.fetchall()]
+            values = distinct_source_ids
+
+        elif column_name in ('state', 'type'):
+            cursor.execute(f"SELECT DISTINCT \"{column_name}\" FROM media_items ORDER BY \"{column_name}\"")
+            values = [row[0] if row[0] is not None else "None" for row in cursor.fetchall()]
+            # Add special state options
+            if column_name == 'state':
+                values.append('ghostlisted')
+                values.append('all_blacklisted')
+
+        elif column_name == 'version':
+            cursor.execute(f"SELECT DISTINCT \"{column_name}\" FROM media_items")
+            db_versions_raw = [row[0] for row in cursor.fetchall()]
+            version_list = []
+            has_none = False
+            for v in db_versions_raw:
+                if v is None or v == "":
+                    has_none = True
+                    continue
+                version_list.append(str(v))
+            if has_none:
+                version_list.append("None")
+            values = sorted(list(set(version_list)))
+
+        else:
+            # Generic handling for other columns
+            cursor.execute(f"SELECT DISTINCT \"{column_name}\" FROM media_items WHERE \"{column_name}\" IS NOT NULL ORDER BY \"{column_name}\"")
+            values = [row[0] for row in cursor.fetchall()]
+
+        return jsonify({'success': True, 'column': column_name, 'values': values})
+
+    except sqlite3.OperationalError as e:
+        logging.error(f"SQLite operational error fetching column values for '{column_name}': {str(e)}")
+        if "database is locked" in str(e).lower():
+            error_msg = f"The database is busy. Please try loading values for '{column_name}' again in a moment."
+            status_code = 503
+        else:
+            error_msg = f"Failed to load filter values for column '{column_name}'. Please try again."
+            status_code = 500
+        return jsonify({'success': False, 'error': error_msg, 'database_locked': 'locked' in str(e).lower()}), status_code
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error fetching column values for '{column_name}': {str(e)}")
+        return jsonify({'success': False, 'error': f"Database error while loading '{column_name}' values. Please refresh the page and try again."}), 500
+    except Exception as e:
+        logging.error(f"Unexpected error fetching column values for '{column_name}': {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': f"An unexpected error occurred while loading '{column_name}' values. Please try again."}), 500
     finally:
         if conn:
             conn.close()

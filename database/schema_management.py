@@ -1,6 +1,7 @@
 import logging
 from .core import get_db_connection, initialize_notifications_table
 from .torrent_tracking import create_torrent_tracking_table
+from .content_source_retry import create_retry_queue_table
 import sqlite3
 import os
 
@@ -8,11 +9,12 @@ import os
 def create_database():
     create_tables()
     create_torrent_tracking_table()
+    create_retry_queue_table()
     #TODO: create_upgrading_table()
-    
+
     # Add statistics-specific indexes
     create_statistics_indexes()
-    
+
     # Create materialized views for statistics
     create_statistics_summary_table()
 
@@ -183,6 +185,9 @@ def migrate_schema():
         if 'resolution' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN resolution TEXT')
             logging.info("Successfully added resolution column to media_items table.")
+        if 'size' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN size REAL')
+            logging.info("Successfully added size column to media_items table.")
         if 'imdb_aliases' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN imdb_aliases TEXT')
             logging.info("Successfully added imdb_aliases column to media_items table.")
@@ -246,6 +251,12 @@ def migrate_schema():
         if 'delayed_upgrade_eligible' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN delayed_upgrade_eligible BOOLEAN DEFAULT TRUE')
             logging.info("Successfully added delayed_upgrade_eligible column to media_items table (default TRUE).")
+        if 'verification_failed' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN verification_failed BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added verification_failed column to media_items table.")
+        if 'verification_failure_reason' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN verification_failure_reason TEXT')
+            logging.info("Successfully added verification_failure_reason column to media_items table.")
 
         # Add new indexes for version and content_source if they don't exist
         existing_indexes_cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index';")
@@ -582,9 +593,14 @@ def verify_database():
         logging.error(f"Error ensuring plex_removal_queue table: {e}")
     
     # Add statistics indexes
-    from .migrations import add_statistics_indexes
+    from .migrations import add_statistics_indexes, add_search_performance_indexes, add_statistics_composite_indexes, add_database_page_indexes
     add_statistics_indexes()
-    
+    add_statistics_composite_indexes()
+
+    # PHASE 1.3: Add search performance indexes
+    add_search_performance_indexes()
+    add_database_page_indexes()
+
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -668,6 +684,7 @@ def create_tables():
                 content_source TEXT,
                 content_source_detail TEXT,
                 resolution TEXT,
+                size REAL,
                 imdb_aliases TEXT,
                 title_aliases TEXT,
                 disable_not_wanted_check BOOLEAN DEFAULT FALSE,
@@ -684,7 +701,11 @@ def create_tables():
                 ghostlisted BOOLEAN DEFAULT FALSE,
                 theatrical_release_date DATE,
                 theatrical_release_date_checked BOOLEAN DEFAULT FALSE,
-                delayed_upgrade_eligible BOOLEAN DEFAULT TRUE
+                delayed_upgrade_eligible BOOLEAN DEFAULT TRUE,
+                plex_labels TEXT,
+                content_sources TEXT,
+                verification_failed BOOLEAN DEFAULT FALSE,
+                verification_failure_reason TEXT
             )
         ''')
 

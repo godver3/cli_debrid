@@ -128,12 +128,15 @@
                     if (data.success) {
                         if (typeof window.reloadTabContent === 'function') {
                             window.reloadTabContent('scrapers', () => {
-                                window.Loading.hide();
                                 window.initializeExpandCollapse();
                                 initializeScrapersFunctionality();
-                                window.showPopup({
-                                    type: POPUP_TYPES.SUCCESS,
-                                    message: 'Scraper added and tab content reloaded successfully',
+                                // Also reload scraping tab to update scraper priorities
+                                window.reloadTabContent('scraping', () => {
+                                    window.Loading.hide();
+                                    window.showPopup({
+                                        type: POPUP_TYPES.SUCCESS,
+                                        message: 'Scraper added and settings updated successfully',
+                                    });
                                 });
                             });
                         } else {
@@ -186,12 +189,15 @@
                     if (data.success) {
                         if (typeof window.reloadTabContent === 'function') {
                             window.reloadTabContent('scrapers', () => {
-                                window.Loading.hide();
                                 window.initializeExpandCollapse();
                                 initializeScrapersFunctionality();
-                                window.showPopup({
-                                    type: POPUP_TYPES.SUCCESS,
-                                    message: 'Scraper deleted and tab content reloaded successfully',
+                                // Also reload scraping tab to update scraper priorities
+                                window.reloadTabContent('scraping', () => {
+                                    window.Loading.hide();
+                                    window.showPopup({
+                                        type: POPUP_TYPES.SUCCESS,
+                                        message: 'Scraper deleted and settings updated successfully',
+                                    });
                                 });
                             });
                         } else {

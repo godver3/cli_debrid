@@ -2,9 +2,25 @@ from flask import Blueprint, render_template, jsonify, request
 import json
 import os
 from datetime import datetime, timedelta
+from collections import deque
 from .models import user_required
 
 performance_bp = Blueprint('performance', __name__)
+
+
+def _read_last_n_lines(file_path, max_lines=2000):
+    """Efficiently read the last N lines from a file using a deque.
+
+    This is much faster than reading the entire file for large log files.
+    """
+    if not os.path.exists(file_path):
+        return []
+
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            return list(deque(f, maxlen=max_lines))
+    except Exception:
+        return []
 
 @performance_bp.route('/dashboard')
 @user_required
@@ -15,51 +31,58 @@ def performance_dashboard():
 @performance_bp.route('/api/performance/log')
 @user_required
 def get_performance_log():
-    """Get the performance data from JSON file."""
+    """Get the performance data from JSON file.
+
+    Optimized to read only the last N lines from the file instead of
+    reading the entire file, which is much faster for large log files.
+    """
     log_dir = os.environ.get('USER_LOGS', '/user/logs')
     log_file = os.path.join(log_dir, 'performance_log.json')
-    
+
     # Get optional time range parameters
     hours = request.args.get('hours', type=int, default=24)
     limit = request.args.get('limit', type=int, default=1000)
     entry_type = request.args.get('type', type=str)  # Optional type filter
     metric_type = request.args.get('metric', type=str)  # Optional metric filter
     cutoff_time = datetime.utcnow() - timedelta(hours=hours)
-    
+
     try:
         entries = []
-        if os.path.exists(log_file):
-            with open(log_file, 'r') as f:
-                for line in f:
-                    try:
-                        entry = json.loads(line.strip())
-                        # Skip if doesn't have timestamp
-                        if 'timestamp' not in entry:
-                            continue
-                            
-                        # Apply type filter if specified
-                        if entry_type and entry.get('type') != entry_type:
-                            continue
-                            
-                        # Apply metric filter if specified
-                        if metric_type and ('metrics' not in entry or metric_type not in entry['metrics']):
-                            continue
-                            
-                        entry_time = datetime.fromisoformat(entry['timestamp'].replace('Z', '+00:00'))
-                        if entry_time >= cutoff_time:
-                            entries.append(entry)
-                    except (json.JSONDecodeError, KeyError, ValueError) as e:
-                        continue
-        
+        # Read only the last N lines (estimate: read more lines than limit to account for filtering)
+        # At 1 entry per 15 seconds, 24 hours = ~5760 entries max
+        max_lines_to_read = min(limit * 3, 6000)
+        lines = _read_last_n_lines(log_file, max_lines_to_read)
+
+        for line in lines:
+            try:
+                entry = json.loads(line.strip())
+                # Skip if doesn't have timestamp
+                if 'timestamp' not in entry:
+                    continue
+
+                # Apply type filter if specified
+                if entry_type and entry.get('type') != entry_type:
+                    continue
+
+                # Apply metric filter if specified
+                if metric_type and ('metrics' not in entry or metric_type not in entry['metrics']):
+                    continue
+
+                entry_time = datetime.fromisoformat(entry['timestamp'].replace('Z', '+00:00'))
+                if entry_time >= cutoff_time:
+                    entries.append(entry)
+            except (json.JSONDecodeError, KeyError, ValueError):
+                continue
+
         # Sort entries by timestamp in descending order (newest first)
         entries.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-        
+
         # Take only the most recent entries up to the limit
         entries = entries[:limit]
-        
+
         # Re-sort in ascending order for display
         entries.sort(key=lambda x: x.get('timestamp', ''))
-        
+
         # Get system info for metadata
         metadata = {
             'log_start_time': entries[0]['timestamp'] if entries else None,
@@ -67,53 +90,58 @@ def get_performance_log():
             'total_entries': len(entries),
             'entry_types': list(set(e.get('type') for e in entries if 'type' in e))
         }
-        
+
         return jsonify({
             'metadata': metadata,
             'entries': entries
         })
-                
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @performance_bp.route('/api/performance/cpu')
 @user_required
 def get_cpu_metrics():
-    """Get CPU performance metrics from the log file."""
+    """Get CPU performance metrics from the log file.
+
+    Optimized to read only the last N lines from the file.
+    """
     log_dir = os.environ.get('USER_LOGS', '/user/logs')
     log_file = os.path.join(log_dir, 'performance_log.json')
-    
+
     # Get optional time range parameters
     hours = request.args.get('hours', type=int, default=1)  # Default to last hour
     limit = request.args.get('limit', type=int, default=60)  # Default to 60 entries (1 per minute)
     include_threads = request.args.get('threads', type=bool, default=False)  # Option to include thread data
     cutoff_time = datetime.now() - timedelta(hours=hours)
-    
+
     try:
         entries = []
-        if os.path.exists(log_file):
-            with open(log_file, 'r') as f:
-                for line in f:
-                    try:
-                        entry = json.loads(line.strip())
-                        # Only process CPU metric entries
-                        if entry.get('type') != 'cpu_metrics':
-                            continue
-                            
-                        entry_time = datetime.fromisoformat(entry['timestamp'])
-                        if entry_time >= cutoff_time:
-                            # Optionally exclude thread data to reduce payload size
-                            if not include_threads and 'metrics' in entry:
-                                entry['metrics'].pop('thread_times', None)
-                            entries.append(entry)
-                            if len(entries) >= limit:
-                                break
-                    except (json.JSONDecodeError, KeyError, ValueError) as e:
-                        continue
-        
+        # Read only last N lines - CPU metrics are a subset, so read more to ensure we get enough
+        max_lines_to_read = limit * 10  # CPU metrics are less frequent
+        lines = _read_last_n_lines(log_file, max_lines_to_read)
+
+        for line in lines:
+            try:
+                entry = json.loads(line.strip())
+                # Only process CPU metric entries
+                if entry.get('type') != 'cpu_metrics':
+                    continue
+
+                entry_time = datetime.fromisoformat(entry['timestamp'])
+                if entry_time >= cutoff_time:
+                    # Optionally exclude thread data to reduce payload size
+                    if not include_threads and 'metrics' in entry:
+                        entry['metrics'].pop('thread_times', None)
+                    entries.append(entry)
+                    if len(entries) >= limit:
+                        break
+            except (json.JSONDecodeError, KeyError, ValueError):
+                continue
+
         # Sort entries by timestamp
         entries.sort(key=lambda x: x.get('timestamp', ''))
-        
+
         # Calculate summary statistics
         summary = {}
         if entries:
@@ -125,49 +153,54 @@ def get_cpu_metrics():
                     'min_cpu_percent': min(cpu_percentages),
                     'samples': len(cpu_percentages)
                 }
-        
+
         return jsonify({
             'summary': summary,
             'entries': entries
         })
-                
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @performance_bp.route('/api/performance/memory')
 @user_required
 def get_memory_metrics():
-    """Get memory performance metrics from the log file."""
+    """Get memory performance metrics from the log file.
+
+    Optimized to read only the last N lines from the file.
+    """
     log_dir = os.environ.get('USER_LOGS', '/user/logs')
     log_file = os.path.join(log_dir, 'performance_log.json')
-    
+
     # Get optional time range parameters
     hours = request.args.get('hours', type=int, default=1)  # Default to last hour
     limit = request.args.get('limit', type=int, default=60)  # Default to 60 entries
     cutoff_time = datetime.now() - timedelta(hours=hours)
-    
+
     try:
         entries = []
-        if os.path.exists(log_file):
-            with open(log_file, 'r') as f:
-                for line in f:
-                    try:
-                        entry = json.loads(line.strip())
-                        # Only process memory metric entries
-                        if entry.get('type') not in ['basic_metrics', 'detailed_memory']:
-                            continue
-                            
-                        entry_time = datetime.fromisoformat(entry['timestamp'])
-                        if entry_time >= cutoff_time:
-                            entries.append(entry)
-                            if len(entries) >= limit:
-                                break
-                    except (json.JSONDecodeError, KeyError, ValueError) as e:
-                        continue
-        
+        # Read only last N lines - memory metrics are a subset, so read more to ensure we get enough
+        max_lines_to_read = limit * 5  # Memory metrics are more frequent than CPU
+        lines = _read_last_n_lines(log_file, max_lines_to_read)
+
+        for line in lines:
+            try:
+                entry = json.loads(line.strip())
+                # Only process memory metric entries
+                if entry.get('type') not in ['basic_metrics', 'detailed_memory']:
+                    continue
+
+                entry_time = datetime.fromisoformat(entry['timestamp'])
+                if entry_time >= cutoff_time:
+                    entries.append(entry)
+                    if len(entries) >= limit:
+                        break
+            except (json.JSONDecodeError, KeyError, ValueError):
+                continue
+
         # Sort entries by timestamp
         entries.sort(key=lambda x: x.get('timestamp', ''))
-        
+
         # Calculate summary statistics
         summary = {}
         if entries:
@@ -176,7 +209,7 @@ def get_memory_metrics():
                 rss_values = [m.get('memory_rss', 0) for m in memory_metrics]
                 vms_values = [m.get('memory_vms', 0) for m in memory_metrics]
                 system_memory_used = [m.get('system_memory_used', 0) for m in memory_metrics]
-                
+
                 summary = {
                     'avg_rss_mb': sum(rss_values) / len(rss_values),
                     'max_rss_mb': max(rss_values),
@@ -187,11 +220,11 @@ def get_memory_metrics():
                     'avg_system_memory_used': sum(system_memory_used) / len(system_memory_used),
                     'samples': len(memory_metrics)
                 }
-        
+
         return jsonify({
             'summary': summary,
             'entries': entries
         })
-                
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
