@@ -242,3 +242,183 @@ def get_wanted_from_overseerr(versions: Dict[str, bool]) -> List[Tuple[List[Dict
         save_overseerr_cache(cache)
     logging.info(f"Retrieved items from {len(all_wanted_items)} Overseerr sources.")
     return all_wanted_items
+
+def get_overseerr_request_id(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, media_type: str) -> int | None:
+    """
+    Get Overseerr request ID for a media item by TMDB ID
+
+    Args:
+        overseerr_url: Overseerr base URL
+        overseerr_api_key: API key
+        tmdb_id: TMDB ID of the media
+        media_type: 'movie' or 'episode'/'show'
+
+    Returns:
+        int: Request ID if found, None otherwise
+    """
+    try:
+        details = get_overseerr_details(overseerr_url, overseerr_api_key, tmdb_id, media_type)
+
+        if not details:
+            logging.debug(f"No Overseerr details found for TMDB ID {tmdb_id}")
+            return None
+
+        # Navigate to mediaInfo.requests
+        media_info = details.get('mediaInfo', {})
+        requests = media_info.get('requests', [])
+
+        if not requests:
+            logging.debug(f"No requests found for TMDB ID {tmdb_id}")
+            return None
+
+        # Find approved/available request (Status 2 = APPROVED, Status 3 = AVAILABLE)
+        for request in reversed(requests):
+            status = request.get('status')
+            if status in [2, 3]:
+                request_id = request.get('id')
+                logging.info(f"Found Overseerr request ID {request_id} for TMDB {tmdb_id} (status {status})")
+                return request_id
+
+        # Fallback: return most recent request ID
+        if requests:
+            request_id = requests[-1].get('id')
+            logging.info(f"Found Overseerr request ID {request_id} for TMDB {tmdb_id} (fallback)")
+            return request_id
+
+        return None
+
+    except Exception as e:
+        logging.error(f"Error getting Overseerr request ID for TMDB {tmdb_id}: {e}")
+        return None
+
+def get_tmdb_from_imdb(imdb_id: str) -> tuple[int | None, str | None]:
+    """
+    Convert IMDB ID to TMDB ID using Overseerr's search API
+
+    Args:
+        imdb_id: IMDB ID (e.g., "tt0137523")
+
+    Returns:
+        tuple: (tmdb_id, media_type) or (None, None) if not found
+    """
+    try:
+        overseerr_url = get_setting('Overseerr', 'overseerr_url')
+        api_key = get_setting('Overseerr', 'overseerr_api_key')
+
+        if not overseerr_url or not api_key:
+            return None, None
+
+        # Search by IMDB ID
+        url = f"{overseerr_url}/api/v1/search?query={imdb_id}"
+        headers = get_overseerr_headers(api_key)
+
+        response = api.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+
+        if response.status_code == 200:
+            data = response.json()
+            results = data.get('results', [])
+
+            # Find exact IMDB ID match
+            for result in results:
+                if result.get('externalIds', {}).get('imdbId') == imdb_id:
+                    tmdb_id = result.get('id')
+                    media_type = result.get('mediaType')  # 'movie' or 'tv'
+                    logging.info(f"Converted IMDB {imdb_id} to TMDB {tmdb_id} ({media_type})")
+                    return tmdb_id, media_type
+
+        logging.debug(f"Could not find TMDB ID for IMDB {imdb_id}")
+        return None, None
+
+    except Exception as e:
+        logging.error(f"Error converting IMDB to TMDB: {e}")
+        return None, None
+
+def remove_from_overseerr_by_tmdb_id(tmdb_id: int, media_type: str, imdb_id: str = None, overseerr_url: str = None, api_key: str = None) -> dict:
+    """
+    Remove an Overseerr request by looking up TMDB ID (or converting from IMDB ID)
+
+    Args:
+        tmdb_id: TMDB ID of the media (can be None if imdb_id provided)
+        media_type: 'movie' or 'episode'/'show'
+        imdb_id: Optional IMDB ID to use if tmdb_id is not available
+        overseerr_url: Optional Overseerr URL (will read from settings if not provided)
+        api_key: Optional API key (will read from settings if not provided)
+
+    Returns:
+        dict: {'success': bool, 'message': str, 'request_id': int | None}
+    """
+    try:
+        # Use provided URL/key or fall back to settings
+        if not overseerr_url:
+            overseerr_url = get_setting('Overseerr', 'overseerr_url')
+        if not api_key:
+            api_key = get_setting('Overseerr', 'overseerr_api_key')
+
+        if not overseerr_url or not api_key:
+            return {
+                'success': False,
+                'message': 'Overseerr not configured',
+                'request_id': None
+            }
+
+        # If no TMDB ID but have IMDB ID, try to convert
+        if not tmdb_id and imdb_id:
+            logging.info(f"No TMDB ID available, attempting to convert IMDB {imdb_id}")
+            tmdb_id, converted_media_type = get_tmdb_from_imdb(imdb_id)
+            if tmdb_id:
+                media_type = converted_media_type or media_type
+                logging.info(f"Successfully converted IMDB {imdb_id} to TMDB {tmdb_id}")
+            else:
+                return {
+                    'success': False,
+                    'message': f'Could not find TMDB ID for IMDB {imdb_id}',
+                    'request_id': None
+                }
+
+        if not tmdb_id:
+            return {
+                'success': False,
+                'message': 'No TMDB ID or IMDB ID available',
+                'request_id': None
+            }
+
+        # Step 1: Lookup request ID
+        request_id = get_overseerr_request_id(overseerr_url, api_key, tmdb_id, media_type)
+
+        if not request_id:
+            return {
+                'success': False,
+                'message': f'No request found for TMDB ID {tmdb_id}',
+                'request_id': None,
+                'not_found': True  # Flag to indicate item wasn't in Overseerr
+            }
+
+        # Step 2: Delete the request
+        url = f"{overseerr_url}/api/v1/request/{request_id}"
+        headers = get_overseerr_headers(api_key)
+
+        response = api.delete(url, headers=headers, timeout=REQUEST_TIMEOUT)
+
+        if response.status_code == 204:
+            logging.info(f"Successfully deleted Overseerr request {request_id} for TMDB {tmdb_id}")
+            return {
+                'success': True,
+                'message': f'Removed request {request_id}',
+                'request_id': request_id
+            }
+        else:
+            error_text = response.text if hasattr(response, 'text') else 'Unknown error'
+            logging.error(f"Failed to delete Overseerr request {request_id}: HTTP {response.status_code} - {error_text}")
+            return {
+                'success': False,
+                'message': f'HTTP {response.status_code}: {error_text}',
+                'request_id': request_id
+            }
+
+    except Exception as e:
+        logging.error(f"Error removing from Overseerr: {e}")
+        return {
+            'success': False,
+            'message': str(e),
+            'request_id': None
+        }

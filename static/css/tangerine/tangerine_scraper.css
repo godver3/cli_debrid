@@ -87,10 +87,13 @@ button.close-loading {
 
 #scraper-container {
     display: flex;
+    position: relative;
     flex-direction: column;
     align-items: center;
     width: 100%;
-    margin-bottom: 30px;
+    /* margin-bottom: 30px; */
+    background-color: #000000;
+    z-index: 5;
 }
 
 /* Search Form */
@@ -558,10 +561,11 @@ form#search-form input:-webkit-autofill:active {
     padding-top: 20px;
     padding-bottom: 20px;
     border-radius: 10px;
+    height: 300px;
 }
 
 .season-poster {
-    height: 200px;
+    height: 100%;
     object-fit: cover;
     margin-right: 20px;
     flex-shrink: 0;
@@ -574,7 +578,7 @@ form#search-form input:-webkit-autofill:active {
     background-color: rgba(0, 0, 0, 0.4);
     padding: 1rem;
     border-radius: 10px;
-    max-height: 200px;
+    max-height: 300px;
     position: relative;
 }
 
@@ -1765,5 +1769,90 @@ tr.filtered-out-item {
 
 .sortable-drag {
     opacity: 1;
+}
+
+/* ========================================
+   Optimized Torrent Overlay Styles
+   ======================================== */
+
+/* Torrent Table Structure */
+.torrent-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.torrent-table-header {
+    color: rgb(191 191 190);
+}
+
+.torrent-name-cell {
+    width: 38%;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: rgb(191 191 190);
+    word-wrap: break-word;
+    white-space: normal;
+    padding: 10px;
+}
+
+.torrent-name-wrapper {
+    display: block;
+    line-height: 1.4;
+    min-height: fit-content;
+}
+
+.torrent-size-cell {
+    width: 12%;
+    text-align: right;
+    color: rgb(191 191 190);
+}
+
+.torrent-source-cell {
+    width: 10%;
+    color: rgb(191 191 190);
+}
+
+.torrent-score-cell {
+    width: 10%;
+    text-align: right;
+    color: rgb(191 191 190);
+}
+
+.torrent-cache-cell {
+    width: 10%;
+    text-align: center;
+    color: rgb(191 191 190);
+}
+
+.torrent-action-cell {
+    width: 10%;
+    text-align: center;
+    color: rgb(191 191 190);
+}
+
+/* Mobile Torrent Grid */
+.torrent-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    justify-content: center;
+}
+
+/* Virtualization container */
+.torrent-results-container {
+    position: relative;
+    min-height: 200px;
+}
+
+.torrent-results-spacer {
+    width: 100%;
+}
+
+/* Loading more indicator */
+.loading-more-torrents {
+    text-align: center;
+    padding: 20px;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 14px;
 }
 

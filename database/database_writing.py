@@ -172,10 +172,7 @@ def update_media_item_state(item_id, state, **kwargs):
     conn = get_db_connection()
     try:
         conn.execute('BEGIN TRANSACTION')
-        
-        # Get the item before update for post-processing
-        item_before = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
-        
+
         # Prepare the base query
         query = '''
             UPDATE media_items
@@ -200,19 +197,16 @@ def update_media_item_state(item_id, state, **kwargs):
         # Execute the query
         conn.execute(query, params)
 
-        if state == 'Scraping':
-            item = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
-            if item:
-                #TODO: add_to_upgrading(dict(item))
-                pass
+        # Get updated item for post-processing (while still in transaction)
+        updated_item_row = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
 
+        # Commit BEFORE post-processing to release lock quickly
         conn.commit()
 
-        # Get updated item for post-processing
-        updated_item_row = conn.execute('SELECT * FROM media_items WHERE id = ?', (item_id,)).fetchone()
+        # Post-processing AFTER commit (lock is released)
         if updated_item_row:
             item_dict = dict(updated_item_row)
-            
+
             # Handle post-processing based on state
             if state == 'Collected':
                 handle_state_change(item_dict)
@@ -220,7 +214,7 @@ def update_media_item_state(item_id, state, **kwargs):
                 handle_state_change(item_dict)
 
         logging.debug(f"Updated media item (ID: {item_id}) state to {state}")
-        
+
         return dict(updated_item_row) if updated_item_row else None
 
     except sqlite3.OperationalError as e:
@@ -250,12 +244,41 @@ def update_media_item_state(item_id, state, **kwargs):
     
 @retry_on_db_lock()
 def remove_from_media_items(item_id):
+    """
+    Permanently delete item from media_items table
+
+    Args:
+        item_id: Database ID of the item to delete
+
+    Returns:
+        True if successful, False otherwise
+    """
     conn = get_db_connection()
     try:
-        conn.execute('DELETE FROM media_items WHERE id = ?', (item_id,))
+        conn.execute('BEGIN TRANSACTION')
+
+        # Verify the item exists before deletion
+        cursor = conn.execute('SELECT id FROM media_items WHERE id = ?', (item_id,))
+        item_exists = cursor.fetchone()
+
+        if not item_exists:
+            logging.warning(f"Item (ID: {item_id}) not found in database - cannot delete")
+            conn.rollback()
+            return False
+
+        # Perform the deletion - this deletes the ENTIRE row
+        result = conn.execute('DELETE FROM media_items WHERE id = ?', (item_id,))
+        deleted_count = result.rowcount
+
+        if deleted_count == 0:
+            logging.warning(f"Item (ID: {item_id}) deletion returned 0 rows affected")
+            conn.rollback()
+            return False
+
         conn.commit()
-        logging.info(f"Removed item (ID: {item_id}) from media items")
+        logging.info(f"Successfully deleted item (ID: {item_id}) from media_items - {deleted_count} row(s) removed")
         return True
+
     except sqlite3.OperationalError as e:
         logging.debug(f"OperationalError in remove_from_media_items for item ID {item_id}: {e}. Handing over to retry_on_db_lock.")
         try:
@@ -277,6 +300,117 @@ def remove_from_media_items(item_id):
         except Exception as rb_ex:
             logging.error(f"Rollback failed in remove_from_media_items after non-Operational error: {rb_ex}")
         return False
+
+def delete_items_batch(item_ids, blacklist=False):
+    """
+    Delete or blacklist multiple items in a single transaction
+
+    Args:
+        item_ids: List of database IDs to delete
+        blacklist: If True, update state to Blacklisted instead of deleting
+
+    Returns:
+        dict with keys:
+            - success: bool
+            - deleted_count: int
+            - error: str or None
+            - database_locked: bool (only if lock detected)
+    """
+    from database.core import get_db_connection
+
+    if not item_ids:
+        return {'success': False, 'deleted_count': 0, 'error': 'No items provided'}
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # BEGIN TRANSACTION
+        cursor.execute('BEGIN TRANSACTION')
+
+        placeholders = ','.join('?' * len(item_ids))
+
+        if blacklist:
+            # Batch UPDATE - set state to Blacklisted
+            query = f"""
+                UPDATE media_items
+                SET state = 'Blacklisted'
+                WHERE id IN ({placeholders})
+            """
+            cursor.execute(query, item_ids)
+            operation = 'blacklisted'
+        else:
+            # Batch DELETE - permanently remove from database
+            query = f"""
+                DELETE FROM media_items
+                WHERE id IN ({placeholders})
+            """
+            cursor.execute(query, item_ids)
+            operation = 'deleted'
+
+        affected_rows = cursor.rowcount
+
+        # COMMIT TRANSACTION
+        conn.commit()
+
+        logging.info(f"Batch {operation} {affected_rows} items from media_items (requested: {len(item_ids)})")
+
+        return {
+            'success': True,
+            'deleted_count': affected_rows,
+            'error': None
+        }
+
+    except sqlite3.OperationalError as e:
+        # Rollback and check for database lock
+        try:
+            conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in delete_items_batch after OperationalError: {rb_ex}")
+
+        if "database is locked" in str(e):
+            logging.error(f"Database locked during batch deletion of {len(item_ids)} items")
+            return {
+                'success': False,
+                'deleted_count': 0,
+                'error': 'database is locked',
+                'database_locked': True
+            }
+        else:
+            logging.error(f"OperationalError in delete_items_batch: {e}")
+            return {
+                'success': False,
+                'deleted_count': 0,
+                'error': str(e)
+            }
+
+    except sqlite3.Error as e:
+        # Rollback on SQLite error
+        try:
+            conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in delete_items_batch after sqlite3.Error: {rb_ex}")
+
+        logging.error(f"SQLite error in batch deletion of {len(item_ids)} items: {e}")
+        return {
+            'success': False,
+            'deleted_count': 0,
+            'error': str(e)
+        }
+
+    except Exception as e:
+        # Rollback on any other error
+        try:
+            conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed in delete_items_batch after Exception: {rb_ex}")
+
+        logging.error(f"Unexpected error in batch deletion of {len(item_ids)} items: {e}")
+        return {
+            'success': False,
+            'deleted_count': 0,
+            'error': str(e)
+        }
     finally:
         if conn:
             conn.close()
@@ -623,7 +757,7 @@ def update_version_name(old_version: str, new_version: str) -> int:
     conn = get_db_connection()
     try:
         conn.execute('BEGIN TRANSACTION')
-        
+
         # Construct the LIKE pattern to match versions starting with old_version
         like_pattern = f"{old_version}%" 
         
@@ -727,7 +861,7 @@ def update_media_items_state_batch(item_ids: List[int], state: str, **kwargs):
     conn = get_db_connection()
     try:
         conn.execute('BEGIN TRANSACTION')
-        
+
         # Prepare the base query
         query = '''
             UPDATE media_items
@@ -936,8 +1070,8 @@ def increment_wake_count(item_id: int) -> int:
     new_wake_count = 0
     try:
         # Ensure atomicity
-        conn.execute('BEGIN IMMEDIATE TRANSACTION')
-        
+        conn.execute('BEGIN TRANSACTION')
+
         # Get current count
         cursor = conn.execute('SELECT wake_count FROM media_items WHERE id = ?', (item_id,))
         result = cursor.fetchone()
@@ -978,7 +1112,83 @@ def increment_wake_count(item_id: int) -> int:
             if conn: conn.rollback() # Explicit rollback
         except Exception as rb_ex:
             logging.error(f"Rollback failed in increment_wake_count after Exception: {rb_ex}")
-        return 0 
+        return 0
+    finally:
+        if conn:
+            conn.close()
+
+# =============================================================================
+# Deletion Functions (for DeletionManager)
+# =============================================================================
+
+def update_item_state(item_id: int, new_state: str) -> bool:
+    """
+    Update item state (for blacklisting during deletion)
+
+    Args:
+        item_id: Database ID of the item
+        new_state: New state to set (typically 'Blacklisted')
+
+    Returns:
+        True if successful, False otherwise
+    """
+    conn = get_db_connection()
+    try:
+        conn.execute('''
+            UPDATE media_items
+            SET state = ?,
+                last_updated = ?
+            WHERE id = ?
+        ''', (new_state, datetime.now(), item_id))
+        conn.commit()
+        logging.info(f"Updated item {item_id} state to {new_state}")
+        return True
+    except Exception as e:
+        logging.error(f"Error updating item state for {item_id}: {e}")
+        try:
+            if conn:
+                conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed: {rb_ex}")
+        return False
+    finally:
+        if conn:
+            conn.close()
+
+def cleanup_show_metadata(imdb_id: str) -> bool:
+    """
+    Clean up tv_shows table after show deletion
+    Removes show metadata and version status tracking
+
+    Args:
+        imdb_id: IMDB identifier of the show
+
+    Returns:
+        True if successful, False otherwise
+    """
+    conn = get_db_connection()
+    try:
+        # Remove from tv_shows table
+        conn.execute('DELETE FROM tv_shows WHERE imdb_id = ?', (imdb_id,))
+
+        # Remove from tv_show_version_status table if it exists
+        try:
+            conn.execute('DELETE FROM tv_show_version_status WHERE imdb_id = ?', (imdb_id,))
+        except sqlite3.OperationalError:
+            # Table might not exist, that's okay
+            pass
+
+        conn.commit()
+        logging.info(f"Cleaned up metadata for show {imdb_id}")
+        return True
+    except Exception as e:
+        logging.error(f"Error cleaning up show metadata for {imdb_id}: {e}")
+        try:
+            if conn:
+                conn.rollback()
+        except Exception as rb_ex:
+            logging.error(f"Rollback failed: {rb_ex}")
+        return False
     finally:
         if conn:
             conn.close()

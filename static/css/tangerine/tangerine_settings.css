@@ -313,7 +313,7 @@
     backdrop-filter: blur(10px);
     border: none;
     border-radius: 12px;
-    padding: 0.875rem;
+    padding: 0.275rem;
     cursor: pointer;
     transition: all 0.3s ease;
     box-shadow: 0 4px 12px rgba(255, 107, 53, 0.3);
@@ -325,8 +325,8 @@
 }
 
 .settings-mobile-menu-toggle svg {
-    width: 24px;
-    height: 24px;
+    width: 36px;
+    height: 36px;
     color: #fff;
     display: block;
 }

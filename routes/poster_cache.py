@@ -199,3 +199,40 @@ def cache_media_meta(tmdb_id, media_type, media_meta):
 
 def cache_unavailable_poster(tmdb_id, media_type):
     cache_poster_url(tmdb_id, media_type, UNAVAILABLE_POSTER)
+
+def get_cached_trending_response():
+    """Get cached trending response if available and not expired"""
+    cache = load_cache()
+    cache_key = "all_trending_response"
+    cache_item = cache.get(cache_key)
+    if cache_item:
+        response_data, timestamp = cache_item
+        # Cache trending for 15 minutes (not 7 days)
+        if datetime.now() - timestamp < timedelta(minutes=15):
+            logging.info("Using cached trending response")
+            return response_data
+        else:
+            logging.info("Cached trending response expired")
+    return None
+
+def cache_trending_response(response_data):
+    """Cache the entire trending response for 15 minutes"""
+    cache = load_cache()
+    cache_key = "all_trending_response"
+    cache[cache_key] = (response_data, datetime.now())
+    save_cache(cache)
+    logging.info("Cached trending response for 15 minutes")
+
+def clear_all_cache():
+    """Clear the entire poster and artwork cache"""
+    try:
+        if os.path.exists(CACHE_FILE):
+            os.remove(CACHE_FILE)
+            logging.info("Successfully cleared all poster/artwork cache")
+            return True
+        else:
+            logging.info("Cache file does not exist, nothing to clear")
+            return True
+    except Exception as e:
+        logging.error(f"Error clearing cache: {e}")
+        return False

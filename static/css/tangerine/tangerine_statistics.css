@@ -295,14 +295,16 @@ input:checked + .toggle-slider:before {
     justify-content: center;
 }
 
-.rescrape-btn i {
+.rescrape-btn i,
+.search-episode-btn {
     font-size: 16px;
     transition: all 0.3s ease;
 }
 
 .stats-box.recently-aired li:hover .rescrape-btn,
 .stats-box.airing-soon li:hover .rescrape-btn,
-.stats-box.upcoming-releases li:hover .rescrape-btn {
+.stats-box.upcoming-releases li:hover .rescrape-btn,
+.stats-box.recently-aired li:hover .search-episode-btn {
     opacity: 1;
 }
 
@@ -312,17 +314,37 @@ input:checked + .toggle-slider:before {
     transform: rotate(180deg);
 }
 
-.rescrape-btn:hover {
+.rescrape-btn:hover
+.search-episode-btn:hover {
     background-color: rgba(255, 107, 53, 0.15);
 }
 
-.rescrape-btn:disabled {
+.rescrape-btn:disabled,
+.search-episode-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
 
+.search-episode-btn {
+    background: none;
+    border: none;
+    color: currentColor;
+    cursor: pointer;
+    padding: 0;
+    margin-left: 10px;
+    transition: all 0.3s ease;
+    width: 20px;
+    height: 20px;
+    opacity: 0.4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 13px;
+}
+
+
 /* Card styles */
-.cards-container {
+.stats-cards-container {
     display: grid;
     grid-template-columns: repeat(auto-fit, 190px);
     gap: 15px;
@@ -330,7 +352,7 @@ input:checked + .toggle-slider:before {
     justify-content: center;
 }
 
-.card {
+.stats-card {
     display: flex;
     /* flex-direction: column; */
     align-items: center;
@@ -341,17 +363,17 @@ input:checked + .toggle-slider:before {
     transition: all 0.2s ease;
 }
 
-.card:hover {
+.stats-card:hover {
     background-color: rgba(255, 255, 255, 0.05);
     border-color: rgba(255, 107, 53, 0.2);
 }
 
-.card:last-child {
+.stats-card:last-child {
     border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
 /* Poster styles */
-.poster-container {
+.stats-poster-container {
     width: 200px;
     aspect-ratio: 2/3;
     position: relative;
@@ -366,7 +388,7 @@ input:checked + .toggle-slider:before {
     object-fit: cover;
 }
 
-.poster-hover {
+.stats-poster-hover {
     position: absolute;
     top: 0;
     left: 0;
@@ -382,7 +404,7 @@ input:checked + .toggle-slider:before {
     justify-content: center;
 }
 
-.poster-container:hover .poster-hover {
+.stats-poster-container:hover .stats-poster-hover {
     opacity: 1;
 }
 span.upgrade-arrow {
@@ -391,20 +413,20 @@ span.upgrade-arrow {
 }
 
 
-.poster-hover .title {
+.stats-poster-hover .title {
     color: #ff6b35;
     font-size: 1.1em;
     font-weight: 500;
     margin-bottom: 8px;
 }
 
-.poster-hover .metadata {
+.stats-poster-hover .metadata {
     color: #e0e0e0;
     font-size: 0.9em;
     margin-bottom: 4px;
 }
 
-.poster-hover .filename {
+.stats-poster-hover .filename {
     color: #888;
     font-family: monospace;
     font-size: 0.8em;
@@ -488,13 +510,13 @@ body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[
 }
 
 /* Compact view modifications */
-.compact-view .cards-container {
+.compact-view .stats-cards-container {
     display: flex;
     flex-direction: column;
     gap: 8px;
 }
 
-.compact-view .card {
+.compact-view .stats-card {
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
@@ -506,16 +528,16 @@ body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[
     border-radius: 8px;
 }
 
-.compact-view .card:hover {
+.compact-view .stats-card:hover {
     background-color: rgba(255, 255, 255, 0.05);
     border-color: rgba(255, 107, 53, 0.2);
 }
 
-.compact-view .card:last-child {
+.compact-view .stats-card:last-child {
     border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
 
-.compact-view .poster-container {
+.compact-view .stats-poster-container {
     display: none;
 }
 
@@ -574,7 +596,7 @@ body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[
 }
 
 /* Scrollable containers for both mobile and desktop */
-.statistics-wrapper.compact-view .cards-container {
+.statistics-wrapper.compact-view .stats-cards-container {
     overflow-y: visible;
 }
 
@@ -618,14 +640,14 @@ body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[
     }
 
     /* Force compact view styles on mobile */
-    .cards-container {
+    .stats-cards-container {
         display: flex !important;
         flex-direction: column !important;
         gap: 1 !important;
         width: 100% !important;
     }
 
-    .card {
+    .stats-card {
         flex-direction: row !important;
         justify-content: flex-start !important;
         align-items: flex-start !important;
@@ -639,7 +661,7 @@ body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[
         overflow: visible !important;
     }
 
-    .poster-container {
+    .stats-poster-container {
         display: none !important;
     }
 
@@ -727,14 +749,14 @@ body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[
 }
 
 /* Also add styles for the poster hover view */
-.poster-hover .filename[data-label]::before {
+.stats-poster-hover .filename[data-label]::before {
     content: attr(data-label);
     color: white;
     margin-right: 4px;
     font-family: inherit;
 }
 
-.poster-hover .filename {
+.stats-poster-hover .filename {
     color: #808080;
     font-family: monospace;
     font-size: 0.8em;
@@ -745,8 +767,8 @@ body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[
 
 /* Recently Upgraded Section - Poster hover formatting */
 /* Note: The combining of From/To filenames is handled by JavaScript in tangerine_filename_formatter.js */
-body[data-theme="tangerine"] .recently-upgraded-section .poster-hover .filename[data-label="From:"]::before,
-body[data-theme="tangerine"] .recently-upgraded-section .poster-hover .filename[data-label="To:"]::before {
+body[data-theme="tangerine"] .recently-upgraded-section .stats-poster-hover .filename[data-label="From:"]::before,
+body[data-theme="tangerine"] .recently-upgraded-section .stats-poster-hover .filename[data-label="To:"]::before {
     display: none !important;
 }
 

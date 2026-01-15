@@ -132,6 +132,12 @@ class TraktRateLimiter:
     Per Trakt API documentation:
     - AUTHED_API_GET_LIMIT: 1000 calls every 5 minutes (same for all authenticated users)
     - VIP vs Free does NOT affect API rate limits (only affects account limits like list counts)
+
+    Features:
+    - Adaptive rate limiting: Increases delay after 429 errors
+    - Global API budget tracking: Monitors API usage across all tasks
+    - Cooldown periods: Backs off after Cloudflare blocking
+    - Task priority system: Critical tasks get budget first
     """
     def __init__(self):
         from threading import Lock
@@ -142,31 +148,90 @@ class TraktRateLimiter:
         self.window_seconds = 300  # 5 minutes
         self.request_times = []
         self.enabled = get_setting('Scraping', 'trakt_rate_limit_enabled', True)
-        # Per-request delay to prevent bursts (1.0s = 1 req/sec = 300 req/5min)
-        # Increased from 0.2s to avoid Cloudflare rate limiting when multiple tasks overlap
-        self.per_request_delay = 1.0
+
+        # Phase 1.3: Adaptive per-request delay
+        self.base_per_request_delay = 2.0  # Increased from 1.0s to 2.0s base
+        self.per_request_delay = self.base_per_request_delay
+        self.max_per_request_delay = 10.0  # Maximum delay during cooldown
         self.last_request_time = 0
 
-        # Log the rate limiting strategy
-        logging.info(f"Trakt rate limiter initialized: {self.requests_per_window} requests/5min limit, 1.0s per-request delay")
+        # Phase 2.1: Global API budget tracking
+        self.budget_warning_threshold = 0.8  # Warn at 80% usage
+        self.budget_pause_threshold = 0.95  # Pause non-critical at 95% usage
 
-    def wait_if_needed(self):
-        """Wait if we're approaching the rate limit"""
+        # Phase 2.2: Adaptive rate limiting and cooldown
+        self.cooldown_until = 0  # Timestamp when cooldown ends
+        self.cooldown_duration = 300  # 5 minutes default cooldown
+        self.last_429_time = 0
+        self.consecutive_429_count = 0
+        self.adaptive_scaling_factor = 1.0  # Multiplier for delay during issues
+
+        # Phase 2.3: Task priority tracking (priority tasks bypass budget pause)
+        self.priority_tasks = {
+            'watchlist', 'collection', 'user_lists'  # Critical task identifiers
+        }
+        self.current_task_priority = 'normal'  # Set by caller before requests
+
+        # Log the rate limiting strategy
+        logging.info(f"Trakt rate limiter initialized: {self.requests_per_window} requests/5min limit, {self.base_per_request_delay}s base per-request delay")
+        logging.info(f"Adaptive rate limiting enabled: scales up to {self.max_per_request_delay}s during cooldown")
+
+    def wait_if_needed(self, task_priority='normal'):
+        """
+        Wait if we're approaching the rate limit.
+
+        Args:
+            task_priority: 'high' for critical tasks, 'normal' for others
+        """
         if not self.enabled:
             return
 
         with self.lock:
             now = time.time()
 
-            # Add per-request delay to prevent bursts
+            # Phase 2.2: Check if we're in cooldown period
+            if now < self.cooldown_until:
+                remaining_cooldown = self.cooldown_until - now
+                if task_priority == 'high':
+                    logging.info(f"High-priority task proceeding despite cooldown ({remaining_cooldown:.0f}s remaining)")
+                else:
+                    logging.warning(f"Cooldown active: waiting {remaining_cooldown:.1f}s before making Trakt request")
+                    time.sleep(remaining_cooldown)
+                    now = time.time()
+                    # Reset cooldown after waiting
+                    self.cooldown_until = 0
+                    self._reset_adaptive_scaling()
+
+            # Phase 1.3 & 2.2: Apply adaptive per-request delay with scaling
+            effective_delay = self.per_request_delay * self.adaptive_scaling_factor
+            effective_delay = min(effective_delay, self.max_per_request_delay)
+
             time_since_last = now - self.last_request_time
-            if time_since_last < self.per_request_delay:
-                delay = self.per_request_delay - time_since_last
+            if time_since_last < effective_delay:
+                delay = effective_delay - time_since_last
                 time.sleep(delay)
                 now = time.time()
 
             # Remove requests older than the window
             self.request_times = [t for t in self.request_times if now - t < self.window_seconds]
+
+            # Phase 2.1: Global API budget tracking
+            current_usage = len(self.request_times)
+            budget_percentage = current_usage / self.requests_per_window
+
+            if budget_percentage >= self.budget_pause_threshold and task_priority != 'high':
+                # Pause non-critical tasks when budget is nearly exhausted
+                oldest_in_window = self.request_times[0]
+                wait_time = self.window_seconds - (now - oldest_in_window) + 1
+                logging.warning(
+                    f"API budget nearly exhausted ({current_usage}/{self.requests_per_window} = {budget_percentage:.1%}). "
+                    f"Pausing non-critical task for {wait_time:.1f}s"
+                )
+                time.sleep(wait_time)
+                now = time.time()
+                self.request_times = [t for t in self.request_times if now - t < self.window_seconds]
+            elif budget_percentage >= self.budget_warning_threshold:
+                logging.info(f"API budget at {budget_percentage:.1%} ({current_usage}/{self.requests_per_window})")
 
             if len(self.request_times) >= self.requests_per_window:
                 # Calculate how long to wait
@@ -182,8 +247,260 @@ class TraktRateLimiter:
             self.request_times.append(now)
             self.last_request_time = now
 
+    def _reset_adaptive_scaling(self):
+        """Reset adaptive scaling to normal after cooldown"""
+        self.adaptive_scaling_factor = 1.0
+        self.per_request_delay = self.base_per_request_delay
+        self.consecutive_429_count = 0
+        logging.info("Adaptive rate limiting reset to normal levels")
+
+    def report_429_error(self, retry_after_seconds=0):
+        """
+        Report a 429 error to trigger adaptive rate limiting.
+
+        Args:
+            retry_after_seconds: Value from Retry-After header (0 if not present)
+        """
+        with self.lock:
+            now = time.time()
+            self.last_429_time = now
+            self.consecutive_429_count += 1
+
+            # Phase 2.2: Adaptive cooldown based on severity
+            if retry_after_seconds > 0:
+                # Cloudflare told us explicitly how long to wait
+                cooldown = max(retry_after_seconds, 300)  # Minimum 5 minutes
+            else:
+                # Exponential backoff based on consecutive failures
+                cooldown = min(300 * (2 ** (self.consecutive_429_count - 1)), 1800)  # Max 30 min
+
+            self.cooldown_until = now + cooldown
+
+            # Increase adaptive scaling
+            self.adaptive_scaling_factor = min(self.adaptive_scaling_factor * 1.5, 5.0)
+            self.per_request_delay = min(
+                self.base_per_request_delay * self.adaptive_scaling_factor,
+                self.max_per_request_delay
+            )
+
+            logging.warning(
+                f"429 error #{self.consecutive_429_count} detected. "
+                f"Cooldown: {cooldown:.0f}s, per-request delay: {self.per_request_delay:.1f}s, "
+                f"scaling factor: {self.adaptive_scaling_factor:.1f}x"
+            )
+
+    def report_success(self):
+        """Report a successful request to gradually reduce adaptive scaling"""
+        with self.lock:
+            now = time.time()
+            # If we've had no 429s for 5 minutes, gradually reduce scaling
+            if now - self.last_429_time > 300 and self.adaptive_scaling_factor > 1.0:
+                self.adaptive_scaling_factor = max(self.adaptive_scaling_factor * 0.9, 1.0)
+                self.per_request_delay = self.base_per_request_delay * self.adaptive_scaling_factor
+                if self.adaptive_scaling_factor == 1.0:
+                    self.consecutive_429_count = 0
+                    logging.info("Adaptive rate limiting fully recovered to normal levels")
+
+    def get_stats(self):
+        """Get current rate limiter statistics"""
+        with self.lock:
+            now = time.time()
+            self.request_times = [t for t in self.request_times if now - t < self.window_seconds]
+            current_usage = len(self.request_times)
+            budget_percentage = current_usage / self.requests_per_window
+
+            cooldown_active = now < self.cooldown_until
+            cooldown_remaining = max(0, self.cooldown_until - now) if cooldown_active else 0
+
+            return {
+                'current_usage': current_usage,
+                'max_requests': self.requests_per_window,
+                'budget_percentage': budget_percentage,
+                'per_request_delay': self.per_request_delay,
+                'adaptive_scaling_factor': self.adaptive_scaling_factor,
+                'cooldown_active': cooldown_active,
+                'cooldown_remaining': cooldown_remaining,
+                'consecutive_429s': self.consecutive_429_count,
+                'last_429_time': self.last_429_time
+            }
+
+# Phase 3.1: Request Queue with Global Coordinator
+class TraktRequestCoordinator:
+    """
+    Centralized coordinator for all Trakt API requests.
+    Provides request queuing, priority management, and telemetry.
+    """
+    def __init__(self, rate_limiter):
+        from queue import PriorityQueue
+        from threading import Lock, Event
+        import threading
+
+        self.rate_limiter = rate_limiter
+        self.request_queue = PriorityQueue()
+        self.lock = Lock()
+        self.enabled = True
+
+        # Telemetry tracking
+        self.total_requests = 0
+        self.successful_requests = 0
+        self.failed_requests = 0
+        self.requests_by_priority = {'high': 0, 'normal': 0}
+        self.start_time = time.time()
+
+        # Worker thread
+        self.worker_thread = None
+        self.shutdown_event = Event()
+
+    def start_worker(self):
+        """Start background worker thread to process request queue"""
+        if self.worker_thread is None or not self.worker_thread.is_alive():
+            self.shutdown_event.clear()
+            self.worker_thread = threading.Thread(
+                target=self._process_queue,
+                daemon=True,
+                name="TraktRequestWorker"
+            )
+            self.worker_thread.start()
+            logging.info("Trakt request coordinator worker started")
+
+    def _process_queue(self):
+        """Background worker that processes queued requests"""
+        while not self.shutdown_event.is_set():
+            try:
+                # Get next request from queue (blocks with timeout)
+                priority, timestamp, request_func, args, kwargs, result_callback = \
+                    self.request_queue.get(timeout=1.0)
+
+                # Execute the request
+                try:
+                    result = request_func(*args, **kwargs)
+                    if result_callback:
+                        result_callback(result, None)
+                    with self.lock:
+                        self.successful_requests += 1
+                except Exception as e:
+                    if result_callback:
+                        result_callback(None, e)
+                    with self.lock:
+                        self.failed_requests += 1
+                    logging.error(f"Request in queue failed: {e}")
+                finally:
+                    self.request_queue.task_done()
+
+            except Exception:
+                # Queue timeout - continue loop
+                pass
+
+    def queue_request(self, request_func, args=(), kwargs=None, priority='normal', callback=None):
+        """
+        Queue a Trakt API request for execution.
+
+        Args:
+            request_func: Function to call
+            args: Tuple of positional arguments
+            kwargs: Dict of keyword arguments
+            priority: 'high' or 'normal'
+            callback: Optional callback(result, error) when complete
+
+        Returns:
+            Queued request timestamp
+        """
+        if kwargs is None:
+            kwargs = {}
+
+        timestamp = time.time()
+        # Priority queue uses lower numbers for higher priority
+        priority_value = 0 if priority == 'high' else 1
+
+        with self.lock:
+            self.total_requests += 1
+            self.requests_by_priority[priority] += 1
+
+        self.request_queue.put((priority_value, timestamp, request_func, args, kwargs, callback))
+        return timestamp
+
+    def get_telemetry(self):
+        """Get telemetry data about request processing"""
+        with self.lock:
+            uptime = time.time() - self.start_time
+            success_rate = (self.successful_requests / self.total_requests * 100) if self.total_requests > 0 else 0
+
+            return {
+                'total_requests': self.total_requests,
+                'successful_requests': self.successful_requests,
+                'failed_requests': self.failed_requests,
+                'success_rate': success_rate,
+                'high_priority_requests': self.requests_by_priority['high'],
+                'normal_priority_requests': self.requests_by_priority['normal'],
+                'queue_size': self.request_queue.qsize(),
+                'uptime_seconds': uptime
+            }
+
+    def shutdown(self):
+        """Shutdown the coordinator and worker thread"""
+        self.shutdown_event.set()
+        if self.worker_thread:
+            self.worker_thread.join(timeout=5.0)
+        logging.info("Trakt request coordinator shutdown")
+
+
 # Global rate limiter instance
 _trakt_rate_limiter = TraktRateLimiter()
+
+# Global request coordinator (Phase 3.1)
+_request_coordinator = TraktRequestCoordinator(_trakt_rate_limiter)
+# Note: Worker thread started on first use to avoid startup overhead
+
+def _set_task_priority(priority='normal'):
+    """
+    Set the priority for upcoming Trakt API calls.
+
+    Args:
+        priority: 'high' for critical tasks (watchlist, collection, user lists),
+                 'normal' for bulk/trending lists
+    """
+    _trakt_rate_limiter.current_task_priority = priority
+
+def get_trakt_telemetry():
+    """
+    Phase 3.3: Get comprehensive telemetry about Trakt API usage.
+
+    Returns:
+        Dict containing rate limiter stats, coordinator stats, and health metrics
+    """
+    rate_limiter_stats = _trakt_rate_limiter.get_stats()
+    coordinator_stats = _request_coordinator.get_telemetry()
+
+    # Combine and enrich
+    telemetry = {
+        'rate_limiter': rate_limiter_stats,
+        'coordinator': coordinator_stats,
+        'health': {
+            'status': 'healthy' if not rate_limiter_stats['cooldown_active'] else 'cooldown',
+            'api_budget_used': rate_limiter_stats['budget_percentage'],
+            'requests_per_second': coordinator_stats['successful_requests'] / max(coordinator_stats['uptime_seconds'], 1),
+            'current_delay': rate_limiter_stats['per_request_delay'],
+            'scaling_active': rate_limiter_stats['adaptive_scaling_factor'] > 1.0
+        },
+        'warnings': []
+    }
+
+    # Generate warnings
+    if rate_limiter_stats['budget_percentage'] > 0.9:
+        telemetry['warnings'].append('API budget critically high (>90%)')
+    elif rate_limiter_stats['budget_percentage'] > 0.8:
+        telemetry['warnings'].append('API budget elevated (>80%)')
+
+    if rate_limiter_stats['cooldown_active']:
+        telemetry['warnings'].append(f"In cooldown for {rate_limiter_stats['cooldown_remaining']:.0f}s")
+
+    if rate_limiter_stats['consecutive_429s'] > 0:
+        telemetry['warnings'].append(f"Recent 429 errors: {rate_limiter_stats['consecutive_429s']}")
+
+    if coordinator_stats['queue_size'] > 10:
+        telemetry['warnings'].append(f"Request queue backlog: {coordinator_stats['queue_size']}")
+
+    return telemetry
 
 def load_trakt_credentials() -> Dict[str, str]:
     try:
@@ -404,7 +721,7 @@ def make_trakt_request(method, endpoint, data=None, max_retries=5, initial_delay
     for attempt in range(max_retries):
         try:
             # Wait if rate limit is approaching (global rate limiter)
-            _trakt_rate_limiter.wait_if_needed()
+            _trakt_rate_limiter.wait_if_needed(task_priority=_trakt_rate_limiter.current_task_priority)
 
             if method.lower() == 'get':
                 response = api.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
@@ -424,6 +741,8 @@ def make_trakt_request(method, endpoint, data=None, max_retries=5, initial_delay
                     raise ValueError("Received HTML response from Trakt API after all retries")
 
             response.raise_for_status()
+            # Report success for adaptive rate limiting recovery
+            _trakt_rate_limiter.report_success()
             return response
             
         except api.exceptions.RequestException as e:
@@ -432,9 +751,17 @@ def make_trakt_request(method, endpoint, data=None, max_retries=5, initial_delay
                 if status_code == 429:  # Too Many Requests
                     # Get retry-after header or use exponential backoff
                     retry_after = int(e.response.headers.get('Retry-After', 0))
-                    delay = retry_after if retry_after > 0 else initial_delay * (2 ** attempt) + random.uniform(0, 1)
 
-                    logging.warning(f"Rate limit hit (429). Waiting {delay:.2f} seconds before retry {attempt + 1}/{max_retries}")
+                    # Phase 1.4: Enforce minimum 300s wait (5 minutes)
+                    if retry_after > 0:
+                        delay = max(retry_after, 300)  # Respect Retry-After but minimum 5 minutes
+                    else:
+                        delay = max(initial_delay * (2 ** attempt), 300)  # Exponential backoff, minimum 5 minutes
+
+                    # Report to rate limiter for adaptive scaling
+                    _trakt_rate_limiter.report_429_error(retry_after)
+
+                    logging.warning(f"Rate limit hit (429). Enforcing minimum 300s wait. Waiting {delay:.2f} seconds before retry {attempt + 1}/{max_retries}")
                     sleep(delay)
                     continue
                 elif status_code == 420:  # VIP Enhanced - Account limit exceeded
@@ -508,7 +835,7 @@ def fetch_items_from_trakt(
     for attempt in range(max_retries):
         try:
             # Wait if rate limit is approaching (global rate limiter)
-            _trakt_rate_limiter.wait_if_needed()
+            _trakt_rate_limiter.wait_if_needed(task_priority=_trakt_rate_limiter.current_task_priority)
 
             response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
 
@@ -521,6 +848,8 @@ def fetch_items_from_trakt(
                 raise ValueError("Received HTML response instead of JSON from Trakt API")
 
             response.raise_for_status()
+            # Report success for adaptive rate limiting recovery
+            _trakt_rate_limiter.report_success()
             return response.json()
 
         except requests.exceptions.HTTPError as http_err:
@@ -528,18 +857,25 @@ def fetch_items_from_trakt(
 
             if status_code == 429:  # Too Many Requests – rate-limited
                 retry_after = int(http_err.response.headers.get("Retry-After", 0)) if http_err.response else 0
+
+                # Phase 1.4: Enforce minimum 300s wait (5 minutes)
                 if retry_after > 0:
-                    # Cloudflare/Trakt explicitly told us how long to wait - respect it exactly
-                    delay = retry_after
+                    # Cloudflare/Trakt explicitly told us how long to wait
+                    delay = max(retry_after, 300)  # Minimum 5 minutes
                     logging.warning(
-                        f"Rate limit hit (429). Cloudflare requires {delay}s wait. Retrying {attempt + 1}/{max_retries}"
+                        f"Rate limit hit (429). Cloudflare requires {retry_after}s, enforcing minimum 300s. "
+                        f"Waiting {delay:.0f}s before retry {attempt + 1}/{max_retries}"
                     )
                 else:
-                    # No Retry-After header, use exponential backoff
-                    delay = initial_delay * (2 ** attempt) + random.uniform(0, 1)
+                    # No Retry-After header, use exponential backoff with minimum
+                    delay = max(initial_delay * (2 ** attempt), 300)
                     logging.warning(
-                        f"Rate limit hit (429). Waiting {delay:.2f}s before retry {attempt + 1}/{max_retries}"
+                        f"Rate limit hit (429). Enforcing minimum 300s wait. "
+                        f"Waiting {delay:.0f}s before retry {attempt + 1}/{max_retries}"
                     )
+
+                # Report to rate limiter for adaptive scaling
+                _trakt_rate_limiter.report_429_error(retry_after)
 
             elif status_code == 420:  # VIP Enhanced - Account limit exceeded
                 is_vip = http_err.response.headers.get('X-VIP-User', 'false') == 'true' if http_err.response else False
@@ -863,8 +1199,28 @@ def get_last_activity() -> Dict[str, Any]:
     endpoint = "/sync/last_activities"
     return fetch_items_from_trakt(endpoint)
 
-def check_for_updates(list_url: str = None) -> bool:
+def check_for_updates(list_url: str = None, cache_ttl_minutes=30) -> bool:
+    """
+    Check if Trakt data has been updated using the last_activities endpoint.
+
+    Args:
+        list_url: Optional list URL to check for updates
+        cache_ttl_minutes: Cache TTL in minutes (Phase 3.2 enhancement)
+
+    Returns:
+        bool: True if updates detected or cache expired, False otherwise
+    """
     cached_activity = load_trakt_cache(LAST_ACTIVITY_CACHE_FILE)
+    current_time = time.time()
+
+    # Phase 3.2: Check if cache TTL expired (default 30 minutes)
+    if cached_activity and 'last_updated' in cached_activity:
+        cache_age_minutes = (current_time - cached_activity['last_updated']) / 60
+        if cache_age_minutes < cache_ttl_minutes:
+            # Cache still valid, no need to check activity
+            logging.debug(f"Cache is fresh ({cache_age_minutes:.1f}min < {cache_ttl_minutes}min), skipping activity check")
+            return False
+
     current_activity = get_last_activity()
     current_time = int(time.time())
     cache_age = current_time - cached_activity.get('last_updated', 0)
@@ -900,6 +1256,8 @@ def check_for_updates(list_url: str = None) -> bool:
 
 def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     logging.debug("Fetching Trakt watchlist")
+    # Phase 2.3: Set high priority for user watchlist (critical task)
+    _set_task_priority('high')
     access_token = ensure_trakt_auth()
     if access_token is None:
         logging.error("Failed to obtain a valid Trakt access token")
@@ -989,6 +1347,8 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[Lis
 
 def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     logging.debug("Fetching Trakt lists")
+    # Phase 2.3: Set high priority for user-created lists (critical task)
+    _set_task_priority('high')
     access_token = ensure_trakt_auth()
     if access_token is None:
         logging.error("Failed to obtain a valid Trakt access token")
@@ -1024,6 +1384,8 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) 
     return all_wanted_items
 
 def get_wanted_from_trakt_collection(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+    # Phase 2.3: Set high priority for user collection (critical task)
+    _set_task_priority('high')
     logging.debug("Fetching Trakt collection")
     access_token = ensure_trakt_auth()
     if access_token is None:
@@ -1161,6 +1523,8 @@ def get_wanted_from_special_trakt_lists(source_config: Dict[str, Any], versions_
     """
     Fetches and processes items from configured Special Trakt Lists.
     """
+    # Phase 2.3: Set normal priority for trending/popular lists (non-critical bulk task)
+    _set_task_priority('normal')
     logging.debug(f"Fetching from Special Trakt Lists: {source_config.get('display_name', 'N/A')}")
     access_token = ensure_trakt_auth()
     if access_token is None:
@@ -1444,6 +1808,210 @@ def get_wanted_from_trakt():
     final_wanted_list = list(all_processed_items.values())
     logging.info(f"Total unique wanted items from all Trakt sources: {len(final_wanted_list)}")
     return final_wanted_list
+
+def remove_from_trakt_list(list_slug: str, items: list, username: str = None) -> dict:
+    """
+    Remove items from a Trakt list
+
+    Args:
+        list_slug: Trakt list slug (e.g., "my-movies", "watchlist")
+        items: List of items to remove, each with 'tmdb_id', 'imdb_id' and 'type'
+        username: Optional Trakt username (if not provided, will use setting)
+
+    Returns:
+        dict: {'success': bool, 'removed': int, 'message': str}
+    """
+    try:
+        if not username:
+            username = get_setting('Trakt', 'trakt_username')
+        if not username:
+            return {'success': False, 'removed': 0, 'message': 'Trakt username not configured'}
+
+        # Build removal payload
+        movies = []
+        shows = []
+        skipped_items = []
+
+        for item in items:
+            tmdb_id = item.get('tmdb_id')
+            imdb_id = item.get('imdb_id')
+            item_type = item.get('type', '').lower()
+            item_title = item.get('title', 'Unknown')
+
+            # Need at least one ID to remove from Trakt
+            if not tmdb_id and not imdb_id:
+                skipped_items.append(f"{item_title} (no TMDB or IMDB ID)")
+                logging.warning(f"Skipping Trakt removal for '{item_title}': missing both TMDB and IMDB ID")
+                continue
+
+            # Build IDs dict - Trakt accepts both TMDB and IMDB IDs
+            ids = {}
+            if tmdb_id:
+                ids['tmdb'] = tmdb_id
+            if imdb_id:
+                ids['imdb'] = imdb_id
+
+            if item_type == 'movie':
+                movies.append({'ids': ids})
+            elif item_type in ['episode', 'show']:
+                shows.append({'ids': ids})
+
+        if not movies and not shows:
+            return {'success': False, 'removed': 0, 'message': 'No valid items to remove'}
+
+        removal_data = {}
+        if movies:
+            removal_data['movies'] = movies
+        if shows:
+            removal_data['shows'] = shows
+
+        # Call Trakt API
+        endpoint = f"/users/{username}/lists/{list_slug}/items/remove"
+        logging.info(f"Trakt API Request: POST {endpoint}")
+        logging.info(f"Trakt API Payload: {removal_data}")
+
+        response = make_trakt_request('post', endpoint, data=removal_data)
+
+        if response and response.status_code == 200:
+            result = response.json()
+            logging.info(f"Trakt API Response (200): {result}")
+
+            removed_movies = result.get('deleted', {}).get('movies', 0)
+            removed_shows = result.get('deleted', {}).get('shows', 0)
+            not_found_movies = result.get('not_found', {}).get('movies', [])
+            not_found_shows = result.get('not_found', {}).get('shows', [])
+            total_removed = removed_movies + removed_shows
+
+            if not_found_movies or not_found_shows:
+                logging.warning(f"Items not found in list: movies={len(not_found_movies)}, shows={len(not_found_shows)}")
+                logging.warning(f"Not found details: {result.get('not_found', {})}")
+
+            logging.info(f"Removed {total_removed} items from Trakt list '{list_slug}' ({removed_movies} movies, {removed_shows} shows)")
+            return {
+                'success': True,
+                'removed': total_removed,
+                'message': f'Removed {total_removed} item(s) from {list_slug}'
+            }
+        elif response:
+            error_text = response.text if hasattr(response, 'text') else 'Unknown error'
+            logging.error(f"Trakt API Response ({response.status_code}): {error_text}")
+            logging.error(f"Failed to remove from Trakt list '{list_slug}': HTTP {response.status_code}")
+            return {
+                'success': False,
+                'removed': 0,
+                'message': f'HTTP {response.status_code}: {error_text}'
+            }
+        else:
+            logging.error(f"No response from Trakt API for endpoint: {endpoint}")
+            return {'success': False, 'removed': 0, 'message': 'No response from Trakt API'}
+
+    except Exception as e:
+        logging.error(f"Error removing from Trakt list '{list_slug}': {e}")
+        return {'success': False, 'removed': 0, 'message': str(e)}
+
+def remove_from_trakt_collection(items: list) -> dict:
+    """
+    Remove items from Trakt collection (different from watchlist/lists)
+
+    Args:
+        items: List of items to remove, each with 'tmdb_id', 'imdb_id' and 'type'
+
+    Returns:
+        dict: {'success': bool, 'removed': int, 'message': str}
+    """
+    try:
+        # Set normal priority so deletion waits for cooldown instead of proceeding
+        _set_task_priority('normal')
+        logging.info(f"[TRAKT_COLLECTION] Starting removal for {len(items)} item(s)")
+
+        # Build removal payload
+        movies = []
+        shows = []
+        skipped_items = []
+
+        for item in items:
+            tmdb_id = item.get('tmdb_id')
+            imdb_id = item.get('imdb_id')
+            item_type = item.get('type', '').lower()
+            item_title = item.get('title', 'Unknown')
+
+            logging.debug(f"[TRAKT_COLLECTION] Processing '{item_title}': type={item_type}, tmdb_id={tmdb_id}, imdb_id={imdb_id}")
+
+            # Need at least one ID to remove from Trakt
+            if not tmdb_id and not imdb_id:
+                skipped_items.append(f"{item_title} (no TMDB or IMDB ID)")
+                logging.warning(f"[TRAKT_COLLECTION] Skipping '{item_title}': missing both TMDB and IMDB ID")
+                continue
+
+            # Build IDs dict - prefer TMDB ID, fallback to IMDB ID
+            ids = {}
+            if tmdb_id:
+                ids['tmdb'] = tmdb_id
+            elif imdb_id:
+                ids['imdb'] = imdb_id
+
+            if item_type == 'movie':
+                movies.append({'ids': ids})
+                logging.debug(f"[TRAKT_COLLECTION] Added movie: {ids}")
+            elif item_type in ['episode', 'show']:
+                shows.append({'ids': ids})
+                logging.debug(f"[TRAKT_COLLECTION] Added show: {ids}")
+            else:
+                logging.warning(f"[TRAKT_COLLECTION] Unknown type '{item_type}' for '{item_title}'")
+
+        if not movies and not shows:
+            logging.error(f"[TRAKT_COLLECTION] No valid items to remove")
+            return {'success': False, 'removed': 0, 'message': 'No valid items to remove'}
+
+        removal_data = {}
+        if movies:
+            removal_data['movies'] = movies
+        if shows:
+            removal_data['shows'] = shows
+
+        logging.info(f"[TRAKT_COLLECTION] Sending removal request: {len(movies)} movies, {len(shows)} shows")
+        logging.debug(f"[TRAKT_COLLECTION] Payload: {json.dumps(removal_data, indent=2)}")
+
+        # Call Trakt API - collection removal endpoint
+        response = make_trakt_request('post', "/sync/collection/remove", data=removal_data)
+
+        if response and response.status_code == 200:
+            result = response.json()
+            logging.info(f"[TRAKT_COLLECTION] API Response: {json.dumps(result, indent=2)}")
+
+            removed_movies = result.get('deleted', {}).get('movies', 0)
+            removed_shows = result.get('deleted', {}).get('shows', 0)
+            removed_episodes = result.get('deleted', {}).get('episodes', 0)
+            not_found_movies = result.get('not_found', {}).get('movies', [])
+            not_found_shows = result.get('not_found', {}).get('shows', [])
+            total_removed = removed_movies + removed_shows + removed_episodes
+
+            if not_found_movies or not_found_shows:
+                logging.warning(f"[TRAKT_COLLECTION] Items not found: {len(not_found_movies)} movies, {len(not_found_shows)} shows")
+                logging.debug(f"[TRAKT_COLLECTION] Not found details: {result.get('not_found', {})}")
+
+            logging.info(f"[TRAKT_COLLECTION] Removed {total_removed} items ({removed_movies} movies, {removed_shows} shows, {removed_episodes} episodes)")
+            return {
+                'success': True,
+                'removed': total_removed,
+                'message': f'Removed {total_removed} item(s) from collection'
+            }
+        elif response:
+            error_text = response.text if hasattr(response, 'text') else 'Unknown error'
+            logging.error(f"[TRAKT_COLLECTION] Failed: HTTP {response.status_code}")
+            logging.error(f"[TRAKT_COLLECTION] Response: {error_text}")
+            return {
+                'success': False,
+                'removed': 0,
+                'message': f'HTTP {response.status_code}: {error_text}'
+            }
+        else:
+            logging.error(f"[TRAKT_COLLECTION] No response from Trakt API")
+            return {'success': False, 'removed': 0, 'message': 'No response from Trakt API'}
+
+    except Exception as e:
+        logging.error(f"Error removing from Trakt collection: {e}")
+        return {'success': False, 'removed': 0, 'message': str(e)}
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')

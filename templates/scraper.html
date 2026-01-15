@@ -159,6 +159,25 @@
             </div>
         </div>
     </div>
+
+    <!-- SSR DATA: Embed trending data directly in HTML for instant rendering -->
+    {% if enable_ssr and trending_data_ssr %}
+    <script id="ssr-trending-data" type="application/json">
+        {{ trending_data_ssr | tojson | safe }}
+    </script>
+    <script>
+        // Flag to tell JavaScript that SSR data is available
+        window.SCRAPER_SSR_ENABLED = true;
+        console.log('✅ SSR enabled - trending data embedded in page');
+    </script>
+    {% else %}
+    <script>
+        // Fallback to client-side rendering
+        window.SCRAPER_SSR_ENABLED = false;
+        console.log('⚠️ SSR disabled - will fetch trending data via AJAX');
+    </script>
+    {% endif %}
+
     <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
     <script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>

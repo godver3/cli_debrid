@@ -197,12 +197,29 @@ async def get_library_contents(session: aiohttp.ClientSession, plex_url: str, li
 async def get_detailed_movie_metadata(session: aiohttp.ClientSession, plex_url: str, movie_key: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> Dict[str, Any]:
     url = f"{plex_url}/library/metadata/{movie_key}?includeGuids=1"
     data = await fetch_data(session, url, headers, semaphore)
-    return data['MediaContainer']['Metadata'][0] if 'MediaContainer' in data and 'Metadata' in data['MediaContainer'] else {}
+    result = data['MediaContainer']['Metadata'][0] if 'MediaContainer' in data and 'Metadata' in data['MediaContainer'] else {}
+    if result:
+        has_media = 'Media' in result
+        logger.debug(f"[DetailedMeta] Movie {movie_key}: has_media={has_media}, keys={list(result.keys())[:10]}")
+    return result
 
 async def get_detailed_show_metadata(session: aiohttp.ClientSession, plex_url: str, show_key: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> Dict[str, Any]:
     url = f"{plex_url}/library/metadata/{show_key}?includeGuids=1"
     data = await fetch_data(session, url, headers, semaphore)
     return data['MediaContainer']['Metadata'][0] if 'MediaContainer' in data and 'Metadata' in data['MediaContainer'] else {}
+
+async def get_detailed_episode_metadata(session: aiohttp.ClientSession, plex_url: str, episode_key: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> Dict[str, Any]:
+    """Fetch detailed metadata for a single episode including Media/Part info."""
+    url = f"{plex_url}/library/metadata/{episode_key}?includeGuids=1"
+    data = await fetch_data(session, url, headers, semaphore)
+    result = data['MediaContainer']['Metadata'][0] if 'MediaContainer' in data and 'Metadata' in data['MediaContainer'] else {}
+    if result:
+        has_media = 'Media' in result
+        if has_media and result['Media']:
+            first_media = result['Media'][0]
+            has_parts = 'Part' in first_media
+            logger.debug(f"[DetailedMeta] Episode {episode_key}: has_media={has_media}, has_parts={has_parts}")
+    return result
 
 async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, Any], fallback_show_metadata_cache: Dict[str, Optional[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """
@@ -230,7 +247,7 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
         'season_number': season_number,
         'episode_number': episode_number,
         'year': show_year,
-        'show_year': show_year, 
+        'show_year': show_year,
         'addedAt': episode_meta.get('addedAt'),
         'guid': episode_meta.get('guid'),
         'ratingKey': episode_meta.get('ratingKey'),
@@ -241,7 +258,9 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
         'episode_imdb_id': None,
         'episode_tmdb_id': None,
         'type': 'episode',
-        'genres': show_genres
+        'genres': show_genres,
+        'thumb': show_details.get('thumb'),
+        'art': show_details.get('art')
     }
            
     if 'Guid' in episode_meta:
@@ -313,6 +332,10 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
              # logger.warning(f"All fallbacks failed, release_date remains None for {show_title} S{season_number}E{base_episode_data['episode_number']}")
 
     episode_entries = []
+    media_list = episode_meta.get('Media', [])
+    # Debug: Log Media count for all episodes
+    if media_list:
+        logger.debug(f"[process_episode] {show_title} S{season_number}E{base_episode_data.get('episode_number', '?')} has {len(media_list)} Media entries")
     if 'Media' in episode_meta and episode_meta['Media']:
         for media in episode_meta.get('Media', []):
             if 'Part' in media and media['Part']:
@@ -320,6 +343,15 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
                     if 'file' in part:
                         episode_entry = base_episode_data.copy()
                         episode_entry['location'] = part['file']
+                        # Extract file size and convert to GB
+                        if 'size' in part:
+                            try:
+                                size_bytes = int(part['size'])
+                                episode_entry['size_gb'] = round(size_bytes / (1024**3), 2)
+                            except (ValueError, TypeError):
+                                episode_entry['size_gb'] = None
+                        else:
+                            episode_entry['size_gb'] = None
                         episode_entries.append(episode_entry)
     
     if not episode_entries:
@@ -327,16 +359,50 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
         try:
             ep_index_log = f"{int(ep_index_log):02d}" if ep_index_log != 'Unknown' else 'Unknown'
         except (ValueError, TypeError):
-            ep_index_log = str(ep_index_log) 
+            ep_index_log = str(ep_index_log)
 
         logger.error(f"No file path found for episode: {show_title} - S{season_number:02d}E{ep_index_log} - {base_episode_data['episode_title']}")
-    
+    elif len(episode_entries) > 1:
+        logger.info(f"[MultiVersion Debug] Episode '{show_title}' S{season_number:02d}E{base_episode_data.get('episode_number', '?')} has {len(episode_entries)} file entries: {[e.get('location') for e in episode_entries]}")
+
     return episode_entries
 
 async def process_movies_chunk(session: aiohttp.ClientSession, plex_url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore, movies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     results = []
+    # First, fetch detailed metadata for all movies in this chunk to get Media/Part info (including size)
+    detail_tasks = []
+    movies_with_keys = []  # Track which movies have keys for proper mapping
+
     for movie in movies:
-        movie_entries = await process_movie(movie)
+        movie_key = movie.get('ratingKey')
+        if movie_key:
+            detail_tasks.append(get_detailed_movie_metadata(session, plex_url, movie_key, headers, semaphore))
+            movies_with_keys.append(movie)
+
+    # Fetch all detailed metadata in parallel
+    if detail_tasks:
+        detailed_results = await asyncio.gather(*detail_tasks, return_exceptions=True)
+
+        # Create a mapping from ratingKey to detailed metadata
+        detailed_map = {}
+        for i, movie in enumerate(movies_with_keys):
+            movie_key = movie.get('ratingKey')
+            detailed = detailed_results[i]
+            if not isinstance(detailed, Exception) and detailed:
+                detailed_map[movie_key] = detailed
+            else:
+                if isinstance(detailed, Exception):
+                    logger.warning(f"Failed to fetch detailed metadata for movie {movie.get('title', 'Unknown')}: {detailed}")
+    else:
+        detailed_map = {}
+
+    # Process all movies, using detailed metadata when available
+    for movie in movies:
+        movie_key = movie.get('ratingKey')
+        if movie_key and movie_key in detailed_map:
+            movie_entries = await process_movie(detailed_map[movie_key])
+        else:
+            movie_entries = await process_movie(movie)
         results.extend(movie_entries)
     return results
 
@@ -356,7 +422,9 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
         'tmdb_id': None,
         'type': 'movie',
         'genres': filtered_genres,
-        'release_date': movie.get('originallyAvailableAt')
+        'release_date': movie.get('originallyAvailableAt'),
+        'thumb': movie.get('thumb'),
+        'art': movie.get('art')
     }
 
     if 'addedAt' not in movie:
@@ -381,12 +449,27 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
                     if 'file' in part:
                         movie_entry = movie_data.copy()
                         movie_entry['location'] = part['file']
+                        # Extract file size and convert to GB
+                        if 'size' in part:
+                            try:
+                                size_bytes = int(part['size'])
+                                movie_entry['size_gb'] = round(size_bytes / (1024**3), 2)
+                                logger.debug(f"[SizeExtract] Movie {movie_data['title']}: size_bytes={size_bytes}, size_gb={movie_entry['size_gb']}")
+                            except (ValueError, TypeError):
+                                movie_entry['size_gb'] = None
+                                logger.debug(f"[SizeExtract] Movie {movie_data['title']}: Invalid size value in part")
+                        else:
+                            movie_entry['size_gb'] = None
+                            logger.debug(f"[SizeExtract] Movie {movie_data['title']}: No 'size' key in part. Part keys: {list(part.keys())}")
                         movie_entries.append(movie_entry)
+    else:
+        logger.debug(f"[SizeExtract] Movie {movie_data['title']}: No 'Media' in movie data. Keys: {list(movie.keys())[:15]}")
     
     if not movie_entries:
         logger.error(f"No filename found for movie: {movie['title']}")
-    
-    # logger.debug(f"Processed {len(movie_entries)} entries for movie: {movie['title']}")
+    elif len(movie_entries) > 1:
+        logger.info(f"[MultiVersion Debug] Movie '{movie_data['title']}' has {len(movie_entries)} file entries: {[e.get('location') for e in movie_entries]}")
+
     return movie_entries
 
 async def get_collected_from_plex(request='all', progress_callback=None, bypass=False,
@@ -661,6 +744,37 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
                     })
                 logger.info(f"Starting processing for {len(all_raw_episodes)} episodes...")
                 t_process_ep_start = time.perf_counter()
+
+                # First, batch fetch detailed episode metadata to get Media/Part info (including size)
+                logger.info(f"Fetching detailed metadata for {len(all_raw_episodes)} episodes to get file size info...")
+                episode_detail_tasks = []
+                episodes_with_keys = []  # Track episodes with keys for proper mapping
+
+                for episode_meta in all_raw_episodes:
+                    episode_key = episode_meta.get('ratingKey')
+                    if episode_key:
+                        episode_detail_tasks.append(get_detailed_episode_metadata(session, plex_url, episode_key, headers, semaphore))
+                        episodes_with_keys.append(episode_meta)
+
+                if episode_detail_tasks:
+                    detailed_episodes = await asyncio.gather(*episode_detail_tasks, return_exceptions=True)
+
+                    # Merge detailed metadata back into episode_meta using proper mapping
+                    for i, episode_meta in enumerate(episodes_with_keys):
+                        detailed = detailed_episodes[i]
+                        if not isinstance(detailed, Exception) and detailed and 'Media' in detailed:
+                            episode_meta['Media'] = detailed['Media']
+                            # Debug: Log multi-file episodes
+                            media_count = len(detailed['Media'])
+                            if media_count > 1:
+                                ep_title = episode_meta.get('grandparentTitle', 'Unknown')
+                                ep_season = episode_meta.get('parentIndex', '?')
+                                ep_num = episode_meta.get('index', '?')
+                                logger.info(f"[DetailedMeta] Episode '{ep_title}' S{ep_season}E{ep_num} has {media_count} Media entries from detailed fetch")
+                        # If detailed fetch failed, episode_meta won't have Media, which is fine - size will be None
+
+                logger.info(f"Finished fetching detailed episode metadata. Processing episodes...")
+
                 processing_tasks = []
 
                 for episode_meta in all_raw_episodes:
@@ -1123,8 +1237,22 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
                                                 return True
 
                     except Exception as e:
+                        error_str = str(e)
                         item_name = getattr(show if section.type == 'show' else (movie if section.type == 'movie' else None), 'title', item_title)
-                        logger.error(f"Error processing item {item_name} in section {section.title}: {str(e)}")
+
+                        # Check for 400 Bad Request - this means Plex doesn't allow deletion
+                        # or the file is already gone from Plex's perspective
+                        if '400' in error_str or 'bad_request' in error_str.lower():
+                            logger.warning(f"[PLEX_REMOVAL] 400 Bad Request for {item_name} in section {section.title}. "
+                                          f"This usually means: 1) 'Allow media deletion' is disabled in Plex settings, "
+                                          f"2) The file no longer exists in Plex metadata, or "
+                                          f"3) Plex needs a library scan to detect the file is missing. "
+                                          f"Consider using scan_and_empty_plex_trash() instead.")
+                            # Return False but don't keep retrying - this is a permanent failure
+                            # that requires user intervention or a different approach
+                            return False
+
+                        logger.error(f"Error processing item {item_name} in section {section.title}: {error_str}")
                         continue
                 
                 if file_deleted:
@@ -1144,6 +1272,139 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
     except Exception as e:
         logger.error(f"General error removing file from Plex for '{item_title}': {str(e)}")
         return False
+
+
+def scan_and_empty_plex_trash(paths: list = None, section_type: str = None) -> dict:
+    """
+    Scan specific Plex paths and then empty trash to clean up unavailable items.
+
+    The scan is needed because Plex doesn't move items to trash until it detects
+    the files are missing during a library scan.
+
+    Args:
+        paths: List of specific folder paths to scan (e.g., deleted symlink parent folders).
+               If provided, only these paths will be scanned instead of entire sections.
+        section_type: Optional - 'movie' or 'show' to filter sections for trash empty.
+                      If None, empties trash for all sections.
+
+    Returns:
+        dict with 'success', 'paths_scanned', 'sections_cleaned', 'errors'
+    """
+    import time
+
+    result = {
+        'success': True,
+        'paths_scanned': [],
+        'sections_cleaned': [],
+        'errors': []
+    }
+
+    try:
+        # Check for Jellyfin configuration first
+        jellyfin_url = get_setting('Debug', 'emby_jellyfin_url', default='').strip()
+        jellyfin_token = get_setting('Debug', 'emby_jellyfin_token', default='').strip()
+
+        if jellyfin_url and jellyfin_token:
+            logger.info("Jellyfin configured - skipping Plex scan and trash empty")
+            result['sections_cleaned'].append('Jellyfin (skipped)')
+            return result
+
+        # Get Plex connection based on file management mode
+        if get_setting('File Management', 'file_collection_management') == 'Plex':
+            plex_url = get_setting('Plex', 'url').rstrip('/')
+            plex_token = get_setting('Plex', 'token')
+        elif get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+            plex_url = get_setting('File Management', 'plex_url_for_symlink', default='')
+            plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
+        else:
+            logger.warning("No Plex URL or token found in settings for trash empty")
+            result['errors'].append("No Plex configuration found")
+            result['success'] = False
+            return result
+
+        if not plex_url or not plex_token:
+            logger.warning("Plex URL or token is empty")
+            result['errors'].append("Plex URL or token is empty")
+            result['success'] = False
+            return result
+
+        plex = plexapi.server.PlexServer(plex_url, plex_token)
+        sections = plex.library.sections()
+
+        # Step 1: Scan specific paths or sections
+        if paths:
+            # Scan only the specific paths provided (much faster than full library scan)
+            for path in paths:
+                try:
+                    # Find which section contains this path
+                    for section in sections:
+                        if not hasattr(section, 'locations') or not section.locations:
+                            continue
+                        for location in section.locations:
+                            if path.startswith(location):
+                                logger.info(f"Scanning specific path in Plex: {path} (section: {section.title})")
+                                section.update(path=path)
+                                result['paths_scanned'].append(path)
+                                logger.info(f"Successfully triggered scan for path: {path}")
+                                break
+                except Exception as e:
+                    error_msg = f"Failed to scan path {path}: {str(e)}"
+                    logger.error(error_msg)
+                    result['errors'].append(error_msg)
+        else:
+            # No specific paths - scan entire sections (fallback, slower)
+            for section in sections:
+                try:
+                    if section_type:
+                        if section_type == 'movie' and section.type != 'movie':
+                            continue
+                        if section_type == 'show' and section.type != 'show':
+                            continue
+
+                    logger.info(f"Scanning entire Plex section: {section.title} ({section.type})")
+                    section.update()
+                    result['paths_scanned'].append(f"[section] {section.title}")
+                    logger.info(f"Successfully triggered scan for section: {section.title}")
+
+                except Exception as e:
+                    error_msg = f"Failed to scan section {section.title}: {str(e)}"
+                    logger.error(error_msg)
+                    result['errors'].append(error_msg)
+
+        # Step 2: Wait for scan to process (Plex needs time to detect missing files)
+        if result['paths_scanned']:
+            logger.info("Waiting for Plex to process scan...")
+            time.sleep(2)
+
+        # Step 3: Empty trash for relevant sections
+        for section in sections:
+            try:
+                # Filter by section type if specified
+                if section_type:
+                    if section_type == 'movie' and section.type != 'movie':
+                        continue
+                    if section_type == 'show' and section.type != 'show':
+                        continue
+
+                logger.info(f"Emptying trash for Plex section: {section.title} ({section.type})")
+                section.emptyTrash()
+                result['sections_cleaned'].append(section.title)
+                logger.info(f"Successfully emptied trash for section: {section.title}")
+
+            except Exception as e:
+                error_msg = f"Failed to empty trash for section {section.title}: {str(e)}"
+                logger.error(error_msg)
+                result['errors'].append(error_msg)
+
+        if result['errors']:
+            result['success'] = len(result['sections_cleaned']) > 0
+
+    except Exception as e:
+        logger.error(f"Error during Plex scan and trash empty: {str(e)}")
+        result['errors'].append(str(e))
+        result['success'] = False
+
+    return result
 
 
 def get_section_type(section: LibrarySection) -> Optional[str]:
@@ -1532,3 +1793,144 @@ def get_plex_item(item_id: int):
     except Exception as e:
         logger.error(f"Error getting Plex item for {item_id}: {e}", exc_info=True)
         return None
+
+
+def get_plex_file_info(file_path: str) -> dict:
+    """
+    Get file size and resolution from Plex for a specific file.
+
+    Args:
+        file_path: Path to the file (should match what Plex has in its library)
+
+    Returns:
+        Dictionary with 'size_gb' and 'resolution' keys, or empty dict if not found
+    """
+    try:
+        # Get Plex connection details
+        file_management = get_setting('File Management', 'file_management_type', default='Plex')
+
+        if file_management == 'Plex':
+            plex_url = get_setting('Plex', 'url')
+            plex_token = get_setting('Plex', 'token')
+        else:
+            plex_url = get_setting('File Management', 'plex_url_for_symlink')
+            plex_token = get_setting('File Management', 'plex_token_for_symlink')
+
+        if not plex_url or not plex_token:
+            logger.debug("Plex URL or token not configured for get_plex_file_info")
+            return {}
+
+        plex = PlexServer(plex_url, plex_token, timeout=30)
+        filename = os.path.basename(file_path)
+
+        # Search through all library sections for the file
+        for section in plex.library.sections():
+            try:
+                if section.type == 'movie':
+                    # Search movies
+                    for movie in section.all():
+                        try:
+                            for media in movie.media:
+                                for part in media.parts:
+                                    if os.path.basename(part.file) == filename:
+                                        size_bytes = part.size if part.size else 0
+                                        size_gb = round(size_bytes / (1024**3), 2) if size_bytes else None
+                                        resolution = media.videoResolution if hasattr(media, 'videoResolution') else None
+                                        logger.debug(f"Found file {filename} in Plex: size={size_gb}GB, resolution={resolution}")
+                                        return {'size_gb': size_gb, 'resolution': resolution, 'location': part.file}
+                        except Exception:
+                            continue
+
+                elif section.type == 'show':
+                    # Search episodes - use allEpisodes for efficiency
+                    try:
+                        for episode in section.searchEpisodes():
+                            try:
+                                for media in episode.media:
+                                    for part in media.parts:
+                                        if os.path.basename(part.file) == filename:
+                                            size_bytes = part.size if part.size else 0
+                                            size_gb = round(size_bytes / (1024**3), 2) if size_bytes else None
+                                            resolution = media.videoResolution if hasattr(media, 'videoResolution') else None
+                                            logger.debug(f"Found file {filename} in Plex: size={size_gb}GB, resolution={resolution}")
+                                            return {'size_gb': size_gb, 'resolution': resolution, 'location': part.file}
+                            except Exception:
+                                continue
+                    except Exception as e:
+                        logger.debug(f"Error searching episodes in section {section.title}: {e}")
+                        continue
+
+            except Exception as e:
+                logger.debug(f"Error searching section {section.title}: {e}")
+                continue
+
+        logger.debug(f"File {filename} not found in any Plex library")
+        return {}
+
+    except Exception as e:
+        logger.error(f"Error getting Plex file info for {file_path}: {e}")
+        return {}
+
+
+def update_item_with_plex_info(item_id: int, file_path: str = None) -> bool:
+    """
+    Update a database item with size/resolution info from Plex.
+    Call this after an item transitions to Collected state.
+
+    Args:
+        item_id: Database ID of the media item
+        file_path: Optional file path. If not provided, will try to get from DB item
+
+    Returns:
+        True if item was updated, False otherwise
+    """
+    from database.database_reading import get_media_item_by_id
+    from database import get_db_connection
+
+    try:
+        # Get item from database if file_path not provided
+        if not file_path:
+            item = get_media_item_by_id(item_id)
+            if not item:
+                logger.debug(f"Item {item_id} not found in database")
+                return False
+            file_path = item.get('filled_by_file') or item.get('location_on_disk')
+
+        if not file_path:
+            logger.debug(f"No file path available for item {item_id}")
+            return False
+
+        # Get info from Plex
+        plex_info = get_plex_file_info(file_path)
+
+        if not plex_info:
+            logger.debug(f"Could not get Plex info for item {item_id} ({file_path})")
+            return False
+
+        # Update database
+        conn = get_db_connection()
+        try:
+            size_gb = plex_info.get('size_gb')
+            resolution = plex_info.get('resolution')
+            location = plex_info.get('location')
+
+            # Only update if we have new data
+            if size_gb is not None or resolution is not None or location:
+                conn.execute('''
+                    UPDATE media_items
+                    SET size = COALESCE(size, ?),
+                        resolution = COALESCE(resolution, ?),
+                        location_on_disk = COALESCE(location_on_disk, ?)
+                    WHERE id = ?
+                ''', (size_gb, resolution, location, item_id))
+                conn.commit()
+                logger.info(f"Updated item {item_id} with Plex info: size={size_gb}GB, resolution={resolution}")
+                return True
+        finally:
+            conn.close()
+
+        return False
+
+    except Exception as e:
+        logger.error(f"Error updating item {item_id} with Plex info: {e}")
+        return False

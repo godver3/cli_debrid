@@ -179,6 +179,10 @@
         max-width: 100%;
     }
 
+    .truncate.mobile-clickable {
+        cursor: pointer;
+    }
+
     /* Add this new style for table cells */
     .table-container td,
     .table-container th {
@@ -225,14 +229,6 @@
             align-items: stretch;
         }
 
-        /* #filter-form label,
-        #filter-form select,
-        #filter-form input[type="text"],
-        #filter-form button {
-            width: 100%;
-            margin-bottom: 10px;
-        } */
-
         .filter-section {
             padding-top: 10px;
         }
@@ -242,11 +238,6 @@
         .sort-container {
             flex-flow: wrap;
         }
-        /* .filter-logic-section {
-            flex-flow: wrap;
-            display: flex;
-            gap: 0;
-        } */
 
         .content-type-filter,
         .pagination {
@@ -328,14 +319,26 @@
         background: rgba(26, 26, 26, 0.95);
         backdrop-filter: blur(20px);
         border: 1px solid rgba(255, 255, 255, 0.1);
-        padding: 20px;
+        padding: 0;
         border-radius: 20px;
         text-align: center;
+        min-width: 300px;
+        overflow: hidden;
     }
 
-    .loading-content p {
-        color: #e0e0e0;
-        margin-bottom: 15px;
+    .loading-progress-bar-container {
+        width: 100%;
+        height: 4px;
+        background-color: rgba(255, 255, 255, 0.1);
+        position: relative;
+        border-radius: 20px 20px 0 0;
+    }
+
+    .loading-progress-bar {
+        height: 100%;
+        background-color: #ff6b35;
+        transition: width 0.3s ease;
+        border-radius: 20px 0 0 0;
     }
 
     .spinner {
@@ -345,12 +348,22 @@
         width: 40px;
         height: 40px;
         animation: spin 1s linear infinite;
-        margin: 0 auto 10px;
+        margin: 20px auto 10px;
     }
 
     @keyframes spin {
         0% { transform: rotate(0deg); }
         100% { transform: rotate(360deg); }
+    }
+
+    .loading-content p {
+        color: #e0e0e0;
+        margin-bottom: 15px;
+        padding: 0 20px;
+    }
+
+    .loading-message {
+        padding: 0 20px;
     }
 
     .close-loading {
@@ -363,7 +376,7 @@
         display: inline-block;
         font-size: 16px;
         font-weight: 600;
-        margin: 4px 2px;
+        margin: 20px 2px;
         cursor: pointer;
         border-radius: 12px;
         transition: all 0.3s ease;
@@ -372,11 +385,6 @@
     .close-loading:hover {
         transform: translateY(-2px);
         box-shadow: 0 8px 24px rgba(255, 107, 53, 0.4);
-    }
-
-    /* Remove any tooltip-specific styles if they exist */
-    .mobile-tooltip-button {
-        display: none;  /* This will hide any existing tooltip buttons */
     }
 
     .remove-filter {
@@ -616,11 +624,26 @@
     .table-container th {
         position: relative;
         border-right: 1px solid rgba(255, 255, 255, 0.1);
+        transition: none;
     }
 
     /* Remove border from last header */
     .table-container th:last-child {
         border-right: none;
+    }
+
+    /* Visual feedback during resize */
+    .table-container th.is-resizing {
+        background-color: rgba(255, 107, 53, 0.1);
+    }
+
+    .table-container table.is-resizing {
+        cursor: col-resize;
+        user-select: none;
+    }
+
+    .table-container table.is-resizing * {
+        cursor: col-resize !important;
     }
 
     /* Hide resize handles and separators on mobile */

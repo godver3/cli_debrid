@@ -112,12 +112,32 @@
                     if (data.success) {
                         if (typeof window.reloadTabContent === 'function') {
                             window.reloadTabContent('scrapers', () => {
-                                window.Loading.hide();
+                                console.log('[Add Scraper] Scrapers tab reloaded');
                                 window.initializeExpandCollapse();
                                 initializeScrapersFunctionality();
+                                // Also reload scraping tab to update scraper priorities
+                                console.log('[Add Scraper] Reloading scraping tab...');
+                                window.reloadTabContent('scraping', () => {
+                                    console.log('[Add Scraper] Scraping tab reloaded successfully');
+                                    window.Loading.hide();
+                                    window.showPopup({
+                                        type: POPUP_TYPES.SUCCESS,
+                                        message: 'Scraper added and settings updated successfully',
+                                    });
+                                }).catch(err => {
+                                    console.error('[Add Scraper] Error reloading scraping tab:', err);
+                                    window.Loading.hide();
+                                    window.showPopup({
+                                        type: POPUP_TYPES.WARNING,
+                                        message: 'Scraper added, but scraping tab may need manual refresh',
+                                    });
+                                });
+                            }).catch(err => {
+                                console.error('[Add Scraper] Error reloading scrapers tab:', err);
+                                window.Loading.hide();
                                 window.showPopup({
-                                    type: POPUP_TYPES.SUCCESS,
-                                    message: 'Scraper added and tab content reloaded successfully',
+                                    type: POPUP_TYPES.ERROR,
+                                    message: 'Error reloading: ' + err.message,
                                 });
                             });
                         } else {
@@ -170,12 +190,15 @@
                     if (data.success) {
                         if (typeof window.reloadTabContent === 'function') {
                             window.reloadTabContent('scrapers', () => {
-                                window.Loading.hide();
                                 window.initializeExpandCollapse();
                                 initializeScrapersFunctionality();
-                                window.showPopup({
-                                    type: POPUP_TYPES.SUCCESS,
-                                    message: 'Scraper deleted and tab content reloaded successfully',
+                                // Also reload scraping tab to update scraper priorities
+                                window.reloadTabContent('scraping', () => {
+                                    window.Loading.hide();
+                                    window.showPopup({
+                                        type: POPUP_TYPES.SUCCESS,
+                                        message: 'Scraper deleted and settings updated successfully',
+                                    });
                                 });
                             });
                         } else {

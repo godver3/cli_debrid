@@ -251,16 +251,16 @@
         <!-- Jellyfin/Emby settings included in File Management section -->
         <div id="jellyfin-settings-in-file-management" style="display: none;">
             <div class="settings-form-group">
-                <label for="jellyfin-url" class="settings-title">Jellyfin/Emby URL:</label>
-                <input type="text" id="jellyfin-url" name="Debug.emby_jellyfin_url"
+                <label for="emby_jellyfin_url" class="settings-title">Jellyfin/Emby URL:</label>
+                <input type="text" id="emby_jellyfin_url" name="Debug.emby_jellyfin_url"
                        value="{{ settings.get('Debug', {}).get('emby_jellyfin_url', '') }}" class="settings-input"
                        data-section="Debug" data-key="emby_jellyfin_url"
                        autocomplete="off">
                 <p class="settings-description">URL for Emby or Jellyfin server (e.g. http://localhost:8096)</p>
             </div>
             <div class="settings-form-group">
-                <label for="jellyfin-token" class="settings-title">Jellyfin/Emby Token:</label>
-                <input type="password" id="jellyfin-token" name="Debug.emby_jellyfin_token"
+                <label for="emby_jellyfin_token" class="settings-title">Jellyfin/Emby Token:</label>
+                <input type="password" id="emby_jellyfin_token" name="Debug.emby_jellyfin_token"
                        value="{{ settings.get('Debug', {}).get('emby_jellyfin_token', '') }}" class="settings-input"
                        data-section="Debug" data-key="emby_jellyfin_token"
                        autocomplete="new-password">
