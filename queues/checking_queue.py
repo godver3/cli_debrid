@@ -814,7 +814,12 @@ class CheckingQueue:
                 if int(current_progress) == 100:
                     # --- Restored Symlinked/Local processing logic ---
                     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
-                        items_to_scan = [] 
+                        items_to_scan = []
+                        # Collect unique directories for batch Plex scan (prevents hammering Plex API)
+                        directories_to_scan = set()
+                        use_jellyfin = get_setting('Debug', 'emby_jellyfin_url', default=False)
+                        use_plex = get_setting('File Management', 'plex_url_for_symlink', default=False)
+
                         for item_in_torrent_group in current_items_for_torrent:
                             try:
                                 time_in_queue_for_item = current_time - self.checking_queue_times[item_in_torrent_group['id']]
@@ -841,11 +846,15 @@ class CheckingQueue:
                                         logging.error(f"Failed to fetch updated data for item {item_in_torrent_group['id']} after successful local check. Skipping media server update.")
                                 else:
                                         logging.debug(f"Fetched updated data for item {item_in_torrent_group['id']} before media server update.")
-                                        if get_setting('Debug', 'emby_jellyfin_url', default=False):
-                                            emby_update_item(dict(updated_item_data))
-                                        elif get_setting('File Management', 'plex_url_for_symlink', default=False):
-                                            plex_update_item(dict(updated_item_data))
-                                
+                                        # Collect directory for batch scan instead of scanning immediately
+                                        # This prevents Plex API spam when processing season packs
+                                        file_location = updated_item_data.get('full_path') or updated_item_data.get('location_on_disk') or updated_item_data.get('location')
+                                        if file_location:
+                                            import os
+                                            directory = os.path.dirname(file_location)
+                                            if directory:
+                                                directories_to_scan.add(directory)
+
                                 conn = get_db_connection()
                                 cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item_in_torrent_group['id'],))
                                 current_state_row = cursor.fetchone()
@@ -862,10 +871,23 @@ class CheckingQueue:
                                     queue_manager.move_to_collected(item_in_torrent_group, "Checking", skip_notification=True)
                                 else:
                                     logging.error(f"Item {item_in_torrent_group['id']} processed locally but seems missing from DB. Cannot confirm final state.")
-                            else: 
+                            else:
                                 logging.debug(f"Local file not found yet for item {item_in_torrent_group['id']}. It might appear later.")
                                 items_to_scan.append(item_in_torrent_group)
-                        
+
+                        # Batch media server update - scan each unique directory ONCE after processing all items
+                        # This dramatically reduces Plex API calls for season packs (e.g., 20 episodes -> 1 scan instead of 20)
+                        if directories_to_scan:
+                            logging.info(f"[CheckingQueue] Batch media server update: {len(directories_to_scan)} unique directories to scan")
+                            for directory in directories_to_scan:
+                                if use_jellyfin:
+                                    # For Jellyfin, create a minimal item dict with the directory
+                                    emby_update_item({'full_path': directory, 'location_on_disk': directory})
+                                elif use_plex:
+                                    # For Plex, create a minimal item dict with the directory
+                                    plex_update_item({'full_path': directory, 'location_on_disk': directory})
+                            logging.info(f"[CheckingQueue] Batch media server update complete")
+
                         if items_to_scan:
                             logging.info("Full library scan disabled for now")
                     # --- End of restored Symlinked/Local processing logic ---
