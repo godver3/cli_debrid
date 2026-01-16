@@ -75,6 +75,11 @@ def handle_rclone_file(file_path: str) -> Dict[str, Any]:
         if matched_items:
             # --- Handle items found in 'Checking' state ---
             all_items_processed_successfully = True # Track success for *this specific file path*
+            # Collect unique directories for batch Plex scan (prevents API spam)
+            directories_to_scan = set()
+            use_jellyfin = get_setting('Debug', 'emby_jellyfin_url', default=False)
+            use_plex = get_setting('File Management', 'plex_url_for_symlink', default=False)
+
             for item_dict in matched_items:
                 item_id = item_dict.get('id', 'Unknown')
                 logging.info(f"[RcloneProcessing] Processing matched 'Checking' item {item_id} for file '{filename}'")
@@ -97,21 +102,30 @@ def handle_rclone_file(file_path: str) -> Dict[str, Any]:
                 if item_processing_successful:
                     logging.info(f"[RcloneProcessing] Successfully processed item {item_id} via check_local_file_for_item.")
                     processed_item_ids.append(item_id)
-                    # --- EDIT: Add Media Server Updates Here ---
-                    # Check for Plex or Emby/Jellyfin configuration and update accordingly
-                    # Use item_dict which is the full dictionary for the processed item
-                    if get_setting('Debug', 'emby_jellyfin_url', default=False):
-                        logging.info(f"[RcloneProcessing] Updating Emby/Jellyfin for item {item_id} after check_local_file_for_item.")
-                        emby_update_item(item_dict) # Pass the item dictionary
-                    elif get_setting('File Management', 'plex_url_for_symlink', default=False):
-                        logging.info(f"[RcloneProcessing] Updating Plex for item {item_id} after check_local_file_for_item.")
-                        plex_update_item(item_dict) # Pass the item dictionary
-                    # --- END EDIT ---
+                    # Collect directory for batch scan instead of scanning immediately
+                    # This prevents Plex API spam when multiple items share the same file
+                    updated_item = get_media_item_by_id(item_id)
+                    if updated_item:
+                        file_location = updated_item.get('full_path') or updated_item.get('location_on_disk') or updated_item.get('location')
+                        if file_location:
+                            directory = os.path.dirname(file_location)
+                            if directory:
+                                directories_to_scan.add(directory)
                 else:
                     logging.error(f"[RcloneProcessing] check_local_file_for_item failed for item {item_id}. Item may remain in Checking state.")
                     # If even one item fails processing via check_local_file_for_item,
                     # we might want to keep the path in the queue for retry.
                     all_items_processed_successfully = False
+
+            # Batch media server update - scan each unique directory ONCE after processing all items
+            if directories_to_scan and processed_item_ids:
+                logging.info(f"[RcloneProcessing] Batch media server update: {len(directories_to_scan)} unique directories to scan")
+                for directory in directories_to_scan:
+                    if use_jellyfin:
+                        emby_update_item({'full_path': directory, 'location_on_disk': directory})
+                    elif use_plex:
+                        plex_update_item({'full_path': directory, 'location_on_disk': directory})
+                logging.info(f"[RcloneProcessing] Batch media server update complete")
 
             # Determine overall success for this path based on processing all matched items
             overall_success = all_items_processed_successfully

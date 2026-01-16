@@ -2043,6 +2043,11 @@ def delete_show(imdb_id):
             logging.info(f"[DELETE_SHOW] Content source removal result: {content_source_result.get('message')}")
 
         # Handle physical cleanup layers (Plex, files, debrid, symlinks, cache)
+        # Get show title from first episode for Plex content-level deletion
+        show_title = episodes[0].get('title') if episodes else None
+        # tmdb_id falls back to imdb_id if not available
+        show_tmdb_id = (episodes[0].get('tmdb_id') or imdb_id) if episodes else imdb_id
+
         debrid_provider = get_debrid_provider()
         deletion_manager = DeletionManager(debrid_provider=debrid_provider)
         result = deletion_manager.delete_multiple_items(
@@ -2056,7 +2061,12 @@ def delete_show(imdb_id):
             clear_cache=clear_cache,
             remove_from_content_source=False,  # Already handled above
             force_delete_parent_folder=True,  # Whole show delete - remove show folder
-            skip_database=True  # We'll handle database ourselves based on auto_ghostlist
+            skip_database=True,  # We'll handle database ourselves based on auto_ghostlist
+            # Plex content-level deletion params - deletes whole show in 1 API call
+            plex_deletion_type='show',
+            plex_content_title=show_title,
+            plex_imdb_id=imdb_id,
+            plex_tmdb_id=show_tmdb_id
         )
 
         logging.info(f"[DELETE_SHOW] Physical cleanup completed: {result.get('deleted_count', 0)} items processed")
@@ -2170,8 +2180,8 @@ def delete_show(imdb_id):
         else:
             layers_executed.append('Database (Deleted)')
 
-        # Media Server - only if actually removed from a configured server
-        media_server_removed = any(
+        # Media Server - check for content-level deletion (plex_deleted flag) or per-item removal
+        media_server_removed = result.get('plex_deleted', False) or any(
             r.get('media_server_removed') and r.get('media_server_type', 'none') != 'none'
             for r in result.get('results', [])
         )
@@ -2195,11 +2205,16 @@ def delete_show(imdb_id):
             else:
                 layers_skipped.append({'layer': 'Filesystem', 'reason': 'No files found'})
 
-        # Debrid - check if actually removed
-        debrid_removed = any(r.get('debrid_removed', False) for r in result.get('results', []))
+        # Debrid - check for batch removal (debrid_removed flag) or per-item removal
+        debrid_removed = result.get('debrid_removed', False) or any(r.get('debrid_removed', False) for r in result.get('results', []))
         if delete_from_debrid:
             if debrid_removed:
-                layers_executed.append('Debrid')
+                # Show count if available from batch removal
+                torrent_count = result.get('debrid_torrents_removed', 0)
+                if torrent_count > 0:
+                    layers_executed.append(f'Debrid ({torrent_count} torrent{"s" if torrent_count != 1 else ""})')
+                else:
+                    layers_executed.append('Debrid')
             else:
                 # Check if debrid provider is available
                 debrid_provider = get_debrid_provider()
@@ -2331,6 +2346,9 @@ def delete_movie(imdb_id):
             logging.info(f"[DELETE_MOVIE] Content source removal result: {content_source_result.get('message')}")
 
         # Handle physical cleanup layers (Plex, files, debrid, symlinks, cache)
+        # tmdb_id falls back to imdb_id if not available
+        movie_tmdb_id = movie.get('tmdb_id') or imdb_id
+
         debrid_provider = get_debrid_provider()
         deletion_manager = DeletionManager(debrid_provider=debrid_provider)
         result = deletion_manager.delete_multiple_items(
@@ -2344,7 +2362,12 @@ def delete_movie(imdb_id):
             clear_cache=clear_cache,
             remove_from_content_source=False,  # Already handled above
             force_delete_parent_folder=True,  # Whole movie delete - remove movie folder
-            skip_database=True  # We'll handle database ourselves based on auto_ghostlist
+            skip_database=True,  # We'll handle database ourselves based on auto_ghostlist
+            # Plex content-level deletion params - deletes whole movie in 1 API call
+            plex_deletion_type='movie',
+            plex_content_title=movie_title,
+            plex_imdb_id=imdb_id,
+            plex_tmdb_id=movie_tmdb_id
         )
 
         logging.info(f"[DELETE_MOVIE] Physical cleanup completed: {result.get('deleted_count', 0)} items processed")
@@ -2413,8 +2436,8 @@ def delete_movie(imdb_id):
         else:
             layers_executed.append('Database (Deleted)')
 
-        # Media Server - only if actually removed from a configured server
-        media_server_removed = any(
+        # Media Server - check for content-level deletion (plex_deleted flag) or per-item removal
+        media_server_removed = result.get('plex_deleted', False) or any(
             r.get('media_server_removed') and r.get('media_server_type', 'none') != 'none'
             for r in result.get('results', [])
         )
@@ -2437,11 +2460,16 @@ def delete_movie(imdb_id):
             else:
                 layers_skipped.append({'layer': 'Filesystem', 'reason': 'No files found'})
 
-        # Debrid - check if actually removed
-        debrid_removed = any(r.get('debrid_removed', False) for r in result.get('results', []))
+        # Debrid - check for batch removal (debrid_removed flag) or per-item removal
+        debrid_removed = result.get('debrid_removed', False) or any(r.get('debrid_removed', False) for r in result.get('results', []))
         if delete_from_debrid:
             if debrid_removed:
-                layers_executed.append('Debrid')
+                # Show count if available from batch removal
+                torrent_count = result.get('debrid_torrents_removed', 0)
+                if torrent_count > 0:
+                    layers_executed.append(f'Debrid ({torrent_count} torrent{"s" if torrent_count != 1 else ""})')
+                else:
+                    layers_executed.append('Debrid')
             else:
                 debrid_provider = get_debrid_provider()
                 if not debrid_provider:
@@ -2639,8 +2667,8 @@ def delete_movie_files():
         # else:
         layers_executed.append('Database (Deleted)')
 
-        # Media Server
-        media_server_removed = any(
+        # Media Server - check for content-level deletion (plex_deleted flag) or per-item removal
+        media_server_removed = result.get('plex_deleted', False) or any(
             r.get('media_server_removed') and r.get('media_server_type', 'none') != 'none'
             for r in result.get('results', [])
         )
@@ -2662,11 +2690,16 @@ def delete_movie_files():
             else:
                 layers_skipped.append({'layer': 'Filesystem', 'reason': 'No files found'})
 
-        # Debrid
-        debrid_removed = any(r.get('debrid_removed') for r in result.get('results', []))
+        # Debrid - check for batch removal (debrid_removed flag) or per-item removal
+        debrid_removed = result.get('debrid_removed', False) or any(r.get('debrid_removed') for r in result.get('results', []))
         if delete_from_debrid:
             if debrid_removed:
-                layers_executed.append('Debrid')
+                # Show count if available from batch removal
+                torrent_count = result.get('debrid_torrents_removed', 0)
+                if torrent_count > 0:
+                    layers_executed.append(f'Debrid ({torrent_count} torrent{"s" if torrent_count != 1 else ""})')
+                else:
+                    layers_executed.append('Debrid')
             else:
                 if not debrid_provider:
                     layers_skipped.append({'layer': 'Debrid', 'reason': 'Debrid provider not configured'})
@@ -2772,6 +2805,11 @@ def delete_season(imdb_id, season_number):
             logging.warning(f"[DELETE_SEASON] Content source removal requested but not supported for season deletion - use delete_show instead")
 
         # Handle physical cleanup layers (Plex, files, debrid, symlinks, cache)
+        # Get show title from first episode for Plex content-level deletion
+        show_title = episodes[0].get('title') if episodes else None
+        # tmdb_id falls back to imdb_id if not available
+        show_tmdb_id = (episodes[0].get('tmdb_id') or imdb_id) if episodes else imdb_id
+
         debrid_provider = get_debrid_provider()
         deletion_manager = DeletionManager(debrid_provider=debrid_provider)
         result = deletion_manager.delete_multiple_items(
@@ -2784,7 +2822,13 @@ def delete_season(imdb_id, season_number):
             delete_symlinks=delete_symlinks,
             clear_cache=clear_cache,
             remove_from_content_source=False,  # Content source removal only in delete_show
-            skip_database=True  # We'll handle database ourselves based on auto_ghostlist
+            skip_database=True,  # We'll handle database ourselves based on auto_ghostlist
+            # Plex content-level deletion params - deletes whole season in 1 API call
+            plex_deletion_type='season',
+            plex_content_title=show_title,
+            plex_imdb_id=imdb_id,
+            plex_tmdb_id=show_tmdb_id,
+            plex_season_number=season_number
         )
 
         logging.info(f"[DELETE_SEASON] Physical cleanup completed: {result.get('deleted_count', 0)} items processed")
@@ -2850,8 +2894,8 @@ def delete_season(imdb_id, season_number):
         # else:
         layers_executed.append('Database (Deleted)')
 
-        # Media Server - only if actually removed from a configured server
-        media_server_removed = any(
+        # Media Server - check for content-level deletion (plex_deleted flag) or per-item removal
+        media_server_removed = result.get('plex_deleted', False) or any(
             r.get('media_server_removed') and r.get('media_server_type', 'none') != 'none'
             for r in result.get('results', [])
         )
@@ -2874,11 +2918,16 @@ def delete_season(imdb_id, season_number):
             else:
                 layers_skipped.append({'layer': 'Filesystem', 'reason': 'No files found'})
 
-        # Debrid - check if actually removed
-        debrid_removed = any(r.get('debrid_removed', False) for r in result.get('results', []))
+        # Debrid - check for batch removal (debrid_removed flag) or per-item removal
+        debrid_removed = result.get('debrid_removed', False) or any(r.get('debrid_removed', False) for r in result.get('results', []))
         if delete_from_debrid:
             if debrid_removed:
-                layers_executed.append('Debrid')
+                # Show count if available from batch removal
+                torrent_count = result.get('debrid_torrents_removed', 0)
+                if torrent_count > 0:
+                    layers_executed.append(f'Debrid ({torrent_count} torrent{"s" if torrent_count != 1 else ""})')
+                else:
+                    layers_executed.append('Debrid')
             else:
                 # Check if debrid provider is available
                 debrid_provider = get_debrid_provider()
@@ -3054,8 +3103,8 @@ def delete_episode(imdb_id, season_number, episode_number):
         # else:
         layers_executed.append('Database (Deleted)')
 
-        # Media Server
-        media_server_removed = any(
+        # Media Server - check for content-level deletion (plex_deleted flag) or per-item removal
+        media_server_removed = result.get('plex_deleted', False) or any(
             r.get('media_server_removed') and r.get('media_server_type', 'none') != 'none'
             for r in result.get('results', [])
         )
@@ -3077,11 +3126,16 @@ def delete_episode(imdb_id, season_number, episode_number):
             else:
                 layers_skipped.append({'layer': 'Filesystem', 'reason': 'No files found'})
 
-        # Debrid
-        debrid_removed = any(r.get('debrid_removed', False) for r in result.get('results', []))
+        # Debrid - check for batch removal (debrid_removed flag) or per-item removal
+        debrid_removed = result.get('debrid_removed', False) or any(r.get('debrid_removed', False) for r in result.get('results', []))
         if delete_from_debrid:
             if debrid_removed:
-                layers_executed.append('Debrid')
+                # Show count if available from batch removal
+                torrent_count = result.get('debrid_torrents_removed', 0)
+                if torrent_count > 0:
+                    layers_executed.append(f'Debrid ({torrent_count} torrent{"s" if torrent_count != 1 else ""})')
+                else:
+                    layers_executed.append('Debrid')
             else:
                 debrid_provider = get_debrid_provider()
                 if not debrid_provider:
