@@ -37,6 +37,10 @@ class PerformanceMonitor:
         self.process = psutil.Process()
         self.last_cpu_measure_time = None
         self.cpu_measure_interval = 1.0  # seconds
+
+        # Prime the CPU percent measurement - first call always returns 0.0
+        # because it needs a baseline. This ensures subsequent calls return real values.
+        self.process.cpu_percent(interval=None)
         
         # Store memory snapshots (timestamp, snapshot)
         self.memory_snapshots = []
@@ -154,14 +158,13 @@ class PerformanceMonitor:
     def _log_basic_metrics(self):
         """Log basic CPU and memory metrics"""
         try:
-            process = psutil.Process(os.getpid())
-
-            # Get CPU info - non-blocking (uses time since last call)
-            cpu_percent = process.cpu_percent(interval=None)
-            cpu_times = process.cpu_times()
+            # Use self.process to maintain CPU baseline between calls
+            # Creating a new Process() each time would reset the baseline and return 0%
+            cpu_percent = self.process.cpu_percent(interval=None)
+            cpu_times = self.process.cpu_times()
             
             # Get memory info with deltas
-            memory_info = process.memory_info()
+            memory_info = self.process.memory_info()
             virtual_memory = psutil.virtual_memory()
             
             # Calculate actual memory usage percentage without cache

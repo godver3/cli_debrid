@@ -888,10 +888,14 @@ async def get_recent_from_plex(scan_all_libraries: bool = False):
 
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
 
+        # FIX: Cache show metadata to avoid fetching the same show multiple times
+        # This prevents fetching the same show 100 times for 100 episodes of that show
+        show_metadata_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+
         async with aiohttp.ClientSession() as session:
             libraries_url = f"{plex_url}/library/sections"
             libraries_data = await fetch_data(session, libraries_url, headers, semaphore)
-            
+
             libraries_by_key = {str(library['key']): library['title'] for library in libraries_data['MediaContainer']['Directory']}
             all_libraries = {library['title']: str(library['key']) for library in libraries_data['MediaContainer']['Directory']}
 
@@ -954,33 +958,57 @@ async def get_recent_from_plex(scan_all_libraries: bool = False):
                                 if not show_key:
                                      logger.warning(f"Skipping recent season '{item_title_log}' due to missing parentRatingKey.")
                                      continue
-                                show_metadata_url = f"{plex_url}/library/metadata/{show_key}?includeGuids=1"
-                                show_metadata = await fetch_data(session, show_metadata_url, headers, semaphore)
-                                if 'MediaContainer' in show_metadata and 'Metadata' in show_metadata['MediaContainer']:
-                                    show_full_metadata = show_metadata['MediaContainer']['Metadata'][0]
-                                    season_episodes = await process_recent_season(item, show_full_metadata, session, plex_url, headers, semaphore)
-                                    for episode_list in season_episodes:
-                                        processed_episodes.extend(episode_list)
+                                # FIX: Use cached show metadata if available
+                                if show_key in show_metadata_cache:
+                                    show_full_metadata = show_metadata_cache[show_key]
+                                    if show_full_metadata is None:
+                                        logger.warning(f"Skipping season '{item_title_log}' - show metadata previously failed to fetch")
+                                        continue
                                 else:
-                                    logger.warning(f"Could not fetch show metadata for recent season: {item_title_log}")
+                                    show_metadata_url = f"{plex_url}/library/metadata/{show_key}?includeGuids=1"
+                                    show_metadata = await fetch_data(session, show_metadata_url, headers, semaphore)
+                                    if 'MediaContainer' in show_metadata and 'Metadata' in show_metadata['MediaContainer']:
+                                        show_full_metadata = show_metadata['MediaContainer']['Metadata'][0]
+                                        show_metadata_cache[show_key] = show_full_metadata
+                                    else:
+                                        logger.warning(f"Could not fetch show metadata for recent season: {item_title_log}")
+                                        show_metadata_cache[show_key] = None
+                                        continue
+                                season_episodes = await process_recent_season(item, show_full_metadata, session, plex_url, headers, semaphore)
+                                for episode_list in season_episodes:
+                                    processed_episodes.extend(episode_list)
                             elif item_type == 'episode':
                                 show_key = item.get('grandparentRatingKey')
                                 if not show_key:
                                      logger.warning(f"Skipping recent episode '{item_title_log}' due to missing grandparentRatingKey.")
                                      continue
-                                show_metadata_url = f"{plex_url}/library/metadata/{show_key}?includeGuids=1"
-                                show_metadata = await fetch_data(session, show_metadata_url, headers, semaphore)
-                                if 'MediaContainer' in show_metadata and 'Metadata' in show_metadata['MediaContainer']:
-                                    show_full_metadata = show_metadata['MediaContainer']['Metadata'][0]
-                                    show_imdb_id, show_tmdb_id = extract_show_ids(show_full_metadata)
-                                    episode_data = await process_recent_episode(item, show_full_metadata['title'], item.get('parentIndex'), show_imdb_id, show_tmdb_id, show_full_metadata)
-                                    processed_episodes.extend(episode_data)
+                                # FIX: Use cached show metadata if available
+                                if show_key in show_metadata_cache:
+                                    show_full_metadata = show_metadata_cache[show_key]
+                                    if show_full_metadata is None:
+                                        logger.warning(f"Skipping episode '{item_title_log}' - show metadata previously failed to fetch")
+                                        continue
                                 else:
-                                    logger.warning(f"Could not fetch show metadata for recent episode: {item_title_log}")
+                                    show_metadata_url = f"{plex_url}/library/metadata/{show_key}?includeGuids=1"
+                                    show_metadata = await fetch_data(session, show_metadata_url, headers, semaphore)
+                                    if 'MediaContainer' in show_metadata and 'Metadata' in show_metadata['MediaContainer']:
+                                        show_full_metadata = show_metadata['MediaContainer']['Metadata'][0]
+                                        show_metadata_cache[show_key] = show_full_metadata
+                                    else:
+                                        logger.warning(f"Could not fetch show metadata for recent episode: {item_title_log}")
+                                        show_metadata_cache[show_key] = None
+                                        continue
+                                show_imdb_id, show_tmdb_id = extract_show_ids(show_full_metadata)
+                                episode_data = await process_recent_episode(item, show_full_metadata['title'], item.get('parentIndex'), show_imdb_id, show_tmdb_id, show_full_metadata)
+                                processed_episodes.extend(episode_data)
                             else:
                                 logger.debug(f"Skipping non-movie/season/episode recent item: {item_title_log} (Type: {item_type})")
                         except Exception as process_err:
                              logger.error(f"Error processing recent item '{item_title_log}' (Type: {item_type}): {process_err}", exc_info=True)
+
+            # Log cache effectiveness
+            if show_metadata_cache:
+                logger.info(f"[RecentScan] Show metadata cache: {len(show_metadata_cache)} unique shows cached (avoided redundant API calls)")
 
         end_time = time.time()
         total_time = end_time - start_time

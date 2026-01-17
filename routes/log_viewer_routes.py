@@ -368,7 +368,16 @@ def get_recent_logs(n, since='', level='all'):
     
     return parsed_logs
 
-def should_include_log(parsed_line, since='', level='all'):
+def should_include_log(parsed_line, since='', level='all', seen_timestamps=None):
+    """
+    Check if a log entry should be included based on timestamp and level filters.
+
+    Args:
+        parsed_line: The parsed log entry dict
+        since: Only include logs after this timestamp
+        level: Minimum log level to include ('all' for all levels)
+        seen_timestamps: Set of (timestamp, message_hash) tuples already sent to avoid duplicates
+    """
     if not parsed_line:
         return False
 
@@ -376,7 +385,9 @@ def should_include_log(parsed_line, since='', level='all'):
         try:
             log_time = datetime.fromisoformat(parsed_line['timestamp'])
             since_dt = datetime.fromisoformat(since)
-            if log_time <= since_dt:
+            # Use strict < comparison - logs with exact same timestamp will be
+            # deduplicated using seen_timestamps set
+            if log_time < since_dt:
                 return False
         except ValueError:
             pass  # If we can't parse the timestamp, we'll include the log
@@ -423,28 +434,52 @@ def stream_logs():
     def generate():
         last_timestamp = request.args.get('since', '')
         level = request.args.get('level', 'all').lower()
-        # Get client requested interval with bounds, default to 100ms instead of 200ms
-        # interval = max(0.05, min(2.0, float(request.args.get('interval', '0.1'))))
-        # Hard code to 50ms
-        interval = 0.05
+        # Increase polling interval to 500ms (was 50ms) to reduce CPU usage
+        # 500ms is still responsive enough for log viewing while being 10x more efficient
+        interval = 0.5
         first_batch = True
-        #logging.debug(f"Starting log stream with interval {interval}s, level {level}")
+
+        # Track seen log entries to prevent duplicates
+        # Store hash of (timestamp + message) for logs we've already sent
+        seen_log_hashes = set()
+        # Limit the size of seen_log_hashes to prevent memory growth
+        MAX_SEEN_HASHES = 5000
 
         # Pre-initialize json encoder for performance
         json_encoder = json.JSONEncoder()
-        
+
         while True:
             try:
                 start_time = time.time()
-                
+
                 # On first connection, get all logs up to MAX_LOGS
                 if first_batch:
                     logs = get_recent_logs(1000, level=level)
                     first_batch = False
-                    #logging.debug(f"First batch: Found {len(logs)} logs")
+                    # Populate seen_log_hashes with initial logs
+                    for log in logs:
+                        log_hash = hash((log['timestamp'], log['message'][:100]))
+                        seen_log_hashes.add(log_hash)
                 else:
                     # After first batch, only get new logs since last timestamp
-                    logs = get_recent_logs(1000, since=last_timestamp, level=level)
+                    raw_logs = get_recent_logs(1000, since=last_timestamp, level=level)
+
+                    # Filter out duplicates using seen_log_hashes
+                    logs = []
+                    for log in raw_logs:
+                        log_hash = hash((log['timestamp'], log['message'][:100]))
+                        if log_hash not in seen_log_hashes:
+                            logs.append(log)
+                            seen_log_hashes.add(log_hash)
+
+                    # Prune seen_log_hashes if it gets too large
+                    if len(seen_log_hashes) > MAX_SEEN_HASHES:
+                        # Keep only the most recent half
+                        seen_log_hashes.clear()
+                        # Re-add hashes from current logs
+                        for log in logs:
+                            log_hash = hash((log['timestamp'], log['message'][:100]))
+                            seen_log_hashes.add(log_hash)
 
                 # Always send data, even if empty, to keep connection alive
                 data = json_encoder.encode({
@@ -452,16 +487,16 @@ def stream_logs():
                     'serverTime': start_time  # Use start time for more accurate latency
                 })
                 yield f"data: {data}\n\n"
-                
+
                 if logs:
                     last_timestamp = logs[-1]['timestamp']
-                
+
                 # Calculate how long we should sleep
                 elapsed = time.time() - start_time
                 sleep_time = max(0, interval - elapsed)  # Don't sleep if we've already taken longer than interval
                 if sleep_time > 0:
                     time.sleep(sleep_time)
-                    
+
             except Exception as e:
                 logging.error(f"Error in stream_logs: {str(e)}")
                 # Send an empty array on error to keep connection alive
@@ -469,7 +504,7 @@ def stream_logs():
                 time.sleep(interval)
 
     return Response(
-        stream_with_context(generate()), 
+        stream_with_context(generate()),
         mimetype='text/event-stream',
         headers={
             'Cache-Control': 'no-cache',
