@@ -5558,7 +5558,24 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
     logging.warning(f"Failed to retrieve or process collected content from {mode}.")
     return None
 
+# FIX: Debounce for Plex recent scan to prevent API spam
+# Track the last time get_and_add_recent_collected_from_plex was called
+_last_plex_recent_scan_time = None
+_PLEX_RECENT_SCAN_COOLDOWN_SECONDS = 300  # 5 minutes minimum between scans
+
 def get_and_add_recent_collected_from_plex():
+    global _last_plex_recent_scan_time
+    from datetime import datetime
+
+    # FIX: Debounce - skip if scan was run recently
+    if _last_plex_recent_scan_time is not None:
+        elapsed = (datetime.now() - _last_plex_recent_scan_time).total_seconds()
+        if elapsed < _PLEX_RECENT_SCAN_COOLDOWN_SECONDS:
+            logging.debug(f"[PlexRecentScan] Debounce: Skipping scan, last ran {elapsed:.0f}s ago (cooldown: {_PLEX_RECENT_SCAN_COOLDOWN_SECONDS}s)")
+            return None
+
+    _last_plex_recent_scan_time = datetime.now()
+
     collected_content = None
     mode = get_setting('File Management', 'file_collection_management')
     logging.info(f"Getting recently added content from {mode}...")
