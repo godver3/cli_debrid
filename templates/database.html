@@ -230,7 +230,7 @@
     {% endif %}
 </div>
 
-<script src="{{ url_for('static', filename='js/loading.js') }}"></script>
+<script src="{{ url_for('static', filename='js/loading.js') }}?v=0726"></script>
 
 <script>
 // Early redirect script to load page with localStorage settings
@@ -1360,9 +1360,13 @@ document.addEventListener('DOMContentLoaded', function() {
     function setUpdatingContent(isUpdating) {
         if (isUpdating) {
             // Show loading with progress - timer will start automatically
-            Loading.show('Loading...', null, true, false);
+            if (Loading && typeof Loading.show === 'function') {
+                Loading.show('Loading...', null, true, false);
+            }
         } else {
-            Loading.hide();
+            if (Loading && typeof Loading.hide === 'function') {
+                Loading.hide();
+            }
         }
     }
 
@@ -1546,7 +1550,9 @@ document.addEventListener('DOMContentLoaded', function() {
         setUpdatingContent(true);
 
         fetchWithProgress(fetchUrl, (progress) => {
-            Loading.setProgress(progress);
+            if (Loading && typeof Loading.setProgress === 'function') {
+                Loading.setProgress(progress);
+            }
         })
             .then(data => {
                 if (data.error) { // Should be caught by the !response.ok above, but good as a fallback
@@ -1940,7 +1946,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function deleteItem(itemId, blacklistItem) {
-        Loading.show('Deleting item...', null, true, false);
+        if (Loading && typeof Loading.show === 'function') {
+            Loading.show('Deleting item...', null, true, false);
+        }
         fetch('{{ url_for('database.delete_item') }}', {
             method: 'POST',
             headers: {
@@ -2036,12 +2044,16 @@ document.addEventListener('DOMContentLoaded', function() {
             showPopup(popupOptions);
         })
         .finally(() => {
-            Loading.hide();
+            if (Loading && typeof Loading.hide === 'function') {
+                Loading.hide();
+            }
         });
     }
 
     function rescrapeItem(itemId) {
-        Loading.show('Rescraping item...', null, true, false);
+        if (Loading && typeof Loading.show === 'function') {
+            Loading.show('Rescraping item...', null, true, false);
+        }
         fetch('{{ url_for('debug.rescrape_item') }}', {
             method: 'POST',
             headers: {
@@ -2147,7 +2159,9 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         })
         .finally(() => {
-            Loading.hide();
+            if (Loading && typeof Loading.hide === 'function') {
+                Loading.hide();
+            }
         });
     }
 
@@ -2201,7 +2215,9 @@ document.addEventListener('DOMContentLoaded', function() {
             message: `Are you sure you want to change the version of ${selectedItems.length} item(s) to ${selectedVersion}?`,
             title: 'Confirm Version Change',
             onConfirm: async () => {
-                Loading.show('Changing versions...', null, false, false);
+                if (Loading && typeof Loading.show === 'function') {
+                    Loading.show('Changing versions...', null, false, false);
+                }
                 try {
                     const result = await processBatchedItems(selectedItems, 'change_version', selectedVersion);
                     showPopup({
@@ -2220,7 +2236,9 @@ document.addEventListener('DOMContentLoaded', function() {
                         title: 'Error',
                     });
                 } finally {
-                    Loading.hide();
+                    if (Loading && typeof Loading.hide === 'function') {
+                        Loading.hide();
+                    }
                 }
             },
         });
@@ -2300,13 +2318,19 @@ document.addEventListener('DOMContentLoaded', function() {
         let batches = Math.ceil(items.length / CONFIG.BATCH_SIZE);
         let databaseLockedInAnyBatch = false;
 
-        Loading.show(`Processing items in ${batches} batches...`, null, false, false);
+        if (Loading && typeof Loading.show === 'function') {
+            Loading.show(`Processing items in ${batches} batches...`, null, false, false);
+        }
 
         for (let i = 0; i < items.length; i += CONFIG.BATCH_SIZE) {
             const batchNumber = Math.floor(i / CONFIG.BATCH_SIZE) + 1;
             const progress = Math.round((batchNumber / batches) * 100);
-            Loading.setProgress(progress);
-            Loading.updateMessage(`Processing batch ${batchNumber}/${batches}...`);
+            if (Loading && typeof Loading.setProgress === 'function') {
+                Loading.setProgress(progress);
+            }
+            if (Loading && typeof Loading.updateMessage === 'function') {
+                Loading.updateMessage(`Processing batch ${batchNumber}/${batches}...`);
+            }
 
             const batch = items.slice(i, i + CONFIG.BATCH_SIZE);
             const formData = new FormData();
@@ -2383,21 +2407,25 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        Loading.hide(); 
+        if (Loading && typeof Loading.hide === 'function') {
+            Loading.hide();
+        }
 
         return {
-            success: errors.length === 0 && !databaseLockedInAnyBatch, 
-            warning: errors.length > 0 && totalProcessed > 0, 
-            message: errors.length > 0 
+            success: errors.length === 0 && !databaseLockedInAnyBatch,
+            warning: errors.length > 0 && totalProcessed > 0,
+            message: errors.length > 0
                 ? `Processed ${totalProcessed}/${items.length} items. Batch errors: ${errors.join('; ')}`
                 : `Successfully processed ${totalProcessed} items`,
-            database_locked: databaseLockedInAnyBatch 
+            database_locked: databaseLockedInAnyBatch
         };
     }
 
     // --- Helper to create the main logic for bulk actions to enable retry ---
     async function executeBulkAction(selectedItems, actionType, targetQueueOrBlacklist, confirmationTitle, successMessagePrefix) {
-        Loading.show('Processing...', null, false, false); // Show progress for bulk operations
+        if (Loading && typeof Loading.show === 'function') {
+            Loading.show('Processing...', null, false, false); // Show progress for bulk operations
+        }
         try {
             const result = await processBatchedItems(selectedItems, actionType, targetQueueOrBlacklist);
             
@@ -2456,7 +2484,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
             }
         } finally {
-            Loading.hide();
+            if (Loading && typeof Loading.hide === 'function') {
+                Loading.hide();
+            }
         }
     }
 
@@ -2664,7 +2694,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
 <script>
     // Initialize loading overlay globally
-    Loading.init();
+    if (typeof Loading !== 'undefined' && typeof Loading.init === 'function') {
+        Loading.init();
+    }
 
     // Stats panel functionality (separate from the module script)
     document.addEventListener('DOMContentLoaded', function() {
