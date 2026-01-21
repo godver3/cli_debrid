@@ -21,11 +21,12 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-MAX_CONCURRENT_REQUESTS = 50
-OPTIMAL_PAGE_SIZE = 2500
+MAX_CONCURRENT_REQUESTS = 50  # Back to original but with small delays between batches
+OPTIMAL_PAGE_SIZE = 500  # Reduced from 2500 for gentler scanning
 CHUNK_SIZE = 10
 MAX_RETRIES = 3
 RETRY_DELAY = 1
+BATCH_DELAY = 0.2  # Small delay between batch fetches to reduce Plex CPU spikes
 
 def process_library_names(library_names: str, all_libraries: dict, libraries_by_key: dict) -> list:
     """
@@ -176,20 +177,30 @@ async def get_library_contents(session: aiohttp.ClientSession, plex_url: str, li
 
     logger.info(f"Library {library_key}{type_str}: totalSize={total_size}, remaining pages={len(remaining_offsets)} (page_size={effective_page_size})")
 
-    tasks = []
-    for offset in remaining_offsets:
-        hdr = headers.copy()
-        hdr['X-Plex-Container-Start'] = str(offset)
-        hdr['X-Plex-Container-Size'] = str(effective_page_size)
-        tasks.append(fetch_data(session, base_url, hdr, semaphore))
+    # Process pages in small batches with delays to reduce Plex CPU load
+    if remaining_offsets:
+        batch_size = MAX_CONCURRENT_REQUESTS  # Process this many pages at a time
+        total_batches = (len(remaining_offsets) + batch_size - 1) // batch_size
+        logger.info(f"Fetching {len(remaining_offsets)} additional pages from library {library_key}{type_str} in {total_batches} batches of {batch_size}")
 
-    if tasks:
-        logger.info(f"Fetching {len(tasks)} additional pages from library {library_key}{type_str} concurrently (<= {semaphore._value} at a time)")
-        results = await asyncio.gather(*tasks)
-        for page_idx, page in enumerate(results, start=1):
-            meta = page.get('MediaContainer', {}).get('Metadata') or []
-            all_metadata.extend(meta)
-            logger.debug(f"Concurrent page {page_idx}/{len(tasks)} for library {library_key}{type_str} returned {len(meta)} items")
+        for batch_num, batch_start in enumerate(range(0, len(remaining_offsets), batch_size), start=1):
+            batch_offsets = remaining_offsets[batch_start:batch_start + batch_size]
+            tasks = []
+            for offset in batch_offsets:
+                hdr = headers.copy()
+                hdr['X-Plex-Container-Start'] = str(offset)
+                hdr['X-Plex-Container-Size'] = str(effective_page_size)
+                tasks.append(fetch_data(session, base_url, hdr, semaphore))
+
+            results = await asyncio.gather(*tasks)
+            for page_idx, page in enumerate(results, start=1):
+                meta = page.get('MediaContainer', {}).get('Metadata') or []
+                all_metadata.extend(meta)
+                logger.debug(f"Batch {batch_num}/{total_batches}, page {page_idx}/{len(tasks)} for library {library_key}{type_str} returned {len(meta)} items")
+
+            # Add delay between batches to let Plex breathe
+            if batch_num < total_batches:
+                await asyncio.sleep(BATCH_DELAY)
 
     logger.info(f"Retrieved {len(all_metadata)} items in total from library {library_key}{type_str} (Concurrent Pagination)")
     return all_metadata
@@ -247,7 +258,6 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
         'season_number': season_number,
         'episode_number': episode_number,
         'year': show_year,
-        'show_year': show_year,
         'addedAt': episode_meta.get('addedAt'),
         'guid': episode_meta.get('guid'),
         'ratingKey': episode_meta.get('ratingKey'),
@@ -258,9 +268,7 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
         'episode_imdb_id': None,
         'episode_tmdb_id': None,
         'type': 'episode',
-        'genres': show_genres,
-        'thumb': show_details.get('thumb'),
-        'art': show_details.get('art')
+        'genres': show_genres
     }
            
     if 'Guid' in episode_meta:
@@ -343,17 +351,8 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
                     if 'file' in part:
                         episode_entry = base_episode_data.copy()
                         episode_entry['location'] = part['file']
-                        # Extract file size and convert to GB
-                        if 'size' in part:
-                            try:
-                                size_bytes = int(part['size'])
-                                episode_entry['size_gb'] = round(size_bytes / (1024**3), 2)
-                            except (ValueError, TypeError):
-                                episode_entry['size_gb'] = None
-                        else:
-                            episode_entry['size_gb'] = None
                         episode_entries.append(episode_entry)
-    
+
     if not episode_entries:
         ep_index_log = episode_meta.get('index', 'Unknown')
         try:
@@ -369,7 +368,7 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
 
 async def process_movies_chunk(session: aiohttp.ClientSession, plex_url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore, movies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     results = []
-    # First, fetch detailed metadata for all movies in this chunk to get Media/Part info (including size)
+    # First, fetch detailed metadata for all movies in this chunk to get Media/Part info
     detail_tasks = []
     movies_with_keys = []  # Track which movies have keys for proper mapping
 
@@ -422,9 +421,7 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
         'tmdb_id': None,
         'type': 'movie',
         'genres': filtered_genres,
-        'release_date': movie.get('originallyAvailableAt'),
-        'thumb': movie.get('thumb'),
-        'art': movie.get('art')
+        'release_date': movie.get('originallyAvailableAt')
     }
 
     if 'addedAt' not in movie:
@@ -449,22 +446,8 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
                     if 'file' in part:
                         movie_entry = movie_data.copy()
                         movie_entry['location'] = part['file']
-                        # Extract file size and convert to GB
-                        if 'size' in part:
-                            try:
-                                size_bytes = int(part['size'])
-                                movie_entry['size_gb'] = round(size_bytes / (1024**3), 2)
-                                logger.debug(f"[SizeExtract] Movie {movie_data['title']}: size_bytes={size_bytes}, size_gb={movie_entry['size_gb']}")
-                            except (ValueError, TypeError):
-                                movie_entry['size_gb'] = None
-                                logger.debug(f"[SizeExtract] Movie {movie_data['title']}: Invalid size value in part")
-                        else:
-                            movie_entry['size_gb'] = None
-                            logger.debug(f"[SizeExtract] Movie {movie_data['title']}: No 'size' key in part. Part keys: {list(part.keys())}")
                         movie_entries.append(movie_entry)
-    else:
-        logger.debug(f"[SizeExtract] Movie {movie_data['title']}: No 'Media' in movie data. Keys: {list(movie.keys())[:15]}")
-    
+
     if not movie_entries:
         logger.error(f"No filename found for movie: {movie['title']}")
     elif len(movie_entries) > 1:
@@ -747,21 +730,40 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
 
                 # First, batch fetch detailed episode metadata to get Media/Part info (including size)
                 logger.info(f"Fetching detailed metadata for {len(all_raw_episodes)} episodes to get file size info...")
-                episode_detail_tasks = []
                 episodes_with_keys = []  # Track episodes with keys for proper mapping
 
                 for episode_meta in all_raw_episodes:
                     episode_key = episode_meta.get('ratingKey')
                     if episode_key:
-                        episode_detail_tasks.append(get_detailed_episode_metadata(session, plex_url, episode_key, headers, semaphore))
                         episodes_with_keys.append(episode_meta)
 
-                if episode_detail_tasks:
-                    detailed_episodes = await asyncio.gather(*episode_detail_tasks, return_exceptions=True)
+                # Process episode detail fetches in batches with delays to reduce Plex CPU load
+                if episodes_with_keys:
+                    batch_size = MAX_CONCURRENT_REQUESTS
+                    total_batches = (len(episodes_with_keys) + batch_size - 1) // batch_size
+                    logger.info(f"Fetching details for {len(episodes_with_keys)} episodes in {total_batches} batches of {batch_size}")
+
+                    all_detailed_episodes = []
+                    for batch_num, batch_start in enumerate(range(0, len(episodes_with_keys), batch_size), start=1):
+                        batch_episodes = episodes_with_keys[batch_start:batch_start + batch_size]
+                        batch_tasks = []
+                        for episode_meta in batch_episodes:
+                            episode_key = episode_meta.get('ratingKey')
+                            batch_tasks.append(get_detailed_episode_metadata(session, plex_url, episode_key, headers, semaphore))
+
+                        batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+                        all_detailed_episodes.extend(batch_results)
+
+                        if batch_num % 100 == 0:
+                            logger.info(f"Episode detail fetch progress: {batch_num}/{total_batches} batches")
+
+                        # Add delay between batches to let Plex breathe
+                        if batch_num < total_batches:
+                            await asyncio.sleep(BATCH_DELAY)
 
                     # Merge detailed metadata back into episode_meta using proper mapping
                     for i, episode_meta in enumerate(episodes_with_keys):
-                        detailed = detailed_episodes[i]
+                        detailed = all_detailed_episodes[i]
                         if not isinstance(detailed, Exception) and detailed and 'Media' in detailed:
                             episode_meta['Media'] = detailed['Media']
                             # Debug: Log multi-file episodes
@@ -1084,11 +1086,20 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
                     if file_path:
                         movie_entry = movie_data.copy()
                         movie_entry['location'] = file_path
+                        # Extract file size and convert to GB
+                        if 'size' in part:
+                            try:
+                                size_bytes = int(part['size'])
+                                movie_entry['size_gb'] = round(size_bytes / (1024**3), 2)
+                            except (ValueError, TypeError):
+                                movie_entry['size_gb'] = None
+                        else:
+                            movie_entry['size_gb'] = None
                         movie_entries.append(movie_entry)
-    
+
     if not movie_entries:
         logger.error(f"No filename found for movie: {movie['title']}")
-    
+
     return movie_entries
 
 async def process_recent_season(season: Dict[str, Any], show: Dict[str, Any], session: aiohttp.ClientSession, plex_url: str, headers: Dict[str, str], semaphore: asyncio.Semaphore) -> List[Dict[str, Any]]:
@@ -1111,6 +1122,7 @@ async def process_recent_episode(episode: Dict[str, Any], show_title: str, seaso
     show_genres = [genre['tag'] for genre in show.get('Genre', []) if 'tag' in genre]
     filtered_genres = filter_genres(show_genres)
     episode_number = episode.get('index')
+    show_year = show.get('year')
     try:
         log_episode_number = f"{int(episode_number):02d}" if episode_number is not None else "Unknown"
     except (ValueError, TypeError):
@@ -1127,7 +1139,7 @@ async def process_recent_episode(episode: Dict[str, Any], show_title: str, seaso
         'episode_title': episode['title'],
         'season_number': season_number,
         'episode_number': episode.get('index'),
-        'year': show.get('year'),
+        'year': show_year,
         'addedAt': episode['addedAt'],
         'guid': episode.get('guid'),
         'ratingKey': episode['ratingKey'],
@@ -1140,7 +1152,6 @@ async def process_recent_episode(episode: Dict[str, Any], show_title: str, seaso
         'type': 'episode',
         'genres': filter_genres(show_genres)
     }
-    
 
     if 'Guid' in episode:
         for guid in episode['Guid']:
@@ -1158,11 +1169,20 @@ async def process_recent_episode(episode: Dict[str, Any], show_title: str, seaso
                     if file_path:
                         episode_entry = episode_data.copy()
                         episode_entry['location'] = file_path
+                        # Extract file size and convert to GB
+                        if 'size' in part:
+                            try:
+                                size_bytes = int(part['size'])
+                                episode_entry['size_gb'] = round(size_bytes / (1024**3), 2)
+                            except (ValueError, TypeError):
+                                episode_entry['size_gb'] = None
+                        else:
+                            episode_entry['size_gb'] = None
                         episode_entries.append(episode_entry)
-    
+
     if not episode_entries:
         logger.error(f"No filename found for episode: {show_title} - S{season_number:02d}E{episode.get('index', 'Unknown'):02d} - {episode['title']}")
-    
+
     return episode_entries
 
 def extract_show_ids(show_metadata):
