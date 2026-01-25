@@ -1008,6 +1008,38 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                                 additional_filename = os.path.basename(additional_source_file)
                                 logging.info(f"[MultiFile] Processing additional file: {additional_filename}")
 
+                                # For episodes, verify this is the same episode (alternate version), not a different episode
+                                if item_type == 'episode':
+                                    try:
+                                        # Use existing PTT parser to extract season/episode from filename
+                                        parsed = parse_with_ptt(additional_filename)
+                                        parsed_season = parsed.get('season')
+                                        parsed_episode = parsed.get('episode')
+
+                                        if parsed_season is None or parsed_episode is None:
+                                            logging.warning(f"[MultiFile] Could not parse episode info from filename: {additional_filename}. Skipping.")
+                                            continue
+
+                                        current_season = item.get('season_number')
+                                        current_episode = item.get('episode_number')
+
+                                        # Ensure type consistency for comparison (convert to int)
+                                        if parsed_season is not None: parsed_season = int(parsed_season)
+                                        if parsed_episode is not None: parsed_episode = int(parsed_episode)
+                                        if current_season is not None: current_season = int(current_season)
+                                        if current_episode is not None: current_episode = int(current_episode)
+
+                                        # Only process if same episode (alternate version)
+                                        if parsed_season != current_season or parsed_episode != current_episode:
+                                            logging.debug(f"[MultiFile] Skipping {additional_filename} - S{parsed_season:02d}E{parsed_episode:02d} != S{current_season:02d}E{current_episode:02d} (different episode in season pack)")
+                                            continue
+
+                                        logging.info(f"[MultiFile] File {additional_filename} confirmed as alternate version of S{current_season:02d}E{current_episode:02d}")
+
+                                    except Exception as parse_err:
+                                        logging.error(f"[MultiFile] Error parsing episode info from {additional_filename}: {parse_err}. Skipping.")
+                                        continue
+
                                 # Create a copy of the item for this additional file
                                 additional_item = item.copy()
                                 additional_item['filled_by_file'] = additional_filename
