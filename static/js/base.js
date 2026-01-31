@@ -7,12 +7,15 @@ import { showPopup, POPUP_TYPES } from './notifications.js';
 window.showPopup = showPopup;
 window.POPUP_TYPES = POPUP_TYPES;
 
+// Global DEBUG flag - enable via: localStorage.setItem('app_debug', 'true'); location.reload();
+window.DEBUG = localStorage.getItem('app_debug') === 'true' || false;
+
 // Set initial notification disabled state from localStorage
 try {
     const notificationsDisabled = localStorage.getItem('notificationsDisabled') === 'true';
     document.body.setAttribute('data-notifications-disabled', notificationsDisabled);
 } catch (e) {
-    console.error('Error setting initial notification state:', e);
+    if (window.DEBUG) console.error('Error setting initial notification state:', e);
 }
 
 // Rate limiting check
@@ -56,6 +59,18 @@ function initializeNavigation() {
                     settingsSidebar.classList.remove('mobile-open');
                     if (settingsMobileOverlay) {
                         settingsMobileOverlay.classList.remove('active');
+                    }
+                    document.body.style.overflow = '';
+                }
+
+                // Close discover filter sidebar when nav menu is opened (Tangerine mobile)
+                const filterDrawer = document.getElementById('filter-drawer');
+                const filterOverlay = document.getElementById('filter-overlay');
+
+                if (filterDrawer && filterDrawer.classList.contains('open')) {
+                    filterDrawer.classList.remove('open');
+                    if (filterOverlay) {
+                        filterOverlay.classList.remove('active');
                     }
                     document.body.style.overflow = '';
                 }
@@ -113,13 +128,13 @@ function initializeNavigation() {
                             try {
                                 localStorage.setItem('tangerine-mobile-nav-expanded', groupName);
                             } catch (e) {
-                                console.error('Error saving nav state:', e);
+                                if (window.DEBUG) console.error('Error saving nav state:', e);
                             }
                         } else {
                             try {
                                 localStorage.setItem('tangerine-mobile-nav-expanded', '');
                             } catch (e) {
-                                console.error('Error saving nav state:', e);
+                                if (window.DEBUG) console.error('Error saving nav state:', e);
                             }
                         }
                     } else {
@@ -232,6 +247,36 @@ function markActivePageInNav() {
 }
 
 // Initialize Navigation Search (Tangerine mobile only)
+/**
+ * Helper function to detect IMDb/TMDB IDs and build the appropriate discover URL
+ * @param {string} searchTerm - The search term to process
+ * @returns {string} - The URL to navigate to
+ */
+function buildSearchURL(searchTerm) {
+    const term = searchTerm.trim();
+    
+    // Check for IMDb ID (tt followed by digits)
+    const imdbMatch = term.match(/^(tt\d+)$/i);
+    if (imdbMatch) {
+        return `/discover?imdb_id=${encodeURIComponent(imdbMatch[1])}`;
+    }
+    
+    // Check for TMDB ID (tmdb: prefix or just digits)
+    const tmdbWithPrefix = term.match(/^tmdb:?(\d+)$/i);
+    if (tmdbWithPrefix) {
+        return `/discover?tmdb_id=${encodeURIComponent(tmdbWithPrefix[1])}`;
+    }
+    
+    // Check if it's just digits (treat as TMDB ID if >= 1)
+    const digitsOnly = term.match(/^(\d+)$/);
+    if (digitsOnly && parseInt(digitsOnly[1]) > 0) {
+        return `/discover?tmdb_id=${encodeURIComponent(digitsOnly[1])}`;
+    }
+    
+    // Default: regular search query
+    return `/discover?q=${encodeURIComponent(term)}`;
+}
+
 function initializeNavSearch() {
     const searchForm = document.getElementById('nav-search-form');
 
@@ -280,8 +325,8 @@ function initializeNavSearch() {
                 document.head.appendChild(style);
             }
 
-            // Navigate immediately
-            window.location.href = `/scraper?q=${encodeURIComponent(searchTerm)}`;
+            // Navigate with ID detection
+            window.location.href = buildSearchURL(searchTerm);
         }
     });
 }
@@ -316,7 +361,7 @@ function initializeTangerineMobileNav() {
                         try {
                             localStorage.setItem('tangerine-mobile-nav-expanded', groupTitle.textContent.trim());
                         } catch (e) {
-                            console.error('Error saving nav state:', e);
+                            if (window.DEBUG) console.error('Error saving nav state:', e);
                         }
                     }
                 }
@@ -342,7 +387,7 @@ function initializeTangerineMobileNav() {
                 }
             }
         } catch (e) {
-            console.error('Error restoring nav state:', e);
+            if (window.DEBUG) console.error('Error restoring nav state:', e);
         }
     }
 
@@ -373,7 +418,7 @@ function initializeReleaseNotes() {
                 }
             })
             .catch(error => {
-                console.error('Error fetching release notes:', error);
+                if (window.DEBUG) console.error('Error fetching release notes:', error);
                 releaseNotesContent.innerHTML = '<div class="error">Error loading release notes</div>';
             });
     }
@@ -506,7 +551,7 @@ function fetchRateLimitInfo() {
             rateLimitInfo.innerHTML = html;
         })
         .catch(error => {
-            console.error('Error fetching rate limit info:', error);
+            if (window.DEBUG) console.error('Error fetching rate limit info:', error);
             document.getElementById('rate-limit-info').innerHTML = '<p class="error">Error loading rate limit information. Please try again.</p>';
         });
 }
@@ -557,7 +602,7 @@ async function checkAndShowPhalanxDisclaimer() {
             });
         }
     } catch (error) {
-        console.error('Error checking Phalanx disclaimer status:', error);
+        if (window.DEBUG) console.error('Error checking Phalanx disclaimer status:', error);
     }
 }
 
@@ -600,6 +645,10 @@ function initializeHelpModal() {
         // Add class to body to prevent scrolling
         document.body.classList.add('modal-open');
 
+        // Override inline display:none (used to prevent FOUC)
+        helpOverlay.style.display = 'block';
+        helpModalBox.style.display = 'flex';
+
         // Add the 'visible' class to show modal elements
         helpOverlay.classList.add('visible');
         helpModalBox.classList.add('visible');
@@ -613,6 +662,10 @@ function initializeHelpModal() {
         // Remove the 'visible' class to hide modal elements
         helpOverlay.classList.remove('visible');
         helpModalBox.classList.remove('visible');
+
+        // Reset inline display style
+        helpOverlay.style.display = '';
+        helpModalBox.style.display = '';
     }
 
     // Fetch content function remains the same
@@ -632,7 +685,7 @@ function initializeHelpModal() {
             }
 
         } catch (error) {
-            console.error("Error fetching help content:", error);
+            if (window.DEBUG) console.error("Error fetching help content:", error);
             helpModalBody.innerHTML = '<p class="error">Could not load help content. Please try again later.</p>';
         }
     }
@@ -696,9 +749,8 @@ document.addEventListener('DOMContentLoaded', function() {
                         'Content-Type': 'application/json',
                     }
                 });
-                console.log('Auto-marked all notifications as read (notifications disabled)');
             } catch (error) {
-                console.error('Error auto-marking notifications as read:', error);
+                if (window.DEBUG) console.error('Error auto-marking notifications as read:', error);
             }
         };
         markAllNotificationsAsReadSilently();
@@ -774,28 +826,23 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             });
             const data = await response.json();
-            console.log('Update check response:', data);
-            
+
             const updateButton = document.getElementById('updateAvailableButton');
             if (!updateButton) {
-                console.log('Update button not found');
                 return;
             }
             
             // Force hide by default
             updateButton.style.display = 'none';
             updateButton.classList.add('hidden');
-            
+
             if (data.success && data.update_available === true) {
-                console.log('Update is available, showing button');
                 updateButton.style.display = '';
                 updateButton.classList.remove('hidden');
                 updateButton.setAttribute('data-tooltip', `New version available: ${data.latest_version} (${data.branch} branch)`);
-            } else {
-                console.log('No update available or check failed, keeping button hidden');
             }
         } catch (error) {
-            console.error('Error checking for updates:', error);
+            if (window.DEBUG) console.error('Error checking for updates:', error);
         }
     }
 
@@ -849,11 +896,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         try {
             notificationEventSource = new EventSource('/base/api/notifications/stream');
-            
-            notificationEventSource.onopen = function(event) {
-                console.log('Connected to notification stream');
-            };
-            
+
             notificationEventSource.onmessage = function(event) {
                 try {
                     const data = JSON.parse(event.data);
@@ -861,26 +904,25 @@ document.addEventListener('DOMContentLoaded', function() {
                     if (data.type === 'new_notification') {
                         handleNewNotification(data.notification);
                     } else if (data.type === 'connection') {
-                        console.log('Notification stream connected:', data.message);
+                        // Connection established
                     } else if (data.type === 'heartbeat') {
                         // Keep connection alive
-                        console.debug('Notification stream heartbeat');
                     }
                 } catch (error) {
-                    console.error('Error parsing notification stream data:', error);
+                    if (window.DEBUG) console.error('Error parsing notification stream data:', error);
                 }
             };
             
             notificationEventSource.onerror = function(event) {
-                console.error('Notification stream error:', event);
+                if (window.DEBUG) console.error('Notification stream error:', event);
                 // Reconnect after a delay
                 setTimeout(() => {
-                    console.log('Reconnecting to notification stream...');
+                    if (window.DEBUG) console.log('Reconnecting to notification stream...');
                     initNotificationStream();
                 }, 5000);
             };
         } catch (error) {
-            console.error('Failed to initialize notification stream:', error);
+            if (window.DEBUG) console.error('Failed to initialize notification stream:', error);
         }
     }
 
@@ -976,7 +1018,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 updateNotificationIndicator();
             }
         } catch (error) {
-            console.error('Error fetching notifications:', error);
+            if (window.DEBUG) console.error('Error fetching notifications:', error);
         }
     }
 
@@ -1060,7 +1102,7 @@ document.addEventListener('DOMContentLoaded', function() {
             // Note: UI is already updated immediately, so no need to refresh here
             // The periodic refresh will ensure consistency with server state
         } catch (error) {
-            console.error('Error marking notification as read:', error);
+            if (window.DEBUG) console.error('Error marking notification as read:', error);
             // If the request fails, we could revert the UI changes here
             // For now, we'll let the periodic refresh handle any inconsistencies
         }
@@ -1093,7 +1135,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 throw new Error('Failed to mark all notifications as read');
             }
         } catch (error) {
-            console.error('Error marking all notifications as read:', error);
+            if (window.DEBUG) console.error('Error marking all notifications as read:', error);
             if (showFeedback) {
                 showPopup({
                     type: POPUP_TYPES.ERROR,
@@ -1254,7 +1296,7 @@ document.addEventListener('DOMContentLoaded', function() {
         updateBodyPaddingForTopOverlays(); // Initial check
 
     } else {
-        console.warn('Rate limits toggle button or section not found.');
+        if (window.DEBUG) console.warn('Rate limits toggle button or section not found.');
     }
     // --- END: Rate Limits Toggle Logic ---
 });

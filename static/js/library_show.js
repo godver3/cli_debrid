@@ -118,6 +118,11 @@ async function loadShowData() {
 
                 // Align sidebar with seasons container
                 alignSidebarWithSeasons();
+
+                // Load cast from TMDB if we have a tmdb_id
+                if (showData.tmdb_id) {
+                    loadCast(showData.tmdb_id);
+                }
             } else {
                 emptyState.style.display = 'flex';
             }
@@ -243,7 +248,7 @@ function renderShowHeader(show) {
 
         // Count collected episodes and missing movable episodes
         Object.values(episodeGroups).forEach(episodes => {
-            const hasCollected = episodes.some(ep => ep.state === 'Collected');
+            const hasCollected = episodes.some(ep => ep.state === 'Collected' || ep.state === 'Upgrading');
             if (hasCollected) {
                 collectedEpisodes++;
             } else {
@@ -300,8 +305,7 @@ function renderShowHeader(show) {
 
     const addedValue = document.getElementById('added-value');
     if (addedValue && show.added_date) {
-        const date = new Date(show.added_date);
-        addedValue.textContent = formatDate(date);
+        addedValue.textContent = formatDate(show.added_date);
     }
 
     const sizeValue = document.getElementById('size-value');
@@ -347,6 +351,17 @@ function renderShowHeader(show) {
     const statusEl = document.getElementById('show-status');
     if (statusEl && show.status) {
         statusEl.textContent = show.status;
+    }
+
+    const ratingEl = document.getElementById('show-rating');
+    if (ratingEl) {
+        if (show.rating) {
+            const ratingValue = parseFloat(show.rating).toFixed(1);
+            const voteCount = show.vote_count ? ` (${show.vote_count.toLocaleString()} votes)` : '';
+            ratingEl.textContent = `${ratingValue}/10${voteCount}`;
+        } else {
+            ratingEl.textContent = '-';
+        }
     }
 
     const genresEl = document.getElementById('show-genres');
@@ -444,9 +459,9 @@ function renderSeasons(seasons) {
         // Count unique episodes
         totalEpisodes += Object.keys(episodeGroups).length;
 
-        // Count collected episodes (at least one file is collected)
+        // Count collected episodes (at least one file is collected or upgrading)
         Object.values(episodeGroups).forEach(episodes => {
-            if (episodes.some(ep => ep.state === 'Collected')) {
+            if (episodes.some(ep => ep.state === 'Collected' || ep.state === 'Upgrading')) {
                 collectedEpisodes++;
             }
         });
@@ -487,10 +502,10 @@ function createSeasonTab(season, isActive) {
     // Count unique episodes
     const totalEpisodes = Object.keys(episodeGroups).length;
 
-    // Count collected episodes (at least one file is collected)
+    // Count collected episodes (at least one file is collected or upgrading)
     let collectedEpisodes = 0;
     Object.values(episodeGroups).forEach(episodes => {
-        if (episodes.some(ep => ep.state === 'Collected')) {
+        if (episodes.some(ep => ep.state === 'Collected' || ep.state === 'Upgrading')) {
             collectedEpisodes++;
         }
     });
@@ -520,36 +535,48 @@ function createSeasonPanel(season, isActive) {
     panel.className = `season-panel ${isActive ? 'active' : ''}`;
     panel.dataset.season = season.season_number;
 
-    // Season delete button - always use delete (not ghostlist) even if auto_ghostlist_enabled
-    const deleteIconSvg = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M10 11v6"></path>
-            <path d="M14 11v6"></path>
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
-            <path d="M3 6h18"></path>
-            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-        </svg>
-    `;
+    // Check permissions for delete button
+    const hasAdminPermissions = document.getElementById('has_admin_permissions')?.value === 'True';
 
-    // Add season header with delete button
+    // Season delete button - only for admins
+    let deleteButtonHtml = '';
+    if (hasAdminPermissions) {
+        const deleteIconSvg = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10 11v6"></path>
+                <path d="M14 11v6"></path>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+                <path d="M3 6h18"></path>
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+        `;
+
+        deleteButtonHtml = `
+            <button class="btn btn-sm btn-danger delete-season-btn"
+                    data-season-number="${season.season_number}"
+                    data-imdb-id="${showData.imdb_id}"
+                    title="Delete entire season">
+                ${deleteIconSvg}
+                Delete Season
+            </button>
+        `;
+    }
+
+    // Add season header with optional delete button
     const seasonHeader = document.createElement('div');
     seasonHeader.className = 'season-panel-header';
     seasonHeader.innerHTML = `
         <h3>Season ${season.season_number}</h3>
-        <button class="btn btn-sm btn-danger delete-season-btn"
-                data-season-number="${season.season_number}"
-                data-imdb-id="${showData.imdb_id}"
-                title="Delete entire season">
-            ${deleteIconSvg}
-            Delete Season
-        </button>
+        ${deleteButtonHtml}
     `;
     panel.appendChild(seasonHeader);
 
-    // Attach delete handler
-    const deleteBtn = seasonHeader.querySelector('.delete-season-btn');
-    if (deleteBtn) {
-        deleteBtn.addEventListener('click', handleDeleteSeason);
+    // Attach delete handler if button exists
+    if (hasAdminPermissions) {
+        const deleteBtn = seasonHeader.querySelector('.delete-season-btn');
+        if (deleteBtn) {
+            deleteBtn.addEventListener('click', handleDeleteSeason);
+        }
     }
 
     // Group episodes by episode_number (handle multiple files per episode)
@@ -651,7 +678,11 @@ function createEpisodeRow(episodes, seasonNumber) {
     // (can have multiple entries if there are multiple files/versions)
     const firstEp = episodes[0];
     const isCollected = episodes.some(ep => ep.state === 'Collected');
+    const isUpgrading = episodes.some(ep => ep.state === 'Upgrading');
     const isBlacklisted = episodes.some(ep => ep.state === 'Blacklisted');
+    const isUnreleased = episodes.some(ep => ep.state === 'Unreleased');
+    const isWanted = episodes.some(ep => ep.state === 'Wanted');
+    const isFinalScrape = episodes.some(ep => ep.state === 'Final_Scrape');
 
     const row = document.createElement('div');
     row.className = 'episode-row';
@@ -662,6 +693,30 @@ function createEpisodeRow(episodes, seasonNumber) {
         statusIcon = `
             <svg class="episode-status-icon collected" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
                 <path fill-rule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm13.36-1.814a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z" clip-rule="evenodd" />
+            </svg>
+        `;
+    } else if (isUpgrading) {
+        statusIcon = `
+            <svg class="episode-status-icon up-arrow" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                <path fill-rule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25zm.53 5.47a.75.75 0 00-1.06 0l-3 3a.75.75 0 101.06 1.06l1.72-1.72v6.19a.75.75 0 001.5 0V10.06l1.72 1.72a.75.75 0 101.06-1.06l-3-3z" clip-rule="evenodd"></path>
+            </svg>
+        `;
+    } else if (isBlacklisted) {
+        statusIcon = `
+            <svg class="episode-status-icon unavailable" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                <path fill-rule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25zm-1.72 6.97a.75.75 0 10-1.06 1.06L10.94 12l-1.72 1.72a.75.75 0 101.06 1.06L12 13.06l1.72 1.72a.75.75 0 101.06-1.06L13.06 12l1.72-1.72a.75.75 0 10-1.06-1.06L12 10.94l-1.72-1.72z" clip-rule="evenodd" />
+            </svg>
+        `;
+    } else if (isUnreleased) {
+        statusIcon = `
+            <svg class="episode-status-icon unreleased" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                <path fill-rule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25zM12 8.25a.75.75 0 01.75.75v3.69l2.28 2.28a.75.75 0 11-1.06 1.06l-2.5-2.5a.75.75 0 01-.22-.53V9a.75.75 0 01.75-.75z" clip-rule="evenodd" />
+            </svg>
+        `;
+    } else if (isWanted) {
+        statusIcon = `
+            <svg class="episode-status-icon wanted" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                <path fill-rule="evenodd" d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25zm4.28 7.22a.75.75 0 010 1.06l-3 3a.75.75 0 01-1.06-1.06l1.72-1.72H9a.75.75 0 010-1.5h4.94l-1.72-1.72a.75.75 0 011.06-1.06l3 3zm-8.56 5.56a.75.75 0 010-1.06l3-3a.75.75 0 011.06 1.06l-1.72 1.72H15a.75.75 0 010 1.5h-4.94l1.72 1.72a.75.75 0 01-1.06 1.06l-3-3z" clip-rule="evenodd" />
             </svg>
         `;
     } else {
@@ -693,18 +748,17 @@ function createEpisodeRow(episodes, seasonNumber) {
     if (episodeWithAirdate) {
         const airdate = episodeWithAirdate.release_date || episodeWithAirdate.airtime;
         if (airdate) {
-            const date = new Date(airdate);
-            const now = new Date();
-            const label = date > now ? 'Airing' : 'Aired';
-            metaParts.push(`<span>${label}: ${formatDate(date)}</span>`);
+            // Determine if airing in future by comparing date strings
+            const today = new Date().toISOString().split('T')[0];
+            const label = airdate > today ? 'Airing' : 'Aired';
+            metaParts.push(`<span>${label}: ${formatDate(airdate)}</span>`);
         }
     }
 
     // Collected date or status
     const collectedEpisode = episodes.find(ep => ep.collected_at);
     if (collectedEpisode && collectedEpisode.collected_at) {
-        const date = new Date(collectedEpisode.collected_at);
-        metaParts.push(`<span>Collected: ${formatDate(date)}</span>`);
+        metaParts.push(`<span>Collected: ${formatDate(collectedEpisode.collected_at)}</span>`);
     } else if (firstEp.state) {
         // Show status for non-collected episodes
         metaParts.push(`<span>Status: ${escapeHtml(firstEp.state)}</span>`);
@@ -736,8 +790,12 @@ function createEpisodeRow(episodes, seasonNumber) {
         `;
     }
 
-    // Search icon - search for this specific episode
-    const searchIcon = `
+    // Check permissions for conditional button rendering
+    const hasAdminPermissions = document.getElementById('has_admin_permissions')?.value === 'True';
+    const hasUserPermissions = document.getElementById('has_user_permissions')?.value === 'True';
+
+    // Search icon - search for this specific episode (User + Admin only, not Requester)
+    const searchIcon = hasUserPermissions ? `
         <button class="search-episode-btn" type="button" title="Search for this episode"
                 data-imdb-id="${episodes[0].imdb_id || ''}"
                 data-tmdb-id="${episodes[0].tmdb_id || ''}"
@@ -747,9 +805,9 @@ function createEpisodeRow(episodes, seasonNumber) {
                 <path stroke-linecap="round" stroke-linejoin="round" d="M10 21h7a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v11m0 5l4.879-4.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242z"></path>
             </svg>
         </button>
-    `;
+    ` : '';
 
-    // Refresh icon - moves episode back to "wanted" state
+    // Refresh icon - moves episode back to "wanted" state (All authenticated users)
     const refreshIcon = `
         <button class="refresh-btn" type="button" title="Move back to Wanted state"
                 data-imdb-id="${episodes[0].imdb_id || ''}"
@@ -764,48 +822,51 @@ function createEpisodeRow(episodes, seasonNumber) {
         </button>
     `;
 
-    // Delete icon - deletes episode (pass all episode data for multi-file support)
-    const episodeIds = episodes.map(ep => ep.id).join(',');
-    const episodeFilesData = JSON.stringify(episodes.map(ep => {
-        // Get filename - prefer filled_by_file, fall back to extracting from location_on_disk
-        let fileName = ep.filled_by_file;
-        if (!fileName && ep.location_on_disk) {
-            const parts = ep.location_on_disk.split('/');
-            fileName = parts[parts.length - 1];
-        }
-        return {
-            id: ep.id,
-            file: fileName || 'Unknown file',
-            version: ep.version || 'Unknown'
-        };
-    }));
+    // Delete icon - deletes episode (Admin only)
+    let deleteIcon = '';
+    if (hasAdminPermissions) {
+        const episodeIds = episodes.map(ep => ep.id).join(',');
+        const episodeFilesData = JSON.stringify(episodes.map(ep => {
+            // Get filename - prefer filled_by_file, fall back to extracting from location_on_disk
+            let fileName = ep.filled_by_file;
+            if (!fileName && ep.location_on_disk) {
+                const parts = ep.location_on_disk.split('/');
+                fileName = parts[parts.length - 1];
+            }
+            return {
+                id: ep.id,
+                file: fileName || 'Unknown file',
+                version: ep.version || 'Unknown'
+            };
+        }));
 
-    // Episode delete button - always use delete (not ghostlist) even if auto_ghostlist_enabled
-    const deleteIconSvg = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M10 11v6"></path>
-            <path d="M14 11v6"></path>
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
-            <path d="M3 6h18"></path>
-            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-        </svg>
-    `;
+        // Episode delete button - always use delete (not ghostlist) even if auto_ghostlist_enabled
+        const deleteIconSvg = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10 11v6"></path>
+                <path d="M14 11v6"></path>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+                <path d="M3 6h18"></path>
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+        `;
 
-    const deleteIcon = `
-        <button class="delete-episode-btn" type="button" title="Delete episode"
-                data-imdb-id="${episodes[0].imdb_id || ''}"
-                data-season="${seasonNumber}"
-                data-episode="${firstEp.episode_number || 0}"
-                data-episode-ids="${episodeIds}"
-                data-episode-files='${episodeFilesData.replace(/'/g, "&#39;")}'>
-            ${deleteIconSvg}
-        </button>
-    `;
+        deleteIcon = `
+            <button class="delete-episode-btn" type="button" title="Delete episode"
+                    data-imdb-id="${episodes[0].imdb_id || ''}"
+                    data-season="${seasonNumber}"
+                    data-episode="${firstEp.episode_number || 0}"
+                    data-episode-ids="${episodeIds}"
+                    data-episode-files='${episodeFilesData.replace(/'/g, "&#39;")}'>
+                ${deleteIconSvg}
+            </button>
+        `;
+    }
 
     // Files - show all files in popup
-    // Show action icons for collected episodes OR blacklisted episodes
+    // Show action icons for collected episodes OR blacklisted episodes OR unknown state OR final_scrape state
     let filesHtml = '';
-    if (files.length > 0 || isBlacklisted || isCollected) {
+    if (files.length > 0 || isBlacklisted || isCollected || isUpgrading || isFinalScrape || firstEp.state === 'Unknown') {
         const filesButtonHtml = files.length > 0 ? `
             <button class="files-toggle-btn" type="button" title="Toggle file list">
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -814,6 +875,11 @@ function createEpisodeRow(episodes, seasonNumber) {
                 <span class="files-count">${files.length}</span>
             </button>
             <div class="episode-files-panel">
+                <button class="files-panel-close" type="button" aria-label="Close">
+                    <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
                 <div class="episode-files">
                     ${files.map(file => `<div class="episode-file" title="${escapeHtml(file)}">${escapeHtml(file)}</div>`).join('')}
                 </div>
@@ -882,6 +948,16 @@ function createEpisodeRow(episodes, seasonNumber) {
             filesPanel.classList.remove('open');
             toggleBtn.classList.remove('active');
         });
+
+        // Close button for mobile
+        const closeBtn = row.querySelector('.files-panel-close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                filesPanel.classList.remove('open');
+                toggleBtn.classList.remove('active');
+            });
+        }
     }
 
     return row;
@@ -906,7 +982,7 @@ function alignSidebarWithSeasons() {
         if (window.innerWidth > 768) {
             sidebar.style.marginTop = `${topOffset}px`;
         } else {
-            sidebar.style.marginTop = '20px'; // Fixed for mobile
+            sidebar.style.marginTop = '0px'; // Fixed for mobile
         }
     }
 }
@@ -935,6 +1011,11 @@ async function handleSearchEpisode(event) {
     const episode = parseInt(btn.dataset.episode);
 
     // Call selectMedia to search for this specific episode
+    // Convert genres string to array if needed for auto-select
+    const genres = showData.genres ?
+        (typeof showData.genres === 'string' ? showData.genres.split(',').map(g => g.trim()) : showData.genres)
+        : [];
+
     await selectMedia(
         showData.tmdb_id || showData.imdb_id,
         showData.title,
@@ -943,7 +1024,7 @@ async function handleSearchEpisode(event) {
         season,
         episode,
         false, // multi = false for single episode
-        null, // genre_ids
+        genres, // genre_ids - pass genres for auto-select
         version
     );
 }
@@ -987,9 +1068,28 @@ function handleRefreshClick(event) {
     });
 }
 
-function formatDate(date) {
-    const options = { year: 'numeric', month: 'short', day: 'numeric' };
-    return date.toLocaleDateString(undefined, options);
+function formatDate(dateInput) {
+    // Handle both Date objects and date strings
+    let dateStr;
+    if (typeof dateInput === 'string') {
+        // Extract just the date part if it has a timestamp
+        dateStr = dateInput.split('T')[0].split(' ')[0];
+    } else if (dateInput instanceof Date) {
+        dateStr = dateInput.toISOString().split('T')[0];
+    } else {
+        return '';
+    }
+    
+    // Parse manually to avoid timezone conversion issues
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+        const year = parts[0];
+        const month = parseInt(parts[1], 10) - 1;
+        const day = parseInt(parts[2], 10);
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return `${months[month]} ${day}, ${year}`;
+    }
+    return dateStr;
 }
 
 // ============================================================================
@@ -1048,6 +1148,11 @@ async function handleSeasonPacks() {
     const activeSeason = activeTab ? parseInt(activeTab.dataset.season) : 1;
 
     // Call selectMedia from scraper.js with show data for season pack
+    // Convert genres string to array if needed for auto-select
+    const genres = showData.genres ?
+        (typeof showData.genres === 'string' ? showData.genres.split(',').map(g => g.trim()) : showData.genres)
+        : [];
+
     await selectMedia(
         showData.tmdb_id || showData.imdb_id,
         showData.title,
@@ -1056,7 +1161,7 @@ async function handleSeasonPacks() {
         activeSeason, // currently selected season
         null, // episode null for season pack
         true, // multi - season packs are multi-file
-        null, // genre_ids
+        genres, // genre_ids - pass genres for auto-select
         version
     );
 }
@@ -1073,7 +1178,7 @@ function handleRefreshTMDB() {
 
     const mediaId = showData.tmdb_id || showData.imdb_id;
 
-    fetch(`/library/refresh_metadata/${mediaId}`, {
+    fetch(`/library/refresh_metadata/show/${mediaId}`, {
         method: 'POST'
     })
     .then(response => response.json())
@@ -1848,5 +1953,56 @@ async function handleDeleteEpisode(event) {
             autoClose: 5000
         });
     }
+}
+
+// =============================================================================
+// Cast Section
+// =============================================================================
+
+/**
+ * Load cast data from TMDB API
+ */
+async function loadCast(tmdbId) {
+    try {
+        const response = await fetch(`/library/cast/tv/${tmdbId}`);
+        const data = await response.json();
+
+        if (data.success && data.cast && data.cast.length > 0) {
+            displayCast(data.cast);
+        }
+    } catch (error) {
+        console.error('[Show Detail] Error loading cast:', error);
+    }
+}
+
+/**
+ * Display cast in the cast grid
+ */
+function displayCast(cast) {
+    const castSection = document.getElementById('cast-section');
+    const castGrid = document.getElementById('cast-grid');
+    const castHeader = document.getElementById('cast-header');
+
+    if (!castSection || !castGrid) return;
+
+    castGrid.innerHTML = cast.map(person => `
+        <div class="cast-card">
+            <img src="${person.profile_path ? `https://image.tmdb.org/t/p/w185${person.profile_path}` : '/static/images/placeholder.png'}"
+                 alt="${person.name}"
+                 class="cast-photo"
+                 onerror="this.src='/static/images/placeholder.png'">
+            <div class="cast-name">${person.name}</div>
+            <div class="cast-character">${person.character || ''}</div>
+        </div>
+    `).join('');
+
+    // Add click handler for collapse/expand toggle
+    if (castHeader) {
+        castHeader.addEventListener('click', function() {
+            castSection.classList.toggle('collapsed');
+        });
+    }
+
+    castSection.style.display = 'block';
 }
 

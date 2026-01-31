@@ -1,3 +1,9 @@
+/* Theme-based visibility */
+.tangerine-only { display: none; }
+.classic-only { display: block; }
+body.tangerine-theme .tangerine-only { display: block; }
+body.tangerine-theme .classic-only { display: none; }
+
 /* Main container */
 .statistics-wrapper {
     display: flex;
@@ -277,7 +283,7 @@ input:checked + .toggle-slider:before {
     border-radius: 4px;
     transition: all 0.2s ease;
     width: 24px;
-    position: absolute;
+    position: relative;
     right: 0;
 }
 

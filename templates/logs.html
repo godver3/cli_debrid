@@ -69,6 +69,7 @@ let isSearchActive = false;
 let currentMatches = [];
 let currentMatchIndex = -1;
 const MAX_LOGS = 1500;
+const renderedLogIds = new Set(); // Track rendered logs to prevent duplicates
 
 function checkScrollPosition() {
     const logEntries = document.getElementById('log-entries');
@@ -116,12 +117,17 @@ function updateLogs(forceRefresh = false) {
         const logEntries = document.getElementById('log-entries');
         lastLogTimestamp = '';
         logEntries.innerHTML = ''; // Clear existing logs
+        renderedLogIds.clear(); // Clear duplicate tracking
         currentLevel = levelFilter;
         isPaused = false;
         document.getElementById('pause-indicator').style.display = 'none';
         
         // Close existing EventSource if it exists
         if (window.logStream) {
+            // Explicitly remove event handlers before closing
+            window.logStream.onmessage = null;
+            window.logStream.onerror = null;
+            window.logStream.onopen = null;
             window.logStream.close();
             window.logStream = null;
         }
@@ -145,6 +151,9 @@ function updateLogs(forceRefresh = false) {
                     const data = JSON.parse(event.data);
                     if (!data.logs || !data.logs.length) return;  // Skip empty updates
                     
+                    // Debug: Log when handler is called
+                    console.log(`[LOG STREAM] Handler called with ${data.logs.length} logs at ${new Date().toISOString()}`);
+                    
                     // Calculate latency
                     const latency = Date.now() - (data.serverTime * 1000);
                     window.lastPerformanceMetrics.lastLatency = latency;
@@ -152,7 +161,6 @@ function updateLogs(forceRefresh = false) {
                     // Skip if paused
                     if (isPaused) return;
                     
-                    const fragment = document.createDocumentFragment();
                     const searchTerm = document.getElementById('log-search').value.toLowerCase();
                     const gotoTerm = document.getElementById('goto-search').value.toLowerCase();
                     const logEntries = document.getElementById('log-entries');
@@ -162,32 +170,47 @@ function updateLogs(forceRefresh = false) {
                     const CHUNK_SIZE = 50;
                     for (let i = 0; i < data.logs.length; i += CHUNK_SIZE) {
                         const chunk = data.logs.slice(i, i + CHUNK_SIZE);
+                        const fragment = document.createDocumentFragment();  // Create new fragment for each chunk
                         
                         chunk.forEach(log => {
-                            // Check if the log matches the filter term
-                            const logText = `${log.timestamp} - ${log.level.toUpperCase()} - ${log.message}`.toLowerCase();
-                            if (!searchTerm || logText.includes(searchTerm)) {
-                                const div = createHighlightedLogEntry(log);
-                                
-                                // If we're in search mode and this log matches the search term
-                                if (isSearchActive && logText.includes(gotoTerm)) {
-                                    currentMatches.push(div);
-                                    // If this is a new match and we're at the end, highlight it
-                                    if (currentMatchIndex === currentMatches.length - 2) {
-                                        navigateToMatch(currentMatches.length - 1);
-                                    } else {
-                                        updateGotoNavButtons();
-                                    }
-                                }
-                                
-                                fragment.appendChild(div);
-                                addedLogs = true;
+                            // Create unique ID for this log entry
+                            const logId = `${log.timestamp}-${log.level}-${log.message}`;
+                            
+                            // Skip if we've already rendered this exact log
+                            if (renderedLogIds.has(logId)) {
+                                return; // Skip duplicate
                             }
+                            
+                            // Mark this log as rendered
+                            renderedLogIds.add(logId);
+                            
+                            // Create the log entry div
+                            const div = createHighlightedLogEntry(log);
+                            
+                            // Apply filter - hide if doesn't match search term
+                            const logText = `${log.timestamp} - ${log.level.toUpperCase()} - ${log.message}`.toLowerCase();
+                            if (searchTerm && !logText.includes(searchTerm)) {
+                                div.style.display = 'none';
+                            }
+                            
+                            // If we're in search mode and this log matches the goto term
+                            if (isSearchActive && logText.includes(gotoTerm)) {
+                                currentMatches.push(div);
+                                // If this is a new match and we're at the end, highlight it
+                                if (currentMatchIndex === currentMatches.length - 2) {
+                                    navigateToMatch(currentMatches.length - 1);
+                                } else {
+                                    updateGotoNavButtons();
+                                }
+                            }
+                            
+                            fragment.appendChild(div);
+                            addedLogs = true;
                         });
 
-                        // Append chunk and yield to main thread
-                        if (addedLogs) {
-                            logEntries.appendChild(fragment.cloneNode(true));
+                        // Append chunk directly (fragment is automatically cleared after appendChild)
+                        if (fragment.hasChildNodes()) {
+                            logEntries.appendChild(fragment);
                             // Remove old logs if we're over the limit
                             while (logEntries.children.length > MAX_LOGS) {
                                 logEntries.removeChild(logEntries.firstChild);
@@ -273,19 +296,51 @@ function updateLogs(forceRefresh = false) {
 
 // Helper function to reconnect the stream with a new interval
 function reconnectStream(levelFilter, interval) {
+    // Prevent multiple simultaneous reconnections
+    if (window.isReconnecting) {
+        return;
+    }
+    window.isReconnecting = true;
+    
     //console.log(`Adjusting refresh rate to ${interval.toFixed(3)}s`);
     if (window.logStream) {
+        // Explicitly remove event handlers before closing
+        window.logStream.onmessage = null;
+        window.logStream.onerror = null;
+        window.logStream.onopen = null;
         window.logStream.close();
         window.logStream = null;
     }
-    window.logStream = new EventSource(`/logs/api/logs/stream?level=${encodeURIComponent(levelFilter)}&interval=${interval}`);
-    // Reattach event handlers from stored handlers
-    window.logStream.onmessage = window.streamHandlers.onMessage;
-    window.logStream.onerror = window.streamHandlers.onError;
+    
+    // Small delay to ensure old connection is fully closed
+    setTimeout(() => {
+        window.logStream = new EventSource(`/logs/api/logs/stream?level=${encodeURIComponent(levelFilter)}&interval=${interval}`);
+        // Reattach event handlers from stored handlers
+        window.logStream.onmessage = window.streamHandlers.onMessage;
+        window.logStream.onerror = window.streamHandlers.onError;
+        window.isReconnecting = false;
+    }, 50);
 }
 
 function filterLogs() {
-    updateLogs(true); // Force refresh to apply search filter
+    // Apply filter client-side without restarting the stream
+    const searchTerm = document.getElementById('log-search').value.toLowerCase();
+    const logEntries = document.getElementById('log-entries');
+    const allEntries = logEntries.querySelectorAll('.log-entry');
+    
+    allEntries.forEach(entry => {
+        const logText = entry.textContent.toLowerCase();
+        if (!searchTerm || logText.includes(searchTerm)) {
+            entry.style.display = '';
+        } else {
+            entry.style.display = 'none';
+        }
+    });
+    
+    // Scroll to bottom if we were already there
+    if (isScrolledToBottom) {
+        scrollToBottom(logEntries);
+    }
 }
 
 function loadSavedLogLevel() {

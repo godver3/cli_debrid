@@ -175,7 +175,8 @@
 .movie-title-row {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-start;
+    /* align-items: flex-start; */
+    text-align: left;
     justify-content: space-between;
     gap: 1rem;
     margin-bottom: 1rem;
@@ -205,6 +206,16 @@
     font-size: 0.75rem;
     font-weight: 600;
     text-transform: uppercase;
+}
+
+.status-badge.partial {
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+}
+
+.status-badge.collected {
+    background: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
 }
 
 .separator {
@@ -362,6 +373,7 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
     font-size: 1rem;
     font-style: italic;
     opacity: 0.8;
+    text-align: left;
     margin-top: 1rem;
     margin-bottom: 0.5rem;
     color: rgba(255, 255, 255, 0.9);
@@ -484,7 +496,7 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
     backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 16px;
-    padding: 1rem 2rem 2rem 2rem;
+    padding: 1rem 2rem 1rem 2rem;
     transition: all 0.3s ease;
 }
 
@@ -661,6 +673,75 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.quality-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.195rem 0.5rem 0.125rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    border-radius: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+    line-height: 1 !important;
+}
+
+/* Quality Badge Colors */
+.release-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: -5px;
+    align-self: center;
+}
+
+.release-title-wrapper {
+    display: flex;
+    /* flex-direction: column; */
+    gap: 6px;
+}
+
+.quality-badge.resolution {
+    background: rgba(139, 92, 246, 0.2);
+    color: #c4b5fd;
+    border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.quality-badge.source {
+    background: rgba(6, 182, 212, 0.2);
+    color: #67e8f9;
+    border: 1px solid rgba(6, 182, 212, 0.3);
+}
+
+.quality-badge.codec {
+    background: rgba(16, 185, 129, 0.2);
+    color: #6ee7b7;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.quality-badge.audio {
+    background: rgba(251, 146, 60, 0.2);
+    color: #fdba74;
+    border: 1px solid rgba(251, 146, 60, 0.3);
+}
+
+.quality-badge.hdr {
+    background: rgba(234, 179, 8, 0.2);
+    color: #fde047;
+    border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.quality-badge.group {
+    background: rgba(168, 85, 247, 0.2);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.quality-badge.extension {
+    background: rgba(100, 116, 139, 0.2);
+    color: #94a3b8;
+    border: 1px solid rgba(100, 116, 139, 0.3);
 }
 
 .movie-file-meta {
@@ -1077,7 +1158,14 @@ ease;
    Responsive Design
    ========================================================================== */
 
-@media (max-width: 768px) {
+@media (max-width: 1024px) {
+    .release-tags {
+        display: inline;
+        align-self: center;
+    }
+    .quality-badge {
+        margin-right: 4px;
+    }
     .movie-content-wrapper {
         padding: 1rem;
     }
@@ -1100,9 +1188,61 @@ ease;
     }
 
     .movie-title {
-        font-size: 1.5rem;
-        justify-self: baseline;
-        margin: 0 0 1rem 0;
+        font-size: 1.25rem;
+        margin: 0;
+        white-space: normal;
+    }
+
+    .movie-title-row {
+        display: block;
+    }
+
+    .movie-title-row .status-badge.missing {
+        display: block;
+        background: transparent;
+        padding: 0;
+        border: none;
+        margin-bottom: 0.75rem;
+        line-height: 1.5;
+    }
+
+    .movie-title-row .status-badge.missing * {
+        display: inline;
+        vertical-align: middle;
+    }
+
+    .movie-title-row .status-badge.missing svg {
+        width: 16px;
+        height: 16px;
+        margin-right: 0.5rem;
+    }
+
+    .movie-title-row .status-badge.missing h1 {
+        margin: 0;
+        padding: 0;
+        font-size: 1.25rem;
+        font-weight: bold;
+    }
+
+    .movie-title-content {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .movie-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0;
+        width: 100%;
+    }
+
+    .release-title-wrapper {
+        display: flex;
+        flex-direction: column;
+        gap: 0.75rem;
+        align-items: flex-start;
     }
 
     .movie-stats {
@@ -1110,6 +1250,7 @@ ease;
     }
 
     .movie-sidebar {
+        max-width: 100%;
         width: 100%;
     }
 
@@ -1118,30 +1259,40 @@ ease;
     }
 
     .movie-file-row {
-        flex-wrap: wrap;
-        padding: 0.75rem 1rem;
+        display: block;
     }
 
     .movie-file-number {
+        display: inline;
         width: auto;
         margin-right: 0.5rem;
     }
 
     .movie-file-status-icon {
+        display: inline-block;
+        vertical-align: sub;
         margin-right: 0.5rem;
     }
 
     .movie-file-info-section {
-        flex: 1 1 100%;
-        margin-top: 0.5rem;
+        display: contents;
+    }
+
+    .movie-file-row .release-title-wrapper {
+        display: contents;
     }
 
     .movie-file-title {
+        display: inline;
+        line-height: 30px;
         white-space: normal;
         word-break: break-word;
     }
 
     .movie-file-meta {
+        display: block;
+        line-height: 30px;
+        padding-bottom: 10px;
         margin-top: 0.25rem;
     }
 
@@ -1171,10 +1322,13 @@ ease;
 
     .movie-meta {
         font-size: 0.745rem;
+        gap: 0.625rem;
+        margin-top: 0.75rem;
+        line-height: 1.4;
     }
 
     .page-backdrop-overlay {
-        background: linear-gradient(to bottom, rgba(0, 0, 0, 0.0) 0%, rgba(0, 0, 0, 0.90) 50%, rgba(0, 0, 0, 0.55) 100%);
+                background: linear-gradient(to bottom, rgba(0, 0, 0, 0.90) 0%, rgba(0, 0, 0, 0.10) 20%, rgba(0, 0, 0, 0.60) 50%, rgba(0, 0, 0, 0.75) 100%);
     }
 
     .movie-info {
@@ -1193,6 +1347,13 @@ ease;
 @media (max-width: 480px) {
     .movie-title {
         font-size: 1.5rem;
+    }
+
+    .movie-meta {
+        font-size: 0.745rem;
+        gap: 0.625rem;
+        margin-top: 0.75rem;
+        line-height: 1.4;
     }
 
     .file-tabs-content {
@@ -1549,7 +1710,7 @@ tr.filtered-out-item:hover {
     border-radius: 50%;
     cursor: pointer;
     transition: all var(--transition-speed) ease;
-    z-index: 5;
+    z-index: 30;
     margin-left: auto;
     padding: 0;
     display: inline-flex;

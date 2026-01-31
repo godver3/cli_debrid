@@ -396,7 +396,12 @@
 
         <!-- Plex Labels Management -->
         <div class="debug_item" style="grid-column: 1 / -1;">
-            <h3>Plex Labels Management</h3>
+            <div style="position: relative;">
+                <h3>Plex Labels Management</h3>
+                <button onclick="showPlexLabelsHelp()" class="plex-labels-help-btn" data-tooltip="View comprehensive help about Plex Labels">
+                    <i class="fas fa-question-circle"></i> Help
+                </button>
+            </div>
             <p class="description">
                 Manage Plex labels for your content. These utilities allow you to view, apply, and remove labels manually, as well as sync labels from configured content sources.
             </p>
@@ -2954,6 +2959,43 @@ if (document.readyState === 'loading') {
         });
     };
     // --- End Fix Missing IMDb ID Function ---
+
+    // --- Plex Labels Help Function ---
+    window.showPlexLabelsHelp = function() {
+        const helpOverlay = document.getElementById('help-overlay');
+        const helpModalBox = document.getElementById('help-modal-box');
+        const helpModalBody = document.getElementById('help-modal-body');
+
+        if (!helpOverlay || !helpModalBox || !helpModalBody) {
+            console.error('Help modal elements not found');
+            return;
+        }
+
+        // Show the modal
+        document.body.classList.add('modal-open');
+        helpOverlay.style.display = 'block';
+        helpModalBox.style.display = 'flex';
+        helpOverlay.classList.add('visible');
+        helpModalBox.classList.add('visible');
+
+        // Load the Plex Labels help content
+        helpModalBody.innerHTML = `<p>Loading help...</p>`;
+
+        fetch('/base/api/help-content?page_path=plex_labels')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.html) {
+                    helpModalBody.innerHTML = data.html;
+                } else {
+                    helpModalBody.innerHTML = `<p>Help content not available.</p>`;
+                }
+            })
+            .catch(error => {
+                console.error('Error loading help content:', error);
+                helpModalBody.innerHTML = `<p>Error loading help content.</p>`;
+            });
+    };
+    // --- End Plex Labels Help Function ---
 </script>
 
 <style>

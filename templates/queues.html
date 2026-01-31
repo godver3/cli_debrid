@@ -328,9 +328,9 @@
             }
         }
         
-        // Add Content Source inline for Wanted, Scraping, Adding, Pre-Release
-        if (['Wanted', 'Scraping', 'Adding', 'Pre_release'].includes(queueName) && item.content_source && item.content_source !== 'Unknown') {
-            itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${item.content_source}</span>`;
+        // Add Content Source inline for Wanted, Scraping, Adding, Pre-Release, Checking
+        if (['Wanted', 'Scraping', 'Adding', 'Pre_release', 'Checking'].includes(queueName) && item.content_source && item.content_source !== 'Unknown') {
+            itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${item.content_source_display || item.content_source}</span>`;
         }
 
         itemContent += processingIndicator;
@@ -419,7 +419,7 @@
 
         // Add Content Source inline for Checking queue items
         if (item.content_source && item.content_source !== 'Unknown') {
-            itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${item.content_source}</span>`;
+            itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${item.content_source_display || item.content_source}</span>`;
         }
 
         // Show progress bar for items that are downloading, unknown, or don't have a state set

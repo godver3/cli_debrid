@@ -518,6 +518,14 @@ def task_stream():
                         if hasattr(program_runner, 'pause_info') and isinstance(program_runner.pause_info, dict):
                             pause_info_to_send = program_runner.pause_info.copy()
 
+                        # BUGFIX: Clear pause_info if queue is not actually paused
+                        # This prevents stale pause messages from persisting in the UI
+                        if not is_paused and pause_info_to_send.get('reason_string') is not None:
+                            pause_info_to_send = {
+                                "reason_string": None, "error_type": None, "service_name": None,
+                                "status_code": None, "retry_count": 0
+                            }
+
                         # Get scheduled task list (this part remains the same)
                         if program_running_state:
                             with program_runner.scheduler_lock:

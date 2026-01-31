@@ -8,7 +8,8 @@
     'use strict';
 
     let modal, overlay, closeBtn, cancelBtn, saveBtn, clearCacheBtn;
-    let primaryArtworkInput, autoGhostlistInput;
+    let autoGhostlistInput;
+    let removeFromContentSourcesInput;
     let currentSettings = null;
 
     // Initialize elements after DOM is ready
@@ -25,8 +26,8 @@
         saveBtn = modal.querySelector('.library-settings-btn-save');
         clearCacheBtn = document.getElementById('clearLibraryCacheBtn');
 
-        primaryArtworkInput = document.getElementById('primaryArtworkSource');
         autoGhostlistInput = document.getElementById('autoGhostlistDeleted');
+        removeFromContentSourcesInput = document.getElementById('removeFromContentSources');
 
         return true;
     }
@@ -54,12 +55,14 @@
             // Populate modal with current values
             const libraryManager = config['Library Manager'] || {};
 
-            if (primaryArtworkInput) {
-                primaryArtworkInput.value = libraryManager.primary_artwork_source || 'Plex';
-            }
-
             if (autoGhostlistInput) {
                 autoGhostlistInput.checked = libraryManager.ghostlist_mode || false;
+            }
+
+            if (removeFromContentSourcesInput) {
+                removeFromContentSourcesInput.checked = libraryManager.remove_from_content_sources !== undefined
+                    ? libraryManager.remove_from_content_sources
+                    : true; // Default to true
             }
 
             // Show modal
@@ -105,8 +108,8 @@
                 updatedSettings['Library Manager'] = {};
             }
 
-            updatedSettings['Library Manager'].primary_artwork_source = primaryArtworkInput.value;
             updatedSettings['Library Manager'].ghostlist_mode = autoGhostlistInput.checked;
+            updatedSettings['Library Manager'].remove_from_content_sources = removeFromContentSourcesInput.checked;
 
             // Send to same API endpoint as settings page
             const response = await fetch('/settings/api/settings', {

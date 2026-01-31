@@ -702,29 +702,50 @@ def check_scraper_connection(scraper_id, scraper_config):
             })
 
         elif scraper_type == 'AIOStreams':
-            from scraper.aiostreams import scrape_aiostreams_instance
+            # Test AIOStreams Stremio addon by checking manifest.json endpoint
+            # This is more reliable than scraping since it just checks if the addon is reachable
+            url = scraper_config.get('url', '').strip()
+            if not url:
+                base_response['error'] = 'URL not configured'
+                return base_response
 
-            # Test with a known movie (The Dark Knight)
             try:
-                results = scrape_aiostreams_instance(
-                    instance='AIOStreams',
-                    settings=scraper_config,
-                    imdb_id='tt0468569',
-                    title='The Dark Knight',
-                    year=2008,
-                    content_type='movie'
-                )
-                base_response['connected'] = len(results) > 0
-                if not base_response['connected']:
-                    base_response['error'] = 'No results found from test search'
-                base_response['details'].update({
-                    'test_movie': 'The Dark Knight (tt0468569)',
-                    'results_found': len(results),
-                    'url': scraper_config.get('url', '')
-                })
+                # Remove /manifest.json if already present
+                base_url = url.rstrip('/')
+                if base_url.endswith('/manifest.json'):
+                    base_url = base_url[:-14]
+
+                # Test the manifest endpoint (standard for all Stremio addons)
+                manifest_url = f"{base_url}/manifest.json"
+                response = requests.get(manifest_url, timeout=5)
+
+                # Check if we get a valid manifest response
+                if response.status_code == 200:
+                    try:
+                        manifest = response.json()
+                        # Verify it's a valid Stremio manifest
+                        if 'id' in manifest and 'version' in manifest:
+                            base_response['connected'] = True
+                            base_response['details'].update({
+                                'url': base_url,
+                                'manifest_url': manifest_url,
+                                'addon_name': manifest.get('name', 'Unknown'),
+                                'addon_version': manifest.get('version', 'Unknown')
+                            })
+                        else:
+                            base_response['error'] = 'Invalid Stremio manifest format'
+                            base_response['details']['url'] = base_url
+                    except ValueError:
+                        base_response['error'] = 'Invalid JSON response from manifest endpoint'
+                        base_response['details']['url'] = base_url
+                else:
+                    base_response['error'] = f'Manifest endpoint returned status code: {response.status_code}'
+                    base_response['details']['url'] = base_url
+
             except Exception as e:
                 base_response['connected'] = False
                 base_response['error'] = str(e)
+                base_response['details']['url'] = scraper_config.get('url', '')
 
         elif scraper_type == 'AIOStreams-API':
             from scraper.aiostreams import scrape_aiostreams_api
@@ -1124,6 +1145,51 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
             # Sample data fetching removed to improve performance
             # Connection check should only verify connectivity, not fetch data
 
+        # --- Adaptive List ---
+        elif source_type == 'Adaptive List':
+            # Adaptive lists are internal TMDB-based dynamic lists
+            # Test by verifying TMDB API key is configured and working
+            tmdb_api_key = get_setting('TMDB', 'api_key', '').strip()
+
+            if not tmdb_api_key:
+                base_response['error'] = 'TMDB API key not configured in Additional Settings'
+                base_response['connected'] = False
+                return base_response
+
+            try:
+                # Test TMDB API with a simple configuration endpoint
+                test_url = f"https://api.themoviedb.org/3/configuration?api_key={tmdb_api_key}"
+                response = requests.get(test_url, timeout=5)
+
+                if response.status_code == 200:
+                    base_response['connected'] = True
+                    base_response['details'].update({
+                        'list_name': source_config.get('list_name', 'Unknown'),
+                        'filter_config': source_config.get('filter_name', 'Unknown'),
+                        'tmdb_status': 'API key valid'
+                    })
+                else:
+                    base_response['error'] = f'TMDB API returned status code: {response.status_code}'
+                    base_response['connected'] = False
+
+            except Exception as e:
+                base_response['error'] = f'TMDB API error: {str(e)}'
+                base_response['connected'] = False
+
+        # --- Agregarr ---
+        elif source_type == 'Agregarr':
+            # Agregarr is a one-way webhook integration (Agregarr → CLI Debrid)
+            # CLI Debrid doesn't initiate connections to Agregarr, it only receives webhooks
+            # Just verify it's configured (enabled) and mark as connected
+
+            # Agregarr doesn't have an API key - it's configured if it's enabled
+            base_response['connected'] = True
+            base_response['details'].update({
+                'webhook_mode': 'receive_only',
+                'note': 'Agregarr sends webhooks to CLI Debrid. No outbound connection required.',
+                'media_type': source_config.get('media_type', 'All')
+            })
+
     except requests.Timeout:
         base_response['error'] = 'Connection timed out'
         base_response['connected'] = False
@@ -1134,7 +1200,7 @@ def check_content_source_connection(source_id: str, source_config: Dict[str, Any
         log.exception(f"Unhandled error during connection check for {source_id}: {e}") # Log unexpected errors
         base_response['error'] = f"Unexpected error: {str(e)}"
         base_response['connected'] = False
-        
+
     return base_response
 
 def check_content_sources_connections():

@@ -23,7 +23,7 @@ class WantedQueue:
         conn = None
         try:
             conn = get_db_connection()
-            cursor = conn.execute("SELECT 1 FROM media_items WHERE id = ? AND state = 'Wanted' LIMIT 1", (item_id,))
+            cursor = conn.execute("SELECT 1 FROM media_items WHERE id = ? AND state = 'Wanted' AND (ghostlisted IS NULL OR ghostlisted = 0) LIMIT 1", (item_id,))
             result = cursor.fetchone()
             return result is not None
         except Exception as e:
@@ -339,7 +339,7 @@ class WantedQueue:
 
                 # Assuming force_priority is an INTEGER field (1 for true, 0 or NULL for false)
                 cursor_force = conn_force.execute(
-                    "SELECT * FROM media_items WHERE state = 'Wanted' AND force_priority = 1"
+                    "SELECT * FROM media_items WHERE state = 'Wanted' AND force_priority = 1 AND (ghostlisted IS NULL OR ghostlisted = 0)"
                 )
                 forced_items_raw = cursor_force.fetchall()
 
@@ -427,7 +427,7 @@ class WantedQueue:
                     return True # Stop processing more items from Wanted if no capacity for regular items
 
             # 3. Build Query for Candidate Items (REGULAR items)
-            query = "SELECT * FROM media_items WHERE state = 'Wanted'" # This will not pick up already moved forced items
+            query = "SELECT * FROM media_items WHERE state = 'Wanted' AND (ghostlisted IS NULL OR ghostlisted = 0)" # This will not pick up already moved forced items
             params = []
             order_by_clauses = []
             sort_order_type = get_setting("Queue", "queue_sort_order", "None")
@@ -576,7 +576,7 @@ class WantedQueue:
                                     "CASE WHEN type = 'episode' THEN episode_number ELSE NULL END ASC NULLS FIRST",
                                     "id ASC"
                                 ]
-                                show_query = f"SELECT * FROM media_items WHERE state = 'Wanted' AND imdb_id = ? ORDER BY {', '.join(show_query_order_clauses)}"
+                                show_query = f"SELECT * FROM media_items WHERE state = 'Wanted' AND imdb_id = ? AND (ghostlisted IS NULL OR ghostlisted = 0) ORDER BY {', '.join(show_query_order_clauses)}"
                                 cursor_show = conn_show.execute(show_query, (item_imdb_id,))
                                 current_show_episodes_from_db_raw = cursor_show.fetchall()
                                 current_show_episodes_from_db = [dict(row) for row in current_show_episodes_from_db_raw]
@@ -670,6 +670,7 @@ class WantedQueue:
                 SELECT id, title, imdb_id, tmdb_id, type, season_number
                 FROM media_items
                 WHERE state = 'Wanted'
+                AND (ghostlisted IS NULL OR ghostlisted = 0)
             """)
             wanted_items = cursor.fetchall()
 

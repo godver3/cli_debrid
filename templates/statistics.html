@@ -4,6 +4,7 @@
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/statistics.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/scraper.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper-mobile.css') }}">
 <script src="{{ url_for('static', filename='js/tangerine_filename_formatter.js') }}"></script>
 {% endblock %}
 {% block title %}Home{% endblock %}
@@ -87,7 +88,7 @@
         <div class="toggle-item search-box-item" id="stats-search-box" style="display: none;">
             <form id="stats-search-form" class="stats-search-form">
                 <i class="fas fa-search stats-search-icon"></i>
-                <input type="text" id="stats-search-input" placeholder="Search movies/shows..." class="stats-search-input">
+                <input type="text" id="stats-search-input" placeholder="Search or enter IMDb/TMDB ID..." class="stats-search-input">
             </form>
         </div>
     </div>
@@ -122,6 +123,32 @@
             }
 
             // Handle search form submission
+            // Helper function to detect IMDb/TMDB IDs (inline version for statistics page)
+            function buildSearchURL(searchTerm) {
+                const term = searchTerm.trim();
+                
+                // Check for IMDb ID (tt followed by digits)
+                const imdbMatch = term.match(/^(tt\d+)$/i);
+                if (imdbMatch) {
+                    return `/discover?imdb_id=${encodeURIComponent(imdbMatch[1])}`;
+                }
+                
+                // Check for TMDB ID (tmdb: prefix or just digits)
+                const tmdbWithPrefix = term.match(/^tmdb:?(\d+)$/i);
+                if (tmdbWithPrefix) {
+                    return `/discover?tmdb_id=${encodeURIComponent(tmdbWithPrefix[1])}`;
+                }
+                
+                // Check if it's just digits (treat as TMDB ID if >= 1)
+                const digitsOnly = term.match(/^(\d+)$/);
+                if (digitsOnly && parseInt(digitsOnly[1]) > 0) {
+                    return `/discover?tmdb_id=${encodeURIComponent(digitsOnly[1])}`;
+                }
+                
+                // Default: regular search query
+                return `/discover?q=${encodeURIComponent(term)}`;
+            }
+
             const searchForm = document.getElementById('stats-search-form');
             if (searchForm) {
                 searchForm.addEventListener('submit', function(e) {
@@ -165,8 +192,8 @@
                             document.head.appendChild(style);
                         }
 
-                        // Navigate immediately
-                        window.location.href = `/scraper?q=${encodeURIComponent(searchTerm)}`;
+                        // Navigate with ID detection
+                        window.location.href = buildSearchURL(searchTerm);
                     }
                 });
             }
@@ -182,6 +209,9 @@
             // Update displays
             updateActiveDownloadsDisplay();
             updateUsageStatsDisplay();
+            
+            // Apply color gradient for tangerine theme
+            applyPercentageColorGradient();
 
             // Add click handler for rescrape buttons
             document.querySelectorAll('.rescrape-btn').forEach(button => {
@@ -306,18 +336,6 @@
                             <span class="air-time">${item.formatted_datetime}</span>
                         </div>
                         <div class="episode-actions">
-                            ${showSearchButton ? `
-                                <button class="search-episode-btn"
-                                    data-imdb-id="${item.imdb_id}"
-                                    data-tmdb-id="${item.tmdb_id}"
-                                    data-season="${item.season_number}"
-                                    data-episode="${item.episode_number}"
-                                    title="Search for this episode">
-                                    <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" width="20" height="20">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M10 21h7a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v11m0 5l4.879-4.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242z"></path>
-                                    </svg>
-                                </button>
-                            ` : ''}
                             ${showMoveToWanted ? `
                                 <button class="refresh-btn"
                                     data-imdb-id="${item.imdb_id}"
@@ -341,6 +359,18 @@
                                 data-episode="${item.episode_number}"
                                 title="Move back to Wanted state">
                                 <i class="recrape-icon"></i>
+                            </button>
+                        ` : ''}
+                        ${showSearchButton ? `
+                            <button class="search-episode-btn"
+                                data-imdb-id="${item.imdb_id}"
+                                data-tmdb-id="${item.tmdb_id}"
+                                data-season="${item.season_number}"
+                                data-episode="${item.episode_number}"
+                                title="Search for this episode">
+                                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" width="20" height="20">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M10 21h7a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v11m0 5l4.879-4.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242z"></path>
+                                </svg>
                             </button>
                         ` : ''}
                     </li>
@@ -806,6 +836,11 @@
         document.addEventListener('DOMContentLoaded', function() {
             console.log('[Statistics] DOM Content Loaded - attaching recently aired listeners');
             attachRecentlyAiredListeners();
+
+            // Fetch available versions for torrent modal (from scraper.js)
+            if (typeof fetchVersions === 'function') {
+                fetchVersions().catch(err => console.warn('[Statistics] Failed to fetch versions:', err));
+            }
         });
 
         document.getElementById('compact-toggle').addEventListener('change', function() {
@@ -856,7 +891,100 @@
     </script>
 
     <div class="stats-container">
-        <div class="stats-box collection-stats" id="collection_stats">
+        <div class="stats-box collection-stats tangerine-only" id="collection_stats_tangerine">
+            <div class="stat-items">
+                <div class="stat-item">
+                    <div class="stat-content">
+                        <div class="stat-icon">
+                            <i class="fas fa-film"></i>
+                        </div>
+                        <div class="stat-text-content">
+                            <div class="stat-label">Movies</div>
+                            <div class="stat-number">{{ stats.total_movies }}</div>
+                        </div>
+                    </div>
+                    <!-- <div class="stat-badges">
+                        <span class="stat-badge files">{{ stats.total_movie_files }} files</span>
+                        <span class="stat-badge warning">{{ stats.wanted_movies|default(0) }} wanted</span>
+                    </div> -->
+                </div>
+                <div class="stat-item">
+                    <div class="stat-content">
+                        <div class="stat-icon">
+                            <i class="fas fa-tv"></i>
+                        </div>
+                        <div class="stat-text-content">
+                            <div class="stat-label">Shows</div>
+                            <div class="stat-number">{{ stats.total_shows }}</div>
+                        </div>
+                    </div>
+                    <!-- <div class="stat-badges">
+                        <span class="stat-badge episodes">{{ stats.total_episodes }} episodes</span>
+                        <span class="stat-badge warning">{{ stats.missing_episodes|default(0) }} missing</span>
+                    </div> -->
+                </div>
+                <div class="stat-item">
+                    <div class="stat-content">
+                        <div class="stat-icon">
+                            <i class="fas fa-video"></i>
+                        </div>
+                        <div class="stat-text-content">
+                            <div class="stat-label">Episodes</div>
+                            <div class="stat-number">{{ stats.total_episodes }}</div>
+                        </div>
+                    </div>
+                </div>
+                {% if not limited_env %}
+                <div class="stat-item">
+                    <div class="stat-content">
+                        <div class="stat-icon">
+                            <i class="fas fa-download"></i>
+                        </div>
+                        <div class="stat-text-content">
+                            <div class="stat-label">Active</div>
+                            <div class="stat-number {{ stats.active_downloads_data.status }}">
+                                <span id="active_downloads">{{ stats.active_downloads_data.count|default(0) }}</span>/<span id="download_limit">{{ stats.active_downloads_data.limit|default(25) }}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-content">
+                        <div class="stat-icon">
+                            <i class="fas fa-chart-line"></i>
+                        </div>
+                        <div class="stat-text-content">
+                            <div class="stat-label"><span class="hide-mobile-text">Daily </span>Usage</div>
+                            <div class="stat-number">
+                                <span id="daily_usage">{{ stats.usage_stats_data.percentage }}%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- <div class="stat-badges">
+                        <span class="stat-badge episodes">{{ stats.active_downloads_data.count|default(0) }}/{{ stats.active_downloads_data.limit|default(25) }} active</span>
+                        <span class="stat-badge warning">{{ stats.usage_stats_data.used }} used</span>
+                        <span class="stat-badge warning">{{ stats.usage_stats_data.limit }} limit</span>
+                    </div> -->
+                </div>
+                {% endif %}
+                <div class="stat-item">
+                    <div class="stat-content">
+                        <div class="stat-icon">
+                            <i class="fas fa-clock"></i>
+                        </div>
+                        <div class="stat-text-content">
+                            <div class="stat-label">Uptime</div>
+                            <div class="stat-number">{{ '%dd %dh %dm' | format(
+                                stats.uptime // 86400,
+                                (stats.uptime % 86400) // 3600,
+                                (stats.uptime % 3600) // 60
+                            ) }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="stats-box collection-stats classic-only" id="collection_stats_classic">
             <div class="stat-items">
                 <div class="stat-item">
                     <p data-label="Total Movies">{{ stats.total_movies }}</p>
@@ -870,15 +998,15 @@
                 {% if not limited_env %}
                 <div class="stat-item">
                     <p data-label="Active Downloads" class="{{ stats.active_downloads_data.status }}">
-                        <span id="active_downloads">{{ stats.active_downloads_data.count|default(0) }}</span>/<span id="download_limit">{{ stats.active_downloads_data.limit|default(25) }}</span>
+                        <span id="active_downloads_classic">{{ stats.active_downloads_data.count|default(0) }}</span>/<span id="download_limit_classic">{{ stats.active_downloads_data.limit|default(25) }}</span>
                     </p>
                 </div>
                 <div class="stat-item">
-                    <p data-label="Daily Usage"><span id="daily_usage">{{ stats.usage_stats_data.used }}</span></p>
+                    <p data-label="Daily Usage"><span id="daily_usage_classic">{{ stats.usage_stats_data.used }}</span> / <span id="daily_limit_classic">{{ stats.usage_stats_data.limit }}</span></p>
                 </div>
                 {% endif %}
                 <div class="stat-item">
-                    <p data-label="Uptime">{{ '%dd %dh %dm' | format(
+                    <p data-label="Uptime">{{ '%d days %d hours %d minutes' | format(
                         stats.uptime // 86400,
                         (stats.uptime % 86400) // 3600,
                         (stats.uptime % 3600) // 60
@@ -909,28 +1037,16 @@
                             {# Determine which buttons to show #}
                             {# Uncollected episodes: show search button only #}
                             {# Checking_upgrade episodes: show both search and move-to-wanted buttons #}
-                            {# Collected episodes: show old rescrape button only #}
-                            {% set show_search_button = item.display_status == 'uncollected' or item.display_status == 'checking_upgrade' %}
+                            {# Collected episodes: show old rescrape button only #}            
                             {% set show_move_to_wanted = item.display_status == 'checking_upgrade' %}
                             {% set show_rescrape = item.display_status == 'collected' %}
+                            {% set show_search_button = item.display_status == 'uncollected' or item.display_status == 'checking_upgrade' %}
 
                             <span class="show-title{{ status_class }}">{{ item.title }}</span>
                             <span class="air-time">{{ item.formatted_datetime }}</span>
                         </div>
                         {# Action buttons - Search button for uncollected/checking_upgrade episodes #}
                         <div class="episode-actions">
-                            {% if show_search_button %}
-                            <button class="search-episode-btn"
-                                    data-imdb-id="{{ item.imdb_id }}"
-                                    data-tmdb-id="{{ item.tmdb_id }}"
-                                    data-season="{{ item.season_number }}"
-                                    data-episode="{{ item.episode_number }}"
-                                    title="Search for this episode">
-                                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" width="20" height="20">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M10 21h7a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v11m0 5l4.879-4.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242z"></path>
-                                </svg>
-                            </button>
-                            {% endif %}
                             {% if show_move_to_wanted %}
                             <button class="refresh-btn"
                                     data-imdb-id="{{ item.imdb_id }}"
@@ -955,6 +1071,18 @@
                                 data-episode="{{ item.episode_number }}"
                                 title="Move back to Wanted state">
                             <i class="recrape-icon"></i>
+                        </button>
+                        {% endif %}
+                        {% if show_search_button %}
+                        <button class="search-episode-btn"
+                                data-imdb-id="{{ item.imdb_id }}"
+                                data-tmdb-id="{{ item.tmdb_id }}"
+                                data-season="{{ item.season_number }}"
+                                data-episode="{{ item.episode_number }}"
+                                title="Search for this episode">
+                            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" width="20" height="20">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M10 21h7a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v11m0 5l4.879-4.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242z"></path>
+                            </svg>
                         </button>
                         {% endif %}
                     </li>
@@ -1087,6 +1215,65 @@
 </div>
 
 <script>
+    // Calculate color based on percentage (0% = green, 50% = yellow, 100% = red)
+    function getGradientColor(percentage) {
+        // Clamp percentage between 0 and 100
+        const percent = Math.max(0, Math.min(100, percentage));
+        
+        let r, g, b;
+        
+        if (percent <= 50) {
+            // Green to Yellow (0% to 50%)
+            // Green: rgb(26, 40, 34) to Yellow: rgb(40, 40, 26)
+            const ratio = percent / 50;
+            r = Math.round(26 + (40 - 26) * ratio);
+            g = Math.round(40 + (40 - 40) * ratio);
+            b = Math.round(34 + (26 - 34) * ratio);
+        } else {
+            // Yellow to Red (50% to 100%)
+            // Yellow: rgb(40, 40, 26) to Red: rgb(40, 26, 26)
+            const ratio = (percent - 50) / 50;
+            r = Math.round(40 + (40 - 40) * ratio);
+            g = Math.round(40 + (26 - 40) * ratio);
+            b = Math.round(26 + (26 - 26) * ratio);
+        }
+        
+        return `rgb(${r} ${g} ${b} / 65%)`;
+    }
+    
+    // Apply color gradient to stat boxes (Tangerine theme only)
+    function applyPercentageColorGradient() {
+        // Only apply for tangerine theme
+        const isTangerine = document.body.classList.contains('tangerine-theme');
+        if (!isTangerine) return;
+        
+        // Active downloads percentage
+        const activeDownloads = parseInt(document.getElementById('active_downloads')?.textContent || 0);
+        const downloadLimit = parseInt(document.getElementById('download_limit')?.textContent || 75);
+        const activePercentage = downloadLimit > 0 ? (activeDownloads / downloadLimit) * 100 : 0;
+        
+        // Daily usage percentage
+        const dailyUsageText = document.getElementById('daily_usage')?.textContent || '0%';
+        const dailyPercentage = parseFloat(dailyUsageText.replace('%', '')) || 0;
+        
+        // Find the stat-item boxes
+        const statItems = document.querySelectorAll('.stat-item');
+        
+        statItems.forEach((item) => {
+            const label = item.querySelector('.stat-label')?.textContent?.trim();
+            
+            if (label === 'Active') {
+                const color = getGradientColor(activePercentage);
+                item.style.backgroundColor = color;
+                item.style.transition = 'background-color 0.3s ease';
+            } else if (label === 'Daily Usage') {
+                const color = getGradientColor(dailyPercentage);
+                item.style.backgroundColor = color;
+                item.style.transition = 'background-color 0.3s ease';
+            }
+        });
+    }
+    
     // Update active downloads display based on data from server
     function updateActiveDownloadsDisplay() {
         const data = {{ stats.active_downloads_data|tojson|safe }};
@@ -1112,6 +1299,9 @@
         } else if (data.status === 'warning') {
             statusElement.classList.add('warning');
         }
+        
+        // Update color gradient for tangerine theme
+        applyPercentageColorGradient();
 
         // Initialize subscription days from server-rendered stats on first paint
         try {
@@ -1149,6 +1339,9 @@
         } else if (data.percentage >= 75) {
             usageElement.classList.add('warning');
         }
+        
+        // Update color gradient for tangerine theme
+        applyPercentageColorGradient();
     }
 
     document.getElementById('time-format-toggle').addEventListener('change', function() {
@@ -1442,8 +1635,11 @@
 <!-- Include loading.js for loading overlay used by scraper -->
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 
+<!-- Include torrent modal utilities for scraper modals -->
+<script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}?v=20260118"></script>
+
 <!-- Include scraper.js for search episode functionality -->
-<script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
+<script src="{{ url_for('static', filename='js/scraper.js') }}?v={{ range(10000, 99999) | random }}"></script>
 
 <!-- Scraper overlay for episode search -->
 <div id="overlay" class="overlay">

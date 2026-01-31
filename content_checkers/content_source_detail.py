@@ -33,6 +33,8 @@ def append_content_source_detail(item: Dict[str, Any], source_type: Optional[str
             detail = item.get('content_source_detail', 'Unknown User')
         elif source_type == 'Overseerr':
             detail = item.get('content_source_detail')
+        elif source_type == 'Agregarr':
+            detail = item.get('content_source_detail')
         elif source_type == 'Trakt':
             detail = item.get('content_source_detail')
         elif source_type == 'MDBList':

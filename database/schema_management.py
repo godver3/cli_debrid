@@ -257,6 +257,15 @@ def migrate_schema():
         if 'verification_failure_reason' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN verification_failure_reason TEXT')
             logging.info("Successfully added verification_failure_reason column to media_items table.")
+        if 'plex_labels_last_synced' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_labels_last_synced TIMESTAMP')
+            logging.info("Successfully added plex_labels_last_synced column to media_items table.")
+        if 'selected_folder' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN selected_folder TEXT')
+            logging.info("Successfully added selected_folder column to media_items table.")
+        if 'selected_folder_is_custom' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN selected_folder_is_custom BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added selected_folder_is_custom column to media_items table.")
 
         # Add new indexes for version and content_source if they don't exist
         existing_indexes_cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index';")
@@ -705,7 +714,8 @@ def create_tables():
                 plex_labels TEXT,
                 content_sources TEXT,
                 verification_failed BOOLEAN DEFAULT FALSE,
-                verification_failure_reason TEXT
+                verification_failure_reason TEXT,
+                plex_labels_last_synced TIMESTAMP
             )
         ''')
 

@@ -60,14 +60,14 @@ let pageBackdrop, pageBackdropImg;
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('[Movie Detail] Page loaded, initializing...');
+    if (window.DEBUG) console.log('[Movie Detail] Page loaded, initializing...');
 
     try {
         initializeElements();
         attachEventListeners();
         loadMovieData();
     } catch (error) {
-        console.error('[Movie Detail] Initialization error:', error);
+        if (window.DEBUG) console.error('[Movie Detail] Initialization error:', error);
     }
 });
 
@@ -86,6 +86,7 @@ function attachEventListeners() {
     const btnRefreshTMDB = document.getElementById('btn-refresh-tmdb');
     const btnSettings = document.getElementById('btn-settings');
     const btnSearchMovie = document.getElementById('btn-search-movie');
+    const btnRequestMovie = document.getElementById('btn-request-movie');
 
     if (btnGetMissing) {
         btnGetMissing.addEventListener('click', handleGetMissing);
@@ -105,6 +106,10 @@ function attachEventListeners() {
 
     if (btnSearchMovie) {
         btnSearchMovie.addEventListener('click', handleSearchMovie);
+    }
+
+    if (btnRequestMovie) {
+        btnRequestMovie.addEventListener('click', handleRequestMovie);
     }
 
     // Close overlay when pressing Escape key
@@ -145,7 +150,7 @@ async function loadMovieData() {
         // Store broken files in Set for fast lookup
         if (brokenData.success && brokenData.broken_files) {
             brokenFiles = new Set(brokenData.broken_files);
-            console.log(`[Movie Detail] Loaded ${brokenFiles.size} broken files`);
+            if (window.DEBUG) console.log(`[Movie Detail] Loaded ${brokenFiles.size} broken files`);
         }
 
         if (data.success) {
@@ -153,7 +158,7 @@ async function loadMovieData() {
             filesData = data.files;
 
             renderMovieHeader(movieData);
-            renderFiles(filesData);
+            renderFiles(filesData,movieData);
 
             // Initialize deletion handlers after data is loaded
             initializeDeletionHandlers();
@@ -169,6 +174,11 @@ async function loadMovieData() {
 
                 // Align sidebar with files container
                 alignSidebarWithFiles();
+
+                // Load cast from TMDB if we have a tmdb_id
+                if (movieData.tmdb_id) {
+                    loadCast(movieData.tmdb_id);
+                }
             } else {
                 emptyState.style.display = 'flex';
             }
@@ -176,14 +186,14 @@ async function loadMovieData() {
             movieError(data.error || 'Failed to load movie details');
         }
     } catch (error) {
-        console.error('[Movie Detail] Error loading data:', error);
+        if (window.DEBUG) console.error('[Movie Detail] Error loading data:', error);
         movieError('Failed to load movie details. Please try again.');
     }
 }
 
 function renderMovieHeader(movie) {
-    console.log('[Movie Detail] Rendering header with data:', movie);
-    console.log('[Movie Detail] Metadata values - overview:', movie.overview, 'genres:', movie.genres, 'network:', movie.network, 'status:', movie.status);
+    if (window.DEBUG) console.log('[Movie Detail] Rendering header with data:', movie);
+    if (window.DEBUG) console.log('[Movie Detail] Metadata values - overview:', movie.overview, 'genres:', movie.genres, 'network:', movie.network, 'status:', movie.status);
 
     // Set title with year in parentheses
     const titleText = movie.title + (movie.year ? ` (${movie.year})` : '');
@@ -191,7 +201,7 @@ function renderMovieHeader(movie) {
     if (titleEl) {
         titleEl.textContent = titleText;
     } else {
-        console.error('[Movie Detail] movie-title element not found');
+        if (window.DEBUG) console.error('[Movie Detail] movie-title element not found');
     }
 
     // Set poster
@@ -273,14 +283,13 @@ function renderMovieHeader(movie) {
     }
 
     const pathValue = document.getElementById('path-value');
-    if (pathValue && movie.location_on_disk) {
-        pathValue.textContent = formatPathDisplay(movie.location_on_disk);
+    if (pathValue && movie.path) {
+        pathValue.textContent = movie.path;
     }
 
     const addedValue = document.getElementById('added-value');
     if (addedValue && movie.collected_at) {
-        const date = new Date(movie.collected_at);
-        addedValue.textContent = formatDate(date);
+        addedValue.textContent = formatDate(movie.collected_at);
     }
 
     const sizeValue = document.getElementById('size-value');
@@ -320,7 +329,7 @@ function renderMovieHeader(movie) {
     // Set details in sidebar - movie specific fields
     const releaseDateEl = document.getElementById('movie-release-date');
     if (releaseDateEl) {
-        releaseDateEl.textContent = movie.release_date || '-';
+        releaseDateEl.textContent = movie.release_date ? formatDate(movie.release_date) : '-';
     }
 
     const runtimeEl = document.getElementById('movie-runtime');
@@ -330,7 +339,13 @@ function renderMovieHeader(movie) {
 
     const ratingEl = document.getElementById('movie-rating');
     if (ratingEl) {
-        ratingEl.textContent = movie.rating ? `${movie.rating}/10` : '-';
+        if (movie.rating) {
+            const ratingValue = parseFloat(movie.rating).toFixed(1);
+            const voteCount = movie.vote_count ? ` (${movie.vote_count.toLocaleString()} votes)` : '';
+            ratingEl.textContent = `${ratingValue}/10${voteCount}`;
+        } else {
+            ratingEl.textContent = '-';
+        }
     }
 
     const genresEl = document.getElementById('movie-genres');
@@ -363,8 +378,8 @@ function renderMovieHeader(movie) {
     }
 
     const pathEl = document.getElementById('movie-path');
-    if (pathEl && movie.location_on_disk) {
-        pathEl.textContent = formatPathDisplay(movie.location_on_disk);
+    if (pathEl && movie.path) {
+        pathEl.textContent = movie.path;
     } else if (pathEl) {
         pathEl.textContent = '-';
     }
@@ -400,14 +415,14 @@ function renderMovieHeader(movie) {
         deleteBtn.setAttribute('aria-label', useGhostIcon ? 'Ghostlist entire movie' : 'Delete entire movie');
     }
 
-    console.log('[Movie Detail] Header rendering complete');
+    if (window.DEBUG) console.log('[Movie Detail] Header rendering complete');
 }
 
-function renderFiles(files) {
+function renderFiles(files,movie) {
     const filesContent = document.getElementById('files-content');
 
     if (!filesContent) {
-        console.error('[Movie Detail] files-content element not found');
+        if (window.DEBUG) console.error('[Movie Detail] files-content element not found');
         return;
     }
 
@@ -424,15 +439,15 @@ function renderFiles(files) {
     fileList.style.cssText = 'display: flex; flex-direction: column; gap: 0.75rem; padding: 1rem;';
 
     files.forEach((file, index) => {
-        const fileRow = createFileRow(file, index + 1);
+        const fileRow = createFileRow(file, index + 1, movie);
         fileList.appendChild(fileRow);
     });
 
     filesContent.appendChild(fileList);
-    console.log('[Movie Detail] Rendered', files.length, 'file(s)');
+    if (window.DEBUG) console.log('[Movie Detail] Rendered', files.length, 'file(s)');
 }
 
-function createFileRow(file, rowNumber) {
+function createFileRow(file, rowNumber, movie) {
     const row = document.createElement('div');
     row.className = 'movie-file-row';
     // Hover effect now handled by CSS
@@ -442,18 +457,27 @@ function createFileRow(file, rowNumber) {
     number.className = 'movie-file-number'
     number.textContent = rowNumber;
 
-    // Status indicator (green checkmark for Collected, red X for Blacklisted)
+    // Status indicator (green checkmark for Collected, red X for Blacklisted, blue clock for Unreleased, purple magnifying glass for Wanted)
     const status = document.createElement('div');
     status.className = 'movie-file-status-icon';
     const isCollected = file.state === 'Collected';
+    const isUpgrading = file.state === 'Upgrading';
     const isBlacklisted = file.state === 'Blacklisted';
+    const isUnreleased = file.state === 'Unreleased';
+    const isWanted = file.state === 'Wanted';
 
     if (isCollected) {
-        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#4CAF50"><circle cx="10" cy="10" r="10"/><path d="M6 10l3 3 5-6" stroke="white" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#4CAF50"><path fill-rule="evenodd" d="M1.875 10c0-4.487 3.638-8.125 8.125-8.125s8.125 3.638 8.125 8.125-3.638 8.125-8.125 8.125S1.875 14.487 1.875 10zm11.133-1.512a.625.625 0 10-1.016-.726l-2.697 3.775-1.42-1.42a.625.625 0 00-.884.883l1.875 1.875a.625.625 0 00.95-.078l3.125-4.375z" clip-rule="evenodd" /></svg>';
     } else if (isBlacklisted) {
-        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#ef4444"><circle cx="10" cy="10" r="10"/><path d="M6 6l8 8M14 6l-8 8" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#ef4444"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm-1.433 5.808a.625.625 0 10-.884.884L9.117 10l-1.434 1.433a.625.625 0 10.884.884L10 10.883l1.433 1.434a.625.625 0 10.884-.884L10.883 10l1.434-1.433a.625.625 0 10-.884-.884L10 9.117l-1.433-1.434z" clip-rule="evenodd" /></svg>';
+    } else if (isUpgrading) {
+        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#60a5fa"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm.442 4.558a.625.625 0 00-.884 0l-2.5 2.5a.625.625 0 10.884.884l1.433-1.434v5.159a.625.625 0 001.25 0V8.383l1.433 1.434a.625.625 0 10.884-.884l-2.5-2.5z" clip-rule="evenodd" /></svg>';
+    } else if (isUnreleased) {
+        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#e0e0e0"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zM10 6.875a.625.625 0 01.625.625v3.075l1.9 1.9a.625.625 0 11-.884.884l-2.083-2.083a.625.625 0 01-.183-.442V7.5a.625.625 0 01.625-.625z" clip-rule="evenodd" /></svg>';
+    } else if (isWanted) {
+        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#fbbf24"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm3.567 6.017a.625.625 0 010 .884l-2.5 2.5a.625.625 0 01-.884-.884l1.434-1.434H7.5a.625.625 0 010-1.25h4.117l-1.434-1.434a.625.625 0 01.884-.884l2.5 2.5zm-7.134 4.633a.625.625 0 010-.884l2.5-2.5a.625.625 0 01.884.884l-1.434 1.434H12.5a.625.625 0 010 1.25H8.383l1.434 1.434a.625.625 0 01-.884.884l-2.5-2.5z" clip-rule="evenodd" /></svg>';
     } else {
-        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#666"><circle cx="10" cy="10" r="10"/></svg>';
+        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#666"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm-1.433 5.808a.625.625 0 10-.884.884L9.117 10l-1.434 1.433a.625.625 0 10.884.884L10 10.883l1.433 1.434a.625.625 0 10.884-.884L10.883 10l1.434-1.433a.625.625 0 10-.884-.884L10 9.117l-1.433-1.434z" clip-rule="evenodd" /></svg>';
     }
 
     // File info section
@@ -461,13 +485,16 @@ function createFileRow(file, rowNumber) {
     info.className = 'movie-file-info-section';
 
     const fileName = file.basename || file.filename || 'Unknown file';
+    const titleText = movie.title + (movie.year ? ` (${movie.year})` : '');
+    const qualityTags = extractQualityTags(file.basename || file.filename || '');
+    const tags = qualityTags.map(tag => createQualityBadge(tag)).join('');
     const version = file.version || 'Default';
 
     // Determine status label and value
     let statusLabel, statusValue;
     if (isCollected && file.collected_at) {
         statusLabel = 'Collected';
-        statusValue = new Date(file.collected_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        statusValue = formatDate(file.collected_at);
     } else if (isBlacklisted) {
         statusLabel = 'Status';
         statusValue = 'Blacklisted';
@@ -480,8 +507,9 @@ function createFileRow(file, rowNumber) {
     const sizeText = (file.size !== null && file.size !== undefined) ? `${file.size.toFixed(2)} GB` : '';
 
     info.innerHTML = `
-        <div style="display: flex; align-items: center; gap: 0.5rem;">
-            <span class="movie-file-title">${fileName}</span>
+        <div class="release-title-wrapper">
+            <div class="movie-file-title" data-clean-title="${titleText}" title="${fileName}">${titleText}</div>
+            <div class="release-tags">${tags}</div>
         </div>
         <div class="movie-file-meta">
             <span class="file-version">${version}</span>
@@ -530,46 +558,51 @@ function createFileRow(file, rowNumber) {
     });
     wantedBtn.addEventListener('click', () => handleMoveFileToWanted(file.id));
 
-    // Individual file delete button - always use delete (not ghostlist) even if auto_ghostlist_enabled
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'file-action-btn delete-btn';
-    deleteBtn.title = 'Delete this file';
-    deleteBtn.dataset.fileId = file.id;
-    deleteBtn.style.cssText = `
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0.5rem;
-        background: transparent;
-        border: 1px solid rgba(239, 68, 68, 0.3);
-        border-radius: 0.375rem;
-        color: #ef4444;
-        cursor: pointer;
-        transition: all 0.2s ease;
-    `;
-
-    // Always use trash icon for individual file deletion
-    deleteBtn.innerHTML = `
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M10 11v6"></path>
-            <path d="M14 11v6"></path>
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
-            <path d="M3 6h18"></path>
-            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-        </svg>
-    `;
-
-    deleteBtn.addEventListener('mouseenter', () => {
-        deleteBtn.style.background = 'rgba(239, 68, 68, 0.15)';
-        deleteBtn.style.borderColor = 'rgba(239, 68, 68, 0.5)';
-    });
-    deleteBtn.addEventListener('mouseleave', () => {
-        deleteBtn.style.background = 'transparent';
-        deleteBtn.style.borderColor = 'rgba(239, 68, 68, 0.3)';
-    });
-
+    // Add move to wanted button (always visible)
     actions.appendChild(wantedBtn);
-    actions.appendChild(deleteBtn);
+
+    // Individual file delete button - only for admins
+    const hasAdminPermissions = document.getElementById('has_admin_permissions')?.value === 'True';
+    if (hasAdminPermissions) {
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'file-action-btn delete-btn';
+        deleteBtn.title = 'Delete this file';
+        deleteBtn.dataset.fileId = file.id;
+        deleteBtn.style.cssText = `
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.5rem;
+            background: transparent;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 0.375rem;
+            color: #ef4444;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        `;
+
+        // Always use trash icon for individual file deletion
+        deleteBtn.innerHTML = `
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10 11v6"></path>
+                <path d="M14 11v6"></path>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path>
+                <path d="M3 6h18"></path>
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            </svg>
+        `;
+
+        deleteBtn.addEventListener('mouseenter', () => {
+            deleteBtn.style.background = 'rgba(239, 68, 68, 0.15)';
+            deleteBtn.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+        });
+        deleteBtn.addEventListener('mouseleave', () => {
+            deleteBtn.style.background = 'transparent';
+            deleteBtn.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+        });
+
+        actions.appendChild(deleteBtn);
+    }
 
     row.appendChild(number);
     row.appendChild(status);
@@ -604,7 +637,7 @@ function handleMoveFileToWanted(fileId) {
         }
     })
     .catch(error => {
-        console.error('Error:', error);
+        if (window.DEBUG) console.error('Error:', error);
         moviePopup({
             type: window.POPUP_TYPES.ERROR,
             message: `Error moving item to Wanted state: ${error.message}`,
@@ -614,7 +647,7 @@ function handleMoveFileToWanted(fileId) {
 }
 
 function movieError(message) {
-    console.error('[Movie Detail] Error:', message);
+    if (window.DEBUG) console.error('[Movie Detail] Error:', message);
 }
 
 function alignSidebarWithFiles() {
@@ -630,7 +663,7 @@ function alignSidebarWithFiles() {
         if (window.innerWidth > 768) {
             sidebar.style.marginTop = `${topOffset}px`;
         } else {
-            sidebar.style.marginTop = '20px'; // Fixed for mobile
+            sidebar.style.marginTop = '0px'; // Fixed for mobile
         }
     }
 }
@@ -643,9 +676,28 @@ window.addEventListener('resize', function() {
     movieSidebarResizeTimeout = setTimeout(alignSidebarWithFiles, 150);
 });
 
-function formatDate(date) {
-    const options = { year: 'numeric', month: 'short', day: 'numeric' };
-    return date.toLocaleDateString(undefined, options);
+function formatDate(dateInput) {
+    // Handle both Date objects and date strings
+    let dateStr;
+    if (typeof dateInput === 'string') {
+        // Extract just the date part if it has a timestamp
+        dateStr = dateInput.split('T')[0].split(' ')[0];
+    } else if (dateInput instanceof Date) {
+        dateStr = dateInput.toISOString().split('T')[0];
+    } else {
+        return '';
+    }
+    
+    // Parse manually to avoid timezone conversion issues
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+        const year = parts[0];
+        const month = parseInt(parts[1], 10) - 1;
+        const day = parseInt(parts[2], 10);
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        return `${months[month]} ${day}, ${year}`;
+    }
+    return dateStr;
 }
 
 // ============================================================================
@@ -658,6 +710,11 @@ async function handleSearchMovie() {
     const version = movieData.version || 'Default';
 
     // Call selectMedia to search for this movie
+    // Convert genres string to array if needed for auto-select
+    const genres = movieData.genres ?
+        (typeof movieData.genres === 'string' ? movieData.genres.split(',').map(g => g.trim()) : movieData.genres)
+        : [];
+
     await selectMedia(
         movieData.tmdb_id || movieData.id,
         movieData.title,
@@ -666,7 +723,7 @@ async function handleSearchMovie() {
         null,  // season (not used for movies)
         null,  // episode (not used for movies)
         false, // multi = false for single movie
-        null,  // genre_ids (leave blank for movies)
+        genres,  // genre_ids - pass genres for auto-select
         version
     );
 }
@@ -702,7 +759,7 @@ function handleGetMissing() {
         }
     })
     .catch(error => {
-        console.error('Error:', error);
+        if (window.DEBUG) console.error('Error:', error);
         moviePopup({
             type: window.POPUP_TYPES.ERROR,
             message: `Error moving videos to Wanted state: ${error.message}`,
@@ -723,6 +780,11 @@ async function handleFilePacks() {
     const activeFile = activeTab ? parseInt(activeTab.dataset.file) : 1;
 
     // Call selectMedia from scraper.js with movie data for file pack
+    // Convert genres string to array if needed for auto-select
+    const genres = movieData.genres ?
+        (typeof movieData.genres === 'string' ? movieData.genres.split(',').map(g => g.trim()) : movieData.genres)
+        : [];
+
     await selectMedia(
         movieData.tmdb_id || movieData.imdb_id,
         movieData.title,
@@ -731,7 +793,7 @@ async function handleFilePacks() {
         activeFile, // currently selected file
         null, // video null for file pack
         true, // multi - file packs are multi-file
-        null, // genre_ids
+        genres, // genre_ids - pass genres for auto-select
         version
     );
 }
@@ -748,7 +810,7 @@ function handleRefreshTMDB() {
 
     const mediaId = movieData.tmdb_id || movieData.imdb_id;
 
-    fetch(`/library/refresh_metadata/${mediaId}`, {
+    fetch(`/library/refresh_metadata/movie/${mediaId}`, {
         method: 'POST'
     })
     .then(response => response.json())
@@ -764,7 +826,7 @@ function handleRefreshTMDB() {
         btn.innerHTML = originalHTML;
     })
     .catch(error => {
-        console.error('Error:', error);
+        if (window.DEBUG) console.error('Error:', error);
         moviePopup({
             type: window.POPUP_TYPES.ERROR,
             message: `Error refreshing metadata: ${error.message}`,
@@ -781,8 +843,161 @@ function handleSettings() {
         window.openLibrarySettingsModal();
     } else {
         // Fallback to old behavior if modal not loaded
-        console.warn('[Library Movie] Library settings modal not loaded, redirecting to settings page');
+        if (window.DEBUG) console.warn('[Library Movie] Library settings modal not loaded, redirecting to settings page');
         window.location.href = '/settings#library-manager';
+    }
+}
+
+function handleRequestMovie() {
+    if (window.DEBUG) console.log('[Movie Request] Opening version modal for movie:', movieData);
+
+    if (!movieData || !movieData.tmdb_id) {
+        if (window.DEBUG) console.error('[Movie Request] No movie data or TMDB ID available');
+        showPopup({
+            message: 'Movie data not available',
+            type: POPUP_TYPES.ERROR
+        });
+        return;
+    }
+
+    // Get available versions from the version select
+    const versionSelect = document.getElementById('version-select');
+    if (!versionSelect) {
+        if (window.DEBUG) console.error('[Movie Request] Version select not found');
+        showPopup({
+            message: 'Version configuration not available',
+            type: POPUP_TYPES.ERROR
+        });
+        return;
+    }
+
+    const availableVersions = Array.from(versionSelect.options)
+        .map(opt => opt.value)
+        .filter(v => v !== 'No Version');
+
+    // Show version modal
+    showVersionModal(availableVersions);
+}
+
+function showVersionModal(versions) {
+    const modal = document.getElementById('versionModal');
+    const versionCheckboxes = document.getElementById('versionCheckboxes');
+
+    if (!modal || !versionCheckboxes) {
+        if (window.DEBUG) console.error('[Movie Request] Modal elements not found');
+        return;
+    }
+
+    // Clear existing checkboxes
+    versionCheckboxes.innerHTML = '';
+
+    // Add heading
+    const header = document.createElement('div');
+    header.className = 'version-section-header';
+    header.innerHTML = `<h4>Requesting: ${movieData.title}${movieData.year ? ` (${movieData.year})` : ''}</h4>`;
+    versionCheckboxes.appendChild(header);
+
+    const separator = document.createElement('hr');
+    versionCheckboxes.appendChild(separator);
+
+    const versionHeader = document.createElement('div');
+    versionHeader.className = 'version-section-header';
+    versionHeader.innerHTML = '<h4>Select Versions:</h4>';
+    versionCheckboxes.appendChild(versionHeader);
+
+    // Create checkboxes for each version
+    versions.forEach(version => {
+        const div = document.createElement('div');
+        div.className = 'version-checkbox';
+        div.innerHTML = `
+            <input type="checkbox" id="version-${version}" name="versions" value="${version}">
+            <label for="version-${version}">${version}</label>
+        `;
+        versionCheckboxes.appendChild(div);
+
+        // Auto-select if only one version
+        if (versions.length === 1) {
+            div.querySelector('input[type="checkbox"]').checked = true;
+        }
+    });
+
+    // Show modal
+    modal.style.display = 'flex';
+
+    // Attach event listeners
+    const confirmBtn = document.getElementById('confirmVersions');
+    const cancelBtn = document.getElementById('cancelVersions');
+
+    const handleConfirm = async () => {
+        const selectedVersions = Array.from(document.querySelectorAll('#versionCheckboxes input[type="checkbox"]:checked'))
+            .map(cb => cb.value);
+
+        if (selectedVersions.length === 0) {
+            showPopup({
+                message: 'Please select at least one version',
+                type: POPUP_TYPES.ERROR
+            });
+            return;
+        }
+
+        await submitRequest(selectedVersions);
+        modal.style.display = 'none';
+
+        // Remove event listeners
+        confirmBtn.removeEventListener('click', handleConfirm);
+        cancelBtn.removeEventListener('click', handleCancel);
+    };
+
+    const handleCancel = () => {
+        modal.style.display = 'none';
+        confirmBtn.removeEventListener('click', handleConfirm);
+        cancelBtn.removeEventListener('click', handleCancel);
+    };
+
+    confirmBtn.addEventListener('click', handleConfirm);
+    cancelBtn.addEventListener('click', handleCancel);
+
+    // Close on Escape key
+    const handleEscape = (e) => {
+        if (e.key === 'Escape' && modal.style.display === 'flex') {
+            handleCancel();
+            document.removeEventListener('keydown', handleEscape);
+        }
+    };
+    document.addEventListener('keydown', handleEscape);
+}
+
+async function submitRequest(selectedVersions) {
+    if (window.DEBUG) console.log('[Movie Request] Submitting request with versions:', selectedVersions);
+
+    try {
+        Loading.show('Requesting movie...');
+
+        const response = await fetch('/content/request', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                id: movieData.tmdb_id,
+                mediaType: 'movie',
+                title: movieData.title,
+                versions: selectedVersions
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success || response.ok) {
+            showPopup({ message: `Successfully requested: ${movieData.title}`, type: POPUP_TYPES.SUCCESS });
+        } else {
+            throw new Error(data.error || 'Request failed');
+        }
+    } catch (error) {
+        if (window.DEBUG) console.error('[Movie Request] Error:', error);
+        showPopup({ message: `Failed to request movie: ${error.message}`, type: POPUP_TYPES.ERROR });
+    } finally {
+        Loading.hide();
     }
 }
 
@@ -801,22 +1016,19 @@ function initializeDeletionHandlers() {
         deleteMovieBtn.addEventListener('click', handleDeleteMovie);
     }
 
-    // Bulk file deletion button
-    const deleteFilesBtn = document.querySelector('.delete-movie-file-btn');
-    console.log('[Movie Detail] Delete files button found:', deleteFilesBtn);
-    console.log('[Movie Detail] Files data:', filesData);
-    if (deleteFilesBtn) {
-        // Show/hide button based on file count
-        if (filesData && filesData.length >= 2) {
-            console.log('[Movie Detail] Showing delete files button - attaching event listener');
-            deleteFilesBtn.style.display = 'inline-flex';
-            deleteFilesBtn.addEventListener('click', handleDeleteMovieFiles);
-        } else {
-            console.log('[Movie Detail] Hiding delete files button - less than 2 files');
-            deleteFilesBtn.style.display = 'none';
+    // Bulk file deletion button - only exists for admin users
+    const hasAdminPermissions = document.getElementById('has_admin_permissions')?.value === 'True';
+    if (hasAdminPermissions) {
+        const deleteFilesBtn = document.querySelector('.delete-movie-file-btn');
+        if (deleteFilesBtn) {
+            // Show/hide button based on file count
+            if (filesData && filesData.length >= 2) {
+                deleteFilesBtn.style.display = 'inline-flex';
+                deleteFilesBtn.addEventListener('click', handleDeleteMovieFiles);
+            } else {
+                deleteFilesBtn.style.display = 'none';
+            }
         }
-    } else {
-        console.error('[Movie Detail] Delete files button not found in DOM');
     }
 
     // Individual file delete buttons
@@ -984,7 +1196,7 @@ async function handleDeleteMovie(event) {
     } catch (error) {
         cleanup();
         window.hideDeletionLoading();
-        console.error('Error deleting movie:', error);
+        if (window.DEBUG) console.error('Error deleting movie:', error);
         moviePopup({
             type: window.POPUP_TYPES.ERROR,
             message: `Error deleting movie: ${error.message}`,
@@ -997,9 +1209,9 @@ async function handleDeleteMovie(event) {
  * Handle bulk movie files deletion
  */
 async function handleDeleteMovieFiles() {
-    console.log('[Movie Detail] handleDeleteMovieFiles called');
-    console.log('[Movie Detail] filesData:', filesData);
-    console.log('[Movie Detail] movieData:', movieData);
+    if (window.DEBUG) console.log('[Movie Detail] handleDeleteMovieFiles called');
+    if (window.DEBUG) console.log('[Movie Detail] filesData:', filesData);
+    if (window.DEBUG) console.log('[Movie Detail] movieData:', movieData);
 
     if (!filesData || filesData.length === 0) {
         moviePopup({
@@ -1010,7 +1222,7 @@ async function handleDeleteMovieFiles() {
         return;
     }
 
-    console.log('[Movie Detail] Showing file selection popup');
+    if (window.DEBUG) console.log('[Movie Detail] Showing file selection popup');
     // Show file selection popup
     const selectedFileIds = await showMovieFileSelectionPopup(filesData, movieData.title);
 
@@ -1156,22 +1368,36 @@ async function deleteMovieFilesByIds(fileIds) {
             // Build detailed deletion report using shared utility (pass 'movie' as media type)
             const reportMessage = window.buildDeletionReport(result, movieData.title, 'movie');
 
+            // Check if there are remaining files
+            const deletedCount = result.deleted_count || 0;
+            const remainingFiles = filesData.length - deletedCount;
+            const shouldRedirect = remainingFiles === 0;
+
             moviePopup({
                 type: window.POPUP_TYPES.SUCCESS,
                 message: reportMessage,
                 autoClose: false,  // Require manual close
                 onConfirm: () => {
-                    // Redirect to library page
-                    window.location.href = '/library';
+                    if (shouldRedirect) {
+                        // All files deleted - go back to library
+                        window.location.href = '/library';
+                    } else {
+                        // Some files remain - reload page to show updated list
+                        window.location.reload();
+                    }
                 }
             });
 
-            // Add close button callback for redirect
+            // Add close button callback
             setTimeout(() => {
                 const closeButton = document.querySelector('.universal-popup #popupClose');
                 if (closeButton) {
                     closeButton.onclick = () => {
-                        window.location.href = '/library';
+                        if (shouldRedirect) {
+                            window.location.href = '/library';
+                        } else {
+                            window.location.reload();
+                        }
                     };
                 }
             }, 100);
@@ -1180,7 +1406,7 @@ async function deleteMovieFilesByIds(fileIds) {
         }
     } catch (error) {
         window.hideDeletionLoading();
-        console.error('Error deleting movie files:', error);
+        if (window.DEBUG) console.error('Error deleting movie files:', error);
         moviePopup({
             type: window.POPUP_TYPES.ERROR,
             message: `Error deleting files: ${error.message}`,
@@ -1266,7 +1492,7 @@ async function handleDeleteFile(event) {
             }
         }
     } catch (error) {
-        console.error('Error deleting file:', error);
+        if (window.DEBUG) console.error('Error deleting file:', error);
         moviePopup({
             type: window.POPUP_TYPES.ERROR,
             message: `Error deleting file: ${error.message}`,
@@ -1333,11 +1559,73 @@ async function handleDeleteVideo(event) {
             }
         }
     } catch (error) {
-        console.error('Error deleting video:', error);
+        if (window.DEBUG) console.error('Error deleting video:', error);
         moviePopup({
             type: window.POPUP_TYPES.ERROR,
             message: `Error deleting video: ${error.message}`,
             autoClose: 5000
         });
     }
+}
+
+// =============================================================================
+// Cast Section
+// =============================================================================
+
+/**
+ * Load cast and director data from TMDB API
+ */
+async function loadCast(tmdbId) {
+    try {
+        const response = await fetch(`/library/cast/movie/${tmdbId}`);
+        const data = await response.json();
+
+        if (data.success) {
+            // Display cast if available
+            if (data.cast && data.cast.length > 0) {
+                displayCast(data.cast);
+            }
+
+            // Display director if available
+            if (data.directors && data.directors.length > 0) {
+                const directorEl = document.getElementById('movie-director');
+                if (directorEl) {
+                    directorEl.textContent = data.directors.join(', ');
+                }
+            }
+        }
+    } catch (error) {
+        if (window.DEBUG) console.error('[Movie Detail] Error loading cast:', error);
+    }
+}
+
+/**
+ * Display cast in the cast grid
+ */
+function displayCast(cast) {
+    const castSection = document.getElementById('cast-section');
+    const castGrid = document.getElementById('cast-grid');
+    const castHeader = document.getElementById('cast-header');
+
+    if (!castSection || !castGrid) return;
+
+    castGrid.innerHTML = cast.map(person => `
+        <div class="cast-card">
+            <img src="${person.profile_path ? `https://image.tmdb.org/t/p/w185${person.profile_path}` : '/static/images/placeholder.png'}"
+                 alt="${person.name}"
+                 class="cast-photo"
+                 onerror="this.src='/static/images/placeholder.png'">
+            <div class="cast-name">${person.name}</div>
+            <div class="cast-character">${person.character || ''}</div>
+        </div>
+    `).join('');
+
+    // Add click handler for collapse/expand toggle
+    if (castHeader) {
+        castHeader.addEventListener('click', function() {
+            castSection.classList.toggle('collapsed');
+        });
+    }
+
+    castSection.style.display = 'block';
 }

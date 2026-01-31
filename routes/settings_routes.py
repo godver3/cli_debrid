@@ -1477,7 +1477,31 @@ def update_settings():
     try:
         new_settings = request.json
         config = load_config()
-        
+
+        # Detect if settings requiring restart are being changed
+        requires_restart = False
+        restart_reasons = []
+
+        # Check for Content Sources changes
+        if 'Content Sources' in new_settings:
+            requires_restart = True
+            restart_reasons.append('Content Sources')
+
+        # Check for Debrid Provider changes
+        if 'Debrid Provider' in new_settings:
+            debrid_settings = new_settings['Debrid Provider']
+            # Check if actual values changed, not just presence
+            current_debrid = config.get('Debrid Provider', {})
+            for key, new_value in debrid_settings.items():
+                current_value = current_debrid.get(key)
+                if new_value != current_value:
+                    requires_restart = True
+                    restart_reasons.append('Debrid Provider')
+                    break
+
+        if requires_restart:
+            logging.info(f"Settings requiring restart detected: {', '.join(set(restart_reasons))}")
+
         logging.info("Received settings update request.")
         # Optional: Log specific sections if needed for debugging
         # logging.info(f"File Management: {json.dumps(new_settings.get('File Management', {}), indent=2)}")
@@ -1729,6 +1753,53 @@ def update_settings():
                                 logging.warning(f"Failed to restart program after settings save: {start_result.get('message', 'Unknown error')}")
                         except Exception as restart_e:
                             logging.error(f"Error restarting program after settings save: {restart_e}", exc_info=True)
+                    else:
+                        # Program was not running - refresh content sources and update scheduled tasks
+                        try:
+                            from routes.program_operation_routes import get_program_runner
+                            runner = get_program_runner()
+                            if runner and runner.scheduler:
+                                logging.info("Program not running - refreshing content sources and updating scheduled tasks...")
+
+                                # Get currently scheduled content source tasks
+                                existing_content_tasks = {
+                                    job.id for job in runner.scheduler.get_jobs()
+                                    if job.id.endswith('_wanted')
+                                }
+
+                                # Refresh content sources (updates enabled_tasks and task_intervals)
+                                runner.get_content_sources(force_refresh=True)
+
+                                # Get expected content source tasks from settings
+                                expected_content_tasks = {
+                                    task for task in runner.enabled_tasks
+                                    if task.endswith('_wanted')
+                                }
+
+                                # Schedule new content source tasks
+                                new_tasks = expected_content_tasks - existing_content_tasks
+                                new_tasks_scheduled = 0
+                                for task_name in new_tasks:
+                                    interval = runner.task_intervals.get(task_name)
+                                    if interval:
+                                        if runner._schedule_task(task_name, interval, initial_run=True):
+                                            new_tasks_scheduled += 1
+                                            logging.info(f"Scheduled new content source task: {task_name}")
+
+                                # Unschedule removed content source tasks
+                                removed_tasks = existing_content_tasks - expected_content_tasks
+                                tasks_unscheduled = 0
+                                for task_name in removed_tasks:
+                                    try:
+                                        runner.scheduler.remove_job(task_name)
+                                        tasks_unscheduled += 1
+                                        logging.info(f"Unscheduled removed content source task: {task_name}")
+                                    except Exception as e:
+                                        logging.warning(f"Failed to unschedule task {task_name}: {e}")
+
+                                logging.info(f"Content sources refreshed. {new_tasks_scheduled} new task(s) scheduled, {tasks_unscheduled} task(s) unscheduled.")
+                        except Exception as refresh_e:
+                            logging.error(f"Error refreshing content sources: {refresh_e}", exc_info=True)
 
                     logging.info("Background reinitialization completed successfully")
 
@@ -1740,10 +1811,16 @@ def update_settings():
         reinit_thread.start()
         logging.info("Settings saved successfully. Component reinitialization started in background.")
 
-        return jsonify({
+        response_data = {
             "status": "success",
-            "message": "Settings updated successfully. Changes are being applied in the background."
-        })
+            "message": "Settings updated successfully. Changes are being applied in the background.",
+            "requires_restart": requires_restart
+        }
+
+        if requires_restart:
+            response_data["restart_reasons"] = list(set(restart_reasons))
+
+        return jsonify(response_data)
     except Exception as e:
         logging.error(f"Error updating settings: {str(e)}", exc_info=True)
         return jsonify({"status": "error", "message": f"An unexpected error occurred: {str(e)}"}), 500

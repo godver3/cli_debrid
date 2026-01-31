@@ -4,8 +4,9 @@ This page displays detailed information about a specific TV show in your library
 
 **Configuration:**
 
-*   **Artwork Display:** This page requires either a **Plex Media Server connection** or a **TMDB API key** to display posters and backdrop images.
+*   **Artwork Display:** This page requires a **TMDB API key** to display posters and backdrop images.
 *   **Ghostlist Mode** Add shows and movies to the ghostlist to prevent them from being re-added. When enabled, deleting content will mark it as ghosted in the database. When disabled, deleted content can be re-added by dynamic content sources.
+*   **Remove From Content Sources** Controls whether deleted items are removed from your content sources (Trakt lists, Overseerr requests, Plex Watchlist, etc.) during deletion. When enabled, the app will remove items from these sources to prevent them from being automatically re-added, but this makes deletion slower. When disabled, deletion is faster but the item might be re-added if it's still on your lists. **Tip:** Enable this when ghostlist mode is OFF. Disable this when ghostlist mode is ON (since ghostlist already prevents re-addition, and disabling makes deletion much faster).
 *   **Clear Artwork Cache** Clears artwork cache if you want to rebuild cache.
 *   Configure these in: **Settings → Additional Settings → Library Manager** or **Settings cog icon in Library section**
 
