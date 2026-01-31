@@ -360,8 +360,9 @@ def get_collected_counts():
         movies_start = time.perf_counter()
         cursor.execute('''
             SELECT COUNT(DISTINCT imdb_id)
-            FROM media_items 
+            FROM media_items
             WHERE type = 'movie' AND state IN ('Collected', 'Upgrading')
+            AND (ghostlisted IS NULL OR ghostlisted = 0)
         ''')
         total_movies = cursor.fetchone()[0]
         movies_time = time.perf_counter() - movies_start
@@ -371,8 +372,9 @@ def get_collected_counts():
         shows_start = time.perf_counter()
         cursor.execute('''
             SELECT COUNT(DISTINCT imdb_id)
-            FROM media_items 
+            FROM media_items
             WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
+            AND (ghostlisted IS NULL OR ghostlisted = 0)
         ''')
         total_shows = cursor.fetchone()[0]
         shows_time = time.perf_counter() - shows_start
@@ -386,6 +388,7 @@ def get_collected_counts():
                 SELECT DISTINCT imdb_id, season_number, episode_number
                 FROM media_items
                 WHERE type = 'episode' AND state IN ('Collected', 'Upgrading')
+                AND (ghostlisted IS NULL OR ghostlisted = 0)
             )
         ''')
         total_episodes = cursor.fetchone()[0]
@@ -438,6 +441,7 @@ async def get_recently_added_items(movie_limit=None, show_limit=None):
             WHERE type = 'movie'
               AND upgraded = 0
               AND state IN ('Collected', 'Upgrading')
+              AND (ghostlisted IS NULL OR ghostlisted = 0)
             ORDER BY collected_at DESC
             LIMIT ?
             """
@@ -455,6 +459,7 @@ async def get_recently_added_items(movie_limit=None, show_limit=None):
             WHERE type = 'episode'
               AND upgraded = 0
               AND state IN ('Collected', 'Upgrading')
+              AND (ghostlisted IS NULL OR ghostlisted = 0)
             ORDER BY collected_at DESC
             LIMIT ?
             """
@@ -578,18 +583,19 @@ async def get_recently_upgraded_items(upgraded_limit=None):
         query_start = time.perf_counter()
         upgraded_query = """
         SELECT * FROM (
-            SELECT 
+            SELECT
                 title, year, type, imdb_id, tmdb_id, version,
                 filled_by_title, filled_by_file, upgrading_from,
                 last_updated, collected_at, original_collected_at,
                 season_number, episode_number
             FROM media_items
             WHERE upgraded = 1 AND collected_at IS NOT NULL
+            AND (ghostlisted IS NULL OR ghostlisted = 0)
             ORDER BY collected_at DESC
             LIMIT 50
         )
-        GROUP BY 
-            CASE 
+        GROUP BY
+            CASE
                 WHEN type = 'movie' THEN title || year
                 ELSE title || COALESCE(season_number, '') || COALESCE(episode_number, '')
             END

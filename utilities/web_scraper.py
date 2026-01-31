@@ -143,6 +143,67 @@ class SearchCache:
             self._cache[key] = (value, expiry)
             logging.debug(f"Cached in memory: {key}, expires at {expiry}")
 
+    def get_by_key(self, key: str) -> Optional[Any]:
+        """Get cached data by explicit key (for arbitrary caching)"""
+        # Try Redis first
+        if self.use_redis and self.redis_client:
+            try:
+                cached_value = self.redis_client.get(key)
+                if cached_value:
+                    self.hits += 1
+                    logging.debug(f"Redis cache HIT for key: {key}")
+                    return json.loads(cached_value)
+            except Exception as e:
+                logging.warning(f"Redis get error for {key}: {e}")
+
+        # Fallback to in-memory cache
+        with self._lock:
+            if key in self._cache:
+                value, expiry = self._cache[key]
+
+                # Check if expired
+                if datetime.now() < expiry:
+                    self.hits += 1
+                    logging.debug(f"Memory cache HIT for key: {key}")
+                    return value
+                else:
+                    # Expired, remove it
+                    del self._cache[key]
+                    logging.debug(f"Cache entry expired for key: {key}")
+
+            self.misses += 1
+            logging.debug(f"Cache MISS for key: {key}")
+            return None
+
+    def set_by_key(self, key: str, value: Any, ttl: Optional[timedelta] = None):
+        """Cache data by explicit key (for arbitrary caching)"""
+        ttl_seconds = int((ttl if ttl else self.default_ttl).total_seconds())
+
+        # Store in Redis
+        if self.use_redis and self.redis_client:
+            try:
+                serialized = json.dumps(value)
+                self.redis_client.setex(key, ttl_seconds, serialized)
+                logging.debug(f"Cached in Redis: {key} (TTL={ttl_seconds}s)")
+            except Exception as e:
+                logging.warning(f"Redis set error for {key}: {e}")
+
+        # Always store in memory cache as fallback
+        with self._lock:
+            expiry = datetime.now() + (ttl if ttl else self.default_ttl)
+
+            # Evict oldest entries if cache is full
+            if len(self._cache) >= self.max_size:
+                # Remove 10% of oldest entries
+                entries_to_remove = max(1, self.max_size // 10)
+                sorted_keys = sorted(self._cache.items(), key=lambda x: x[1][1])
+                for old_key, _ in sorted_keys[:entries_to_remove]:
+                    del self._cache[old_key]
+                logging.debug(f"Evicted {entries_to_remove} old cache entries")
+
+            self._cache[key] = (value, expiry)
+            logging.debug(f"Cached in memory: {key}, expires at {expiry}")
+
     def clear(self):
         """Clear all cached entries (both Redis and memory)"""
         # Clear Redis
@@ -1615,7 +1676,16 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
         multi = True
 
     # Check if anime is in the genres
-    is_anime = genres and 'anime' in [genre.lower() for genre in genres]
+    # Genres can be either integers (genre IDs) or strings (genre names)
+    is_anime = False
+    if genres:
+        # Check if genres are integers (genre IDs) or strings (genre names)
+        if isinstance(genres[0], int):
+            # Genre ID 16 is Animation/Anime
+            is_anime = 16 in genres
+        else:
+            # Genre names as strings
+            is_anime = 'anime' in [genre.lower() for genre in genres]
     logging.info(f"Genres from frontend: {genres}")
     logging.info(f"Is anime detected from frontend genres: {is_anime}")
 
@@ -1635,10 +1705,17 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
                    f"movie_or_episode={movie_or_episode}, season={season}, episode={episode}, multi={multi}, version={version}, genres={genres}")
     logging.debug(f"[process_media_selection] Calling scraper.scrape for '{title}'.")
 
+    # Validate and convert year to integer
+    try:
+        year_int = int(year) if year else 0
+    except (ValueError, TypeError):
+        logging.error(f"Invalid year value: {year}, using 0 as fallback")
+        year_int = 0
+
     # Call the scraper function with the version parameter
     # scrape_results here are the "passed" torrents from the scrape function
     # filtered_out_results are those filtered by the scrape function
-    passed_results_from_scrape, filtered_out_results_from_scrape = scrape(imdb_id, str(tmdb_id), title, int(year), movie_or_episode, version, season, episode, multi, genres)
+    passed_results_from_scrape, filtered_out_results_from_scrape = scrape(imdb_id, str(tmdb_id), title, year_int, movie_or_episode, version, season, episode, multi, genres)
     logging.debug(f"[process_media_selection] scraper.scrape for '{title}' returned: passed={len(passed_results_from_scrape)}, filtered_out={len(filtered_out_results_from_scrape if filtered_out_results_from_scrape else [])}")
 
     # Process the passed results (e.g., for cache status, hash extraction)

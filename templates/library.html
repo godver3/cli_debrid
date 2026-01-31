@@ -18,6 +18,9 @@
 
 {% block content %}
 <div class="library-container" data-plex-configured="{{ plex_configured|lower }}" data-tmdb-configured="{{ tmdb_configured|lower }}">
+    <!-- Hidden input for JavaScript permission checks -->
+    <input type="hidden" id="has_admin_permissions" value="{{ 'True' if has_admin_permissions else 'False' }}">
+
     <!-- Header Section -->
     <div class="library-header">
         <div class="library-title-section">
@@ -26,7 +29,8 @@
         </div>
 
         <div class="flex items-center gap-2">
-            <!-- Select/Cancel Button -->
+            <!-- Select/Cancel Button (Admin Only) -->
+            {% if has_admin_permissions %}
             <button type="button" class="action-btn action-btn-ghost action-btn-sm" id="select-btn" title="Select items">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -34,7 +38,7 @@
                 <span class="hidden sm:inline ml-1">Select</span>
             </button>
 
-            <!-- Delete Button (hidden by default, shown in selection mode) -->
+            <!-- Delete Button (Admin Only, hidden by default, shown in selection mode) -->
             <button type="button" class="action-btn btn-danger action-btn-sm" id="delete-selected-btn" title="Delete selected items" style="display: none;">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
@@ -42,6 +46,7 @@
                 <span class="hidden sm:inline ml-1">Delete</span>
                 <span class="badge" id="delete-count-badge" style="display: none;">0</span>
             </button>
+            {% endif %}
 
             <!-- Refresh Button -->
             <button type="button" class="action-btn action-btn-sm gap-2" id="refresh-btn" title="Refresh library">
@@ -51,7 +56,8 @@
                 <span class="hidden sm:inline">Refresh</span>
             </button>
 
-            <!-- Settings Button -->
+            <!-- Settings Button (Admin Only) -->
+            {% if has_admin_permissions %}
             <button type="button" class="action-btn action-btn-sm gap-2" id="settings-btn" title="Library Manager Settings">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
@@ -59,6 +65,7 @@
                 </svg>
                 <span class="hidden sm:inline">Settings</span>
             </button>
+            {% endif %}
 
             <!-- View Toggle (Grid/List) -->
             <div class="join">
@@ -109,6 +116,12 @@
                 <option value="upgraded">Upgraded</option>
             </select>
 
+            <select id="duplicates-state-filter" class="form-control filter-select" style="display: none;">
+                <option value="all" selected>All States</option>
+                <option value="collected">Collected Only</option>
+                <option value="blacklisted">Blacklisted Only</option>
+            </select>
+
             <select id="type-filter" class="form-control filter-select">
                 <option value="all">All Media</option>
                 <option value="movie">Movies</option>
@@ -134,7 +147,7 @@
         </svg>
         <h3 style="margin: 0 0 0.5rem 0; font-size: 1.5rem;">Library Not Configured</h3>
         <p style="margin: 0 0 1rem 0; opacity: 0.9;">
-            The Library page requires either <strong>Plex authentication</strong> or a <strong>TMDB API key</strong> to display artwork.
+            The Library page requires a <strong>TMDB API key</strong> to display artwork.
         </p>
         <p style="margin: 0;">
             Please configure at least one source in <a href="/settings" style="color: #3b82f6; text-decoration: underline;">Settings</a> → Additional Settings → Library Manager

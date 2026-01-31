@@ -110,7 +110,7 @@
         <div class="result-count">
             Showing {{ result_count }} results
             <span class="unique-count">(Unique: {{ unique_result_count }})</span>
-            | Total pages: {{ total_pages }}
+            | Total pages: {{ total_pages }} | Total items: {{ total_count }}
         </div>
         <form id="filter-form" class="mb-3">
 
@@ -230,7 +230,7 @@
     {% endif %}
 </div>
 
-<script src="{{ url_for('static', filename='js/loading.js') }}?v=0726"></script>
+<script src="{{ url_for('static', filename='js/loading.js') }}?v=0727"></script>
 
 <script>
 // Early redirect script to load page with localStorage settings
@@ -1689,7 +1689,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Update result count
                 const resultCountElement = document.querySelector('.result-count');
                 if (resultCountElement && typeof data.result_count !== "undefined") {
-                    resultCountElement.innerHTML = `Showing ${data.result_count} results <span class="unique-count">(Unique: ${data.unique_result_count})</span> | Total pages: ${data.total_pages}`;
+                    resultCountElement.innerHTML = `Showing ${data.result_count} results <span class="unique-count">(Unique: ${data.unique_result_count})</span> | Total pages: ${data.total_pages} | Total items: ${data.total_count}`;
                 }
             })
             .catch(error => {

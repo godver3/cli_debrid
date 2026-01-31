@@ -16,7 +16,7 @@ class UnreleasedQueue:
         try:
             from database.core import get_db_connection
             conn = get_db_connection()
-            cursor = conn.execute("SELECT 1 FROM media_items WHERE id = ? AND state = 'Unreleased' LIMIT 1", (item_id,))
+            cursor = conn.execute("SELECT 1 FROM media_items WHERE id = ? AND state = 'Unreleased' AND (ghostlisted IS NULL OR ghostlisted = 0) LIMIT 1", (item_id,))
             result = cursor.fetchone()
             return result is not None
         except Exception as e:

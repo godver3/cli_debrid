@@ -487,6 +487,20 @@ def index():
     unreleased_time = time.time() - unreleased_start
     logging.debug(f"[QUEUE_ROUTES] Unreleased queue processing took {unreleased_time:.3f}s")
 
+    # Add display names for content sources
+    display_names_start = time.time()
+    from utilities.settings import get_all_settings
+    content_sources = get_all_settings().get('Content Sources', {})
+    for queue_name, items in queue_contents.items():
+        if queue_name in ['Wanted', 'Scraping', 'Adding', 'Pre_release', 'Checking']:
+            for item in items:
+                if item.get('content_source'):
+                    source_config = content_sources.get(item['content_source'], {})
+                    display_name = source_config.get('display_name', item['content_source'])
+                    item['content_source_display'] = display_name
+    display_names_time = time.time() - display_names_start
+    logging.debug(f"[QUEUE_ROUTES] Display names processing took {display_names_time:.3f}s")
+
     template_start = time.time()
     upgrading_queue = queue_contents.get('Upgrading', [])
     response = render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue, program_status=program_status)
@@ -655,6 +669,20 @@ def api_queue_contents():
             logging.debug(f"[QUEUE_ROUTES] Consolidate_items for Unreleased (pre-consolidate) took {consolidate_time:.3f}s")
             queue_contents[queue_name] = items
 
+    # Add display names for content sources in API response
+    display_names_start = time.time()
+    from utilities.settings import get_all_settings
+    content_sources = get_all_settings().get('Content Sources', {})
+    for queue_name, items in queue_contents.items():
+        if queue_name in ['Wanted', 'Scraping', 'Adding', 'Pre_release', 'Checking']:
+            for item in items:
+                if item.get('content_source'):
+                    source_config = content_sources.get(item['content_source'], {})
+                    display_name = source_config.get('display_name', item['content_source'])
+                    item['content_source_display'] = display_name
+    display_names_time = time.time() - display_names_start
+    logging.debug(f"[QUEUE_ROUTES] API display names processing took {display_names_time:.3f}s")
+
     response_start = time.time()
     response = jsonify({
         "contents": queue_contents,
@@ -771,6 +799,23 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
             else:
                 item['scrape_count'] = 0
                 item['last_scrape'] = 'Never'
+        
+        # Add display names for content sources
+        if queue_name in ['Wanted', 'Scraping', 'Adding', 'Pre_release', 'Checking'] and item.get('content_source'):
+            # Cache content sources settings to avoid repeated lookups
+            if not hasattr(process_item_for_response, '_content_sources_cache'):
+                from utilities.settings import get_all_settings
+                process_item_for_response._content_sources_cache = get_all_settings().get('Content Sources', {})
+                process_item_for_response._content_sources_timestamp = time.time()
+            elif time.time() - process_item_for_response._content_sources_timestamp > 30:  # Cache for 30 seconds
+                from utilities.settings import get_all_settings
+                process_item_for_response._content_sources_cache = get_all_settings().get('Content Sources', {})
+                process_item_for_response._content_sources_timestamp = time.time()
+            
+            content_sources = process_item_for_response._content_sources_cache
+            source_config = content_sources.get(item['content_source'], {})
+            display_name = source_config.get('display_name', item['content_source'])
+            item['content_source_display'] = display_name
         
         # Optimize JSON serialization - only process problematic fields
         datetime_fields = ['final_check_display_time', 'time_added', 'last_updated']

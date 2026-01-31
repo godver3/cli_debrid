@@ -1,0 +1,224 @@
+/**
+ * Discover Settings Modal Styles - Tangerine Theme
+ * Quick-access modal for Discover page settings
+ */
+
+.discover-settings-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeInDiscover {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+.discover-settings-modal-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+}
+
+.discover-settings-modal-content {
+    position: relative;
+    background-color: #1a1a1a;
+    border-radius: 16px;
+    border: 2px solid rgba(225, 124, 82, 0.2);
+    width: 90%;
+    max-width: 600px;
+    max-height: 90vh;
+    overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5),
+                0 0 20px rgba(225, 124, 82, 0.1);
+    animation: slideUpDiscover 0.3s ease-out;
+    display: flex;
+    flex-direction: column;
+}
+
+@keyframes slideUpDiscover {
+    from {
+        transform: translateY(20px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+.discover-settings-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px;
+    border-bottom: 2px solid rgba(225, 124, 82, 0.3);
+    background: linear-gradient(135deg, rgba(225, 124, 82, 0.1) 0%, transparent 100%);
+}
+
+/* .discover-settings-modal-header h2 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #e17c52;
+    padding-left: 12px;
+    border-left: 4px solid #e17c52;
+} */
+
+.discover-settings-modal-close {
+    background: none;
+    border: none;
+    font-size: 2rem;
+    line-height: 1;
+    color: #999;
+    cursor: pointer;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.discover-settings-modal-close:hover {
+    background-color: rgba(225, 124, 82, 0.2);
+    color: #e17c52;
+}
+
+.discover-settings-modal-body {
+    padding: 24px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.discover-setting-group {
+    margin-bottom: 24px;
+}
+
+.discover-setting-group:last-child {
+    margin-bottom: 0;
+}
+
+.discover-setting-group > label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #e17c52;
+    margin-bottom: 8px;
+    cursor: pointer;
+}
+
+.discover-setting-description {
+    font-size: 0.85rem;
+    color: #aaa;
+    line-height: 1.5;
+    margin: 8px 0 0 0;
+}
+
+.discover-setting-checkbox {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: #f97316;
+    flex-shrink: 0;
+}
+
+.discover-settings-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 24px;
+    border-top: 1px solid #333;
+}
+
+.discover-settings-btn-cancel,
+.discover-settings-btn-save {
+    padding: 10px 20px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.discover-settings-btn-cancel {
+    background-color: transparent;
+    color: #999;
+    border: 1px solid #444;
+}
+
+.discover-settings-btn-cancel:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    color: #fff;
+}
+
+.discover-settings-btn-save {
+    background-color: #f97316;
+    color: #fff;
+}
+
+.discover-settings-btn-save:hover:not(:disabled) {
+    background-color: #ea580c;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);
+}
+
+.discover-settings-btn-save:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Mobile responsive */
+@media (max-width: 640px) {
+    .discover-settings-modal-content {
+        width: 95%;
+        max-height: 95vh;
+    }
+
+    .discover-settings-modal-header {
+        padding: 16px 20px;
+    }
+
+    .discover-settings-modal-header h2 {
+        font-size: 1.25rem;
+    }
+
+    .discover-settings-modal-body {
+        padding: 20px;
+    }
+
+    .discover-setting-description {
+        margin-left: 30px;
+    }
+
+    .discover-settings-modal-footer {
+        padding: 12px 16px;
+    }
+
+    .discover-settings-btn-cancel,
+    .discover-settings-btn-save {
+        font-size: 0.9rem;
+        padding: 8px 16px;
+    }
+}

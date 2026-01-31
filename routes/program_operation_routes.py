@@ -961,7 +961,7 @@ def check_program_conditions():
     })
 
 @program_operation_bp.route('/api/task_timings', methods=['GET'])
-@user_required
+@admin_required
 def get_task_timings():
     runner = get_program_runner()
     if not runner or not runner.is_running():
@@ -1093,7 +1093,7 @@ def get_task_timings():
     return jsonify(success=True, tasks=tasks_data)
 
 @program_operation_bp.route('/task_timings')
-@user_required
+@admin_required
 def task_timings():
     return render_template('task_timings.html')
 

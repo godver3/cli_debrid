@@ -41,6 +41,7 @@ from .user_token_routes import user_token_bp
 from .symlink_tools_routes import symlink_tools_bp
 from .metadata_routes import metadata_bp
 from .plex_labels_debug_routes import plex_labels_debug_bp
+from .discover_routes import discover_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
@@ -164,7 +165,8 @@ def register_blueprints(app):
         (user_token_bp, '/user_token'),
         (symlink_tools_bp, '/symlink_tools'),
         (metadata_bp, '/metadata'),
-        (plex_labels_debug_bp, '')
+        (plex_labels_debug_bp, ''),
+        (discover_bp, '/discover')
     ]
     
     for blueprint, url_prefix in blueprints:

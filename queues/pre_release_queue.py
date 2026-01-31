@@ -77,9 +77,10 @@ class PreReleaseQueue:
             with get_db_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT * FROM media_items 
-                    WHERE state = 'Unreleased' 
+                    SELECT * FROM media_items
+                    WHERE state = 'Unreleased'
                     AND type = 'movie'
+                    AND (ghostlisted IS NULL OR ghostlisted = 0)
                     AND (
                         (release_date IS NOT NULL AND release_date NOT IN ('Unknown','None','') )
                         OR (physical_release_date IS NOT NULL)

@@ -234,11 +234,11 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
 
         #logging.info(f"Processed metadata: {processed_metadata}")
 
-        logging.info(f"Genres: {processed_metadata['genres']}")
-        logging.info("Checking for anime genre")
+        logging.debug(f"Genres: {processed_metadata['genres']}")
+        logging.debug("Checking for anime genre")
         is_anime = 'anime' in [genre.lower() for genre in processed_metadata['genres']]
         processed_metadata['genres'] = ['anime'] if is_anime else processed_metadata['genres']
-        logging.info(f"Processed metadata: {processed_metadata}")
+        logging.debug(f"Processed metadata: {processed_metadata}")
 
         if media_type == 'movie':
             processed_metadata['release_date'] = get_release_date(metadata, imdb_id)

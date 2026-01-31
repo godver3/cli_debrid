@@ -282,14 +282,26 @@ class CheckingQueue:
                         logging.info(f"Removed reverted upgrade item {item_id} from checking queue")
 
                 else:
-                    # Original logic for non-upgrade items
-                    logging.info(f"Moving item {item_id} back to Wanted state")
-                    queue_manager.move_to_wanted(item, "Checking")
+                    # GHOSTLIST CHECK: Don't move ghostlisted/blacklisted items back to Wanted
+                    item_state = item.get('state', '')
+                    is_ghostlisted = item.get('ghostlisted') == 1
+                    is_blacklisted = item_state == 'Blacklisted'
 
-                    # Remove the item from the checking queue
-                    if item in self.items: # Check before removing
-                        self.remove_item(item) # This will also clean up unknown_strikes if needed
-                        logging.info(f"Removed item {item_id} from checking queue")
+                    if is_ghostlisted or is_blacklisted:
+                        logging.info(f"⛔ Skipping item {item_id} - item is {'ghostlisted' if is_ghostlisted else 'blacklisted'}, not moving back to Wanted")
+                        # Remove from checking queue but don't move to Wanted
+                        if item in self.items:
+                            self.remove_item(item)
+                            logging.info(f"Removed ghostlisted/blacklisted item {item_id} from checking queue")
+                    else:
+                        # Original logic for non-upgrade items
+                        logging.info(f"Moving item {item_id} back to Wanted state")
+                        queue_manager.move_to_wanted(item, "Checking")
+
+                        # Remove the item from the checking queue
+                        if item in self.items: # Check before removing
+                            self.remove_item(item) # This will also clean up unknown_strikes if needed
+                            logging.info(f"Removed item {item_id} from checking queue")
 
             except Exception as e:
                 logging.error(f"Failed to handle item {item.get('id', 'unknown')} for missing torrent {torrent_id}: {str(e)}")
@@ -816,7 +828,8 @@ class CheckingQueue:
                     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
                         items_to_scan = []
                         # Collect unique directories for batch Plex scan (prevents hammering Plex API)
-                        directories_to_scan = set()
+                        # Store as dict: {directory: item_type} to preserve type information for section matching
+                        directories_to_scan = {}
                         use_jellyfin = get_setting('Debug', 'emby_jellyfin_url', default=False)
                         use_plex = get_setting('File Management', 'plex_url_for_symlink', default=False)
 
@@ -853,7 +866,9 @@ class CheckingQueue:
                                             import os
                                             directory = os.path.dirname(file_location)
                                             if directory:
-                                                directories_to_scan.add(directory)
+                                                # Store item type with directory for proper section matching
+                                                item_type = updated_item_data.get('type', 'episode')  # Default to episode for shows
+                                                directories_to_scan[directory] = item_type
 
                                 conn = get_db_connection()
                                 cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item_in_torrent_group['id'],))
@@ -866,9 +881,21 @@ class CheckingQueue:
                                 elif current_item_state == 'Collected':
                                     logging.info(f"Item {item_in_torrent_group['id']} state confirmed as Collected after local check.")
                                     queue_manager.move_to_collected(item_in_torrent_group, "Checking", skip_notification=True)
+                                    # Sync labels now that item is detected in Plex
+                                    try:
+                                        from utilities.plex_label_manager import sync_labels_to_plex_for_item
+                                        sync_labels_to_plex_for_item(item_in_torrent_group['id'])
+                                    except Exception as e:
+                                        logging.error(f"Error syncing labels for item {item_in_torrent_group['id']}: {e}")
                                 elif current_item_state:
                                     logging.warning(f"Item {item_in_torrent_group['id']} processed locally but state is '{current_item_state}'. Moving to Collected.")
                                     queue_manager.move_to_collected(item_in_torrent_group, "Checking", skip_notification=True)
+                                    # Sync labels now that item is detected in Plex
+                                    try:
+                                        from utilities.plex_label_manager import sync_labels_to_plex_for_item
+                                        sync_labels_to_plex_for_item(item_in_torrent_group['id'])
+                                    except Exception as e:
+                                        logging.error(f"Error syncing labels for item {item_in_torrent_group['id']}: {e}")
                                 else:
                                     logging.error(f"Item {item_in_torrent_group['id']} processed locally but seems missing from DB. Cannot confirm final state.")
                             else:
@@ -879,13 +906,13 @@ class CheckingQueue:
                         # This dramatically reduces Plex API calls for season packs (e.g., 20 episodes -> 1 scan instead of 20)
                         if directories_to_scan:
                             logging.info(f"[CheckingQueue] Batch media server update: {len(directories_to_scan)} unique directories to scan")
-                            for directory in directories_to_scan:
+                            for directory, item_type in directories_to_scan.items():
                                 if use_jellyfin:
-                                    # For Jellyfin, create a minimal item dict with the directory
-                                    emby_update_item({'full_path': directory, 'location_on_disk': directory})
+                                    # For Jellyfin, create a minimal item dict with the directory and type
+                                    emby_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
                                 elif use_plex:
-                                    # For Plex, create a minimal item dict with the directory
-                                    plex_update_item({'full_path': directory, 'location_on_disk': directory})
+                                    # For Plex, create a minimal item dict with the directory and type
+                                    plex_update_item({'full_path': directory, 'location_on_disk': directory, 'type': item_type})
                             logging.info(f"[CheckingQueue] Batch media server update complete")
 
                         if items_to_scan:
@@ -1258,12 +1285,28 @@ class CheckingQueue:
                         )
                         logging.info(f"Successfully reverted failed upgrade for {item_identifier} (stalled torrent).")
                     else:
-                        logging.error(f"Failed to restore previous state for {item_identifier} after stalled torrent. Moving to Wanted as fallback.")
-                        queue_manager.move_to_wanted(item, "Checking")
+                        # GHOSTLIST CHECK: Don't move ghostlisted/blacklisted items back to Wanted
+                        item_state = item.get('state', '')
+                        is_ghostlisted = item.get('ghostlisted') == 1
+                        is_blacklisted = item_state == 'Blacklisted'
+
+                        if is_ghostlisted or is_blacklisted:
+                            logging.info(f"⛔ Skipping item {item_id} - item is {'ghostlisted' if is_ghostlisted else 'blacklisted'}, not moving back to Wanted (stalled torrent fallback)")
+                        else:
+                            logging.error(f"Failed to restore previous state for {item_identifier} after stalled torrent. Moving to Wanted as fallback.")
+                            queue_manager.move_to_wanted(item, "Checking")
                 else:
-                    # For non-upgrade items, move back to Wanted state to trigger re-scraping
-                    logging.info(f"Moving item {item_identifier} back to Wanted state due to stalled torrent: {reason}")
-                    queue_manager.move_to_wanted(item, "Checking")
+                    # GHOSTLIST CHECK: Don't move ghostlisted/blacklisted items back to Wanted
+                    item_state = item.get('state', '')
+                    is_ghostlisted = item.get('ghostlisted') == 1
+                    is_blacklisted = item_state == 'Blacklisted'
+
+                    if is_ghostlisted or is_blacklisted:
+                        logging.info(f"⛔ Skipping item {item_id} - item is {'ghostlisted' if is_ghostlisted else 'blacklisted'}, not moving back to Wanted (stalled torrent)")
+                    else:
+                        # For non-upgrade items, move back to Wanted state to trigger re-scraping
+                        logging.info(f"Moving item {item_identifier} back to Wanted state due to stalled torrent: {reason}")
+                        queue_manager.move_to_wanted(item, "Checking")
                 
                 # remove_item is called by move_to_wanted or restore_item_state indirectly through DB state change and queue update.
                 # Explicitly ensure it's removed from the Python object list if not already.

@@ -1,5 +1,5 @@
 // SEARCH OPTIMIZATION VERSION: 2026-01-11-v2
-console.log('🔧 Scraper.js loaded - Search Optimizations ACTIVE (v2026-01-11-v2)');
+if (window.DEBUG) console.log('🔧 Scraper.js loaded - Search Optimizations ACTIVE (v2026-01-11-v2)');
 
 function addToRealDebrid(magnetLink, torrent) {
     // Check if user is a requester before making the request
@@ -30,6 +30,20 @@ function addToRealDebrid(magnetLink, torrent) {
             formData.append('genres', torrent.genres || '');
             formData.append('original_scraped_torrent_title', torrent.original_title || torrent.title);
             formData.append('current_score', torrent.score_breakdown?.total_score || '0');
+
+            // Get selected folder from dropdown if it exists (for symlink mode)
+            const folderSelect = document.getElementById('torrent-folder-select');
+            if (folderSelect && folderSelect.value) {
+                const selectedOption = folderSelect.options[folderSelect.selectedIndex];
+                const isCustom = selectedOption.getAttribute('data-is-custom') === 'true';
+
+                formData.append('selected_folder', folderSelect.value);
+                formData.append('selected_folder_is_custom', isCustom);
+                if (window.DEBUG) console.log('📁 Sending selected folder to backend:', {
+                    folder: folderSelect.value,
+                    isCustom: isCustom
+                });
+            }
 
             fetch('/scraper/add_to_debrid', {
                 method: 'POST',
@@ -92,7 +106,7 @@ function addToRealDebrid(magnetLink, torrent) {
                 }
             })
             .catch(error => {
-                console.error('Error:', error);
+                if (window.DEBUG) console.error('Error:', error);
                 showPopup({
                     type: POPUP_TYPES.ERROR,
                     title: 'Error',
@@ -139,7 +153,7 @@ function removeUncachedItem(torrentId, torrentHash) {
     })
     .catch(error => {
         hideLoadingState();
-        console.error('Error:', error);
+        if (window.DEBUG) console.error('Error:', error);
         showPopup({
             type: POPUP_TYPES.ERROR,
             title: 'Error',
@@ -217,6 +231,30 @@ function hideLoadingState() {
 const episodeCache = new Map();
 const EPISODE_CACHE_TTL = 60 * 60 * 1000; // 60 minutes in milliseconds
 
+// Client-side torrent results cache (in-memory with 30-minute TTL)
+const torrentResultsCache = new Map();
+const TORRENT_CACHE_TTL = 30 * 60 * 1000; // 30 minutes in milliseconds
+
+function getCachedTorrentResults(cacheKey) {
+    const cached = torrentResultsCache.get(cacheKey);
+    if (!cached) return null;
+
+    const now = Date.now();
+    if (now - cached.timestamp > TORRENT_CACHE_TTL) {
+        torrentResultsCache.delete(cacheKey);
+        return null;
+    }
+
+    return cached.data;
+}
+
+function setCachedTorrentResults(cacheKey, data) {
+    torrentResultsCache.set(cacheKey, {
+        data: data,
+        timestamp: Date.now()
+    });
+}
+
 function getCachedEpisodes(cacheKey) {
     const cached = episodeCache.get(cacheKey);
     if (!cached) return null;
@@ -227,7 +265,6 @@ function getCachedEpisodes(cacheKey) {
         return null;
     }
 
-    console.log('Episode cache HIT for:', cacheKey);
     return cached.data;
 }
 
@@ -236,7 +273,6 @@ function setCachedEpisodes(cacheKey, data) {
         data: data,
         timestamp: Date.now()
     });
-    console.log('Episode cache SET for:', cacheKey);
 }
 
 // Client-side trending cache (in-memory with 15-minute TTL)
@@ -253,7 +289,6 @@ function getCachedTrending(cacheKey) {
         return null;
     }
 
-    console.log('Trending cache HIT for:', cacheKey);
     return cached.data;
 }
 
@@ -262,12 +297,10 @@ function setCachedTrending(cacheKey, data) {
         data: data,
         timestamp: Date.now()
     });
-    console.log('Trending cache SET for:', cacheKey);
 }
 
 // OPTIMIZATION: Prefetch all trending data in parallel for instant display
 function prefetchTrendingData() {
-    console.log('🚀 Prefetching trending data in background...');
 
     // Fetch all three trending categories in parallel
     const fetchPromises = [
@@ -276,35 +309,35 @@ function prefetchTrendingData() {
             .then(data => {
                 if (data.trendingMovies) {
                     setCachedTrending('trending_movies', data.trendingMovies);
-                    console.log('✅ Prefetched trending movies:', data.trendingMovies.length, 'items');
+                    if (window.DEBUG) console.log('✅ Prefetched trending movies:', data.trendingMovies.length, 'items');
                 }
             })
-            .catch(error => console.warn('Failed to prefetch movies:', error)),
+            .catch(error => { if (window.DEBUG) console.warn('Failed to prefetch movies:', error) }),
 
         fetch('/scraper/shows_trending', { method: 'GET' })
             .then(response => response.json())
             .then(data => {
                 if (data.trendingShows) {
                     setCachedTrending('trending_shows', data.trendingShows);
-                    console.log('✅ Prefetched trending shows:', data.trendingShows.length, 'items');
+                    if (window.DEBUG) console.log('✅ Prefetched trending shows:', data.trendingShows.length, 'items');
                 }
             })
-            .catch(error => console.warn('Failed to prefetch shows:', error)),
+            .catch(error => { if (window.DEBUG) console.warn('Failed to prefetch shows:', error) }),
 
         fetch('/scraper/anime_trending', { method: 'GET' })
             .then(response => response.json())
             .then(data => {
                 if (data.trendingAnime) {
                     setCachedTrending('trending_anime', data.trendingAnime);
-                    console.log('✅ Prefetched trending anime:', data.trendingAnime.length, 'items');
+                    if (window.DEBUG) console.log('✅ Prefetched trending anime:', data.trendingAnime.length, 'items');
                 }
             })
-            .catch(error => console.warn('Failed to prefetch anime:', error))
+            .catch(error => { if (window.DEBUG) console.warn('Failed to prefetch anime:', error) })
     ];
 
     // Wait for all to complete
     Promise.all(fetchPromises).then(() => {
-        console.log('🎉 All trending data prefetched and cached!');
+        if (window.DEBUG) console.log('🎉 All trending data prefetched and cached!');
 
         // PHASE 1 FIX #3: Prefetch common searches after trending data loads
         setTimeout(prefetchCommonSearches, 2000); // 2 second delay
@@ -313,7 +346,7 @@ function prefetchTrendingData() {
 
 // PHASE 1 FIX #3: Prefetch common/popular search terms for instant results
 async function prefetchCommonSearches() {
-    console.log('🔍 Prefetching common searches...');
+    if (window.DEBUG) console.log('🔍 Prefetching common searches...');
 
     const commonSearches = [
         'Marvel',
@@ -338,17 +371,17 @@ async function prefetchCommonSearches() {
 
             if (response.ok) {
                 prefetchedCount++;
-                console.log(`✅ Prefetched: "${term}"`);
+                if (window.DEBUG) console.log(`✅ Prefetched: "${term}"`);
             }
         } catch (err) {
-            console.debug(`Prefetch skipped: "${term}"`);
+            if (window.DEBUG) console.debug(`Prefetch skipped: "${term}"`);
         }
 
         // Small delay between requests to avoid hammering the server
         await new Promise(resolve => setTimeout(resolve, 300));
     }
 
-    console.log(`🎉 Prefetched ${prefetchedCount}/${commonSearches.length} common searches!`);
+    if (window.DEBUG) console.log(`🎉 Prefetched ${prefetchedCount}/${commonSearches.length} common searches!`);
 }
 
 // Infinite scroll state for episodes
@@ -473,7 +506,7 @@ function renderEpisodeBatch() {
     episodeScrollState.renderedCount = end;
     episodeScrollState.isLoading = false;
 
-    console.log(`Rendered episodes ${start + 1}-${end} of ${episodeScrollState.allEpisodes.length}`);
+    if (window.DEBUG) console.log(`Rendered episodes ${start + 1}-${end} of ${episodeScrollState.allEpisodes.length}`);
 }
 
 // Handle infinite scroll - load more episodes when nearing bottom
@@ -507,7 +540,7 @@ function updateEpisodeURLState(mediaId, title, season) {
     url.searchParams.set('view', 'episodes');
 
     window.history.pushState({}, '', url);
-    console.log('Episode URL state updated:', url.search);
+    if (window.DEBUG) console.log('Episode URL state updated:', url.search);
 }
 
 // Back button functionality
@@ -604,7 +637,7 @@ function formatBitrateInline(bitrate) {
     return `~${bitrateMbps} mbps`;
 }
 
-function displayTorrentResults(data, title, year, version, mediaId, mediaType, season, episode, genre_ids) {
+async function displayTorrentResults(data, title, year, version, mediaId, mediaType, season, episode, genre_ids, searchDuration = 0) {
     hideLoadingState();
     const overlay = document.getElementById('overlay');
     const overlayContent = document.getElementById('overlayContent');
@@ -617,9 +650,12 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                                      .concat(filteredOutTorrents.map(t => ({ ...t, __isActuallyFilteredOut: true })));
 
     const mediaQuery = window.matchMedia('(max-width: 1024px)');
-    function handleScreenChange(e) {
+    async function handleScreenChange(e) {
         if (e.matches) { // Mobile view
-            overlayContent.innerHTML = `<h3>Torrent Results for ${title} (${year})</h3>`;
+            overlayContent.innerHTML = `
+                <h3>
+                    Torrent Results for ${title} (${year})
+                </h3>`;
             const gridContainer = document.createElement('div');
             gridContainer.style.display = 'flex';
             gridContainer.style.flexWrap = 'wrap';
@@ -638,14 +674,15 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                     <button ${isFilteredOut ? 'style="cursor:pointer; opacity:0.7;"' : ''}>
                     <div class="torresult-info">
                         <p class="torresult-title">${torrent.title || torrent.original_title || 'N/A'}</p>
-                        <p class="torresult-item" ${isFilteredOut ? `data-tooltip="${torrent.filter_reason || 'Filtered'}"` : ''}>${(torrent.size || 0).toFixed(1)} GB | ${bitrateInline} | ${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</p>
+                        <p class="torresult-item">${(torrent.size || 0).toFixed(1)} GB | ${bitrateInline} | ${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</p>
                         <p class="torresult-item">${torrent.source || 'N/A'}</p>
                         <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' :
                                       torrent.cached === 'No' ? 'not-cached' :
                                       torrent.cached === 'Not Checked' ? 'not-checked' :
                                       torrent.cached === 'N/A' ? 'check-unavailable' : 'unknown'}" data-index="${index}">${torrent.cached || 'N/A'}</span>
                     </div>
-                    </button>             
+                    </button>
+                    ${torrent.cached === 'Yes' ? '<div class="mobile-cache-check">✓</div>' : ''}
                     <div class="assign-magnet-icon" title="Assign Magnet Link">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
@@ -719,25 +756,238 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
             overlayContent.appendChild(gridContainer);
 
         } else { // Desktop view
-            overlayContent.innerHTML = '';
-            const header = document.createElement('h3');
-            header.textContent = `Torrent Results for ${title} (${year})`;
-            overlayContent.appendChild(header);
+            // Check current theme using the same storage key as theme_switcher.js
+            const currentTheme = localStorage.getItem('selectedTheme') || 'classic';
+            if (window.DEBUG) console.log('🎨 Torrent modal theme:', currentTheme);
             
+            if (currentTheme === 'tangerine') {
+                // TANGERINE THEME - Modern Redesign
+            overlayContent.innerHTML = '';
+            
+            // Create modal header
+            const modalHeader = document.createElement('div');
+            modalHeader.className = 'torrent-modal-header';
+            
+            // Get unique scrapers count
+            const scrapers = new Set(allDisplayItems.map(t => t.source?.split(' - ')[0]).filter(Boolean));
+            const scraperCount = scrapers.size;
+            
+            modalHeader.innerHTML = `
+                <div class="torrent-modal-title-section">
+                    <h3>Torrent Results for ${title} (${year})</h3>
+                    <div class="torrent-stats">
+                        <span>${allDisplayItems.length} results</span>
+                        <span>Search: ${searchDuration}ms</span>
+                        <span>${scraperCount} scraper${scraperCount !== 1 ? 's' : ''}</span>
+                    </div>
+                </div>
+            `;
+            overlayContent.appendChild(modalHeader);
+            
+            // Create filter section
+            const filterSection = document.createElement('div');
+            filterSection.className = 'torrent-filter-section';
+
+            // Get versions from either availableVersions array or the page's version select dropdown
+            let versionsToUse = [];
+
+            // Always try to get from page dropdown first as it's server-rendered and always available
+            const pageVersionSelect = document.getElementById('version-select');
+            if (pageVersionSelect) {
+                versionsToUse = Array.from(pageVersionSelect.options).map(opt => opt.value);
+                if (window.DEBUG) console.log('✅ Using versions from page dropdown:', versionsToUse);
+            } else if (availableVersions.length > 0) {
+                // Fallback to availableVersions if page dropdown not found
+                versionsToUse = availableVersions;
+                if (window.DEBUG) console.log('✅ Using versions from API:', versionsToUse);
+            } else {
+                // Last resort: just use the current version
+                versionsToUse = [version];
+                if (window.DEBUG) console.log('⚠️ No versions found, using current version only:', version);
+            }
+
+            // Debug log
+            if (window.DEBUG) console.log('📦 Final versions for dropdown:', versionsToUse, 'Current version:', version);
+
+            // Strip asterisks from version for comparison (e.g., "4K Remux*" -> "4K Remux")
+            const cleanVersion = version.replace(/\*/g, '');
+
+            // Generate version options HTML
+            const versionOptionsHTML = versionsToUse.map(v =>
+                `<option value="${v}" ${v === cleanVersion ? 'selected' : ''}>${v}</option>`
+            ).join('');
+
+            // Fetch symlink folders and build folder dropdown HTML
+            let folderDropdownHTML = '';
+            try {
+                const foldersResponse = await fetch('/scraper/get_symlink_folders');
+                const foldersData = await foldersResponse.json();
+
+                if (foldersData.enabled && foldersData.folders && foldersData.folders.length > 0) {
+                    const folderSettings = foldersData.folder_settings;
+
+                    // Determine which folder to auto-select based on genres
+                    let autoSelectedFolder = null;
+
+                    // Convert genre_ids to lowercase array for checking
+                    let genreList = [];
+                    if (Array.isArray(genre_ids)) {
+                        genreList = genre_ids.map(g => String(g).trim().toLowerCase());
+                    } else if (typeof genre_ids === 'string') {
+                        genreList = genre_ids.split(',').map(g => g.trim().toLowerCase());
+                    } else if (typeof genre_ids === 'number') {
+                        genreList = [String(genre_ids)];
+                    }
+
+                    if (window.DEBUG) console.log('📁 Folder auto-select - Raw genre_ids:', genre_ids);
+                    if (window.DEBUG) console.log('📁 Folder auto-select - Parsed genreList:', genreList);
+                    if (window.DEBUG) console.log('📁 Folder auto-select - genre_ids type:', typeof genre_ids);
+
+                    // For anime: TMDB uses "animation" genre ID (16) or name, not "anime"
+                    // Check for both "anime" and "animation"
+                    const isAnime = genreList.some(g => {
+                        const matches = g.includes('anime') || g.includes('animation') || g === '16';
+                        if (matches && window.DEBUG) console.log(`📁 Anime match found: "${g}"`);
+                        return matches;
+                    });
+
+                    // For documentary: TMDB uses "documentary" genre ID (99) or name
+                    const isDocumentary = genreList.some(g => {
+                        const matches = g.includes('documentary') || g === '99';
+                        if (matches && window.DEBUG) console.log(`📁 Documentary match found: "${g}"`);
+                        return matches;
+                    });
+
+                    if (window.DEBUG) console.log('📁 Folder auto-select - Detection results:', {
+                        isAnime,
+                        isDocumentary,
+                        mediaType,
+                        animeEnabled: folderSettings.enable_separate_anime_folders,
+                        documentaryEnabled: folderSettings.enable_separate_documentary_folders
+                    });
+
+                    // Determine expected folder name based on media type and genres
+                    if (mediaType === 'movie') {
+                        if (isAnime && folderSettings.enable_separate_anime_folders) {
+                            autoSelectedFolder = folderSettings.anime_movies_folder_name;
+                        } else if (isDocumentary && folderSettings.enable_separate_documentary_folders) {
+                            autoSelectedFolder = folderSettings.documentary_movies_folder_name;
+                        } else {
+                            autoSelectedFolder = folderSettings.movies_folder_name;
+                        }
+                    } else { // TV show
+                        if (isAnime && folderSettings.enable_separate_anime_folders) {
+                            autoSelectedFolder = folderSettings.anime_tv_shows_folder_name;
+                        } else if (isDocumentary && folderSettings.enable_separate_documentary_folders) {
+                            autoSelectedFolder = folderSettings.documentary_tv_shows_folder_name;
+                        } else {
+                            autoSelectedFolder = folderSettings.tv_shows_folder_name;
+                        }
+                    }
+
+                    if (window.DEBUG) console.log('📁 Auto-selected folder:', autoSelectedFolder);
+
+                    // Filter folders based on media type
+                    const filteredFolders = foldersData.folders.filter(folder => {
+                        if (folder.is_custom) {
+                            // Custom folders appear for both movies and TV shows
+                            return true;
+                        }
+
+                        // Standard folders - filter based on media type
+                        const folderNameLower = folder.name.toLowerCase();
+                        if (mediaType === 'movie') {
+                            return folderNameLower.includes('movie') ||
+                                   (folderNameLower === folderSettings.movies_folder_name.toLowerCase());
+                        } else { // TV show
+                            return folderNameLower.includes('show') || folderNameLower.includes('tv') ||
+                                   (folderNameLower === folderSettings.tv_shows_folder_name.toLowerCase());
+                        }
+                    });
+
+                    if (window.DEBUG) console.log('📁 Available folders:', foldersData.folders);
+                    if (window.DEBUG) console.log('📁 Filtered folders:', filteredFolders);
+
+                    if (filteredFolders.length > 0) {
+                        const folderOptionsHTML = filteredFolders.map(folder => {
+                            const isSelected = folder.name === autoSelectedFolder;
+                            if (window.DEBUG) console.log(`📁 Checking folder "${folder.name}" === "${autoSelectedFolder}"? ${isSelected}`);
+                            const displayName = folder.is_custom ?
+                                `${folder.name} (${mediaType === 'movie' ? folderSettings.movies_folder_name : folderSettings.tv_shows_folder_name})` :
+                                folder.name;
+                            return `<option value="${folder.name}" data-is-custom="${folder.is_custom}" ${isSelected ? 'selected' : ''}>${displayName}</option>`;
+                        }).join('');
+
+                        folderDropdownHTML = `
+                            <div class="torrent-folder-dropdown-wrapper">
+                                <label for="torrent-folder-select">Folder:</label>
+                                <select id="torrent-folder-select" class="torrent-folder-select">
+                                    ${folderOptionsHTML}
+                                </select>
+                            </div>
+                        `;
+                    }
+                }
+            } catch (error) {
+                if (window.DEBUG) console.error('Error fetching symlink folders:', error);
+                // Continue without folder dropdown if there's an error
+            }
+
+            filterSection.innerHTML = `
+                <div class="torrent-filter-input-wrapper">
+                    ${createSearchIcon()}
+                    <input type="text" class="torrent-filter-input" id="torrent-filter-input" placeholder="Filter results...">
+                </div>
+                <div class="torrent-version-dropdown-wrapper">
+                    <label for="torrent-version-select">Version:</label>
+                    <select id="torrent-version-select" class="torrent-version-select">
+                        ${versionOptionsHTML}
+                    </select>
+                </div>
+                ${folderDropdownHTML}
+                <div class="torrent-filter-toggles">
+                    <label class="torrent-filter-checkbox">
+                        <input type="checkbox" id="show-filtered-checkbox">
+                        <span>Show filtered</span>
+                    </label>
+                    <label class="torrent-filter-checkbox">
+                        <input type="checkbox" id="show-filename-checkbox">
+                        <span>Filename</span>
+                    </label>
+                </div>
+            `;
+            overlayContent.appendChild(filterSection);
+
+            // Add version change handler
+            const versionSelect = document.getElementById('torrent-version-select');
+            if (versionSelect) {
+                versionSelect.addEventListener('change', async function(e) {
+                    const newVersion = e.target.value;
+                    if (window.DEBUG) console.log(`Version changed from ${version} to ${newVersion}`);
+
+                    // Close current overlay
+                    closeOverlay();
+
+                    // Trigger new search with new version
+                    // Note: multi value defaults to true for TV shows
+                    const multi = mediaType === 'tv' ? true : false;
+                    await selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, newVersion);
+                });
+            }
+            
+            // Create table
             const table = document.createElement('table');
-            table.style.width = '100%';
-            table.style.borderCollapse = 'collapse';
 
             const thead = document.createElement('thead');
             thead.innerHTML = `
                 <tr>
-                    <th style="color: rgb(191 191 190); width: 38%;">Name</th>
-                    <th style="color: rgb(191 191 190); width: 12%; text-align: right;">Size Per File</th>
-                    <th style="color: rgb(191 191 190); width: 10%;">Source</th>
-                    <th style="color: rgb(191 191 190); width: 10%; text-align: right;">Score</th>
-                    <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Cache</th>
-                    <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Add</th>
-                    <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Assign</th>
+                    <th class="sortable" style="width: 40%;">Release</th>
+                    <th class="sortable text-right" style="width: 10%;">Size</th>
+                    <th style="width: 12%;">Scraper</th>
+                    <th class="sortable text-right" style="width: 10%;">Score</th>
+                    <th class="text-center" style="width: 8%;">Cache</th>
+                    <th class="text-center" style="width: 10%;">Add</th>
+                    <th class="text-center" style="width: 10%;">Assign</th>
                 </tr>
             `;
             table.appendChild(thead);
@@ -746,10 +996,6 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
             allDisplayItems.forEach((torrent, index) => {
                 const isFilteredOut = torrent.__isActuallyFilteredOut;
                 const cacheStatus = torrent.cached || 'Unknown';
-                const cacheStatusClass = cacheStatus === 'Yes' ? 'cached' :
-                                      cacheStatus === 'No' ? 'not-cached' :
-                                      cacheStatus === 'Not Checked' ? 'not-checked' :
-                                      cacheStatus === 'N/A' ? 'check-unavailable' : 'unknown';
                 
                 if (torrent.magnet) {
                     torrent.magnet_link = torrent.magnet;
@@ -759,49 +1005,68 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                     prefill_id: mediaId, prefill_type: mediaType, prefill_title: title,
                     prefill_year: year, prefill_magnet: torrent.magnet, prefill_version: version
                 });
-                // Set selection type based on whether this is an episode or season pack
+                
                 if (season) {
                     assignUrlParams.set('prefill_seasons', season);
                     if (episode) {
-                        // Individual episode
                         assignUrlParams.set('prefill_selection', 'episode');
                         assignUrlParams.set('prefill_episode', episode);
                     } else {
-                        // Season pack
                         assignUrlParams.set('prefill_selection', 'seasons');
                     }
                 }
                 const assignUrl = `/magnet/assign_magnet?${assignUrlParams.toString()}`;
 
-                // Create bitrate tooltip for desktop
-                const bitrateTooltip = formatBitrate(torrent.bitrate);
-
+                // Extract quality tags from title
+                const qualityTags = extractQualityTags(torrent.title || torrent.original_title || '');
+                const qualityBadgesHtml = qualityTags.map(tag => createQualityBadge(tag)).join('');
+                
+                // Use clean title from header, store filename for toggle
+                const ShowInfo = `${season ? `<span class="season-info">S${season.toString().padStart(2, '0')}` : ''}${(torrent.parsed_info.seasons).length > 1 ? ` - ${(torrent.parsed_info.seasons).length}</span>` : `</span>`} ${episode ? `<span class="ds-episode-info"> E${episode.toString().padStart(2, '0')}</span>`: ''}`;
+                const cleanTitle = `${title} (${year})${ShowInfo ? ` ${ShowInfo}` : ''}`;
+                const filename = torrent.title || torrent.original_title || 'N/A';
+                
+                // Get score and color class
+                const score = torrent.score_breakdown?.total_score || 0;
+                const scoreClass = getScoreColorClass(score);
+                const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (score || 'N/A');
+                
+                // Create cache icon
+                const cacheIconHtml = createCacheIcon(cacheStatus);
+                
                 const row = document.createElement('tr');
                 if (isFilteredOut) {
-                    row.classList.add('filtered-out-item'); 
+                    row.classList.add('filtered-row');
                 }
 
                 row.innerHTML = `
-                    <td style="font-weight: 600; text-transform: uppercase; color: rgb(191 191 190); word-wrap: break-word; white-space: normal; padding: 10px;">
-                        <div style="display: block; line-height: 1.4; min-height: fit-content;">
-                            ${torrent.title || torrent.original_title || 'N/A'}
+                    <td>
+                        <div class="release-title-wrapper">
+                            <div class="release-title" data-clean-title="${cleanTitle.replace(/"/g, '&quot;')}" data-filename="${filename.replace(/"/g, '&quot;')}">${cleanTitle}</div>
+                            <div class="release-tags">${qualityBadgesHtml}</div>
                         </div>
                     </td>
-                    <td style="color: rgb(191 191 190); text-align: right;" data-bitrate="${bitrateTooltip}">${(torrent.size || 0).toFixed(1)} GB</td>
-                    <td id="scraper-source" style="color: rgb(191 191 190);">
-                        <div class="source-container">
-                            ${(torrent.source || 'N/A').split(' - ').map(part => `<span class="source-badge">${part.trim()}</span>`).join('')}
-                        </div>
+                    <td class="text-right">${(torrent.size || 0).toFixed(1)} GB</td>
+                    <td>
+                        ${(torrent.source || 'N/A').split(' - ').map(p => `<span class="source-badge">${p.trim()}</span>`).join('')}
                     </td>
-                    <td style="color: rgb(191 191 190); text-align: right;" ${isFilteredOut ? `data-tooltip="${torrent.filter_reason || 'Filtered'}"` : ''}>${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</td>
-                    <td style="color: rgb(191 191 190); text-align: center;">
-                        <span class="cache-status ${cacheStatusClass}" data-index="${index}">${cacheStatus}</span>
+                    <td class="text-right">
+                        <span class="score-value ${scoreClass}" ${isFilteredOut ? `title="${torrent.filter_reason || 'Filtered'}"` : ''}>${scoreDisplay}</span>
                     </td>
-                    <td style="color: rgb(191 191 190); text-align: center;">
-                        <button class="action-button add-button">Add</button>
+                    <td class="text-center cache-cell" data-torrent-index="${index}">
+                        <span class="cache-icon-wrapper">${cacheIconHtml}</span>
                     </td>
-                    <td style="color: rgb(191 191 190); text-align: center;">
-                         <button class="action-button assign-button" onclick="window.location.href='${assignUrl}'">Assign</button>
+                    <td class="text-center">
+                        <button class="action-button add-button">
+                            ${createDownloadIcon()}
+                            ADD
+                        </button>
+                    </td>
+                    <td class="text-center">
+                        <button class="action-button assign-button">
+                            ${createExternalLinkIcon()}
+                            ASSIGN
+                        </button>
                     </td>
                 `;
                 tbody.appendChild(row);
@@ -811,7 +1076,6 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                 const assignButton = row.querySelector('.assign-button');
 
                 if (isFilteredOut) {
-                    // Make the 'Add' button clickable for filtered items and show a confirmation
                     addButton.onclick = function() {
                         const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
                         showPopup({
@@ -828,9 +1092,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                             }
                         });
                     };
-
                 } else {
-                    // Standard behavior for non-filtered items
                     addButton.onclick = function() {
                         addToRealDebrid(torrent.magnet, {
                             ...torrent, year, version: torrent.version || version, title,
@@ -838,14 +1100,206 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
                             tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
                         });
                     };
-
-                    assignButton.onclick = function() {
-                        window.location.href = assignUrl;
-                    };
                 }
+                
+                assignButton.onclick = function() {
+                    window.location.href = assignUrl;
+                };
             });
             table.appendChild(tbody);
             overlayContent.appendChild(table);
+            
+            // Add filter functionality
+            const filterInput = overlayContent.querySelector('#torrent-filter-input');
+            const showFilteredCheckbox = overlayContent.querySelector('#show-filtered-checkbox');
+            const showFilenameCheckbox = overlayContent.querySelector('#show-filename-checkbox');
+            
+            // Filename toggle functionality
+            if (showFilenameCheckbox) {
+                // Load saved state from localStorage
+                const savedFilenameState = localStorage.getItem('torrentShowFilename') === 'true';
+                showFilenameCheckbox.checked = savedFilenameState;
+                
+                // Apply saved state on initial load
+                if (savedFilenameState) {
+                    const rows = overlayContent.querySelectorAll('tbody tr');
+                    rows.forEach(row => {
+                        const titleDiv = row.querySelector('.release-title');
+                        if (titleDiv) {
+                            const filename = titleDiv.getAttribute('data-filename');
+                            titleDiv.textContent = filename;
+                        }
+                    });
+                }
+                
+                showFilenameCheckbox.addEventListener('change', function() {
+                    // Save state to localStorage
+                    localStorage.setItem('torrentShowFilename', this.checked);
+                    
+                    const rows = overlayContent.querySelectorAll('tbody tr');
+                    rows.forEach(row => {
+                        const titleDiv = row.querySelector('.release-title');
+                        if (titleDiv) {
+                            const cleanTitle = titleDiv.getAttribute('data-clean-title');
+                            const filename = titleDiv.getAttribute('data-filename');
+                            if (this.checked) {
+                                titleDiv.textContent = filename;
+                            } else {
+                                titleDiv.innerHTML = cleanTitle;
+                            }
+                        }
+                    });
+                });
+            }
+            
+            function applyFilters() {
+                const filterText = filterInput.value.toLowerCase();
+                const showFiltered = showFilteredCheckbox.checked;
+                
+                const rows = tbody.querySelectorAll('tr');
+                rows.forEach(row => {
+                    const isFiltered = row.classList.contains('filtered-row');
+                    const text = row.textContent.toLowerCase();
+                    const matchesSearch = !filterText || text.includes(filterText);
+                    const shouldShow = matchesSearch && (showFiltered || !isFiltered);
+                    
+                    row.style.display = shouldShow ? '' : 'none';
+                });
+            }
+            
+            filterInput.addEventListener('input', applyFilters);
+            showFilteredCheckbox.addEventListener('change', applyFilters);
+            
+            // Hide filtered items by default
+            applyFilters();
+            
+            // Add close button handlers
+            overlayContent.querySelectorAll('.close-modal-btn').forEach(btn => {
+                btn.onclick = () => closeOverlay();
+            });
+            
+            } else {
+                // CLASSIC THEME - Original Desktop Table
+                overlayContent.innerHTML = '';
+                const header = document.createElement('h3');
+                header.textContent = `Torrent Results for ${title} (${year})`;
+                overlayContent.appendChild(header);
+                
+                const table = document.createElement('table');
+                table.style.width = '100%';
+                table.style.borderCollapse = 'collapse';
+
+                const thead = document.createElement('thead');
+                thead.innerHTML = `
+                    <tr>
+                        <th style="color: rgb(191 191 190); width: 38%;">Name</th>
+                        <th style="color: rgb(191 191 190); width: 12%; text-align: right;">Size Per File</th>
+                        <th style="color: rgb(191 191 190); width: 10%;">Source</th>
+                        <th style="color: rgb(191 191 190); width: 10%; text-align: right;">Score</th>
+                        <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Cache</th>
+                        <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Add</th>
+                        <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Assign</th>
+                    </tr>
+                `;
+                table.appendChild(thead);
+
+                const tbody = document.createElement('tbody');
+                allDisplayItems.forEach((torrent, index) => {
+                    const isFilteredOut = torrent.__isActuallyFilteredOut;
+                    const cacheStatus = torrent.cached || 'Unknown';
+                    const cacheStatusClass = cacheStatus === 'Yes' ? 'cached' :
+                                          cacheStatus === 'No' ? 'not-cached' :
+                                          cacheStatus === 'Not Checked' ? 'not-checked' :
+                                          cacheStatus === 'N/A' ? 'check-unavailable' : 'unknown';
+                    
+                    if (torrent.magnet) {
+                        torrent.magnet_link = torrent.magnet;
+                    }
+
+                    const assignUrlParams = new URLSearchParams({
+                        prefill_id: mediaId, prefill_type: mediaType, prefill_title: title,
+                        prefill_year: year, prefill_magnet: torrent.magnet, prefill_version: version
+                    });
+                    if (season) {
+                        assignUrlParams.set('prefill_seasons', season);
+                        if (episode) {
+                            assignUrlParams.set('prefill_selection', 'episode');
+                            assignUrlParams.set('prefill_episode', episode);
+                        } else {
+                            assignUrlParams.set('prefill_selection', 'seasons');
+                        }
+                    }
+                    const assignUrl = `/magnet/assign_magnet?${assignUrlParams.toString()}`;
+
+                    const bitrateTooltip = formatBitrate(torrent.bitrate);
+
+                    const row = document.createElement('tr');
+                    if (isFilteredOut) {
+                        row.classList.add('filtered-out-item'); 
+                    }
+
+                    row.innerHTML = `
+                        <td style="font-weight: 600; text-transform: uppercase; color: rgb(191 191 190); word-wrap: break-word; white-space: normal; padding: 10px;">
+                            <div style="display: block; line-height: 1.4; min-height: fit-content;">
+                                ${torrent.title || torrent.original_title || 'N/A'}
+                            </div>
+                        </td>
+                        <td style="color: rgb(191 191 190); text-align: right;" data-bitrate="${bitrateTooltip}">${(torrent.size || 0).toFixed(1)} GB</td>
+                        <td id="scraper-source" style="color: rgb(191 191 190);">
+                            <div class="source-container">
+                                ${(torrent.source || 'N/A').split(' - ').map(part => `<span class="source-badge">${part.trim()}</span>`).join('')}
+                            </div>
+                        </td>
+                        <td style="color: rgb(191 191 190); text-align: right;" ${isFilteredOut ? `data-tooltip="${torrent.filter_reason || 'Filtered'}"` : ''}>${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</td>
+                        <td style="color: rgb(191 191 190); text-align: center;">
+                            <span class="cache-status ${cacheStatusClass}" data-index="${index}">${cacheStatus}</span>
+                        </td>
+                        <td style="color: rgb(191 191 190); text-align: center;">
+                            <button class="action-button add-button">Add</button>
+                        </td>
+                        <td style="color: rgb(191 191 190); text-align: center;">
+                             <button class="action-button assign-button" onclick="window.location.href='${assignUrl}'">Assign</button>
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+
+                    const addButton = row.querySelector('.add-button');
+                    const assignButton = row.querySelector('.assign-button');
+
+                    if (isFilteredOut) {
+                        addButton.onclick = function() {
+                            const confirmationMessage = `This item was filtered for the following reason:\n\n'${torrent.filter_reason || 'No specific reason provided'}'.\n\nDo you want to add it anyway?`;
+                            showPopup({
+                                type: POPUP_TYPES.CONFIRM,
+                                title: 'Add Filtered Item?',
+                                message: confirmationMessage,
+                                confirmText: 'Add Anyway',
+                                onConfirm: () => {
+                                    addToRealDebrid(torrent.magnet, {
+                                        ...torrent, year, version: torrent.version || version, title,
+                                        media_type: mediaType, season: season || null, episode: episode || null,
+                                        tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
+                                    });
+                                }
+                            });
+                        };
+                    } else {
+                        addButton.onclick = function() {
+                            addToRealDebrid(torrent.magnet, {
+                                ...torrent, year, version: torrent.version || version, title,
+                                media_type: mediaType, season: season || null, episode: episode || null,
+                                tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
+                            });
+                        };
+
+                        assignButton.onclick = function() {
+                            window.location.href = assignUrl;
+                        };
+                    }
+                });
+                table.appendChild(tbody);
+                overlayContent.appendChild(table);
+            }
         }
     }
     mediaQuery.addListener(handleScreenChange); // Add listener
@@ -908,6 +1362,7 @@ function displayTorrentResults(data, title, year, version, mediaId, mediaType, s
     // --- END SIMPLER EVENT LISTENERS ---
 
 
+    // Check cache status in background
     checkCacheStatusInBackground(null, allDisplayItems);
     
     // Setup tooltips for filter reasons
@@ -1128,7 +1583,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         // Save state to localStorage on change
         allowSpecialsCheckbox.addEventListener('change', function() {
             localStorage.setItem('allowSpecials', this.checked);
-            console.log(`Allow Specials set to: ${this.checked}`);
+            if (window.DEBUG) console.log(`Allow Specials set to: ${this.checked}`);
         });
     }
     
@@ -1263,7 +1718,7 @@ document.addEventListener('DOMContentLoaded', async function() {
             }
         })
         .catch(error => {
-            console.error('Trakt Auth Check Error:', error);
+            if (window.DEBUG) console.error('Trakt Auth Check Error:', error);
             get_allTrending(); // Fallback uses combined call
         });
     
@@ -1387,7 +1842,7 @@ document.addEventListener('DOMContentLoaded', async function() {
         const searchInput = document.querySelector('#search-form input[name="search_term"]');
         const searchButton = document.getElementById('searchformButton');
         if (searchInput && searchButton) {
-            console.log(`Auto-searching for: ${searchTermFromUrl}`);
+            if (window.DEBUG) console.log(`Auto-searching for: ${searchTermFromUrl}`);
             searchInput.value = searchTermFromUrl;
             searchButton.click();
         }
@@ -1455,7 +1910,7 @@ document.addEventListener('DOMContentLoaded', async function() {
     const versionParam = urlParams.get('v');
 
     if (searchQuery && searchInput) {
-        console.log('Restoring search from URL:', searchQuery);
+        if (window.DEBUG) console.log('Restoring search from URL:', searchQuery);
         searchInput.value = searchQuery;
 
         // Restore version if present
@@ -1468,13 +1923,244 @@ document.addEventListener('DOMContentLoaded', async function() {
         performLiveSearch(searchQuery, false);
     }
 
+    // Check for pending scraper load from discover page
+    const pendingLoad = sessionStorage.getItem('pendingScraperLoad');
+    if (pendingLoad) {
+        try {
+            const mediaData = JSON.parse(pendingLoad);
+            if (window.DEBUG) console.log('Auto-loading media from discover:', mediaData);
+
+            // Clear the sessionStorage immediately to prevent re-triggering
+            sessionStorage.removeItem('pendingScraperLoad');
+
+            // Hide search form when coming from discover
+            const searchForm = document.getElementById('search-form');
+            if (searchForm) {
+                searchForm.style.display = 'none';
+            }
+
+            // Clean URL to prevent back button issues
+            if (window.location.search.includes('from_discover=1')) {
+                // Replace current history entry with clean /scraper URL
+                window.history.replaceState({}, '', '/scraper');
+            }
+
+            // Store pre-fetched episodes if available (but don't display yet - need to set up UI first)
+            let preFetchedEpisodes = null;
+            let preFetchedSeason = null;
+            if (mediaData.preFetchedEpisodes) {
+                if (window.DEBUG) console.log('⚡ Pre-fetched episodes available - will display instantly after UI setup');
+                if (window.DEBUG) console.log('MediaData genres:', mediaData.genre_ids);
+                preFetchedEpisodes = mediaData.preFetchedEpisodes;
+                preFetchedSeason = mediaData.preFetchedSeason || 1;
+
+                // Cache the pre-fetched episodes
+                const versionSelect = document.getElementById('version-select');
+                const version = versionSelect ? versionSelect.value : 'Any';
+                const cacheKey = `episodes:${mediaData.media_id}:${preFetchedSeason}:${version}:${mediaData.allow_specials}`;
+                setCachedEpisodes(cacheKey, preFetchedEpisodes);
+            }
+
+            // Show loading state only if not using pre-fetched episodes
+            if (!preFetchedEpisodes) {
+                showLoadingState();
+            }
+
+            // Get version from select element
+            const versionSelect = document.getElementById('version-select');
+            const version = versionSelect ? versionSelect.value : 'Any';
+
+            // Prepare form data for season selection
+            const formData = new FormData();
+            formData.append('media_id', mediaData.media_id);
+            formData.append('title', mediaData.title);
+            formData.append('year', mediaData.year);
+            formData.append('media_type', mediaData.media_type);
+            formData.append('multi', mediaData.multi);
+            formData.append('version', version);
+            formData.append('allow_specials', mediaData.allow_specials);
+            if (mediaData.rating) formData.append('rating', mediaData.rating);
+            if (mediaData.vote_average) formData.append('vote_average', mediaData.vote_average);
+            // Convert genre_ids array to comma-separated string (not JSON)
+            if (mediaData.genre_ids && Array.isArray(mediaData.genre_ids)) {
+                formData.append('genre_ids', mediaData.genre_ids.join(','));
+            }
+
+            // POST to select_season endpoint to get all available seasons
+            fetch('/scraper/select_season', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                hideLoadingState();
+
+                if (data.error) {
+                    if (window.DEBUG) console.error('Error loading season data:', data.error);
+                    displayError(data.error);
+                } else {
+                    if (window.DEBUG) console.log('Season data loaded successfully');
+
+                    // Get season results
+                    const seasonResults = data.episode_results || data.results;
+                    if (!seasonResults || seasonResults.length === 0) {
+                        displayError('No season results found');
+                        return;
+                    }
+
+                    // Show season results section
+                    toggleResultsVisibility('displayEpisodeResults');
+
+                    // Populate the season dropdown
+                    const dropdown = document.getElementById('seasonDropdown');
+                    const seasonPackButton = document.getElementById('seasonPackButton');
+                    const requestSeasonButton = document.getElementById('requestSeasonButton');
+
+                    if (!dropdown) {
+                        if (window.DEBUG) console.error('Season dropdown not found');
+                        return;
+                    }
+
+                    dropdown.innerHTML = '';
+                    seasonResults.forEach(item => {
+                        const option = document.createElement('option');
+                        option.value = JSON.stringify(item);
+                        option.textContent = item.season_num === 0 ? 'Specials' : `Season: ${item.season_num}`;
+                        dropdown.appendChild(option);
+                    });
+
+                    // Store these in a scope accessible to the dropdown change handler
+                    const genre_ids = mediaData.genre_ids || [];
+                    const vote_average = mediaData.vote_average || 0;
+                    const tmdb_api_key_set = document.getElementById('tmdb_api_key_set')?.value === 'True';
+
+                    // Store show-level metadata for display
+                    const showBackdropPath = mediaData.backdrop_path || null;
+                    const showOverview = mediaData.overview || 'No overview available';
+
+                    // Debug logging
+                    if (window.DEBUG) console.log('=== Season Dropdown Setup ===');
+                    if (window.DEBUG) console.log('genre_ids from mediaData:', genre_ids);
+                    if (window.DEBUG) console.log('vote_average from mediaData:', vote_average);
+                    if (window.DEBUG) console.log('backdrop_path from mediaData:', showBackdropPath);
+                    if (window.DEBUG) console.log('overview from mediaData:', showOverview);
+
+                    // Check if user is a requester
+                    const isRequesterEl = document.getElementById('is_requester');
+                    const isRequester = isRequesterEl && isRequesterEl.value === 'True';
+
+                    // Add change event listener to dropdown
+                    dropdown.addEventListener('change', function() {
+                        const selectedItem = JSON.parse(this.value);
+                        const optionText = this.options[this.selectedIndex].textContent;
+                        let displayedSeasonNum = selectedItem.season_num;
+
+                        if (optionText.startsWith('Season: ')) {
+                            const extractedSeason = parseInt(optionText.replace('Season: ', ''));
+                            if (!isNaN(extractedSeason)) {
+                                displayedSeasonNum = extractedSeason;
+                            }
+                        }
+
+                        if (tmdb_api_key_set) {
+                            // Use show-level backdrop/overview from mediaData, season-specific poster
+                            const itemBackdropPath = showBackdropPath || selectedItem.backdrop_path || null;
+                            const itemShowOverview = showOverview || selectedItem.show_overview || 'No overview available';
+
+                            displaySeasonInfo(
+                                selectedItem.title,
+                                displayedSeasonNum,
+                                selectedItem.air_date,
+                                selectedItem.season_overview,
+                                selectedItem.poster_path,
+                                genre_ids,
+                                vote_average,
+                                itemBackdropPath,
+                                itemShowOverview
+                            );
+                        } else {
+                            displaySeasonInfoTextOnly(selectedItem.title, displayedSeasonNum);
+                        }
+
+                        // Check if we have pre-fetched episodes for this season
+                        if (preFetchedEpisodes && displayedSeasonNum === preFetchedSeason) {
+                            if (window.DEBUG) console.log('⚡ Using pre-fetched episodes for season', preFetchedSeason);
+                            // Display pre-fetched episodes instantly without API call
+                            displayEpisodeResults(
+                                preFetchedEpisodes,
+                                selectedItem.title,
+                                selectedItem.year,
+                                version,
+                                selectedItem.id,
+                                selectedItem.media_type,
+                                displayedSeasonNum,
+                                null,
+                                genre_ids
+                            );
+                        } else {
+                            // Normal flow - fetch episodes from API
+                            selectEpisode(selectedItem.id, selectedItem.title, selectedItem.year, selectedItem.media_type, displayedSeasonNum, null, selectedItem.multi, genre_ids);
+                        }
+                    });
+
+                    // Setup season pack button
+                    if (seasonPackButton) {
+                        seasonPackButton.onclick = function() {
+                            if (isRequester) return;
+
+                            const selectedItem = JSON.parse(dropdown.value);
+                            const content = {
+                                mediaId: selectedItem.id,
+                                title: selectedItem.title,
+                                year: selectedItem.year,
+                                mediaType: selectedItem.media_type,
+                                season: selectedItem.season_num,
+                                episode: null,
+                                multi: true,
+                                genre_ids: genre_ids
+                            };
+                            showScrapeVersionModal(content);
+                        };
+                    }
+
+                    // Setup request season button
+                    if (requestSeasonButton) {
+                        requestSeasonButton.onclick = function() {
+                            const selectedItem = JSON.parse(dropdown.value);
+                            const content = {
+                                id: selectedItem.id,
+                                mediaType: selectedItem.media_type,
+                                title: selectedItem.title,
+                                seasons: [selectedItem.season_num]
+                            };
+                            requestContent(content, ['Any']);
+                        };
+                    }
+
+                    // Auto-select first season to trigger episode loading
+                    if (dropdown.options.length > 0) {
+                        dropdown.dispatchEvent(new Event('change'));
+                    }
+                }
+            })
+            .catch(error => {
+                hideLoadingState();
+                if (window.DEBUG) console.error('Error auto-loading media:', error);
+                displayError('Failed to load media data');
+            });
+        } catch (error) {
+            if (window.DEBUG) console.error('Error parsing pending scraper load:', error);
+            sessionStorage.removeItem('pendingScraperLoad');
+        }
+    }
+
     // OPTIMIZATION: Prefetch trending data in background for instant display
     prefetchTrendingData();
 }); // End of DOMContentLoaded
 
 // PHASE 2.3: Handle browser back/forward navigation
 window.addEventListener('popstate', function(event) {
-    console.log('Popstate event:', event.state);
+    if (window.DEBUG) console.log('Popstate event:', event.state);
 
     const searchInput = document.querySelector('#search-form input[name="search_term"]');
     if (!searchInput) return;
@@ -1508,7 +2194,7 @@ window.addEventListener('popstate', function(event) {
 
 // PHASE 1.2 & 2.3: Live Search Function with URL state management
 function performLiveSearch(searchTerm, updateURL = true) {
-    console.log('Performing live search for:', searchTerm);
+    if (window.DEBUG) console.log('Performing live search for:', searchTerm);
 
     // Get current version selection
     const versionSelect = document.getElementById('version-select');
@@ -1545,7 +2231,7 @@ function performLiveSearch(searchTerm, updateURL = true) {
         Loading.hide();
 
         if (data.error) {
-            console.error('Live search error:', data.error);
+            if (window.DEBUG) console.error('Live search error:', data.error);
             return;
         }
 
@@ -1557,7 +2243,7 @@ function performLiveSearch(searchTerm, updateURL = true) {
     .catch(error => {
         // Hide loading overlay on error
         Loading.hide();
-        console.error('Live search failed:', error);
+        if (window.DEBUG) console.error('Live search failed:', error);
     });
 }
 
@@ -1575,7 +2261,7 @@ async function fetchVersions() {
             availableVersions = data.versions;
         }
     } catch (error) {
-        console.error('Error fetching versions:', error);
+        if (window.DEBUG) console.error('Error fetching versions:', error);
         displayError('Error fetching versions');
     }
 }
@@ -1777,16 +2463,16 @@ function showVersionModalForSeason(content) {
 // Function to fetch show seasons from the server
 async function fetchShowSeasons(tmdbId) {
     try {
-        console.log(`Fetching seasons for TMDB ID: ${tmdbId}`);
+        if (window.DEBUG) console.log(`Fetching seasons for TMDB ID: ${tmdbId}`);
         const response = await fetch(`/content/show_seasons?tmdb_id=${tmdbId}`, {
             method: 'GET'
         });
         
         // Log the HTTP status
-        console.log(`Show seasons fetch response status: ${response.status}`);
+        if (window.DEBUG) console.log(`Show seasons fetch response status: ${response.status}`);
         
         const data = await response.json();
-        console.log('Show seasons API response:', data);
+        if (window.DEBUG) console.log('Show seasons API response:', data);
         
         if (data.success && data.seasons && data.seasons.length > 0) {
             // Update the season selection container
@@ -1796,7 +2482,7 @@ async function fetchShowSeasons(tmdbId) {
             
             // Sort seasons in numerical order
             const seasons = data.seasons.sort((a, b) => a - b);
-            console.log(`Found ${seasons.length} seasons:`, seasons);
+            if (window.DEBUG) console.log(`Found ${seasons.length} seasons:`, seasons);
             
             // Create checkbox for each season
             seasons.forEach(season => {
@@ -1809,16 +2495,16 @@ async function fetchShowSeasons(tmdbId) {
                 seasonsList.appendChild(seasonDiv);
             });
         } else {
-            console.warn('No seasons found or invalid response format:', data);
+            if (window.DEBUG) console.warn('No seasons found or invalid response format:', data);
             let errorMessage = 'Could not load seasons. Please try again or request the whole show.';
             if (data.error) {
-                console.error('API error message:', data.error);
+                if (window.DEBUG) console.error('API error message:', data.error);
                 errorMessage = `Error: ${data.error}`;
             }
             document.getElementById('season-selection-container').innerHTML = `<p>${errorMessage}</p>`;
         }
     } catch (error) {
-        console.error('Error fetching show seasons:', error);
+        if (window.DEBUG) console.error('Error fetching show seasons:', error);
         document.getElementById('season-selection-container').innerHTML = 
             '<p>Error loading seasons. Please try again later.</p>';
     }
@@ -1896,7 +2582,7 @@ async function requestContent(content, selectedVersions) {
             displayError(result.error || 'Failed to request content');
         }
     } catch (error) {
-        console.error('Error requesting content:', error);
+        if (window.DEBUG) console.error('Error requesting content:', error);
         displayError('Error requesting content');
     } finally {
         hideLoadingState();
@@ -2195,7 +2881,7 @@ function get_allTrending() {
         if (ssrDataElement) {
             try {
                 const data = JSON.parse(ssrDataElement.textContent);
-                console.log('✅ SSR: Using embedded trending data (0ms delay)');
+                if (window.DEBUG) console.log('✅ SSR: Using embedded trending data (0ms delay)');
 
                 // Process movies
                 if (data.trendingMovies && data.trendingMovies.length > 0) {
@@ -2229,7 +2915,7 @@ function get_allTrending() {
 
                 return; // SSR successful, exit early
             } catch (error) {
-                console.error('⚠️ SSR: Failed to parse embedded data, falling back to fetch:', error);
+                if (window.DEBUG) console.error('⚠️ SSR: Failed to parse embedded data, falling back to fetch:', error);
                 // Fall through to client-side cache or fetch
             }
         }
@@ -2242,7 +2928,7 @@ function get_allTrending() {
 
     if (moviesCached && showsCached && animeCached) {
         // All data is cached, render immediately
-        console.log('✅ Client cache: Using cached trending data');
+        if (window.DEBUG) console.log('✅ Client cache: Using cached trending data');
         const movieFrag = document.createDocumentFragment();
         moviesCached.forEach((item, index) => {
             movieFrag.appendChild(createMovieElement(item, index));
@@ -2265,7 +2951,7 @@ function get_allTrending() {
     }
 
     // PRIORITY 3: Fetch combined data from server
-    console.log('⏳ Fetching trending data via AJAX...');
+    if (window.DEBUG) console.log('⏳ Fetching trending data via AJAX...');
     fetch('/scraper/all_trending', { method: 'GET' })
         .then(response => response.json())
         .then(data => {
@@ -2305,7 +2991,7 @@ function get_allTrending() {
             }
         })
         .catch(error => {
-            console.error('Error fetching all trending:', error);
+            if (window.DEBUG) console.error('Error fetching all trending:', error);
             displayError('An error occurred while fetching trending content.');
         });
 }
@@ -2352,7 +3038,7 @@ function get_trendingMovies() {
         }
     })
     .catch(error => {
-        console.error('Error:', error);
+        if (window.DEBUG) console.error('Error:', error);
         displayError('An error occurred.');
     });
 }
@@ -2399,7 +3085,7 @@ function get_trendingShows() {
         }
     })
     .catch(error => {
-        console.error('Error:', error);
+        if (window.DEBUG) console.error('Error:', error);
         displayError('An error occurred.');
     });
 }
@@ -2574,18 +3260,18 @@ function get_trendingAnime() {
         }
     })
     .catch(error => {
-        console.error('Error:', error);
+        if (window.DEBUG) console.error('Error:', error);
         displayError('An error occurred.');
     });
 }
 
 function searchMedia(event) {
-    console.log('searchMedia called', event);
+    if (window.DEBUG) console.log('searchMedia called', event);
     
     // Prevent the default form submission which would reload the page
     if (event) {
         event.preventDefault();
-        console.log('Event default prevented');
+        if (window.DEBUG) console.log('Event default prevented');
     }
     
     // Get the isRequester value
@@ -2595,7 +3281,7 @@ function searchMedia(event) {
     let searchTerm = document.querySelector('input[name="search_term"]').value.trim(); // Trim whitespace
     let version = document.getElementById('version-select').value;
     
-    console.log('Search parameters:', { searchTerm, version });
+    if (window.DEBUG) console.log('Search parameters:', { searchTerm, version });
     
     if (!searchTerm) {
         displayError('Please enter a search term or ID (e.g., tt1234567 or tmdb12345)');
@@ -2610,21 +3296,21 @@ function searchMedia(event) {
     const tmdbIdPrefixedPattern = /^tmdb\d+$/i; // Case insensitive for tmdb prefix
 
     if (imdbIdPattern.test(searchTerm)) {
-        console.log('Detected IMDb ID:', searchTerm);
+        if (window.DEBUG) console.log('Detected IMDb ID:', searchTerm);
         fetchUrl = '/scraper/lookup_by_id';
         fetchBody = `id_type=imdb&media_id=${encodeURIComponent(searchTerm)}`;
     } else if (tmdbIdPrefixedPattern.test(searchTerm)) {
         const tmdbId = searchTerm.substring(4); // Remove "tmdb" prefix
-        console.log('Detected TMDb ID (after stripping prefix):', tmdbId);
+        if (window.DEBUG) console.log('Detected TMDb ID (after stripping prefix):', tmdbId);
         fetchUrl = '/scraper/lookup_by_id';
         fetchBody = `id_type=tmdb&media_id=${encodeURIComponent(tmdbId)}`;
     } else {
-        console.log('Performing standard search for:', searchTerm);
+        if (window.DEBUG) console.log('Performing standard search for:', searchTerm);
         fetchUrl = '/scraper/';
         fetchBody = `search_term=${encodeURIComponent(searchTerm)}&version=${encodeURIComponent(version)}`;
     }
 
-    console.log(`Submitting search to ${fetchUrl}`);
+    if (window.DEBUG) console.log(`Submitting search to ${fetchUrl}`);
 
     fetch(fetchUrl, {
         method: 'POST',
@@ -2634,7 +3320,7 @@ function searchMedia(event) {
         body: fetchBody
     })
     .then(response => {
-        console.log('Search response status:', response.status);
+        if (window.DEBUG) console.log('Search response status:', response.status);
         if (!response.ok) {
             // Try to parse error JSON, otherwise use status text
             return response.json().then(err => {
@@ -2646,7 +3332,7 @@ function searchMedia(event) {
         return response.json();
     })
     .then(data => {
-        console.log('Search response data:', data);
+        if (window.DEBUG) console.log('Search response data:', data);
         hideLoadingState();
         
         if (data.error) {
@@ -2670,7 +3356,7 @@ function searchMedia(event) {
     })
     .catch(error => {
         hideLoadingState();
-        console.error('Search Error:', error);
+        if (window.DEBUG) console.error('Search Error:', error);
         displayError('An error occurred while searching: ' + error.message);
     });
 }
@@ -2685,7 +3371,7 @@ window.searchScrollState = {
 };
 
 function displaySearchResults(results, version) {
-    console.log('Displaying results. First item:', results.length > 0 ? JSON.stringify(results[0]) : 'No results'); // Log the first item as JSON
+    if (window.DEBUG) console.log('Displaying results. First item:', results.length > 0 ? JSON.stringify(results[0]) : 'No results'); // Log the first item as JSON
 
     // First hide trending container and show search results
     toggleResultsVisibility('displaySearchResults');
@@ -2695,7 +3381,7 @@ function displaySearchResults(results, version) {
     const resultsList = document.getElementById('resultsList');
 
     if (!searchResultsDiv || !resultsList) {
-        console.error('Search result elements not found!');
+        if (window.DEBUG) console.error('Search result elements not found!');
         return;
     }
 
@@ -2707,14 +3393,14 @@ function displaySearchResults(results, version) {
 
     // Validate that results is an array
     if (!Array.isArray(results)) {
-        console.error('Expected results to be an array but got:', typeof results);
+        if (window.DEBUG) console.error('Expected results to be an array but got:', typeof results);
         displayError('Invalid response format, likely Trakt connection issue');
         return;
     }
 
     // Check if we have results
     if (results.length === 0) {
-        console.log('No results found');
+        if (window.DEBUG) console.log('No results found');
         resultsList.innerHTML = '<p>No results found. Try a different search term.</p>';
         return;
     }
@@ -2772,7 +3458,7 @@ function displaySearchResults_OLD(results, version) {
     `;
 
     results.forEach(item => {
-        console.log('Processing item for display:', JSON.stringify(item, null, 2));
+        if (window.DEBUG) console.log('Processing item for display:', JSON.stringify(item, null, 2));
         const searchResDiv = document.createElement('div');
         searchResDiv.className = 'sresult';
         let posterUrl = '/static/images/placeholder.png'; // Default placeholder
@@ -2781,32 +3467,32 @@ function displaySearchResults_OLD(results, version) {
         // --- Use item.poster_path (lowercase with underscore) ---
         if (item.poster_path && typeof item.poster_path === 'string' && item.poster_path.trim() !== '') {
              const pathToCheck = item.poster_path.trim(); // Use correct key here
-             console.log('Checking poster_path:', pathToCheck); // Log correct key
+             if (window.DEBUG) console.log('Checking poster_path:', pathToCheck); // Log correct key
 
              // --- Logic remains the same, just uses pathToCheck from correct key ---
              if (pathToCheck.startsWith('static/')) {
                  posterUrl = pathToCheck.startsWith('/') ? pathToCheck : `/${pathToCheck}`;
                  isPlaceholder = pathToCheck.includes('placeholder.png');
-                 console.log(`Poster type: static, Placeholder: ${isPlaceholder}`);
+                 if (window.DEBUG) console.log(`Poster type: static, Placeholder: ${isPlaceholder}`);
              } else if (pathToCheck.startsWith('http')) {
                  posterUrl = pathToCheck;
                  isPlaceholder = false;
-                  console.log('Poster type: http');
+                  if (window.DEBUG) console.log('Poster type: http');
              } else if (pathToCheck.startsWith('/scraper/tmdb_image')) {
                   posterUrl = pathToCheck.startsWith('/') ? pathToCheck : `/${pathToCheck}`;
                   isPlaceholder = false;
-                  console.log('Poster type: proxy');
+                  if (window.DEBUG) console.log('Poster type: proxy');
              } else if (pathToCheck.startsWith('/')) { // Assume TMDB path
                  posterUrl = `/scraper/tmdb_image/w300${pathToCheck}`; // Use proxy route
                  isPlaceholder = false;
-                  console.log('Poster type: assumed TMDB, using proxy');
+                  if (window.DEBUG) console.log('Poster type: assumed TMDB, using proxy');
              } else {
-                 console.warn(`Unknown poster_path format, using placeholder: ${pathToCheck}`);
+                 if (window.DEBUG) console.warn(`Unknown poster_path format, using placeholder: ${pathToCheck}`);
              }
         } else {
-             console.warn('Missing, empty, or invalid poster_path, using placeholder. Value:', item.poster_path); // Log correct key
+             if (window.DEBUG) console.warn('Missing, empty, or invalid poster_path, using placeholder. Value:', item.poster_path); // Log correct key
         }
-        console.log('Final poster URL:', posterUrl);
+        if (window.DEBUG) console.log('Final poster URL:', posterUrl);
         // --- End Poster Path Logic ---
 
         // --- Create DB Status Pip HTML ---
@@ -2972,7 +3658,7 @@ function renderResultsBatch() {
     const end = Math.min(start + searchScrollState.batchSize, searchScrollState.allResults.length);
     const batch = searchScrollState.allResults.slice(start, end);
 
-    console.log(`Rendering batch: ${start}-${end} of ${searchScrollState.allResults.length}`);
+    if (window.DEBUG) console.log(`Rendering batch: ${start}-${end} of ${searchScrollState.allResults.length}`);
 
     // Get settings
     const tmdb_api_key_set = document.getElementById('tmdb_api_key_set')?.value === 'True';
@@ -3028,7 +3714,7 @@ function renderResultsBatch() {
     searchScrollState.renderedCount = end;
     searchScrollState.isLoading = false;
 
-    console.log(`Rendered ${end} of ${searchScrollState.allResults.length} results`);
+    if (window.DEBUG) console.log(`Rendered ${end} of ${searchScrollState.allResults.length} results`);
 }
 
 // Handle infinite scroll - load more results when nearing bottom
@@ -3055,7 +3741,7 @@ function setupSearchScrollListener() {
 
 // Extract the result element creation into a separate function for reusability
 function createResultElement(item, tmdb_api_key_set, isRequester, version, requestIconHTML, testerIconHTML, assignMagnetIconHTML, index = 999) {
-    console.log('Processing item for display:', JSON.stringify(item, null, 2));
+    if (window.DEBUG) console.log('Processing item for display:', JSON.stringify(item, null, 2));
     const searchResDiv = document.createElement('div');
     searchResDiv.className = 'sresult';
     let posterUrl = '/static/images/placeholder.png'; // Default placeholder
@@ -3064,32 +3750,32 @@ function createResultElement(item, tmdb_api_key_set, isRequester, version, reque
     // --- Use item.poster_path (lowercase with underscore) ---
     if (item.poster_path && typeof item.poster_path === 'string' && item.poster_path.trim() !== '') {
          const pathToCheck = item.poster_path.trim(); // Use correct key here
-         console.log('Checking poster_path:', pathToCheck); // Log correct key
+         if (window.DEBUG) console.log('Checking poster_path:', pathToCheck); // Log correct key
 
          // --- Logic remains the same, just uses pathToCheck from correct key ---
          if (pathToCheck.startsWith('static/')) {
              posterUrl = pathToCheck.startsWith('/') ? pathToCheck : `/${pathToCheck}`;
              isPlaceholder = pathToCheck.includes('placeholder.png');
-             console.log(`Poster type: static, Placeholder: ${isPlaceholder}`);
+             if (window.DEBUG) console.log(`Poster type: static, Placeholder: ${isPlaceholder}`);
          } else if (pathToCheck.startsWith('http')) {
              posterUrl = pathToCheck;
              isPlaceholder = false;
-              console.log('Poster type: http');
+              if (window.DEBUG) console.log('Poster type: http');
          } else if (pathToCheck.startsWith('/scraper/tmdb_image')) {
               posterUrl = pathToCheck.startsWith('/') ? pathToCheck : `/${pathToCheck}`;
               isPlaceholder = false;
-              console.log('Poster type: proxy');
+              if (window.DEBUG) console.log('Poster type: proxy');
          } else if (pathToCheck.startsWith('/')) { // Assume TMDB path
              posterUrl = `/scraper/tmdb_image/w300${pathToCheck}`; // Use proxy route
              isPlaceholder = false;
-              console.log('Poster type: assumed TMDB, using proxy');
+              if (window.DEBUG) console.log('Poster type: assumed TMDB, using proxy');
          } else {
-             console.warn(`Unknown poster_path format, using placeholder: ${pathToCheck}`);
+             if (window.DEBUG) console.warn(`Unknown poster_path format, using placeholder: ${pathToCheck}`);
          }
     } else {
-         console.warn('Missing, empty, or invalid poster_path, using placeholder. Value:', item.poster_path); // Log correct key
+         if (window.DEBUG) console.warn('Missing, empty, or invalid poster_path, using placeholder. Value:', item.poster_path); // Log correct key
     }
-    console.log('Final poster URL:', posterUrl);
+    if (window.DEBUG) console.log('Final poster URL:', posterUrl);
     // --- End Poster Path Logic ---
 
     // --- Create DB Status Pip HTML ---
@@ -3244,13 +3930,26 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
     }
 
     if (!mediaId || mediaId === 'undefined') {
-        console.error("selectMedia called with invalid mediaId:", mediaId);
+        if (window.DEBUG) console.error("selectMedia called with invalid mediaId:", mediaId);
         displayError("An internal error occurred: media ID is missing.");
         hideLoadingState();
         return;
     }
 
+    // Create cache key from search parameters
+    const cacheKey = `${mediaId}_${mediaType}_${version}_${season || 'null'}_${episode || 'null'}`;
+    
+    // Check cache first
+    const cachedData = getCachedTorrentResults(cacheKey);
+    if (cachedData) {
+        if (window.DEBUG) console.log('⚡ Using cached torrent results - instant display!');
+        hideLoadingState();
+        displayTorrentResults(cachedData.data, title, year, version, mediaId, mediaType, season, episode, genre_ids, cachedData.searchDuration);
+        return;
+    }
+
     showLoadingState();
+    const searchStartTime = performance.now(); // Track search start time
     let formData = new FormData();
     formData.append('media_id', mediaId);
     formData.append('title', title);
@@ -3261,7 +3960,11 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
     formData.append('multi', multi);
     formData.append('version', version);
     formData.append('skip_cache_check', 'true'); // Always use background checking
-    if (genre_ids) formData.append('genre_ids', genre_ids); // Add genre_ids to form data
+    // Convert genre_ids to comma-separated string if it's an array
+    if (genre_ids) {
+        const genreString = Array.isArray(genre_ids) ? genre_ids.join(',') : genre_ids;
+        formData.append('genre_ids', genreString);
+    }
     
     fetch('/scraper/select_media', {
         method: 'POST',
@@ -3280,26 +3983,30 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
         // Skip further processing if aborted
         if (data.abort) return;
         
+        const searchDuration = Math.round(performance.now() - searchStartTime); // Calculate duration
         hideLoadingState();
         if (data.error) {
             displayError(data.error);
             return;
         }
-        // Pass the whole 'data' object
-        displayTorrentResults(data, title, year, version, mediaId, mediaType, season, episode, genre_ids);
+        
+        // Cache the results
+        setCachedTorrentResults(cacheKey, { data: data, searchDuration: searchDuration });
+        
+        // Pass the whole 'data' object and search duration
+        displayTorrentResults(data, title, year, version, mediaId, mediaType, season, episode, genre_ids, searchDuration);
         
         // No need to do additional cache checking since displayTorrentResults already does it
     })
     .catch(error => {
         hideLoadingState();
-        console.error('Error:', error);
+        if (window.DEBUG) console.error('Error:', error);
         displayError('An error occurred while processing your request.');
     });
 }
 
 // Function to check cache status in the background and update the UI
 function checkCacheStatusInBackground(hashes, results) {
-    const cacheStatusElements = document.querySelectorAll('.cache-status');
     let processedCount = 0;
     let totalCount = Math.min(5, results.length);
     let processingItems = new Set(); // Track items currently being processed
@@ -3307,23 +4014,43 @@ function checkCacheStatusInBackground(hashes, results) {
 
     // Update to handle both magnet links and torrent files
     function updateCacheStatusUI(index, status) {
-        if (index >= cacheStatusElements.length) return;
-        
-        const element = cacheStatusElements[index];
-        element.classList.remove('not-checked', 'cached', 'not-cached', 'check-unavailable', 'unknown');
-        
-        if (status === 'cached') {
-            element.classList.add('cached');
-            element.textContent = '✓';
-        } else if (status === 'not_cached') {
-            element.classList.add('not-cached');
-            element.textContent = '✗';
-        } else if (status === 'check_unavailable') {
-            element.classList.add('check-unavailable');
-            element.textContent = 'N/A';
+        // Try new desktop structure first (Tangerine theme)
+        const cacheCell = document.querySelector(`.cache-cell[data-torrent-index="${index}"]`);
+        if (cacheCell) {
+            const wrapper = cacheCell.querySelector('.cache-icon-wrapper');
+            if (wrapper) {
+                // Update with new cache icon (Tangerine theme)
+                if (status === 'cached') {
+                    wrapper.innerHTML = createCacheIcon('Yes');
+                } else if (status === 'not_cached') {
+                    wrapper.innerHTML = createCacheIcon('No');
+                } else if (status === 'check_unavailable') {
+                    wrapper.innerHTML = createCacheIcon('N/A');
+                } else {
+                    wrapper.innerHTML = createCacheIcon('Unknown');
+                }
+            }
         } else {
-            element.classList.add('unknown');
-            element.textContent = '?';
+            // Fallback to old structure (mobile view or classic theme)
+            const cacheStatusElements = document.querySelectorAll('.cache-status');
+            if (index < cacheStatusElements.length) {
+                const element = cacheStatusElements[index];
+                element.classList.remove('not-checked', 'cached', 'not-cached', 'check-unavailable', 'unknown');
+                
+                if (status === 'cached') {
+                    element.classList.add('cached');
+                    element.textContent = '✓';
+                } else if (status === 'not_cached') {
+                    element.classList.add('not-cached');
+                    element.textContent = '✗';
+                } else if (status === 'check_unavailable') {
+                    element.classList.add('check-unavailable');
+                    element.textContent = 'N/A';
+                } else {
+                    element.classList.add('unknown');
+                    element.textContent = '?';
+                }
+            }
         }
         
         processedCount++;
@@ -3334,11 +4061,25 @@ function checkCacheStatusInBackground(hashes, results) {
     }
 
     function markRemainingAsNA() {
-        for (let i = processedCount; i < cacheStatusElements.length; i++) {
-            const element = cacheStatusElements[i];
-            element.classList.remove('not-checked');
-            element.classList.add('check-unavailable');
-            element.textContent = 'N/A';
+        // Mark any remaining unchecked cache cells as N/A
+        for (let i = processedCount; i < totalCount; i++) {
+            // Try new desktop structure first
+            const cacheCell = document.querySelector(`.cache-cell[data-torrent-index="${i}"]`);
+            if (cacheCell) {
+                const wrapper = cacheCell.querySelector('.cache-icon-wrapper');
+                if (wrapper) {
+                    wrapper.innerHTML = createCacheIcon('N/A');
+                }
+            } else {
+                // Fallback to old structure
+                const cacheStatusElements = document.querySelectorAll('.cache-status');
+                if (i < cacheStatusElements.length) {
+                    const element = cacheStatusElements[i];
+                    element.classList.remove('not-checked');
+                    element.classList.add('check-unavailable');
+                    element.textContent = 'N/A';
+                }
+            }
         }
     }
 
@@ -3413,7 +4154,7 @@ function checkCacheStatusInBackground(hashes, results) {
             payload.torrent_url = result.torrent_url;
         }
 
-        console.log(`Checking cache status for item at index ${index}`);
+        if (window.DEBUG) console.log(`Checking cache status for item at index ${index}`);
         fetch('/scraper/check_cache_status', {
             method: 'POST',
             headers: {
@@ -3425,12 +4166,12 @@ function checkCacheStatusInBackground(hashes, results) {
             return response.json();
         })
         .then(data => {
-            console.log(`Cache status for index ${index}:`, data);
+            if (window.DEBUG) console.log(`Cache status for index ${index}:`, data);
             updateCacheStatusUI(index, data.status);
             checkCompletion();
         })
         .catch(error => {
-            console.error(`Error checking cache status for index ${index}:`, error);
+            if (window.DEBUG) console.error(`Error checking cache status for index ${index}:`, error);
             updateCacheStatusUI(index, 'unknown');
             checkCompletion();
         });
@@ -3452,8 +4193,7 @@ function checkCacheStatusInBackground(hashes, results) {
             }
             
             // Skip if this item is already processed
-            const element = cacheStatusElements[i];
-            if (!element.classList.contains('not-checked')) {
+            if (i < processedCount) {
                 continue;
             }
             
@@ -3471,13 +4211,6 @@ function checkCacheStatusInBackground(hashes, results) {
         if (processingItems.size === 0 && processedCount < totalCount) {
             finalizeCacheCheck();
         }
-    }
-
-    // Initialize all cache status elements to "Checking..."
-    for (let i = 0; i < cacheStatusElements.length; i++) {
-        const element = cacheStatusElements[i];
-        element.textContent = '...';
-        element.classList.add('not-checked');
     }
 
     // Start processing items
@@ -3565,7 +4298,7 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
                 const optionText = this.options[this.selectedIndex].textContent;
                 let displayedSeasonNum = selectedItem.season_num;
                 
-                console.log('Season selection debug:', {
+                if (window.DEBUG) console.log('Season selection debug:', {
                     optionText: optionText,
                     originalSeasonNum: selectedItem.season_num,
                     selectedItem: selectedItem
@@ -3576,11 +4309,11 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
                     const extractedSeason = parseInt(optionText.replace('Season: ', ''));
                     if (!isNaN(extractedSeason)) {
                         displayedSeasonNum = extractedSeason;
-                        console.log('Extracted season number from display text:', extractedSeason);
+                        if (window.DEBUG) console.log('Extracted season number from display text:', extractedSeason);
                     }
                 }
                 
-                console.log('Final season number to be passed to selectEpisode:', displayedSeasonNum);
+                if (window.DEBUG) console.log('Final season number to be passed to selectEpisode:', displayedSeasonNum);
                 
                 if (tmdb_api_key_set) {
                     // Use the backdrop_path from the selected item or from the parent scope backdrop_path parameter
@@ -3658,13 +4391,13 @@ function selectSeason(mediaId, title, year, mediaType, season, episode, multi, g
     })
     .catch(error => {
         hideLoadingState();
-        console.error('Error:', error);
+        if (window.DEBUG) console.error('Error:', error);
         displayError('An error occurred while processing your request.');
     });
 }
 
 function displaySeasonInfo(title, season_num, air_date, season_overview, poster_path, genre_ids, vote_average, backdrop_path, show_overview) {
-    console.log('Received genre_ids:', genre_ids);
+    if (window.DEBUG) console.log('Received genre_ids:', genre_ids);
     const seasonInfo = document.getElementById('season-info');
 
     // Format genre_ids into a string of genre names
@@ -3741,7 +4474,7 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, 
     const allowSpecials = localStorage.getItem('allowSpecials') === 'true';
     const version = document.getElementById('version-select').value;
 
-    console.log('selectEpisode called with:', {
+    if (window.DEBUG) console.log('selectEpisode called with:', {
         mediaId: mediaId,
         title: title,
         year: year,
@@ -3757,12 +4490,12 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, 
     const cachedEpisodes = getCachedEpisodes(cacheKey);
 
     if (cachedEpisodes) {
-        console.log('Using cached episodes for season', season);
+        if (window.DEBUG) console.log('Using cached episodes for season', season);
         displayEpisodeResults(cachedEpisodes, title, year, version, mediaId, mediaType, season, episode, genre_ids);
         return;
     }
 
-    console.log('Episode cache MISS for:', cacheKey, '- fetching fresh data');
+    if (window.DEBUG) console.log('Episode cache MISS for:', cacheKey, '- fetching fresh data');
     showLoadingState();
 
     let formData = new FormData();
@@ -3808,7 +4541,7 @@ function selectEpisode(mediaId, title, year, mediaType, season, episode, multi, 
     })
     .catch(error => {
         hideLoadingState();
-        console.error('Error:', error);
+        if (window.DEBUG) console.error('Error:', error);
         displayError('An error occurred while fetching episodes.');
     });
 }
@@ -3960,7 +4693,7 @@ function closeMobileActionModal() {
 
 async function handleAutoScrape(imdbId, season, episode, version) {
     showLoadingState();
-    console.log(`Auto-scraping for IMDb ID: ${imdbId}, Season: ${season}, Episode: ${episode}, Version: ${version}`);
+    if (window.DEBUG) console.log(`Auto-scraping for IMDb ID: ${imdbId}, Season: ${season}, Episode: ${episode}, Version: ${version}`);
 
     try {
         if (version) {
@@ -3972,7 +4705,7 @@ async function handleAutoScrape(imdbId, season, episode, version) {
                 if (Array.from(versionSelect.options).some(opt => opt.value === version)) {
                     versionSelect.value = version;
                 } else {
-                    console.warn(`Version "${version}" not found in dropdown. Using default.`);
+                    if (window.DEBUG) console.warn(`Version "${version}" not found in dropdown. Using default.`);
                 }
             }
         }
@@ -4005,7 +4738,7 @@ async function handleAutoScrape(imdbId, season, episode, version) {
 
     } catch (error) {
         hideLoadingState();
-        console.error('Auto-scrape failed:', error);
+        if (window.DEBUG) console.error('Auto-scrape failed:', error);
         displayError(`Auto-scrape failed: ${error.message}`);
     }
 }
