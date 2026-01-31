@@ -66,9 +66,10 @@ def robust_url_decode(encoded_string: str) -> str:
             return encoded_string
 
 @webhook_bp.route('/', methods=['POST'])
+@webhook_bp.route('', methods=['POST'])  # Support both /webhook and /webhook/
 def webhook():
     data = request.json
-    logging.debug(f"Received webhook: {data}")
+    logging.info(f"[WEBHOOK] Received webhook data: {data}")
     try:
         # Handle test notifications separately
         if data.get('notification_type') == 'TEST_NOTIFICATION':
@@ -351,3 +352,274 @@ def plex_scan_webhook():
     except Exception as e:
         logging.error(f"Error processing Plex scan webhook for file {filename}: {str(e)}", exc_info=True)
         return jsonify({"status": "error", "message": f"Internal server error: {str(e)}"}), 500
+
+# ========================================
+# Agregarr/Overseerr API Compatibility Routes
+# ========================================
+
+@webhook_bp.route('/api/v1/request', methods=['GET'])
+def agregarr_get_requests():
+    """
+    Return list of existing requests for Agregarr to sync.
+    Returns empty list since CLI Debrid doesn't store request history.
+    """
+    # Agregarr wants to pre-fetch existing requests
+    # We return empty results since CLI processes requests immediately
+    return jsonify({
+        "pageInfo": {
+            "pages": 1,
+            "pageSize": 20,
+            "results": 0,
+            "page": 1
+        },
+        "results": []
+    }), 200
+
+@webhook_bp.route('/api/v1/request', methods=['POST'])
+def agregarr_create_request():
+    """
+    Overseerr-compatible request creation endpoint for Agregarr.
+    Converts Agregarr/Overseerr API format to webhook format and processes it.
+    
+    Expected request body from Agregarr:
+    {
+        "mediaType": "movie" or "tv",
+        "mediaId": <tmdb_id>,
+        "seasons": [<season_numbers>],  // Optional, for TV shows
+        "is4k": false,
+        "serverId": 0,
+        "profileId": 0,
+        "rootFolder": "/",
+        "userId": 1
+    }
+    """
+    try:
+        data = request.json
+        logging.info(f"[Agregarr API] Received request: {data}")
+        
+        # Extract media information
+        media_type = data.get('mediaType', '').lower()  # 'movie' or 'tv'
+        tmdb_id = data.get('mediaId')
+        seasons = data.get('seasons', [])
+        
+        if not tmdb_id or not media_type:
+            return jsonify({
+                "error": "Missing required fields: mediaType and mediaId"
+            }), 400
+        
+        # Convert Agregarr/Overseerr API format to webhook format
+        webhook_payload = {
+            "notification_type": "MEDIA_PENDING",
+            "subject": f"New {media_type} request from Agregarr",
+            "request": {
+                "request_id": f"agregarr_{int(datetime.now().timestamp())}",
+                "requestedBy_username": "Agregarr",
+                "requestedBy_email": "agregarr@system"
+            },
+            "media": {
+                "media_type": media_type,
+                "tmdbId": tmdb_id,
+                "from_overseerr": True  # Mark as coming from Overseerr-compatible source
+            }
+        }
+        
+        # Add season information for TV shows
+        if media_type == 'tv' and seasons:
+            webhook_payload["extra"] = []
+            for season_num in seasons:
+                webhook_payload["extra"].append({
+                    "name": "Requested Seasons",
+                    "value": str(season_num)
+                })
+        
+        # Process using existing webhook handler
+        process_overseerr_webhook(webhook_payload)
+        
+        # Return Overseerr-compatible response
+        response = {
+            "id": tmdb_id,
+            "status": 1,  # 1 = pending
+            "createdAt": datetime.now().isoformat(),
+            "updatedAt": datetime.now().isoformat(),
+            "type": media_type,
+            "is4k": data.get('is4k', False),
+            "serverId": data.get('serverId', 0),
+            "profileId": data.get('profileId', 0),
+            "rootFolder": data.get('rootFolder', '/'),
+            "media": {
+                "id": tmdb_id,
+                "mediaType": media_type,
+                "tmdbId": tmdb_id,
+                "status": 3  # 3 = processing
+            }
+        }
+        
+        if media_type == 'tv' and seasons:
+            response["seasons"] = [{"seasonNumber": s, "status": 3} for s in seasons]
+        
+        logging.info(f"[Agregarr API] Successfully processed {media_type} request for TMDB ID {tmdb_id}")
+        return jsonify(response), 201
+        
+    except Exception as e:
+        logging.error(f"[Agregarr API] Error processing request: {e}", exc_info=True)
+        return jsonify({
+            "error": f"Internal server error: {str(e)}"
+        }), 500
+
+@webhook_bp.route('/api/v1/user', methods=['GET'])
+def agregarr_get_users():
+    """
+    Return list of users for Agregarr.
+    Returns empty list since CLI doesn't manage users.
+    """
+    return jsonify({
+        "pageInfo": {
+            "pages": 1,
+            "pageSize": 20,
+            "results": 0,
+            "page": 1
+        },
+        "results": []
+    }), 200
+
+@webhook_bp.route('/api/v1/user', methods=['POST'])
+def agregarr_create_user():
+    """
+    Handle user creation requests from Agregarr.
+    Simply returns success - CLI Debrid doesn't need actual user management.
+    """
+    data = request.json or {}
+    username = data.get('username', 'Agregarr')
+    
+    logging.debug(f"[Agregarr API] User creation request for username: {username}")
+    
+    # Return a successful user creation response
+    return jsonify({
+        "id": 999,  # Fake user ID for Agregarr
+        "email": f"{username}@cli-debrid",
+        "username": username,
+        "displayName": username,
+        "permissions": 2,  # Admin permissions
+        "avatar": "",
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "updatedAt": datetime.now(timezone.utc).isoformat()
+    }), 201
+
+@webhook_bp.route('/api/v1/user/<int:user_id>/settings/permissions', methods=['POST'])
+def agregarr_update_user_permissions(user_id):
+    """
+    Handle user permission updates from Agregarr.
+    Simply returns success - CLI doesn't need permission management.
+    """
+    data = request.json or {}
+    logging.debug(f"[Agregarr API] Permission update for user {user_id}: {data}")
+    
+    return jsonify({
+        "id": user_id,
+        "permissions": data.get('permissions', 2),
+        "updatedAt": datetime.now(timezone.utc).isoformat()
+    }), 200
+
+@webhook_bp.route('/api/v1/user/<int:user_id>/settings/notifications', methods=['POST'])
+def agregarr_update_user_notifications(user_id):
+    """
+    Handle user notification settings updates from Agregarr.
+    Simply returns success - CLI doesn't need notification management.
+    """
+    data = request.json or {}
+    logging.debug(f"[Agregarr API] Notification settings update for user {user_id}")
+    
+    return jsonify({
+        "id": user_id,
+        "notificationTypes": data.get('notificationTypes', {}),
+        "updatedAt": datetime.now(timezone.utc).isoformat()
+    }), 200
+
+@webhook_bp.route('/api/v1/auth/me', methods=['GET'])
+def agregarr_get_user():
+    """
+    Return current user information for Agregarr connection validation.
+    No authentication required for simplicity.
+    """
+    return jsonify({
+        "id": 1,
+        "email": "agregarr@cli-debrid",
+        "username": "cli_debrid",
+        "displayName": "CLI Debrid",
+        "permissions": 2,  # Admin permissions
+        "avatar": ""
+    }), 200
+
+@webhook_bp.route('/api/v1/status', methods=['GET'])
+def agregarr_get_status():
+    """
+    Return status information to help Agregarr verify connection.
+    """
+    return jsonify({
+        "version": "1.0.0",
+        "commitTag": "cli_debrid",
+        "updateAvailable": False,
+        "commitsBehind": 0
+    }), 200
+
+@webhook_bp.route('/api/v1/settings/public', methods=['GET'])
+def agregarr_get_settings():
+    """
+    Return public settings required for Agregarr initialization.
+    """
+    return jsonify({
+        "initialized": True,
+        "applicationTitle": "CLI Debrid",
+        "applicationUrl": "",
+        "hideAvailable": False,
+        "localLogin": True,
+        "movie4kEnabled": False,
+        "series4kEnabled": False,
+        "region": "",
+        "originalLanguage": "",
+        "trustProxy": False,
+        "csrfProtection": False,
+        "cacheImages": False,
+        "vapidPublic": "",
+        "enablePushRegistration": False,
+        "locale": "en",
+        "emailEnabled": False,
+        "newPlexLogin": True
+    }), 200
+
+@webhook_bp.route('/api/v1/settings/main', methods=['GET'])
+def agregarr_get_main_settings():
+    """
+    Return main settings for Agregarr.
+    """
+    return jsonify({
+        "apiKey": "cli_debrid_dummy_key",
+        "applicationTitle": "CLI Debrid",
+        "applicationUrl": "",
+        "csrfProtection": False,
+        "defaultPermissions": 2,
+        "hideAvailable": False,
+        "localLogin": True,
+        "newPlexLogin": True,
+        "region": "",
+        "originalLanguage": "",
+        "trustProxy": False,
+        "movie4kEnabled": False,
+        "series4kEnabled": False
+    }), 200
+
+@webhook_bp.route('/api/v1/settings/radarr', methods=['GET'])
+def agregarr_get_radarr_servers():
+    """
+    Return empty Radarr servers list.
+    Agregarr checks for this but CLI Debrid doesn't use Radarr.
+    """
+    return jsonify([]), 200
+
+@webhook_bp.route('/api/v1/settings/sonarr', methods=['GET'])
+def agregarr_get_sonarr_servers():
+    """
+    Return empty Sonarr servers list.
+    Agregarr checks for this but CLI Debrid doesn't use Sonarr.
+    """
+    return jsonify([]), 200

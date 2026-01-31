@@ -16,6 +16,7 @@ from utilities.settings import get_setting
 import random
 from time import sleep
 import requests
+from utilities.trakt_coordinator import GlobalTraktCoordinator
 
 REQUEST_TIMEOUT = 10  # seconds
 TRAKT_API_URL = "https://api.trakt.tv"
@@ -150,7 +151,7 @@ class TraktRateLimiter:
         self.enabled = get_setting('Scraping', 'trakt_rate_limit_enabled', True)
 
         # Phase 1.3: Adaptive per-request delay
-        self.base_per_request_delay = 2.0  # Increased from 1.0s to 2.0s base
+        self.base_per_request_delay = 5.0  # Quick Fix: Increased from 2.0s to 5.0s to reduce 429 errors
         self.per_request_delay = self.base_per_request_delay
         self.max_per_request_delay = 10.0  # Maximum delay during cooldown
         self.last_request_time = 0
@@ -837,6 +838,9 @@ def fetch_items_from_trakt(
             # Wait if rate limit is approaching (global rate limiter)
             _trakt_rate_limiter.wait_if_needed(task_priority=_trakt_rate_limiter.current_task_priority)
 
+            # Wait for global cooldown across all code paths
+            GlobalTraktCoordinator.get_instance().wait_if_needed()
+
             response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
 
             # Detect HTML responses that sometimes appear instead of JSON
@@ -876,6 +880,9 @@ def fetch_items_from_trakt(
 
                 # Report to rate limiter for adaptive scaling
                 _trakt_rate_limiter.report_429_error(retry_after)
+
+                # Report to global coordinator to coordinate all code paths
+                GlobalTraktCoordinator.get_instance().set_global_cooldown(delay)
 
             elif status_code == 420:  # VIP Enhanced - Account limit exceeded
                 is_vip = http_err.response.headers.get('X-VIP-User', 'false') == 'true' if http_err.response else False
@@ -994,39 +1001,69 @@ def get_imdb_id(item: Dict[str, Any], media_type: str) -> str:
     return ''
 
 def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    from database.core import get_db_connection
+
     processed_items = []
     seen_imdb_ids = set()  # Track IMDb IDs we've already processed
     skipped_count = 0
     duplicate_count = 0
-    
+    blacklisted_count = 0
+
     for item in items:
         media_type = assign_media_type(item)
         if not media_type:
             skipped_count += 1
             continue
-        
+
         imdb_id = get_imdb_id(item, media_type)
         if not imdb_id:
             logging.warning(f"Skipping item due to missing ID: {item.get(media_type, {}).get('title', 'Unknown Title')}")
             skipped_count += 1
             continue
-            
+
         # Skip if we've already processed this IMDb ID
         if imdb_id in seen_imdb_ids:
             duplicate_count += 1
             continue
-            
+
+        # GHOSTLIST CHECK: Skip blacklisted/ghostlisted items from Trakt Collection
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT title, state, ghostlisted FROM media_items WHERE imdb_id = ? LIMIT 1",
+                (imdb_id,)
+            )
+            row = cursor.fetchone()
+
+            if row:
+                item_title = row[0]
+                item_state = row[1]
+                is_ghostlisted = row[2] == 1
+                is_blacklisted = item_state == 'Blacklisted'
+
+                if is_ghostlisted or is_blacklisted:
+                    logging.info(f"⛔ BLOCKED: Skipping {'ghostlisted' if is_ghostlisted else 'blacklisted'} item from Trakt Collection: {item_title} (IMDB: {imdb_id})")
+                    blacklisted_count += 1
+                    seen_imdb_ids.add(imdb_id)  # Mark as seen to avoid re-checking
+                    continue
+        except Exception as e:
+            logging.error(f"Error checking blacklist status for {imdb_id}: {e}")
+            # Continue processing - don't block on database errors
+
         seen_imdb_ids.add(imdb_id)
         processed_items.append({
             'imdb_id': imdb_id,
             'media_type': media_type
         })
-    
+
     if skipped_count > 0:
         logging.info(f"Skipped {skipped_count} items due to missing media type or ID")
     if duplicate_count > 0:
         logging.info(f"Skipped {duplicate_count} duplicate items")
-        
+    if blacklisted_count > 0:
+        logging.info(f"⛔ Blocked {blacklisted_count} blacklisted/ghostlisted items from Trakt Collection")
+
     return processed_items
 
 def _to_timestamp(value: Any) -> float | None:
@@ -1610,16 +1647,21 @@ def get_wanted_from_special_trakt_lists(source_config: Dict[str, Any], versions_
 
 def check_trakt_early_releases():
     logging.debug("Checking Trakt for early releases")
-    
+
     trakt_early_releases = get_setting('Scraping', 'trakt_early_releases', False)
     if not trakt_early_releases:
         logging.debug("Trakt early releases check is disabled")
         return
 
+    # Load IMDB→Trakt ID cache to avoid redundant API calls
+    imdb_trakt_cache = load_imdb_trakt_cache()
+    cache_hits = 0
+    cache_misses = 0
+
     # Get all items with state sleeping, wanted, or unreleased
     states_to_check = ('Sleeping', 'Wanted', 'Unreleased')
     items_to_check = get_all_media_items(state=states_to_check)
-    
+
     skipped_count = 0
     updated_count = 0
     no_early_release_skipped = 0 # Counter for skipped items due to the flag
@@ -1636,18 +1678,35 @@ def check_trakt_early_releases():
             continue
 
         imdb_id = item['imdb_id']
-        # Perform Trakt lookups only if no_early_release is False
-        trakt_id_search = fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
 
-        if trakt_id_search and isinstance(trakt_id_search, list) and len(trakt_id_search) > 0:
-            # Determine the correct trakt_id
-            trakt_id = None
-            if 'movie' in trakt_id_search[0] and 'ids' in trakt_id_search[0]['movie'] and 'trakt' in trakt_id_search[0]['movie']['ids']:
-                trakt_id = str(trakt_id_search[0]['movie']['ids']['trakt'])
-            elif 'show' in trakt_id_search[0] and 'ids' in trakt_id_search[0]['show'] and 'trakt' in trakt_id_search[0]['show']['ids']:
-                 trakt_id = str(trakt_id_search[0]['show']['ids']['trakt'])
+        # Check cache first to avoid redundant API calls
+        cached_entry = imdb_trakt_cache.get(imdb_id)
+        if cached_entry and 'trakt_id' in cached_entry:
+            trakt_id = str(cached_entry['trakt_id'])
+            cache_hits += 1
+            logging.debug(f"Cache hit: IMDB {imdb_id} → Trakt {trakt_id}")
+        else:
+            # Cache miss - perform Trakt API lookup
+            trakt_id_search = fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
+            cache_misses += 1
+
+            if trakt_id_search and isinstance(trakt_id_search, list) and len(trakt_id_search) > 0:
+                # Determine the correct trakt_id
+                trakt_id = None
+                if 'movie' in trakt_id_search[0] and 'ids' in trakt_id_search[0]['movie'] and 'trakt' in trakt_id_search[0]['movie']['ids']:
+                    trakt_id = str(trakt_id_search[0]['movie']['ids']['trakt'])
+                elif 'show' in trakt_id_search[0] and 'ids' in trakt_id_search[0]['show'] and 'trakt' in trakt_id_search[0]['show']['ids']:
+                     trakt_id = str(trakt_id_search[0]['show']['ids']['trakt'])
+
+                # Cache the newly fetched trakt_id
+                if trakt_id:
+                    imdb_trakt_cache[imdb_id] = {
+                        'trakt_id': trakt_id,
+                        'cached_at': datetime.now().isoformat()
+                    }
+                    logging.debug(f"Cached: IMDB {imdb_id} → Trakt {trakt_id}")
             else:
-                logging.warning(f"Unexpected Trakt API response structure or missing Trakt ID for IMDB ID: {imdb_id}. Response: {trakt_id_search[0]}")
+                logging.warning(f"Unexpected Trakt API response structure or missing Trakt ID for IMDB ID: {imdb_id}")
                 continue # Skip if we can't get a valid trakt ID
 
             # If we couldn't extract a valid trakt_id, skip
@@ -1655,24 +1714,25 @@ def check_trakt_early_releases():
                  logging.warning(f"Could not extract Trakt ID for IMDB ID: {imdb_id}")
                  continue
 
-            endpoint = f"/movies/{trakt_id}/lists/personal/popular" if item['type'] == 'movie' else f"/shows/{trakt_id}/lists/personal/popular"
-            try:
-                trakt_lists = fetch_items_from_trakt(endpoint)
-            except Exception as e:
-                 logging.error(f"Error fetching Trakt lists for {item['type']} ID {trakt_id} (IMDB: {imdb_id}): {e}")
-                 continue # Skip item if list fetching fails
+        # Now use the trakt_id (either from cache or freshly fetched)
+        endpoint = f"/movies/{trakt_id}/lists/personal/popular" if item['type'] == 'movie' else f"/shows/{trakt_id}/lists/personal/popular"
+        try:
+            trakt_lists = fetch_items_from_trakt(endpoint)
+        except Exception as e:
+             logging.error(f"Error fetching Trakt lists for {item['type']} ID {trakt_id} (IMDB: {imdb_id}): {e}")
+             continue # Skip item if list fetching fails
 
-            if trakt_lists: # Ensure trakt_lists is not None or empty
-                for trakt_list in trakt_lists:
-                    # Check if 'name' exists and is not None before applying regex
-                    list_name = trakt_list.get('name')
-                    if list_name and re.search(r'(latest|new).*?(releases)', list_name, re.IGNORECASE):
-                        logging.info(f"Found {item['title']} in early release list '{list_name}'. Setting early_release=True for item ID {item['id']}.")
-                        update_media_item(item['id'], early_release=True)
-                        updated_count += 1
-                        break # Found in a relevant list, no need to check other lists for this item
-            else:
-                 logging.debug(f"No popular personal lists found for Trakt ID {trakt_id} (IMDB: {imdb_id})")
+        if trakt_lists: # Ensure trakt_lists is not None or empty
+            for trakt_list in trakt_lists:
+                # Check if 'name' exists and is not None before applying regex
+                list_name = trakt_list.get('name')
+                if list_name and re.search(r'(latest|new).*?(releases)', list_name, re.IGNORECASE):
+                    logging.info(f"Found {item['title']} in early release list '{list_name}'. Setting early_release=True for item ID {item['id']}.")
+                    update_media_item(item['id'], early_release=True)
+                    updated_count += 1
+                    break # Found in a relevant list, no need to check other lists for this item
+        else:
+             logging.debug(f"No popular personal lists found for Trakt ID {trakt_id} (IMDB: {imdb_id})")
 
 
     if updated_count > 0:
@@ -1681,6 +1741,13 @@ def check_trakt_early_releases():
          logging.info(f"Skipped checking {no_early_release_skipped} items because their 'no_early_release' flag was set.")
     if skipped_count > 0:
         logging.debug(f"Skipped {skipped_count} episodes during Trakt early release check.")
+
+    # Save cache and log statistics
+    save_imdb_trakt_cache(imdb_trakt_cache)
+    total_checks = cache_hits + cache_misses
+    if total_checks > 0:
+        cache_hit_rate = (cache_hits / total_checks) * 100
+        logging.info(f"Cache stats: {cache_hits} hits, {cache_misses} misses ({cache_hit_rate:.1f}% hit rate)")
 
 def fetch_liked_trakt_lists_details() -> List[Dict[str, str]]:
     """Fetches details (name, URL) of lists the authenticated user has liked."""

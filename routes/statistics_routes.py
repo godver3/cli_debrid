@@ -475,10 +475,48 @@ def root():
     # Get collection counts from the optimized summary function
     collection_start = time.perf_counter()
     from database.statistics import get_statistics_summary
+    from database.database_reading import get_item_count_by_state
     counts = get_statistics_summary()
     stats['total_movies'] = counts['total_movies']
     stats['total_shows'] = counts['total_shows']
     stats['total_episodes'] = counts['total_episodes']
+    
+    # Get additional counts for badges
+    try:
+        # Movie files count (total movie entries in Collected/Upgrading state)
+        from database import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM media_items WHERE type = 'movie' AND state IN ('Collected', 'Upgrading')")
+        stats['total_movie_files'] = cursor.fetchone()[0]
+        
+        # Wanted movies count
+        cursor.execute("""
+            SELECT COUNT(DISTINCT COALESCE(imdb_id, tmdb_id)) 
+            FROM media_items 
+            WHERE type = 'movie' 
+            AND state = 'Wanted'
+            AND (imdb_id IS NOT NULL OR tmdb_id IS NOT NULL)
+        """)
+        stats['wanted_movies'] = cursor.fetchone()[0]
+        logging.info(f"Wanted movies count: {stats['wanted_movies']}")
+        
+        # Missing episodes count (episodes that exist but are not collected)
+        cursor.execute("""
+            SELECT COUNT(DISTINCT imdb_id || '-' || season_number || '-' || episode_number)
+            FROM media_items 
+            WHERE type = 'episode' 
+            AND state NOT IN ('Collected', 'Upgrading')
+            AND imdb_id IN (SELECT DISTINCT imdb_id FROM media_items WHERE type = 'episode' AND state IN ('Collected', 'Upgrading'))
+        """)
+        stats['missing_episodes'] = cursor.fetchone()[0]
+        
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error getting additional statistics: {str(e)}")
+        stats['total_movie_files'] = 0
+        stats['wanted_movies'] = 0
+        stats['missing_episodes'] = 0
     
     # Get active downloads and usage stats (skip in limited environment)
     downloads_start = time.perf_counter()
@@ -1043,6 +1081,39 @@ def index_api():
     stats['total_movies'] = counts['total_movies']
     stats['total_shows'] = counts['total_shows']
     stats['total_episodes'] = counts['total_episodes']
+    
+    # Get additional counts for badges
+    try:
+        from database import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM media_items WHERE type = 'movie' AND state IN ('Collected', 'Upgrading')")
+        stats['total_movie_files'] = cursor.fetchone()[0]
+        
+        cursor.execute("""
+            SELECT COUNT(DISTINCT COALESCE(imdb_id, tmdb_id)) 
+            FROM media_items 
+            WHERE type = 'movie' 
+            AND state = 'Wanted'
+            AND (imdb_id IS NOT NULL OR tmdb_id IS NOT NULL)
+        """)
+        stats['wanted_movies'] = cursor.fetchone()[0]
+        
+        cursor.execute("""
+            SELECT COUNT(DISTINCT imdb_id || '-' || season_number || '-' || episode_number)
+            FROM media_items 
+            WHERE type = 'episode' 
+            AND state NOT IN ('Collected', 'Upgrading')
+            AND imdb_id IN (SELECT DISTINCT imdb_id FROM media_items WHERE type = 'episode' AND state IN ('Collected', 'Upgrading'))
+        """)
+        stats['missing_episodes'] = cursor.fetchone()[0]
+        
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error getting additional statistics: {str(e)}")
+        stats['total_movie_files'] = 0
+        stats['wanted_movies'] = 0
+        stats['missing_episodes'] = 0
     
     # Get active downloads and usage stats (skip in limited environment)
     if not limited_env:

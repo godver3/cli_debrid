@@ -68,6 +68,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/rate_limits.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/library_management.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/library_settings_modal.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/discover_settings_modal.css') }}">
 
     <!-- Load theme switcher early to prevent FOUC -->
     <script src="{{ url_for('static', filename='js/theme_switcher.js') }}"></script>
@@ -814,16 +815,18 @@
                 <div class="nav-search-container">
                     <form id="nav-search-form" class="nav-search-form">
                         <i class="fas fa-search nav-search-icon"></i>
-                        <input type="text" id="navSearch" class="nav-search-input" placeholder="Search movies/shows..." autocomplete="off">
+                        <input type="text" id="navSearch" class="nav-search-input" placeholder="Search or enter IMDb/TMDB ID..." autocomplete="off">
                     </form>
                 </div>
                 {% set menu_groups = {
                     'Main': [
                         ('root.root', 'Home'),
-                        ('scraper.index', 'Add Media'),
+                        ('discover.index', 'Discover'),
                         ('library.index', 'Library'),
-                        ('queues.index', 'Queues'),
-                        ('program_operation.task_timings', 'Task Manager'),
+                        ('queues.index', 'Queues')
+                    ] + (
+                        [('program_operation.task_timings', 'Task Manager')] if not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') else []
+                    ) + [
                         ('statistics.calendar_view', 'Calendar'),
                         ('wiki', 'Wiki', 'https://github.com/godver3/cli_debrid/wiki')
                     ],
@@ -836,8 +839,7 @@
                         ([] if is_limited_environment() else [('torrent_status.torrent_status', 'Torrent Status')]) + [
                         ('connections.index', 'Connections'),
                         ('api_summary.index', 'API Summary'),
-                        ('real_time_api.index', 'Real Time API'),
-                        ('library_management.library_shows_overview_page', 'Shows Library Status')
+                        ('real_time_api.index', 'Real Time API')
                     ],
                     'Tools': [
                         ('scraper.scraper_tester', 'Tester'),
@@ -855,7 +857,7 @@
 
                 {% set menu_icons = {
                     'Home': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>',
-                    'Add Media': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>',
+                    'Discover': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>',
                     'Library': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>',
                     'Queues': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>',
                     'Task Manager': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>',
@@ -870,7 +872,6 @@
                     'Connections': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>',
                     'API Summary': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>',
                     'Real Time API': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>',
-                    'Shows Library Status': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>',
                     'Tester': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>',
                     'Debug': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>',
                     'R. Parser': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>',
@@ -1000,7 +1001,7 @@
     <!-- END EDIT -->
 
     <!-- Notifications Modal -->
-    <div id="notificationsModal" class="modal">
+    <div id="notificationsModal" class="modal" style="display: none;">
         <div class="modal-content">
             <div class="modal-header">
                 <h2>Notifications</h2>
@@ -1036,8 +1037,8 @@
     </div>
 
     <!-- Help Modal -->
-    <div id="help-overlay" class="help-overlay">  </div>
-    <div id="help-modal-box" class="help-modal-box">
+    <div id="help-overlay" class="help-overlay" style="display: none;"></div>
+    <div id="help-modal-box" class="help-modal-box" style="display: none;">
         <div class="help-modal-header">
             <h2>Help & Information</h2>
             <button class="help-modal-close" id="help-modal-close">&times;</button>
@@ -1115,13 +1116,13 @@
     </div>
 
     <!-- "Hacked" Easter Egg Overlay -->
-    <div id="hack-overlay">
+    <div id="hack-overlay" style="display: none;">
         <div id="hack-text"></div>
     </div>
 
     <!-- Release notes popup -->
-    <div class="release-notes-overlay" id="releaseNotesOverlay"></div>
-    <div class="release-notes-popup" id="releaseNotesPopup">
+    <div class="release-notes-overlay" id="releaseNotesOverlay" style="display: none;"></div>
+    <div class="release-notes-popup" id="releaseNotesPopup" style="display: none;">
         <div class="release-notes-header">
             <h3 class="release-notes-title">Release Notes</h3>
             <button class="release-notes-close" id="releaseNotesClose">&times;</button>
@@ -1147,9 +1148,10 @@
     <script type="module" src="{{ url_for('static', filename='js/task_monitor.js') }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/base.js') }}"></script>
     <script src="{{ url_for('static', filename='js/library_settings_modal.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/discover_settings_modal.js') }}"></script>
 
     <!-- Support Modal -->
-    <div id="supportModal" class="modal">
+    <div id="supportModal" class="modal" style="display: none;">
         <div class="modal-content support-modal">
             <div class="modal-header">
                 <h2>Support cli_debrid</h2>
@@ -1208,15 +1210,6 @@
             </div>
             <div class="library-settings-modal-body">
                 <div class="library-setting-group">
-                    <label for="primaryArtworkSource">Primary Artwork Source</label>
-                    <p class="library-setting-description">Choose where to get posters and artwork from first. Plex uses your server's artwork (requires Plex authentication). TMDB uses online movie database (requires TMDB API key). The other source will be used as backup.</p>
-                    <select id="primaryArtworkSource" class="library-setting-input">
-                        <option value="Plex">Plex</option>
-                        <option value="TMDB">TMDB</option>
-                    </select>
-                </div>
-
-                <div class="library-setting-group">
                     <label for="autoGhostlistDeleted">
                         <input type="checkbox" id="autoGhostlistDeleted" class="library-setting-checkbox">
                         Ghostlist Mode
@@ -1225,14 +1218,71 @@
                 </div>
 
                 <div class="library-setting-group">
+                    <label for="removeFromContentSources">
+                        <input type="checkbox" id="removeFromContentSources" class="library-setting-checkbox">
+                        Remove From Content Sources
+                    </label>
+                    <p class="library-setting-description">Remove items from content sources (Trakt lists, Overseerr requests, Plex Watchlist, etc.) during deletion. When enabled, the app will remove items from these sources to prevent them from being automatically re-added, but this makes deletion slower. When disabled, deletion is faster but the item might be re-added if it's still on your lists. <strong>Tip:</strong> Enable this when ghostlist mode is OFF. Disable this when ghostlist mode is ON (since ghostlist already prevents re-addition, and disabling makes deletion much faster).</p>
+                </div>
+
+                <div class="library-setting-group">
                     <label>Clear Artwork Cache</label>
-                    <p class="library-setting-description">Remove all cached posters and backdrops. Artwork will be re-downloaded from the primary source on next library load.</p>
+                    <p class="library-setting-description">Remove all cached posters and backdrops. Artwork will be re-downloaded from TMDB on next library load.</p>
                     <button type="button" id="clearLibraryCacheBtn" class="library-settings-btn-clear-cache">Clear Cache</button>
                 </div>
             </div>
             <div class="library-settings-modal-footer">
                 <button class="library-settings-btn-cancel">Cancel</button>
                 <button class="library-settings-btn-save">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Discover Settings Modal -->
+    <div id="discoverSettingsModal" class="discover-settings-modal" style="display: none;">
+        <div class="discover-settings-modal-overlay"></div>
+        <div class="discover-settings-modal-content">
+            <div class="discover-settings-modal-header">
+                <h2>Discover Settings</h2>
+                <button class="discover-settings-modal-close" aria-label="Close">&times;</button>
+            </div>
+            <div class="discover-settings-modal-body">
+                <div class="discover-setting-group">
+                    <label for="discoverHideNoRating">
+                        <input type="checkbox" id="discoverHideNoRating" class="discover-setting-checkbox">
+                        Hide items without rating
+                    </label>
+                    <p class="discover-setting-description">Hide items that don't have a TMDB rating from discover results.</p>
+                </div>
+
+                <div class="discover-setting-group">
+                    <label for="discoverHideNoPoster">
+                        <input type="checkbox" id="discoverHideNoPoster" class="discover-setting-checkbox">
+                        Hide items without poster image
+                    </label>
+                    <p class="discover-setting-description">Hide items that don't have a poster image from discover results.</p>
+                </div>
+
+                <div class="discover-setting-group">
+                    <label for="discoverOnlyShowMissing">
+                        <input type="checkbox" id="discoverOnlyShowMissing" class="discover-setting-checkbox">
+                        Only show missing items
+                    </label>
+                    <p class="discover-setting-description">Only show items that are not already in your library. Items will be filtered based on their database status.</p>
+                </div>
+
+                <div class="discover-setting-group">
+                    <label for="discoverEpisodeView">TV Show Episode View</label>
+                    <select id="discoverEpisodeView" class="discover-setting-select">
+                        <option value="discover">Discover</option>
+                        <option value="add_media">Classic (Add Media)</option>
+                    </select>
+                    <p class="discover-setting-description">Choose where to route when clicking on TV shows not in your library. Movies always go to Discover details page.</p>
+                </div>
+            </div>
+            <div class="discover-settings-modal-footer">
+                <button class="discover-settings-btn-cancel">Cancel</button>
+                <button class="discover-settings-btn-save">Save Settings</button>
             </div>
         </div>
     </div>

@@ -91,7 +91,7 @@ def get_overseerr_details(overseerr_url: str, overseerr_api_key: str, tmdb_id: i
     headers = get_overseerr_headers(overseerr_api_key)
     endpoint = f"/api/v1/{'movie' if media_type == 'movie' else 'tv'}/{tmdb_id}"
     url = get_url(overseerr_url, endpoint)
-    
+
     try:
         response = api.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
@@ -99,6 +99,48 @@ def get_overseerr_details(overseerr_url: str, overseerr_api_key: str, tmdb_id: i
     except api.exceptions.RequestException as e:
         logging.error(f"Error fetching details for TMDB ID {tmdb_id}: {str(e)}")
         return {}
+
+def get_overseerr_requester_by_tmdb(overseerr_url: str, overseerr_api_key: str, tmdb_id: int, media_type: str) -> str:
+    """
+    Get the requester name for a media item from Overseerr by TMDB ID.
+
+    Args:
+        overseerr_url: Overseerr base URL
+        overseerr_api_key: API key
+        tmdb_id: TMDB ID of the media
+        media_type: 'movie' or 'episode'/'show'
+
+    Returns:
+        str: Requester display name, email, or 'Unknown' if not found
+    """
+    try:
+        details = get_overseerr_details(overseerr_url, overseerr_api_key, tmdb_id, media_type)
+
+        if not details:
+            logging.debug(f"No Overseerr details found for TMDB ID {tmdb_id}")
+            return 'Unknown'
+
+        # Navigate to mediaInfo.requests
+        media_info = details.get('mediaInfo', {})
+        requests = media_info.get('requests', [])
+
+        if not requests:
+            logging.debug(f"No requests found for TMDB ID {tmdb_id}")
+            return 'Unknown'
+
+        # Get the most recent request (last in the list)
+        latest_request = requests[-1]
+        requested_by = latest_request.get('requestedBy', {})
+
+        # Extract display name or email
+        requester = requested_by.get('displayName') or requested_by.get('email') or 'Unknown'
+
+        logging.info(f"Found Overseerr requester '{requester}' for TMDB {tmdb_id}")
+        return requester
+
+    except Exception as e:
+        logging.error(f"Error getting Overseerr requester for TMDB {tmdb_id}: {e}")
+        return 'Unknown'
 
 def fetch_overseerr_wanted_content(overseerr_url: str, overseerr_api_key: str, take: int = DEFAULT_TAKE) -> List[Dict[str, Any]]:
     headers = get_overseerr_headers(overseerr_api_key)

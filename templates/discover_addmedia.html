@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}Add Media - {{ config.get('Program', {}).get('name', 'Debrid Media Manager') }}{% endblock %}
+
+{% block head %}
+    {{ super() }}
+    <script src="{{ url_for('static', filename='js/theme_switcher.js') }}"></script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const theme = getCurrentTheme();
+            const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_scraper.css' : 'css/scraper.css';
+            const mobileCssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_scraper-mobile.css' : 'css/scraper-mobile.css';
+
+            const link1 = document.createElement('link');
+            link1.rel = 'stylesheet';
+            link1.href = '{{ url_for("static", filename="") }}' + cssFile + '?v={{ range(10000, 99999) | random }}';
+            document.head.appendChild(link1);
+
+            const link2 = document.createElement('link');
+            link2.rel = 'stylesheet';
+            link2.href = '{{ url_for("static", filename="") }}' + mobileCssFile + '?v={{ range(10000, 99999) | random }}';
+            document.head.appendChild(link2);
+        });
+    </script>
+
+    <style>
+        /* Prevent white flash on page load */
+        html {
+            background-color: #0a0a0a !important;
+        }
+        body {
+            background-color: #0a0a0a !important;
+            margin: 0;
+            padding: 0;
+        }
+    </style>
+
+    <meta name="media_id" content="{{ media_id }}">
+    <meta name="title" content="{{ title }}">
+    <meta name="year" content="{{ year }}">
+    <meta name="media_type" content="{{ media_type }}">
+    <meta name="rating" content="{{ rating }}">
+    <meta name="vote_average" content="{{ vote_average }}">
+    <meta name="genre_ids" content="{{ genre_ids }}">
+    <meta name="backdrop_path" content="{{ backdrop_path }}">
+    <meta name="overview" content="{{ overview }}">
+{% endblock %}
+
+{% block content %}
+<div class="scraper-container">
+    <input type="hidden" id="tmdb_api_key_set" value="{{ 'True' if tmdb_api_key_set else 'False' }}">
+    <input type="hidden" id="is_requester" value="{{ 'True' if is_requester else 'False' }}">
+    <input type="hidden" id="has_user_permissions" value="{{ 'True' if has_user_permissions else 'False' }}">
+
+    <!-- Season and Episode Selection -->
+    <div id="seasonResults">
+        <div id="season-info"></div>
+        <div class="season-controls">
+            <select id="seasonDropdown"></select>
+            {% if has_user_permissions %}
+            <button id="seasonPackButton">Season Pack</button>
+            {% endif %}
+            <button id="requestSeasonButton">Request Season</button>
+        </div>
+        <div id="episodeResults"></div>
+    </div>
+
+    <!-- Scrape Version Selection Modal -->
+    <div id="scrapeVersionModal" class="version-modal">
+        <div class="version-modal-content">
+            <h3>Select Scrape Version</h3>
+            <div id="scrapeVersionRadios">
+                <!-- Version radio buttons will be dynamically inserted here -->
+            </div>
+            <div class="version-modal-buttons">
+                <button id="confirmScrapeVersion">Scrape</button>
+                <button id="cancelScrapeVersion">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Request Version Selection Modal -->
+    <div id="versionModal" class="version-modal">
+        <div class="version-modal-content">
+            <h3>Select Versions</h3>
+            <div id="versionCheckboxes">
+                <!-- Version checkboxes will be dynamically inserted here -->
+            </div>
+            <div class="version-modal-buttons">
+                <button id="confirmVersions">Request</button>
+                <button id="cancelVersions">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Torrent Results Overlay -->
+    <div id="overlay" class="overlay">
+        <div class="overlay-content">
+            <button class="close-btn" aria-label="Close">&times;</button>
+            <div id="overlayContent"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+    {{ super() }}
+    <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}?v={{ range(10000, 99999) | random }}"></script>
+    <script src="{{ url_for('static', filename='js/scraper.js') }}?v={{ range(10000, 99999) | random }}"></script>
+    <script src="{{ url_for('static', filename='js/discover_addmedia.js') }}?v={{ range(10000, 99999) | random }}"></script>
+{% endblock %}

@@ -28,10 +28,15 @@
         }
     }
 
-    // Get the saved theme from localStorage, default to classic
+    // Get the saved theme from localStorage, default to tangerine
     function getSavedTheme() {
         const savedTheme = localStorage.getItem(STORAGE_KEY);
-        return savedTheme || THEMES.CLASSIC;
+        if (savedTheme) {
+            return savedTheme;
+        }
+
+        // Default to tangerine for new users
+        return THEMES.TANGERINE;
     }
 
     // Save theme preference to localStorage and cookie

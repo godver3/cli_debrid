@@ -12,28 +12,19 @@ from cli_battery.app.direct_api import DirectAPI
 import sqlite3
 import time
 
-def _cache_plex_artwork(media_items_batch):
+def _cache_tmdb_artwork(media_items_batch):
     """
-    Cache poster and backdrop URLs from Plex or TMDB based on user preference.
-    Priority determined by 'primary_artwork_source' setting (Plex or TMDB).
-    Uses the non-primary source as fallback.
+    Cache poster and backdrop URLs from TMDB.
     Only caches items that are not already in cache or have expired.
-    Plex URLs are proxied through /library/plex_image endpoint.
     """
     from routes.poster_cache import load_cache, save_cache, normalize_media_type, CACHE_EXPIRY_DAYS
     from utilities.web_scraper import get_media_meta
-    from utilities.settings import get_setting
-
-    # Get primary artwork source preference
-    primary_source = get_setting('Library Manager', 'primary_artwork_source', default='Plex')
 
     # Load cache once for the entire batch
     cache = load_cache()
     cache_updated = False
     cached_count = 0
     skipped_count = 0
-    tmdb_fallback_count = 0
-    plex_fallback_count = 0
 
     for item in media_items_batch:
         tmdb_id = item.get('tmdb_id')
@@ -49,10 +40,6 @@ def _cache_plex_artwork(media_items_batch):
 
         normalized_type = normalize_media_type(media_type)
 
-        # Get URLs from Plex and TMDB based on priority
-        thumb_url = item.get('thumb')  # Plex poster
-        art_url = item.get('art')  # Plex backdrop
-
         # Check and cache poster
         poster_key = f"{tmdb_id}_{normalized_type}"
 
@@ -63,77 +50,27 @@ def _cache_plex_artwork(media_items_batch):
             if datetime.now() - timestamp < timedelta(days=CACHE_EXPIRY_DAYS):
                 skipped_count += 1
             else:
-                # Expired, update it based on primary source
-                final_poster_url = None
-
-                if primary_source == 'TMDB':
-                    # Try TMDB first
-                    try:
-                        media_meta = get_media_meta(str(tmdb_id), media_type)
-                        if media_meta and media_meta[0]:
-                            final_poster_url = media_meta[0]
-                    except Exception as e:
-                        logging.debug(f"TMDB failed for poster {tmdb_id}: {e}")
-
-                    # Fallback to Plex if TMDB failed
-                    if not final_poster_url and thumb_url:
-                        final_poster_url = thumb_url
-                        plex_fallback_count += 1
-                else:
-                    # Try Plex first (default)
-                    if thumb_url:
-                        final_poster_url = thumb_url
-                    else:
-                        # Fallback to TMDB if Plex doesn't have it
-                        try:
-                            media_meta = get_media_meta(str(tmdb_id), media_type)
-                            if media_meta and media_meta[0]:
-                                final_poster_url = media_meta[0]
-                                tmdb_fallback_count += 1
-                        except Exception as e:
-                            logging.debug(f"TMDB fallback failed for poster {tmdb_id}: {e}")
-
-                if final_poster_url:
-                    cache[poster_key] = (final_poster_url, datetime.now())
-                    cache_updated = True
-                    cached_count += 1
-        else:
-            # Not in cache, add it based on primary source
-            final_poster_url = None
-
-            if primary_source == 'TMDB':
-                # Try TMDB first
+                # Expired, update from TMDB
                 try:
                     media_meta = get_media_meta(str(tmdb_id), media_type)
                     if media_meta and media_meta[0]:
-                        final_poster_url = media_meta[0]
+                        cache[poster_key] = (media_meta[0], datetime.now())
+                        cache_updated = True
+                        cached_count += 1
                 except Exception as e:
                     logging.debug(f"TMDB failed for poster {tmdb_id}: {e}")
+        else:
+            # Not in cache, fetch from TMDB
+            try:
+                media_meta = get_media_meta(str(tmdb_id), media_type)
+                if media_meta and media_meta[0]:
+                    cache[poster_key] = (media_meta[0], datetime.now())
+                    cache_updated = True
+                    cached_count += 1
+            except Exception as e:
+                logging.debug(f"TMDB failed for poster {tmdb_id}: {e}")
 
-                # Fallback to Plex if TMDB failed
-                if not final_poster_url and thumb_url:
-                    final_poster_url = thumb_url
-                    plex_fallback_count += 1
-            else:
-                # Try Plex first (default)
-                if thumb_url:
-                    final_poster_url = thumb_url
-                else:
-                    # Fallback to TMDB if Plex doesn't have it
-                    try:
-                        media_meta = get_media_meta(str(tmdb_id), media_type)
-                        if media_meta and media_meta[0]:
-                            final_poster_url = media_meta[0]
-                            tmdb_fallback_count += 1
-                    except Exception as e:
-                        logging.debug(f"TMDB fallback failed for poster {tmdb_id}: {e}")
-
-            if final_poster_url:
-                cache[poster_key] = (final_poster_url, datetime.now())
-                cache_updated = True
-                cached_count += 1
-
-        # Check and cache backdrop (art) based on primary source
+        # Check and cache backdrop
         backdrop_key = f"{tmdb_id}_backdrop_{normalized_type}"
 
         # Check if already cached and not expired
@@ -143,89 +80,30 @@ def _cache_plex_artwork(media_items_batch):
             if datetime.now() - timestamp < timedelta(days=CACHE_EXPIRY_DAYS):
                 skipped_count += 1
             else:
-                # Expired, update it based on primary source
-                final_backdrop_url = None
-
-                if primary_source == 'TMDB':
-                    # Try TMDB first
-                    try:
-                        media_meta = get_media_meta(str(tmdb_id), media_type)
-                        if media_meta and media_meta[4]:
-                            final_backdrop_url = media_meta[4]
-                    except Exception as e:
-                        logging.debug(f"TMDB failed for backdrop {tmdb_id}: {e}")
-
-                    # Fallback to Plex if TMDB failed
-                    if not final_backdrop_url and art_url:
-                        final_backdrop_url = art_url
-                        plex_fallback_count += 1
-                else:
-                    # Try Plex first (default)
-                    if art_url:
-                        final_backdrop_url = art_url
-                    else:
-                        # Fallback to TMDB if Plex doesn't have it
-                        try:
-                            media_meta = get_media_meta(str(tmdb_id), media_type)
-                            if media_meta and media_meta[4]:
-                                final_backdrop_url = media_meta[4]
-                                tmdb_fallback_count += 1
-                        except Exception as e:
-                            logging.debug(f"TMDB fallback failed for backdrop {tmdb_id}: {e}")
-
-                if final_backdrop_url:
-                    cache[backdrop_key] = (final_backdrop_url, datetime.now())
-                    cache_updated = True
-                    cached_count += 1
-        else:
-            # Not in cache, add it based on primary source
-            final_backdrop_url = None
-
-            if primary_source == 'TMDB':
-                # Try TMDB first
+                # Expired, update from TMDB
                 try:
                     media_meta = get_media_meta(str(tmdb_id), media_type)
                     if media_meta and media_meta[4]:
-                        final_backdrop_url = media_meta[4]
+                        cache[backdrop_key] = (media_meta[4], datetime.now())
+                        cache_updated = True
+                        cached_count += 1
                 except Exception as e:
                     logging.debug(f"TMDB failed for backdrop {tmdb_id}: {e}")
-
-                # Fallback to Plex if TMDB failed
-                if not final_backdrop_url and art_url:
-                    final_backdrop_url = art_url
-                    plex_fallback_count += 1
-            else:
-                # Try Plex first (default)
-                if art_url:
-                    final_backdrop_url = art_url
-                else:
-                    # Fallback to TMDB if Plex doesn't have it
-                    try:
-                        media_meta = get_media_meta(str(tmdb_id), media_type)
-                        if media_meta and media_meta[4]:
-                            final_backdrop_url = media_meta[4]
-                            tmdb_fallback_count += 1
-                    except Exception as e:
-                        logging.debug(f"TMDB fallback failed for backdrop {tmdb_id}: {e}")
-
-            if final_backdrop_url:
-                cache[backdrop_key] = (final_backdrop_url, datetime.now())
-                cache_updated = True
-                cached_count += 1
+        else:
+            # Not in cache, fetch from TMDB
+            try:
+                media_meta = get_media_meta(str(tmdb_id), media_type)
+                if media_meta and media_meta[4]:
+                    cache[backdrop_key] = (media_meta[4], datetime.now())
+                    cache_updated = True
+                    cached_count += 1
+            except Exception as e:
+                logging.debug(f"TMDB failed for backdrop {tmdb_id}: {e}")
 
     # Save cache only once if any updates were made
     if cache_updated:
         save_cache(cache)
-        fallback_msg = []
-        if tmdb_fallback_count > 0:
-            fallback_msg.append(f"{tmdb_fallback_count} from TMDB")
-        if plex_fallback_count > 0:
-            fallback_msg.append(f"{plex_fallback_count} from Plex")
-
-        if fallback_msg:
-            logging.info(f"[Artwork Cache - {primary_source} primary] Cached {cached_count} items ({', '.join(fallback_msg)} fallback), skipped {skipped_count}")
-        else:
-            logging.info(f"[Artwork Cache - {primary_source} primary] Cached {cached_count} new/expired items, skipped {skipped_count} already cached")
+        logging.info(f"[Artwork Cache - TMDB] Cached {cached_count} new/expired items, skipped {skipped_count} already cached")
     else:
         logging.debug(f"[Artwork Cache] All {skipped_count} items already cached, no updates needed")
 
@@ -240,9 +118,8 @@ def add_collected_items(media_items_batch, recent=False, backfill=False):
         logging.info("Plex library checks disabled - using simplified collection process")
         return plex_collection_disabled(media_items_batch)
 
-    # Cache posters and backdrops from Plex data
-    # Plex URLs are proxied through /library/plex_image endpoint
-    _cache_plex_artwork(media_items_batch)
+    # Cache posters and backdrops from TMDB
+    _cache_tmdb_artwork(media_items_batch)
 
     conn = get_db_connection()
     try:
@@ -279,7 +156,7 @@ def add_collected_items(media_items_batch, recent=False, backfill=False):
                 query = f'''
                     SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version,
                            filled_by_file, collected_at, release_date, upgrading_from, content_source,
-                           location_on_disk, location_basename
+                           location_on_disk, location_basename, ghostlisted
                     FROM media_items
                     WHERE filled_by_file IN ({placeholders})
                        OR upgrading_from IN ({placeholders})
@@ -552,6 +429,15 @@ def add_collected_items(media_items_batch, recent=False, backfill=False):
                         # )
                         
                         if existing_db_item['state'] not in ['Collected', 'Upgrading']:
+                            # Skip ghostlisted or blacklisted items - they should not be re-collected from Plex
+                            is_ghostlisted = existing_db_item.get('ghostlisted') == 1
+                            is_blacklisted = existing_db_item['state'] == 'Blacklisted'
+
+                            if is_ghostlisted or is_blacklisted:
+                                logging.info(f"[Collection] Skipping DB item {db_item_id} ({existing_db_item['title']}) - "
+                                           f"item is {'ghostlisted' if is_ghostlisted else 'blacklisted'} and should not be collected from Plex")
+                                continue
+
                             if existing_db_item['release_date'] in ['Unknown', 'unknown', 'None', 'none', None, '']:
                                 days_since_release = 0
                                 # logging.debug(f"Unknown release date for {item_identifier} - treating as new content")
@@ -660,10 +546,14 @@ def add_collected_items(media_items_batch, recent=False, backfill=False):
                             new_size = item.get('size_gb')
                             new_resolution = item.get('resolution')
 
+                            # Debug logging for backfill size issues
+                            if backfill and (existing_size is None or existing_size == 0):
+                                logging.info(f"[Backfill Debug] Item {db_item_id}: existing_size={existing_size}, new_size={new_size}, new_resolution={new_resolution}")
+
                             # Update if any Plex-sourced field is missing or location changed
                             should_update = (
                                 existing_location != current_plex_location or
-                                (existing_size is None and new_size is not None) or
+                                ((existing_size is None or existing_size == 0) and new_size is not None and new_size > 0) or
                                 (existing_resolution is None and new_resolution is not None) or
                                 (not existing_imdb_id and imdb_id) or
                                 (not existing_tmdb_id and tmdb_id) or
@@ -679,7 +569,7 @@ def add_collected_items(media_items_batch, recent=False, backfill=False):
                                     UPDATE media_items
                                     SET location_on_disk = ?,
                                         resolution = COALESCE(resolution, ?),
-                                        size = COALESCE(size, ?),
+                                        size = CASE WHEN size IS NULL OR size = 0 THEN ? ELSE size END,
                                         imdb_id = COALESCE(NULLIF(imdb_id, ''), ?),
                                         tmdb_id = COALESCE(NULLIF(tmdb_id, ''), ?),
                                         collected_at = COALESCE(collected_at, ?),
@@ -718,6 +608,32 @@ def add_collected_items(media_items_batch, recent=False, backfill=False):
                             parsed_info = parser_approximation(filename)
                             version = parsed_info['version']
                             # logging.debug(f"Using parsed version '{version}' for {item_identifier} (no checking items found)")
+
+                        # GHOSTLIST CHECK: Skip inserting if this item is ghostlisted
+                        ghostlist_check_query = '''
+                            SELECT id FROM media_items
+                            WHERE (imdb_id = ? OR tmdb_id = ?)
+                            AND type = ?
+                            AND (ghostlisted = 1 OR state = 'Blacklisted')
+                            LIMIT 1
+                        '''
+                        ghostlist_check_params = (imdb_id, tmdb_id, item_type)
+                        if item_type == 'episode':
+                            ghostlist_check_query = '''
+                                SELECT id FROM media_items
+                                WHERE (imdb_id = ? OR tmdb_id = ?)
+                                AND type = ?
+                                AND season_number = ?
+                                AND episode_number = ?
+                                AND (ghostlisted = 1 OR state = 'Blacklisted')
+                                LIMIT 1
+                            '''
+                            ghostlist_check_params = (imdb_id, tmdb_id, item_type, item['season_number'], item['episode_number'])
+
+                        ghostlist_result = conn.execute(ghostlist_check_query, ghostlist_check_params).fetchone()
+                        if ghostlist_result:
+                            logging.info(f"⛔ Skipping {item_identifier} - user has ghostlisted/blacklisted this item (ID: {ghostlist_result['id']})")
+                            continue
 
                         if item_type == 'movie':
                             conn.execute('''
@@ -831,19 +747,27 @@ def add_collected_items(media_items_batch, recent=False, backfill=False):
                                 logging.info(f"[Missing File Cleanup] Deleting item {item_identifier} (ID: {item['id']}, File: {file_to_log}) as another collected version ('{current_version}') exists.")
                                 conn.execute('DELETE FROM media_items WHERE id = ?', (item['id'],))
                             else:
-                                logging.info(f"[Missing File Cleanup] File missing for {item_identifier} (ID: {item['id']}, File: {file_to_log}). No other matching version found. Moving to 'Wanted'.")
-                                conn.execute('''
-                                    UPDATE media_items 
-                                    SET state = 'Wanted', 
-                                        filled_by_file = NULL, 
-                                        filled_by_title = NULL, 
-                                        filled_by_magnet = NULL, 
-                                        filled_by_torrent_id = NULL, 
-                                        collected_at = NULL,
-                                        last_updated = ?,
-                                        version = TRIM(version, '*') 
-                                    WHERE id = ?
-                                ''', (datetime.now(), item['id']))
+                                # GHOSTLIST CHECK: Don't move ghostlisted/blacklisted items to Wanted
+                                is_ghostlisted = item.get('ghostlisted') == 1
+                                is_blacklisted = item.get('state') == 'Blacklisted'
+
+                                if is_ghostlisted or is_blacklisted:
+                                    logging.info(f"⛔ [Missing File Cleanup] File missing for {'ghostlisted' if is_ghostlisted else 'blacklisted'} item {item_identifier} (ID: {item['id']}, File: {file_to_log}). Deleting item instead of moving to Wanted.")
+                                    conn.execute('DELETE FROM media_items WHERE id = ?', (item['id'],))
+                                else:
+                                    logging.info(f"[Missing File Cleanup] File missing for {item_identifier} (ID: {item['id']}, File: {file_to_log}). No other matching version found. Moving to 'Wanted'.")
+                                    conn.execute('''
+                                        UPDATE media_items
+                                        SET state = 'Wanted',
+                                            filled_by_file = NULL,
+                                            filled_by_title = NULL,
+                                            filled_by_magnet = NULL,
+                                            filled_by_torrent_id = NULL,
+                                            collected_at = NULL,
+                                            last_updated = ?,
+                                            version = TRIM(version, '*')
+                                        WHERE id = ?
+                                    ''', (datetime.now(), item['id']))
                         except Exception as e:
                             # conn.rollback() # Rollback for THIS item was removed, transaction handles overall
                             logging.error(f"Error handling missing file for item {item_identifier} (ID: {item['id']}): {str(e)}", exc_info=True)
@@ -1012,10 +936,44 @@ def plex_collection_disabled(media_items_batch: List[Dict[str, Any]]) -> bool:
                 logging.info(f"Item already exists ({item_desc}) with version {found_version} (from {filename_source}): {filename}")
                 continue
 
+            # GHOSTLIST CHECK: Skip inserting if this item is ghostlisted or blacklisted
+            ghostlist_check_query = '''
+                SELECT id FROM media_items
+                WHERE (imdb_id = ? OR tmdb_id = ?)
+                AND type = ?
+                AND (ghostlisted = 1 OR state = 'Blacklisted')
+                LIMIT 1
+            '''
+            ghostlist_check_params = [item.get('imdb_id'), item.get('tmdb_id'), item.get('type', 'movie')]
+
+            if item.get('type') == 'episode':
+                ghostlist_check_query = '''
+                    SELECT id FROM media_items
+                    WHERE (imdb_id = ? OR tmdb_id = ?)
+                    AND type = ?
+                    AND season_number = ?
+                    AND episode_number = ?
+                    AND (ghostlisted = 1 OR state = 'Blacklisted')
+                    LIMIT 1
+                '''
+                ghostlist_check_params = [
+                    item.get('imdb_id'),
+                    item.get('tmdb_id'),
+                    item.get('type'),
+                    item.get('season_number'),
+                    item.get('episode_number')
+                ]
+
+            ghostlist_result = cursor.execute(ghostlist_check_query, ghostlist_check_params).fetchone()
+            if ghostlist_result:
+                item_desc = f"S{item.get('season_number')}E{item.get('episode_number')}" if item.get('type') == 'episode' else "movie"
+                logging.info(f"⛔ Skipping {item_desc} {item.get('title')} - user has ghostlisted/blacklisted this item (ID: {ghostlist_result['id']})")
+                continue
+
             # Add new item to database
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             collected_at = item.get('collected_at', now)  # Use item's collected_at if available, fallback to now
-            
+
             if item.get('type') == 'episode':
                 cursor.execute('''
                     INSERT INTO media_items 

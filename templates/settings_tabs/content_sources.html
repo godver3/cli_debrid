@@ -42,6 +42,7 @@
         initializeSourceButtons();
         initializeAssignUserButtons();
         initializePlexLabelsFields();
+        initializeAdaptiveListButtons();
 
         const settingsContainer = document.querySelector('.settings-container');
         if (settingsContainer) {
@@ -697,6 +698,11 @@
             fixedContainer.style.display = (selectedMode === 'fixed') ? 'block' : 'none';
         }
     }
+
+    function initializeAdaptiveListButtons() {
+        // No longer needed - each adaptive list is its own content source
+        // and can be deleted using the standard "Delete Source" button
+    }
 </script>
 
 <style>
@@ -740,6 +746,48 @@
     
     .no-versions-warning:hover {
         color: #ff5252;
+    }
+
+    /* Adaptive List styles */
+    .adaptive-lists-container {
+        max-height: 400px;
+        overflow-y: auto;
+    }
+
+    .adaptive-list-item {
+        transition: background-color 0.2s ease, border-color 0.2s ease;
+    }
+
+    .adaptive-list-item:hover {
+        background: rgba(255,255,255,0.08) !important;
+        border-color: rgba(255,255,255,0.2) !important;
+    }
+
+    .edit-adaptive-list-btn {
+        background: #007bff !important;
+        color: white !important;
+    }
+
+    .edit-adaptive-list-btn:hover {
+        background: #0056b3 !important;
+    }
+
+    .delete-adaptive-list-btn {
+        background: #dc3545 !important;
+        color: white !important;
+    }
+
+    .delete-adaptive-list-btn:hover {
+        background: #c82333 !important;
+    }
+
+    .add-adaptive-list-btn {
+        background: #28a745 !important;
+        color: white !important;
+    }
+
+    .add-adaptive-list-btn:hover {
+        background: #218838 !important;
     }
 </style>
 
@@ -796,7 +844,263 @@
                 <div class="settings-section-content" style="display: none;">
 
                     {# --- START: Conditional Rendering based on Type --- #}
-                    {% if config.type == 'Other Plex Watchlist' %}
+                    {% if config.type == 'Adaptive List' %}
+                        {# --- Render Adaptive List - each is its own content source --- #}
+
+                        {# Filter Summary #}
+                        {% set filters = config.get('filters', {}) %}
+                        <div class="settings-form-group">
+                            <label class="settings-title">Filter Configuration:</label>
+                            <p class="settings-description">This adaptive list uses TMDB Discover filters. Time-sensitive filters adapt their results based on when they're checked.</p>
+
+                            <div style="margin-top: 10px; padding: 12px; background: rgba(255,255,255,0.05); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                                <div style="display: flex; align-items: center; justify-content: space-between;">
+                                    <div>
+                                        <span style="color: #888; font-size: 0.85em;">
+                                            Media Type: <strong style="color: #f4f4f4;">{{ config.get('media_type', 'movie')|capitalize }}</strong>
+                                        </span>
+                                        {% if filters %}
+                                            <div style="font-size: 0.8em; color: #aaa; margin-top: 4px;">
+                                                {% set filter_count = filters|length %}
+                                                {{ filter_count }} filter{{ 's' if filter_count != 1 else '' }} configured
+                                                {% if filters.released_within %}
+                                                    • Released within {{ filters.released_within }} days
+                                                {% endif %}
+                                                {% if filters.upcoming_days %}
+                                                    • Upcoming {{ filters.upcoming_days }} days
+                                                {% endif %}
+                                                {% if filters.genres %}
+                                                    • {{ filters.genres.split(',')|length }} genre(s)
+                                                {% endif %}
+                                                {% if filters.genres_exclude %}
+                                                    • {{ filters.genres_exclude.split(',')|length }} excluded genre(s)
+                                                {% endif %}
+                                                {% if filters.keywords %}
+                                                    • {{ filters.keywords.split(',')|length }} keyword(s)
+                                                {% endif %}
+                                                {% if filters.keywords_exclude %}
+                                                    • {{ filters.keywords_exclude.split(',')|length }} excluded keyword(s)
+                                                {% endif %}
+                                                {% if filters.language %}
+                                                    • {{ filters.language.split(',')|length }} language(s)
+                                                {% endif %}
+                                                {% if filters.country %}
+                                                    • {{ filters.country.split(',')|length }} country(ies)
+                                                {% endif %}
+                                                {% if filters.watch_provider %}
+                                                    • {{ filters.watch_provider.split(',')|length }} provider(s)
+                                                {% endif %}
+                                                {% if filters.network %}
+                                                    • {{ filters.network.split(',')|length }} network(s)
+                                                {% endif %}
+                                                {% if filters.tmdb_rating_min %}
+                                                    • Rating ≥ {{ filters.tmdb_rating_min }}
+                                                {% endif %}
+                                                {% if filters.tmdb_votes_min %}
+                                                    • Votes ≥ {{ filters.tmdb_votes_min }}
+                                                {% endif %}
+                                                {% if filters.runtime_max and filters.runtime_max != '300' %}
+                                                    • <{{ filters.runtime_max }} min
+                                                {% endif %}
+                                                {% if filters.include_video %}
+                                                    • Include video
+                                                {% endif %}
+                                                {% if filters.title_filter %}
+                                                    • Title filter
+                                                {% endif %}
+                                                {% if filters.sort_by and filters.sort_by != 'popularity.desc' %}
+                                                    • Sort: {{ filters.sort_by }}
+                                                {% endif %}
+                                            </div>
+                                        {% else %}
+                                            <div style="font-size: 0.8em; color: #f59e0b; margin-top: 4px;">
+                                                ⚠️ No filters configured
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                    <a href="/discover?edit_adaptive_list={{ source_id }}"
+                                       class="popup-button edit-adaptive-list-btn"
+                                       style="padding: 6px 12px; font-size: 0.85em; text-decoration: none;">
+                                        Edit Filters
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+
+                        {# Versions #}
+                        {% set key = 'versions' %}
+                        {% set value = config.get(key, {}) %}
+                        <div class="settings-form-group">
+                            <label class="settings-title">Versions:</label>
+                            <div class="version-checkboxes">
+                                {% set scraping_versions = settings.get('Scraping', {}).get('versions', {}) %}
+                                {% set source_versions = value %}
+                                {% for version_name in scraping_versions.keys() %}
+                                <label>
+                                    <input type="checkbox" name="Content Sources.{{ source_id }}.versions" value="{{ version_name }}"
+                                        data-section="Content Sources" data-key="{{ source_id }}.versions.{{ version_name }}"
+                                        {% if source_versions is mapping and version_name in source_versions and source_versions[version_name] %}
+                                            checked
+                                        {% elif source_versions is iterable and not source_versions is string and not source_versions is mapping and version_name in source_versions %}
+                                            checked
+                                        {% endif %}
+                                        >
+                                    {{ version_name }}
+                                </label>
+                                {% endfor %}
+                            </div>
+                            <p class="settings-description">Select which quality versions to look for when processing items from this source.</p>
+                        </div>
+
+                        {# Allow Specials #}
+                        {% set key = 'allow_specials' %}
+                        {% set value = config.get(key, False) %}
+                        <div class="settings-form-group">
+                            <label class="settings-title">
+                                <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}"
+                                       name="Content Sources.{{ source_id }}.{{ key }}"
+                                       data-section="Content Sources"
+                                       data-key="{{ source_id }}.{{ key }}"
+                                       {% if value %}checked{% endif %}>
+                                Allow Specials
+                            </label>
+                            <p class="settings-description">Allow TV show specials (Season 0) to be added from this source.</p>
+                        </div>
+
+                        {# Cutoff Date #}
+                        {% set key = 'cutoff_date' %}
+                        {% set value = config.get(key, '') %}
+                        <div class="settings-form-group">
+                            <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">Cutoff Date:</label>
+                            <input type="text" id="content-sources-{{ source_id }}-{{ key }}"
+                                   name="Content Sources.{{ source_id }}.{{ key }}"
+                                   value="{{ value }}"
+                                   class="settings-input"
+                                   data-section="Content Sources"
+                                   data-key="{{ source_id }}.{{ key }}"
+                                   placeholder="YYYY-MM-DD">
+                            <p class="settings-description">Only add content released after this date. Leave empty to include all content.</p>
+                        </div>
+
+                        {# Exclude Genres #}
+                        {% set key = 'exclude_genres' %}
+                        {% set value = config.get(key, []) %}
+                        <div class="settings-form-group">
+                            <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">Exclude Genres:</label>
+                            <input type="text" id="content-sources-{{ source_id }}-{{ key }}"
+                                   name="Content Sources.{{ source_id }}.{{ key }}"
+                                   value="{{ value|join(', ') if value is iterable and not value is string else value }}"
+                                   class="settings-input"
+                                   data-section="Content Sources"
+                                   data-key="{{ source_id }}.{{ key }}"
+                                   placeholder="e.g., Horror, Documentary, Reality">
+                            <p class="settings-description">Comma-separated list of genres to exclude from this source.</p>
+                        </div>
+
+                        {# List Length Limit #}
+                        {% set key = 'list_length_limit' %}
+                        {% set value = config.get(key, 0) %}
+                        <div class="settings-form-group">
+                            <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">List Length Limit:</label>
+                            <input type="number" id="content-sources-{{ source_id }}-{{ key }}"
+                                   name="Content Sources.{{ source_id }}.{{ key }}"
+                                   value="{{ value }}"
+                                   class="settings-input"
+                                   data-section="Content Sources"
+                                   data-key="{{ source_id }}.{{ key }}"
+                                   min="0"
+                                   placeholder="0 = no limit">
+                            <p class="settings-description">Maximum number of items to process from this source. Set to 0 for no limit.</p>
+                        </div>
+
+                        {# Custom Symlink Subfolder #}
+                        {% set key = 'custom_symlink_subfolder' %}
+                        {% set value = config.get(key, '') %}
+                        <div class="symlink-subfolder-container" data-source-id="{{ source_id }}">
+                            <div class="settings-form-group">
+                                <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">Custom Symlink Subfolder:</label>
+                                <input type="text" id="content-sources-{{ source_id }}-{{ key }}"
+                                       name="Content Sources.{{ source_id }}.{{ key }}"
+                                       value="{{ value if value is not none else '' }}"
+                                       class="settings-input"
+                                       data-section="Content Sources"
+                                       data-key="{{ source_id }}.{{ key }}"
+                                       placeholder="e.g., AdaptiveLists">
+                                <p class="settings-description">Optional: Specify a custom subfolder within the main symlink root directory for items from this source.</p>
+                            </div>
+                        </div>
+
+                        {# Render Plex Labels configuration if available for this source type #}
+                        {% set source_type = config.type %}
+                        {% if settings_schema['Content Sources'].schema is defined and
+                              source_type in settings_schema['Content Sources'].schema and
+                              'plex_labels' in settings_schema['Content Sources'].schema[source_type] %}
+                            {% set plex_labels_config = config.get('plex_labels', {}) if config.get('plex_labels', {}) is mapping else {} %}
+                            {% set plex_labels_schema = settings_schema['Content Sources'].schema[source_type]['plex_labels'].schema %}
+
+                            <div class="settings-form-group" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
+                                <h5 style="margin-bottom: 10px; color: #f4f4f4;">Plex Labels Configuration</h5>
+                                <p class="settings-description" style="margin-bottom: 15px;">
+                                    Configure automatic Plex label assignment for items from this source. Labels help organize your Plex library and can be used for collections or filtering. More Plex label functions can be found on debug functions page.
+                                </p>
+
+                                {# Enabled checkbox #}
+                                <div class="settings-form-group">
+                                    <label class="settings-title">
+                                        <input type="checkbox"
+                                               id="content-sources-{{ source_id }}-plex_labels-enabled"
+                                               name="Content Sources.{{ source_id }}.plex_labels.enabled"
+                                               data-section="Content Sources"
+                                               data-key="{{ source_id }}.plex_labels.enabled"
+                                               onchange="togglePlexLabelsFields('{{ source_id }}')"
+                                               {% if plex_labels_config.get('enabled', False) %}checked{% endif %}>
+                                        Enable Plex Labels
+                                    </label>
+                                    <p class="settings-description">{{ plex_labels_schema.enabled.description }}</p>
+                                </div>
+
+                                {# Plex Labels dependent fields - indented and disabled when Enable Plex Labels is unchecked #}
+                                <div class="plex-labels-dependent-fields" id="plex-labels-dependent-{{ source_id }}" style="margin-left: 10px;">
+                                    {# Label Mode dropdown #}
+                                    <div class="settings-form-group">
+                                        <label for="content-sources-{{ source_id }}-plex_labels-label_mode" class="settings-title">Label Mode:</label>
+                                        <select id="content-sources-{{ source_id }}-plex_labels-label_mode"
+                                                name="Content Sources.{{ source_id }}.plex_labels.label_mode"
+                                                class="settings-input"
+                                                data-section="Content Sources"
+                                                data-key="{{ source_id }}.plex_labels.label_mode"
+                                                onchange="updatePlexLabelsVisibility('{{ source_id }}')"
+                                                {% if not plex_labels_config.get('enabled', False) %}disabled{% endif %}>
+                                            {% for choice in plex_labels_schema.label_mode.choices %}
+                                                <option value="{{ choice }}"
+                                                        {% if plex_labels_config.get('label_mode', plex_labels_schema.label_mode.default) == choice %}selected{% endif %}>
+                                                    {{ choice|title }}
+                                                </option>
+                                            {% endfor %}
+                                        </select>
+                                        <p class="settings-description">{{ plex_labels_schema.label_mode.description }}</p>
+                                    </div>
+
+                                    {# Fixed Label input (shown when label_mode is 'fixed') #}
+                                    <div class="settings-form-group plex-labels-fixed" id="plex-labels-fixed-{{ source_id }}"
+                                         style="display: {% if plex_labels_config.get('label_mode', plex_labels_schema.label_mode.default) == 'fixed' %}block{% else %}none{% endif %};">
+                                        <label for="content-sources-{{ source_id }}-plex_labels-fixed_label" class="settings-title">Fixed Label:</label>
+                                        <input type="text"
+                                               id="content-sources-{{ source_id }}-plex_labels-fixed_label"
+                                               name="Content Sources.{{ source_id }}.plex_labels.fixed_label"
+                                               value="{{ plex_labels_config.get('fixed_label', '') }}"
+                                               class="settings-input"
+                                               data-section="Content Sources"
+                                               data-key="{{ source_id }}.plex_labels.fixed_label"
+                                               placeholder="e.g., Kids Content"
+                                               {% if not plex_labels_config.get('enabled', False) %}disabled{% endif %}>
+                                        <p class="settings-description">{{ plex_labels_schema.fixed_label.description }}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endif %}
+
+                    {% elif config.type == 'Other Plex Watchlist' %}
                         {# --- Render fields in SPECIFIC order for Other Plex Watchlist --- #}
 
 
@@ -1198,10 +1502,11 @@
                          {% endif %}
 
                         {# Render Plex Labels configuration if available for this source type #}
+                        {% set source_type = config.type %}
                         {% if settings_schema['Content Sources'].schema is defined and
                               source_type in settings_schema['Content Sources'].schema and
                               'plex_labels' in settings_schema['Content Sources'].schema[source_type] %}
-                            {% set plex_labels_config = config.get('plex_labels', {}) %}
+                            {% set plex_labels_config = config.get('plex_labels', {}) if config.get('plex_labels', {}) is mapping else {} %}
                             {% set plex_labels_schema = settings_schema['Content Sources'].schema[source_type]['plex_labels'].schema %}
 
                             <div class="settings-form-group" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">

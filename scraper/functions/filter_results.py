@@ -160,9 +160,8 @@ def filter_results(
             similarity_threshold = 0.85
         # If query_title_len >= 10, it uses the base_similarity_threshold (e.g., 0.8)
         # or the anime threshold if is_anime was true.
-    logging.info(f"DEBUG: Title length: {query_title_len}, Similarity threshold: {similarity_threshold}")
 
-    
+
     # Cache season episode counts for multi-episode content
     total_episodes = sum(season_episode_counts.values()) if season_episode_counts and is_episode else 0
     # --- START Logging for total_episodes ---
@@ -594,7 +593,7 @@ def filter_results(
 
                     # Additional check: If titles are similar length but have different non-year content, apply penalty
                     # This catches cases like "dragon.ball.daima" vs "dragon.ball.1986" or "dragon.ball.z" vs "dragon.ball"
-                    elif api_alias_length > 0 and final_alias_sim > 0.7:
+                    elif api_alias_length > 0 and final_alias_sim > 0.7 and normalized_parsed_title:
                         # Extract non-numeric words from both titles to check for content differences
                         # Include single-character words (like 'Z', 'X', 'GT') which are significant in anime titles
                         alias_words = set(w.lower() for w in normalized_api_alias.split('.') if not w.isdigit() and w)
@@ -1095,12 +1094,6 @@ def filter_results(
 
                     season_pack = season_episode_info.get('season_pack', 'Unknown')
                     if season_pack == 'N/A':
-                        # Add detailed logging to understand why this is considered a single episode
-                        logging.info(f"SINGLE EPISODE DEBUG: '{original_title}' rejected because season_pack='N/A'")
-                        logging.info(f"SINGLE EPISODE DEBUG: season_episode_info: {season_episode_info}")
-                        logging.info(f"SINGLE EPISODE DEBUG: episodes: {season_episode_info.get('episodes', [])}")
-                        logging.info(f"SINGLE EPISODE DEBUG: seasons: {season_episode_info.get('seasons', [])}")
-                        logging.info(f"SINGLE EPISODE DEBUG: parsed_info: {parsed_info}")
                         result['filter_reason'] = "Single episode result when searching for multi"
                         logging.info(f"Rejected: Single episode in multi mode for '{original_title}' (Size: {result['size']:.2f}GB)")
                         continue
@@ -1111,9 +1104,7 @@ def filter_results(
                         if len(episodes) < 2:
                             # For anime, add heuristic detection of season packs that PTT missed
                             is_likely_anime_pack = False
-                            
-                            logging.info(f"ANIME PACK DEBUG: Processing '{original_title}' - is_anime={is_anime}, genres={genres}")
-                            
+
                             if is_anime:
                                 # Check for anime pack indicators in the title
                                 anime_pack_indicators = [
@@ -1124,11 +1115,7 @@ def filter_results(
                                 
                                 title_lower = original_title.lower()
                                 has_pack_keywords = any(indicator in title_lower for indicator in anime_pack_indicators)
-                                
-                                # Debug which indicators matched
-                                matched_indicators = [indicator for indicator in anime_pack_indicators if indicator in title_lower]
-                                logging.info(f"ANIME PACK DEBUG: title_lower='{title_lower}', matched_indicators={matched_indicators}, has_pack_keywords={has_pack_keywords}")
-                                
+
                                 # Check file size - anime season packs are typically larger
                                 result_size = parse_size(result.get('size', 0))
                                 large_size = result_size > 5.0  # 5GB+ suggests multiple episodes

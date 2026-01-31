@@ -882,6 +882,7 @@ def get_and_add_wanted_content(source_id):
     from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss, get_wanted_from_friends_plex_rss
     from content_checkers.trakt import get_wanted_from_trakt_lists, get_wanted_from_trakt_watchlist, get_wanted_from_trakt_collection, get_wanted_from_friend_trakt_watchlist, get_wanted_from_special_trakt_lists
     from content_checkers.mdb_list import get_wanted_from_mdblists
+    from content_checkers.adaptive_list import get_wanted_from_adaptive_list
     from content_checkers.content_source_detail import append_content_source_detail
     from metadata.metadata import process_metadata
     from datetime import datetime, timedelta # Add this import
@@ -984,6 +985,9 @@ def get_and_add_wanted_content(source_id):
             wanted_content = get_wanted_from_trakt_collection(versions_from_config)
         elif source_type == 'Collected':
             wanted_content = get_wanted_from_collected()
+        elif source_type == 'Adaptive List':
+            # Adaptive List - each content source is one list with filters stored directly
+            wanted_content = get_wanted_from_adaptive_list(source_data, versions_from_config)
         else:
             logging.warning(f"Unknown source type: {source_type}")
             # Optionally return an error or empty result here
@@ -1073,11 +1077,15 @@ def get_and_add_wanted_content(source_id):
                                     item = append_content_source_detail(item, source_type=source_type)
 
                                 # Filter by media type after metadata processing
+                                # Handle both traditional format ('Movies'/'Shows') and Adaptive List format ('movie'/'tv')
                                 if source_media_type != 'All' and not source_type.startswith('Collected'):
                                     items_filtered_type = []
                                     for item in all_items_meta_processed_batch:
-                                        if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or \
-                                           (source_media_type == 'Shows' and item.get('media_type') in ['tv', 'episode']):
+                                        item_media_type = item.get('media_type')
+                                        # Check for traditional format OR Adaptive List format
+                                        is_movie_match = (source_media_type == 'Movies' or source_media_type == 'movie') and item_media_type == 'movie'
+                                        is_show_match = (source_media_type == 'Shows' or source_media_type == 'tv') and item_media_type in ['tv', 'episode']
+                                        if is_movie_match or is_show_match:
                                             items_filtered_type.append(item)
                                         else:
                                             batch_media_type_skipped += 1
@@ -1193,16 +1201,20 @@ def get_and_add_wanted_content(source_id):
                             item = append_content_source_detail(item, source_type=source_type)
 
                         # Filter by media type after metadata processing
+                        # Handle both traditional format ('Movies'/'Shows') and Adaptive List format ('movie'/'tv')
                         if source_media_type != 'All' and not source_type.startswith('Collected'):
                             items_filtered_type = []
                             for item in all_items_meta_processed_non_batch:
-                                if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or \
-                                   (source_media_type == 'Shows' and item.get('media_type') in ['tv', 'episode']):
+                                item_media_type = item.get('media_type')
+                                # Check for traditional format OR Adaptive List format
+                                is_movie_match = (source_media_type == 'Movies' or source_media_type == 'movie') and item_media_type == 'movie'
+                                is_show_match = (source_media_type == 'Shows' or source_media_type == 'tv') and item_media_type in ['tv', 'episode']
+                                if is_movie_match or is_show_match:
                                     items_filtered_type.append(item)
                                 else:
                                     media_type_skipped += 1
                                     logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to media type mismatch: {item.get('media_type')} != {source_media_type}")
-                            
+
                             all_items_meta_processed_non_batch = items_filtered_type
                             if media_type_skipped > 0:
                                 logging.debug(f"{source_id}: Skipped {media_type_skipped} items due to media type mismatch")
@@ -1690,6 +1702,56 @@ def run_task():
         logging.error(f"Error in run_task: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': f'An unexpected error occurred: {str(e)}'}), 500
 
+@debug_bp.route('/sync_plex_labels', methods=['POST'])
+@admin_required
+def sync_plex_labels():
+    """
+    Sync Plex labels from content sources with optional incremental mode.
+
+    Request JSON:
+        {
+            "incremental": true/false,  # Optional, default false
+            "days_back": 7              # Optional, default 7 (only used if incremental=true)
+        }
+    """
+    try:
+        data = request.get_json() or {}
+        incremental = data.get('incremental', False)
+        days_back = data.get('days_back', 7)
+
+        # Validate days_back
+        if not isinstance(days_back, int) or days_back < 1 or days_back > 365:
+            return jsonify({
+                'success': False,
+                'error': 'days_back must be an integer between 1 and 365'
+            }), 400
+
+        logging.info(f"Manual sync_plex_labels triggered: incremental={incremental}, days_back={days_back}")
+
+        # Get the program runner and run the task directly
+        runner = get_program_runner()
+        if not runner:
+            return jsonify({
+                'success': False,
+                'error': 'ProgramRunner not initialized'
+            }), 500
+
+        # Run the task directly (not queued, runs immediately)
+        runner.task_regenerate_labels_from_backfilled_details(incremental=incremental, days_back=days_back)
+
+        mode_desc = f"incremental (last {days_back} days)" if incremental else "full"
+        return jsonify({
+            'success': True,
+            'message': f'Label sync ({mode_desc}) completed successfully'
+        }), 200
+
+    except Exception as e:
+        logging.error(f"Error in sync_plex_labels: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @debug_bp.route('/get_available_tasks', methods=['GET'])
 @admin_required
 def get_available_tasks():
@@ -1705,6 +1767,11 @@ def get_available_tasks():
         {'id': 'pending_uncached', 'display_name': 'Pending Uncached'},
         {'id': 'upgrading', 'display_name': 'Upgrading'},
         {'id': 'task_plex_full_scan', 'display_name': 'Plex Full Scan'},
+        {'id': 'task_sync_plex_labels', 'display_name': 'Sync Plex Labels'},
+        {'id': 'task_backfill_plex_labels_content_source_detail', 'display_name': 'Backfill Plex Labels Content Source Detail'},
+        {'id': 'task_regenerate_labels_full', 'display_name': 'Sync Labels from Content Sources (Full - All Items)'},
+        {'id': 'task_regenerate_labels_incremental', 'display_name': 'Sync Labels from Content Sources (Incremental - Last 7 Days)'},
+        {'id': 'task_backfill_missing_labels', 'display_name': 'Backfill Missing Labels'},
         {'id': 'task_debug_log', 'display_name': 'Debug Log'},
         {'id': 'task_refresh_release_dates', 'display_name': 'Refresh Release Dates'},
         {'id': 'task_purge_not_wanted_magnets_file', 'display_name': 'Purge Not Wanted Magnets File'},

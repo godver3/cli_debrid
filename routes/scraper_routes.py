@@ -181,6 +181,8 @@ def add_torrent_to_debrid():
         version_from_form = request.form.get('version') # Renamed to avoid conflict
         tmdb_id = request.form.get('tmdb_id')
         original_scraped_torrent_title = request.form.get('original_scraped_torrent_title')
+        selected_folder = request.form.get('selected_folder')  # Get user-selected folder for symlink mode
+        selected_folder_is_custom = request.form.get('selected_folder_is_custom') == 'true'  # Check if it's a custom folder
         # --- START EDIT: Get current_score from form data ---
         current_score_str = request.form.get('current_score', '0') # Default to '0'
         try:
@@ -191,6 +193,15 @@ def add_torrent_to_debrid():
         # --- END EDIT ---
 
         logging.info(f"Adding {title} ({year}) to debrid provider")
+        logging.info(f"========== FOLDER SELECTION DEBUG ==========")
+        logging.info(f"selected_folder: {selected_folder}")
+        logging.info(f"selected_folder_is_custom: {selected_folder_is_custom}")
+        logging.info(f"============================================")
+        if selected_folder:
+            folder_type = "custom" if selected_folder_is_custom else "standard"
+            logging.info(f"✅ User selected folder: {selected_folder} (type: {folder_type})")
+        else:
+            logging.info(f"⚠️ No folder selected - will use genre-based auto-detection")
 
         # Determine the final version for the item
         final_version_for_item = version_from_form
@@ -324,7 +335,9 @@ def add_torrent_to_debrid():
                     'episode': episode_number,
                     'version': final_version_for_item, # Use the determined version
                     'tmdb_id': tmdb_id,
-                    'genres': genres
+                    'genres': genres,
+                    'selected_folder': selected_folder,  # Include user-selected folder for symlink mode
+                    'selected_folder_is_custom': selected_folder_is_custom  # Flag for custom vs standard folders
                 }
 
                 # If there's a recent entry, update it instead of creating new one
@@ -511,7 +524,10 @@ def add_torrent_to_debrid():
                     'release_date': release_date,
                     'genres': json.dumps(genres),  # JSON encode the genres list
                     'current_score': current_score,
-                    'real_debrid_original_title': torrent_info.get('original_filename')
+                    'real_debrid_original_title': torrent_info.get('original_filename'),
+                    'content_source': 'content_requestor',
+                    'selected_folder': selected_folder,  # User-selected folder from dropdown
+                    'selected_folder_is_custom': selected_folder_is_custom  # Flag for custom vs standard folders
                 }
 
                 # Add TV show specific fields if this is a TV show
@@ -565,9 +581,7 @@ def add_torrent_to_debrid():
                                 episode_item['episode_number'] = episode_num
                                 episode_item['current_score'] = current_score # Use the score passed for the pack
                                 episode_item['type'] = 'episode' # Ensure type is set for matching
-                                # --- START EDIT: Add content_source ---
-                                episode_item['content_source'] = 'content_requester'
-                                # --- END EDIT ---
+                                # Note: content_source inherited from item which already has 'content_requestor'
                                 
                                 # Get episode-specific release date and title
                                 first_aired = episode_data.get('first_aired')
@@ -1961,7 +1975,7 @@ def check_cache_status():
             # Check cache status based on what we have
             is_cached = None
             if magnet_link:
-                logging.info(f"Checking cache status for magnet link at index {index}")
+                logging.debug(f"Checking cache status for magnet link at index {index}")
                 is_cached = torrent_processor.check_cache(magnet_link, remove_cached=True, item=item_for_check)
                 
                 # Update PhalanxDB with new cache status if enabled
@@ -2421,3 +2435,102 @@ def lookup_by_id(): # This remains synchronous
 
     logging.info(f"ID lookup successful, returning {len(processed_results)} result(s).")
     return jsonify({'results': processed_results})
+
+@scraper_bp.route('/get_symlink_folders')
+@user_required
+def get_symlink_folders():
+    """
+    Get available symlink folders for the folder dropdown in torrent modal.
+    Returns folder information including:
+    - All enabled standard folders from settings (Movies, TV Shows, Anime, Documentary)
+    - Custom folders that physically exist in the symlink path
+    - Which folders are custom (need /Movies or /TV Shows subfolders)
+    - Whether each folder exists on the filesystem yet
+    - Folder name settings for auto-selection logic
+    """
+    try:
+        # Check if symlinking is enabled
+        file_management_mode = get_setting('File Management', 'file_collection_management', 'Plex')
+        if file_management_mode != 'Symlinked/Local':
+            return jsonify({'folders': [], 'enabled': False})
+
+        symlink_path = get_setting('File Management', 'symlinked_files_path', '/mnt/symlinked')
+
+        # Get folder name settings
+        folder_settings = {
+            'movies_folder_name': get_setting('Debug', 'movies_folder_name', 'Movies'),
+            'tv_shows_folder_name': get_setting('Debug', 'tv_shows_folder_name', 'TV Shows'),
+            'anime_movies_folder_name': get_setting('Debug', 'anime_movies_folder_name', 'Anime Movies'),
+            'anime_tv_shows_folder_name': get_setting('Debug', 'anime_tv_shows_folder_name', 'Anime TV Shows'),
+            'documentary_movies_folder_name': get_setting('Debug', 'documentary_movies_folder_name', 'Documentary Movies'),
+            'documentary_tv_shows_folder_name': get_setting('Debug', 'documentary_tv_shows_folder_name', 'Documentary TV Shows'),
+            'enable_separate_anime_folders': get_setting('Debug', 'enable_separate_anime_folders', False),
+            'enable_separate_documentary_folders': get_setting('Debug', 'enable_separate_documentary_folders', False)
+        }
+
+        # Build list of standard folders
+        standard_folders = [
+            folder_settings['movies_folder_name'],
+            folder_settings['tv_shows_folder_name']
+        ]
+
+        if folder_settings['enable_separate_anime_folders']:
+            standard_folders.extend([
+                folder_settings['anime_movies_folder_name'],
+                folder_settings['anime_tv_shows_folder_name']
+            ])
+
+        if folder_settings['enable_separate_documentary_folders']:
+            standard_folders.extend([
+                folder_settings['documentary_movies_folder_name'],
+                folder_settings['documentary_tv_shows_folder_name']
+            ])
+
+        # Get custom folders from content sources
+        custom_folders = []
+        all_settings = get_all_settings()
+        content_sources = all_settings.get('Content Sources', {})
+        for source_id, source_config in content_sources.items():
+            if isinstance(source_config, dict):
+                custom_folder = source_config.get('custom_symlink_subfolder', '').strip()
+                if custom_folder and custom_folder not in custom_folders:
+                    custom_folders.append(custom_folder)
+
+        # Scan filesystem to see which folders actually exist
+        existing_folder_names = []
+        if os.path.exists(symlink_path):
+            for folder_name in os.listdir(symlink_path):
+                folder_full_path = os.path.join(symlink_path, folder_name)
+                if os.path.isdir(folder_full_path):
+                    existing_folder_names.append(folder_name)
+
+        # Build comprehensive folder list:
+        # 1. All enabled standard folders (from settings, regardless of existence)
+        # 2. All custom folders (from content source settings, regardless of existence)
+        all_folders = []
+
+        # Add standard folders (always include if enabled in settings)
+        for folder_name in standard_folders:
+            all_folders.append({
+                'name': folder_name,
+                'is_custom': False,
+                'exists': folder_name in existing_folder_names
+            })
+
+        # Add ALL custom folders from content source settings (regardless of existence)
+        for folder_name in custom_folders:
+            all_folders.append({
+                'name': folder_name,
+                'is_custom': True,
+                'exists': folder_name in existing_folder_names
+            })
+
+        return jsonify({
+            'folders': all_folders,
+            'folder_settings': folder_settings,
+            'enabled': True
+        })
+
+    except Exception as e:
+        logging.error(f"Error getting symlink folders: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e), 'enabled': False}), 500

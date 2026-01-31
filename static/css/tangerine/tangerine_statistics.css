@@ -1,3 +1,7 @@
+/* Theme-based visibility */
+.tangerine-only { display: block; }
+.classic-only { display: none; }
+
 /* Main container */
 .statistics-wrapper {
     display: flex;
@@ -116,8 +120,9 @@ input:checked + .toggle-slider:before {
 }
 
 /* Collection stats - Grid layout with separate boxes */
+/* Collection stats - Cinephage-inspired card design */
 .stats-box.collection-stats {
-    margin-bottom: 10px;
+    margin-bottom: 20px;
     background: transparent;
     border: none;
     padding: 0;
@@ -125,44 +130,107 @@ input:checked + .toggle-slider:before {
 
 .stats-box.collection-stats .stat-items {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1rem;
 }
 
 .stats-box.collection-stats .stat-item {
-    background-color: rgba(255, 255, 255, 0.02);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    background-color: rgba(30, 30, 30, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 12px;
-    padding: 1.5rem;
-    text-align: center;
-    transition: all 0.3s ease;
+    padding: 1.25rem;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
 }
 
 .stats-box.collection-stats .stat-item:hover {
-    background-color: rgba(255, 255, 255, 0.04);
-    border-color: rgba(255, 255, 255, 0.1);
+    background-color: rgba(40, 40, 40, 0.9);
+    border-color: rgba(255, 107, 53, 0.3);
     transform: translateY(-2px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
 }
 
-.stats-box.collection-stats .stat-item p {
-    font-size: 1.75rem;
-    font-weight: 700;
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+.stats-box.collection-stats .stat-item .stat-content {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 1rem;
 }
 
-.stats-box.collection-stats .stat-item p::before {
-    content: attr(data-label);
-    display: block;
-    color: #888;
-    font-weight: 600;
-    font-size: 0.5em;
+.stats-box.collection-stats .stat-item .stat-text-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    flex: 1;
+    align-items: self-start;
+}
+
+.stats-box.collection-stats .stat-item .stat-icon {
+    background-color: rgba(255, 107, 53, 0.1);
+    border-radius: 8px;
+    padding: 0.625rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.stats-box.collection-stats .stat-item .stat-icon i {
+    color: #ff6b35;
+    font-size: 1.5rem;
+}
+
+.stats-box.collection-stats .stat-item .stat-label {
+    color: #aaa;
+    font-weight: 500;
+    font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 8px;
-    -webkit-text-fill-color: #888;
+}
+
+.stats-box.collection-stats .stat-item .stat-number {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #ff6b35;
+    line-height: 1;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.stats-box.collection-stats .stat-item .stat-badges {
+    display: flex;
+    gap: 0.375rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+}
+
+.stats-box.collection-stats .stat-item .stat-badge {
+    font-size: 0.75rem;
+    font-weight: 400;
+    line-height: 1.2;
+    padding: 0.25rem 0.45rem;
+    border-radius: 9px;
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #aaa;
+}
+
+.stats-box.collection-stats .stat-item .stat-badge.files {
+    background-color: #8056e09c;
+    color: #e0e0e0;
+}
+
+.stats-box.collection-stats .stat-item .stat-badge.episodes {
+    background-color: #3a7be29c;
+    color: #e0e0e0;
+}
+
+.stats-box.collection-stats .stat-item .stat-badge.warning {
+    background-color: #f78f209c;
+    color: #e0e0e0;
 }
 
 /* Top stats grid */
@@ -616,15 +684,17 @@ body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[
     #compact_toggle {
         display: none;
     }
+    .stats-box.collection-stats .stat-item .stat-number {
+        font-size: .95rem;
+    }
     .stats-box.collection-stats .stat-items {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(183px, 1fr));
-        gap: 0.5rem;
-        /* display: grid !important; */
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 0.75rem;
     }
 
     .stats-box.collection-stats .stat-item {
-        padding: 0.5rem;
+        padding: 0.75rem;
     }
     .top-stats {
         grid-template-columns: 1fr;
@@ -991,5 +1061,9 @@ input[type="text"], input[type="number"], input[type="email"], input[type="passw
 
     .stats-search-input {
         font-size: 16px; /* Prevents zoom on mobile */
+    }
+
+    .hide-mobile-text {
+        display: none;
     }
 }

@@ -189,6 +189,63 @@ def handle_rclone_file(file_path: str) -> Dict[str, Any]:
              search_type = 'show'
 
 
+        # Look for existing item in database to preserve content_source
+        imdb_id_for_lookup = best_match['ids'].get('imdb')
+        content_source_to_use = 'Collected_1'  # Default if no existing item found
+        content_source_detail_to_use = 'CD-Library'
+
+        if imdb_id_for_lookup:
+            from database.core import get_db_connection
+            conn = get_db_connection()
+            cursor = conn.cursor()
+
+            # Look for existing items (in any state) with same IMDB ID to inherit content_source
+            if search_type == 'movie':
+                cursor.execute('''
+                    SELECT content_source, content_source_detail
+                    FROM media_items
+                    WHERE imdb_id = ? AND type = 'movie'
+                    AND content_source IS NOT NULL AND content_source != ''
+                    ORDER BY
+                        CASE state
+                            WHEN 'Wanted' THEN 1
+                            WHEN 'Scraping' THEN 2
+                            WHEN 'Checking' THEN 3
+                            ELSE 4
+                        END
+                    LIMIT 1
+                ''', (imdb_id_for_lookup,))
+            else:
+                # For episodes, match by IMDB ID, season, and episode
+                season_num = parsed_info.get('season') or parsed_info.get('seasons', [None])[0]
+                episode_num = parsed_info.get('episodes', [None])[0]
+                cursor.execute('''
+                    SELECT content_source, content_source_detail
+                    FROM media_items
+                    WHERE imdb_id = ? AND type = 'episode'
+                    AND season_number = ? AND episode_number = ?
+                    AND content_source IS NOT NULL AND content_source != ''
+                    ORDER BY
+                        CASE state
+                            WHEN 'Wanted' THEN 1
+                            WHEN 'Scraping' THEN 2
+                            WHEN 'Checking' THEN 3
+                            ELSE 4
+                        END
+                    LIMIT 1
+                ''', (imdb_id_for_lookup, season_num, episode_num))
+
+            existing_item = cursor.fetchone()
+            cursor.close()
+            conn.close()
+
+            if existing_item and existing_item['content_source']:
+                content_source_to_use = existing_item['content_source']
+                content_source_detail_to_use = existing_item['content_source_detail'] or content_source_detail_to_use
+                logging.info(f"[RcloneProcessing] Found existing item with content_source='{content_source_to_use}', will use for new item")
+            else:
+                logging.info(f"[RcloneProcessing] No existing item with content_source found, using default: '{content_source_to_use}'")
+
         # Construct the item dictionary
         item_to_add = {
             'title': metadata.get('title'),
@@ -207,7 +264,9 @@ def handle_rclone_file(file_path: str) -> Dict[str, Any]:
             'original_collected_at': datetime.now(timezone.utc), # Use timezone-aware datetime
             'original_path_for_symlink': source_file, # Use full source path
             'overview': metadata.get('overview'),
-            'rating': metadata.get('vote_average') # Example if TMDB data is fetched
+            'rating': metadata.get('vote_average'), # Example if TMDB data is fetched
+            'content_source': content_source_to_use,  # Preserve from existing item or use default
+            'content_source_detail': content_source_detail_to_use  # Preserve from existing item or use default
         }
 
         # Add episode-specific information if it's a TV show

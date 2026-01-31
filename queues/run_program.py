@@ -273,16 +273,17 @@ class ProgramRunner:
             'task_reconcile_queues': 3600,         # Run every 1 hour
             'task_check_database_health': 3600,    # Run every hour
             'task_sync_time': 3600,                # Run every hour
-            'task_check_trakt_early_releases': 3600,# Run every hour
+            'task_check_trakt_early_releases': 7200,# Run every 2 hours (reduced to minimize API calls)
             'task_update_show_ids': 40600,         # Run every ~11 hours
             'task_update_show_titles': 45600,      # Run every ~12 hours
             'task_update_movie_ids': 50600,        # Run every ~14 hours
             'task_update_movie_titles': 55600,     # Run every ~15 hours
-            'task_refresh_release_dates': 36000,   # Run every 10 hours
+            'task_refresh_release_dates': 36600,   # Run every 10h 10m (10 hours + 600s stagger to avoid overlap with early_releases)
             # 'task_generate_airtime_report': 3600,  # Run every hour
             'task_run_library_maintenance': 12 * 60 * 60, # Run every twelve hours (if enabled)
             'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours (if enabled)
             'task_refresh_plex_tokens': 24 * 60 * 60,   # Run every 24 hours
+            'task_sync_plex_labels': 30 * 60,           # Run every 30 minutes
             'task_update_tv_show_status': 172800,       # Run every 48 hours
             # 'task_purge_not_wanted_magnets_file': 604800, # Default: 1 week (Can be added if needed)
             # 'task_local_library_scan': 900, # Default: 15 mins (Can be added if needed)
@@ -291,6 +292,7 @@ class ProgramRunner:
             # 'task_adjust_intervals_for_load': 120, # Run every 2 minutes
             # --- START EDIT: Add new task for library size refresh ---
             'task_refresh_library_size_cache': 12 * 60 * 60, # Run every 12 hours
+            'task_backup_database': 24 * 60 * 60, # Run every 24 hours (daily backup)
             # --- END EDIT ---
             'task_process_standalone_plex_removals': 60 * 60, # Run every hour
             # --- START EDIT: Add media analysis task interval ---
@@ -504,6 +506,9 @@ class ProgramRunner:
             # --- END EDIT ---
             # --- START EDIT: Enable new library size task by default ---
             'task_refresh_library_size_cache',
+            # --- END EDIT ---
+            # --- START EDIT: Enable database backup task by default ---
+            'task_backup_database',
             # --- END EDIT ---
             'task_process_standalone_plex_removals', # Enable by default
             # --- START EDIT: Enable media analysis task by default ---
@@ -725,10 +730,6 @@ class ProgramRunner:
         }
 
         # Log the final set of enabled tasks right before starting the scheduling process
-        # --- START EDIT: Add debug logging ---
-        logging.info(f"DEBUG: Final enabled tasks before scheduling: {sorted(list(self.enabled_tasks))}")
-        logging.info(f"DEBUG: Final task intervals before scheduling: {self.task_intervals}")
-        # --- END EDIT ---
         logging.info(f"Final enabled tasks before initial scheduling: {sorted(list(self.enabled_tasks))}")
 
         # --- START EDIT: Serialize all scheduled tasks ---
@@ -909,6 +910,22 @@ class ProgramRunner:
             initial_run: Whether this is the initial scheduling run
             initial_delay_seconds: Delay in seconds before first run (for staggering startup tasks)
         """
+        # Safety check: scheduler must be initialized before scheduling tasks
+        if self.scheduler is None:
+            logging.warning(f"Cannot schedule task '{task_name}': scheduler is not initialized. Start the program first.")
+            return False
+
+        # When disable_initialization is enabled, delay heavy tasks by their full interval
+        # This prevents release_dates and content sources from running immediately on startup
+        if initial_run and initial_delay_seconds == 0:
+            disable_init = get_setting('Debug', 'disable_initialization', '')
+            if disable_init:
+                # Heavy tasks: release_dates and content sources (_wanted tasks)
+                is_heavy_task = (task_name == 'task_refresh_release_dates' or task_name.endswith('_wanted'))
+                if is_heavy_task:
+                    initial_delay_seconds = interval_seconds
+                    logging.info(f"[disable_initialization] Delaying heavy task '{task_name}' by {interval_seconds}s (full interval)")
+
         current_thread_id_outer = threading.get_ident()
         logging.debug(f"Attempting to schedule task: '{task_name}' with interval {interval_seconds}s (initial_run: {initial_run}, initial_delay: {initial_delay_seconds}s) (Thread: {current_thread_id_outer})")
         lock_acquired = False # Flag to track lock acquisition
@@ -1223,7 +1240,8 @@ class ProgramRunner:
                 'My Plex RSS Watchlist': 900,
                 'My Friends Plex RSS Watchlist': 900,
                 'My Friends Trakt Watchlist': 900,
-                'Special Trakt Lists': 900 # Added new source type with default interval
+                'Special Trakt Lists': 900,
+                'Adaptive List': 900  # TMDB discover-based adaptive lists
             }
             
             log_intervals_message = ["Content source intervals being applied to effective set:"] # Prepare log message
@@ -1768,6 +1786,10 @@ class ProgramRunner:
                         except Exception as e:
                             logging.error(f"Failed to fetch Other Plex watchlist for {watchlist['username']}: {str(e)}")
                             continue
+            elif source_type == 'Adaptive List':
+                from content_checkers.adaptive_list import get_wanted_from_adaptive_list
+                # Get the list configurations from the source data
+                wanted_content = get_wanted_from_adaptive_list(data, versions_from_config)
             else:
                 logging.warning(f"Unknown source type: {source_type}")
                 return
@@ -1844,16 +1866,20 @@ class ProgramRunner:
                                     item = append_content_source_detail(item, source_type=source_type)
                                 
                                 # Filter by media type after metadata processing
+                                # Handle both traditional format ('Movies'/'Shows') and Adaptive List format ('movie'/'tv')
                                 if source_media_type != 'All' and not source_type.startswith('Collected'):
                                     items_filtered_type = []
                                     for item in all_items:
-                                        if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or \
-                                           (source_media_type == 'Shows' and item.get('media_type') in ['tv', 'episode']):
+                                        item_media_type = item.get('media_type')
+                                        # Check for traditional format OR Adaptive List format
+                                        is_movie_match = (source_media_type == 'Movies' or source_media_type == 'movie') and item_media_type == 'movie'
+                                        is_show_match = (source_media_type == 'Shows' or source_media_type == 'tv') and item_media_type in ['tv', 'episode']
+                                        if is_movie_match or is_show_match:
                                             items_filtered_type.append(item)
                                         else:
                                             media_type_skipped += 1
                                             logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to media type mismatch: {item.get('media_type')} != {source_media_type}")
-                                    
+
                                     all_items = items_filtered_type
                                     if media_type_skipped > 0:
                                         logging.debug(f"Batch {source}: Skipped {media_type_skipped} items due to media type mismatch")
@@ -1955,16 +1981,20 @@ class ProgramRunner:
                                 item = append_content_source_detail(item, source_type=source_type)
                             
                             # Filter by media type after metadata processing
+                            # Handle both traditional format ('Movies'/'Shows') and Adaptive List format ('movie'/'tv')
                             if source_media_type != 'All' and not source_type.startswith('Collected'):
                                 items_filtered_type = []
                                 for item in all_items:
-                                    if (source_media_type == 'Movies' and item.get('media_type') == 'movie') or \
-                                       (source_media_type == 'Shows' and item.get('media_type') in ['tv', 'episode']):
+                                    item_media_type = item.get('media_type')
+                                    # Check for traditional format OR Adaptive List format
+                                    is_movie_match = (source_media_type == 'Movies' or source_media_type == 'movie') and item_media_type == 'movie'
+                                    is_show_match = (source_media_type == 'Shows' or source_media_type == 'tv') and item_media_type in ['tv', 'episode']
+                                    if is_movie_match or is_show_match:
                                         items_filtered_type.append(item)
                                     else:
                                         media_type_skipped += 1
                                         logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to media type mismatch: {item.get('media_type')} != {source_media_type}")
-                                
+
                                 all_items = items_filtered_type
                                 if media_type_skipped > 0:
                                     logging.debug(f"{source}: Skipped {media_type_skipped} items due to media type mismatch")
@@ -2820,6 +2850,70 @@ class ProgramRunner:
              # Catch potential socket errors, etc.
              logging.error(f"Unexpected error during time synchronization: {e}")
 
+    def task_backup_database(self):
+        """
+        Scheduled task to backup the database daily.
+        Only runs when the system is idle to avoid performance impact.
+        """
+        try:
+            # Check if system is idle before running backup
+            if not self._is_system_idle_for_backup():
+                logging.info("[DATABASE_BACKUP] System is busy, skipping scheduled backup")
+                return
+
+            logging.info("[DATABASE_BACKUP] Starting scheduled database backup (system is idle)")
+
+            # Import here to avoid circular import
+            from main import backup_database
+
+            # Run backup with 3 backup retention
+            success = backup_database(max_backups=3)
+
+            if success:
+                logging.info("[DATABASE_BACKUP] Scheduled database backup completed successfully")
+            else:
+                logging.warning("[DATABASE_BACKUP] Scheduled database backup failed")
+
+        except Exception as e:
+            logging.error(f"[DATABASE_BACKUP] Error in scheduled backup task: {e}", exc_info=True)
+
+    def _is_system_idle_for_backup(self):
+        """
+        Check if the system is idle enough to run a database backup.
+
+        Returns:
+            bool: True if system is idle, False if busy
+        """
+        try:
+            # Check 1: No active queue processing (checking if any tasks are currently executing)
+            if self.currently_executing_tasks:
+                logging.debug(f"[DATABASE_BACKUP] System busy: {len(self.currently_executing_tasks)} task(s) executing")
+                return False
+
+            # Check 2: Queue sizes are not growing rapidly (system is stable)
+            from queues.queue_manager import QueueManager
+            queue_manager = QueueManager()
+
+            # If scraping or adding queues have items, system is actively working
+            scraping_size = queue_manager.get_queue_size('Scraping')
+            adding_size = queue_manager.get_queue_size('Adding')
+
+            if scraping_size > 0 or adding_size > 0:
+                logging.debug(f"[DATABASE_BACKUP] System busy: Scraping={scraping_size}, Adding={adding_size}")
+                return False
+
+            # Check 3: Not in a paused state (avoid backing up during maintenance)
+            if queue_manager.is_paused():
+                logging.debug("[DATABASE_BACKUP] System paused, waiting for resume")
+                return False
+
+            logging.debug("[DATABASE_BACKUP] System is idle, backup can proceed")
+            return True
+
+        except Exception as e:
+            logging.warning(f"[DATABASE_BACKUP] Error checking idle state: {e}, assuming not idle")
+            return False
+
     def task_reconcile_queues(self):
         """Task to reconcile items in Checking state with matching filled_by_file items,
            and deduplicate items in Wanted, Scraping, or Unreleased states."""
@@ -2851,7 +2945,7 @@ class ProgramRunner:
             # Step 1: Original reconciliation for 'Checking' items based on filled_by_file
             reconciliation_logger.info("Starting reconciliation for 'Checking' items based on shared file paths...")
             cursor.execute("""
-                SELECT 
+                SELECT
                     c.id as checking_id, c.title as checking_title, c.type as checking_type, c.filled_by_file,
                     m.id as matching_id, m.title as matching_title, m.state as matching_state, m.type as matching_type
                 FROM media_items c
@@ -2859,6 +2953,7 @@ class ProgramRunner:
                 WHERE c.state = 'Checking'
                   AND c.filled_by_file IS NOT NULL
                   AND m.state != 'Checking'
+                  AND (m.ghostlisted IS NULL OR m.ghostlisted = 0)
             """)
             reconciliation_pairs = cursor.fetchall()
 
@@ -2897,6 +2992,7 @@ class ProgramRunner:
                 FROM media_items
                 WHERE state IN ('Wanted', 'Scraping', 'Unreleased')
                   AND imdb_id IS NOT NULL
+                  AND (ghostlisted IS NULL OR ghostlisted = 0)
                 ORDER BY imdb_id, type, season_number, episode_number, version, id
             """)
             candidate_semantic_duplicates = cursor.fetchall()
@@ -3184,6 +3280,130 @@ class ProgramRunner:
         elif exception[0]:
             logging.error(f"Download stats refresh failed: {str(exception[0])}")
 
+    def task_sync_plex_labels(self):
+        """
+        Sync Plex labels for Collected items
+
+        Ensures labels stored in database are also present in Plex.
+        Handles cases where labels failed to sync initially (item not in Plex yet).
+        Only runs if at least one content source has Plex labels enabled.
+        """
+        try:
+            # Check if any content source has Plex labels enabled
+            from utilities.settings import get_all_settings
+            settings = get_all_settings()
+            content_sources = settings.get('Content Sources', {})
+
+            labels_enabled = any(
+                source.get('plex_labels', {}).get('enabled', False)
+                for source in content_sources.values()
+            )
+
+            if not labels_enabled:
+                logging.debug("Plex labels not enabled in any content source, skipping sync task")
+                return
+
+            from utilities.plex_label_manager import sync_pending_labels
+            synced = sync_pending_labels(max_items=50)
+            if synced > 0:
+                logging.info(f"Synced {synced} Plex labels")
+        except Exception as e:
+            logging.error(f"Error in task_sync_plex_labels: {e}", exc_info=True)
+
+    def task_backfill_plex_labels_content_source_detail(self):
+        """
+        Backfill content_source_detail for items with NULL value
+
+        Parses the content_source field and extracts appropriate detail values
+        for all source types. Used to fix old items that were added before
+        content_source_detail was properly populated.
+        """
+        try:
+            from utilities.plex_label_manager import backfill_content_source_detail
+            result = backfill_content_source_detail()
+
+            if result['success']:
+                logging.info(f"Backfilled {result['total_updated']} items: {result['by_source']}")
+            else:
+                logging.error(f"Backfill failed: {result.get('error', 'Unknown error')}")
+
+        except Exception as e:
+            logging.error(f"Error in task_backfill_plex_labels_content_source_detail: {e}", exc_info=True)
+
+    def task_regenerate_labels_from_backfilled_details(self, incremental: bool = False, days_back: int = 7):
+        """
+        Regenerate Plex labels from updated content_source_detail values
+
+        Args:
+            incremental: If True, only sync items that need updating (not synced or recently changed)
+            days_back: When incremental=True, also sync items collected in last N days (default 7)
+
+        After backfilling content_source_detail, this regenerates the plex_labels
+        column from the updated detail values and syncs them to Plex. Handles all
+        source types including Overseerr, Agregarr, and internal sources.
+
+        When incremental=True, only processes items with plex_labels_last_synced IS NULL
+        or items collected in the last N days, resulting in 95%+ time reduction.
+        """
+        try:
+            from utilities.plex_label_manager import regenerate_labels_from_backfilled_details
+            result = regenerate_labels_from_backfilled_details(incremental=incremental, days_back=days_back)
+
+            if result['success']:
+                mode_info = f" ({result.get('mode', 'full')} mode)" if 'mode' in result else ""
+                logging.info(f"Regenerated labels for {result['total_regenerated']} items ({result['unique_items']} unique TMDB IDs){mode_info}")
+            else:
+                logging.error(f"Label regeneration failed: {result.get('error', 'Unknown error')}")
+
+        except Exception as e:
+            logging.error(f"Error in task_regenerate_labels_from_backfilled_details: {e}", exc_info=True)
+
+    def task_regenerate_labels_full(self):
+        """
+        Full sync: Regenerate Plex labels for ALL items
+
+        Processes all 5922 items regardless of when they were last synced.
+        Use this for initial setup, troubleshooting, or after bulk configuration changes.
+
+        Expected time: 13-14 hours
+        """
+        logging.info("Starting FULL label sync (all items)")
+        self.task_regenerate_labels_from_backfilled_details(incremental=False)
+
+    def task_regenerate_labels_incremental(self):
+        """
+        Incremental sync: Regenerate Plex labels for changed/new items only
+
+        Only processes items that:
+        - Have never been synced (plex_labels_last_synced IS NULL), OR
+        - Were collected in the last 7 days
+
+        Use this for routine maintenance and regular syncs.
+
+        Expected time: 5-15 minutes
+        """
+        logging.info("Starting INCREMENTAL label sync (last 7 days + never synced)")
+        self.task_regenerate_labels_from_backfilled_details(incremental=True, days_back=7)
+
+    def task_backfill_missing_labels(self):
+        """
+        Backfill Plex labels for items with NULL/empty plex_labels
+
+        Generates and syncs labels only for items that don't have labels yet,
+        without overwriting existing labels. Safe to run multiple times.
+        """
+        try:
+            from utilities.plex_label_manager import backfill_missing_labels
+            result = backfill_missing_labels()
+
+            if result['success']:
+                logging.info(f"Backfilled labels for {result['total_backfilled']} items ({result['unique_items']} unique TMDB IDs)")
+            else:
+                logging.error(f"Label backfill failed: {result.get('error', 'Unknown error')}")
+
+        except Exception as e:
+            logging.error(f"Error in task_backfill_missing_labels: {e}", exc_info=True)
+
     def task_refresh_plex_tokens(self):
         logging.info("Performing periodic Plex token validation")
         from utilities.plex_functions import validate_plex_tokens
@@ -3245,7 +3465,7 @@ class ProgramRunner:
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
-            items = cursor.execute('SELECT id, title, filled_by_title, filled_by_file, type, imdb_id, tmdb_id, season_number, episode_number, year, version, original_scraped_torrent_title, real_debrid_original_title FROM media_items WHERE state = "Checking"').fetchall()
+            items = cursor.execute('SELECT id, title, filled_by_title, filled_by_file, type, imdb_id, tmdb_id, season_number, episode_number, year, version, original_scraped_torrent_title, real_debrid_original_title FROM media_items WHERE state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)').fetchall()
         except sqlite3.Error as db_err:
             logging.error(f"Database error fetching items for Plex check: {db_err}")
             conn.close()
@@ -5062,7 +5282,20 @@ class ProgramRunner:
                 return
 
             # Make sure the script is executable
-            os.chmod(script_path, 0o755)
+            # Check if already executable to avoid permission errors on mounted filesystems
+            try:
+                current_mode = os.stat(script_path).st_mode
+                if not (current_mode & 0o111):  # Check if any execute bit is set
+                    os.chmod(script_path, 0o755)
+                    logging.debug(f"Set execute permissions on {script_path}")
+                else:
+                    logging.debug(f"Script {script_path} is already executable")
+            except (OSError, PermissionError) as e:
+                # If chmod fails but file exists, check if it's already executable
+                if os.access(script_path, os.X_OK):
+                    logging.debug(f"Script {script_path} is executable (chmod failed but file has execute permission)")
+                else:
+                    logging.warning(f"Could not set execute permission on {script_path}: {e}. Will attempt to run anyway.")
 
             # Run the bulk subtitle processing script with a limit of 200 files
             max_files = 200
@@ -5265,10 +5498,10 @@ def process_overseerr_webhook(data):
 
 
     if not media_type or not tmdb_id:
-        logging.error(f"Invalid Overseerr webhook data: missing media_type or tmdbId. Data: {data}")
+        logging.error(f"Invalid Overseerr/Agregarr webhook data: missing media_type or tmdbId. Data: {data}")
         return
 
-    logging.info(f"Processing Overseerr webhook: Type={media_type}, TMDB={tmdb_id}, Title='{title}', Requester='{requester_display_name}' (email: {requester_email}), Request ID={request_id}")
+    logging.info(f"Processing Overseerr/Agregarr webhook: Type={media_type}, TMDB={tmdb_id}, Title='{title}', Requester='{requester_display_name}' (email: {requester_email}), Request ID={request_id}")
 
     wanted_item = {
         'tmdb_id': tmdb_id,
@@ -5301,20 +5534,32 @@ def process_overseerr_webhook(data):
     wanted_content_processed = process_metadata(wanted_content)
 
     if wanted_content_processed:
-        # Get the versions for the relevant Overseerr source from settings
+        # Get the versions for the relevant Overseerr or Agregarr source from settings
         content_sources = ProgramRunner().get_content_sources(force_refresh=False) # Don't need full refresh usually
-        # Find the first enabled Overseerr source (assuming only one usually)
-        overseerr_source_key = next((source for source, data in content_sources.items()
-                                     if source.startswith('Overseerr')), None)
+        
+        # Determine if this is from Agregarr based on requester name
+        is_agregarr = requester_display_name == "Agregarr"
+        
+        # Find the appropriate content source
+        if is_agregarr:
+            # Look for Agregarr source first
+            source_key = next((source for source, data in content_sources.items()
+                              if source.startswith('Agregarr')), None)
+            source_type = 'Agregarr'
+        else:
+            # Look for Overseerr source
+            source_key = next((source for source, data in content_sources.items()
+                              if source.startswith('Overseerr')), None)
+            source_type = 'Overseerr'
 
         versions = {}
-        source_name = 'overseerr_webhook' # Default source name
-        if overseerr_source_key:
-             versions = content_sources[overseerr_source_key].get('versions', {})
-             source_name = overseerr_source_key # Use the actual source name if found
-             logging.info(f"Using versions from configured Overseerr source '{overseerr_source_key}': {versions}")
+        source_name = f"{source_type.lower()}_webhook" # Default source name
+        if source_key:
+             versions = content_sources[source_key].get('versions', {})
+             source_name = source_key # Use the actual source name if found
+             logging.info(f"Using versions from configured {source_type} source '{source_key}': {versions}")
         else:
-             logging.warning("No enabled Overseerr content source found in settings. Using default versions (empty).")
+             logging.warning(f"No enabled {source_type} content source found in settings. Using default versions (empty).")
 
 
         all_items = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', []) + wanted_content_processed.get('anime', [])
@@ -5326,13 +5571,13 @@ def process_overseerr_webhook(data):
                  # Store request ID for removal tracking
                  item['overseerr_request_id'] = request_id
                  from content_checkers.content_source_detail import append_content_source_detail
-                 item = append_content_source_detail(item, source_type='Overseerr') # Keep source type generic
+                 item = append_content_source_detail(item, source_type=source_type) # Use determined source type (Overseerr or Agregarr)
 
              from database import add_collected_items, add_wanted_items
              add_wanted_items(all_items, versions) # Pass the determined versions
-             logging.info(f"Processed and added {len(all_items)} wanted item(s) from Overseerr webhook (TMDB ID: {tmdb_id}). Requester: {requester_display_name}")
+             logging.info(f"Processed {len(all_items)} wanted item(s) from {source_type} webhook (TMDB ID: {tmdb_id}). Requester: {requester_display_name}")
         else:
-             logging.warning(f"Metadata processing for Overseerr webhook (TMDB ID: {tmdb_id}) resulted in no items to add.")
+             logging.warning(f"Metadata processing for {source_type} webhook (TMDB ID: {tmdb_id}) resulted in no items to add.")
 
 def generate_airtime_report():
     from metadata.metadata import _get_local_timezone # Added import here
@@ -5347,6 +5592,7 @@ def generate_airtime_report():
         SELECT id, title, type, release_date, airtime, state
         FROM media_items
         WHERE state IN ('Wanted', 'Unreleased')
+        AND (ghostlisted IS NULL OR ghostlisted = 0)
         ORDER BY release_date, airtime
     """)
     items = cursor.fetchall()
@@ -5500,11 +5746,11 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
     # with Plex metadata (location_on_disk, resolution, size, imdb_id, tmdb_id, collected_at)
     if mode == 'Plex' or bypass or backfill:
         if backfill:
-            logging.info("Getting all collected content from Plex for BACKFILL...")
+            logging.info("Getting all collected content from Plex for BACKFILL (with size/resolution fetch)...")
         else:
             logging.info("Getting all collected content from Plex...")
         try:
-            collected_content = asyncio.run(run_get_collected_from_plex(bypass=bypass))
+            collected_content = asyncio.run(run_get_collected_from_plex(bypass=bypass, fetch_sizes=backfill))
         except Exception as e:
              logging.error(f"Error running run_get_collected_from_plex: {e}", exc_info=True)
              return None # Return None on error during fetch
@@ -5527,6 +5773,37 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
         episodes = collected_content.get('episodes', [])
 
         logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes from {mode}.")
+
+        # FILESYSTEM FALLBACK: If Plex returned 0 items and we're in backfill mode with Symlinked/Local,
+        # fall back to filesystem scanning to get size/resolution data
+        if backfill and len(movies) == 0 and len(episodes) == 0 and mode == 'Symlinked/Local':
+            logging.warning("[BACKFILL_FALLBACK] Plex returned 0 items, falling back to filesystem scan for backfill...")
+            try:
+                from database.database_reading import get_all_media_items
+                from utilities.local_library_scan import local_library_scan
+
+                # Get all Collected items from database
+                db_items = get_all_media_items(state='Collected')
+                logging.info(f"[BACKFILL_FALLBACK] Got {len(db_items)} items from database for filesystem backfill")
+
+                if db_items:
+                    # Scan filesystem to get size/resolution data
+                    scan_results = local_library_scan(db_items)
+                    logging.info(f"[BACKFILL_FALLBACK] Filesystem scan found data for {len(scan_results)} items")
+
+                    # Convert scan results to the format expected by add_collected_items
+                    # scan_results is a dict: {item_id: {updated_item_dict}}
+                    filesystem_items = list(scan_results.values())
+
+                    if filesystem_items:
+                        movies = [item for item in filesystem_items if item.get('type') == 'movie']
+                        episodes = [item for item in filesystem_items if item.get('type') == 'episode']
+                        logging.info(f"[BACKFILL_FALLBACK] Filesystem fallback found {len(movies)} movies and {len(episodes)} episodes")
+
+                        # Update collected_content to include filesystem data
+                        collected_content = {'movies': movies, 'episodes': episodes}
+            except Exception as e:
+                logging.error(f"[BACKFILL_FALLBACK] Error during filesystem fallback: {e}", exc_info=True)
 
         # Don't return None if some items were skipped during add_collected_items
         if len(movies) > 0 or len(episodes) > 0:

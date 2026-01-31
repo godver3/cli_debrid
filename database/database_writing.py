@@ -451,7 +451,7 @@ def update_media_item(item_id: int, **kwargs):
         query = f'''
             UPDATE media_items
             SET {set_clause}, last_updated = ?
-            WHERE id = ?
+            WHERE id = ? AND (ghostlisted IS NULL OR ghostlisted = 0)
         '''
 
         conn.execute(query, params)
@@ -696,6 +696,40 @@ def add_media_item(item: dict) -> int:
     """
     conn = get_db_connection()
     try:
+        # GHOSTLIST CHECK: Don't insert if a ghostlisted version already exists
+        imdb_id = item.get('imdb_id')
+        tmdb_id = item.get('tmdb_id')
+        item_type = item.get('type')
+
+        if imdb_id or tmdb_id:
+            ghostlist_check_query = '''
+                SELECT id FROM media_items
+                WHERE (imdb_id = ? OR tmdb_id = ?)
+                AND type = ?
+                AND (ghostlisted = 1 OR state = 'Blacklisted')
+                LIMIT 1
+            '''
+            ghostlist_check_params = [imdb_id, tmdb_id, item_type]
+
+            # For episodes, also check season/episode number
+            if item_type == 'episode' and 'season_number' in item and 'episode_number' in item:
+                ghostlist_check_query = '''
+                    SELECT id FROM media_items
+                    WHERE (imdb_id = ? OR tmdb_id = ?)
+                    AND type = ?
+                    AND season_number = ?
+                    AND episode_number = ?
+                    AND (ghostlisted = 1 OR state = 'Blacklisted')
+                    LIMIT 1
+                '''
+                ghostlist_check_params = [imdb_id, tmdb_id, item_type, item['season_number'], item['episode_number']]
+
+            ghostlist_result = conn.execute(ghostlist_check_query, ghostlist_check_params).fetchone()
+            if ghostlist_result:
+                logging.info(f"⛔ Skipping add_media_item - user has ghostlisted/blacklisted this item (ID: {ghostlist_result[0]}, IMDB: {imdb_id}, Type: {item_type})")
+                conn.close()
+                return None
+
         # Get the column names from the item dictionary
         columns = list(item.keys())
         placeholders = ['?' for _ in columns]

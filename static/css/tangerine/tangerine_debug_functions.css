@@ -648,6 +648,36 @@ body[data-theme="tangerine"] .debug_items {
     background: #1a1a1a;
 }
 
+/* Plex Labels Help Button */
+body[data-theme="tangerine"] .debug-container .plex-labels-help-btn {
+    width: 6% !important;
+    position: absolute;
+    right: 0;
+    top: 0;
+    border: none;
+    border-radius: 10px;
+    padding: 4px 8px !important;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    margin-top: 0.5rem;
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%) !important;
+    color: #fff;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+}
+
+body[data-theme="tangerine"] .debug-container .plex-labels-help-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(255, 107, 53, 0.3);
+}
+
+body[data-theme="tangerine"] .debug-container .plex-labels-help-btn:active {
+    transform: translateY(0);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .debug-container {
