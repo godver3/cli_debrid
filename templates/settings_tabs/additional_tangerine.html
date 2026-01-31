@@ -423,17 +423,6 @@
             </div>
         </div>
         <div class="settings-section-content">
-            <!-- Primary Artwork Source -->
-            <div class="settings-form-group">
-                <label for="additional-primary_artwork_source" class="settings-title">Primary Artwork Source:</label>
-                <select id="additional-primary_artwork_source" name="Library Manager.primary_artwork_source" class="settings-input"
-                        data-section="Library Manager" data-key="primary_artwork_source">
-                    <option value="Plex" {% if settings.get('Library Manager', {}).get('primary_artwork_source', 'Plex') == 'Plex' %}selected{% endif %}>Plex</option>
-                    <option value="TMDB" {% if settings.get('Library Manager', {}).get('primary_artwork_source', 'Plex') == 'TMDB' %}selected{% endif %}>TMDB</option>
-                </select>
-                <p class="settings-description">Choose where to get posters and artwork from first. Plex uses your server's artwork (requires Plex authentication). TMDB uses online movie database (requires TMDB API key). The other source will be used as backup.</p>
-            </div>
-
             <!-- Auto Ghostlist Deleted -->
             <div class="settings-form-group">
                 <label for="additional-ghostlist_mode" class="settings-title">Auto Ghostlist Deleted:</label>
@@ -441,6 +430,15 @@
                        data-section="Library Manager" data-key="ghostlist_mode"
                        {% if settings.get('Library Manager', {}).get('ghostlist_mode', False) %}checked{% endif %}>
                 <p class="settings-description">Automatically add deleted shows and movies to the ghostlist to prevent them from being re-added. When enabled, deleting a show will mark it as ghosted in the database. When disabled, deleted shows can be re-added by content sources.</p>
+            </div>
+
+            <!-- Remove From Content Sources -->
+            <div class="settings-form-group">
+                <label for="additional-remove_from_content_sources" class="settings-title">Remove From Content Sources:</label>
+                <input type="checkbox" id="additional-remove_from_content_sources" name="Library Manager.remove_from_content_sources"
+                       data-section="Library Manager" data-key="remove_from_content_sources"
+                       {% if settings.get('Library Manager', {}).get('remove_from_content_sources', True) %}checked{% endif %}>
+                <p class="settings-description">Remove items from content sources (Trakt, Overseerr, etc.) during deletion. Enable when ghostlist OFF (prevents re-addition, slower). Disable when ghostlist ON (faster, ghostlist already prevents re-addition).</p>
             </div>
 
             <!-- Clear Cache Button -->

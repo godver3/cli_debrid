@@ -702,6 +702,124 @@ input, textarea, [contenteditable="true"] {
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
+/* ==========================================================================
+   Discover-Style Badges (Status & Media Type)
+   ========================================================================== */
+
+/* Status badge with icon - stacks inside badge containers */
+.db-status-badge {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.db-status-badge svg {
+    width: 16px;
+    height: 16px;
+}
+
+.db-status-badge.present,
+.db-status-badge.collected {
+    background-color: rgba(16, 185, 129, 0.5);
+    color: white;
+}
+
+.db-status-badge.missing {
+    background-color: rgba(239, 68, 68, 0.5);
+    color: white;
+}
+
+.db-status-badge.wanted,
+.db-status-badge.partial {
+    background-color: rgba(234, 179, 8, 0.5);
+    color: white;
+}
+
+.db-status-badge.upgrading {
+    background-color: rgba(59, 130, 246, 0.5);
+    color: white;
+}
+
+.db-status-badge.blacklisted {
+    background-color: rgba(30, 30, 30, 0.5);
+    color: white;
+}
+
+.db-status-badge.unreleased {
+    background-color: rgba(249, 115, 22, 0.5);
+    color: white;
+}
+
+/* Media type badge with icon - stacks inside badge containers */
+.media-type-badge {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(4px);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.media-type-badge svg {
+    width: 16px;
+    height: 16px;
+}
+
+.media-type-badge.badge-movie {
+    background-color: rgba(139, 92, 246, 0.5);
+    color: white;
+}
+
+.media-type-badge.badge-tv {
+    background-color: rgba(59, 130, 246, 0.5);
+    color: white;
+}
+
+/* Split badges for mixed states - 50/50 gradient backgrounds */
+.db-status-badge.split-badge {
+    overflow: hidden;
+}
+
+/* Priority order: Wanted > Unreleased > Collected > Blacklisted */
+/* Primary state is on the left (50%), secondary on the right (50%) */
+
+/* Wanted + Unreleased */
+.db-status-badge.split-wanted-unreleased {
+    background: linear-gradient(90deg, rgba(234, 179, 8, 0.5) 50%, rgba(249, 115, 22, 0.5) 50%) !important;
+}
+
+/* Wanted + Collected */
+.db-status-badge.split-wanted-collected {
+    background: linear-gradient(90deg, rgba(234, 179, 8, 0.5) 50%, rgba(16, 185, 129, 0.5) 50%) !important;
+}
+
+/* Wanted + Blacklisted */
+.db-status-badge.split-wanted-blacklisted {
+    background: linear-gradient(90deg, rgba(234, 179, 8, 0.5) 50%, rgba(30, 30, 30, 0.5) 50%) !important;
+}
+
+/* Unreleased + Collected */
+.db-status-badge.split-unreleased-collected {
+    background: linear-gradient(90deg, rgba(249, 115, 22, 0.5) 50%, rgba(16, 185, 129, 0.5) 50%) !important;
+}
+
+/* Unreleased + Blacklisted */
+.db-status-badge.split-unreleased-blacklisted {
+    background: linear-gradient(90deg, rgba(249, 115, 22, 0.5) 50%, rgba(30, 30, 30, 0.5) 50%) !important;
+}
+
+/* Collected + Blacklisted */
+.db-status-badge.split-collected-blacklisted {
+    background: linear-gradient(90deg, rgba(16, 185, 129, 0.5) 50%, rgba(30, 30, 30, 0.5) 50%) !important;
+}
+
 /* Progress bar */
 .progress-bar-container {
     position: absolute;

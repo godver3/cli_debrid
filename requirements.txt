@@ -3,6 +3,7 @@ babelfish==0.6.1
 beautifulsoup4==4.12.3
 bencode.py==4.0.0
 bencodepy==0.9.5
+guessit>=3.7.0
 dogpile.cache>=0.9.2
 flask_session==0.8.0
 Flask==3.0.3

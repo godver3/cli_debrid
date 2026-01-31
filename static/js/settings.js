@@ -349,6 +349,19 @@ export function updateSettings() {
                 }
             }
 
+            // Preserve the 'lists' field for Adaptive List sources (managed via API, not form inputs)
+            // The lists are managed through the Discover page API, not through form fields
+            if (sourceData.type === 'Adaptive List') {
+                // Try to get lists from the existing loaded settings
+                const existingSource = window.contentSourceSettings ? window.contentSourceSettings[sourceId] : null;
+                if (existingSource && existingSource.lists) {
+                    sourceData.lists = existingSource.lists;
+                } else {
+                    // Initialize with empty array if not found
+                    sourceData.lists = [];
+                }
+            }
+
             settingsData['Content Sources'][sourceId] = sourceData;
         });
     }
@@ -426,7 +439,7 @@ export function updateSettings() {
     }
     
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
@@ -1006,6 +1019,15 @@ export function updateSettings() {
         console.log("Server response:", data);
 
         if (data.status === 'success') {
+            // Determine the success message based on restart requirement
+            let successMessage;
+            if (data.requires_restart) {
+                const reasons = data.restart_reasons ? data.restart_reasons.join(', ') : 'critical settings';
+                successMessage = `Settings saved successfully.<br><br><strong>⚠️ Restart Required</strong><br>Changes to ${reasons} require restarting CLI Debrid to take effect.`;
+            } else {
+                successMessage = 'Settings saved successfully.<br>Program runner restarted if running.';
+            }
+
             // Reload scraping tab to update scraper priority fields after settings save
             if (typeof window.reloadTabContent === 'function') {
                 console.log('[Settings Save] Reloading scraping tab to update scraper priorities...');
@@ -1015,21 +1037,33 @@ export function updateSettings() {
                     if (window.Loading) {
                         window.Loading.hide();
                     }
-                    showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: 'Settings saved successfully.<br>Program runner restarted if running.'});
+                    showPopup({
+                        type: data.requires_restart ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                        title: data.requires_restart ? 'Restart Required' : 'Success',
+                        message: successMessage
+                    });
                 }).catch(err => {
                     console.error('[Settings Save] Error reloading scraping tab:', err);
                     // Hide loading overlay even if reload fails
                     if (window.Loading) {
                         window.Loading.hide();
                     }
-                    showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: 'Settings saved successfully.<br>Program runner restarted if running.'});
+                    showPopup({
+                        type: data.requires_restart ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                        title: data.requires_restart ? 'Restart Required' : 'Success',
+                        message: successMessage
+                    });
                 });
             } else {
                 // Hide loading overlay if reloadTabContent not available
                 if (window.Loading) {
                     window.Loading.hide();
                 }
-                showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: 'Settings saved successfully.<br>Program runner restarted if running.'});
+                showPopup({
+                    type: data.requires_restart ? POPUP_TYPES.WARNING : POPUP_TYPES.SUCCESS,
+                    title: data.requires_restart ? 'Restart Required' : 'Success',
+                    message: successMessage
+                });
             }
         } else {
             // Hide loading overlay on error
@@ -1059,6 +1093,7 @@ function updateContentSourceCheckPeriods() {
 
     const defaultIntervals = {
         'Overseerr': 900,
+        'Agregarr': 900,
         'MDBList': 900,
         'Collected': 86400,
         'Trakt Watchlist': 900,
@@ -1067,7 +1102,8 @@ function updateContentSourceCheckPeriods() {
         'My Plex Watchlist': 900,
         'Other Plex Watchlist': 900,
         'My Plex RSS Watchlist': 900,
-        'My Friends Plex RSS Watchlist': 900
+        'My Friends Plex RSS Watchlist': 900,
+        'Adaptive List': 900
     };
 
     const enabledContentSources = Object.keys(settingsData['Content Sources'] || {}).filter(source => settingsData['Content Sources'][source].enabled);

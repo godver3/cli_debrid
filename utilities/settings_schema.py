@@ -243,6 +243,22 @@ SETTINGS_SCHEMA = {
             "sensitive": True
         }
     },
+    "MDBList": {
+        "tab": "Additional Settings",
+        "api_key": {
+            "type": "string",
+            "description": "MDBList API key - enables curated lists from IMDB, Trakt, Netflix, Disney+, and more on the Discover page. Get your API key at <a href='https://mdblist.com/preferences/' target='_blank'>mdblist.com/preferences</a>",
+            "default": "",
+            "sensitive": True
+        },
+        "cache_duration": {
+            "type": "integer",
+            "description": "How long to cache MDBList data (in hours). Lower values mean fresher data but more API calls.",
+            "default": 24,
+            "min": 1,
+            "max": 168
+        }
+    },
     "Staleness Threshold": {
         "tab": "Additional Settings",
         "staleness_threshold": {
@@ -1274,6 +1290,60 @@ SETTINGS_SCHEMA = {
                     }
                 }
             },
+            "Agregarr": {
+                "enabled": {"type": "boolean", "default": False},
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "media_type": {"type": "string", "default": "All", "choices": ["All", "Movies", "Shows"]},
+                "display_name": {"type": "string", "default": "Agregarr"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
+                    "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'requester' uses requester display name automatically, 'fixed' uses a static label you specify",
+                            "default": "requester",
+                            "choices": ["requester", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
+                }
+            },
             "My Plex Watchlist": {
                 "enabled": {"type": "boolean", "default": False},
                 "versions": {"type": "dict", "default": {"Default": True}},
@@ -1618,6 +1688,69 @@ SETTINGS_SCHEMA = {
                         }
                     }
                 }
+            },
+            "Adaptive List": {
+                "enabled": {"type": "boolean", "default": False},
+                "lists": {
+                    "type": "list",
+                    "description": "List of adaptive filter configurations. Each list uses TMDB discover filters that produce time-sensitive results.",
+                    "default": [],
+                    "schema": {
+                        "name": {"type": "string", "description": "Name for this adaptive list", "default": ""},
+                        "media_type": {"type": "string", "description": "Media type: movie or tv", "default": "movie", "choices": ["movie", "tv"]},
+                        "filters": {"type": "dict", "description": "TMDB discover filter parameters", "default": {}}
+                    }
+                },
+                "versions": {"type": "dict", "default": {"Default": True}},
+                "display_name": {"type": "string", "default": "Adaptive List"},
+                "allow_specials": {
+                    "type": "boolean",
+                    "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                },
+                "custom_symlink_subfolder": {
+                    "type": "string",
+                    "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
+                    "default": ""
+                },
+                "cutoff_date": {
+                    "type": "string",
+                    "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
+                    "default": ""
+                },
+                "exclude_genres": {
+                    "type": "list",
+                    "description": "List of genres to exclude from this content source. Items with any of these genres will be skipped during content processing.",
+                    "default": []
+                },
+                "list_length_limit": {
+                    "type": "integer",
+                    "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
+                    "default": 0
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'list_name' uses the adaptive list name automatically, 'fixed' uses a static label you specify",
+                            "default": "list_name",
+                            "choices": ["list_name", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
+                }
             }
         }
     },
@@ -1900,14 +2033,43 @@ SETTINGS_SCHEMA = {
         "tab": "Additional Settings",
         "primary_artwork_source": {
             "type": "string",
-            "description": "Choose where to get posters and artwork from first. Plex uses your server's artwork (requires Plex authentication). TMDB uses online movie database (requires TMDB API key). The other source will be used as backup.",
-            "default": "Plex",
-            "choices": ["Plex", "TMDB"]
+            "description": "Artwork source for posters and backdrops. Uses TMDB online movie database (requires TMDB API key).",
+            "default": "TMDB",
+            "choices": ["TMDB"]
         },
         "ghostlist_mode": {
             "type": "boolean",
             "description": "Add shows and movies to the ghostlist to prevent them from being re-added. When enabled, deleting content will mark it as ghosted in the database. When disabled, deleted content can be re-added by dynamic content sources.",
             "default": False
+        },
+        "remove_from_content_sources": {
+            "type": "boolean",
+            "description": "Remove items from content sources (Trakt, Overseerr, etc.) during deletion. Enable when ghostlist OFF (prevents re-addition, slower). Disable when ghostlist ON (faster, ghostlist already prevents re-addition).",
+            "default": True
+        }
+    },
+    "Discover Settings": {
+        "tab": "Additional Settings",
+        "hide_no_rating": {
+            "type": "boolean",
+            "description": "Hide items without a rating from discover results",
+            "default": False
+        },
+        "hide_no_poster": {
+            "type": "boolean",
+            "description": "Hide items without a poster image from discover results",
+            "default": False
+        },
+        "only_show_missing": {
+            "type": "boolean",
+            "description": "Only show items that are not in your library (hide items already in database)",
+            "default": False
+        },
+        "tv_show_episode_view": {
+            "type": "string",
+            "description": "Where to route when clicking on TV shows not in library (movies always go to Discover details)",
+            "default": "discover",
+            "choices": ["discover", "add_media"]
         }
     }
 }

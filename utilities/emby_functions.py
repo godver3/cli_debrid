@@ -117,17 +117,22 @@ def emby_update_item(item: Dict[str, Any]) -> bool:
         if not emby_url or not emby_token:
             logging.warning("Emby/Jellyfin URL or token not configured")
             return False
-            
-        # Get the fresh item data from the database
-        updated_item = get_media_item_by_id(item['id'])
-        if not updated_item:
-            logging.error(f"Could not get updated item from database for item {item['id']}")
-            return False
-            
-        # Get the file location from the updated item
-        file_location = updated_item['location_on_disk']
-        logging.debug(f"Emby/Jellyfin update - Item details: id={item.get('id')}, title={item.get('title')}, location={file_location}")
-        
+
+        # Handle two cases: items with 'id' (from database) and items without (batch updates)
+        if 'id' in item:
+            # Get the fresh item data from the database
+            updated_item = get_media_item_by_id(item['id'])
+            if not updated_item:
+                logging.error(f"Could not get updated item from database for item {item['id']}")
+                return False
+            # Get the file location from the updated item
+            file_location = updated_item['location_on_disk']
+            logging.debug(f"Emby/Jellyfin update - Item details: id={item.get('id')}, title={item.get('title')}, location={file_location}")
+        else:
+            # No ID provided - use location directly (for batch updates)
+            file_location = item.get('location_on_disk') or item.get('full_path')
+            logging.debug(f"Emby/Jellyfin update - Batch update for location: {file_location}")
+
         if not file_location:
             logging.error(f"No file location provided in item: {item}")
             return False

@@ -99,13 +99,24 @@ def set_in_cache(key, data, ttl_seconds):
     _memory_cache[key] = (data, expiry)
     logging.debug(f"✅ Memory cache SET: {key} (TTL: {ttl_seconds}s)")
 
-    # Clean old memory cache entries (keep max 100 entries)
-    if len(_memory_cache) > 100:
-        # Remove expired entries
+    # Clean old memory cache entries (keep max 50 entries - reduced from 100 to prevent memory bloat)
+    MAX_CACHE_SIZE = 50
+    if len(_memory_cache) > MAX_CACHE_SIZE:
         now = datetime.now()
+
+        # First, remove expired entries
         expired_keys = [k for k, (_, exp) in _memory_cache.items() if exp < now]
         for k in expired_keys:
             del _memory_cache[k]
+
+        # If still over limit after removing expired, evict oldest entries (LRU)
+        if len(_memory_cache) > MAX_CACHE_SIZE:
+            # Sort by expiry time (oldest first)
+            sorted_items = sorted(_memory_cache.items(), key=lambda x: x[1][1])
+            entries_to_remove = len(_memory_cache) - MAX_CACHE_SIZE
+            for old_key, _ in sorted_items[:entries_to_remove]:
+                del _memory_cache[old_key]
+            logging.debug(f"Evicted {entries_to_remove} oldest cache entries (LRU)")
 
 def cache_response(cache_type='trending'):
     """Decorator to cache function responses"""
@@ -218,3 +229,55 @@ def get_cached_db_statuses(tmdb_ids):
     set_in_cache(cache_key, result, CACHE_TTL['db_status'])
 
     return result
+
+def get_cached_episode_info(tmdb_ids):
+    """
+    Fetch episode information for TV shows with database status.
+
+    Args:
+        tmdb_ids: List of TMDB IDs to check (should be TV shows)
+
+    Returns:
+        Dict mapping tmdb_id → episode_info dict with counts
+    """
+    if not tmdb_ids:
+        return {}
+
+    from database.core import get_db_connection
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        placeholders = ','.join('?' * len(tmdb_ids))
+        episode_count_query = f"""
+            SELECT
+                tmdb_id,
+                COUNT(DISTINCT season_number) as distinct_seasons,
+                COUNT(DISTINCT season_number || '-' || episode_number) as total_episodes,
+                COUNT(DISTINCT CASE WHEN state = 'Collected' THEN season_number || '-' || episode_number END) as collected_episodes,
+                COUNT(DISTINCT CASE WHEN state = 'Blacklisted' THEN season_number || '-' || episode_number END) as blacklisted_episodes,
+                COUNT(DISTINCT CASE WHEN state = 'Unreleased' THEN season_number || '-' || episode_number END) as unreleased_episodes,
+                COUNT(DISTINCT CASE WHEN state IN ('Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping') THEN season_number || '-' || episode_number END) as wanted_episodes
+            FROM media_items
+            WHERE tmdb_id IN ({placeholders}) AND type = 'episode'
+            GROUP BY tmdb_id
+        """
+
+        cursor.execute(episode_count_query, [str(tid) for tid in tmdb_ids])
+
+        episode_info = {}
+        for row in cursor.fetchall():
+            episode_info[str(row['tmdb_id'])] = {
+                'distinct_seasons': row['distinct_seasons'],
+                'total_episodes': row['total_episodes'],
+                'collected_episodes': row['collected_episodes'],
+                'blacklisted_episodes': row['blacklisted_episodes'],
+                'unreleased_episodes': row['unreleased_episodes'],
+                'wanted_episodes': row['wanted_episodes']
+            }
+
+        return episode_info
+
+    finally:
+        cursor.close()

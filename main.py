@@ -127,44 +127,113 @@ def backup_config():
     else:
         logging.warning("config.json not found, no backup created.")
 
-def backup_database():
+def backup_database(max_backups=3):
     """
-    Creates a backup of the media_items.db file with a timestamp.
-    Keeps only the two most recent backups.
+    Creates a backup of the media_items.db file with a timestamp using SQLite's BACKUP API.
+    This method is safe to use during active database operations and won't cause locking issues.
+    Keeps only the most recent backups (default: 3).
+    Also cleans up orphaned SQLite WAL and SHM files from previous backups.
+
+    Args:
+        max_backups (int): Maximum number of backup files to retain (default: 3)
+
+    Returns:
+        bool: True if backup was successful, False otherwise
     """
+    import sqlite3
+
     try:
         # Get db_content directory from environment variable
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
         db_path = os.path.join(db_content_dir, 'media_items.db')
-        
+
         if not os.path.exists(db_path):
             logging.warning("media_items.db not found, no backup created.")
-            return
-            
+            return False
+
         # Create backup directory if it doesn't exist
         backup_dir = os.path.join(db_content_dir, 'backups')
         os.makedirs(backup_dir, exist_ok=True)
-        
+
         # Generate backup filename with timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         backup_path = os.path.join(backup_dir, f'media_items_{timestamp}.db')
-        
-        # Create the backup
-        shutil.copy2(db_path, backup_path)
-        logging.info(f"Backup of media_items.db created: {backup_path}")
-        
+
+        # Use SQLite's BACKUP API which is safe during active operations
+        # This creates a consistent point-in-time snapshot without locking the database
+        logging.debug(f"Starting SQLite backup from {db_path} to {backup_path}")
+
+        source_conn = None
+        backup_conn = None
+
+        try:
+            # Connect to source database (read-only to minimize locking)
+            source_conn = sqlite3.connect(f'file:{db_path}?mode=ro', uri=True, timeout=30)
+
+            # Connect to backup database
+            backup_conn = sqlite3.connect(backup_path, timeout=30)
+
+            # Perform the backup using SQLite's backup API
+            # This method is transactionally safe and allows concurrent operations
+            with backup_conn:
+                source_conn.backup(backup_conn)
+
+            logging.debug(f"SQLite backup completed successfully")
+
+        finally:
+            if backup_conn:
+                backup_conn.close()
+            if source_conn:
+                source_conn.close()
+
+        # Verify backup was created and get size
+        if not os.path.exists(backup_path):
+            logging.error("Backup file was not created")
+            return False
+
+        backup_size_mb = os.path.getsize(backup_path) / (1024 * 1024)
+        logging.info(f"Database backup created: {backup_path} ({backup_size_mb:.1f} MB)")
+
         # Get list of existing backups and sort by modification time
-        existing_backups = [os.path.join(backup_dir, f) for f in os.listdir(backup_dir) 
+        existing_backups = [os.path.join(backup_dir, f) for f in os.listdir(backup_dir)
                           if f.startswith('media_items_') and f.endswith('.db')]
         existing_backups.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-        
-        # Remove older backups, keeping only the two most recent
-        for old_backup in existing_backups[2:]:
-            os.remove(old_backup)
-            logging.info(f"Removed old backup: {old_backup}")
-            
+
+        # Remove older backups, keeping only the most recent
+        removed_count = 0
+        for old_backup in existing_backups[max_backups:]:
+            try:
+                os.remove(old_backup)
+                removed_count += 1
+                logging.info(f"Removed old backup: {os.path.basename(old_backup)}")
+            except Exception as e:
+                logging.warning(f"Failed to remove old backup {old_backup}: {e}")
+
+        if removed_count > 0:
+            logging.info(f"Cleaned up {removed_count} old backup(s), keeping {min(len(existing_backups), max_backups)} most recent")
+
+        # Clean up orphaned WAL and SHM files from the backups directory
+        # These are leftover SQLite Write-Ahead Log and shared memory files
+        orphaned_files = [os.path.join(backup_dir, f) for f in os.listdir(backup_dir)
+                         if f.endswith(('.db-wal', '.db-shm'))]
+
+        if orphaned_files:
+            for orphan in orphaned_files:
+                try:
+                    os.remove(orphan)
+                    logging.debug(f"Removed orphaned SQLite file: {os.path.basename(orphan)}")
+                except Exception as e:
+                    logging.warning(f"Failed to remove orphaned file {orphan}: {e}")
+            logging.info(f"Cleaned up {len(orphaned_files)} orphaned SQLite WAL/SHM file(s)")
+
+        return True
+
+    except sqlite3.Error as e:
+        logging.error(f"SQLite error creating database backup: {str(e)}")
+        return False
     except Exception as e:
         logging.error(f"Error creating database backup: {str(e)}")
+        return False
 
 def get_version():
     try:
@@ -1542,10 +1611,11 @@ def main():
     if 'Content Sources' in config:
         updated = False
         for source_id, source_config in config['Content Sources'].items():
-            # Skip the Collected source as it doesn't use media_type
-            if source_id.startswith('Collected_'):
+            # Skip Collected and Adaptive List sources - they don't use the standard 'Movies'/'Shows'/'All' media_type
+            # Adaptive Lists use 'movie'/'tv' format internally and handle media_type filtering differently
+            if source_id.startswith('Collected_') or source_id.startswith('Adaptive List_'):
                 continue
-            
+
             # Check if media_type is missing
             if 'media_type' not in source_config:
                 # Create new ordered dict with desired key order

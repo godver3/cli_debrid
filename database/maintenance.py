@@ -1,5 +1,6 @@
 import logging
 import os
+import platform
 
 def update_show_ids():
     """Update show IDs (imdb_id and tmdb_id) in the database if they don't match the direct API."""
@@ -660,17 +661,32 @@ def run_plex_library_maintenance():
                 
                 # Validate that the constructed path is within the mount location
                 try:
-                    # Resolve any symlinks to get the real path
-                    real_full_path = os.path.realpath(full_path)
-                    real_mounted_path = os.path.realpath(mounted_path)
-                    
+                    # On Windows, os.path.realpath() fails when drives are unmounted/disconnected
+                    # Use normpath instead which doesn't require filesystem access
+                    is_windows = platform.system() == 'Windows'
+
+                    if is_windows:
+                        # Normalize paths without requiring filesystem access
+                        real_full_path = os.path.normpath(full_path)
+                        real_mounted_path = os.path.normpath(mounted_path)
+                    else:
+                        # On Unix-like systems, resolve symlinks as before
+                        real_full_path = os.path.realpath(full_path)
+                        real_mounted_path = os.path.realpath(mounted_path)
+
                     # Check if the path is within the mount location
-                    if not real_full_path.startswith(real_mounted_path):
+                    # On Windows, use case-insensitive comparison
+                    if is_windows:
+                        path_check = real_full_path.lower().startswith(real_mounted_path.lower())
+                    else:
+                        path_check = real_full_path.startswith(real_mounted_path)
+
+                    if not path_check:
                         logging.warning(f"Path outside mount location for {title}: {full_path} (resolved: {real_full_path})")
                         logging.warning(f"Mount location: {mounted_path} (resolved: {real_mounted_path})")
                         # Skip this item as it's outside the expected mount location
                         continue
-                        
+
                 except OSError as e:
                     logging.warning(f"Error resolving path for {title}: {full_path} - {str(e)}")
                     # If we can't resolve the path, skip this item

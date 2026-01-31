@@ -377,11 +377,8 @@ export function initializeTaskMonitor() {
     const taskMonitorContainer = document.getElementById('taskMonitorContainer');
     
     if (!taskMonitorContainer || isOnboarding) {
-        console.log("Task monitor container not found or on onboarding page. Skipping initialization.");
         return; // Skip if monitor shouldn't be present
     }
-    
-    console.log("Attempting to initialize Task Monitor..."); // Log start
 
     // Assign the globally scoped variables here
     currentTaskDisplay = document.getElementById('currentTaskDisplay');
@@ -413,7 +410,6 @@ export function initializeTaskMonitor() {
     // --- START: Set Initialization Flag ---
     // Set the flag *after* basic checks but before adding listeners/starting stream
     isTaskMonitorInitialized = true;
-    console.log("Task Monitor Initializing Now...");
     // --- END: Set Initialization Flag ---
 
     // --- START: Load initial visibility state ---
@@ -492,36 +488,25 @@ export function initializeTaskMonitor() {
 
     // --- START: Add Guard and Logging for setupTaskStream ---
     // Clean up existing source just in case initialize is somehow called multiple times
-    if (eventSource) { 
-        console.warn("initializeTaskMonitor: Found existing EventSource (should not happen with guard). Closing it.");
+    if (eventSource) {
         eventSource.close();
         eventSource = null;
     }
-    console.log("initializeTaskMonitor: Calling setupTaskStream().");
     setupTaskStream(); // Start the SSE connection
     // --- END: Add Guard and Logging for setupTaskStream ---
-    
+
     // Clean up when the page is unloaded
     window.addEventListener('beforeunload', () => {
-        // --- START: Add Logging to beforeunload ---
-        console.log("beforeunload: Event triggered.");
         if (eventSource) {
-            console.log(`beforeunload: Closing EventSource (readyState: ${eventSource.readyState})`);
             eventSource.close();
-            console.log("beforeunload: EventSource closed.");
-        } else {
-            console.log("beforeunload: No active EventSource to close.");
         }
-        // --- END: Add Logging to beforeunload ---
     });
 
     // Initial body padding check after setup
     if (typeof window.updateBodyPaddingForTopOverlays === 'function') {
         // isTaskMonitorVisible is already set based on initial load
-        window.updateBodyPaddingForTopOverlays(); 
+        window.updateBodyPaddingForTopOverlays();
     }
-
-    console.log("Task Monitor Initialization Complete."); // Log end
 }
 
 // --- START EDIT: Rewrite updateTaskDisplay to handle list ---
@@ -673,8 +658,6 @@ function toggleDropdownVisibility() {
         // Update the aria attribute for accessibility
         const isExpanded = taskMonitorDropdownElement.classList.contains('dropdown-visible');
         currentTaskDisplay.setAttribute('aria-expanded', isExpanded);
-    } else {
-        console.log("Dropdown toggle ignored: Main container is hidden.");
     }
 }
 
@@ -790,9 +773,8 @@ window.closePauseBanner = closePauseBanner;
 
 // --- START: Modify DOMContentLoaded Listener ---
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("DOMContentLoaded event fired."); // Log when event fires
-    initializeTaskMonitor(); 
-}); 
+    initializeTaskMonitor();
+});
 // --- END: Modify DOMContentLoaded Listener ---
 
 // --- START EDIT: Reconnect Task Monitor when page becomes visible ---

@@ -228,9 +228,9 @@
         <!-- Disable Initialization -->
         <div class="settings-form-group">
             <label class="settings-title">
-                <input type="checkbox" id="disable-initialization" name="UI Settings.disable_initialization"
-                       data-section="UI Settings" data-key="disable_initialization"
-                       {% if settings.get('UI Settings', {}).get('disable_initialization', False) %}checked{% endif %}>
+                <input type="checkbox" id="disable-initialization" name="Debug.disable_initialization"
+                       data-section="Debug" data-key="disable_initialization"
+                       {% if settings.get('Debug', {}).get('disable_initialization', False) %}checked{% endif %}>
                 Disable Initialization
             </label>
             <p class="settings-description">When enabled, the program will skip the initialization process on startup. Useful for testing or manual control</p>

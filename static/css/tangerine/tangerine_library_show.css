@@ -487,7 +487,7 @@ button.btn.btn-sm.btn-danger.delete-season-btn {
     backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 16px;
-    padding: 1rem 2rem 2rem 2rem;
+    padding: 1rem 2rem 1rem 2rem;
     transition: all 0.3s ease;
 }
 
@@ -763,6 +763,20 @@ ease;
     opacity: 0.5;
 }
 
+.episode-status-icon.unreleased {
+    color: #e0e0e0;
+    opacity: 0.8;
+}
+
+.episode-status-icon.wanted {
+    color: #fbbf24;
+    opacity: 0.8;
+}
+
+.episode-status-icon.up-arrow {
+    color: #60a5fa;
+}
+
 .episode-info-section {
     flex: 1;
     min-width: 0;
@@ -924,6 +938,28 @@ ease;
     pointer-events: auto;
 }
 
+.files-panel-close {
+    display: none; /* Hidden by default (desktop) */
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    border-radius: 0.25rem;
+    color: rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+    padding: 0.25rem;
+    width: 28px;
+    height: 28px;
+    transition: all 0.2s ease;
+    z-index: 10;
+}
+
+.files-panel-close:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+}
+
 .episode-files {
     counter-reset: file-counter;
     list-style: none;
@@ -985,9 +1021,9 @@ ease;
     opacity: 0.8;
 }
 
-.show-sidebar {
+/* .show-sidebar {
     margin-top: 384px;
-}
+} */
 
 /* ==========================================================================
    Responsive Design
@@ -1038,21 +1074,37 @@ ease;
         margin-left: 0;
         margin-right: 5px;
         line-height: 0;
+        white-space: nowrap;
     }
     .files-toggle-btn {
         display: inline-block;
         padding: 0.5rem;
         line-height: 0;
+        white-space: nowrap;
     }
     .action-btn, .delete-episode-btn {
+        display: inline-block;
         padding: 0.5rem;
         margin-left: 0;
-        line-height: 0;
+        margin-right: 5px;
+        line-height: 1;
+        white-space: nowrap;
     }
     .files-count {
         vertical-align: 3px;
     }
-        
+    .episode-files-panel {
+        margin-top: -50px;
+        min-width: min-content;
+        max-width: max-content;
+    }
+    .files-panel-close {
+        display: block; /* Show on mobile */
+    }
+    .episode-files {
+        padding-top: 2rem; /* Make room for close button */
+    }
+
 }
 @media (max-width: 768px) {
     .show-content-wrapper {
@@ -1143,27 +1195,38 @@ ease;
         margin-left: 0;
         margin-right: 5px;
         line-height: 0;
+        white-space: nowrap;
     }
     .files-toggle-btn {
         display: inline-block;
         padding: 0.5rem;
         line-height: 0;
+        white-space: nowrap;
     }
     .action-btn, .delete-episode-btn {
+        display: inline-block;
         padding: 0.5rem;
         margin-left: 0;
-        line-height: 0;
+        margin-right: 5px;
+        line-height: 1;
+        white-space: nowrap;
     }
     .episode-files-panel {
-        margin-top: -209px;
+        margin-top: -50px;
         min-width: min-content;
         max-width: max-content;
+    }
+    .files-panel-close {
+        display: block; /* Show on mobile */
+    }
+    .episode-files {
+        padding-top: 2rem; /* Make room for close button */
     }
     .files-count {
         vertical-align: 3px;
     }
     .page-backdrop-overlay {
-        background: linear-gradient(to bottom, rgba(0, 0, 0, 0.0) 0%, rgba(0, 0, 0, 0.90) 50%, rgba(0, 0, 0, 0.55) 100%);
+                background: linear-gradient(to bottom, rgba(0, 0, 0, 0.90) 0%, rgba(0, 0, 0, 0.10) 20%, rgba(0, 0, 0, 0.60) 50%, rgba(0, 0, 0, 0.75) 100%);
     }
     .show-info {
         margin-top: 100px;
@@ -1220,21 +1283,32 @@ ease;
         margin-left: 0;
         margin-right: 5px;
         line-height: 0;
+        white-space: nowrap;
     }
     .files-toggle-btn {
         display: inline-block;
         padding: 0.5rem;
         line-height: 0;
+        white-space: nowrap;
     }
     .action-btn, .delete-episode-btn {
+        display: inline-block;
         padding: 0.5rem;
         margin-left: 0;
-        line-height: 0;
+        margin-right: 5px;
+        line-height: 1;
+        white-space: nowrap;
     }
     .episode-files-panel {
-        margin-top: -209px;
+        margin-top: -50px;
         min-width: min-content;
         max-width: max-content;
+    }
+    .files-panel-close {
+        display: block; /* Show on mobile */
+    }
+    .episode-files {
+        padding-top: 2rem; /* Make room for close button */
     }
     .files-count {
         vertical-align: 3px;
@@ -1363,33 +1437,6 @@ body.modal-open {
     display: flex;
     align-items: center;
     justify-content: space-between;
-}
-
-.close-btn {
-    position: absolute;
-    top: 10px;
-    right: 15px;
-    background: none;
-    border: none;
-    font-size: 28px;
-    color: #ccc;
-    cursor: pointer;
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    transition: all 0.3s ease;
-    z-index: 5;
-    margin-left: auto;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.close-btn:hover {
-    color: #fff;
-    background-color: rgba(255, 255, 255, 0.1);
-    transform: scale(1.1);
 }
 
 .overlay-content table {
@@ -1597,7 +1644,7 @@ tr.filtered-out-item:hover {
     border-radius: 50%;
     cursor: pointer;
     transition: all var(--transition-speed) ease;
-    z-index: 5;
+    z-index: 30;
     margin-left: auto;
     padding: 0;
     display: inline-flex;

@@ -1,0 +1,1067 @@
+{% extends "base.html" %}
+
+{% block title %}Discover - Find New Content{% endblock %}
+
+{% block head %}
+<script src="{{ url_for('static', filename='js/theme_switcher.js') }}"></script>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const theme = getCurrentTheme();
+        const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_discover.css' : 'css/discover.css';
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = '{{ url_for("static", filename="") }}' + cssFile + '?v={{ range(10000, 99999) | random }}';
+        document.head.appendChild(link);
+    });
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="discover-container" data-tmdb-configured="{{ tmdb_configured|lower }}">
+    <!-- Hidden permission flags -->
+    <input type="hidden" id="has_admin_permissions" value="{{ 'True' if has_admin_permissions else 'False' }}">
+
+    <!-- Hidden version select for torrent modal dropdown -->
+    <select id="version-select" style="display: none;">
+        {% for version in versions %}
+            <option value="{{ version }}">{{ version }}</option>
+        {% endfor %}
+        <option value="No Version">No Version</option>
+    </select>
+
+    <!-- Header Section -->
+    <div class="discover-header">
+        <div class="discover-title-section">
+            <h1 class="discover-title">Discover</h1>
+            <p class="discover-subtitle">Find new content using TMDB-powered discovery</p>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <!-- Settings Button (Admin only) -->
+            {% if has_admin_permissions %}
+            <button type="button" class="action-btn action-btn-sm gap-2" id="discover-settings-btn" title="Discover settings">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span class="hidden sm:inline">Settings</span>
+            </button>
+            {% endif %}
+
+            <!-- Filter Toggle Button -->
+            <button type="button" class="action-btn action-btn-sm gap-2" id="filter-toggle-btn" title="Open filters">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" />
+                </svg>
+                <span class="hidden sm:inline">Filters</span>
+            </button>
+
+            <!-- Clear Filters Button -->
+            <button type="button" class="action-btn action-btn-sm action-btn-ghost gap-2" id="clear-filters-btn-header" title="Clear all filters" style="display: none;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+                <span class="hidden sm:inline">Clear</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Search Section -->
+    <div class="discover-search">
+        <div class="search-input-wrapper">
+            <input
+                type="text"
+                id="search-input"
+                class="form-control"
+                placeholder="Search movies/shows or enter IMDb/TMDB ID..."
+                autocomplete="off"
+            >
+            <button id="search-clear-btn" class="search-clear-btn" style="display: none;" title="Clear search" aria-label="Clear search">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="discover-tabs">
+        <button type="button" class="tab-btn active" data-tab="trending">Trending</button>
+        <!-- FlixPatrol dropdown - Top 10 streaming charts (no API key required) -->
+        <div id="flixpatrol-tabs" class="flixpatrol-tabs-container">
+            <div class="flixpatrol-dropdown-wrapper">
+                <button type="button" class="tab-btn flixpatrol-dropdown-trigger" id="flixpatrol-dropdown-btn">
+                    <span id="flixpatrol-dropdown-label">Top 10</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m6 9 6 6 6-6"/>
+                    </svg>
+                </button>
+                <div id="flixpatrol-dropdown-menu" class="flixpatrol-dropdown-menu">
+                    <!-- Platform options will be dynamically inserted here -->
+                </div>
+            </div>
+        </div>
+        <!-- MDBList dropdown - dynamically shown if MDBList is configured -->
+        <div id="mdblist-tabs" class="mdblist-tabs-container" style="display: none;">
+            <div class="mdblist-dropdown-wrapper">
+                <button type="button" class="tab-btn mdblist-dropdown-trigger" id="mdblist-dropdown-btn">
+                    <span id="mdblist-dropdown-label">Lists</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m6 9 6 6 6-6"/>
+                    </svg>
+                </button>
+                <div id="mdblist-dropdown-menu" class="mdblist-dropdown-menu">
+                    <!-- List options will be dynamically inserted here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter Drawer -->
+    <div id="filter-drawer" class="filter-drawer">
+        <div class="filter-drawer-header">
+            <h3>Advanced Filters</h3>
+            <button type="button" id="filter-close-btn" class="filter-close-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+
+        <div class="filter-content">
+
+            <!-- Filter Presets Section - Always visible at top -->
+            <div class="filter-section preset-section open" data-section="presets">
+                <div class="filter-section-header">
+                    <h4 class="filter-section-title">Filter Presets</h4>
+                    <svg class="filter-section-toggle" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                </div>
+                <div class="filter-section-content">
+                    <div class="filter-section-inner">
+                        <div class="filter-group">
+                            <label class="filter-label">Load Preset</label>
+                            <div class="preset-controls">
+                                <select id="preset-select" class="preset-select">
+                                    <option value="">-- Select a preset --</option>
+                                </select>
+                                <button type="button" id="delete-preset-btn" class="preset-delete-btn" title="Delete selected preset" disabled>
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sort Options Section - Always Open -->
+            <div class="filter-section sort-section open" data-section="sort">
+                <div class="filter-section-header">
+                    <h4 class="filter-section-title">Sort Options</h4>
+                    <svg class="filter-section-toggle" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                </div>
+                <div class="filter-section-content">
+                    <div class="filter-section-inner">
+                        <!-- Sort By Dropdown with Order Toggle -->
+                        <div class="filter-group">
+                            <label class="filter-label">Sort By</label>
+                            <div class="sort-controls">
+                                <div class="sort-dropdown-wrapper">
+                                    <select id="sort-by" class="sort-select">
+                                        <option value="popularity" selected>Popularity</option>
+                                        <option value="vote_average">Rating</option>
+                                        <option value="vote_count">Vote Count</option>
+                                        <option value="primary_release_date">Release Date</option>
+                                        <option value="title">Title</option>
+                                        <option value="runtime">Runtime</option>
+                                    </select>
+                                </div>
+                                <button type="button" id="sort-order-toggle" class="sort-order-btn" data-order="desc" title="Toggle sort order">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="sort-icon-desc">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="sort-icon-asc" style="display: none;">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Display Options -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Media Type and Basic Filters -->
+            <div class="filter-section" data-section="content-type">
+                <div class="filter-section-header">
+                    <h4 class="filter-section-title">Content Type</h4>
+                    <svg class="filter-section-toggle" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                </div>
+                <div class="filter-section-content">
+                    <div class="filter-section-inner">
+                
+                <!-- Media Type Filter -->
+                <div class="filter-group">
+                    <label class="filter-label">Media Type</label>
+                    <div class="filter-options">
+                        <button type="button" class="filter-option active" data-filter="type" data-value="all">All</button>
+                        <button type="button" class="filter-option" data-filter="type" data-value="movie">Movies</button>
+                        <button type="button" class="filter-option" data-filter="type" data-value="tv">TV Shows</button>
+                    </div>
+                </div>
+
+                <!-- Year Range Filter -->
+                <div class="filter-group">
+                    <label class="filter-label">Release Year Range</label>
+                    <div class="year-range-controls">
+                        <div class="ui calendar year-calendar-from">
+                            <div class="ui input left icon">
+                                <i class="calendar icon"></i>
+                                <input type="text" id="year-from" placeholder="1900" value="">
+                            </div>
+                        </div>
+                        <div class="range-separator">to</div>
+                        <div class="ui calendar year-calendar-to">
+                            <div class="ui input left icon">
+                                <i class="calendar icon"></i>
+                                <input type="text" id="year-to" placeholder="2026" value="">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Release Date Filters -->
+                <div class="filter-group">
+                    <label class="filter-label">Released Within (days)</label>
+                    <div class="ui input">
+                        <input type="number" id="released-within" placeholder="e.g., 30" min="0">
+                    </div>
+                </div>
+
+                <div class="filter-group">
+                    <label class="filter-label">Upcoming Releases (days)</label>
+                    <div class="ui input">
+                        <input type="number" id="upcoming-days" placeholder="e.g., 90" min="0">
+                    </div>
+                </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Rating Filters Section -->
+            <div class="filter-section" data-section="ratings">
+                <div class="filter-section-header">
+                    <h4 class="filter-section-title">Ratings & Votes</h4>
+                    <svg class="filter-section-toggle" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                </div>
+                <div class="filter-section-content">
+                    <div class="filter-section-inner">
+                
+                <!-- TMDb Rating -->
+                <div class="filter-group">
+                    <label class="filter-label">TMDb Rating</label>
+                    <div class="rating-slider-container">
+                        <div class="ui small labeled ticked range slider" id="tmdb-rating-slider">
+                            <div class="inner">
+                                <div class="track"></div>
+                                <div class="track-fill" style="left: 0%; right: 0%;"></div>
+                                <div class="thumb" style="left: calc(0% - 6px); right: auto;"></div>
+                                <div class="thumb second" style="left: calc(100% - 6px); right: auto;"></div>
+                            </div>
+                            <ul class="auto labels">
+                                <li class="label" style="left: calc(0% + 7px);">0</li>
+                                <li class="label" style="left: calc(50% + 0px);">5</li>
+                                <li class="label" style="left: calc(100% - 7px);">10</li>
+                            </ul>
+                        </div>
+                        <div class="ui mini input rating-inputs">
+                            <div class="ui label">Between</div>
+                            <input type="text" id="tmdb-rating-min" value="0" class="rating-input">
+                            <div class="ui label">and</div>
+                            <input type="text" id="tmdb-rating-max" value="10" class="rating-input">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TMDb Votes -->
+                <div class="filter-group">
+                    <label class="filter-label">TMDb Vote Count</label>
+                    <div class="votes-slider-container">
+                        <div class="ui small labeled ticked slider" id="tmdb-votes-slider">
+                            <div class="inner">
+                                <div class="track"></div>
+                                <div class="track-fill" style="left: 0%; right: 100%;"></div>
+                                <div class="thumb" style="left: calc(0% - 6px); right: auto;"></div>
+                            </div>
+                            <ul class="auto labels">
+                                <li class="label" style="left: calc(0% + 7px);">0</li>
+                                <li class="label" style="left: calc(10% + 0px);">500</li>
+                                <li class="label" style="left: calc(20% + 0px);">1k</li>
+                                <li class="label" style="left: calc(50% + 0px);">2.5k</li>
+                                <li class="label" style="left: calc(100% - 7px);">5k</li>
+                            </ul>
+                        </div>
+                        <div class="ui mini input votes-input">
+                            <div class="ui label">At least</div>
+                            <input type="text" id="tmdb-votes-min" value="0" class="votes-input-field">
+                            <div class="ui label">votes</div>
+                        </div>
+                    </div>
+                </div>
+
+                    </div>
+                </div>
+            </div>
+
+            <!-- Genre and Regions -->
+            <div class="filter-section" data-section="genres">
+                <div class="filter-section-header">
+                    <h4 class="filter-section-title">Genres & Regions</h4>
+                    <svg class="filter-section-toggle" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                </div>
+                <div class="filter-section-content">
+                    <div class="filter-section-inner">
+
+                <!-- Genre Multi-Select (MDBlist Style) -->
+                <div class="filter-group">
+                    <label class="filter-label">Genres</label>
+                    <div class="chips-input-container" id="genres-container">
+                        <div class="chips-wrapper" id="genres-chips">
+                            <!-- Selected genre chips will appear here -->
+                        </div>
+                        <input type="text" id="genres-search" class="chips-search-input" placeholder="Type to search..." autocomplete="off">
+                        <button type="button" class="chips-dropdown-toggle" id="genres-dropdown-toggle">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+                        <div class="chips-dropdown" id="genres-dropdown">
+                            <div class="chips-dropdown-item" data-value="match_all">[Match all]</div>
+                            <!-- Genre items will be loaded dynamically -->
+                        </div>
+                    </div>
+                    <input type="hidden" id="selected-genres" name="genres">
+                </div>
+                <!-- Language Filter -->
+                <div class="filter-group">
+                    <label class="filter-label">Language</label>
+                    <div class="chips-input-container" id="language-container">
+                        <div class="chips-wrapper" id="language-chips"></div>
+                        <input type="text" id="language-search" class="chips-search-input" placeholder="Type to search..." autocomplete="off">
+                        <button type="button" class="chips-dropdown-toggle" id="language-dropdown-toggle">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+                        <div class="chips-dropdown" id="language-dropdown">
+                            <div class="chips-dropdown-item" data-value="en">English</div>
+                            <div class="chips-dropdown-item" data-value="es">Spanish</div>
+                            <div class="chips-dropdown-item" data-value="fr">French</div>
+                            <div class="chips-dropdown-item" data-value="de">German</div>
+                            <div class="chips-dropdown-item" data-value="it">Italian</div>
+                            <div class="chips-dropdown-item" data-value="pt">Portuguese</div>
+                            <div class="chips-dropdown-item" data-value="ja">Japanese</div>
+                            <div class="chips-dropdown-item" data-value="ko">Korean</div>
+                            <div class="chips-dropdown-item" data-value="zh">Chinese</div>
+                            <div class="chips-dropdown-item" data-value="hi">Hindi</div>
+                            <div class="chips-dropdown-item" data-value="ru">Russian</div>
+                            <div class="chips-dropdown-item" data-value="ar">Arabic</div>
+                            <div class="chips-dropdown-item" data-value="nl">Dutch</div>
+                            <div class="chips-dropdown-item" data-value="sv">Swedish</div>
+                            <div class="chips-dropdown-item" data-value="no">Norwegian</div>
+                            <div class="chips-dropdown-item" data-value="da">Danish</div>
+                            <div class="chips-dropdown-item" data-value="fi">Finnish</div>
+                            <div class="chips-dropdown-item" data-value="pl">Polish</div>
+                            <div class="chips-dropdown-item" data-value="tr">Turkish</div>
+                            <div class="chips-dropdown-item" data-value="th">Thai</div>
+                        </div>
+                    </div>
+                    <input type="hidden" id="selected-language" name="language">
+                </div>
+
+                <!-- Country/Region Filter -->
+                <div class="filter-group">
+                    <label class="filter-label">Country</label>
+                    <div class="chips-input-container" id="country-container">
+                        <div class="chips-wrapper" id="country-chips"></div>
+                        <input type="text" id="country-search" class="chips-search-input" placeholder="Type to search..." autocomplete="off">
+                        <button type="button" class="chips-dropdown-toggle" id="country-dropdown-toggle">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+                        <div class="chips-dropdown" id="country-dropdown">
+                            <div class="chips-dropdown-item" data-value="US">United States</div>
+                            <div class="chips-dropdown-item" data-value="GB">United Kingdom</div>
+                            <div class="chips-dropdown-item" data-value="CA">Canada</div>
+                            <div class="chips-dropdown-item" data-value="AU">Australia</div>
+                            <div class="chips-dropdown-item" data-value="DE">Germany</div>
+                            <div class="chips-dropdown-item" data-value="FR">France</div>
+                            <div class="chips-dropdown-item" data-value="ES">Spain</div>
+                            <div class="chips-dropdown-item" data-value="IT">Italy</div>
+                            <div class="chips-dropdown-item" data-value="JP">Japan</div>
+                            <div class="chips-dropdown-item" data-value="KR">South Korea</div>
+                            <div class="chips-dropdown-item" data-value="CN">China</div>
+                            <div class="chips-dropdown-item" data-value="IN">India</div>
+                            <div class="chips-dropdown-item" data-value="BR">Brazil</div>
+                            <div class="chips-dropdown-item" data-value="MX">Mexico</div>
+                            <div class="chips-dropdown-item" data-value="RU">Russia</div>
+                            <div class="chips-dropdown-item" data-value="SE">Sweden</div>
+                            <div class="chips-dropdown-item" data-value="NO">Norway</div>
+                            <div class="chips-dropdown-item" data-value="DK">Denmark</div>
+                            <div class="chips-dropdown-item" data-value="NL">Netherlands</div>
+                            <div class="chips-dropdown-item" data-value="NZ">New Zealand</div>
+                        </div>
+                    </div>
+                    <input type="hidden" id="selected-country" name="country">
+                </div>
+
+                <!-- Watch Region (for Streaming Providers) -->
+                <div class="filter-group">
+                    <label class="filter-label">Watch Region</label>
+                    <select id="watch-region" class="sort-select">
+                        <option value="US" selected>United States</option>
+                        <option value="GB">United Kingdom</option>
+                        <option value="CA">Canada</option>
+                        <option value="AU">Australia</option>
+                        <option value="DE">Germany</option>
+                        <option value="FR">France</option>
+                        <option value="ES">Spain</option>
+                        <option value="IT">Italy</option>
+                        <option value="JP">Japan</option>
+                        <option value="KR">South Korea</option>
+                        <option value="BR">Brazil</option>
+                        <option value="MX">Mexico</option>
+                        <option value="IN">India</option>
+                        <option value="NL">Netherlands</option>
+                        <option value="SE">Sweden</option>
+                        <option value="NO">Norway</option>
+                        <option value="DK">Denmark</option>
+                        <option value="NZ">New Zealand</option>
+                    </select>
+                </div>
+
+                    </div>
+                </div>
+            </div>
+
+            <!-- Lists Section (FlixPatrol + MDBList) -->
+            <div class="filter-section" data-section="lists">
+                <div class="filter-section-header">
+                    <h4 class="filter-section-title">Lists</h4>
+                    <svg class="filter-section-toggle" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                </div>
+                <div class="filter-section-content">
+                    <div class="filter-section-inner">
+
+                <div class="filter-group">
+                    <label class="filter-label">Select List</label>
+                    <div class="chips-input-container" id="lists-container">
+                        <div class="chips-wrapper" id="lists-chips">
+                            <!-- Selected list chip will appear here -->
+                        </div>
+                        <input type="text" id="lists-search" class="chips-search-input" placeholder="Search lists..." autocomplete="off" style="display: none;">
+                        <button type="button" class="chips-dropdown-toggle" id="lists-dropdown-toggle">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+                        <div class="chips-dropdown" id="lists-dropdown">
+                            <!-- Lists will be populated dynamically -->
+                            <div class="chips-dropdown-empty">Loading lists...</div>
+                        </div>
+                    </div>
+                    <input type="hidden" id="selected-list" name="list">
+                </div>
+
+                    </div>
+                </div>
+            </div>
+
+            <!-- Keywords Section -->
+            <div class="filter-section" data-section="keywords">
+                <div class="filter-section-header">
+                    <h4 class="filter-section-title">Keywords</h4>
+                    <svg class="filter-section-toggle" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                </div>
+                <div class="filter-section-content">
+                    <div class="filter-section-inner">
+
+                <!-- Keywords Filter -->
+                <div class="filter-group">
+                    <label class="filter-label">Keywords</label>
+                    <div class="chips-input-container" id="keyword-container">
+                        <div class="chips-wrapper" id="keyword-chips"></div>
+                        <input type="text" id="keyword-search" class="chips-search-input" placeholder="Search keywords..." autocomplete="off">
+                        <button type="button" class="chips-dropdown-toggle" id="keyword-dropdown-toggle">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+                        <div class="chips-dropdown" id="keyword-dropdown">
+                            <!-- Keywords will be loaded dynamically from search -->
+                            <div class="chips-dropdown-empty">Type to search keywords...</div>
+                        </div>
+                    </div>
+                    <input type="hidden" id="selected-keyword" name="keyword">
+                </div>
+
+                <!-- Include Video Checkbox -->
+                <div class="filter-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="include-video" name="include_video">
+                        <span>Include Video Results</span>
+                    </label>
+                </div>
+
+                <!-- Title Filter -->
+                <div class="filter-group">
+                    <label class="filter-label">Title Filter (Client-Side)</label>
+                    <input type="text" id="title-filter" class="filter-input" placeholder="Enter text or regex pattern..." autocomplete="off">
+                    <small style="color: #888; font-size: 0.85em; display: block; margin-top: 4px;">
+                        Supports plain text or regex (e.g., /pattern/i)
+                    </small>
+                </div>
+                </div>
+                </div>
+            </div>       
+            <!-- Networks and Provider Section -->
+            <div class="filter-section" data-section="networksproviders">
+                <div class="filter-section-header">
+                    <h4 class="filter-section-title">Networks and Providers</h4>
+                    <svg class="filter-section-toggle" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                </div>
+                <div class="filter-section-content">
+                    <div class="filter-section-inner">    
+
+                <!-- Streaming Provider Filter -->
+                <div class="filter-group" id="provider-filter-group">
+                    <label class="filter-label">Streaming Provider</label>
+                    <div class="chips-input-container" id="provider-container">
+                        <div class="chips-wrapper" id="provider-chips"></div>
+                        <input type="text" id="provider-search" class="chips-search-input" placeholder="Type to search..." autocomplete="off">
+                        <button type="button" class="chips-dropdown-toggle" id="provider-dropdown-toggle">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+                        <div class="chips-dropdown" id="provider-dropdown">
+                            <!-- Major Streaming Services -->
+                            <div class="chips-dropdown-item" data-value="8">Netflix</div>
+                            <div class="chips-dropdown-item" data-value="1796">Netflix Standard with Ads</div>
+                            <div class="chips-dropdown-item" data-value="175">Netflix Kids</div>
+                            <div class="chips-dropdown-item" data-value="337">Disney+</div>
+                            <div class="chips-dropdown-item" data-value="350">Apple TV+</div>
+                            <div class="chips-dropdown-item" data-value="9">Amazon Prime Video</div>
+                            <div class="chips-dropdown-item" data-value="613">Amazon Prime Video Free with Ads</div>
+                            <div class="chips-dropdown-item" data-value="10">Amazon Video</div>
+                            <div class="chips-dropdown-item" data-value="15">Hulu</div>
+                            <div class="chips-dropdown-item" data-value="1899">Max</div>
+                            <div class="chips-dropdown-item" data-value="386">Peacock Premium</div>
+                            <div class="chips-dropdown-item" data-value="531">Paramount+</div>
+                            <div class="chips-dropdown-item" data-value="520">Discovery+</div>
+                            <!-- Premium Cable Streaming -->
+                            <div class="chips-dropdown-item" data-value="43">Starz</div>
+                            <div class="chips-dropdown-item" data-value="34">MGM Plus</div>
+                            <div class="chips-dropdown-item" data-value="526">AMC+</div>
+                            <!-- Purchase/Rent -->
+                            <div class="chips-dropdown-item" data-value="2">Apple TV</div>
+                            <div class="chips-dropdown-item" data-value="3">Google Play Movies</div>
+                            <div class="chips-dropdown-item" data-value="7">Fandango At Home</div>
+                            <div class="chips-dropdown-item" data-value="332">Fandango at Home Free</div>
+                            <div class="chips-dropdown-item" data-value="192">YouTube</div>
+                            <div class="chips-dropdown-item" data-value="188">YouTube Premium</div>
+                            <div class="chips-dropdown-item" data-value="235">YouTube Free</div>
+                            <div class="chips-dropdown-item" data-value="2528">YouTube TV</div>
+                            <!-- Free Streaming -->
+                            <div class="chips-dropdown-item" data-value="300">Pluto TV</div>
+                            <div class="chips-dropdown-item" data-value="207">The Roku Channel</div>
+                            <div class="chips-dropdown-item" data-value="538">Plex</div>
+                            <div class="chips-dropdown-item" data-value="2077">Plex Channel</div>
+                            <div class="chips-dropdown-item" data-value="1963">Xumo Play</div>
+                            <div class="chips-dropdown-item" data-value="1971">DistroTV</div>
+                            <div class="chips-dropdown-item" data-value="1875">Runtime</div>
+                            <div class="chips-dropdown-item" data-value="1948">Reveel</div>
+                            <div class="chips-dropdown-item" data-value="2409">Fawesome</div>
+                            <!-- TV Networks -->
+                            <div class="chips-dropdown-item" data-value="83">The CW</div>
+                            <div class="chips-dropdown-item" data-value="79">NBC</div>
+                            <div class="chips-dropdown-item" data-value="328">Fox</div>
+                            <div class="chips-dropdown-item" data-value="80">AMC</div>
+                            <div class="chips-dropdown-item" data-value="318">Adult Swim</div>
+                            <div class="chips-dropdown-item" data-value="209">PBS</div>
+                            <div class="chips-dropdown-item" data-value="123">FXNow</div>
+                            <div class="chips-dropdown-item" data-value="211">Freeform</div>
+                            <div class="chips-dropdown-item" data-value="363">TNT</div>
+                            <div class="chips-dropdown-item" data-value="506">TBS</div>
+                            <div class="chips-dropdown-item" data-value="365">Bravo TV</div>
+                            <div class="chips-dropdown-item" data-value="156">A&E</div>
+                            <div class="chips-dropdown-item" data-value="157">Lifetime</div>
+                            <div class="chips-dropdown-item" data-value="397">BBC America</div>
+                            <div class="chips-dropdown-item" data-value="1964">National Geographic</div>
+                            <!-- Discovery Networks -->
+                            <div class="chips-dropdown-item" data-value="403">Discovery</div>
+                            <div class="chips-dropdown-item" data-value="406">HGTV</div>
+                            <div class="chips-dropdown-item" data-value="366">Food Network</div>
+                            <div class="chips-dropdown-item" data-value="412">TLC</div>
+                            <div class="chips-dropdown-item" data-value="408">Investigation Discovery</div>
+                            <div class="chips-dropdown-item" data-value="411">Science Channel</div>
+                            <div class="chips-dropdown-item" data-value="399">Animal Planet</div>
+                            <div class="chips-dropdown-item" data-value="413">Travel Channel</div>
+                            <!-- Specialty Streaming -->
+                            <div class="chips-dropdown-item" data-value="283">Crunchyroll</div>
+                            <div class="chips-dropdown-item" data-value="430">HiDive</div>
+                            <div class="chips-dropdown-item" data-value="344">Rakuten Viki</div>
+                            <div class="chips-dropdown-item" data-value="446">Retrocrush</div>
+                            <div class="chips-dropdown-item" data-value="514">AsianCrush</div>
+                            <div class="chips-dropdown-item" data-value="575">OnDemandKorea</div>
+                            <div class="chips-dropdown-item" data-value="99">Shudder</div>
+                            <div class="chips-dropdown-item" data-value="151">BritBox</div>
+                            <div class="chips-dropdown-item" data-value="87">Acorn TV</div>
+                            <div class="chips-dropdown-item" data-value="143">Sundance Now</div>
+                            <div class="chips-dropdown-item" data-value="11">MUBI</div>
+                            <div class="chips-dropdown-item" data-value="258">Criterion Channel</div>
+                            <div class="chips-dropdown-item" data-value="190">Curiosity Stream</div>
+                            <div class="chips-dropdown-item" data-value="551">Magellan TV</div>
+                            <div class="chips-dropdown-item" data-value="191">Kanopy</div>
+                            <div class="chips-dropdown-item" data-value="212">Hoopla</div>
+                            <div class="chips-dropdown-item" data-value="257">fuboTV</div>
+                            <div class="chips-dropdown-item" data-value="2383">Philo</div>
+                            <!-- Niche/Specialty -->
+                            <div class="chips-dropdown-item" data-value="251">ALLBLK</div>
+                            <div class="chips-dropdown-item" data-value="278">Pure Flix</div>
+                            <div class="chips-dropdown-item" data-value="417">Here TV</div>
+                            <div class="chips-dropdown-item" data-value="444">Dekkoo</div>
+                            <div class="chips-dropdown-item" data-value="473">Revry</div>
+                            <div class="chips-dropdown-item" data-value="546">WOW Presents Plus</div>
+                            <div class="chips-dropdown-item" data-value="260">WWE Network</div>
+                            <div class="chips-dropdown-item" data-value="264">MyOutdoorTV</div>
+                            <div class="chips-dropdown-item" data-value="475">DOCSVILLE</div>
+                            <div class="chips-dropdown-item" data-value="439">Shout! Factory TV</div>
+                            <div class="chips-dropdown-item" data-value="529">ARROW</div>
+                            <div class="chips-dropdown-item" data-value="692">Cultpix</div>
+                            <div class="chips-dropdown-item" data-value="427">Mhz Choice</div>
+                            <div class="chips-dropdown-item" data-value="438">Chai Flicks</div>
+                            <div class="chips-dropdown-item" data-value="555">The Oprah Winfrey Network</div>
+                            <div class="chips-dropdown-item" data-value="2129">BYUtv</div>
+                            <div class="chips-dropdown-item" data-value="1956">Angel Studios</div>
+                            <!-- Amazon Channels -->
+                            <div class="chips-dropdown-item" data-value="1825">HBO Max Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="582">Paramount+ Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="583">MGM+ Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="528">AMC+ Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="584">Discovery+ Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="1794">Starz Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="1968">Crunchyroll Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="196">AcornTV Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="197">BritBox Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="204">Shudder Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="205">Sundance Now Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="201">MUBI Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="289">Cinemax Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="290">Hallmark+ Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="293">PBS Kids Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="294">PBS Masterpiece Amazon Channel</div>
+                            <div class="chips-dropdown-item" data-value="343">Bet+ Amazon Channel</div>
+                            <!-- Apple TV Channels -->
+                            <div class="chips-dropdown-item" data-value="1853">Paramount Plus Apple TV Channel</div>
+                            <div class="chips-dropdown-item" data-value="1855">Starz Apple TV Channel</div>
+                            <div class="chips-dropdown-item" data-value="1854">AMC Plus Apple TV Channel</div>
+                            <div class="chips-dropdown-item" data-value="1852">Britbox Apple TV Channel</div>
+                            <!-- Roku Channels -->
+                            <div class="chips-dropdown-item" data-value="633">Paramount+ Roku Premium Channel</div>
+                            <div class="chips-dropdown-item" data-value="634">Starz Roku Premium Channel</div>
+                            <div class="chips-dropdown-item" data-value="635">AMC+ Roku Premium Channel</div>
+                            <div class="chips-dropdown-item" data-value="636">MGM Plus Roku Premium Channel</div>
+                            <!-- International -->
+                            <div class="chips-dropdown-item" data-value="457">VIX</div>
+                            <div class="chips-dropdown-item" data-value="309">Sun Nxt</div>
+                            <div class="chips-dropdown-item" data-value="315">Hoichoi</div>
+                            <div class="chips-dropdown-item" data-value="532">aha</div>
+                            <div class="chips-dropdown-item" data-value="581">iQIYI</div>
+                            <div class="chips-dropdown-item" data-value="1715">Shahid VIP</div>
+                            <div class="chips-dropdown-item" data-value="701">FilmBox+</div>
+                            <!-- Other -->
+                            <div class="chips-dropdown-item" data-value="486">Spectrum On Demand</div>
+                            <div class="chips-dropdown-item" data-value="508">DisneyNOW</div>
+                            <div class="chips-dropdown-item" data-value="507">tru TV</div>
+                            <div class="chips-dropdown-item" data-value="509">WeTV</div>
+                            <div class="chips-dropdown-item" data-value="422">VH1</div>
+                            <div class="chips-dropdown-item" data-value="458">Vice TV</div>
+                            <div class="chips-dropdown-item" data-value="1953">Ovation TV</div>
+                            <div class="chips-dropdown-item" data-value="1957">Cineverse</div>
+                            <div class="chips-dropdown-item" data-value="1960">Midnight Pulp</div>
+                            <div class="chips-dropdown-item" data-value="2285">JustWatch TV</div>
+                            <div class="chips-dropdown-item" data-value="2308">Darkroom</div>
+                            <div class="chips-dropdown-item" data-value="331">FlixFling</div>
+                        </div>
+                    </div>
+                    <input type="hidden" id="selected-provider" name="watch_provider">
+                </div>
+
+                <!-- TV Network Filter (TV Shows Only) -->
+                <div class="filter-group" id="network-filter-group">
+                    <label class="filter-label">TV Network <span class="filter-hint">(TV shows only)</span></label>
+                    <div class="chips-input-container" id="network-container">
+                        <div class="chips-wrapper" id="network-chips"></div>
+                        <input type="text" id="network-search" class="chips-search-input" placeholder="Type to search..." autocomplete="off">
+                        <button type="button" class="chips-dropdown-toggle" id="network-dropdown-toggle">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+                        <div class="chips-dropdown" id="network-dropdown">
+                            <!-- Premium Cable Networks -->
+                            <div class="chips-dropdown-item" data-value="49">HBO</div>
+                            <div class="chips-dropdown-item" data-value="67">Showtime</div>
+                            <div class="chips-dropdown-item" data-value="318">Starz</div>
+                            <div class="chips-dropdown-item" data-value="359">Cinemax</div>
+                            <!-- Major US Broadcast -->
+                            <div class="chips-dropdown-item" data-value="2">ABC</div>
+                            <div class="chips-dropdown-item" data-value="6">NBC</div>
+                            <div class="chips-dropdown-item" data-value="16">CBS</div>
+                            <div class="chips-dropdown-item" data-value="19">FOX</div>
+                            <div class="chips-dropdown-item" data-value="71">The CW</div>
+                            <div class="chips-dropdown-item" data-value="209">PBS</div>
+                            <!-- Cable Networks -->
+                            <div class="chips-dropdown-item" data-value="88">FX</div>
+                            <div class="chips-dropdown-item" data-value="174">AMC</div>
+                            <div class="chips-dropdown-item" data-value="77">Syfy</div>
+                            <div class="chips-dropdown-item" data-value="30">USA Network</div>
+                            <div class="chips-dropdown-item" data-value="41">TNT</div>
+                            <div class="chips-dropdown-item" data-value="68">TBS</div>
+                            <div class="chips-dropdown-item" data-value="43">National Geographic</div>
+                            <div class="chips-dropdown-item" data-value="64">Discovery</div>
+                            <div class="chips-dropdown-item" data-value="65">History</div>
+                            <div class="chips-dropdown-item" data-value="51">A&E</div>
+                            <div class="chips-dropdown-item" data-value="84">TLC</div>
+                            <div class="chips-dropdown-item" data-value="91">Animal Planet</div>
+                            <div class="chips-dropdown-item" data-value="47">Comedy Central</div>
+                            <div class="chips-dropdown-item" data-value="33">MTV</div>
+                            <div class="chips-dropdown-item" data-value="34">Lifetime</div>
+                            <div class="chips-dropdown-item" data-value="29">ESPN</div>
+                            <div class="chips-dropdown-item" data-value="24">BET</div>
+                            <div class="chips-dropdown-item" data-value="52">Investigation Discovery</div>
+                            <div class="chips-dropdown-item" data-value="80">Adult Swim</div>
+                            <div class="chips-dropdown-item" data-value="2739">Disney XD</div>
+                            <!-- Kids Networks -->
+                            <div class="chips-dropdown-item" data-value="56">Cartoon Network</div>
+                            <div class="chips-dropdown-item" data-value="13">Nickelodeon</div>
+                            <div class="chips-dropdown-item" data-value="54">Disney Channel</div>
+                            <div class="chips-dropdown-item" data-value="35">Nick Jr.</div>
+                            <div class="chips-dropdown-item" data-value="1267">PBS Kids</div>
+                            <!-- Streaming Networks -->
+                            <div class="chips-dropdown-item" data-value="213">Netflix</div>
+                            <div class="chips-dropdown-item" data-value="1024">Amazon</div>
+                            <div class="chips-dropdown-item" data-value="2552">Apple TV+</div>
+                            <div class="chips-dropdown-item" data-value="2739">Disney+</div>
+                            <div class="chips-dropdown-item" data-value="453">Hulu</div>
+                            <div class="chips-dropdown-item" data-value="4330">Paramount+</div>
+                            <div class="chips-dropdown-item" data-value="3353">Peacock</div>
+                            <!-- UK Networks -->
+                            <div class="chips-dropdown-item" data-value="4">BBC One</div>
+                            <div class="chips-dropdown-item" data-value="332">BBC Two</div>
+                            <div class="chips-dropdown-item" data-value="3">BBC Three</div>
+                            <div class="chips-dropdown-item" data-value="100">BBC Four</div>
+                            <div class="chips-dropdown-item" data-value="26">Channel 4</div>
+                            <div class="chips-dropdown-item" data-value="99">Channel 5</div>
+                            <div class="chips-dropdown-item" data-value="9">ITV</div>
+                            <div class="chips-dropdown-item" data-value="493">Sky Atlantic</div>
+                            <!-- Canadian Networks -->
+                            <div class="chips-dropdown-item" data-value="85">CBC</div>
+                            <div class="chips-dropdown-item" data-value="173">CTV</div>
+                            <div class="chips-dropdown-item" data-value="116">Showcase</div>
+                            <!-- Australian Networks -->
+                            <div class="chips-dropdown-item" data-value="18">ABC (AU)</div>
+                            <div class="chips-dropdown-item" data-value="78">SBS</div>
+                            <div class="chips-dropdown-item" data-value="11">Seven Network</div>
+                            <!-- Anime Networks -->
+                            <div class="chips-dropdown-item" data-value="94">TV Tokyo</div>
+                            <div class="chips-dropdown-item" data-value="98">Tokyo MX</div>
+                            <div class="chips-dropdown-item" data-value="614">Fuji TV</div>
+                            <div class="chips-dropdown-item" data-value="95">TV Asahi</div>
+                            <div class="chips-dropdown-item" data-value="2918">Crunchyroll</div>
+                        </div>
+                    </div>
+                    <input type="hidden" id="selected-network" name="network">
+                </div>
+
+                <!-- Runtime Range -->
+                <div class="filter-group">
+                    <label class="filter-label">Runtime (minutes)</label>
+                    <div class="runtime-range-controls">
+                        <div class="ui input">
+                            <input type="number" id="runtime-min" placeholder="Min" min="0" value="0">
+                        </div>
+                        <div class="range-separator">to</div>
+                        <div class="ui input">
+                            <input type="number" id="runtime-max" placeholder="Max" min="0" value="300">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Production Companies -->
+                <div class="filter-group">
+                    <label class="filter-label">Production Company</label>
+                    <div class="chips-input-container" id="company-container">
+                        <div class="chips-wrapper" id="company-chips"></div>
+                        <input type="text" id="company-search" class="chips-search-input" placeholder="Type to search..." autocomplete="off">
+                        <button type="button" class="chips-dropdown-toggle" id="company-dropdown-toggle">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+                        <div class="chips-dropdown" id="company-dropdown">
+                            <div class="chips-dropdown-empty">Type to search companies...</div>
+                        </div>
+                    </div>
+                    <input type="hidden" id="production-company" name="production_company">
+                </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Active Filters Display -->
+            <div class="active-filters-section" id="active-filters-section" style="display: none;">
+                <h4 class="filter-section-title">Active Filters</h4>
+                <div class="active-filters-container" id="active-filters-container">
+                    <!-- Active filter chips will appear here -->
+                </div>
+            </div>
+        </div>
+
+        <div class="filter-actions">
+            <button type="button" id="clear-filters-btn" class="action-btn action-btn-ghost">Clear</button>
+            <button type="button" id="save-preset-btn" class="action-btn action-btn-secondary" title="Save current filters as a preset">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 1rem; height: 1rem; margin-right: 0.25rem;">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" />
+                </svg>
+                Preset
+            </button>
+            <button type="button" id="save-adaptive-list-btn" class="action-btn action-btn-secondary" title="Save current filters as an Adaptive List content source">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" style="width: 1rem; height: 1rem; margin-right: 0.25rem;">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
+                Adaptive List
+            </button>
+            <button type="button" id="apply-filters-btn" class="action-btn action-btn-primary">Apply</button>
+        </div>
+    </div>
+
+    <!-- Filter Overlay -->
+    <div id="filter-overlay" class="filter-overlay"></div>
+
+    <!-- Scrape Version Selection Modal -->
+    <div id="scrapeVersionModal" class="version-modal">
+        <div class="version-modal-content">
+            <h3>Select Scrape Version</h3>
+            <div id="scrapeVersionRadios">
+                <!-- Version radio buttons will be dynamically inserted here -->
+            </div>
+            <div class="version-modal-buttons">
+                <button id="confirmScrapeVersion">Scrape</button>
+                <button id="cancelScrapeVersion">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Request Version Selection Modal -->
+    <div id="versionModal" class="version-modal">
+        <div class="version-modal-content">
+            <h3>Select Versions</h3>
+            <div id="versionCheckboxes">
+                <!-- Version checkboxes will be dynamically inserted here -->
+            </div>
+            <div class="version-modal-buttons">
+                <button id="confirmVersions">Request</button>
+                <button id="cancelVersions">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Adaptive List Save Modal -->
+    <div id="adaptive-list-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content adaptive-list-modal-content">
+            <div class="modal-header">
+                <h3 id="adaptive-list-modal-title">Save as Adaptive List</h3>
+                <button type="button" id="adaptive-list-modal-close" class="modal-close-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-description">Save your current filters as an Adaptive List content source. This list will automatically update with new content matching your filters.</p>
+
+                <div class="form-group">
+                    <label for="adaptive-list-name">List Name</label>
+                    <input type="text" id="adaptive-list-name" placeholder="e.g., New Action Movies (30 days)" class="form-input">
+                </div>
+
+                <div class="adaptive-list-filter-summary">
+                    <h4>Active Filters:</h4>
+                    <div id="adaptive-list-filter-preview" class="filter-preview-chips">
+                        <!-- Filter summary will be populated by JavaScript -->
+                    </div>
+                </div>
+
+                <div class="adaptive-list-info">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+                    </svg>
+                    <span>Adaptive lists work best with time-sensitive filters like "Released Within" or "Upcoming" that produce different results over time.</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="adaptive-list-cancel-btn" class="action-btn action-btn-ghost">Cancel</button>
+                <button type="button" id="adaptive-list-save-btn" class="action-btn action-btn-primary">
+                    <span id="adaptive-list-save-text">Save Adaptive List</span>
+                    <span id="adaptive-list-save-loading" style="display: none;">Saving...</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Preset Save Modal -->
+    <div id="preset-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content preset-modal-content">
+            <div class="modal-header">
+                <h3 id="preset-modal-title">Save Filter Preset</h3>
+                <button type="button" id="preset-modal-close" class="modal-close-btn">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-description">Save your current filter settings as a preset for quick access later.</p>
+
+                <div class="form-group">
+                    <label for="preset-name">Preset Name</label>
+                    <input type="text" id="preset-name" placeholder="e.g., Recent Sci-Fi Movies" class="form-input">
+                </div>
+
+                <div class="preset-filter-summary">
+                    <h4>Filters to Save:</h4>
+                    <div id="preset-filter-preview" class="filter-preview-chips">
+                        <!-- Filter summary will be populated by JavaScript -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" id="preset-cancel-btn" class="action-btn action-btn-ghost">Cancel</button>
+                <button type="button" id="preset-save-btn" class="action-btn action-btn-primary">
+                    <span id="preset-save-text">Save Preset</span>
+                    <span id="preset-save-loading" style="display: none;">Saving...</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Section -->
+    <div class="discover-results">
+        <!-- Loading State removed - page loads fast enough without it -->
+
+        <!-- Empty State - controlled by .active class -->
+        <div id="empty-state" class="empty-state">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-16 h-16">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+            </svg>
+            <h3>No results found</h3>
+            <p>Try adjusting your search or filters</p>
+        </div>
+
+        <!-- Error State - controlled by .active class -->
+        <div id="error-state" class="error-state">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-16 h-16">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+            </svg>
+            <h3>Error loading content</h3>
+            <p>Please check your TMDB API configuration and try again</p>
+        </div>
+
+        <!-- TMDB Not Configured -->
+        {% if not tmdb_configured %}
+        <div class="tmdb-not-configured">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-16 h-16">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+            </svg>
+            <h3>TMDB API Key Required</h3>
+            <p>Configure your TMDB API key in settings to enable discovery features</p>
+            <a href="{{ url_for('settings.index') }}" class="action-btn action-btn-primary">Configure Settings</a>
+        </div>
+        {% endif %}
+
+        <!-- Trending Content - Category Rows -->
+        <div id="trending-content">
+            <!-- Movies Row -->
+            <div class="category-section" id="movies-section">
+                <div class="category-header">
+                    <h2 class="category-title">Movies</h2>
+                </div>
+                <div class="category-grid" id="movies-grid">
+                    <!-- Movies will be populated here -->
+                </div>
+            </div>
+
+            <!-- Shows Row -->
+            <div class="category-section" id="shows-section">
+                <div class="category-header">
+                    <h2 class="category-title">Shows</h2>
+                </div>
+                <div class="category-grid" id="shows-grid">
+                    <!-- Shows will be populated here -->
+                </div>
+            </div>
+
+            <!-- Anime Row -->
+            <div class="category-section" id="anime-section">
+                <div class="category-header">
+                    <h2 class="category-title">Anime</h2>
+                </div>
+                <div class="category-grid" id="anime-grid">
+                    <!-- Anime will be populated here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Search Results Grid (hidden by default, shown when searching) -->
+        <div id="search-results" style="display: none;">
+            <!-- Results Info Bar -->
+            <div class="results-info-bar" id="results-info">
+                <span class="results-count" id="results-count"></span>
+                <span class="results-page" id="results-page"></span>
+            </div>
+            <div id="results-grid" class="results-grid">
+                <!-- Search results will be populated here -->
+            </div>
+            <!-- Pagination -->
+            <div id="pagination" class="pagination" style="display: none;">
+                <button type="button" id="load-more-btn" class="action-btn action-btn-primary">Load More</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/discover.js') }}?v={{ range(10000, 99999) | random }}"></script>
+{% endblock %}

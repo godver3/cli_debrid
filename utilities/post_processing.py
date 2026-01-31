@@ -164,12 +164,34 @@ def handle_state_change(item: Dict[str, Any]) -> None:
             # Apply Plex labels based on content source configuration
             try:
                 logging.info(f"POST-PROCESSING: About to apply Plex labels for item {fresh_item.get('id')} ({fresh_item.get('title')})")
-                from plex.plex_label_manager import apply_labels_for_item
+                from utilities.plex_label_manager import apply_labels_for_item
                 result = apply_labels_for_item(dict(fresh_item))
                 logging.info(f"POST-PROCESSING: Plex labels application returned {result} for item {fresh_item.get('id')}")
             except Exception as e:
                 logging.error(f"Failed to apply Plex labels: {str(e)}")
                 logging.exception("Plex labels traceback:")
+
+            # Update item with size and resolution info
+            # OPTIMIZATION: Skip slow Plex API search (35-40s per episode) during checking queue
+            # Use fast filesystem check only. Plex search can be done later if needed.
+            try:
+                item_id = fresh_item.get('id')
+                if not item_id:
+                    logging.warning(f"POST-PROCESSING: No item ID available for size/resolution update")
+                else:
+                    logging.info(f"POST-PROCESSING: About to update size/resolution for item {item_id} ({fresh_item.get('title')})")
+                    from utilities.plex_functions import update_item_with_plex_info
+                    file_path = fresh_item.get('location_on_disk') or fresh_item.get('filled_by_file')
+                    if file_path:
+                        logging.info(f"POST-PROCESSING: Calling update_item_with_plex_info for {item_id} with path: {file_path} (skipping slow Plex search)")
+                        # skip_plex_search=True prevents 35-40s delay per episode
+                        result = update_item_with_plex_info(item_id, file_path, skip_plex_search=True)
+                        logging.info(f"POST-PROCESSING: Size/resolution update returned {result} for item {item_id}")
+                    else:
+                        logging.info(f"POST-PROCESSING: No file path available for item {item_id} to update size/resolution")
+            except Exception as e:
+                logging.error(f"Failed to update item size/resolution info: {str(e)}")
+                logging.exception("Size/resolution update traceback:")
         else:
             logging.warning(f"Unhandled state {state} in post-processing")
 

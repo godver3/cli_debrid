@@ -476,13 +476,30 @@ class QueueManager:
     def move_to_wanted(self, item: Dict[str, Any], from_queue: str, new_version: str = None):
         item_identifier = self.generate_identifier(item)
         target_version_str = f" (Version: {new_version})" if new_version else ""
+
+        # GHOSTLIST CHECK: Prevent PERMANENTLY ghostlisted items from being moved to Wanted
+        # Allow temporarily blacklisted items to be unblacklisted (state='Blacklisted' but ghostlisted != 1)
+        # This preserves the unblacklisting feature while blocking permanently ghostlisted items
+        is_ghostlisted = item.get('ghostlisted') == 1
+
+        if is_ghostlisted:
+            logging.warning(f"⛔ BLOCKED: Attempted to move permanently ghostlisted item {item_identifier}{target_version_str} to Wanted from {from_queue} - operation blocked")
+            # Don't move the item, just remove it from the source queue
+            if from_queue == "Checking":
+                from queues.checking_queue import CheckingQueue
+                checking_queue = CheckingQueue()
+                if checking_queue.contains_item_id(item['id']):
+                    checking_queue.remove_item(item)
+                    logging.info(f"Removed permanently ghostlisted item {item['id']} from {from_queue} queue")
+            return  # Block the move to Wanted
+
         logging.debug(f"Moving item {item_identifier}{target_version_str} to Wanted queue from {from_queue}")
-        
+
         # If moving from Sleeping, preserve wake count (though usually reset when entering Wanted)
         from database import get_wake_count
         wake_count = get_wake_count(item['id'])
         logging.debug(f"Wake count before moving to Wanted: {wake_count}")
-        
+
         updated_item = self._move_item_to_queue(item, from_queue, "Wanted", "Wanted", new_version=new_version, filled_by_title=None, filled_by_magnet=None)
         
         if updated_item:
@@ -491,36 +508,92 @@ class QueueManager:
 
     def move_to_upgrading(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
+
+        # GHOSTLIST CHECK: Prevent ghostlisted/blacklisted items from being moved to Upgrading
+        item_state = item.get('state', '')
+        is_ghostlisted = item.get('ghostlisted') == 1
+        is_blacklisted = item_state == 'Blacklisted'
+
+        if is_ghostlisted or is_blacklisted:
+            logging.warning(f"⛔ BLOCKED: Attempted to move {'ghostlisted' if is_ghostlisted else 'blacklisted'} item {item_identifier} to Upgrading from {from_queue} - operation blocked")
+            return  # Block the move to Upgrading
+
         logging.debug(f"Moving item to Upgrading: {item_identifier}")
         self._move_item_to_queue(item, from_queue, "Upgrading", "Upgrading")
 
     def move_to_pre_release(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
+
+        # GHOSTLIST CHECK: Prevent ghostlisted/blacklisted items from being moved to Pre-Release
+        item_state = item.get('state', '')
+        is_ghostlisted = item.get('ghostlisted') == 1
+        is_blacklisted = item_state == 'Blacklisted'
+
+        if is_ghostlisted or is_blacklisted:
+            logging.warning(f"⛔ BLOCKED: Attempted to move {'ghostlisted' if is_ghostlisted else 'blacklisted'} item {item_identifier} to Pre-Release from {from_queue} - operation blocked")
+            return  # Block the move to Pre-Release
+
         logging.debug(f"Moving item to Pre-Release: {item_identifier}")
         self._move_item_to_queue(item, from_queue, "Pre_release", "Pre_release")
 
     def move_to_scraping(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
+
+        # GHOSTLIST CHECK: Prevent ghostlisted/blacklisted items from being moved to Scraping
+        item_state = item.get('state', '')
+        is_ghostlisted = item.get('ghostlisted') == 1
+        is_blacklisted = item_state == 'Blacklisted'
+
+        if is_ghostlisted or is_blacklisted:
+            logging.warning(f"⛔ BLOCKED: Attempted to move {'ghostlisted' if is_ghostlisted else 'blacklisted'} item {item_identifier} to Scraping from {from_queue} - operation blocked")
+            if from_queue == "Wanted":
+                from queues.wanted_queue import WantedQueue
+                wanted_queue = WantedQueue()
+                if wanted_queue.contains_item_id(item['id']):
+                    wanted_queue.remove_item(item)
+                    logging.info(f"Removed ghostlisted/blacklisted item {item['id']} from {from_queue} queue")
+            return  # Block the move to Scraping
+
         logging.debug(f"Moving item to Scraping: {item_identifier}")
         self._move_item_to_queue(item, from_queue, "Scraping", "Scraping")
 
     def move_to_adding(self, item: Dict[str, Any], from_queue: str, filled_by_title: str, scrape_results: List[Dict]):
         item_identifier = self.generate_identifier(item)
+
+        # GHOSTLIST CHECK: Prevent ghostlisted/blacklisted items from being moved to Adding
+        item_state = item.get('state', '')
+        is_ghostlisted = item.get('ghostlisted') == 1
+        is_blacklisted = item_state == 'Blacklisted'
+
+        if is_ghostlisted or is_blacklisted:
+            logging.warning(f"⛔ BLOCKED: Attempted to move {'ghostlisted' if is_ghostlisted else 'blacklisted'} item {item_identifier} to Adding from {from_queue} - operation blocked")
+            return  # Block the move to Adding
+
         logging.debug(f"Moving item to Adding: {item_identifier}")
-        
+
         updated_item = self._move_item_to_queue(
-            item, 
+            item,
             from_queue if from_queue != "Wanted" else None,  # Don't remove from Wanted queue
-            "Adding", 
-            "Adding", 
-            filled_by_title=filled_by_title, 
+            "Adding",
+            "Adding",
+            filled_by_title=filled_by_title,
             scrape_results=scrape_results
         )
 
     def move_to_checking(self, item: Dict[str, Any], from_queue: str, title: str, link: str, filled_by_file: str, torrent_id: str = None):
         item_identifier = self.generate_identifier(item)
+
+        # GHOSTLIST CHECK: Prevent ghostlisted/blacklisted items from being moved to Checking
+        item_state = item.get('state', '')
+        is_ghostlisted = item.get('ghostlisted') == 1
+        is_blacklisted = item_state == 'Blacklisted'
+
+        if is_ghostlisted or is_blacklisted:
+            logging.warning(f"⛔ BLOCKED: Attempted to move {'ghostlisted' if is_ghostlisted else 'blacklisted'} item {item_identifier} to Checking from {from_queue} - operation blocked")
+            return  # Block the move to Checking
+
         logging.debug(f"Moving item to Checking: {item_identifier}")
-        
+
         from utilities.settings import get_setting
 
         '''
@@ -580,19 +653,40 @@ class QueueManager:
 
     def move_to_sleeping(self, item: Dict[str, Any], from_queue: str):
         item_identifier = self.generate_identifier(item)
+
+        # GHOSTLIST CHECK: Prevent ghostlisted/blacklisted items from being moved to Sleeping
+        item_state = item.get('state', '')
+        is_ghostlisted = item.get('ghostlisted') == 1
+        is_blacklisted = item_state == 'Blacklisted'
+
+        if is_ghostlisted or is_blacklisted:
+            logging.warning(f"⛔ BLOCKED: Attempted to move {'ghostlisted' if is_ghostlisted else 'blacklisted'} item {item_identifier} to Sleeping from {from_queue} - operation blocked")
+            return  # Block the move to Sleeping
+
         logging.debug(f"Moving item {item_identifier} to Sleeping queue")
-        
+
         from database import get_wake_count
         wake_count = get_wake_count(item['id'])
         logging.debug(f"Wake count before moving to Sleeping: {wake_count}")
 
         updated_item = self._move_item_to_queue(item, from_queue, "Sleeping", "Sleeping")
-        
+
         if updated_item:
             updated_item['wake_count'] = wake_count
             self.queues["Sleeping"].add_item(updated_item)  # Re-add with wake count
 
     def move_to_unreleased(self, item: Dict[str, Any], from_queue: str):
+        item_identifier = self.generate_identifier(item)
+
+        # GHOSTLIST CHECK: Prevent ghostlisted/blacklisted items from being moved to Unreleased
+        item_state = item.get('state', '')
+        is_ghostlisted = item.get('ghostlisted') == 1
+        is_blacklisted = item_state == 'Blacklisted'
+
+        if is_ghostlisted or is_blacklisted:
+            logging.warning(f"⛔ BLOCKED: Attempted to move {'ghostlisted' if is_ghostlisted else 'blacklisted'} item {item_identifier} to Unreleased from {from_queue} - operation blocked")
+            return  # Block the move to Unreleased
+
         self._move_item_to_queue(item, from_queue, "Unreleased", "Unreleased")
 
     def move_to_blacklisted(self, item: Dict[str, Any], from_queue: str):
@@ -658,13 +752,24 @@ class QueueManager:
         logging.debug(f"Finished processing move for item {item_identifier} (to Blacklisted or Fallback)")
 
     def move_to_pending_uncached(self, item: Dict[str, Any], from_queue: str, title: str, link: str, scrape_results: List[Dict]):
+        item_identifier = self.generate_identifier(item)
+
+        # GHOSTLIST CHECK: Prevent ghostlisted/blacklisted items from being moved to Pending Uncached
+        item_state = item.get('state', '')
+        is_ghostlisted = item.get('ghostlisted') == 1
+        is_blacklisted = item_state == 'Blacklisted'
+
+        if is_ghostlisted or is_blacklisted:
+            logging.warning(f"⛔ BLOCKED: Attempted to move {'ghostlisted' if is_ghostlisted else 'blacklisted'} item {item_identifier} to Pending Uncached from {from_queue} - operation blocked")
+            return  # Block the move to Pending Uncached
+
         self._move_item_to_queue(
-            item, 
-            from_queue, 
-            "Pending Uncached", 
-            "Pending Uncached", 
-            filled_by_title=title, 
-            filled_by_magnet=link, 
+            item,
+            from_queue,
+            "Pending Uncached",
+            "Pending Uncached",
+            filled_by_title=title,
+            filled_by_magnet=link,
             scrape_results=scrape_results
         )
 
@@ -813,8 +918,18 @@ class QueueManager:
     def move_to_collected(self, item: Dict[str, Any], from_queue: str, skip_notification: bool = False):
         """Move an item to the Collected state after symlink is created."""
         item_identifier = self.generate_identifier(item)
+
+        # GHOSTLIST CHECK: Prevent ghostlisted/blacklisted items from being moved to Collected
+        item_state = item.get('state', '')
+        is_ghostlisted = item.get('ghostlisted') == 1
+        is_blacklisted = item_state == 'Blacklisted'
+
+        if is_ghostlisted or is_blacklisted:
+            logging.warning(f"⛔ BLOCKED: Attempted to move {'ghostlisted' if is_ghostlisted else 'blacklisted'} item {item_identifier} to Collected from {from_queue} - operation blocked")
+            return  # Block the move to Collected
+
         logging.debug(f"Moving item {item_identifier} to Collected state")
-        
+
         # Log initiation of move to Collected
         self.item_tracker.info({
             'event': 'MOVE_INITIATED',
@@ -851,7 +966,7 @@ class QueueManager:
 
             # Apply Plex labels if configured
             try:
-                from plex.plex_label_manager import apply_labels_for_item
+                from utilities.plex_label_manager import apply_labels_for_item
                 apply_labels_for_item(updated_item)
             except Exception as label_error:
                 logging.error(f"Error applying Plex labels to item {item_identifier}: {label_error}")
@@ -984,8 +1099,53 @@ class QueueManager:
         # Ensure the state is 'Wanted'
         new_item_data_for_db = new_item_data.copy() # Work with a copy
         new_item_data_for_db['state'] = 'Wanted'
-        if 'id' in new_item_data_for_db: 
+        if 'id' in new_item_data_for_db:
             del new_item_data_for_db['id']
+
+        # CHECK IF ITEM IS ALREADY GHOSTLISTED/BLACKLISTED - Phase 2 Fix
+        imdb_id = new_item_data_for_db.get('imdb_id')
+        tmdb_id = new_item_data_for_db.get('tmdb_id')
+        media_type = new_item_data_for_db.get('type')
+        season = new_item_data_for_db.get('season_number')
+        episode = new_item_data_for_db.get('episode_number')
+
+        if imdb_id or tmdb_id:
+            conn_check = None
+            try:
+                conn_check = get_db_connection()
+                # Check for existing ghostlisted/blacklisted items
+                if media_type == 'episode' and season is not None and episode is not None:
+                    # For episodes, check specific season/episode
+                    query_check = """
+                        SELECT id FROM media_items
+                        WHERE (imdb_id = ? OR tmdb_id = ?)
+                        AND type = ?
+                        AND season_number = ?
+                        AND episode_number = ?
+                        AND (ghostlisted = 1 OR state = 'Blacklisted')
+                        LIMIT 1
+                    """
+                    result_check = conn_check.execute(query_check, (imdb_id, tmdb_id, media_type, season, episode)).fetchone()
+                else:
+                    # For movies/shows, check by IMDB/TMDB
+                    query_check = """
+                        SELECT id FROM media_items
+                        WHERE (imdb_id = ? OR tmdb_id = ?)
+                        AND type = ?
+                        AND (ghostlisted = 1 OR state = 'Blacklisted')
+                        LIMIT 1
+                    """
+                    result_check = conn_check.execute(query_check, (imdb_id, tmdb_id, media_type)).fetchone()
+
+                if result_check:
+                    logging.info(f"⛔ Skipping {item_identifier_for_log} - user has ghostlisted/blacklisted this item (ID: {result_check[0]})")
+                    return False
+            except Exception as e_check:
+                logging.error(f"Error checking ghostlisted status for {item_identifier_for_log}: {e_check}")
+                # Continue anyway - don't block on check failure
+            finally:
+                if conn_check:
+                    conn_check.close()
 
         try:
             # Add the new media item to the database, returns the new item's ID

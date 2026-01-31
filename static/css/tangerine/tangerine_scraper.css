@@ -888,32 +888,7 @@ ease;
     color: #fff;
 }
 
-.close-btn {
-    position: sticky;
-    top: 15px;
-    right: 15px;
-    width: 30px;
-    height: 32px;
-    font-size: 24px;
-    border: none;
-    background-color: transparent;
-    color: var(--text-secondary);
-    border-radius: 50%;
-    cursor: pointer;
-    transition: all var(--transition-speed) ease;
-    z-index: 5;
-    margin-left: auto;
-    padding: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-}
 
-.close-btn:hover {
-    color: var(--text-primary);
-    background-color: rgba(255, 255, 255, 0.1);
-    transform: scale(1.1);
-}
 
 .overlay-content table {
     width: 100%;
@@ -948,33 +923,95 @@ ease;
 }
 
 .torresult {
-    width: 300px;
-    margin-bottom: 5px;
-    border-radius: var(--border-radius-md);
-    background-color: #383434;
-    padding: var(--spacing-md);
-    transition: transform var(--transition-speed) 
-ease;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 20px;
+    margin-bottom: 20px;
+    overflow: hidden;
+    padding: 1.25rem;
 }
-p.torresult-title {
-    font-size: 1.1rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    line-height: 1.3rem;
-    color: rgb(191 191 190);
+
+.torresult button {
+    background: none;
+    border: none;
+    padding: 0;
+    width: 100%;
     text-align: left;
+    cursor: pointer;
+    color: inherit;
+    flex: 1;
+}
+
+.torresult-info {
+    display: grid;
+    /* flex-direction: column; */
+    gap: 0.5rem;
+    width: 100%;
+    text-align: center;
+}
+
+p.torresult-title {
+    font-size: 1rem;
+    text-align: center;
+    margin: 5px 0;
+    word-break: break-word;
 }
 
 p.torresult-item {
-    font-size: 0.999rem;
-    line-height: 1.3rem;
-    color: rgb(191 191 190);
-    text-align: center;
+    font-size: 0.9rem;
+    margin: 5px 0;
+    color: #e17c52;
     word-break: normal;
     overflow-wrap: anywhere;
     white-space: normal;
     hyphens: none;
+}
+
+.assign-magnet-icon {
+    position: absolute;
+    bottom: 10px;
+    right: 10px;
+    width: 32px;
+    height: 32px;
+    background-color: #FFC107;
+    border: 2px solid rgba(0, 0, 0, 0.3);
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    transition: all 0.2s ease;
+}
+
+.assign-magnet-icon:hover {
+    background-color: #FFA000;
+    transform: scale(1.1);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+}
+
+.assign-magnet-icon svg {
+    width: 20px;
+    height: 20px;
+    color: #333;
+    pointer-events: none;
+}
+
+/* Mobile cache checkmark */
+.mobile-cache-check {
+    width: 40px;
+    height: 40px;
+    background: rgba(16, 185, 129, 0.2);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    color: #10b981;
+    font-weight: bold;
+    margin: 8px auto 0;
 }
 
 .overlay-content td .torrent-title-wrapper {
@@ -990,14 +1027,14 @@ p.torresult-item {
 
 /* Cache Status Badges */
 .cache-status {
-    display: inline-block;
-    padding: 0.25rem 0.75rem;
-    border-radius: 20px;
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-top: 0.5rem;
+    display: inline-block !important;
+    padding: 6px 12px !important;
+    border-radius: 20px !important;
+    font-size: 0.75rem !important;
+    margin: 4px 0 !important;
+    text-align: center !important;
+    width: 42% !important;
+    justify-self: center;
 }
 
 .cache-status.cached {
@@ -1856,3 +1893,669 @@ tr.filtered-out-item {
     font-size: 14px;
 }
 
+
+/* ==========================================================================
+   Torrent Results Modal - Modern Redesign (Tangerine Theme)
+   Matches Interactive Search styling with Tangerine colors
+   ========================================================================== */
+
+/* Modal Header */
+.overlay-content .torrent-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #404040;
+    position: sticky;
+    top: 0;
+    background: #1a1a1a;
+    z-index: 10;
+    margin-top: 20px;
+}
+
+.overlay-content .torrent-modal-title-section h3 {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: #fafafa;
+    margin: 0 0 0.5rem 0;
+    border: none;
+    line-height: 10px;
+
+}
+
+.overlay-content .torrent-stats {
+    font-size: 0.875rem;
+    color: #a3a3a3;
+    display: flex;
+    gap: 1rem;
+    padding-left: 18px;
+}
+
+.overlay-content .torrent-stats span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.overlay-content .torrent-stats span:not(:last-child)::after {
+    content: "";
+    display: inline-block;
+    width: 1px;
+    height: 12px;
+    background: #444;
+    margin-left: 0.75rem;
+}
+
+.overlay-content .torrent-modal-actions {
+    display: flex;
+    align-self: start;
+    gap: 0.5rem;
+}
+
+.overlay-content .torrent-modal-actions button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: transparent;
+    border: none;
+    color: #a3a3a3;
+    font-size: 0.875rem;
+    cursor: pointer;
+    border-radius: 0.375rem;
+    transition: all 0.2s;
+}
+
+.overlay-content .torrent-modal-actions button:hover {
+    background: #333333;
+    color: #fafafa;
+}
+
+.overlay-content .torrent-modal-actions button svg {
+    width: 1.5rem;
+    height: 1.5rem;
+}
+
+.overlay-content .torrent-modal-actions .refresh-btn svg {
+    animation: spin 1s linear infinite;
+    animation-play-state: paused;
+}
+
+.overlay-content .torrent-modal-actions .refresh-btn.refreshing svg {
+    animation-play-state: running;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* Filter Section */
+.overlay-content .torrent-filter-section {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    /* padding: 1rem;
+    background: #262626; */
+    border-radius: 0.5rem;
+    /* position: sticky; */
+    top: 90px;
+    z-index: 9;
+}
+
+.overlay-content .torrent-filter-input-wrapper {
+    position: relative;
+    flex: 1;
+    min-width: 200px;
+}
+
+.overlay-content .torrent-version-dropdown-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.overlay-content .torrent-version-dropdown-wrapper label {
+    color: #d4d4d4;
+    font-size: 0.875rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.overlay-content .torrent-version-select {
+    padding: 0.5rem 0.75rem;
+    background: #1a1a1a;
+    border: 1px solid #404040;
+    border-radius: 0.375rem;
+    color: #fafafa;
+    font-size: 0.875rem;
+    cursor: pointer;
+    min-width: 120px;
+    transition: all 0.2s ease;
+}
+
+.overlay-content .torrent-version-select:hover {
+    border-color: #525252;
+}
+
+.overlay-content .torrent-version-select:focus {
+    outline: none;
+    border-color: #f97316;
+}
+
+.overlay-content .torrent-folder-dropdown-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.overlay-content .torrent-folder-dropdown-wrapper label {
+    color: #d4d4d4;
+    font-size: 0.875rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.overlay-content .torrent-folder-select {
+    padding: 0.5rem 0.75rem;
+    background: #1a1a1a;
+    border: 1px solid #404040;
+    border-radius: 0.375rem;
+    color: #fafafa;
+    font-size: 0.875rem;
+    cursor: pointer;
+    min-width: 150px;
+    transition: all 0.2s ease;
+}
+
+.overlay-content .torrent-folder-select:hover {
+    border-color: #525252;
+}
+
+.overlay-content .torrent-folder-select:focus {
+    outline: none;
+    border-color: #f97316;
+}
+
+.overlay-content .torrent-filter-toggles {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+
+.overlay-content .torrent-filter-input-wrapper svg {
+    position: absolute;
+    left: 0.75rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1rem;
+    height: 1rem;
+    color: #a3a3a3;
+    pointer-events: none;
+}
+
+.overlay-content .torrent-filter-input {
+    width: 100%;
+    padding: 0.5rem 0.75rem 0.5rem 2.5rem;
+    background: #1a1a1a;
+    border: 1px solid #404040;
+    border-radius: 0.375rem;
+    color: #fafafa;
+    font-size: 0.875rem;
+}
+
+.overlay-content .torrent-filter-input:focus {
+    outline: none;
+    border-color: #f97316;
+}
+
+.overlay-content .torrent-filter-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #a3a3a3;
+    font-size: 0.875rem;
+    cursor: pointer;
+}
+
+.overlay-content .torrent-filter-checkbox input[type="checkbox"] {
+    cursor: pointer;
+}
+
+/* Table Styling */
+.overlay-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    border: none;
+    caret-color: transparent
+}
+
+.overlay-content thead {
+    position: sticky;
+    top: 80px;
+    background: #000000;
+    z-index: 8;
+}
+
+.overlay-content th {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #a3a3a3;
+    border-bottom: 1px solid #404040;
+}
+
+.overlay-content th.sortable {
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.2s;
+}
+
+.overlay-content th.sortable:hover {
+    color: #fafafa;
+}
+
+.overlay-content th.text-right {
+    text-align: right;
+}
+
+.overlay-content th.text-center {
+    text-align: center;
+}
+
+.overlay-content tbody tr {
+    /* border-bottom: 1px solid #333333; */
+    transition: background-color 0.2s;
+}
+
+.overlay-content tbody tr:hover {
+    background: #262626;
+}
+
+.overlay-content tbody tr.filtered-row {
+    opacity: 0.5;
+}
+
+.overlay-content td {
+    padding: 1rem;
+    font-size: 0.875rem;
+    color: #e0e0e0;
+    vertical-align: middle;
+}
+
+.close-btn:hover {
+    color: var(--text-primary);
+    background-color: rgba(255, 255, 255, 0.1);
+    transform: scale(1.1);
+}
+
+.close-btn {
+    position: sticky;
+    top: 15px;
+    right: 15px;
+    width: 30px;
+    height: 32px;
+    font-size: 24px;
+    border: none;
+    background-color: transparent;
+    color: var(--text-secondary);
+    border-radius: 50%;
+    cursor: pointer;
+    transition: all var(--transition-speed) ease;
+    z-index: 30;
+    margin-left: auto;
+    padding: 0;
+    display: block;
+    align-items: center;
+    justify-content: center;
+}
+
+
+.overlay-content td.text-right {
+    text-align: right;
+}
+
+.overlay-content td.text-center {
+    text-align: center;
+}
+
+/* Release Name Column with Separate Title and Tags Rows */
+.overlay-content .release-title-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.overlay-content .release-title {
+    font-size: 13px;
+    color: #fafafa;
+    line-height: 2;
+    font-weight: 400;
+}
+
+.overlay-content .release-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-self: self-start;
+}
+
+.overlay-content .quality-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    border-radius: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+}
+
+/* Quality Badge Colors */
+.overlay-content .quality-badge.resolution {
+    background: rgba(139, 92, 246, 0.2);
+    color: #c4b5fd;
+    border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.overlay-content .quality-badge.source {
+    background: rgba(6, 182, 212, 0.2);
+    color: #67e8f9;
+    border: 1px solid rgba(6, 182, 212, 0.3);
+}
+
+.overlay-content .quality-badge.codec {
+    background: rgba(16, 185, 129, 0.2);
+    color: #6ee7b7;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.overlay-content .quality-badge.audio {
+    background: rgba(251, 146, 60, 0.2);
+    color: #fdba74;
+    border: 1px solid rgba(251, 146, 60, 0.3);
+}
+
+.overlay-content .quality-badge.hdr {
+    background: rgba(234, 179, 8, 0.2);
+    color: #fde047;
+    border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.overlay-content .quality-badge.group {
+    background: rgba(168, 85, 247, 0.2);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.overlay-content .quality-badge.extension {
+    background: rgba(100, 116, 139, 0.2);
+    color: #94a3b8;
+    border: 1px solid rgba(100, 116, 139, 0.3);
+}
+
+/* Source Badge (Indexer) - Simpler inline style */
+.overlay-content .source-badge {
+    display: inline-block;
+    padding: 4px 4px;
+    background: #2a2a2a;
+    border: 1px solid #14b8a6;
+    border-radius: 4px;
+    color: #14b8a6;
+    font-size: 11px;
+    font-weight: 500;
+    margin-right: 4px;
+    margin-bottom: 4px;
+    width: 100%;
+    text-align: center;
+}
+
+/* Score Column */
+.overlay-content .score-value {
+    font-weight: 600;
+    font-size: 0.875rem;
+}
+
+.overlay-content .score-value.high {
+    color: #6ee7b7;
+}
+
+.overlay-content .score-value.medium {
+    color: #fde047;
+}
+
+.overlay-content .score-value.low {
+    color: #fca5a5;
+}
+
+/* Cache Status Icons */
+.overlay-content .cache-status-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.375rem;
+}
+
+.overlay-content .cache-status-icon svg {
+    width: 1.25rem;
+    height: 1.25rem;
+}
+
+.overlay-content .cache-status-icon.cached {
+    background: rgba(16, 185, 129, 0.2);
+    color: #6ee7b7;
+}
+
+.overlay-content .cache-status-icon.not-cached {
+    background: rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+}
+
+.overlay-content .cache-status-icon.unknown {
+    background: rgba(156, 163, 175, 0.2);
+    color: #9ca3af;
+}
+
+/* Action Buttons */
+.overlay-content .action-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+}
+
+.overlay-content .action-button.add-button {
+    background: #f97316;
+    color: white;
+}
+
+.overlay-content .action-button.add-button:hover {
+    background: #ea580c;
+}
+
+.overlay-content .action-button.assign-button {
+    background: transparent;
+    color: #a3a3a3;
+    border: 1px solid #404040;
+}
+
+.overlay-content .action-button.assign-button:hover {
+    background: #333333;
+    color: #fafafa;
+    border-color: #525252;
+}
+
+.overlay-content .action-button svg {
+    width: 1rem;
+    height: 1rem;
+}
+
+/* Close Button at Bottom - REMOVED */
+/*
+.overlay-content .modal-footer {
+    display: flex;
+    justify-content: center;
+    padding: 1.5rem 0 1rem;
+    border-top: 1px solid #404040;
+    margin-top: 1.5rem;
+}
+
+.overlay-content .modal-footer .close-modal-btn {
+    padding: 0.75rem 2rem;
+    background: transparent;
+    border: 1px solid #404040;
+    color: #a3a3a3;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.overlay-content .modal-footer .close-modal-btn:hover {
+    background: #333333;
+    color: #fafafa;
+    border-color: #525252;
+}
+*/
+
+/* Empty State */
+.overlay-content .torrent-empty-state {
+    text-align: center;
+    padding: 3rem 1rem;
+    color: #a3a3a3;
+}
+
+.overlay-content .torrent-empty-state svg {
+    width: 3rem;
+    height: 3rem;
+    margin-bottom: 1rem;
+    opacity: 0.5;
+}
+
+.overlay-content .torrent-empty-state h4 {
+    font-size: 1.125rem;
+    margin: 0 0 0.5rem;
+    color: #fafafa;
+}
+
+.overlay-content .torrent-empty-state p {
+    font-size: 0.875rem;
+    margin: 0;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+    /* Reset sticky positioning for mobile */
+    .overlay-content .torrent-modal-header {
+        position: relative;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+    
+    .overlay-content .torrent-filter-section {
+        position: relative;
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .overlay-content .torrent-version-dropdown-wrapper {
+        width: 100%;
+    }
+
+    .overlay-content .torrent-version-select {
+        flex: 1;
+        width: 100%;
+    }
+
+    .overlay-content .torrent-folder-dropdown-wrapper {
+        width: 100%;
+    }
+
+    .overlay-content .torrent-folder-select {
+        flex: 1;
+        width: 100%;
+    }
+
+    .overlay-content thead {
+        position: relative;
+        top: auto;
+    }
+    
+    .overlay-content table {
+        font-size: 0.8125rem;
+    }
+    
+    .overlay-content th,
+    .overlay-content td {
+        padding: 0.75rem 0.5rem;
+    }
+}
+
+@media (max-width: 768px) {
+    .close-btn {
+        position: sticky;
+        top: 15px;
+        right: 15px;
+        width: 30px;
+        height: 32px;
+        font-size: 24px;
+        border: none;
+        background-color: transparent;
+        color: var(--text-secondary);
+        border-radius: 50%;
+        cursor: pointer;
+        transition: all var(--transition-speed) ease;
+        z-index: 30;
+        margin-left: auto;
+        padding: 0;
+        display: block;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .close-btn:hover {
+        color: var(--text-primary);
+        background-color: rgba(255, 255, 255, 0.1);
+        transform: scale(1.1);
+    }
+}
+
+/* Season and Episode Info Styling */
+.season-info {
+    color: #3b82f6;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(59, 130, 246, 0.15);
+}
+
+.ds-episode-info {
+    color: #10b981;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(16, 185, 129, 0.15);
+}
+
+.season-count {
+    color: #8b5cf6;
+    font-weight: 500;
+    font-size: 0.9em;
+}

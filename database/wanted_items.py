@@ -8,7 +8,7 @@ import random
 import os
 from queues.config_manager import load_config
 from utilities.settings import get_setting
-from content_checkers.trakt import fetch_items_from_trakt
+from content_checkers.trakt import fetch_items_from_trakt, load_imdb_trakt_cache, save_imdb_trakt_cache
 import re
 
 def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
@@ -39,6 +39,11 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             'monitor_mode_recent_skip': 0
         }
         airtime_cache = {}
+
+        # Load IMDB→Trakt ID cache to avoid redundant API calls
+        imdb_trakt_cache = load_imdb_trakt_cache()
+        cache_hits = 0
+        cache_misses = 0
 
         config = load_config()
         content_sources = config.get('Content Sources', {})
@@ -165,6 +170,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 query = f'''
                     SELECT imdb_id, version, state FROM media_items
                     WHERE type = 'movie' AND imdb_id IN ({placeholders})
+                    AND (ghostlisted IS NULL OR ghostlisted = FALSE)
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
@@ -181,6 +187,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 query = f'''
                     SELECT tmdb_id, version, state FROM media_items
                     WHERE type = 'movie' AND tmdb_id IN ({placeholders})
+                    AND (ghostlisted IS NULL OR ghostlisted = FALSE)
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
@@ -199,6 +206,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 query = f'''
                     SELECT imdb_id, season_number, episode_number, version, state FROM media_items
                     WHERE type = 'episode' AND imdb_id IN ({placeholders})
+                    AND (ghostlisted IS NULL OR ghostlisted = FALSE)
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
@@ -215,6 +223,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 query = f'''
                     SELECT tmdb_id, season_number, episode_number, version, state FROM media_items
                     WHERE type = 'episode' AND tmdb_id IN ({placeholders})
+                    AND (ghostlisted IS NULL OR ghostlisted = FALSE)
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
@@ -502,18 +511,42 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     if check_trakt:
                         logging.info(f"Checking Trakt early release lists for movie: {normalized_title} ({imdb_id})")
                         try:
-                            trakt_search_results = fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
-                            if trakt_search_results and isinstance(trakt_search_results, list) and len(trakt_search_results) > 0:
-                                if 'movie' in trakt_search_results[0] and trakt_search_results[0]['movie'].get('ids', {}).get('trakt'):
-                                    trakt_id = str(trakt_search_results[0]['movie']['ids']['trakt'])
-                                    trakt_lists = fetch_items_from_trakt(f"/movies/{trakt_id}/lists/personal/popular")
-                                    if trakt_lists:
-                                        for trakt_list in trakt_lists:
-                                            if re.search(r'(latest|new).*?(releases)', trakt_list.get('name', ''), re.IGNORECASE):
-                                                early_release_flag = True; break
-                                    else: logging.warning(f"Failed to fetch Trakt lists for movie {trakt_id}")
-                                else: logging.warning(f"Could not extract Trakt ID from search results for {imdb_id}")
-                            else: logging.info(f"No Trakt search results found for {imdb_id}")
+                            # Check cache first to avoid redundant API calls
+                            cached_entry = imdb_trakt_cache.get(imdb_id)
+                            if cached_entry and 'trakt_id' in cached_entry:
+                                trakt_id = str(cached_entry['trakt_id'])
+                                cache_hits += 1
+                                logging.debug(f"Cache hit: IMDB {imdb_id} → Trakt {trakt_id}")
+                            else:
+                                # Cache miss - perform API lookup
+                                trakt_search_results = fetch_items_from_trakt(f"/search/imdb/{imdb_id}")
+                                cache_misses += 1
+                                trakt_id = None
+
+                                if trakt_search_results and isinstance(trakt_search_results, list) and len(trakt_search_results) > 0:
+                                    if 'movie' in trakt_search_results[0] and trakt_search_results[0]['movie'].get('ids', {}).get('trakt'):
+                                        trakt_id = str(trakt_search_results[0]['movie']['ids']['trakt'])
+
+                                        # Cache the newly fetched trakt_id
+                                        imdb_trakt_cache[imdb_id] = {
+                                            'trakt_id': trakt_id,
+                                            'cached_at': datetime.now().isoformat()
+                                        }
+                                        logging.debug(f"Cached: IMDB {imdb_id} → Trakt {trakt_id}")
+                                    else:
+                                        logging.warning(f"Could not extract Trakt ID from search results for {imdb_id}")
+                                else:
+                                    logging.info(f"No Trakt search results found for {imdb_id}")
+
+                            # Use the trakt_id (from cache or freshly fetched)
+                            if trakt_id:
+                                trakt_lists = fetch_items_from_trakt(f"/movies/{trakt_id}/lists/personal/popular")
+                                if trakt_lists:
+                                    for trakt_list in trakt_lists:
+                                        if re.search(r'(latest|new).*?(releases)', trakt_list.get('name', ''), re.IGNORECASE):
+                                            early_release_flag = True; break
+                                else:
+                                    logging.warning(f"Failed to fetch Trakt lists for movie {trakt_id}")
                         except Exception as e:
                             logging.error(f"Error checking Trakt early release for {imdb_id}: {str(e)}")
                             skip_stats['trakt_error'] += 1
@@ -658,11 +691,20 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
         if skip_report:
             logging.info("Wanted items processing complete. Skip summary:\n" + "\n".join(skip_report))
         logging.info(f"Final stats - Added: {items_added}, Updated: {items_updated}, Total Skipped: {items_skipped}")
+        
+        return items_added
     except Exception as e:
         logging.error(f"Error adding wanted items: {str(e)}", exc_info=True)
         conn.rollback()
         raise
     finally:
+        # Save cache and log statistics
+        save_imdb_trakt_cache(imdb_trakt_cache)
+        total_checks = cache_hits + cache_misses
+        if total_checks > 0:
+            cache_hit_rate = (cache_hits / total_checks) * 100
+            logging.info(f"Trakt cache stats: {cache_hits} hits, {cache_misses} misses ({cache_hit_rate:.1f}% hit rate)")
+
         conn.close()
         if watch_history_conn:
             watch_history_conn.close()

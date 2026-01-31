@@ -60,7 +60,7 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         
         logging.debug(f"get_symlink_path received item with filename_real_path: {item.get('filename_real_path')}")
         logging.debug(f"Input item: type={item.get('type')}, genres={item.get('genres')}, content_source={item.get('content_source')}")
-        
+
         # Get the base symlink path from general File Management settings
         symlinked_path_base = get_setting('File Management', 'symlinked_files_path')
         
@@ -88,6 +88,20 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
                 logging.debug(f"[SymlinkPath] No specific configuration found for content source '{item_content_source_id}'. Using default base path.")
         else:
             logging.debug("[SymlinkPath] No content_source ID found in item. Using default base symlink path.")
+
+        # Check for user-selected custom folder (from web interface dropdown)
+        # This overrides content source custom folder if user manually selected a different one
+        selected_folder = item.get('selected_folder')
+        selected_folder_is_custom = item.get('selected_folder_is_custom', False)
+
+        if selected_folder and selected_folder_is_custom:
+            # User selected a custom folder - update the root path
+            sanitized_selected_folder = sanitize_filename(selected_folder)
+            if sanitized_selected_folder:
+                final_symlinked_path_root = os.path.join(symlinked_path_base, sanitized_selected_folder)
+                logging.info(f"[SymlinkPath] User selected custom folder '{sanitized_selected_folder}'. New root: '{final_symlinked_path_root}'")
+            else:
+                logging.warning(f"[SymlinkPath] User-selected custom folder '{selected_folder}' sanitized to empty. Using current root.")
 
         # The rest of the function will use 'final_symlinked_path_root' as the starting point
         # instead of 'symlinked_path' which was previously 'symlinked_path_base'.
@@ -268,20 +282,37 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
                 if not parsed_genres_list and item_genres_value: # If parsing failed but there was some input
                     logging.warning(f"[SymlinkPath] Could not parse genres '{str(item_genres_value)[:100]}' into a list for {item.get('imdb_id', 'N/A')}. Treating as no genres.")
 
-                # Determine content type based on genres
-                is_anime = any('anime' in genre.lower() for genre in parsed_genres_list)
-                is_documentary = any('documentary' in genre.lower() for genre in parsed_genres_list)
-                
-                folder_name_for_type = ""
-                if is_anime and enable_separate_anime_folders:
-                    folder_name_for_type = anime_movies_folder_name_setting if media_type == 'movie' else anime_tv_shows_folder_name_setting
-                    logging.debug(f"[SymlinkPath] Item classified as Anime. Folder type: '{folder_name_for_type}'")
-                elif is_documentary and enable_separate_documentary_folders:
-                    folder_name_for_type = documentary_movies_folder_name_setting if media_type == 'movie' else documentary_tv_shows_folder_name_setting
-                    logging.debug(f"[SymlinkPath] Item classified as Documentary. Folder type: '{folder_name_for_type}'")
+                # Check if user manually selected a folder (from web interface dropdown)
+                # Note: Custom folders are handled separately above (they change the root path)
+                # Here we only handle standard type folders (Movies, Documentary Movies, etc.)
+                selected_folder = item.get('selected_folder')
+                selected_folder_is_custom = item.get('selected_folder_is_custom', False)
+
+                logging.info(f"[SymlinkPath] ========== TYPE FOLDER SELECTION DEBUG ==========")
+                logging.info(f"[SymlinkPath] selected_folder: {selected_folder}")
+                logging.info(f"[SymlinkPath] selected_folder_is_custom: {selected_folder_is_custom}")
+                logging.info(f"[SymlinkPath] Root path: {final_symlinked_path_root}")
+                logging.info(f"[SymlinkPath] =============================================")
+
+                if selected_folder and not selected_folder_is_custom:
+                    # User selected a standard type folder (not a custom folder)
+                    folder_name_for_type = selected_folder
+                    logging.info(f"[SymlinkPath] Using user-selected type folder: '{folder_name_for_type}' (manual selection overrides genre-based auto-detection)")
                 else:
-                    folder_name_for_type = movies_folder_name_setting if media_type == 'movie' else tv_shows_folder_name_setting
-                    logging.debug(f"[SymlinkPath] Item classified as Standard Movie/Show. Folder type: '{folder_name_for_type}'")
+                    # Determine content type based on genres (auto-detection)
+                    is_anime = any('anime' in genre.lower() for genre in parsed_genres_list)
+                    is_documentary = any('documentary' in genre.lower() for genre in parsed_genres_list)
+
+                    folder_name_for_type = ""
+                    if is_anime and enable_separate_anime_folders:
+                        folder_name_for_type = anime_movies_folder_name_setting if media_type == 'movie' else anime_tv_shows_folder_name_setting
+                        logging.debug(f"[SymlinkPath] Item classified as Anime. Folder type: '{folder_name_for_type}'")
+                    elif is_documentary and enable_separate_documentary_folders:
+                        folder_name_for_type = documentary_movies_folder_name_setting if media_type == 'movie' else documentary_tv_shows_folder_name_setting
+                        logging.debug(f"[SymlinkPath] Item classified as Documentary. Folder type: '{folder_name_for_type}'")
+                    else:
+                        folder_name_for_type = movies_folder_name_setting if media_type == 'movie' else tv_shows_folder_name_setting
+                        logging.debug(f"[SymlinkPath] Item classified as Standard Movie/Show. Folder type: '{folder_name_for_type}'")
                 
                 folder_name_for_type = folder_name_for_type.strip()
                 if not folder_name_for_type:

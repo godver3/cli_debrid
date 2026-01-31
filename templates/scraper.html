@@ -1,6 +1,32 @@
 {% extends "base.html" %}
 {% block title %}Add Media{% endblock %}
 {% block head %}
+<script src="{{ url_for('static', filename='js/theme_switcher.js') }}"></script>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const theme = getCurrentTheme();
+        const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_scraper.css' : 'css/scraper.css';
+        const trendingCssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_scraper_trending.css' : 'css/scraper_trending.css';
+        const mobileCssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_scraper-mobile.css' : 'css/scraper-mobile.css';
+        
+        const link1 = document.createElement('link');
+        link1.rel = 'stylesheet';
+        link1.href = '{{ url_for("static", filename="") }}' + cssFile + '?v={{ range(10000, 99999) | random }}';
+        document.head.appendChild(link1);
+        
+        const link2 = document.createElement('link');
+        link2.rel = 'stylesheet';
+        link2.href = '{{ url_for("static", filename="") }}' + trendingCssFile + '?v={{ range(10000, 99999) | random }}';
+        document.head.appendChild(link2);
+        
+        const link3 = document.createElement('link');
+        link3.rel = 'stylesheet';
+        link3.href = '{{ url_for("static", filename="") }}' + mobileCssFile + '?v={{ range(10000, 99999) | random }}';
+        document.head.appendChild(link3);
+    });
+</script>
+
 <style>
     /* Prevent white flash on page load */
     html {
@@ -15,9 +41,6 @@
 <meta name="theme-color" content="#333333">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper_trending.css') }}">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/scraper-mobile.css') }}">
 <div id="scraper-container" class="{% if not tmdb_api_key_set %}no-tmdb-api{% endif %}">
 
         
@@ -179,6 +202,7 @@
     {% endif %}
 
     <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}?v=20260118"></script>
+    <script src="{{ url_for('static', filename='js/scraper.js') }}?v={{ range(10000, 99999) | random }}"></script>
     <script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
 {% endblock %}

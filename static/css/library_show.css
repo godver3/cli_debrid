@@ -501,7 +501,7 @@ button.btn.btn-sm.btn-danger.delete-season-btn {
     backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 16px;
-    padding: 1rem 2rem 2rem 2rem;
+    padding: 1rem 2rem 1rem 2rem;
     transition: all 0.3s ease;
 }
 
@@ -776,6 +776,20 @@ button.btn.btn-sm.btn-danger.delete-season-btn {
     opacity: 0.5;
 }
 
+.episode-status-icon.unreleased {
+    color: #e0e0e0;
+    opacity: 0.8;
+}
+
+.episode-status-icon.wanted {
+    color: #fbbf24;
+    opacity: 0.8;
+}
+
+.episode-status-icon.up-arrow {
+    color: #60a5fa;
+}
+
 .episode-info-section {
     flex: 1;
     min-width: 0;
@@ -937,6 +951,28 @@ button.btn.btn-sm.btn-danger.delete-season-btn {
     pointer-events: auto;
 }
 
+.files-panel-close {
+    display: none; /* Hidden by default (desktop) */
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    border-radius: 0.25rem;
+    color: rgba(255, 255, 255, 0.8);
+    cursor: pointer;
+    padding: 0.25rem;
+    width: 28px;
+    height: 28px;
+    transition: all 0.2s ease;
+    z-index: 10;
+}
+
+.files-panel-close:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff;
+}
+
 .episode-files {
     counter-reset: file-counter;
     list-style: none;
@@ -1051,21 +1087,31 @@ button.btn.btn-sm.btn-danger.delete-season-btn {
         margin-left: 0;
         margin-right: 5px;
         line-height: 0;
+        white-space: nowrap;
     }
     .files-toggle-btn {
         display: inline-block;
         padding: 0.5rem;
         line-height: 0;
+        white-space: nowrap;
     }
     .action-btn, .delete-episode-btn {
+        display: inline-block;
         padding: 0.5rem;
         margin-left: 0;
-        line-height: 0;
+        margin-right: 5px;
+        line-height: 1;
+        white-space: nowrap;
     }
     .files-count {
         vertical-align: 3px;
     }
-        
+    .episode-files-panel {
+        margin-top: -50px;
+        min-width: min-content;
+        max-width: max-content;
+    }
+
 }
 @media (max-width: 768px) {
     .show-content-wrapper {
@@ -1156,21 +1202,32 @@ button.btn.btn-sm.btn-danger.delete-season-btn {
         margin-left: 0;
         margin-right: 5px;
         line-height: 0;
+        white-space: nowrap;
     }
     .files-toggle-btn {
         display: inline-block;
         padding: 0.5rem;
         line-height: 0;
+        white-space: nowrap;
     }
     .action-btn, .delete-episode-btn {
+        display: inline-block;
         padding: 0.5rem;
         margin-left: 0;
-        line-height: 0;
+        margin-right: 5px;
+        line-height: 1;
+        white-space: nowrap;
     }
     .episode-files-panel {
-        margin-top: -209px;
+        margin-top: -50px;
         min-width: min-content;
         max-width: max-content;
+    }
+    .files-panel-close {
+        display: block; /* Show on mobile */
+    }
+    .episode-files {
+        padding-top: 2rem; /* Make room for close button */
     }
     .files-count {
         vertical-align: 3px;
@@ -1233,21 +1290,32 @@ button.btn.btn-sm.btn-danger.delete-season-btn {
         margin-left: 0;
         margin-right: 5px;
         line-height: 0;
+        white-space: nowrap;
     }
     .files-toggle-btn {
         display: inline-block;
         padding: 0.5rem;
         line-height: 0;
+        white-space: nowrap;
     }
     .action-btn, .delete-episode-btn {
+        display: inline-block;
         padding: 0.5rem;
         margin-left: 0;
-        line-height: 0;
+        margin-right: 5px;
+        line-height: 1;
+        white-space: nowrap;
     }
     .episode-files-panel {
-        margin-top: -209px;
+        margin-top: -50px;
         min-width: min-content;
         max-width: max-content;
+    }
+    .files-panel-close {
+        display: block; /* Show on mobile */
+    }
+    .episode-files {
+        padding-top: 2rem; /* Make room for close button */
     }
     .files-count {
         vertical-align: 3px;
@@ -1469,33 +1537,6 @@ tr.filtered-out-item:hover {
     background-color: rgba(255, 255, 255, 0.05);
 }
 
-/* Files Panel (Slide-out) */
-.episode-files-panel {
-    position: fixed;
-    right: 2rem;
-    top: 50%;
-    transform: translate(calc(100% + 2rem), -50%);
-    max-height: 80vh;
-    width: auto;
-    min-width: 400px;
-    max-width: 600px;
-    background: rgba(20, 20, 22, 0.98);
-    backdrop-filter: blur(20px);
-    border: none;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-    border-radius: 0.5rem;
-    transition: transform 0.2s ease;
-    z-index: 1000;
-    overflow-y: auto;
-    padding: 1.5rem;
-    pointer-events: none;
-}
-
-.episode-files-panel.open {
-    transform: translate(0, -50%);
-    pointer-events: auto;
-}
-
 .episode-files {
     counter-reset: file-counter;
     list-style: none;
@@ -1549,7 +1590,6 @@ tr.filtered-out-item:hover {
     padding: 20px;
     border-radius: 20px;
     text-align: center;
-    opacity: 0.6;
 }
 
 .loading-content p {
@@ -1565,6 +1605,22 @@ tr.filtered-out-item:hover {
     font-size: 14px;
     color: #ccc;
     margin-top: 10px;
+}
+
+.loading-progress-bar-container {
+    width: 100%;
+    height: 4px;
+    background-color: rgba(255, 255, 255, 0.1);
+    position: relative;
+    border-radius: 20px 20px 0 0;
+    margin-bottom: 15px;
+}
+
+.loading-progress-bar {
+    height: 100%;
+    background-color: #3b82f6;
+    transition: width 0.3s ease;
+    border-radius: 20px 0 0 0;
 }
 
 .show-sidebar {
@@ -1626,9 +1682,25 @@ tr.filtered-out-item:hover {
     }
 }
 
+.close-loading {
+    background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 16px;
+    font-weight: 600;
+    margin: 4px 2px;
+    cursor: pointer;
+    border-radius: 12px;
+    transition: all 0.3s ease;
+}
+
 .close-loading:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(255, 107, 53, 0.4);
+    box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4);
 }
 
 /* ========================================
@@ -1637,35 +1709,47 @@ tr.filtered-out-item:hover {
 
 .overlay-content {
     position: relative;
-    background-color: var(--surface-color);
+    background: rgba(26, 26, 26, 0.95);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     padding: 0 20px 20px 20px;
-    border-radius: var(--border-radius-lg);
+    border-radius: 20px;
     width: 85%;
     max-width: 1200px;
     max-height: 85vh;
     overflow-y: auto;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    overflow-wrap: anywhere;
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
     scrollbar-width: none;
     -ms-overflow-style: none;
-    margin-top: 0;
     display: flex;
     flex-direction: column;
+}
+
+.overlay-content::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, #3b82f6, #60a5fa);
 }
 
 .overlay-content h3 {
     position: sticky;
     top: 0;
-    background-color: var(--surface-color);
+    background-color: rgba(26, 26, 26, 0.95);
+    backdrop-filter: blur(20px);
     margin-top: 0;
     padding-top: 10px;
     padding-bottom: 15px;
     margin-bottom: 15px;
     z-index: 3;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     display: flex;
     align-items: center;
     justify-content: space-between;
+    color: #fff;
 }
 
 .close-btn {
@@ -1681,7 +1765,7 @@ tr.filtered-out-item:hover {
     border-radius: 50%;
     cursor: pointer;
     transition: all var(--transition-speed) ease;
-    z-index: 5;
+    z-index: 30;
     margin-left: auto;
     padding: 0;
     display: inline-flex;
@@ -1705,7 +1789,8 @@ tr.filtered-out-item:hover {
 .overlay-content thead {
     position: sticky;
     top: 55px;
-    background-color: var(--surface-color);
+    background-color: rgba(26, 26, 26, 0.95);
+    backdrop-filter: blur(20px);
     z-index: 2;
     border-bottom: 1px solid rgba(255, 255, 255, 0.2);
 }
@@ -1715,7 +1800,7 @@ tr.filtered-out-item:hover {
     text-align: left;
     overflow: hidden;
     text-overflow: ellipsis;
-    background-color: var(--surface-color);
+    background-color: rgba(26, 26, 26, 0.95);
 }
 
 .overlay-content td {
@@ -1899,12 +1984,12 @@ td#scraper-source .source-badge {
     left: 0;
     width: 100%;
     height: 100%;
-    background: rgba(0, 0, 0, 0.8);
+    background: rgba(0, 0, 0, 0.85);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 10000;
-    backdrop-filter: blur(4px);
+    backdrop-filter: blur(6px);
 }
 
 .file-selection-popup {
@@ -1917,7 +2002,7 @@ td#scraper-source .source-badge {
     max-height: 80vh;
     overflow-y: auto;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-    border: 1px solid rgba(59, 130, 246, 0.3);
+    border: 2px solid rgba(59, 130, 246, 0.3);
 }
 
 /* Mobile: Full width */
@@ -1980,8 +2065,8 @@ td#scraper-source .source-badge {
 }
 
 .file-number {
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.9);
+    font-weight: 700;
+    color: #60a5fa;
     margin-right: 0.5rem;
 }
 
@@ -2004,43 +2089,50 @@ td#scraper-source .source-badge {
     padding-top: 0.5rem;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
-.file-selection-btn:hover {
-    background-color: #0056b3;
-}
-
 .file-selection-btn {
-    background-color: #007bff;
-    color: white;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    width: 100%;
+    padding: 0.875rem 1.5rem;
     border: none;
-    padding: 12px 20px;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    margin-top: 0.5rem;
+    background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+    color: #ffffff;
     text-align: center;
     text-decoration: none;
     display: inline-block;
-    font-size: 16px;
-    margin: 4px 2px;
-    cursor: pointer;
-    border-radius: 4px;
-    transition: background-color 0.3s;
+}
+
+.file-selection-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(59, 130, 246, 0.4);
 }
 
 .file-selection-cancel {
-    background: rgba(255, 255, 255, 0.1);
+    background: #374151;
     color: #fff;
 }
 
 .file-selection-cancel:hover {
-    background: rgba(255, 255, 255, 0.15);
+    background: #4b5563;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 .file-selection-delete {
-    background: #dc3545;
+    background: linear-gradient(145deg, #ef4444, #dc2626);
     color: #fff;
 }
 
 .file-selection-delete:hover {
-    background: #c82333;
+    background: linear-gradient(145deg, #dc2626, #b91c1c);
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(220, 53, 69, 0.4);
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
 }
 
 .file-selection-btn:active {

@@ -22,6 +22,7 @@ window.libraryState = {
     hasMore: true,
     searchTerm: '',
     statusFilter: 'collected',
+    duplicatesStateFilter: 'all',
     typeFilter: 'all',
     sortBy: 'title_asc',
     totalCount: 0,
@@ -31,7 +32,7 @@ window.libraryState = {
 
 // DOM elements
 let mediaGrid, loadingIndicator, emptyState, resultsInfo;
-let searchInput, statusFilter, typeFilter, sortSelect, refreshBtn, searchClearBtn;
+let searchInput, statusFilter, duplicatesStateFilter, typeFilter, sortSelect, refreshBtn, searchClearBtn;
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
@@ -64,6 +65,7 @@ function initializeElements() {
 
     searchInput = document.getElementById('search-input');
     statusFilter = document.getElementById('status-filter');
+    duplicatesStateFilter = document.getElementById('duplicates-state-filter');
     typeFilter = document.getElementById('type-filter');
     sortSelect = document.getElementById('sort-select');
     refreshBtn = document.getElementById('refresh-btn');
@@ -74,7 +76,8 @@ function initializeElements() {
         statusFilter: localStorage.getItem('libraryStatusFilter'),
         typeFilter: localStorage.getItem('libraryTypeFilter'),
         sortBy: localStorage.getItem('librarySortBy'),
-        searchTerm: localStorage.getItem('librarySearchTerm')
+        searchTerm: localStorage.getItem('librarySearchTerm'),
+        duplicatesStateFilter: localStorage.getItem('libraryDuplicatesStateFilter')
     };
 
     // Apply saved values to DOM elements and state
@@ -95,6 +98,16 @@ function initializeElements() {
     // Update sort options based on status filter (before restoring sort value)
     const isUpcoming = libraryState.statusFilter === 'upcoming';
     updateSortOptions(isUpcoming);
+
+    // Show duplicates state filter if duplicates is selected
+    if (duplicatesStateFilter && libraryState.statusFilter === 'duplicates') {
+        duplicatesStateFilter.style.display = '';
+        // Restore saved duplicates state filter value
+        if (savedFilters.duplicatesStateFilter) {
+            duplicatesStateFilter.value = savedFilters.duplicatesStateFilter;
+            libraryState.duplicatesStateFilter = savedFilters.duplicatesStateFilter;
+        }
+    }
 
     if (savedFilters.sortBy) {
         sortSelect.value = savedFilters.sortBy;
@@ -159,6 +172,9 @@ function attachEventListeners() {
 
     // Filters
     statusFilter.addEventListener('change', handleStatusFilterChange);
+    if (duplicatesStateFilter) {
+        duplicatesStateFilter.addEventListener('change', handleDuplicatesStateChange);
+    }
     typeFilter.addEventListener('change', handleFilterChange);
     sortSelect.addEventListener('change', handleFilterChange);
 
@@ -199,8 +215,25 @@ function handleSearch() {
 
 function handleStatusFilterChange() {
     const isUpcoming = statusFilter.value === 'upcoming';
+    const isDuplicates = statusFilter.value === 'duplicates';
+
+    // Show/hide duplicates state filter
+    if (duplicatesStateFilter) {
+        duplicatesStateFilter.style.display = isDuplicates ? '' : 'none';
+        if (!isDuplicates) {
+            duplicatesStateFilter.value = 'all';
+            libraryState.duplicatesStateFilter = 'all';
+        }
+    }
+
     updateSortOptions(isUpcoming);
     handleFilterChange();
+}
+
+function handleDuplicatesStateChange() {
+    libraryState.duplicatesStateFilter = duplicatesStateFilter.value;
+    localStorage.setItem('libraryDuplicatesStateFilter', libraryState.duplicatesStateFilter);
+    resetAndReload();
 }
 
 function handleFilterChange() {
@@ -270,6 +303,13 @@ function handleRefresh() {
 }
 
 function handleSettings() {
+    // Check if user has admin permissions
+    const hasAdminPermissions = document.getElementById('has_admin_permissions');
+    if (hasAdminPermissions && hasAdminPermissions.value !== 'True') {
+        console.warn('[Library] Settings access requires admin permissions');
+        return; // Silently block for non-admins
+    }
+
     if (typeof window.openLibrarySettingsModal === 'function') {
         window.openLibrarySettingsModal();
     } else {
@@ -400,6 +440,7 @@ async function fetchItems(isReset = false) {
         offset: libraryState.offset,
         search: libraryState.searchTerm,
         status: libraryState.statusFilter,
+        duplicates_state: libraryState.duplicatesStateFilter,
         media_type: libraryState.typeFilter,
         sort: libraryState.sortBy
     });
@@ -482,15 +523,28 @@ function createListItem(item) {
     row.dataset.ghostlisted = item.ghostlisted || '';
 
 
-    // Build poster URL
+    // Build poster URL - handle both TMDB and Plex images
     let posterUrl = '/static/images/placeholder.png';
+    let needsFetch = false;
+    let fetchUseImdb = false;  // Flag to use IMDB fallback
+
     if (item.poster_path && item.poster_path.startsWith('plex:')) {
+        // Plex image - use Plex proxy endpoint
         const plexPath = item.poster_path.substring(5);
         posterUrl = `/library/plex_image${plexPath}`;
     } else if (item.poster_path && item.poster_path.startsWith('/')) {
+        // TMDB image - use TMDB proxy endpoint
         posterUrl = `/scraper/tmdb_image/w92${item.poster_path}`; // Smaller size for list view
     } else if (item.poster_path) {
+        // Full URL or other format - use as-is
         posterUrl = item.poster_path;
+    } else if (item.tmdb_id) {
+        // No poster cached - fetch from TMDB on-demand using TMDB ID
+        needsFetch = true;
+    } else if (item.imdb_id) {
+        // No TMDB ID - try to fetch using IMDB ID
+        needsFetch = true;
+        fetchUseImdb = true;
     }
 
     // Type badge
@@ -517,25 +571,24 @@ function createListItem(item) {
         //progressPercent = 100 +'%';
         progressPercent = '';
     }
-    // Status badge with circle icon
-    let statusBadge = '';
-    let statusClass = '';
-    if (item.status_label === 'Missing') {
-        statusClass = 'status-blacklisted';
-        statusBadge = `<span class="status-badge ${statusClass}" title="Blacklisted">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>
-            </svg>
-        </span>`;
-    } else if (item.status_label === 'Collected') {
-        statusClass = 'status-collected';
-        statusBadge = `<span class="status-badge ${statusClass}" title="Collected">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="12" cy="12" r="10"></circle>
-            </svg>
-        </span>`;
-    }
+    // Detect mixed states for TV shows (for split badges)
+    const mixedStates = detectMixedStates(item);
+
+    // Status badge using Discover-style icons
+    // Don't apply state class if we have a split badge (to avoid CSS conflicts)
+    const iconState = mixedStates.primary || mapLibraryStateToStatusClass(item.state, item.status_label, item.episode_info);
+    const statusClass = mixedStates.isSplit ? '' : iconState;
+    const statusIcon = getStatusIcon(iconState);
+
+    // Create split badge if mixed states detected
+    const splitClass = mixedStates.isSplit ? `split-badge split-${mixedStates.primary}-${mixedStates.secondary}` : '';
+    const statusTitle = mixedStates.isSplit
+        ? `${mixedStates.primary} + ${mixedStates.secondary}`
+        : iconState;
+
+    const statusBadge = `<span class="db-status-badge ${statusClass} ${splitClass}" title="${statusTitle}">
+        ${statusIcon}
+    </span>`;
 
     // Quality badge (placeholder - you can add actual quality data if available)
     const qualityBadge = item.quality || '—';
@@ -568,6 +621,20 @@ function createListItem(item) {
 
     // Add click handler
     row.addEventListener('click', () => handleCardClick(item));
+
+    // Fetch missing poster asynchronously (similar to grid view)
+    if (needsFetch) {
+        const posterImg = row.querySelector('.list-col-poster img');
+        if (posterImg) {
+            if (fetchUseImdb) {
+                // Use IMDB ID to look up poster (TMDB ID not available)
+                fetchMissingPosterByImdb(item.imdb_id, item.type, posterImg);
+            } else {
+                // Use TMDB ID directly
+                fetchMissingPoster(item.tmdb_id, item.type, posterImg);
+            }
+        }
+    }
 
     return row;
 }
@@ -606,20 +673,31 @@ function createGridCard(item) {
         fetchUseImdb = true;
     }
 
-    // Type badge (top-right)
-    const typeClass = item.type === 'show' ? 'badge-tv' : 'badge-movie';
-    const typeBadge = `<span class="type-badge ${typeClass}">${item.type === 'show' ? 'TV' : 'Movie'}</span>`;
+    // Detect mixed states for TV shows (for split badges)
+    const mixedStates = detectMixedStates(item);
 
-    // Blacklisted badge (below type badge) - using provided SVG
-    let blacklistedBadge = '';
-    if (item.state === 'Blacklisted') {
-        blacklistedBadge = `<span class="type-badge badge-blacklisted" title="Blacklisted">
-            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle;">
-                <circle cx="12" cy="12" r="10"></circle>
-                <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>
-            </svg>
-        </span>`;
-    }
+    // Status badge using Discover-style icons
+    // Don't apply state class if we have a split badge (to avoid CSS conflicts)
+    const iconState = mixedStates.primary || mapLibraryStateToStatusClass(item.state, item.status_label, item.episode_info);
+    const statusClass = mixedStates.isSplit ? '' : iconState;
+    const statusIcon = getStatusIcon(iconState);
+
+    // Create split badge if mixed states detected
+    const splitClass = mixedStates.isSplit ? `split-badge split-${mixedStates.primary}-${mixedStates.secondary}` : '';
+    const statusTitle = mixedStates.isSplit
+        ? `${mixedStates.primary} + ${mixedStates.secondary}`
+        : iconState;
+
+    const statusBadge = `<div class="db-status-badge ${statusClass} ${splitClass}" title="${statusTitle}">
+        ${statusIcon}
+    </div>`;
+
+    // Media type badge using Discover-style icons (top-right)
+    const mediaTypeIcon = getMediaTypeIcon(item.type);
+    const mediaTypeClass = item.type === 'show' ? 'badge-tv' : 'badge-movie';
+    const typeBadge = `<div class="media-type-badge ${mediaTypeClass}" title="${item.type === 'show' ? 'TV Show' : 'Movie'}">
+        ${mediaTypeIcon}
+    </div>`;
 
     // Episode info badge (top-left) for shows
     let episodeBadge = '';
@@ -642,9 +720,17 @@ function createGridCard(item) {
         // For upcoming items, show release date instead of progress
         if (item.release_date && item.release_date !== 'Unknown') {
             // Format the date nicely (e.g., "Feb 15, 2026")
-            const releaseDate = new Date(item.release_date);
-            const options = { year: 'numeric', month: 'short', day: 'numeric' };
-            progressInfo = releaseDate.toLocaleDateString('en-US', options);
+            // Parse manually to avoid timezone conversion issues
+            const parts = item.release_date.split('-');
+            if (parts.length === 3) {
+                const year = parts[0];
+                const month = parseInt(parts[1], 10) - 1;
+                const day = parseInt(parts[2], 10);
+                const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                progressInfo = `${months[month]} ${day}, ${year}`;
+            } else {
+                progressInfo = item.release_date;
+            }
         } else {
             progressInfo = 'Release date TBA';
         }
@@ -653,41 +739,82 @@ function createGridCard(item) {
         progressInfo = `${progressPercent}% complete`;
     }
 
-    // Build card HTML (Cinephage style)
-    card.innerHTML = `
-        <div class="media-poster">
-            <img src="${posterUrl}"
-                 alt="${escapeHtml(item.title)}"
-                 loading="lazy"
-                 onerror="this.onerror=null; this.src='/static/images/placeholder.png'; this.classList.add('placeholder');">
+    // Build card HTML (Cinephage style with Discover badges)
+    // For movies: status badge in top-left, type badge in top-right
+    // For shows: both badges stacked in top-right (type on top, status below)
+    if (item.type === 'show') {
+        card.innerHTML = `
+            <div class="media-poster">
+                <img src="${posterUrl}"
+                     alt="${escapeHtml(item.title)}"
+                     loading="lazy"
+                     onerror="this.onerror=null; this.src='/static/images/placeholder.png'; this.classList.add('placeholder');">
 
-            <!-- Top-right badge (Type) -->
-            <div class="badge-top-right">
-                ${typeBadge}
-                ${blacklistedBadge}
-            </div>
+                <!-- Top-right badges (Type + Status stacked) for shows -->
+                <div class="badge-top-right">
+                    ${typeBadge}
+                    ${statusBadge}
+                </div>
 
-            <!-- Top-left badge (Episode count) -->
-            ${episodeBadge ? `<div class="badge-top-left">${episodeBadge}</div>` : ''}
+                <!-- Episode count badge - top left -->
+                ${episodeBadge ? `<div class="badge-top-left">${episodeBadge}</div>` : ''}
 
-            <!-- Progress bar at bottom -->
-            <div class="progress-bar-container">
-                <div class="progress-bar" style="width: ${progressPercent}%"></div>
-            </div>
+                <!-- Progress bar at bottom -->
+                <div class="progress-bar-container">
+                    <div class="progress-bar" style="width: ${progressPercent}%"></div>
+                </div>
 
-            <!-- Hover overlay with info -->
-            <div class="hover-overlay">
-                <div class="hover-content">
-                    <h3 class="hover-title">${escapeHtml(item.title)}</h3>
-                    <div class="hover-meta">
-                        <span class="hover-year">${item.year || 'N/A'}</span>
-                        <span class="hover-progress">${progressInfo}</span>
+                <!-- Hover overlay with info -->
+                <div class="hover-overlay">
+                    <div class="hover-content">
+                        <h3 class="hover-title">${escapeHtml(item.title)}</h3>
+                        <div class="hover-meta">
+                            <span class="hover-year">${item.year || 'N/A'}</span>
+                            <span class="hover-progress">${progressInfo}</span>
+                        </div>
+
                     </div>
-
                 </div>
             </div>
-        </div>
-    `;
+        `;
+    } else {
+        // Movie layout: status in top-left, type in top-right
+        card.innerHTML = `
+            <div class="media-poster">
+                <img src="${posterUrl}"
+                     alt="${escapeHtml(item.title)}"
+                     loading="lazy"
+                     onerror="this.onerror=null; this.src='/static/images/placeholder.png'; this.classList.add('placeholder');">
+
+                <!-- Status badge - top left for movies -->
+                <div class="badge-top-left">
+                    ${statusBadge}
+                </div>
+
+                <!-- Type badge - top right for movies -->
+                <div class="badge-top-right">
+                    ${typeBadge}
+                </div>
+
+                <!-- Progress bar at bottom -->
+                <div class="progress-bar-container">
+                    <div class="progress-bar" style="width: ${progressPercent}%"></div>
+                </div>
+
+                <!-- Hover overlay with info -->
+                <div class="hover-overlay">
+                    <div class="hover-content">
+                        <h3 class="hover-title">${escapeHtml(item.title)}</h3>
+                        <div class="hover-meta">
+                            <span class="hover-year">${item.year || 'N/A'}</span>
+                            <span class="hover-progress">${progressInfo}</span>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+        `;
+    }
 
     // Add click handler for card (navigate to details)
     card.addEventListener('click', () => handleCardClick(item));
@@ -713,6 +840,158 @@ function createGridCard(item) {
     }
 
     return card;
+}
+
+/**
+ * Detect mixed states for TV shows and return split badge info
+ * Returns: { primary, secondary, isSplit } where primary is the higher priority state
+ * Priority order: Partial/Wanted > Unreleased > Collected > Blacklisted
+ */
+function detectMixedStates(item) {
+    // Only for TV shows with episode info
+    if (item.type !== 'show' || !item.episode_info) {
+        return { primary: null, secondary: null, isSplit: false };
+    }
+
+    const info = item.episode_info;
+    const states = [];
+
+    // Determine which states are present (must have at least 1 episode in that state)
+    if (info.collected > 0) states.push('collected');
+    if (info.wanted > 0) states.push('wanted');  // Partial/wanted episodes
+    if (info.unreleased > 0) states.push('unreleased');
+    if (info.blacklisted > 0) states.push('blacklisted');
+
+    // If only one state or no states, no split needed
+    if (states.length <= 1) {
+        return { primary: states[0] || null, secondary: null, isSplit: false };
+    }
+
+    // Define priority order (highest to lowest)
+    const priority = ['wanted', 'unreleased', 'collected', 'blacklisted'];
+
+    // Sort states by priority
+    const sortedStates = states.sort((a, b) => {
+        return priority.indexOf(a) - priority.indexOf(b);
+    });
+
+    // Return primary (highest priority) and secondary (next highest) with split flag
+    return {
+        primary: sortedStates[0],
+        secondary: sortedStates[1],
+        isSplit: true
+    };
+}
+
+/**
+ * Map library state to Discover-style status class
+ */
+function mapLibraryStateToStatusClass(state, statusLabel, episodeInfo) {
+    // For TV shows, check for mixed states first
+    if (episodeInfo && episodeInfo.total > 0) {
+        const collected = episodeInfo.collected || 0;
+        const total = episodeInfo.total || 0;
+        const blacklisted = episodeInfo.blacklisted || 0;
+        const unreleased = episodeInfo.unreleased || 0;
+        const wanted = episodeInfo.wanted || 0;
+
+        // If all collected -> collected
+        if (collected === total) return 'collected';
+
+        // If all blacklisted -> blacklisted
+        if (blacklisted === total) return 'blacklisted';
+
+        // If all unreleased -> unreleased
+        if (unreleased === total) return 'unreleased';
+
+        // If partially collected -> wanted (partial)
+        if (collected > 0 && collected < total) return 'wanted';
+
+        // If nothing collected but some wanted -> wanted
+        if (wanted > 0) return 'wanted';
+    }
+
+    if (!state) {
+        // Use status_label as fallback
+        if (statusLabel === 'Collected') return 'collected';
+        if (statusLabel === 'Missing') return 'blacklisted';
+        return 'missing';
+    }
+
+    const stateLower = state.toLowerCase();
+
+    // Direct mappings
+    if (stateLower === 'collected') return 'collected';
+    // Treat upgrading as collected (we have it, just getting better version)
+    if (stateLower === 'upgrading') return 'collected';
+    if (stateLower === 'blacklisted') return 'blacklisted';
+    if (stateLower === 'unreleased') return 'unreleased';
+
+    // In-progress states map to 'wanted' (yellow)
+    if (['wanted', 'scraping', 'adding', 'checking', 'sleeping', 'partial'].includes(stateLower)) {
+        return 'wanted';
+    }
+
+    // Default to missing (red X)
+    return 'missing';
+}
+
+/**
+ * Get status icon HTML (from Discover page)
+ */
+function getStatusIcon(status) {
+    switch (status) {
+        case 'collected':
+        case 'present':
+            // Archive box icon - collected/in library (green)
+            return `<svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+            </svg>`;
+        case 'partial':
+        case 'wanted':
+            // Partial file icon - partially collected/wanted (yellow)
+            return `<svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 640 640">
+                <path d="M192 64C156.7 64 128 92.7 128 128L128 384L512 384L512 234.5C512 217.5 505.3 201.2 493.3 189.2L386.7 82.7C374.7 70.7 358.5 64 341.5 64L192 64zM453.5 240L360 240C346.7 240 336 229.3 336 216L336 122.5L453.5 240zM128 416L128 480L192 480L192 416L128 416zM192 576L192 512L128 512C128 547.3 156.7 576 192 576zM224 576L304 576L304 512L224 512L224 576zM336 576L416 576L416 512L336 512L336 576zM448 576C483.3 576 512 547.3 512 512L448 512L448 576zM512 416L448 416L448 480L512 480L512 416z"/>
+            </svg>`;
+        case 'upgrading':
+            // Upload arrow icon - upgrading (blue)
+            return `<svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 640 640">
+                <path d="M342.6 73.4C330.1 60.9 309.8 60.9 297.3 73.4L169.3 201.4C156.8 213.9 156.8 234.2 169.3 246.7C181.8 259.2 202.1 259.2 214.6 246.7L288 173.3L288 384C288 401.7 302.3 416 320 416C337.7 416 352 401.7 352 384L352 173.3L425.4 246.7C437.9 259.2 458.2 259.2 470.7 246.7C483.2 234.2 483.2 213.9 470.7 201.4L342.7 73.4zM160 416C160 398.3 145.7 384 128 384C110.3 384 96 398.3 96 416L96 480C96 533 139 576 192 576L448 576C501 576 544 533 544 480L544 416C544 398.3 529.7 384 512 384C494.3 384 480 398.3 480 416L480 480C480 497.7 465.7 512 448 512L192 512C174.3 512 160 497.7 160 480L160 416z"/>
+            </svg>`;
+        case 'blacklisted':
+            // Ban/circle with slash icon - blacklisted (black)
+            return `<svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 640 640">
+                <path d="M431.2 476.5L163.5 208.8C141.1 240.2 128 278.6 128 320C128 426 214 512 320 512C361.5 512 399.9 498.9 431.2 476.5zM476.5 431.2C498.9 399.8 512 361.4 512 320C512 214 426 128 320 128C278.5 128 240.1 141.1 208.8 163.5L476.5 431.2zM64 320C64 178.6 178.6 64 320 64C461.4 64 576 178.6 576 320C576 461.4 461.4 576 320 576C178.6 576 64 461.4 64 320z"/>
+            </svg>`;
+        case 'unreleased':
+            // Calendar X icon - unreleased/coming soon (orange)
+            return `<svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 640 640">
+                <path d="M224 64C241.7 64 256 78.3 256 96L256 128L384 128L384 96C384 78.3 398.3 64 416 64C433.7 64 448 78.3 448 96L448 128L480 128C515.3 128 544 156.7 544 192L544 480C544 515.3 515.3 544 480 544L160 544C124.7 544 96 515.3 96 480L96 192C96 156.7 124.7 128 160 128L192 128L192 96C192 78.3 206.3 64 224 64zM387.9 284.1C378.5 274.7 363.3 274.7 354 284.1L320.1 318L286.2 284.1C276.8 274.7 261.6 274.7 252.3 284.1C243 293.5 242.9 308.7 252.3 318L286.2 351.9L252.3 385.8C242.9 395.2 242.9 410.4 252.3 419.7C261.7 429 276.9 429.1 286.2 419.7L320.1 385.8L354 419.7C363.4 429.1 378.6 429.1 387.9 419.7C397.2 410.3 397.3 395.1 387.9 385.8L354 351.9L387.9 318C397.3 308.6 397.3 293.4 387.9 284.1z"/>
+            </svg>`;
+        case 'missing':
+        default:
+            // X icon - missing/not in library (red)
+            return `<svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 640 640">
+                <path d="M504.6 148.5C515.9 134.9 514.1 114.7 500.5 103.4C486.9 92.1 466.7 93.9 455.4 107.5L320 270L184.6 107.5C173.3 93.9 153.1 92.1 139.5 103.4C125.9 114.7 124.1 134.9 135.4 148.5L278.3 320L135.4 491.5C124.1 505.1 125.9 525.3 139.5 536.6C153.1 547.9 173.3 546.1 184.6 532.5L320 370L455.4 532.5C466.7 546.1 486.9 547.9 500.5 536.6C514.1 525.3 515.9 505.1 504.6 491.5L361.7 320L504.6 148.5z"/>
+            </svg>`;
+    }
+}
+
+/**
+ * Get media type icon HTML (from Discover page)
+ */
+function getMediaTypeIcon(mediaType) {
+    if (mediaType === 'movie') {
+        // Film/movie icon
+        return `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-2.625 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-1.5A1.125 1.125 0 0118 18.375M20.625 4.5H3.375m17.25 0c.621 0 1.125.504 1.125 1.125M20.625 4.5h-1.5C18.504 4.5 18 5.004 18 5.625m3.75 0v1.5c0 .621-.504 1.125-1.125 1.125M3.375 4.5c-.621 0-1.125.504-1.125 1.125M3.375 4.5h1.5C5.496 4.5 6 5.004 6 5.625m-2.625 0v1.5c0 .621.504 1.125 1.125 1.125m0 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m1.5-3.75C5.496 8.25 6 7.746 6 7.125v-1.5M4.875 8.25C5.496 8.25 6 8.754 6 9.375v1.5m0-5.25v5.25m0-5.25C6 5.004 6.504 4.5 7.125 4.5h9.75c.621 0 1.125.504 1.125 1.125m1.125 2.625h1.5m-1.5 0A1.125 1.125 0 0118 7.125v-1.5m1.125 2.625c-.621 0-1.125.504-1.125 1.125v1.5m2.625-2.625c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125M18 5.625v5.25M7.125 12h9.75m-9.75 0A1.125 1.125 0 016 10.875M7.125 12C6.504 12 6 12.504 6 13.125m0-2.25C6 11.496 5.496 12 4.875 12M18 10.875c0 .621-.504 1.125-1.125 1.125M18 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m-12 5.25v-5.25m0 5.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125m-12 0v-1.5c0-.621-.504-1.125-1.125-1.125M18 18.375v-5.25m0 5.25v-1.5c0-.621.504-1.125 1.125-1.125M18 13.125v1.5c0 .621.504 1.125 1.125 1.125M18 13.125c0-.621.504-1.125 1.125-1.125M6 13.125v1.5c0 .621-.504 1.125-1.125 1.125M6 13.125C6 12.504 5.496 12 4.875 12m-1.5 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M19.125 12h1.5m0 0c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h1.5m14.25 0h1.5" />
+        </svg>`;
+    } else {
+        // TV icon (for shows)
+        return `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 20.25h12m-7.5-3v3m3-3v3m-10.125-3h17.25c.621 0 1.125-.504 1.125-1.125V4.875c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125z" />
+        </svg>`;
+    }
 }
 
 // Helper function to format file size
@@ -919,7 +1198,8 @@ window.refreshLibrary = resetAndReload;
 const selectionState = {
     isSelectionMode: false,
     selectedItems: new Set(),
-    lastSelectedIndex: null
+    lastSelectedIndex: null,
+    containerClickHandler: null // Store handler for event delegation
 };
 
 // Initialize multi-select functionality
@@ -927,6 +1207,7 @@ function initializeMultiSelect() {
     const selectBtn = document.getElementById('select-btn');
     const deleteBtn = document.getElementById('delete-selected-btn');
 
+    // Only initialize if buttons exist (admin-only)
     if (selectBtn) {
         selectBtn.addEventListener('click', handleSelectButtonClick);
     }
@@ -935,8 +1216,10 @@ function initializeMultiSelect() {
         deleteBtn.addEventListener('click', deleteSelectedItems);
     }
 
-    // Keyboard shortcuts
-    document.addEventListener('keydown', handleKeyboardShortcuts);
+    // Keyboard shortcuts (only for admins since non-admins won't have select/delete buttons)
+    if (selectBtn || deleteBtn) {
+        document.addEventListener('keydown', handleKeyboardShortcuts);
+    }
 }
 
 // Handle Select/Cancel button click
@@ -973,6 +1256,10 @@ function enterSelectionMode() {
     // Add checkboxes to all cards
     addCheckboxesToCards();
 
+    // Add event delegation listener to container (ONE listener for all items)
+    selectionState.containerClickHandler = handleContainerClick;
+    mediaGrid.addEventListener('click', selectionState.containerClickHandler);
+
     // Update delete button visibility
     updateDeleteButton();
 }
@@ -987,6 +1274,12 @@ function exitSelectionMode() {
     const selectBtn = document.getElementById('select-btn');
     const deleteBtn = document.getElementById('delete-selected-btn');
     const mediaGrid = document.getElementById('media-grid');
+
+    // Remove event delegation listener from container
+    if (selectionState.containerClickHandler) {
+        mediaGrid.removeEventListener('click', selectionState.containerClickHandler);
+        selectionState.containerClickHandler = null;
+    }
 
     // Reset Select button
     selectBtn.innerHTML = `
@@ -1064,10 +1357,12 @@ function addCheckboxesToCards() {
             e.stopPropagation();
         });
 
-        // Add click handler
+        // Add change handler for checkbox input
         const input = checkbox.querySelector('input');
         input.addEventListener('change', (e) => handleCheckboxChange(e, index));
-        item.addEventListener('click', (e) => handleSelectionCardClick(e, item, index));
+
+        // NOTE: Item click handler now uses event delegation on container (see handleContainerClick)
+        // No individual listeners attached to each item - improves performance and prevents memory leaks
     });
 }
 
@@ -1082,6 +1377,26 @@ function handleCheckboxChange(event, index) {
     }
 
     updateSelectButtonText();
+}
+
+// Handle container click with event delegation (ONE listener for all items)
+function handleContainerClick(event) {
+    if (!selectionState.isSelectionMode) return;
+
+    // Find the clicked card/row (event delegation)
+    const isListView = libraryState.currentView === 'list';
+    const card = event.target.closest(isListView ? '.list-row' : '.media-card');
+
+    if (!card) return; // Click wasn't on a card/row
+
+    // Get the index of the clicked item
+    const checkbox = card.querySelector('input[type="checkbox"]');
+    if (!checkbox) return;
+
+    const index = parseInt(checkbox.dataset.index);
+
+    // Delegate to the existing selection logic
+    handleSelectionCardClick(event, card, index);
 }
 
 // Handle card click in selection mode

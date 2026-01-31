@@ -1,0 +1,1021 @@
+"""
+Adaptive List Content Checker
+Fetches content from TMDB discover API using saved filter configurations.
+Adaptive lists are time-sensitive - results change based on when they're checked
+due to filters like "released_within" and "upcoming_days".
+"""
+
+import logging
+import pickle
+import os
+import re
+import requests
+from typing import List, Dict, Any, Tuple
+from datetime import datetime, timedelta
+from utilities.settings import get_setting
+from utilities.flixpatrol_api import fetch_top10 as fetch_flixpatrol_top10
+from utilities.mdblist_api import fetch_list_items as fetch_mdblist_items
+
+REQUEST_TIMEOUT = 15  # seconds
+
+# Cache configuration
+DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+ADAPTIVE_LIST_TMDB_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'adaptive_list_tmdb_cache.pkl')
+ADAPTIVE_LIST_IMDB_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'adaptive_list_imdb_cache.pkl')
+
+# Cache control flag
+disable_caching = False
+
+logger = logging.getLogger(__name__)
+
+# TMDB Metadata Cache Functions
+def load_tmdb_cache():
+    """Load TMDB metadata cache"""
+    if disable_caching or not os.path.exists(ADAPTIVE_LIST_TMDB_CACHE_FILE):
+        return {}
+    try:
+        with open(ADAPTIVE_LIST_TMDB_CACHE_FILE, 'rb') as f:
+            cache = pickle.load(f)
+            logger.debug(f"Loaded TMDB cache with {len(cache)} entries")
+            return cache
+    except Exception as e:
+        logger.warning(f"Failed to load TMDB cache: {e}")
+        return {}
+
+def save_tmdb_cache(cache):
+    """Save TMDB metadata cache"""
+    if disable_caching:
+        return
+    try:
+        with open(ADAPTIVE_LIST_TMDB_CACHE_FILE, 'wb') as f:
+            pickle.dump(cache, f)
+            logger.debug(f"Saved TMDB cache with {len(cache)} entries")
+    except Exception as e:
+        logger.error(f"Failed to save TMDB cache: {e}")
+
+# TMDB→IMDB ID Cache Functions
+def load_imdb_cache():
+    """Load TMDB→IMDB ID mapping cache with smart expiration"""
+    if disable_caching or not os.path.exists(ADAPTIVE_LIST_IMDB_CACHE_FILE):
+        return {}
+    try:
+        with open(ADAPTIVE_LIST_IMDB_CACHE_FILE, 'rb') as f:
+            cache = pickle.load(f)
+            logger.debug(f"Loaded IMDB cache with {len(cache)} entries")
+            return cache
+    except Exception as e:
+        logger.warning(f"Failed to load IMDB cache: {e}")
+        return {}
+
+def save_imdb_cache(cache):
+    """Save TMDB→IMDB ID mapping cache"""
+    if disable_caching:
+        return
+    try:
+        with open(ADAPTIVE_LIST_IMDB_CACHE_FILE, 'wb') as f:
+            pickle.dump(cache, f)
+            logger.debug(f"Saved IMDB cache with {len(cache)} entries")
+    except Exception as e:
+        logger.error(f"Failed to save IMDB cache: {e}")
+
+def is_cache_entry_valid(cache_entry, cache_key, current_time=None):
+    """
+    Determine if a cache entry is still valid based on smart expiration rules.
+    
+    Args:
+        cache_entry: Dict with data and 'cached_at', 'release_date' (optional)
+        cache_key: Cache key for logging
+        current_time: Current datetime (defaults to now)
+    
+    Returns:
+        bool: True if cache is valid, False if expired
+    """
+    if not cache_entry or 'cached_at' not in cache_entry:
+        return False
+    
+    try:
+        if current_time is None:
+            current_time = datetime.now()
+        
+        cached_date = cache_entry['cached_at']
+        if isinstance(cached_date, str):
+            cached_date = datetime.fromisoformat(cached_date)
+        
+        age_days = (current_time - cached_date).days
+        
+        # Check release date age for smart TTL
+        release_date = cache_entry.get('release_date')
+        if release_date and release_date != 'Unknown':
+            try:
+                release_year = int(str(release_date)[:4])
+                current_year = current_time.year
+                years_since_release = current_year - release_year
+                
+                # Unreleased content: Cache 1 day
+                if years_since_release < 0:
+                    if age_days > 1:
+                        logger.debug(f"Cache expired for {cache_key}: Unreleased content older than 1 day")
+                        return False
+                    return True
+                
+                # Recent content (<2 years): Cache 7 days
+                if years_since_release < 2:
+                    if age_days > 7:
+                        logger.debug(f"Cache expired for {cache_key}: Recent content cache older than 7 days")
+                        return False
+                    return True
+                
+                # Old content (≥2 years): Cache 90 days
+                if age_days > 90:
+                    logger.debug(f"Cache expired for {cache_key}: Old content cache older than 90 days")
+                    return False
+                return True
+                
+            except (ValueError, TypeError):
+                # Can't parse release date, default to 30 day expiry
+                if age_days > 30:
+                    logger.debug(f"Cache expired for {cache_key}: Unknown age, default 30 day expiry")
+                    return False
+        else:
+            # No release date info, default to 30 day expiry
+            if age_days > 30:
+                logger.debug(f"Cache expired for {cache_key}: No release date, default 30 day expiry")
+                return False
+        
+        return True
+        
+    except Exception as e:
+        logger.warning(f"Error validating cache entry for {cache_key}: {e}")
+        return False
+
+
+def get_wanted_from_adaptive_list(list_configs: Dict[str, Any], versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+    """
+    Fetch wanted items from TMDB discover API using saved filter configurations.
+
+    Args:
+        list_configs: List of adaptive list configurations, each containing:
+            - name: Display name for the list
+            - media_type: 'movie' or 'tv'
+            - filters: Dict of TMDB discover filter parameters
+        versions: Dict of version flags to assign to items
+
+    Returns:
+        List of tuples: [(items_list, versions_dict), ...]
+    """
+    all_wanted_items = []
+
+    # Get TMDB API key
+    tmdb_api_key = get_setting('TMDB', 'api_key', '')
+    if not tmdb_api_key:
+        logging.error("[Adaptive List] TMDB API key not configured")
+        return []
+
+    
+    list_name = list_configs.get('display_name', 'Unnamed List')
+    media_type = list_configs.get('media_type', 'movie')
+    filters = list_configs.get('filters', {})
+
+    if not filters:
+        logging.warning(f"[Adaptive List] No filters configured for list '{list_name}', skipping")
+        return []
+
+    logging.info(f"[Adaptive List] Processing list '{list_name}' (type: {media_type})")
+    logging.info(f"[Adaptive List] Filters received: {filters}")
+
+    try:
+        # Check if this list uses FlixPatrol/MDBList sources
+        if 'lists' in filters and filters['lists']:
+            items = fetch_from_lists(tmdb_api_key, filters, list_name)
+        else:
+            items = fetch_from_tmdb_discover(tmdb_api_key, media_type, filters, list_name)
+
+        if items:
+            logging.info(f"[Adaptive List] Found {len(items)} items from list '{list_name}'")
+            all_wanted_items.append((items, versions))
+        else:
+            logging.info(f"[Adaptive List] No items found from list '{list_name}'")
+
+    except Exception as e:
+        logging.error(f"[Adaptive List] Error processing list '{list_name}': {e}")
+        return []
+
+    return all_wanted_items
+
+
+def fetch_from_tmdb_discover(api_key: str, media_type: str, filters: Dict, list_name: str) -> List[Dict[str, Any]]:
+    """
+    Fetch items from TMDB discover API with given filters.
+    Fetches multiple pages to get comprehensive results.
+
+    Args:
+        api_key: TMDB API key
+        media_type: 'movie' or 'tv'
+        filters: Dict of filter parameters
+        list_name: Name of the list (for logging)
+
+    Returns:
+        List of wanted item dicts with imdb_id and media_type
+    """
+    items = []
+
+    # Build base URL
+    if media_type == 'tv':
+        base_url = f"https://api.themoviedb.org/3/discover/tv?api_key={api_key}&language=en-US"
+        date_field = 'first_air_date'
+    else:
+        base_url = f"https://api.themoviedb.org/3/discover/movie?api_key={api_key}&language=en-US"
+        date_field = 'primary_release_date'
+
+    # Build parameters from filters
+    params = build_discover_params(filters, date_field, media_type)
+
+    # Fetch up to 5 pages (100 items max) to balance coverage with API limits
+    max_pages = 5
+    total_fetched = 0
+
+    for page in range(1, max_pages + 1):
+        url = f"{base_url}&page={page}&{'&'.join(params)}"
+
+        logging.info(f"[Adaptive List] Fetching page {page} for '{list_name}'")
+
+        try:
+            response = requests.get(url, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+            data = response.json()
+
+            results = data.get('results', [])
+            total_pages = data.get('total_pages', 1)
+            total_results = data.get('total_results', 0)
+            logging.info(f"[Adaptive List] TMDB response: {len(results)} results on page {page}, total_results={total_results}, total_pages={total_pages}")
+
+            if not results:
+                break
+
+            # Apply title filter BEFORE IMDB lookup (more efficient - reduces API calls)
+            title_filter_str = filters.get('title_filter', '')
+            if title_filter_str:
+                try:
+                    # Parse JavaScript-style regex: /pattern/flags
+                    js_regex_match = re.match(r'^/(.+)/([gimsuvy]*)$', title_filter_str)
+                    if js_regex_match:
+                        pattern_str = js_regex_match.group(1)
+                        flags_str = js_regex_match.group(2)
+                        # Convert JS flags to Python flags (i = IGNORECASE, m = MULTILINE, s = DOTALL)
+                        py_flags = 0
+                        if 'i' in flags_str:
+                            py_flags |= re.IGNORECASE
+                        if 'm' in flags_str:
+                            py_flags |= re.MULTILINE
+                        if 's' in flags_str:
+                            py_flags |= re.DOTALL
+                        title_pattern = re.compile(pattern_str, py_flags)
+                        logging.info(f"[Adaptive List] Parsed JS regex '{title_filter_str}' -> pattern='{pattern_str}', flags={py_flags}")
+                    else:
+                        # Plain regex or text pattern
+                        title_pattern = re.compile(title_filter_str, re.IGNORECASE)
+                except re.error as e:
+                    logging.warning(f"[Adaptive List] Invalid regex '{title_filter_str}': {e}, treating as plain text")
+                    title_pattern = re.compile(re.escape(title_filter_str), re.IGNORECASE)
+
+                original_count = len(results)
+                results = [r for r in results if title_pattern.search(r.get('title', '') or r.get('name', ''))]
+                logging.info(f"[Adaptive List] Title filter '{title_filter_str}' reduced page results from {original_count} to {len(results)}")
+
+            # Process each result to get IMDB ID
+            for item in results:
+                tmdb_id = item.get('id')
+                if not tmdb_id:
+                    continue
+
+                # Get release date for smart caching
+                release_date = item.get('release_date') or item.get('first_air_date')
+
+                # Fetch external IDs to get IMDB ID
+                item_title = item.get('title') or item.get('name', '')
+                imdb_id = get_imdb_id(api_key, tmdb_id, media_type, release_date)
+
+                # Add item with IMDB ID if available, otherwise use TMDB ID fallback
+                wanted_item = {
+                    'imdb_id': imdb_id,  # Can be None - will use TMDB ID fallback
+                    'tmdb_id': tmdb_id,
+                    'media_type': 'movie' if media_type == 'movie' else 'tv',
+                    'title': item_title,
+                }
+                items.append(wanted_item)
+                total_fetched += 1
+
+                if not imdb_id:
+                    logging.info(f"[Adaptive List] No IMDB ID for '{item_title}' (TMDB ID: {tmdb_id}) - using TMDB ID fallback")
+
+            # Stop if we've reached the last page
+            if page >= total_pages:
+                break
+
+        except requests.exceptions.RequestException as e:
+            logging.error(f"[Adaptive List] TMDB API error on page {page}: {e}")
+            break
+        except Exception as e:
+            logging.error(f"[Adaptive List] Error processing page {page}: {e}")
+            break
+
+    # Note: Title filter is now applied BEFORE IMDB lookup (inside the page loop above)
+    # This is more efficient as it reduces the number of IMDB API calls needed
+
+    logging.info(f"[Adaptive List] Fetched {len(items)} items from '{list_name}' (IMDB IDs + TMDB ID fallbacks)")
+    return items
+
+
+def fetch_from_lists(api_key: str, filters: Dict, list_name: str) -> List[Dict[str, Any]]:
+    """
+    Fetch items from FlixPatrol/MDBList sources and apply filters.
+    
+    Args:
+        api_key: TMDB API key
+        filters: Dict of filter parameters including 'lists' parameter
+        list_name: Name of the adaptive list (for logging)
+    
+    Returns:
+        List of wanted item dicts with imdb_id and media_type
+    """
+    items = []
+    all_list_items = []
+    
+    # Parse lists parameter: "flixpatrol:netflix,flixpatrol:disney,mdblist:top-imdb"
+    lists_param = filters.get('lists', '')
+    if not lists_param:
+        return []
+    
+    list_sources = [pair.strip() for pair in lists_param.split(',') if pair.strip()]
+    
+    logging.info(f"[Adaptive List] Fetching from {len(list_sources)} list source(s) for '{list_name}'")
+    
+    # Fetch all lists and enrich with TMDB data
+    for list_pair in list_sources:
+        try:
+            parts = list_pair.split(':', 1)
+            if len(parts) != 2:
+                continue
+            
+            source, list_id = parts
+            
+            if source == 'flixpatrol':
+                # FlixPatrol returns {'items': [...], 'platform': '...', 'date': '...'}
+                result = fetch_flixpatrol_top10(list_id)
+                if result and 'items' in result:
+                    # Enrich items with TMDB data
+                    enriched = enrich_list_items_with_tmdb(api_key, result['items'])
+                    all_list_items.extend(enriched)
+                    logging.debug(f"[Adaptive List] Fetched {len(enriched)} enriched items from FlixPatrol:{list_id}")
+            elif source == 'mdblist':
+                # MDBList returns {'items': [...], 'list_name': '...'}
+                result = fetch_mdblist_items(list_id, limit=50)
+                if result and 'items' in result:
+                    # MDBList items already have tmdb_id, just need to enrich with full details
+                    enriched = enrich_mdblist_items_with_tmdb(api_key, result['items'])
+                    all_list_items.extend(enriched)
+                    logging.debug(f"[Adaptive List] Fetched {len(enriched)} enriched items from MDBList:{list_id}")
+        except Exception as e:
+            logging.error(f"[Adaptive List] Error fetching list {list_pair}: {e}")
+            continue
+    
+    logging.info(f"[Adaptive List] Got {len(all_list_items)} total items from lists before filtering")
+    
+    # Apply client-side filters
+    filtered_items = apply_list_filters(all_list_items, filters)
+    
+    logging.info(f"[Adaptive List] {len(filtered_items)} items after filtering")
+    
+    # Convert to wanted items format with IMDB IDs
+    for item in filtered_items:
+        tmdb_id = item.get('id')
+        media_type = item.get('media_type', 'movie')
+        
+        if not tmdb_id:
+            continue
+        
+        # Get release date for smart caching
+        release_date = item.get('release_date') or item.get('first_air_date')
+        
+        # Fetch IMDB ID
+        imdb_id = get_imdb_id(api_key, tmdb_id, media_type, release_date)
+        
+        # Add item with IMDB ID if available, otherwise use TMDB ID fallback
+        item_title = item.get('title') or item.get('name', '')
+        wanted_item = {
+            'imdb_id': imdb_id,  # Can be None - will use TMDB ID fallback
+            'tmdb_id': tmdb_id,
+            'media_type': 'movie' if media_type == 'movie' else 'tv',
+            'title': item_title,
+        }
+        items.append(wanted_item)
+
+        if not imdb_id:
+            logging.info(f"[Adaptive List] No IMDB ID for '{item_title}' (TMDB ID: {tmdb_id}) - using TMDB ID fallback")
+    
+    logging.info(f"[Adaptive List] Fetched {len(items)} items after filtering (IMDB IDs + TMDB ID fallbacks)")
+    return items
+
+
+def enrich_list_items_with_tmdb(api_key: str, items: List[Dict]) -> List[Dict]:
+    """
+    Enrich FlixPatrol items with TMDB data by searching for titles.
+    
+    Args:
+        api_key: TMDB API key
+        items: Raw FlixPatrol items with title and media_type
+    
+    Returns:
+        List of enriched items with TMDB data
+    """
+    enriched = []
+    
+    for item in items:
+        title = item.get('title', '')
+        media_type = item.get('media_type', 'unknown')
+        
+        if not title:
+            continue
+        
+        try:
+            # Search TMDB by title
+            search_types = ['movie', 'tv'] if media_type == 'unknown' else [media_type if media_type == 'tv' else 'movie']
+            
+            tmdb_id = None
+            for search_type in search_types:
+                search_url = f"https://api.themoviedb.org/3/search/{search_type}?api_key={api_key}&query={requests.utils.quote(title)}&page=1"
+                search_response = requests.get(search_url, timeout=5)
+                if search_response.status_code == 200:
+                    search_data = search_response.json()
+                    if search_data.get('results'):
+                        tmdb_id = search_data['results'][0]['id']
+                        media_type = search_type
+                        break
+            
+            if not tmdb_id:
+                continue
+            
+            # Fetch full TMDB details
+            if media_type == 'tv':
+                tmdb_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}?api_key={api_key}&language=en-US"
+            else:
+                tmdb_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={api_key}&language=en-US"
+            
+            tmdb_response = requests.get(tmdb_url, timeout=5)
+            if tmdb_response.status_code == 200:
+                tmdb_data = tmdb_response.json()
+                
+                # Extract genre IDs and other data
+                genres = tmdb_data.get('genres', [])
+                genre_ids = [g['id'] for g in genres if isinstance(g, dict) and 'id' in g]
+                
+                enriched.append({
+                    'id': tmdb_id,
+                    'title': tmdb_data.get('title') or tmdb_data.get('name'),
+                    'media_type': media_type,
+                    'genre_ids': genre_ids,
+                    'original_language': tmdb_data.get('original_language', ''),
+                    'origin_country': tmdb_data.get('origin_country', []),
+                    'vote_average': tmdb_data.get('vote_average', 0),
+                    'vote_count': tmdb_data.get('vote_count', 0),
+                    'release_date': tmdb_data.get('release_date', ''),
+                    'first_air_date': tmdb_data.get('first_air_date', ''),
+                    'runtime': tmdb_data.get('runtime', 0) if media_type == 'movie' else tmdb_data.get('episode_run_time', [0])[0] if tmdb_data.get('episode_run_time') else 0,
+                })
+        except Exception as e:
+            logging.debug(f"[Adaptive List] Error enriching {title}: {e}")
+            continue
+    
+    return enriched
+
+
+def enrich_mdblist_items_with_tmdb(api_key: str, items: List[Dict]) -> List[Dict]:
+    """
+    Enrich MDBList items with TMDB data.
+    
+    Args:
+        api_key: TMDB API key
+        items: MDBList items with tmdb_id
+    
+    Returns:
+        List of enriched items with full TMDB data
+    """
+    enriched = []
+    
+    for item in items:
+        tmdb_id = item.get('tmdb_id')
+        media_type = item.get('media_type', 'movie')
+        
+        if not tmdb_id:
+            continue
+        
+        try:
+            # Fetch full TMDB details
+            if media_type == 'tv':
+                tmdb_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}?api_key={api_key}&language=en-US"
+            else:
+                tmdb_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={api_key}&language=en-US"
+            
+            tmdb_response = requests.get(tmdb_url, timeout=5)
+            if tmdb_response.status_code == 200:
+                tmdb_data = tmdb_response.json()
+                
+                # Extract genre IDs and other data
+                genres = tmdb_data.get('genres', [])
+                genre_ids = [g['id'] for g in genres if isinstance(g, dict) and 'id' in g]
+                
+                enriched.append({
+                    'id': tmdb_id,
+                    'title': tmdb_data.get('title') or tmdb_data.get('name'),
+                    'media_type': media_type,
+                    'genre_ids': genre_ids,
+                    'original_language': tmdb_data.get('original_language', ''),
+                    'origin_country': tmdb_data.get('origin_country', []),
+                    'vote_average': tmdb_data.get('vote_average', 0),
+                    'vote_count': tmdb_data.get('vote_count', 0),
+                    'release_date': tmdb_data.get('release_date', ''),
+                    'first_air_date': tmdb_data.get('first_air_date', ''),
+                    'runtime': tmdb_data.get('runtime', 0) if media_type == 'movie' else tmdb_data.get('episode_run_time', [0])[0] if tmdb_data.get('episode_run_time') else 0,
+                })
+        except Exception as e:
+            logging.debug(f"[Adaptive List] Error enriching TMDB ID {tmdb_id}: {e}")
+            continue
+    
+    return enriched
+
+
+def apply_list_filters(items: List[Dict], filters: Dict) -> List[Dict]:
+    """
+    Apply filters to list items (client-side filtering like in discover.js).
+    Only apply filters when data is present - matches frontend behavior.
+    
+    Args:
+        items: List items to filter
+        filters: Filter configuration
+    
+    Returns:
+        Filtered list of items
+    """
+    filtered = []
+    
+    logging.info(f"[Adaptive List] Filtering {len(items)} items with filters: {filters}")
+    
+    # Count items by filter
+    genre_filtered = 0
+    lang_filtered = 0
+    country_filtered = 0
+    rating_filtered = 0
+    votes_filtered = 0
+    released_within_filtered = 0
+    upcoming_filtered = 0
+    runtime_filtered = 0
+    media_type_filtered = 0
+    title_filtered = 0
+
+    # Compile title filter regex if provided (supports JavaScript-style /pattern/flags)
+    title_filter_pattern = None
+    title_filter_str = filters.get('title_filter', '')
+    if title_filter_str:
+        try:
+            # Parse JavaScript-style regex: /pattern/flags
+            js_regex_match = re.match(r'^/(.+)/([gimsuvy]*)$', title_filter_str)
+            if js_regex_match:
+                pattern_str = js_regex_match.group(1)
+                flags_str = js_regex_match.group(2)
+                # Convert JS flags to Python flags (i = IGNORECASE, m = MULTILINE, s = DOTALL)
+                py_flags = 0
+                if 'i' in flags_str:
+                    py_flags |= re.IGNORECASE
+                if 'm' in flags_str:
+                    py_flags |= re.MULTILINE
+                if 's' in flags_str:
+                    py_flags |= re.DOTALL
+                title_filter_pattern = re.compile(pattern_str, py_flags)
+                logging.info(f"[Adaptive List] Parsed JS regex '{title_filter_str}' -> pattern='{pattern_str}', flags={py_flags}")
+            else:
+                # Plain regex or text pattern
+                title_filter_pattern = re.compile(title_filter_str, re.IGNORECASE)
+        except re.error as e:
+            logging.warning(f"[Adaptive List] Invalid regex '{title_filter_str}': {e}, treating as plain text")
+            title_filter_pattern = re.compile(re.escape(title_filter_str), re.IGNORECASE)
+    
+    # Default upcoming_days to 0 if released_within is set but upcoming_days is not
+    if filters.get('released_within') and 'upcoming_days' not in filters:
+        filters['upcoming_days'] = 0
+    
+    for item in items:
+        skip = False
+        
+        # Media type filter
+        if filters.get('media_type') and filters['media_type'] != 'all' and not skip:
+            if item.get('media_type') != filters['media_type']:
+                media_type_filtered += 1
+                skip = True
+        
+        # Released within filter (checks if item is too old)
+        if filters.get('released_within') and not skip:
+            release_date = item.get('release_date') or item.get('first_air_date')
+            if release_date:
+                try:
+                    days_ago = int(filters['released_within'])
+                    cutoff_date = datetime.now() - timedelta(days=days_ago)
+                    item_date = datetime.strptime(release_date[:10], '%Y-%m-%d')
+                    if item_date < cutoff_date:
+                        released_within_filtered += 1
+                        skip = True
+                except (ValueError, TypeError):
+                    pass
+            else:
+                released_within_filtered += 1
+                skip = True
+        
+        # Upcoming days filter (checks if item is too far in the future)
+        # When upcoming_days = 0, only allow items released up to today (no future items)
+        # When upcoming_days > 0, allow items releasing within the next N days
+        if 'upcoming_days' in filters and not skip:
+            release_date = item.get('release_date') or item.get('first_air_date')
+            if release_date:
+                try:
+                    days_ahead = int(filters['upcoming_days'])
+                    now = datetime.now()
+                    future_date = now + timedelta(days=days_ahead)
+                    item_date = datetime.strptime(release_date[:10], '%Y-%m-%d')
+                    if item_date > future_date:
+                        upcoming_filtered += 1
+                        skip = True
+                except (ValueError, TypeError):
+                    pass
+            else:
+                upcoming_filtered += 1
+                skip = True
+        
+        # Runtime filter
+        if filters.get('runtime_max') and not skip:
+            runtime = item.get('runtime', 0)
+            if runtime > 0:
+                try:
+                    max_runtime = int(filters['runtime_max'])
+                    if runtime > max_runtime:
+                        runtime_filtered += 1
+                        skip = True
+                except ValueError:
+                    pass
+        
+        # Genre filter (exclude) - only if item has genre data
+        if filters.get('genres_exclude') and not skip:
+            excluded_genres = [int(g) for g in filters['genres_exclude'].split(',') if g.strip().isdigit()]
+            item_genres = item.get('genre_ids', [])
+            if item_genres and any(g in item_genres for g in excluded_genres):
+                genre_filtered += 1
+                skip = True
+        
+        # Language filter - only if item has language data
+        if filters.get('language') and not skip:
+            allowed_langs = [l.strip() for l in filters['language'].split(',') if l.strip()]
+            item_lang = item.get('original_language', '')
+            if item_lang and item_lang not in allowed_langs:
+                lang_filtered += 1
+                skip = True
+        
+        # Country filter - only if item has country data
+        if filters.get('country') and not skip:
+            allowed_countries = [c.strip() for c in filters['country'].split(',') if c.strip()]
+            item_countries = item.get('origin_country', [])
+            if item_countries and not any(c in allowed_countries for c in item_countries):
+                country_filtered += 1
+                skip = True
+        
+        # Rating filter - only if item has rating data
+        if filters.get('tmdb_rating_min') and not skip:
+            try:
+                min_rating = float(filters['tmdb_rating_min'])
+                item_rating = item.get('vote_average', 0)
+                if item_rating > 0 and item_rating < min_rating:
+                    rating_filtered += 1
+                    skip = True
+            except ValueError:
+                pass
+        
+        # Votes filter - only if item has vote count data
+        if filters.get('tmdb_votes_min') and not skip:
+            try:
+                min_votes = int(filters['tmdb_votes_min'])
+                item_votes = item.get('vote_count', 0)
+                if item_votes > 0 and item_votes < min_votes:
+                    votes_filtered += 1
+                    skip = True
+            except ValueError:
+                pass
+
+        # Title filter (client-side regex/text filter)
+        if title_filter_pattern and not skip:
+            item_title = item.get('title') or item.get('name', '')
+            if item_title and not title_filter_pattern.search(item_title):
+                title_filtered += 1
+                skip = True
+
+        if not skip:
+            filtered.append(item)
+    
+    logging.info(f"[Adaptive List] Filter stats - Genre: {genre_filtered}, Lang: {lang_filtered}, Country: {country_filtered}, Rating: {rating_filtered}, Votes: {votes_filtered}, ReleasedWithin: {released_within_filtered}, Upcoming: {upcoming_filtered}, Runtime: {runtime_filtered}, MediaType: {media_type_filtered}, Title: {title_filtered}")
+    logging.info(f"[Adaptive List] {len(filtered)} items passed all filters out of {len(items)} total")
+    
+    return filtered
+
+
+def build_discover_params(filters: Dict, date_field: str, media_type: str) -> List[str]:
+    """
+    Build TMDB discover API parameters from filter configuration.
+    Handles time-sensitive filters like released_within and upcoming_days.
+
+    Args:
+        filters: Dict of filter parameters from saved configuration
+        date_field: 'primary_release_date' for movies, 'first_air_date' for TV
+        media_type: 'movie' or 'tv'
+
+    Returns:
+        List of URL parameter strings
+    """
+    params = []
+    today = datetime.now()
+
+    # Sort options
+    sort_by = filters.get('sort_by', 'popularity.desc')
+    # Fix sort_by for release date - TMDB uses different field names per media type
+    if 'primary_release_date' in sort_by or 'release_date' in sort_by:
+        order = 'desc' if '.desc' in sort_by else 'asc'
+        sort_by = f"{date_field}.{order}"
+    params.append(f"sort_by={sort_by}")
+
+    # Genre filtering (include and exclude)
+    if filters.get('genres'):
+        genres_or = filters['genres'].replace(',', '|')
+        params.append(f"with_genres={genres_or}")
+    if filters.get('genres_exclude'):
+        params.append(f"without_genres={filters['genres_exclude']}")
+
+    # Keyword filtering
+    if filters.get('keywords'):
+        keywords_or = filters['keywords'].replace(',', '|')
+        params.append(f"with_keywords={keywords_or}")
+    if filters.get('keywords_exclude'):
+        params.append(f"without_keywords={filters['keywords_exclude']}")
+
+    # Language filtering
+    if filters.get('language'):
+        language_or = filters['language'].replace(',', '|')
+        params.append(f"with_original_language={language_or}")
+
+    # Country filtering
+    if filters.get('country'):
+        country_or = filters['country'].replace(',', '|')
+        params.append(f"with_origin_country={country_or}")
+
+    # Watch provider filtering
+    if filters.get('watch_provider'):
+        provider_or = filters['watch_provider'].replace(',', '|')
+        params.append(f"with_watch_providers={provider_or}")
+        watch_region = filters.get('watch_region', 'US')
+        params.append(f"watch_region={watch_region}")
+    if filters.get('watch_provider_exclude'):
+        params.append(f"without_watch_providers={filters['watch_provider_exclude']}")
+
+    # TV Network filtering (TV only)
+    if media_type == 'tv':
+        if filters.get('network'):
+            network_or = filters['network'].replace(',', '|')
+            params.append(f"with_networks={network_or}")
+        if filters.get('network_exclude'):
+            params.append(f"without_networks={filters['network_exclude']}")
+
+    # Release type filtering (Movies only)
+    if media_type == 'movie' and filters.get('release_type'):
+        release_type_or = filters['release_type'].replace(',', '|')
+        params.append(f"with_release_type={release_type_or}")
+
+    # TIME-SENSITIVE DATE FILTERING
+    # These are what make the list "adaptive" - results change based on when checked
+    date_start = None
+    date_end = None
+    date_filter_applied = False
+
+    # Released Within: items released in the past X days
+    released_within = filters.get('released_within')
+    if released_within not in [None, '', '0', 0]:
+        try:
+            released_within_int = int(released_within)
+            if released_within_int > 0:
+                date_start = today - timedelta(days=released_within_int)
+                date_filter_applied = True
+                logging.info(f"[Adaptive List] Released within {released_within_int} days from: {date_start.strftime('%Y-%m-%d')}")
+        except (ValueError, TypeError):
+            logging.warning(f"[Adaptive List] Invalid released_within value: {released_within}")
+
+    # Upcoming Releases: items releasing in the next X days
+    upcoming_days = filters.get('upcoming_days')
+    if upcoming_days not in [None, '', '0', 0]:
+        try:
+            upcoming_days_int = int(upcoming_days)
+            if upcoming_days_int > 0:
+                date_end = today + timedelta(days=upcoming_days_int)
+                date_filter_applied = True
+                logging.info(f"[Adaptive List] Upcoming {upcoming_days_int} days until: {date_end.strftime('%Y-%m-%d')}")
+        except (ValueError, TypeError):
+            logging.warning(f"[Adaptive List] Invalid upcoming_days value: {upcoming_days}")
+
+    # Apply date range
+    if date_start:
+        params.append(f"{date_field}.gte={date_start.strftime('%Y-%m-%d')}")
+        logging.info(f"[Adaptive List] Adding TMDB filter: {date_field}.gte={date_start.strftime('%Y-%m-%d')}")
+    if date_end:
+        params.append(f"{date_field}.lte={date_end.strftime('%Y-%m-%d')}")
+        logging.info(f"[Adaptive List] Adding TMDB filter: {date_field}.lte={date_end.strftime('%Y-%m-%d')}")
+
+    # Year range filtering (only if no specific date filter applied)
+    if not date_filter_applied:
+        if filters.get('year_from'):
+            try:
+                year_int = int(filters['year_from'])
+                params.append(f"{date_field}.gte={year_int}-01-01")
+            except ValueError:
+                pass
+        if filters.get('year_to'):
+            try:
+                year_int = int(filters['year_to'])
+                params.append(f"{date_field}.lte={year_int}-12-31")
+            except ValueError:
+                pass
+
+    # TMDB Rating filtering
+    if filters.get('tmdb_rating_min'):
+        try:
+            rating = float(filters['tmdb_rating_min'])
+            if rating > 0:
+                params.append(f"vote_average.gte={rating}")
+        except ValueError:
+            pass
+
+    if filters.get('tmdb_rating_max'):
+        try:
+            rating = float(filters['tmdb_rating_max'])
+            if rating < 10:
+                params.append(f"vote_average.lte={rating}")
+        except ValueError:
+            pass
+
+    # Vote count filtering
+    if filters.get('tmdb_votes_min'):
+        try:
+            votes = int(filters['tmdb_votes_min'])
+            if votes > 0:
+                params.append(f"vote_count.gte={votes}")
+        except ValueError:
+            pass
+
+    # Runtime filtering (Movies only)
+    if media_type == 'movie':
+        if filters.get('runtime_min'):
+            try:
+                runtime = int(filters['runtime_min'])
+                if runtime > 0:
+                    params.append(f"with_runtime.gte={runtime}")
+            except ValueError:
+                pass
+        if filters.get('runtime_max'):
+            try:
+                runtime = int(filters['runtime_max'])
+                if runtime < 300:
+                    params.append(f"with_runtime.lte={runtime}")
+            except ValueError:
+                pass
+
+    # Budget filtering (Movies only)
+    if media_type == 'movie':
+        if filters.get('budget_min'):
+            try:
+                budget = int(filters['budget_min'])
+                if budget > 0:
+                    params.append(f"budget.gte={budget}")
+            except ValueError:
+                pass
+        if filters.get('budget_max'):
+            try:
+                budget = int(filters['budget_max'])
+                params.append(f"budget.lte={budget}")
+            except ValueError:
+                pass
+
+    # Revenue filtering (Movies only)
+    if media_type == 'movie':
+        if filters.get('revenue_min'):
+            try:
+                revenue = int(filters['revenue_min'])
+                if revenue > 0:
+                    params.append(f"revenue.gte={revenue}")
+            except ValueError:
+                pass
+        if filters.get('revenue_max'):
+            try:
+                revenue = int(filters['revenue_max'])
+                params.append(f"revenue.lte={revenue}")
+            except ValueError:
+                pass
+
+    # Production company filtering
+    if filters.get('production_company'):
+        company_ids = [c.strip() for c in filters['production_company'].split(',') if c.strip().isdigit()]
+        if company_ids:
+            params.append(f"with_companies={'|'.join(company_ids)}")
+    if filters.get('production_company_exclude'):
+        exclude_ids = [c.strip() for c in filters['production_company_exclude'].split(',') if c.strip().isdigit()]
+        if exclude_ids:
+            params.append(f"without_companies={','.join(exclude_ids)}")
+
+    # Apply minimum vote count when filtering by rating to avoid misleading results
+    # But not for upcoming content which won't have votes yet
+    if filters.get('tmdb_rating_min') and not filters.get('tmdb_votes_min') and not filters.get('upcoming_days'):
+        try:
+            rating = float(filters['tmdb_rating_min'])
+            if rating > 0:
+                params.append("vote_count.gte=10")
+        except ValueError:
+            pass
+
+    # Include video filter - allows non-standard video content
+    if filters.get('include_video'):
+        params.append("include_video=true")
+
+    return params
+
+
+def get_imdb_id(api_key: str, tmdb_id: int, media_type: str, release_date: str | None = None) -> str | None:
+    """
+    Fetch IMDB ID for a TMDB item with smart caching.
+
+    Args:
+        api_key: TMDB API key
+        tmdb_id: TMDB ID of the item
+        media_type: 'movie' or 'tv'
+        release_date: Release date string (YYYY-MM-DD) for smart TTL
+
+    Returns:
+        IMDB ID string or None if not found
+    """
+    # Load cache
+    imdb_cache = load_imdb_cache()
+    cache_key = f"{tmdb_id}_{media_type}"
+    current_time = datetime.now()
+    
+    # Check cache first
+    if cache_key in imdb_cache:
+        cache_entry = imdb_cache[cache_key]
+        if is_cache_entry_valid(cache_entry, cache_key, current_time):
+            logger.debug(f"[Adaptive List] Cache hit for TMDB {tmdb_id} ({media_type})")
+            return cache_entry.get('imdb_id')
+        else:
+            logger.debug(f"[Adaptive List] Cache expired for TMDB {tmdb_id} ({media_type})")
+    
+    # Cache miss or expired - fetch from API
+    try:
+        if media_type == 'tv':
+            url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/external_ids?api_key={api_key}"
+        else:
+            url = f"https://api.themoviedb.org/3/movie/{tmdb_id}/external_ids?api_key={api_key}"
+
+        response = requests.get(url, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        data = response.json()
+
+        imdb_id = data.get('imdb_id')
+        
+        # Cache the result (including None results to avoid repeated failed lookups)
+        cache_entry = {
+            'imdb_id': imdb_id,
+            'cached_at': current_time,
+            'release_date': release_date or 'Unknown'
+        }
+        imdb_cache[cache_key] = cache_entry
+        save_imdb_cache(imdb_cache)
+        
+        logger.debug(f"[Adaptive List] Cached IMDB ID for TMDB {tmdb_id} ({media_type}): {imdb_id}")
+        
+        return imdb_id
+
+    except Exception as e:
+        logging.debug(f"[Adaptive List] Could not get IMDB ID for TMDB {tmdb_id}: {e}")
+        return None
+
+
+def remove_from_adaptive_list(items: List[dict]) -> dict:
+    """
+    Adaptive lists don't support removal as they're dynamic TMDB queries.
+    Items are filtered by the ghostlist/already collected check instead.
+
+    Returns:
+        dict: Always returns success with 0 removed
+    """
+    return {
+        'success': True,
+        'removed': 0,
+        'message': 'Adaptive lists do not support item removal - items are managed via ghostlist'
+    }

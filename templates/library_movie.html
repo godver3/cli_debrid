@@ -4,10 +4,101 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/library_movie.css') }}">
+<script>
+    // Dynamically load theme-specific scraper CSS
+    (function() {
+        function getCurrentTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme) return savedTheme;
+            const metaTheme = document.querySelector('meta[name="theme"]');
+            return metaTheme ? metaTheme.getAttribute('content') : 'classic';
+        }
+        
+        const theme = getCurrentTheme();
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        
+        if (theme === 'tangerine') {
+            link.href = "{{ url_for('static', filename='css/tangerine/tangerine_scraper.css') }}?v=20260118";
+        } else {
+            link.href = "{{ url_for('static', filename='css/scraper.css') }}";
+        }
+        
+        document.head.appendChild(link);
+    })();
+</script>
+<style>
+    /* Cast section styles */
+    .cast-section {
+        margin-top: 0;
+    }
+    .cast-header {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        cursor: pointer;
+        user-select: none;
+        /* padding: 0.5rem 0; */
+    }
+    .cast-header:hover {
+        opacity: 0.8;
+    }
+    .cast-header h3 {
+        margin: 0;
+    }
+    .cast-toggle-icon {
+        width: 20px;
+        height: 20px;
+        transition: transform 0.2s ease;
+        color: rgba(255,255,255,0.6);
+    }
+    .cast-section.collapsed .cast-toggle-icon {
+        transform: rotate(-90deg);
+    }
+    .cast-section.collapsed .cast-grid {
+        display: none;
+    }
+    .cast-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+    .cast-card {
+        text-align: center;
+    }
+    .cast-photo {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        object-fit: cover;
+        background: rgba(255,255,255,0.1);
+        margin: 0 auto 0.5rem;
+    }
+    .cast-name {
+        font-weight: 500;
+        font-size: 0.875rem;
+    }
+    .cast-character {
+        font-size: 0.75rem;
+        opacity: 0.7;
+    }
+</style>
 {% endblock %}
 
 {% block content %}
 <div class="movie-container" data-media-id="{{ media_id }}" data-plex-configured="{{ plex_configured|lower }}" data-tmdb-configured="{{ tmdb_configured|lower }}">
+    <!-- Hidden inputs for permission checks -->
+    <input type="hidden" id="has_admin_permissions" value="{{ 'True' if has_admin_permissions else 'False' }}">
+    <input type="hidden" id="has_user_permissions" value="{{ 'True' if has_user_permissions else 'False' }}">
+
+    <!-- Hidden version select for torrent modal dropdown -->
+    <select id="version-select" style="display: none;">
+        {% for version in versions %}
+            <option value="{{ version }}">{{ version }}</option>
+        {% endfor %}
+        <option value="No Version">No Version</option>
+    </select>
 
     <!-- Full Page Backdrop -->
     <div id="page-backdrop" class="page-backdrop" style="display: none;">
@@ -25,7 +116,7 @@
             </svg>
             <h3 style="margin: 0 0 0.5rem 0; font-size: 1.5rem;">Library Not Configured</h3>
             <p style="margin: 0 0 1rem 0; opacity: 0.9;">
-                The Library page requires either <strong>Plex authentication</strong> or a <strong>TMDB API key</strong> to display artwork.
+                The Library page requires a <strong>TMDB API key</strong> to display artwork.
             </p>
             <p style="margin: 0;">
                 Please configure at least one source in <a href="/settings" style="color: #3b82f6; text-decoration: underline;">Settings</a> → Additional Settings → Library Manager
@@ -36,11 +127,21 @@
 
         <!-- Top Action Buttons -->
         <div id="page-actions" class="page-actions" style="display: none;">
+            {% if has_user_permissions %}
             <button id="btn-search-movie" class="action-btn primary-btn" title="Search for movie" aria-label="Search for movie">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="11" cy="11" r="8"></circle>
                     <path d="m21 21-4.35-4.35"></path>
                 </svg>
+            </button>
+            {% endif %}
+            <button id="btn-request-movie" class="action-btn ghost-btn" title="Request movie" aria-label="Request movie with version selection">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 15V3"></path>
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <path d="m7 10 5 5 5-5"></path>
+                </svg>
+                <span class="action-text">Request</span>
             </button>
             <button id="btn-refresh-tmdb" class="action-btn ghost-btn" title="Refresh from TMDB" aria-label="Refresh metadata from TMDB">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -50,6 +151,7 @@
                     <path d="M8 16H3v5"></path>
                 </svg>
             </button>
+            {% if has_admin_permissions %}
             <button id="btn-settings" class="action-btn ghost-btn" title="Settings" aria-label="Movie settings">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"></path>
@@ -65,6 +167,7 @@
                     <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                 </svg>
             </button>
+            {% endif %}
         </div>
 
         <!-- Main Content Grid: Left (Header + Files) | Right (Sidebar) -->
@@ -136,6 +239,7 @@
                 <div id="files-container" class="files-container">
                     <div class="files-header">
                         <h2>Movie Files</h2>
+                        {% if has_admin_permissions %}
                         <button class="btn btn-sm btn-danger delete-movie-file-btn" title="Delete Movie Files">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <path d="M10 11v6"></path>
@@ -146,9 +250,11 @@
                             </svg>
                             Delete Files
                         </button>
+                        {% endif %}
                     </div>
                     <div id="files-content" class="files-content"></div>
                 </div>
+
             </div>
 
             <!-- Right Column: Sidebar Info Boxes -->
@@ -158,7 +264,18 @@
                     <h3 class="info-box-title">Overview</h3>
                     <p id="movie-overview" class="info-box-text">-</p>
                 </div>
-
+                <div class="info-box">
+                    <!-- Cast Section - Collapsible -->
+                    <div id="cast-section" class="cast-section collapsed" style="display: none;">
+                        <div class="cast-header" id="cast-header">
+                            <h3>Cast</h3>
+                            <svg class="cast-toggle-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                        </div>
+                        <div id="cast-grid" class="cast-grid"></div>
+                    </div>
+                </div>
                 <!-- Info Box -->
                 <div class="info-box">
                     <h3 class="info-box-title">Info</h3>
@@ -182,6 +299,10 @@
                         <div class="detail-row">
                             <span class="detail-label">Genres</span>
                             <span id="movie-genres" class="detail-value">-</span>
+                        </div>
+                        <div class="detail-row" id="director-row">
+                            <span class="detail-label">Director</span>
+                            <span id="movie-director" class="detail-value">-</span>
                         </div>
                         <div class="detail-row">
                             <span class="detail-label">IMDb</span>
@@ -231,6 +352,20 @@
                 <div id="overlayContent"></div>
             </div>
         </div>
+
+        <!-- Version Selection Modal for Requests -->
+        <div id="versionModal" class="version-modal" style="display: none;">
+            <div class="version-modal-content">
+                <h3>Select Versions to Request</h3>
+                <div id="versionCheckboxes">
+                    <!-- Version checkboxes will be dynamically inserted here -->
+                </div>
+                <div class="version-modal-buttons">
+                    <button id="confirmVersions" class="btn btn-primary">Request</button>
+                    <button id="cancelVersions" class="btn btn-secondary">Cancel</button>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -239,6 +374,7 @@
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/deletion_common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/scraper.js') }}"></script>
+<script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}?v=20260118"></script>
+<script src="{{ url_for('static', filename='js/scraper.js') }}?v={{ range(10000, 99999) | random }}"></script>
 <script src="{{ url_for('static', filename='js/library_movie.js') }}"></script>
 {% endblock %}
