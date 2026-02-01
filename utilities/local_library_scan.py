@@ -1044,8 +1044,12 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                                     try:
                                         # Use existing PTT parser to extract season/episode from filename
                                         parsed = parse_with_ptt(additional_filename)
-                                        parsed_season = parsed.get('season')
-                                        parsed_episode = parsed.get('episode')
+                                        # Try singular first, fallback to plural list (consistent with rclone_processing.py)
+                                        # Safely handle empty lists
+                                        seasons = parsed.get('seasons') or []
+                                        episodes = parsed.get('episodes') or []
+                                        parsed_season = parsed.get('season') or (seasons[0] if len(seasons) > 0 else None)
+                                        parsed_episode = parsed.get('episode') or (episodes[0] if len(episodes) > 0 else None)
 
                                         if parsed_season is None or parsed_episode is None:
                                             logging.warning(f"[MultiFile] Could not parse episode info from filename: {additional_filename}. Skipping.")
@@ -1074,6 +1078,24 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                                 # Create a copy of the item for this additional file
                                 additional_item = item.copy()
                                 additional_item['filled_by_file'] = additional_filename
+
+                                # For episodes: Re-parse filename to ensure correct season/episode numbers
+                                # This is a safety measure in case the episode check failed or was skipped
+                                if item_type == 'episode':
+                                    try:
+                                        reparsed = parse_with_ptt(additional_filename)
+                                        # Safely handle empty lists
+                                        seasons = reparsed.get('seasons') or []
+                                        episodes = reparsed.get('episodes') or []
+                                        reparsed_season = reparsed.get('season') or (seasons[0] if len(seasons) > 0 else None)
+                                        reparsed_episode = reparsed.get('episode') or (episodes[0] if len(episodes) > 0 else None)
+                                        if reparsed_season is not None:
+                                            additional_item['season_number'] = int(reparsed_season)
+                                        if reparsed_episode is not None:
+                                            additional_item['episode_number'] = int(reparsed_episode)
+                                        logging.debug(f"[MultiFile] Updated additional_item episode numbers from filename: S{additional_item.get('season_number')}E{additional_item.get('episode_number')}")
+                                    except Exception as reparse_err:
+                                        logging.warning(f"[MultiFile] Could not re-parse episode info for {additional_filename}: {reparse_err}")
 
                                 # Generate symlink path for this additional file
                                 additional_dest_file = get_symlink_path(additional_item, additional_source_file, skip_jikan_lookup=True)
