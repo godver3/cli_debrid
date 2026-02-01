@@ -133,13 +133,13 @@ SETTINGS_SCHEMA = {
         },
         "movie_libraries": {
             "type": "string",
-            "description": "Comma-separated list of Plex movie library names",
-            "default": ""
+            "description": "Comma-separated list of Plex movie library names or IDs (e.g., 'Movies,4K Movies' or '1,5')",
+            "default": "Movies"
         },
         "shows_libraries": {
             "type": "string",
-            "description": "Comma-separated list of Plex TV show library names",
-            "default": ""
+            "description": "Comma-separated list of Plex TV show library names or IDs (e.g., 'TV Shows,Anime' or '2,3')",
+            "default": "Shows"
         },
         "update_plex_on_file_discovery": {
             "type": "boolean",
