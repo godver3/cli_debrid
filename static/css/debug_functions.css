@@ -121,6 +121,18 @@ body[data-theme="classic"] .grid, body[data-theme="classic"] .debug_items {
     margin-right: 8px;
 }
 
+.debug-container input[type="radio"] {
+    margin-right: 8px;
+    cursor: pointer;
+}
+
+#cleanup-upgrades-form .form-group label {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    margin-bottom: 10px;
+}
+
 .debug-container label {
     color: #f4f4f4;
     margin-bottom: 8px;
@@ -736,4 +748,96 @@ body[data-theme="classic"] .grid, body[data-theme="classic"] .debug_items {
 
 .debug-container .plex-labels-help-btn:active {
     transform: translateY(0);
+}
+
+/* Loading Overlay */
+.loading {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(8px);
+    z-index: 9999;
+    justify-content: center;
+    align-items: center;
+}
+
+.loading-content {
+    background: rgba(40, 40, 40, 0.95);
+    backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 20px;
+    border-radius: 20px;
+    text-align: center;
+}
+
+.loading-content p {
+    color: #e0e0e0;
+    margin-bottom: 15px;
+}
+
+.loading-message {
+    margin-bottom: 10px;
+}
+
+.loading-details {
+    font-size: 14px;
+    color: #ccc;
+    margin-top: 10px;
+}
+
+.spinner {
+    border: 4px solid rgba(255, 255, 255, 0.1);
+    border-top: 4px solid #007bff;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 10px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.close-loading {
+    background: #007bff;
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 16px;
+    font-weight: 600;
+    margin: 4px 2px;
+    cursor: pointer;
+    border-radius: 12px;
+    transition: all 0.3s ease;
+}
+
+.close-loading:hover {
+    background: #0056b3;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 123, 255, 0.4);
+}
+
+.loading-progress-bar-container {
+    width: 100%;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    margin-bottom: 15px;
+    overflow: hidden;
+}
+
+.loading-progress-bar {
+    height: 100%;
+    background: #007bff;
+    width: 0%;
+    transition: width 0.3s ease;
 }

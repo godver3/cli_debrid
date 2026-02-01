@@ -2030,6 +2030,37 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
         found_matching_section = False
         matching_sections = []
 
+        # Get configured library filters from settings (support both names and IDs)
+        allowed_library_keys = None
+        try:
+            # Build library dictionaries for filtering
+            all_libraries = {}  # {name: key}
+            libraries_by_key = {}  # {key: name}
+            for section in plex.library.sections():
+                # Convert key to string for consistent comparison
+                key_str = str(section.key)
+                all_libraries[section.title] = key_str
+                libraries_by_key[key_str] = section.title
+
+            # Get configured library names/IDs from settings
+            if item_type == 'movie':
+                movie_libs_setting = get_setting('Plex', 'movie_libraries', '')
+                if movie_libs_setting:
+                    allowed_library_keys = process_library_names(movie_libs_setting, all_libraries, libraries_by_key)
+                    # Translate keys to names for logging
+                    lib_names = [libraries_by_key.get(key, key) for key in allowed_library_keys]
+                    logger.debug(f"Filtering to configured movie libraries: {lib_names}")
+            elif item_type == 'episode':
+                shows_libs_setting = get_setting('Plex', 'shows_libraries', '')
+                if shows_libs_setting:
+                    allowed_library_keys = process_library_names(shows_libs_setting, all_libraries, libraries_by_key)
+                    # Translate keys to names for logging
+                    lib_names = [libraries_by_key.get(key, key) for key in allowed_library_keys]
+                    logger.debug(f"Filtering to configured show libraries: {lib_names}")
+        except Exception as filter_err:
+            logger.warning(f"Error setting up library filters: {filter_err}. Will scan all matching sections.")
+            allowed_library_keys = None
+
         for section in plex.library.sections():
             try:
                 # Type checking: Only check movie sections for movies, show sections for episodes
@@ -2038,6 +2069,11 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
                     continue
                 if item_type == 'episode' and section.type != 'show':
                     logger.debug(f"Skipping non-show section '{section.title}' for episode item")
+                    continue
+
+                # Filter by configured library settings (if specified)
+                if allowed_library_keys is not None and str(section.key) not in allowed_library_keys:
+                    logger.debug(f"Skipping section '{section.title}' (key: {section.key}) - not in configured libraries: {allowed_library_keys}")
                     continue
 
                 # Validate section.locations exists
@@ -2087,6 +2123,11 @@ def plex_update_item(item: Dict[str, Any]) -> bool:
                     # Find sections of matching type and scan the content folder path
                     for section in plex.library.sections():
                         try:
+                            # Filter by configured library settings (if specified)
+                            if allowed_library_keys is not None and str(section.key) not in allowed_library_keys:
+                                logger.debug(f"Skipping section '{section.title}' (key: {section.key}) in fallback - not in configured libraries")
+                                continue
+
                             # Match by section type
                             if item_type == 'movie' and section.type == 'movie':
                                 logger.info(f"Using movie section '{section.title}' for custom folder scan: {content_folder_path}")

@@ -2954,6 +2954,7 @@ class ProgramRunner:
                   AND c.filled_by_file IS NOT NULL
                   AND m.state != 'Checking'
                   AND (m.ghostlisted IS NULL OR m.ghostlisted = 0)
+                  AND (c.ghostlisted IS NULL OR c.ghostlisted = 0)
             """)
             reconciliation_pairs = cursor.fetchall()
 
@@ -3503,7 +3504,7 @@ class ProgramRunner:
                         conn_update = get_db_connection()
                         cursor_update = conn_update.cursor()
                         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                        cursor_update.execute('UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking"',
+                        cursor_update.execute('UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
                                               (now, item_id))
 
                         if cursor_update.rowcount > 0:
@@ -3674,7 +3675,7 @@ class ProgramRunner:
                              conn_update = get_db_connection()
                              cursor_update = conn_update.cursor()
                              now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                             cursor_update.execute('UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking"',
+                             cursor_update.execute('UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
                                                    (now, item_id))
 
                              if cursor_update.rowcount > 0:
@@ -3858,7 +3859,7 @@ class ProgramRunner:
                     continue 
                     # --- END EDIT ---
 
-                # --- START: Logic to identify scan paths (original location) 
+                # --- START: Logic to identify scan paths (original location)
                 if should_trigger_scan:
                     if not sections:
                          logging.error("Plex sections not available, cannot identify scan paths.")
@@ -3867,10 +3868,46 @@ class ProgramRunner:
                     item_type_mapped = 'show' if item_dict['type'] == 'episode' else item_dict['type']
                     logging.debug(f"Identifying scan paths for item {item_id} (type: {item_type_mapped}, title: '{filled_by_title}')")
 
+                    # Get configured library filters (support both names and IDs)
+                    allowed_library_keys = None
+                    try:
+                        from utilities.plex_functions import process_library_names
+
+                        # Build library dictionaries for filtering
+                        all_libraries = {}  # {name: key}
+                        libraries_by_key = {}  # {key: name}
+                        for section in sections:
+                            # Convert key to string for consistent comparison
+                            key_str = str(section.key)
+                            all_libraries[section.title] = key_str
+                            libraries_by_key[key_str] = section.title
+
+                        # Get configured library names/IDs from settings
+                        if item_type_mapped == 'movie':
+                            movie_libs_setting = get_setting('Plex', 'movie_libraries', '')
+                            if movie_libs_setting:
+                                allowed_library_keys = process_library_names(movie_libs_setting, all_libraries, libraries_by_key)
+                                lib_names = [libraries_by_key.get(key, key) for key in allowed_library_keys]
+                                logging.debug(f"Filtering Plex file check to configured movie libraries: {lib_names}")
+                        elif item_type_mapped == 'show':
+                            shows_libs_setting = get_setting('Plex', 'shows_libraries', '')
+                            if shows_libs_setting:
+                                allowed_library_keys = process_library_names(shows_libs_setting, all_libraries, libraries_by_key)
+                                lib_names = [libraries_by_key.get(key, key) for key in allowed_library_keys]
+                                logging.debug(f"Filtering Plex file check to configured show libraries: {lib_names}")
+                    except Exception as filter_err:
+                        logging.warning(f"Error setting up library filters for Plex file check: {filter_err}. Will scan all matching sections.")
+                        allowed_library_keys = None
+
                     found_matching_section_location = False
                     for section in sections:
                         # Check if section type matches item type
                         if section.type != item_type_mapped:
+                            continue
+
+                        # Filter by configured library settings (if specified)
+                        if allowed_library_keys is not None and str(section.key) not in allowed_library_keys:
+                            logging.debug(f"Skipping section '{section.title}' (key: {section.key}) - not in configured libraries")
                             continue
 
                         logging.debug(f"  Checking Section '{section.title}' (Type: {section.type})")

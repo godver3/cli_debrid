@@ -209,9 +209,27 @@
             {% endif %}
             {% endif %}
         {% endfor %}
-        
 
-        
+        <!-- Plex Library Settings for Symlink Mode -->
+        <div class="settings-form-group symlink-plex-setting" style="display: none;">
+            <label for="plex-movie_libraries_symlink" class="settings-title">Movie Libraries:</label>
+            <input type="text" id="plex-movie_libraries_symlink" name="Plex.movie_libraries"
+                   value="{{ settings.get('Plex', {}).get('movie_libraries', '') }}" class="settings-input"
+                   data-section="Plex" data-key="movie_libraries"
+                   placeholder="Movies, 4K Movies or 1, 5">
+            <p class="settings-description">Comma-separated list of Plex movie library names or IDs (e.g., 'Movies,4K Movies' or '1,5')</p>
+        </div>
+
+        <div class="settings-form-group symlink-plex-setting" style="display: none;">
+            <label for="plex-shows_libraries_symlink" class="settings-title">TV Show Libraries:</label>
+            <input type="text" id="plex-shows_libraries_symlink" name="Plex.shows_libraries"
+                   value="{{ settings.get('Plex', {}).get('shows_libraries', '') }}" class="settings-input"
+                   data-section="Plex" data-key="shows_libraries"
+                   placeholder="TV Shows, Anime or 2, 3">
+            <p class="settings-description">Comma-separated list of Plex TV show library names or IDs (e.g., 'TV Shows,Anime' or '2,3')</p>
+        </div>
+
+
         <!-- Plex settings included in File Management section -->
         <div id="plex-settings-in-file-management" style="display: none;">
             <div class="settings-subheader">
@@ -336,9 +354,11 @@ function updateMediaServerSettings() {
     const mediaServerType = document.getElementById('media-server-type');
     const plexSection = document.getElementById('plex-settings-in-file-management');
     const jellyfinSection = document.getElementById('jellyfin-settings-in-file-management');
-    const plexUrlField = document.querySelector('input[name="File Management.plex_url_for_symlink"]').closest('.settings-form-group');
-    const plexTokenField = document.querySelector('input[name="File Management.plex_token_for_symlink"]').closest('.settings-form-group');
-    
+    const plexUrlField = document.querySelector('input[name="File Management.plex_url_for_symlink"]')?.closest('.settings-form-group');
+    const plexTokenField = document.querySelector('input[name="File Management.plex_token_for_symlink"]')?.closest('.settings-form-group');
+    const movieLibsField = document.querySelector('input[name="Plex.movie_libraries"]')?.closest('.settings-form-group.symlink-plex-setting');
+    const showsLibsField = document.querySelector('input[name="Plex.shows_libraries"]')?.closest('.settings-form-group.symlink-plex-setting');
+
     console.log('updateMediaServerSettings called');
     console.log('mediaServerType:', mediaServerType);
     console.log('mediaServerType.value:', mediaServerType ? mediaServerType.value : 'null');
@@ -346,7 +366,9 @@ function updateMediaServerSettings() {
     console.log('jellyfinSection:', jellyfinSection);
     console.log('plexUrlField:', plexUrlField);
     console.log('plexTokenField:', plexTokenField);
-    
+    console.log('movieLibsField:', movieLibsField);
+    console.log('showsLibsField:', showsLibsField);
+
     if (mediaServerType && plexSection && jellyfinSection) {
         if (mediaServerType.value === 'plex') {
             console.log('Setting to Plex');
@@ -355,12 +377,16 @@ function updateMediaServerSettings() {
             jellyfinSection.style.display = 'none';
             if (plexUrlField) plexUrlField.style.display = 'block';
             if (plexTokenField) plexTokenField.style.display = 'block';
+            if (movieLibsField) movieLibsField.style.display = 'block';
+            if (showsLibsField) showsLibsField.style.display = 'block';
         } else if (mediaServerType.value === 'jellyfin') {
             console.log('Setting to Jellyfin');
             plexSection.style.display = 'none';
             jellyfinSection.style.display = 'block';
             if (plexUrlField) plexUrlField.style.display = 'none';
             if (plexTokenField) plexTokenField.style.display = 'none';
+            if (movieLibsField) movieLibsField.style.display = 'none';
+            if (showsLibsField) showsLibsField.style.display = 'none';
         } else {
             // Default case - hide both sections if no media server type is selected
             console.log('No media server type selected, hiding both sections');
@@ -368,6 +394,8 @@ function updateMediaServerSettings() {
             jellyfinSection.style.display = 'none';
             if (plexUrlField) plexUrlField.style.display = 'none';
             if (plexTokenField) plexTokenField.style.display = 'none';
+            if (movieLibsField) movieLibsField.style.display = 'none';
+            if (showsLibsField) showsLibsField.style.display = 'none';
         }
     }
 }
