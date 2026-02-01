@@ -615,7 +615,7 @@ def _find_all_video_files_in_folder(folder_path: str, primary_file: str) -> List
     return video_files
 
 
-def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False, on_success_callback: Optional[Callable[[str], None]] = None) -> bool:
+def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False, on_success_callback: Optional[Callable[[str], None]] = None, skip_multifile_scan: bool = False) -> bool:
     """
     Check if the local file for the item exists and create symlink if needed.
     When called from webhook endpoint, will retry up to 5 times with 1 second delay.
@@ -629,6 +629,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
         is_webhook: If True, enables retry mechanism for webhook calls
         extended_search: If True, will perform an extended search for the file
         on_success_callback: Optional function to call with the relative path upon success.
+        skip_multifile_scan: If True, skips scanning for additional files in the folder (prevents recursive scanning)
 
     Returns:
         True if successful, False otherwise.
@@ -1025,7 +1026,8 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 # For both movies and episodes, scan the source folder for additional video files and create
                 # separate database entries for each (similar to how Plex mode handles multiple files)
                 # This ensures all files from a torrent are properly tracked in the database
-                if source_folder:
+                # Skip if skip_multifile_scan is True (prevents redundant folder scans)
+                if source_folder and not skip_multifile_scan:
                     try:
                         all_video_files = _find_all_video_files_in_folder(source_folder, source_file)
                         # Filter out the primary file we already processed
@@ -1037,7 +1039,6 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
 
                             for additional_source_file in additional_files:
                                 additional_filename = os.path.basename(additional_source_file)
-                                logging.info(f"[MultiFile] Processing additional file: {additional_filename}")
 
                                 # For episodes, verify this is the same episode (alternate version), not a different episode
                                 if item_type == 'episode':
@@ -1069,11 +1070,14 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                                             logging.debug(f"[MultiFile] Skipping {additional_filename} - S{parsed_season:02d}E{parsed_episode:02d} != S{current_season:02d}E{current_episode:02d} (different episode in season pack)")
                                             continue
 
-                                        logging.info(f"[MultiFile] File {additional_filename} confirmed as alternate version of S{current_season:02d}E{current_episode:02d}")
+                                        logging.info(f"[MultiFile] Processing additional file: {additional_filename} (alternate version of S{current_season:02d}E{current_episode:02d})")
 
                                     except Exception as parse_err:
                                         logging.error(f"[MultiFile] Error parsing episode info from {additional_filename}: {parse_err}. Skipping.")
                                         continue
+                                else:
+                                    # For movies, log that we're processing this additional file
+                                    logging.info(f"[MultiFile] Processing additional file: {additional_filename}")
 
                                 # Create a copy of the item for this additional file
                                 additional_item = item.copy()
@@ -1115,15 +1119,47 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                                     from database.core import get_db_connection
                                     conn = get_db_connection()
                                     try:
-                                        # Check if this file already exists in the database
+                                        # First, check if there's an existing entry for this movie/episode that's blacklisted or ghostlisted
+                                        # This prevents creating duplicate entries when a blacklisted version already exists
+                                        if item_type == 'episode':
+                                            existing_movie_check = conn.execute('''
+                                                SELECT id, state, blacklisted, ghostlisted
+                                                FROM media_items
+                                                WHERE imdb_id = ? AND type = ? AND version = ?
+                                                AND season_number = ? AND episode_number = ?
+                                                AND (blacklisted = 1 OR ghostlisted = 1)
+                                                LIMIT 1
+                                            ''', (item.get('imdb_id'), item_type, item.get('version'),
+                                                  item.get('season_number'), item.get('episode_number'))).fetchone()
+                                        else:  # movie
+                                            existing_movie_check = conn.execute('''
+                                                SELECT id, state, blacklisted, ghostlisted
+                                                FROM media_items
+                                                WHERE imdb_id = ? AND type = ? AND version = ?
+                                                AND (blacklisted = 1 OR ghostlisted = 1)
+                                                LIMIT 1
+                                            ''', (item.get('imdb_id'), item_type, item.get('version'))).fetchone()
+
+                                        if existing_movie_check:
+                                            logging.info(f"[MultiFile] Skipping additional file {additional_filename} - found existing blacklisted/ghostlisted entry (ID: {existing_movie_check['id']}, blacklisted: {existing_movie_check['blacklisted']}, ghostlisted: {existing_movie_check['ghostlisted']})")
+                                            conn.close()
+                                            continue
+
+                                        # Check if this specific file already exists in the database
                                         cursor = conn.execute(
-                                            'SELECT id FROM media_items WHERE filled_by_file = ? AND type = ?',
+                                            'SELECT id, blacklisted, ghostlisted FROM media_items WHERE filled_by_file = ? AND type = ?',
                                             (additional_filename, item_type)
                                         )
                                         existing = cursor.fetchone()
                                         cursor.close()
 
                                         if existing:
+                                            # Check if the existing entry is blacklisted or ghostlisted
+                                            if existing['blacklisted'] == 1 or existing['ghostlisted'] == 1:
+                                                logging.info(f"[MultiFile] Skipping update for {additional_filename} - existing entry (ID: {existing['id']}) is blacklisted/ghostlisted")
+                                                conn.close()
+                                                continue
+
                                             logging.debug(f"[MultiFile] File {additional_filename} already exists in DB (ID: {existing['id']}), updating location")
                                             conn.execute('''
                                                 UPDATE media_items

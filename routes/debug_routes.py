@@ -5245,7 +5245,8 @@ def fix_episode_numbers():
                         'db_season': db_season,
                         'db_episode': db_episode,
                         'parsed_season': parsed_season,
-                        'parsed_episode': parsed_ep_display
+                        'parsed_episode': parsed_ep_display,
+                        'filled_by_torrent_id': ep['filled_by_torrent_id']
                     }
                     mismatches.append(mismatch)
 
@@ -5382,7 +5383,8 @@ def fix_episode_numbers():
                     episode_number,
                     COUNT(*) as count,
                     GROUP_CONCAT(id) as ids,
-                    GROUP_CONCAT(filled_by_file, ' | ') as files
+                    GROUP_CONCAT(filled_by_file, ' | ') as files,
+                    GROUP_CONCAT(filled_by_torrent_id, ' | ') as torrent_ids
                 FROM media_items
                 WHERE type = 'episode'
                 AND (ghostlisted = 0 OR ghostlisted IS NULL)
@@ -5419,3 +5421,297 @@ def fix_episode_numbers():
             'success': False,
             'error': f'An error occurred: {str(e)}'
         })
+
+@debug_bp.route('/api/cleanup_ghostlisted_duplicates', methods=['POST'])
+@admin_required
+def cleanup_ghostlisted_duplicates():
+    """
+    Remove ghostlisted duplicate entries while keeping collected versions.
+    Supports both movies and TV shows.
+    """
+    from database.core import get_db_connection
+    from datetime import datetime
+    import time
+
+    dry_run = request.form.get('dry_run') == 'on'
+    media_type = request.form.get('media_type', 'movie')  # 'movie' or 'show'
+    logging.info(f"Ghostlist cleanup requested. Media type: {media_type}, Dry run: {dry_run}")
+
+    conn = None
+    start_time = time.time()
+    total_deleted = 0
+    total_movies = 0
+    results = []
+
+    try:
+        conn = get_db_connection()
+
+        # Determine the type filter for SQL
+        if media_type == 'show':
+            type_filter = "type = 'episode'"
+            media_label = "shows"
+        else:  # movie
+            type_filter = "type = 'movie'"
+            media_label = "movies"
+
+        # Find items with both collected and ghostlisted versions
+        cursor = conn.execute(f"""
+            SELECT imdb_id,
+                   COUNT(*) as total_versions,
+                   SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
+                   SUM(CASE WHEN state = 'Collected' THEN 1 ELSE 0 END) as collected_count
+            FROM media_items
+            WHERE {type_filter} AND imdb_id IS NOT NULL
+            GROUP BY imdb_id
+            HAVING ghostlisted_count > 0 AND collected_count > 0
+            ORDER BY imdb_id
+        """)
+        mixed_movies = cursor.fetchall()
+        cursor.close()
+
+        total_movies = len(mixed_movies)
+        logging.info(f"Found {total_movies} {media_label} with mixed ghostlist status")
+
+        if total_movies == 0:
+            return jsonify({
+                'success': True,
+                'message': f'No ghostlisted duplicates found for {media_label}',
+                'total_movies': 0,
+                'total_deleted': 0,
+                'elapsed_time': 0,
+                'results': []
+            })
+
+        # Process each movie
+        for idx, movie in enumerate(mixed_movies, 1):
+            imdb_id = movie['imdb_id']
+
+            # Get all versions of this item
+            cursor = conn.execute(f"""
+                SELECT id, title, state, ghostlisted, content_source,
+                       filled_by_file, location_basename, location_on_disk, filled_by_torrent_id
+                FROM media_items
+                WHERE imdb_id = ? AND {type_filter}
+                ORDER BY ghostlisted, id
+            """, (imdb_id,))
+            versions = cursor.fetchall()
+            cursor.close()
+
+            collected_versions = [v for v in versions if v['ghostlisted'] == 0]
+            ghostlisted_versions = [v for v in versions if v['ghostlisted'] == 1]
+
+            # Safety check: ensure we're keeping at least one collected version
+            if not collected_versions:
+                logging.warning(f"Skipping {imdb_id} - no collected versions found")
+                continue
+
+            # Delete ghostlisted versions
+            deleted_ids = []
+            for ghost in ghostlisted_versions:
+                deleted_ids.append(ghost['id'])
+
+                if not dry_run:
+                    conn.execute("DELETE FROM media_items WHERE id = ?", (ghost['id'],))
+
+                # Determine which location field to use (first non-null)
+                location = ghost['filled_by_file'] or ghost['location_basename'] or ghost['location_on_disk'] or 'N/A'
+
+                results.append({
+                    'movie_id': ghost['id'],
+                    'title': ghost['title'],
+                    'imdb_id': imdb_id,
+                    'source': ghost['content_source'],
+                    'location': location,
+                    'torrent_id': ghost['filled_by_torrent_id'] or 'N/A',
+                    'action': 'deleted' if not dry_run else 'would_delete'
+                })
+
+            total_deleted += len(deleted_ids)
+
+        if not dry_run and total_deleted > 0:
+            conn.commit()
+
+        elapsed_time = time.time() - start_time
+
+        return jsonify({
+            'success': True,
+            'message': f'{"Would delete" if dry_run else "Deleted"} {total_deleted} ghostlisted duplicates from {total_movies} {media_label}',
+            'total_movies': total_movies,
+            'total_deleted': total_deleted,
+            'elapsed_time': round(elapsed_time, 2),
+            'dry_run': dry_run,
+            'results': results[:50]  # Limit to first 50 for display
+        })
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+            conn.close()
+        logging.error(f"Error in cleanup_ghostlisted_duplicates: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': f'An error occurred: {str(e)}'
+        }), 500
+    finally:
+        if conn:
+            conn.close()
+
+@debug_bp.route('/api/cleanup_failed_upgrades', methods=['POST'])
+@admin_required
+def cleanup_failed_upgrades():
+    """Remove blacklisted (non-ghostlisted) duplicate entries.
+
+    Supports both movies and TV shows.
+    Can either keep collected and delete blacklisted, or keep blacklisted and delete collected.
+
+    This handles failed upgrade attempts where an item has both:
+    - Collected version (any version)
+    - Blacklisted version (ghostlisted=0, state='Blacklisted')
+
+    Args:
+        dry_run: If 'on', only preview what would be deleted
+        version_match: If 'same', only delete items with matching version. If 'all', delete all.
+        media_type: 'movie' or 'show' (default: 'movie')
+        keep_action: 'keep_collected' or 'keep_blacklisted' (default: 'keep_collected')
+    """
+    from database.core import get_db_connection
+    import time
+
+    conn = None
+    try:
+        dry_run = request.form.get('dry_run') == 'on'
+        version_match = request.form.get('version_match', 'all')  # 'all' or 'same'
+        media_type = request.form.get('media_type', 'movie')  # 'movie' or 'show'
+        keep_action = request.form.get('keep_action', 'keep_collected')  # 'keep_collected' or 'keep_blacklisted'
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        start_time = time.time()
+
+        # Determine the type filter for SQL
+        if media_type == 'show':
+            type_filter = "type = 'episode'"
+            media_label = "shows"
+        else:  # movie
+            type_filter = "type = 'movie'"
+            media_label = "movies"
+
+        # Find items with both collected and blacklisted (non-ghostlisted) versions
+        cursor.execute(f"""
+            SELECT imdb_id,
+                   COUNT(*) as total_versions,
+                   SUM(CASE WHEN state = 'Blacklisted' AND ghostlisted = 0 THEN 1 ELSE 0 END) as blacklisted_count,
+                   SUM(CASE WHEN state = 'Collected' THEN 1 ELSE 0 END) as collected_count
+            FROM media_items
+            WHERE {type_filter} AND imdb_id IS NOT NULL
+            GROUP BY imdb_id
+            HAVING blacklisted_count > 0 AND collected_count > 0
+        """)
+
+        problem_movies = cursor.fetchall()
+        total_movies = len(problem_movies)
+        total_deleted = 0
+        results = []
+
+        for movie_row in problem_movies:
+            imdb_id = movie_row[0]
+
+            # Get all versions of this item
+            cursor.execute(f"""
+                SELECT id, title, state, ghostlisted, content_source, version,
+                       filled_by_file, location_basename, location_on_disk, filled_by_torrent_id
+                FROM media_items
+                WHERE imdb_id = ? AND {type_filter}
+                ORDER BY state, id
+            """, (imdb_id,))
+
+            versions = [dict(zip(['id', 'title', 'state', 'ghostlisted', 'content_source', 'version',
+                                  'filled_by_file', 'location_basename', 'location_on_disk', 'filled_by_torrent_id'], row))
+                       for row in cursor.fetchall()]
+
+            # Separate collected and blacklisted (non-ghostlisted) versions
+            collected_versions = [v for v in versions if v['state'] == 'Collected']
+            blacklisted_versions = [v for v in versions if v['state'] == 'Blacklisted' and v['ghostlisted'] == 0]
+
+            # Safety check: ensure we have both types before proceeding
+            if not collected_versions or not blacklisted_versions:
+                logging.warning(f"Skipping {imdb_id} - missing collected or blacklisted versions (safety check)")
+                continue
+
+            # Determine which versions to delete based on keep_action
+            versions_to_delete = []
+
+            if keep_action == 'keep_blacklisted':
+                # Delete collected versions, keep blacklisted
+                if version_match == 'same':
+                    # Only delete collected versions that match a blacklisted version
+                    blacklisted_version_set = {v['version'] for v in blacklisted_versions}
+                    versions_to_delete = [v for v in collected_versions if v['version'] in blacklisted_version_set]
+                else:  # 'all'
+                    # Delete all collected versions regardless of version field
+                    versions_to_delete = collected_versions
+            else:  # keep_collected
+                # Delete blacklisted versions, keep collected (default behavior)
+                if version_match == 'same':
+                    # Only delete blacklisted versions that match a collected version
+                    collected_version_set = {v['version'] for v in collected_versions}
+                    versions_to_delete = [v for v in blacklisted_versions if v['version'] in collected_version_set]
+                else:  # 'all'
+                    # Delete all blacklisted versions regardless of version field
+                    versions_to_delete = blacklisted_versions
+
+            # Delete the identified versions
+            for version in versions_to_delete:
+                if not dry_run:
+                    conn.execute("DELETE FROM media_items WHERE id = ?", (version['id'],))
+
+                total_deleted += 1
+
+                # Determine which location field to use (first non-null)
+                location = version['filled_by_file'] or version['location_basename'] or version['location_on_disk'] or 'N/A'
+
+                results.append({
+                    'id': version['id'],
+                    'title': version['title'],
+                    'version': version['version'],
+                    'content_source': version['content_source'],
+                    'location': location,
+                    'torrent_id': version['filled_by_torrent_id'] or 'N/A'
+                })
+
+        if not dry_run and total_deleted > 0:
+            conn.commit()
+
+        elapsed_time = time.time() - start_time
+
+        version_mode_text = "same version" if version_match == 'same' else "any version"
+
+        if keep_action == 'keep_blacklisted':
+            action_description = f"collected versions ({version_mode_text})"
+        else:
+            action_description = f"blacklisted versions ({version_mode_text})"
+
+        return jsonify({
+            'success': True,
+            'message': f'{"Would delete" if dry_run else "Deleted"} {total_deleted} {action_description} from {total_movies} {media_label}',
+            'total_movies': total_movies,
+            'total_deleted': total_deleted,
+            'elapsed_time': round(elapsed_time, 2),
+            'dry_run': dry_run,
+            'version_match': version_match,
+            'keep_action': keep_action,
+            'results': results[:50]  # Limit to first 50 for display
+        })
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+            conn.close()
+        logging.error(f"Error in cleanup_failed_upgrades: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': f'An error occurred: {str(e)}'
+        }), 500
+    finally:
+        if conn:
+            conn.close()
