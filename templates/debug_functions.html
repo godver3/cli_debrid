@@ -166,6 +166,44 @@
             </form>
         </div>
         <div class="debug_item">
+            <h3>Fix Episode Numbers</h3>
+            <p class="description">Fix incorrect episode numbers in database by parsing from filenames. Detects bug-created duplicates (same torrent, wrong episode) and can remove them. Uses filled_by_file, location_basename, or location_on_disk to extract filenames.</p>
+            <form id="fix-episode-numbers-form">
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="episode_dry_run" name="dry_run" checked>
+                        Dry Run (Preview changes without saving)
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="show_duplicates" name="show_duplicates">
+                        Show Duplicate Episodes (same show/season/episode with multiple entries)
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="remove_duplicates" name="remove_duplicates">
+                        <strong>Remove Bug-Created Duplicates</strong> (same torrent ID, wrong episode numbers)
+                    </label>
+                </div>
+                <button type="submit">Fix Episode Numbers</button>
+                <button type="button" id="view-episode-results-btn" style="display: none; margin-top: 10px;">View Last Results</button>
+                <div id="episode-fix-progress" style="display: none; margin-top: 15px;">
+                    <div class="progress-message">
+                        <span class="operation-spinner"></span>
+                        <span id="episode-progress-message">Processing episodes...</span>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <div style="background: #2a2a2a; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+                            <div id="episode-progress-bar" style="background: #4ecdc4; height: 6px; width: 100%; transition: width 0.3s;"></div>
+                        </div>
+                        <div id="episode-elapsed-time" style="color: #95a5a6; font-size: 12px;">Elapsed: 0s</div>
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="debug_item">
             <h3>Modify Symlink Base Paths</h3>
             <p class="description">Update the base paths for symlinks and original file locations in the database. Use carefully!</p>
             <form id="modify-symlink-paths-form">
@@ -538,6 +576,20 @@
             </form>
         </div>
         -->
+        </div>
+    </div>
+</div>
+
+<!-- Episode Results Modal -->
+<div id="episode-results-modal" class="episode-modal" style="display: none;">
+    <div class="episode-modal-overlay"></div>
+    <div class="episode-modal-content">
+        <div class="episode-modal-header">
+            <h2 id="episode-modal-title">Episode Fix Results</h2>
+            <button class="episode-modal-close" id="episode-modal-close-btn">&times;</button>
+        </div>
+        <div class="episode-modal-body" id="episode-modal-body">
+            <!-- Results will be inserted here -->
         </div>
     </div>
 </div>
@@ -2344,6 +2396,249 @@ if (document.readyState === 'loading') {
         }
         // --- End Fix Zurg Symlinks Logic ---
 
+        // --- Episode Results Modal Functions ---
+        let lastEpisodeResults = null;
+
+        function showEpisodeResultsModal(resultsHtml, title = 'Episode Fix Results') {
+            const modal = document.getElementById('episode-results-modal');
+            const modalBody = document.getElementById('episode-modal-body');
+            const modalTitle = document.getElementById('episode-modal-title');
+
+            modalTitle.textContent = title;
+            modalBody.innerHTML = resultsHtml;
+            modal.style.display = 'flex';
+            document.body.style.overflow = 'hidden'; // Prevent background scrolling
+        }
+
+        function closeEpisodeResultsModal() {
+            const modal = document.getElementById('episode-results-modal');
+            modal.style.display = 'none';
+            document.body.style.overflow = ''; // Restore scrolling
+        }
+
+        // Close modal when clicking overlay
+        document.addEventListener('click', function(e) {
+            const modal = document.getElementById('episode-results-modal');
+            if (e.target.classList.contains('episode-modal-overlay')) {
+                closeEpisodeResultsModal();
+            }
+        });
+
+        // Close modal on Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                const modal = document.getElementById('episode-results-modal');
+                if (modal.style.display === 'flex') {
+                    closeEpisodeResultsModal();
+                }
+            }
+        });
+
+        // View Last Results button
+        const viewResultsBtn = document.getElementById('view-episode-results-btn');
+        if (viewResultsBtn) {
+            viewResultsBtn.addEventListener('click', function() {
+                if (lastEpisodeResults) {
+                    showEpisodeResultsModal(lastEpisodeResults.html, lastEpisodeResults.title);
+                }
+            });
+        }
+
+        // Close button event listener
+        const closeBtn = document.getElementById('episode-modal-close-btn');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', closeEpisodeResultsModal);
+        }
+        // --- End Episode Results Modal Functions ---
+
+        // --- Fix Episode Numbers Logic ---
+        const fixEpisodeForm = document.getElementById('fix-episode-numbers-form');
+
+        if (fixEpisodeForm) {
+            fixEpisodeForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+
+                const isDryRun = document.getElementById('episode_dry_run').checked;
+                const showDuplicates = document.getElementById('show_duplicates').checked;
+                const removeDuplicates = document.getElementById('remove_duplicates').checked;
+
+                let confirmMessage = isDryRun
+                    ? 'Start episode number analysis (Dry Run)? This will scan for incorrect episode numbers but make no changes.'
+                    : 'Fix episode numbers? This will update database entries where episode numbers do not match filenames.';
+
+                if (removeDuplicates && !isDryRun) {
+                    confirmMessage += '\n\nWARNING: This will also DELETE bug-created duplicate entries (same torrent, wrong episode numbers).';
+                }
+
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    message: confirmMessage,
+                    title: 'Confirm Episode Number Fix',
+                    onConfirm: () => {
+                        Loading.show();
+
+                        // Show progress bar and start timer
+                        const progressDiv = document.getElementById('episode-fix-progress');
+                        const elapsedTimeSpan = document.getElementById('episode-elapsed-time');
+                        const progressMessage = document.getElementById('episode-progress-message');
+
+                        progressDiv.style.display = 'block';
+                        progressMessage.textContent = isDryRun ? 'Analyzing episodes...' : 'Fixing episodes...';
+
+                        let startTime = Date.now();
+                        let timerInterval = setInterval(() => {
+                            const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+                            const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+                            const remainingSeconds = elapsedSeconds % 60;
+                            elapsedTimeSpan.textContent = `Elapsed: ${elapsedMinutes}m ${remainingSeconds}s`;
+                        }, 1000);
+
+                        const formData = new FormData(fixEpisodeForm);
+
+                        fetch('/debug/api/fix_episode_numbers', {
+                            method: 'POST',
+                            body: formData
+                        })
+                        .then(response => response.json())
+                        .then(data => {
+                            Loading.hide();
+                            clearInterval(timerInterval);
+                            progressDiv.style.display = 'none';
+                            if (data.success) {
+                                let popupMessage = '';
+                                if (data.dry_run) {
+                                    popupMessage = `Found ${data.mismatches_found} episodes with incorrect episode numbers`;
+                                    if (data.torrent_duplicates_found > 0) {
+                                        popupMessage += ` and ${data.torrent_duplicates_found} torrent ID duplicates`;
+                                    }
+                                } else {
+                                    popupMessage = `Fixed ${data.fixed_count} episodes`;
+                                    if (data.deleted_count > 0) {
+                                        popupMessage += ` and deleted ${data.deleted_count} bug-created duplicates`;
+                                    }
+                                }
+
+                                // Build results HTML for modal
+                                let resultsHtml = '<div class="episode-results-summary">';
+                                resultsHtml += '<h4>Summary</h4>';
+                                resultsHtml += `<p><strong>Episodes with Incorrect Numbers:</strong> ${data.mismatches_found}</p>`;
+                                if (!data.dry_run) {
+                                    resultsHtml += `<p><strong>Episodes Fixed:</strong> ${data.fixed_count}</p>`;
+                                }
+                                if (data.deleted_count && data.deleted_count > 0) {
+                                    resultsHtml += `<p><strong>Bug-Created Duplicates Deleted:</strong> ${data.deleted_count}</p>`;
+                                }
+                                if (data.torrent_duplicates_found) {
+                                    resultsHtml += `<p><strong>Torrent ID Duplicates Found:</strong> ${data.torrent_duplicates_found}</p>`;
+                                }
+                                resultsHtml += '</div>';
+
+                                if (data.mismatches && data.mismatches.length > 0) {
+                                    resultsHtml += '<h4>Mismatched Episodes:</h4>';
+                                    resultsHtml += '<table class="preview-results-table"><thead><tr><th>ID</th><th>Title</th><th>Filename</th><th>DB</th><th>Filename Says</th></tr></thead><tbody>';
+                                    data.mismatches.forEach(item => {
+                                        resultsHtml += `<tr>
+                                            <td>${item.id}</td>
+                                            <td class="title-cell">${item.title || 'N/A'}</td>
+                                            <td class="path-cell">${item.filename}</td>
+                                            <td>S${item.db_season}E${item.db_episode}</td>
+                                            <td>S${item.parsed_season}E${item.parsed_episode}</td>
+                                        </tr>`;
+                                    });
+                                    resultsHtml += '</tbody></table>';
+                                    if (data.mismatches_found > data.mismatches.length) {
+                                        resultsHtml += `<p><i>(Showing first ${data.mismatches.length} mismatches)</i></p>`;
+                                    }
+                                }
+
+                                if (showDuplicates && data.duplicates && data.duplicates.length > 0) {
+                                    resultsHtml += '<h4>Duplicate Episodes:</h4>';
+                                    resultsHtml += '<table class="preview-results-table"><thead><tr><th>TMDB ID</th><th>Season/Episode</th><th>Count</th><th>IDs</th></tr></thead><tbody>';
+                                    data.duplicates.forEach(dup => {
+                                        resultsHtml += `<tr>
+                                            <td>${dup.tmdb_id}</td>
+                                            <td>S${dup.season_number}E${dup.episode_number}</td>
+                                            <td>${dup.count}</td>
+                                            <td class="path-cell">${dup.ids}</td>
+                                        </tr>`;
+                                    });
+                                    resultsHtml += '</tbody></table>';
+                                    if (data.duplicates_found > data.duplicates.length) {
+                                        resultsHtml += `<p><i>(Showing first ${data.duplicates.length} duplicates)</i></p>`;
+                                    }
+                                } else if (showDuplicates) {
+                                    resultsHtml += '<p>No duplicate episodes found.</p>';
+                                }
+
+                                // Display torrent ID duplicates
+                                if (data.torrent_duplicates && data.torrent_duplicates.length > 0) {
+                                    resultsHtml += '<h4>Bug-Created Duplicates (Same Torrent ID):</h4>';
+                                    resultsHtml += '<p class="info-text">These episodes have the same torrent ID but wrong episode numbers due to the bug.</p>';
+                                    resultsHtml += '<table class="preview-results-table"><thead><tr><th>Torrent ID</th><th>TMDB</th><th>Show/Season</th><th>Correct Episodes</th><th>Wrong Episodes</th><th>Status</th></tr></thead><tbody>';
+                                    data.torrent_duplicates.forEach(dup => {
+                                        const correctEps = dup.correct_ids.length > 0 ? `${dup.correct_ids.length} episodes (IDs: ${dup.correct_ids.join(', ')})` : 'None found';
+                                        const wrongEps = dup.wrong_ids.length > 0 ? `${dup.wrong_ids.length} episodes (IDs: ${dup.wrong_ids.join(', ')})` : 'None found';
+                                        const status = data.deleted_count > 0 ? '<span style="color: green;">✓ Deleted</span>' : '<span style="color: orange;">Found</span>';
+
+                                        resultsHtml += `<tr>
+                                            <td>${dup.torrent_id}</td>
+                                            <td>${dup.tmdb_id}</td>
+                                            <td>${dup.episodes_info}</td>
+                                            <td class="path-cell">${correctEps}</td>
+                                            <td class="path-cell">${wrongEps}</td>
+                                            <td>${status}</td>
+                                        </tr>`;
+                                    });
+                                    resultsHtml += '</tbody></table>';
+                                } else if (data.torrent_duplicates_found === 0) {
+                                    resultsHtml += '<p>No torrent ID duplicates found.</p>';
+                                }
+
+                                // Store results for "View Last Results" button
+                                const modalTitle = data.dry_run ? 'Episode Analysis Results (Dry Run)' : 'Episode Fix Results';
+                                lastEpisodeResults = {
+                                    html: resultsHtml,
+                                    title: modalTitle
+                                };
+
+                                // Show modal with results
+                                showEpisodeResultsModal(resultsHtml, modalTitle);
+
+                                // Show "View Last Results" button
+                                document.getElementById('view-episode-results-btn').style.display = 'inline-block';
+
+                                // Also show success popup
+                                showPopup({
+                                    type: data.dry_run ? POPUP_TYPES.INFO : POPUP_TYPES.SUCCESS,
+                                    message: popupMessage,
+                                    title: data.dry_run ? 'Analysis Complete' : 'Fix Complete',
+                                    autoClose: true
+                                });
+                            } else {
+                                showPopup({
+                                    type: POPUP_TYPES.ERROR,
+                                    message: data.error || 'An unknown error occurred',
+                                    title: 'Error'
+                                });
+                            }
+                        })
+                        .catch(error => {
+                            Loading.hide();
+                            clearInterval(timerInterval);
+                            progressDiv.style.display = 'none';
+                            console.error('Error:', error);
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: 'Network error occurred. Check console for details.',
+                                title: 'Error'
+                            });
+                        });
+                    }
+                });
+            });
+        }
+        // --- End Fix Episode Numbers Logic ---
+
         // --- Handler for Delete Battery DB Form ---
         const deleteBatteryDbForm = document.getElementById('delete-battery-db-form');
         if (deleteBatteryDbForm) {
@@ -3026,6 +3321,192 @@ if (document.readyState === 'loading') {
         font-size: 12px;
         opacity: 0.8;
         margin-top: 5px;
+    }
+
+    /* Episode Results Modal Styles */
+    .episode-modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .episode-modal-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        backdrop-filter: blur(4px);
+    }
+
+    .episode-modal-content {
+        position: relative;
+        background: var(--card-bg, #1a1a1a);
+        border: 1px solid var(--border-color, #333);
+        border-radius: 8px;
+        width: 90%;
+        max-width: 1200px;
+        max-height: 85vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+    }
+
+    .episode-modal-header {
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--border-color, #333);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-shrink: 0;
+    }
+
+    .episode-modal-header h2 {
+        margin: 0;
+        font-size: 20px;
+        color: var(--text-primary, #fff);
+    }
+
+    .episode-modal-close {
+        background: none;
+        border: none;
+        font-size: 32px;
+        color: var(--text-secondary, #999);
+        cursor: pointer;
+        padding: 0;
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        transition: all 0.2s;
+    }
+
+    .episode-modal-close:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: var(--text-primary, #fff);
+    }
+
+    .episode-modal-body {
+        padding: 24px;
+        overflow-y: auto;
+        flex: 1;
+    }
+
+    /* Custom scrollbar for modal */
+    .episode-modal-body::-webkit-scrollbar {
+        width: 10px;
+    }
+
+    .episode-modal-body::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 5px;
+    }
+
+    .episode-modal-body::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.2);
+        border-radius: 5px;
+    }
+
+    .episode-modal-body::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.3);
+    }
+
+    /* Results summary styling */
+    .episode-results-summary {
+        background: rgba(78, 205, 196, 0.1);
+        border: 1px solid rgba(78, 205, 196, 0.3);
+        border-radius: 6px;
+        padding: 16px;
+        margin-bottom: 24px;
+    }
+
+    .episode-results-summary h4 {
+        margin: 0 0 12px 0;
+        color: #4ecdc4;
+        font-size: 16px;
+    }
+
+    .episode-results-summary p {
+        margin: 6px 0;
+        font-size: 14px;
+    }
+
+    /* Table styling in modal */
+    .episode-modal-body table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+        font-size: 13px;
+    }
+
+    .episode-modal-body table th {
+        background: rgba(255, 255, 255, 0.05);
+        padding: 12px;
+        text-align: left;
+        font-weight: 600;
+        border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+        position: sticky;
+        top: 0;
+        z-index: 10;
+    }
+
+    .episode-modal-body table td {
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .episode-modal-body table tr:hover {
+        background: rgba(255, 255, 255, 0.03);
+    }
+
+    .episode-modal-body .title-cell {
+        max-width: 250px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .episode-modal-body .path-cell {
+        font-family: monospace;
+        font-size: 12px;
+        max-width: 350px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--text-secondary, #999);
+    }
+
+    .episode-modal-body h4 {
+        margin: 24px 0 12px 0;
+        color: var(--accent-color, #4ecdc4);
+        font-size: 16px;
+    }
+
+    .episode-modal-body .info-text {
+        color: var(--text-secondary, #999);
+        font-size: 13px;
+        margin-bottom: 12px;
+    }
+
+    /* Episode progress bar pulse animation - matches plex labels style */
+    #episode-progress-bar {
+        animation: progress-pulse 1.5s ease-in-out infinite;
+    }
+
+    @keyframes progress-pulse {
+        0%, 100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.6;
+        }
     }
 </style>
 
