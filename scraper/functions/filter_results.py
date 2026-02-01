@@ -267,6 +267,7 @@ def filter_results(
                 main_sim_sort = fuzz.token_sort_ratio(normalized_parsed_title, normalized_query_title) / 100.0
                 main_title_sim = (main_sim_set + main_sim_sort) / 2.0
             else:
+                main_sim_sort = main_sim_set  # Use main_sim_set as fallback when no parsed title
                 main_title_sim = main_sim_set
 
             # Store original values for debug logging

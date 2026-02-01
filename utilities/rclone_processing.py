@@ -217,8 +217,11 @@ def handle_rclone_file(file_path: str) -> Dict[str, Any]:
                 ''', (imdb_id_for_lookup,))
             else:
                 # For episodes, match by IMDB ID, season, and episode
-                season_num = parsed_info.get('season') or parsed_info.get('seasons', [None])[0]
-                episode_num = parsed_info.get('episodes', [None])[0]
+                # Safely handle empty lists
+                seasons = parsed_info.get('seasons') or []
+                episodes = parsed_info.get('episodes') or []
+                season_num = parsed_info.get('season') or (seasons[0] if len(seasons) > 0 else None)
+                episode_num = parsed_info.get('episode') or (episodes[0] if len(episodes) > 0 else None)
                 cursor.execute('''
                     SELECT content_source, content_source_detail
                     FROM media_items
@@ -275,8 +278,11 @@ def handle_rclone_file(file_path: str) -> Dict[str, Any]:
              show_title = best_match.get('title', item_to_add['title']) # Fallback to item title
              show_year = best_match.get('year', item_to_add['year']) # Fallback to item year
              # PTT uses 'season', ensure consistency
-             season_num = parsed_info.get('season') or parsed_info.get('seasons', [None])[0]
-             episode_num = parsed_info.get('episodes', [None])[0] # Use first parsed episode
+             # Safely handle empty lists
+             seasons = parsed_info.get('seasons') or []
+             episodes = parsed_info.get('episodes') or []
+             season_num = parsed_info.get('season') or (seasons[0] if len(seasons) > 0 else None)
+             episode_num = parsed_info.get('episode') or (episodes[0] if len(episodes) > 0 else None) # Prefer singular, fallback to first from list
 
              item_to_add.update({
                  'show_title': show_title,
@@ -586,8 +592,11 @@ def process_rclone_file(file_path: str) -> Dict[str, Any]:
                 metadata, source = api.get_movie_metadata(imdb_id=imdb_id, tmdb_id=tmdb_id)
             else: # show
                 # Ensure we pass the correct season/episode numbers if available from PTT
-                season_num_ptt = parsed_info.get('season') or parsed_info.get('seasons', [None])[0]
-                episode_num_ptt = parsed_info.get('episodes', [None])[0]
+                # Safely handle empty lists
+                seasons = parsed_info.get('seasons') or []
+                episodes = parsed_info.get('episodes') or []
+                season_num_ptt = parsed_info.get('season') or (seasons[0] if len(seasons) > 0 else None)
+                episode_num_ptt = episodes[0] if len(episodes) > 0 else None
                 metadata, source = api.get_show_metadata(
                     imdb_id=imdb_id,
                     tmdb_id=tmdb_id,
@@ -627,8 +636,11 @@ def process_rclone_file(file_path: str) -> Dict[str, Any]:
             else: # show/episode
                 # For episodes, try to find episode-specific air date from fetched metadata
                 # Use parsed PTT info first
-                season_num = parsed_info.get('season') or parsed_info.get('seasons', [None])[0]
-                episode_num = parsed_info.get('episodes', [None])[0]
+                # Safely handle empty lists
+                seasons = parsed_info.get('seasons') or []
+                episodes = parsed_info.get('episodes') or []
+                season_num = parsed_info.get('season') or (seasons[0] if len(seasons) > 0 else None)
+                episode_num = episodes[0] if len(episodes) > 0 else None
 
                 # Check if DirectAPI returned episode-specific metadata directly
                 if metadata.get('air_date'): # Check top-level first (common if specific episode requested)
