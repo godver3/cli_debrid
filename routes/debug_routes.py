@@ -5140,3 +5140,282 @@ def remove_duplicate_items():
             'success': False,
             'error': f'An error occurred: {str(e)}'
         })
+
+@debug_bp.route('/api/fix_episode_numbers', methods=['POST'])
+@admin_required
+def fix_episode_numbers():
+    """
+    Fix incorrect episode numbers in database by parsing from filled_by_file column.
+
+    Finds episodes where episode_number doesn't match the filename and corrects them.
+    Also can identify duplicate episodes (same show/season/episode with multiple entries).
+    """
+    from scraper.functions.ptt_parser import parse_with_ptt
+    from database.core import get_db_connection
+
+    dry_run = request.form.get('dry_run') == 'on'
+    show_duplicates = request.form.get('show_duplicates') == 'on'
+    remove_duplicates = request.form.get('remove_duplicates') == 'on'
+
+    logging.info(f"Episode number fix requested. Dry run: {dry_run}, Show duplicates: {show_duplicates}, Remove duplicates: {remove_duplicates}")
+
+    conn = None
+    mismatches = []
+    duplicates = []
+    torrent_duplicates = []
+    fixed_count = 0
+    deleted_count = 0
+
+    try:
+        conn = get_db_connection()
+
+        # Find episodes - include those with filled_by_file OR location_on_disk/basename
+        cursor = conn.execute("""
+            SELECT id, title, season_number, episode_number, filled_by_file,
+                   location_on_disk, location_basename, filled_by_torrent_id,
+                   tmdb_id, imdb_id, collected_at
+            FROM media_items
+            WHERE type = 'episode'
+            AND (
+                (filled_by_file IS NOT NULL AND filled_by_file != '')
+                OR (location_on_disk IS NOT NULL AND location_on_disk != '')
+                OR (location_basename IS NOT NULL AND location_basename != '')
+            )
+            ORDER BY tmdb_id, season_number, episode_number
+        """)
+
+        episodes = cursor.fetchall()
+        cursor.close()
+
+        logging.info(f"Scanning {len(episodes)} episodes for incorrect episode numbers")
+
+        # Check each episode
+        for ep in episodes:
+            ep_id = ep['id']
+            db_season = ep['season_number']
+            db_episode = ep['episode_number']
+
+            # Get filename with fallback logic
+            filename = ep['filled_by_file']
+            if not filename:
+                # Fallback to location_basename
+                filename = ep['location_basename']
+            if not filename and ep['location_on_disk']:
+                # Fallback to extracting filename from location_on_disk
+                import os
+                filename = os.path.basename(ep['location_on_disk'])
+
+            if not filename:
+                continue  # Skip if no filename available
+
+            try:
+                # Parse filename to get actual episode number
+                parsed = parse_with_ptt(filename)
+
+                # Safely extract season and episode, handling empty lists
+                seasons = parsed.get('seasons') or []
+                episodes = parsed.get('episodes') or []
+                parsed_season = parsed.get('season') or (seasons[0] if len(seasons) > 0 else None)
+                parsed_episode = parsed.get('episode') or (episodes[0] if len(episodes) > 0 else None)
+
+                if parsed_season is None or parsed_episode is None:
+                    continue
+
+                parsed_season = int(parsed_season)
+                parsed_episode = int(parsed_episode)
+
+                # For multi-episode files (S01E01E02), check if db_episode is in the episode range
+                episodes_int = [int(e) for e in episodes] if episodes else [parsed_episode]
+
+                # Check if there's a mismatch
+                # Season must match AND episode must be in the parsed episodes list
+                if db_season != parsed_season or db_episode not in episodes_int:
+                    # Format episode display for multi-episode files
+                    if len(episodes_int) > 1:
+                        parsed_ep_display = f"{episodes_int[0]}-{episodes_int[-1]}"
+                    else:
+                        parsed_ep_display = parsed_episode
+
+                    mismatch = {
+                        'id': ep_id,
+                        'title': ep['title'],
+                        'tmdb_id': ep['tmdb_id'],
+                        'imdb_id': ep['imdb_id'],
+                        'filename': filename,
+                        'db_season': db_season,
+                        'db_episode': db_episode,
+                        'parsed_season': parsed_season,
+                        'parsed_episode': parsed_ep_display
+                    }
+                    mismatches.append(mismatch)
+
+                    logging.info(
+                        f"Found mismatch ID {ep_id}: {ep['title']} "
+                        f"S{db_season}E{db_episode} -> S{parsed_season}E{parsed_episode} "
+                        f"(File: {filename})"
+                    )
+
+                    # Fix if not dry run
+                    if not dry_run:
+                        conn.execute(
+                            """UPDATE media_items
+                               SET season_number = ?, episode_number = ?
+                               WHERE id = ?""",
+                            (parsed_season, parsed_episode, ep_id)
+                        )
+                        fixed_count += 1
+
+            except Exception as parse_err:
+                logging.warning(f"Could not parse {filename}: {parse_err}")
+                continue
+
+        if not dry_run and fixed_count > 0:
+            conn.commit()
+            logging.info(f"Fixed {fixed_count} episode numbers")
+
+        # Find torrent ID based duplicates (bug-created duplicates)
+        if remove_duplicates or show_duplicates:
+            torrent_dup_cursor = conn.execute("""
+                SELECT
+                    filled_by_torrent_id,
+                    tmdb_id,
+                    season_number,
+                    episode_number,
+                    COUNT(*) as count,
+                    GROUP_CONCAT(id || ':' || season_number || 'x' || episode_number || ':' ||
+                                 COALESCE(filled_by_file, location_basename, '?'), ' | ') as episodes,
+                    GROUP_CONCAT(id) as ids,
+                    GROUP_CONCAT(collected_at) as collected_dates
+                FROM media_items
+                WHERE type = 'episode'
+                AND filled_by_torrent_id IS NOT NULL
+                AND filled_by_torrent_id != ''
+                AND (ghostlisted = 0 OR ghostlisted IS NULL)
+                GROUP BY filled_by_torrent_id, tmdb_id, season_number, episode_number
+                HAVING count > 1
+                ORDER BY tmdb_id, season_number, episode_number, filled_by_torrent_id
+            """)
+
+            torrent_dupes = torrent_dup_cursor.fetchall()
+            torrent_dup_cursor.close()
+
+            for dup in torrent_dupes:
+                # These are TRUE duplicates: same torrent + same show + same season + same episode
+                # Now we need to figure out which entry is "correct" (matches filename) and which are "wrong"
+                ids = dup['ids'].split(',')
+                episodes_info = dup['episodes'].split(' | ')
+                db_season = dup['season_number']
+                db_episode = dup['episode_number']
+
+                correct_entries = []
+                wrong_entries = []
+
+                for i, ep_info in enumerate(episodes_info):
+                    parts = ep_info.split(':')
+                    if len(parts) >= 3:
+                        ep_id = parts[0]
+                        se_info = parts[1]  # like "1x5"
+                        filename = parts[2] if len(parts) > 2 else None
+
+                        if filename and filename != '?':
+                            # Parse filename to check if episode number matches database value
+                            try:
+                                parsed = parse_with_ptt(filename)
+
+                                # Safely extract season and episode, handling empty lists
+                                seasons = parsed.get('seasons') or []
+                                episodes = parsed.get('episodes') or []
+                                parsed_season = parsed.get('season') or (seasons[0] if len(seasons) > 0 else None)
+                                parsed_episode = parsed.get('episode') or (episodes[0] if len(episodes) > 0 else None)
+
+                                if parsed_season is not None and parsed_episode is not None:
+                                    parsed_s = int(parsed_season)
+                                    # For multi-episode files, check if db_episode is in the range
+                                    episodes_int = [int(e) for e in episodes] if episodes else [int(parsed_episode)]
+
+                                    # If filename matches the database entry, it's "correct"
+                                    # If filename doesn't match, it's a "wrong" duplicate
+                                    if parsed_s == db_season and db_episode in episodes_int:
+                                        correct_entries.append(ep_id)
+                                    else:
+                                        wrong_entries.append(ep_id)
+                                else:
+                                    # Can't parse filename - treat as potentially wrong
+                                    wrong_entries.append(ep_id)
+                            except:
+                                # Parse failed - treat as potentially wrong
+                                wrong_entries.append(ep_id)
+                        else:
+                            # No filename - can't determine, treat as potentially wrong
+                            wrong_entries.append(ep_id)
+
+                # Build duplicate info
+                # We always report these since they're true duplicates
+                torrent_duplicates.append({
+                    'torrent_id': dup['filled_by_torrent_id'],
+                    'tmdb_id': dup['tmdb_id'],
+                    'season': db_season,
+                    'episode': db_episode,
+                    'total_count': dup['count'],
+                    'correct_ids': correct_entries,
+                    'wrong_ids': wrong_entries,
+                    'episodes_info': f"S{db_season}E{db_episode}"
+                })
+
+                # Delete wrong entries if remove_duplicates is enabled
+                if remove_duplicates and not dry_run and wrong_entries:
+                    for wrong_id in wrong_entries:
+                        conn.execute("DELETE FROM media_items WHERE id = ?", (int(wrong_id),))
+                        deleted_count += 1
+                        logging.info(f"Deleted duplicate entry ID {wrong_id} (duplicate S{db_season}E{db_episode}, torrent {dup['filled_by_torrent_id']})")
+
+        if not dry_run and deleted_count > 0:
+            conn.commit()
+            logging.info(f"Deleted {deleted_count} duplicate entries")
+
+        # Find duplicate episodes if requested
+        if show_duplicates:
+            dup_cursor = conn.execute("""
+                SELECT
+                    tmdb_id,
+                    season_number,
+                    episode_number,
+                    COUNT(*) as count,
+                    GROUP_CONCAT(id) as ids,
+                    GROUP_CONCAT(filled_by_file, ' | ') as files
+                FROM media_items
+                WHERE type = 'episode'
+                AND (ghostlisted = 0 OR ghostlisted IS NULL)
+                GROUP BY tmdb_id, season_number, episode_number
+                HAVING count > 1
+                ORDER BY tmdb_id, season_number, episode_number
+            """)
+
+            duplicates = [dict(row) for row in dup_cursor.fetchall()]
+            dup_cursor.close()
+
+            logging.info(f"Found {len(duplicates)} episodes with multiple entries")
+
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'dry_run': dry_run,
+            'mismatches_found': len(mismatches),
+            'mismatches': mismatches[:50],  # Limit to first 50 for display
+            'fixed_count': fixed_count if not dry_run else 0,
+            'duplicates_found': len(duplicates) if show_duplicates else None,
+            'duplicates': duplicates[:20] if show_duplicates else None,  # Limit to first 20
+            'torrent_duplicates_found': len(torrent_duplicates),
+            'torrent_duplicates': torrent_duplicates[:20],  # Bug-created duplicates
+            'deleted_count': deleted_count if not dry_run else 0
+        })
+
+    except Exception as e:
+        if conn:
+            conn.close()
+        logging.error(f"Error in fix_episode_numbers: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': f'An error occurred: {str(e)}'
+        })
