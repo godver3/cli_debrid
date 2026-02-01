@@ -149,6 +149,44 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
 
         media_items_batch = filtered_media_items_batch
 
+        # CRITICAL FIX: Deduplicate incoming batch to prevent multiple entries for same movie
+        # If the batch contains multiple items with the same IMDb ID and version, keep only the first one
+        seen_items = {}  # Key: (imdb_id or tmdb_id, version, type), Value: first item with this key
+        deduplicated_batch = []
+        duplicates_in_batch = 0
+
+        for item in media_items_batch:
+            imdb_id = item.get('imdb_id')
+            tmdb_id = item.get('tmdb_id')
+            version = item.get('version', 'Default')
+            item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
+
+            # For episodes, include season/episode in the key
+            if item_type == 'episode':
+                season = item.get('season_number')
+                episode = item.get('episode_number')
+                # Use IMDb ID if available, otherwise TMDB ID
+                identifier = imdb_id if imdb_id else tmdb_id
+                key = (identifier, version, item_type, season, episode)
+            else:
+                # For movies, use IMDb ID if available, otherwise TMDB ID
+                identifier = imdb_id if imdb_id else tmdb_id
+                key = (identifier, version, item_type)
+
+            if key in seen_items:
+                # Duplicate found in batch - skip it
+                duplicates_in_batch += 1
+                logging.debug(f"Skipping duplicate in batch: {item.get('title')} ({identifier}, version={version})")
+            else:
+                # First occurrence - keep it
+                seen_items[key] = item
+                deduplicated_batch.append(item)
+
+        if duplicates_in_batch > 0:
+            logging.info(f"⚠️  Removed {duplicates_in_batch} duplicate items from incoming batch before processing")
+
+        media_items_batch = deduplicated_batch
+
         existing_movies = {}
         batch_size = 450
         

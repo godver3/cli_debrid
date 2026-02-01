@@ -141,12 +141,16 @@ export function updateSettings() {
     inputs.forEach(input => {
         const name = input.name;
         if (!name) return; // Skip inputs without names
-        
+
         // Skip Content Sources inputs - they are handled separately
         if (name.startsWith('Content Sources.')) return;
-        
+
         // Skip radio buttons that are not checked
         if (input.type === 'radio' && !input.checked) return;
+
+        // Skip hidden inputs and inputs inside hidden containers
+        // This prevents hidden duplicate fields from overwriting visible ones
+        if (input.offsetParent === null && input.type !== 'hidden') return;
         
         let value = input.value;
         
@@ -947,32 +951,48 @@ export function updateSettings() {
     }
 
     const debridProvider = document.getElementById('debrid provider-provider');
-    
+
     if (debridProvider) {
+        // Ensure Debrid Provider section exists
+        if (!settingsData['Debrid Provider']) {
+            settingsData['Debrid Provider'] = {};
+        }
         settingsData['Debrid Provider']['provider'] = debridProvider.value;
-    
+
     } else {
     }
 
     const updatePlexOnFileDiscovery = document.getElementById('plex-update_plex_on_file_discovery');
-    
+
     if (updatePlexOnFileDiscovery) {
+        // Ensure Plex section exists
+        if (!settingsData['Plex']) {
+            settingsData['Plex'] = {};
+        }
         settingsData['Plex']['update_plex_on_file_discovery'] = updatePlexOnFileDiscovery.checked;
 
     } else {
     }
 
     const mountedFileLocation = document.getElementById('plex-mounted_file_location');
-    
+
     if (mountedFileLocation) {
+        // Ensure Plex section exists
+        if (!settingsData['Plex']) {
+            settingsData['Plex'] = {};
+        }
         settingsData['Plex']['mounted_file_location'] = mountedFileLocation.value;
-    
+
     } else {
     }
 
     const doNotAddPlexWatchHistoryItemsToQueue = document.getElementById('scraping-do_not_add_plex_watch_history_items_to_queue');
-    
+
     if (doNotAddPlexWatchHistoryItemsToQueue) {
+        // Ensure Scraping section exists
+        if (!settingsData['Scraping']) {
+            settingsData['Scraping'] = {};
+        }
         settingsData['Scraping']['do_not_add_plex_watch_history_items_to_queue'] = doNotAddPlexWatchHistoryItemsToQueue.checked;
 
     } else {

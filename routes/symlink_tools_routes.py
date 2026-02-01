@@ -164,6 +164,28 @@ def add_to_database(item, symlink_path):
             ''', (datetime.now(), exact_match[0]))
             logging.info(f"Updated existing item {exact_match[0]} with same symlink path: {symlink_path}")
         else:
+            # Check for existing blacklisted/ghostlisted entry before inserting
+            # This prevents creating duplicate Collected entries for blacklisted items
+            if item['type'] == 'movie':
+                ghostlist_check = cursor.execute('''
+                    SELECT id FROM media_items
+                    WHERE imdb_id = ? AND type = 'movie'
+                    AND (ghostlisted = 1 OR state = 'Blacklisted')
+                    LIMIT 1
+                ''', (item['imdb_id'],)).fetchone()
+            else:
+                ghostlist_check = cursor.execute('''
+                    SELECT id FROM media_items
+                    WHERE imdb_id = ? AND type = 'episode'
+                    AND season_number = ? AND episode_number = ?
+                    AND (ghostlisted = 1 OR state = 'Blacklisted')
+                    LIMIT 1
+                ''', (item['imdb_id'], item['season_number'], item['episode_number'])).fetchone()
+
+            if ghostlist_check:
+                logging.info(f"⛔ [Symlink Tools] Skipping insert for {item['title']} - found existing blacklisted/ghostlisted entry (ID: {ghostlist_check[0]})")
+                return
+
             # Insert new item
             if item['type'] == 'movie':
                 cursor.execute('''

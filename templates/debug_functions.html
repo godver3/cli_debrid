@@ -114,9 +114,133 @@
                 <button type="submit">Run Task</button>
             </form>
         </div>
+        <div class="debug_item">
+            <h3>Clean Up Ghostlisted Duplicates</h3>
+            <p class="description">Remove ghostlisted duplicate entries while keeping collected versions. Finds items with both collected AND ghostlisted versions, and safely removes the ghostlisted duplicates.</p>
+            <form id="cleanup-duplicates-form">
+                <div class="form-group">
+                    <label for="cleanup_media_type">Media Type:</label>
+                    <select id="cleanup_media_type" name="media_type">
+                        <option value="movie" selected>Movies</option>
+                        <option value="show">Shows</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="cleanup_dry_run" name="dry_run" checked>
+                        Dry Run (Preview what will be deleted without actually deleting)
+                    </label>
+                </div>
+                <button type="submit">Clean Up Duplicates</button>
+                <button type="button" id="view-cleanup-results-btn" style="display: none; margin-top: 10px;">View Last Results</button>
+                <div id="cleanup-progress" style="display: none; margin-top: 15px;">
+                    <div class="progress-message">
+                        <span class="operation-spinner"></span>
+                        <span id="cleanup-progress-message">Scanning for duplicates...</span>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <div style="background: #2a2a2a; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+                            <div id="cleanup-progress-bar" style="background: #4ecdc4; height: 6px; width: 0%; transition: width 0.3s;"></div>
+                        </div>
+                        <div id="cleanup-elapsed-time" style="color: #95a5a6; font-size: 12px;">Elapsed: 0s</div>
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Clean Up Failed Upgrade Attempts</h3>
+            <p class="description">Remove entries from failed upgrade attempts or blacklist bug. Finds items with both collected AND blacklisted versions, and removes duplicates based on your selection.</p>
+            <form id="cleanup-upgrades-form">
+                <div class="form-group">
+                    <label for="upgrades_media_type">Media Type:</label>
+                    <select id="upgrades_media_type" name="media_type">
+                        <option value="movie" selected>Movies</option>
+                        <option value="show">Shows</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="upgrades_dry_run" name="dry_run" checked>
+                        Dry Run (Preview what will be deleted without actually deleting)
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="radio" id="keep_collected" name="keep_action" value="keep_collected" checked>
+                        Keep collected, delete blacklisted (for failed upgrades)
+                    </label>
+                    <label>
+                        <input type="radio" id="keep_blacklisted" name="keep_action" value="keep_blacklisted">
+                        Keep blacklisted, delete collected (for blacklist bug)
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="radio" id="version_match_all" name="version_match" value="all" checked>
+                        Delete all versions (any version)
+                    </label>
+                    <label>
+                        <input type="radio" id="version_match_same" name="version_match" value="same">
+                        Delete only versions with same version field
+                    </label>
+                </div>
+                <button type="submit">Clean Up Failed Upgrades</button>
+                <button type="button" id="view-upgrades-results-btn" style="display: none; margin-top: 10px;">View Last Results</button>
+                <div id="upgrades-progress" style="display: none; margin-top: 15px;">
+                    <div class="progress-message">
+                        <span class="operation-spinner"></span>
+                        <span id="upgrades-progress-message">Scanning for failed upgrades...</span>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <div style="background: #2a2a2a; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+                            <div id="upgrades-progress-bar" style="background: #4ecdc4; height: 6px; width: 0%; transition: width 0.3s;"></div>
+                        </div>
+                        <div id="upgrades-elapsed-time" style="color: #95a5a6; font-size: 12px;">Elapsed: 0s</div>
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="debug_item">
+            <h3>Fix Episode Numbers</h3>
+            <p class="description">Fix incorrect episode numbers in database by parsing from filenames. Detects bug-created duplicates (same torrent, wrong episode) and can remove them. Uses filled_by_file, location_basename, or location_on_disk to extract filenames.</p>
+            <form id="fix-episode-numbers-form">
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="episode_dry_run" name="dry_run" checked>
+                        Dry Run (Preview changes without saving)
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="show_duplicates" name="show_duplicates">
+                        Show Duplicate Episodes (same show/season/episode with multiple entries)
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        <input type="checkbox" id="remove_duplicates" name="remove_duplicates">
+                        <strong>Remove Bug-Created Duplicates</strong> (same torrent ID, wrong episode numbers)
+                    </label>
+                </div>
+                <button type="submit">Fix Episode Numbers</button>
+                <button type="button" id="view-episode-results-btn" style="display: none; margin-top: 10px;">View Last Results</button>
+                <div id="episode-fix-progress" style="display: none; margin-top: 15px;">
+                    <div class="progress-message">
+                        <span class="operation-spinner"></span>
+                        <span id="episode-progress-message">Processing episodes...</span>
+                    </div>
+                    <div style="margin-top: 10px;">
+                        <div style="background: #2a2a2a; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+                            <div id="episode-progress-bar" style="background: #4ecdc4; height: 6px; width: 100%; transition: width 0.3s;"></div>
+                        </div>
+                        <div id="episode-elapsed-time" style="color: #95a5a6; font-size: 12px;">Elapsed: 0s</div>
+                    </div>
+                </div>
+            </form>
+        </div>
         </div>
     </div>
-    
+
     <!-- Symlink Tab -->
     <div id="symlink-tab" class="debug-tab-content">
         <div class="debug_items">
@@ -163,44 +287,6 @@
                 </div>
                 <button type="submit">Fix Zurg Symlinks</button>
                 <div id="fix-zurg-results" class="results-area" style="margin-top: 15px;"></div>
-            </form>
-        </div>
-        <div class="debug_item">
-            <h3>Fix Episode Numbers</h3>
-            <p class="description">Fix incorrect episode numbers in database by parsing from filenames. Detects bug-created duplicates (same torrent, wrong episode) and can remove them. Uses filled_by_file, location_basename, or location_on_disk to extract filenames.</p>
-            <form id="fix-episode-numbers-form">
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="episode_dry_run" name="dry_run" checked>
-                        Dry Run (Preview changes without saving)
-                    </label>
-                </div>
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="show_duplicates" name="show_duplicates">
-                        Show Duplicate Episodes (same show/season/episode with multiple entries)
-                    </label>
-                </div>
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="remove_duplicates" name="remove_duplicates">
-                        <strong>Remove Bug-Created Duplicates</strong> (same torrent ID, wrong episode numbers)
-                    </label>
-                </div>
-                <button type="submit">Fix Episode Numbers</button>
-                <button type="button" id="view-episode-results-btn" style="display: none; margin-top: 10px;">View Last Results</button>
-                <div id="episode-fix-progress" style="display: none; margin-top: 15px;">
-                    <div class="progress-message">
-                        <span class="operation-spinner"></span>
-                        <span id="episode-progress-message">Processing episodes...</span>
-                    </div>
-                    <div style="margin-top: 10px;">
-                        <div style="background: #2a2a2a; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
-                            <div id="episode-progress-bar" style="background: #4ecdc4; height: 6px; width: 100%; transition: width 0.3s;"></div>
-                        </div>
-                        <div id="episode-elapsed-time" style="color: #95a5a6; font-size: 12px;">Elapsed: 0s</div>
-                    </div>
-                </div>
             </form>
         </div>
         <div class="debug_item">
@@ -589,6 +675,20 @@
             <button class="episode-modal-close" id="episode-modal-close-btn">&times;</button>
         </div>
         <div class="episode-modal-body" id="episode-modal-body">
+            <!-- Results will be inserted here -->
+        </div>
+    </div>
+</div>
+
+<!-- Cleanup Results Modal -->
+<div id="cleanup-results-modal" class="episode-modal" style="display: none;">
+    <div class="episode-modal-overlay"></div>
+    <div class="episode-modal-content">
+        <div class="episode-modal-header">
+            <h2 id="cleanup-modal-title">Cleanup Results</h2>
+            <button class="episode-modal-close" id="cleanup-modal-close-btn">&times;</button>
+        </div>
+        <div class="episode-modal-body" id="cleanup-modal-body">
             <!-- Results will be inserted here -->
         </div>
     </div>
@@ -2451,6 +2551,51 @@ if (document.readyState === 'loading') {
         }
         // --- End Episode Results Modal Functions ---
 
+        // --- Cleanup Results Modal Functions ---
+        let lastCleanupResults = null;
+
+        function showCleanupResultsModal(resultsHtml, title = 'Cleanup Results') {
+            const modal = document.getElementById('cleanup-results-modal');
+            const modalBody = document.getElementById('cleanup-modal-body');
+            const modalTitle = document.getElementById('cleanup-modal-title');
+
+            modalTitle.textContent = title;
+            modalBody.innerHTML = resultsHtml;
+            modal.style.display = 'flex';
+            document.body.style.overflow = 'hidden'; // Prevent background scrolling
+        }
+
+        function closeCleanupResultsModal() {
+            const modal = document.getElementById('cleanup-results-modal');
+            modal.style.display = 'none';
+            document.body.style.overflow = ''; // Restore scrolling
+        }
+
+        // Close modal when clicking overlay
+        document.addEventListener('click', function(e) {
+            const modal = document.getElementById('cleanup-results-modal');
+            if (e.target.classList.contains('episode-modal-overlay') && modal.style.display === 'flex') {
+                closeCleanupResultsModal();
+            }
+        });
+
+        // Close modal on Escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                const modal = document.getElementById('cleanup-results-modal');
+                if (modal.style.display === 'flex') {
+                    closeCleanupResultsModal();
+                }
+            }
+        });
+
+        // Close button event listener
+        const cleanupCloseBtn = document.getElementById('cleanup-modal-close-btn');
+        if (cleanupCloseBtn) {
+            cleanupCloseBtn.addEventListener('click', closeCleanupResultsModal);
+        }
+        // --- End Cleanup Results Modal Functions ---
+
         // --- Fix Episode Numbers Logic ---
         const fixEpisodeForm = document.getElementById('fix-episode-numbers-form');
 
@@ -2475,8 +2620,6 @@ if (document.readyState === 'loading') {
                     message: confirmMessage,
                     title: 'Confirm Episode Number Fix',
                     onConfirm: () => {
-                        Loading.show();
-
                         // Show progress bar and start timer
                         const progressDiv = document.getElementById('episode-fix-progress');
                         const elapsedTimeSpan = document.getElementById('episode-elapsed-time');
@@ -2501,7 +2644,6 @@ if (document.readyState === 'loading') {
                         })
                         .then(response => response.json())
                         .then(data => {
-                            Loading.hide();
                             clearInterval(timerInterval);
                             progressDiv.style.display = 'none';
                             if (data.success) {
@@ -2535,7 +2677,7 @@ if (document.readyState === 'loading') {
 
                                 if (data.mismatches && data.mismatches.length > 0) {
                                     resultsHtml += '<h4>Mismatched Episodes:</h4>';
-                                    resultsHtml += '<table class="preview-results-table"><thead><tr><th>ID</th><th>Title</th><th>Filename</th><th>DB</th><th>Filename Says</th></tr></thead><tbody>';
+                                    resultsHtml += '<table class="preview-results-table"><thead><tr><th>ID</th><th>Title</th><th>Filename</th><th>DB</th><th>Filename Says</th><th>Torrent ID</th></tr></thead><tbody>';
                                     data.mismatches.forEach(item => {
                                         resultsHtml += `<tr>
                                             <td>${item.id}</td>
@@ -2543,6 +2685,7 @@ if (document.readyState === 'loading') {
                                             <td class="path-cell">${item.filename}</td>
                                             <td>S${item.db_season}E${item.db_episode}</td>
                                             <td>S${item.parsed_season}E${item.parsed_episode}</td>
+                                            <td>${item.filled_by_torrent_id || 'N/A'}</td>
                                         </tr>`;
                                     });
                                     resultsHtml += '</tbody></table>';
@@ -2553,13 +2696,15 @@ if (document.readyState === 'loading') {
 
                                 if (showDuplicates && data.duplicates && data.duplicates.length > 0) {
                                     resultsHtml += '<h4>Duplicate Episodes:</h4>';
-                                    resultsHtml += '<table class="preview-results-table"><thead><tr><th>TMDB ID</th><th>Season/Episode</th><th>Count</th><th>IDs</th></tr></thead><tbody>';
+                                    resultsHtml += '<table class="preview-results-table"><thead><tr><th>TMDB ID</th><th>Season/Episode</th><th>Count</th><th>IDs</th><th>Torrent IDs</th><th>Filenames</th></tr></thead><tbody>';
                                     data.duplicates.forEach(dup => {
                                         resultsHtml += `<tr>
                                             <td>${dup.tmdb_id}</td>
                                             <td>S${dup.season_number}E${dup.episode_number}</td>
                                             <td>${dup.count}</td>
                                             <td class="path-cell">${dup.ids}</td>
+                                            <td class="path-cell">${dup.torrent_ids || 'N/A'}</td>
+                                            <td class="path-cell">${dup.files || 'N/A'}</td>
                                         </tr>`;
                                     });
                                     resultsHtml += '</tbody></table>';
@@ -2623,7 +2768,6 @@ if (document.readyState === 'loading') {
                             }
                         })
                         .catch(error => {
-                            Loading.hide();
                             clearInterval(timerInterval);
                             progressDiv.style.display = 'none';
                             console.error('Error:', error);
@@ -2638,6 +2782,287 @@ if (document.readyState === 'loading') {
             });
         }
         // --- End Fix Episode Numbers Logic ---
+
+        // --- Clean Up Ghostlisted Duplicates Logic ---
+        const cleanupForm = document.getElementById('cleanup-duplicates-form');
+        const cleanupResults = {data: null};
+
+        if (cleanupForm) {
+            cleanupForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+
+                const formData = new FormData(this);
+                const isDryRun = formData.get('dry_run') === 'on';
+                const progressDiv = document.getElementById('cleanup-progress');
+                const progressBar = document.getElementById('cleanup-progress-bar');
+                const progressMessage = document.getElementById('cleanup-progress-message');
+                const elapsedTimeDiv = document.getElementById('cleanup-elapsed-time');
+                const viewResultsBtn = document.getElementById('view-cleanup-results-btn');
+
+                // Show progress UI
+                progressDiv.style.display = 'block';
+                progressBar.style.width = '0%';
+                progressMessage.textContent = isDryRun ? 'Analyzing duplicates...' : 'Cleaning up duplicates...';
+
+                // Start timer
+                const startTime = Date.now();
+                const timerInterval = setInterval(() => {
+                    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                    elapsedTimeDiv.textContent = `Elapsed: ${elapsed}s`;
+                }, 1000);
+
+                // Simulate progress (since we don't have streaming in this simple implementation)
+                progressBar.style.width = '30%';
+
+                fetch('/debug/api/cleanup_ghostlisted_duplicates', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    clearInterval(timerInterval);
+                    progressBar.style.width = '100%';
+
+                    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                    elapsedTimeDiv.textContent = `Completed in ${elapsed}s`;
+
+                    if (data.success) {
+                        // Build results HTML for modal
+                        const mediaType = document.getElementById('cleanup_media_type').value;
+                        const mediaLabel = mediaType === 'show' ? 'shows' : 'movies';
+                        let resultsHtml = '<div class="episode-results-summary">';
+                        resultsHtml += `<p><strong>Total ${mediaLabel.charAt(0).toUpperCase() + mediaLabel.slice(1)}:</strong> ${data.total_movies}</p>`;
+                        resultsHtml += `<p><strong>${data.dry_run ? 'Would Delete' : 'Deleted'}:</strong> ${data.total_deleted} ghostlisted duplicates</p>`;
+                        resultsHtml += `<p><strong>Elapsed Time:</strong> ${data.elapsed_time}s</p>`;
+
+                        if (data.results && data.results.length > 0) {
+                            resultsHtml += `<h4>Sample of ${data.dry_run ? 'duplicates that would be deleted' : 'deleted duplicates'} (showing first ${data.results.length}):</h4>`;
+                            resultsHtml += `<table style="width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 0.9em;">`;
+                            resultsHtml += `<tr style="background: #2a2a2a;"><th style="padding: 8px; text-align: left;">ID</th><th style="padding: 8px; text-align: left;">Title</th><th style="padding: 8px; text-align: left;">Location</th><th style="padding: 8px; text-align: left;">Torrent ID</th><th style="padding: 8px; text-align: left;">Source</th></tr>`;
+
+                            data.results.slice(0, 20).forEach(result => {
+                                resultsHtml += `<tr style="border-bottom: 1px solid #333;">`;
+                                resultsHtml += `<td style="padding: 8px;">${result.movie_id}</td>`;
+                                resultsHtml += `<td style="padding: 8px;">${result.title}</td>`;
+                                resultsHtml += `<td style="padding: 8px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${result.location || 'N/A'}">${result.location || 'N/A'}</td>`;
+                                resultsHtml += `<td style="padding: 8px;">${result.torrent_id || 'N/A'}</td>`;
+                                resultsHtml += `<td style="padding: 8px;">${result.source || 'N/A'}</td>`;
+                                resultsHtml += `</tr>`;
+                            });
+                            resultsHtml += `</table>`;
+                        }
+                        resultsHtml += '</div>';
+
+                        const modalTitle = isDryRun ? 'Ghostlisted Duplicates Analysis (Dry Run)' : 'Ghostlisted Duplicates Cleanup Results';
+                        lastCleanupResults = {
+                            html: resultsHtml,
+                            title: modalTitle
+                        };
+
+                        setTimeout(() => {
+                            progressDiv.style.display = 'none';
+                        }, 2000);
+
+                        // Show results in modal
+                        showCleanupResultsModal(resultsHtml, modalTitle);
+
+                        // Show view results button for later viewing
+                        viewResultsBtn.style.display = 'inline-block';
+                    } else {
+                        progressDiv.style.display = 'none';
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            message: data.error || 'An unknown error occurred',
+                            title: 'Error'
+                        });
+                    }
+                })
+                .catch(error => {
+                    clearInterval(timerInterval);
+                    progressDiv.style.display = 'none';
+                    console.error('Error:', error);
+                    showPopup({
+                        type: POPUP_TYPES.ERROR,
+                        message: 'Network error occurred. Check console for details.',
+                        title: 'Error'
+                    });
+                });
+            });
+
+            // View results button handler
+            const viewCleanupResultsBtn = document.getElementById('view-cleanup-results-btn');
+            if (viewCleanupResultsBtn) {
+                viewCleanupResultsBtn.addEventListener('click', function() {
+                    if (lastCleanupResults) {
+                        showCleanupResultsModal(lastCleanupResults.html, lastCleanupResults.title);
+                    }
+                });
+            }
+        }
+        // --- End Clean Up Ghostlisted Duplicates Logic ---
+
+        // --- Clean Up Failed Upgrade Attempts Logic ---
+        {
+            const upgradesForm = document.getElementById('cleanup-upgrades-form');
+            const upgradesProgress = document.getElementById('upgrades-progress');
+            const upgradesProgressBar = document.getElementById('upgrades-progress-bar');
+            const upgradesProgressMessage = document.getElementById('upgrades-progress-message');
+            const upgradesElapsedTime = document.getElementById('upgrades-elapsed-time');
+            const viewUpgradesResultsBtn = document.getElementById('view-upgrades-results-btn');
+            let upgradesResults = {};
+
+            if (upgradesForm) {
+                upgradesForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
+
+                    const dryRunChecked = document.getElementById('upgrades_dry_run').checked;
+                    const versionMatchRadios = document.getElementsByName('version_match');
+                    let versionMatch = 'all';
+                    for (const radio of versionMatchRadios) {
+                        if (radio.checked) {
+                            versionMatch = radio.value;
+                            break;
+                        }
+                    }
+
+                    const keepActionRadios = document.getElementsByName('keep_action');
+                    let keepAction = 'keep_collected';
+                    for (const radio of keepActionRadios) {
+                        if (radio.checked) {
+                            keepAction = radio.value;
+                            break;
+                        }
+                    }
+
+                    const mediaType = document.getElementById('upgrades_media_type').value;
+
+                    // Show progress UI
+                    upgradesProgress.style.display = 'block';
+                    upgradesProgressBar.style.width = '0%';
+                    upgradesProgressMessage.textContent = 'Scanning for duplicates...';
+
+                    // Start the timer
+                    const startTime = Date.now();
+                    const timerInterval = setInterval(() => {
+                        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                        upgradesElapsedTime.textContent = `Elapsed: ${elapsed}s`;
+                    }, 1000);
+
+                    // Animate progress bar to 30% immediately
+                    setTimeout(() => {
+                        upgradesProgressBar.style.width = '30%';
+                    }, 100);
+
+                    // Prepare form data
+                    const formData = new FormData();
+                    if (dryRunChecked) {
+                        formData.append('dry_run', 'on');
+                    }
+                    formData.append('version_match', versionMatch);
+                    formData.append('keep_action', keepAction);
+                    formData.append('media_type', mediaType);
+
+                    // Make the request
+                    fetch('/debug/api/cleanup_failed_upgrades', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        clearInterval(timerInterval);
+
+                        if (data.success) {
+                            // Update progress to 100%
+                            upgradesProgressBar.style.width = '100%';
+                            upgradesProgressMessage.textContent = data.message;
+
+                            // Stop timer
+                            const finalTime = Math.floor((Date.now() - startTime) / 1000);
+                            upgradesElapsedTime.textContent = `Completed in ${finalTime}s`;
+
+                            // Build results HTML for modal
+                            let resultsHtml = '<div class="episode-results-summary">';
+                            const mediaLabel = mediaType === 'show' ? 'shows' : 'movies';
+                            resultsHtml += `<p><strong>Total ${mediaLabel.charAt(0).toUpperCase() + mediaLabel.slice(1)}:</strong> ${data.total_movies}</p>`;
+                            resultsHtml += `<p><strong>${data.dry_run ? 'Would Delete' : 'Deleted'}:</strong> ${data.total_deleted} items</p>`;
+                            resultsHtml += `<p><strong>Action:</strong> ${data.keep_action === 'keep_collected' ? 'Keep collected, delete blacklisted' : 'Keep blacklisted, delete collected'}</p>`;
+                            resultsHtml += `<p><strong>Version Match:</strong> ${data.version_match === 'all' ? 'Any version' : 'Same version only'}</p>`;
+                            resultsHtml += `<p><strong>Elapsed Time:</strong> ${data.elapsed_time}s</p>`;
+
+                            if (data.results && data.results.length > 0) {
+                                resultsHtml += `<h4>Sample of ${data.dry_run ? 'items that would be deleted' : 'deleted items'} (showing first ${data.results.length}):</h4>`;
+                                resultsHtml += `<table style="width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 0.9em;">`;
+                                resultsHtml += `<tr style="background: #2a2a2a;"><th style="padding: 8px; text-align: left;">ID</th><th style="padding: 8px; text-align: left;">Title</th><th style="padding: 8px; text-align: left;">Version</th><th style="padding: 8px; text-align: left;">Location</th><th style="padding: 8px; text-align: left;">Torrent ID</th><th style="padding: 8px; text-align: left;">Source</th></tr>`;
+
+                                data.results.slice(0, 20).forEach(result => {
+                                    resultsHtml += `<tr style="border-bottom: 1px solid #333;">`;
+                                    resultsHtml += `<td style="padding: 8px;">${result.id}</td>`;
+                                    resultsHtml += `<td style="padding: 8px;">${result.title}</td>`;
+                                    resultsHtml += `<td style="padding: 8px;">${result.version}</td>`;
+                                    resultsHtml += `<td style="padding: 8px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${result.location || 'N/A'}">${result.location || 'N/A'}</td>`;
+                                    resultsHtml += `<td style="padding: 8px;">${result.torrent_id || 'N/A'}</td>`;
+                                    resultsHtml += `<td style="padding: 8px;">${result.content_source || 'N/A'}</td>`;
+                                    resultsHtml += `</tr>`;
+                                });
+                                resultsHtml += `</table>`;
+                            }
+                            resultsHtml += '</div>';
+
+                            const dryRunChecked = document.getElementById('upgrades_dry_run').checked;
+                            const modalTitle = dryRunChecked ? 'Failed Upgrade Attempts Analysis (Dry Run)' : 'Failed Upgrade Attempts Cleanup Results';
+                            lastCleanupResults = {
+                                html: resultsHtml,
+                                title: modalTitle
+                            };
+
+                            // Show results in modal
+                            showCleanupResultsModal(resultsHtml, modalTitle);
+
+                            // Show view results button for later viewing
+                            if (viewUpgradesResultsBtn) {
+                                viewUpgradesResultsBtn.style.display = 'inline-block';
+                            }
+
+                            // Hide progress after 3 seconds
+                            setTimeout(() => {
+                                upgradesProgress.style.display = 'none';
+                            }, 3000);
+                        } else {
+                            clearInterval(timerInterval);
+                            upgradesProgressBar.style.width = '0%';
+                            upgradesProgress.style.display = 'none';
+
+                            showPopup({
+                                type: POPUP_TYPES.ERROR,
+                                message: data.error || 'An unknown error occurred',
+                                title: 'Cleanup Failed'
+                            });
+                        }
+                    })
+                    .catch(error => {
+                        clearInterval(timerInterval);
+                        upgradesProgressBar.style.width = '0%';
+                        upgradesProgress.style.display = 'none';
+
+                        showPopup({
+                            type: POPUP_TYPES.ERROR,
+                            message: 'Failed to cleanup failed upgrades: ' + error.message,
+                            title: 'Error'
+                        });
+                    });
+                });
+            }
+
+            // View results button handler
+            if (viewUpgradesResultsBtn) {
+                viewUpgradesResultsBtn.addEventListener('click', function() {
+                    if (lastCleanupResults) {
+                        showCleanupResultsModal(lastCleanupResults.html, lastCleanupResults.title);
+                    }
+                });
+            }
+        }
+        // --- End Clean Up Failed Upgrade Attempts Logic ---
 
         // --- Handler for Delete Battery DB Form ---
         const deleteBatteryDbForm = document.getElementById('delete-battery-db-form');
@@ -3507,6 +3932,27 @@ if (document.readyState === 'loading') {
         50% {
             opacity: 0.6;
         }
+    }
+
+    /* Cleanup progress bar - matches plex labels and fix episode numbers style */
+    #cleanup-progress-bar {
+        animation: progress-pulse 1.5s ease-in-out infinite;
+    }
+
+    #upgrades-progress-bar {
+        animation: progress-pulse 1.5s ease-in-out infinite;
+    }
+
+    /* Radio button styling for cleanup forms */
+    #cleanup-upgrades-form .form-group label {
+        display: block;
+        margin-bottom: 10px;
+        cursor: pointer;
+    }
+
+    #cleanup-upgrades-form .form-group label input[type="radio"] {
+        margin-right: 8px;
+        cursor: pointer;
     }
 </style>
 
