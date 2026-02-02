@@ -61,17 +61,15 @@
             </form>
         </div>
         <div class="debug_item">
-            <h3>Remove Duplicate Database Items</h3>
-            <p class="description">Find and remove duplicate database items based on the filled_by_file field. This will identify items with the same filename and remove the duplicates, keeping only one entry per unique file.</p>
-            <form id="remove-duplicates-form" action="/debug/api/remove_duplicate_items" method="POST">
+            <h3>Run Task Manually</h3>
+            <form id="run-task-form">
                 <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="dry_run_duplicates" name="dry_run" checked>
-                        Dry Run (Preview duplicates without deleting)
-                    </label>
+                    <label for="task_select">Select Task:</label>
+                    <select id="task_select" name="task_name">
+                        <!-- Options will be populated dynamically -->
+                    </select>
                 </div>
-                <button type="submit">Find and Remove Duplicates</button>
-                <div id="remove-duplicates-results" class="results-area" style="margin-top: 15px;"></div>
+                <button type="submit">Run Task</button>
             </form>
         </div>
         <div class="debug_item">
@@ -103,15 +101,17 @@
             </form>
         </div>
         <div class="debug_item">
-            <h3>Run Task Manually</h3>
-            <form id="run-task-form">
+            <h3>Remove Duplicate Database Items</h3>
+            <p class="description">Find and remove duplicate database items based on the filled_by_file field. This will identify items with the same filename and remove the duplicates, keeping only one entry per unique file.</p>
+            <form id="remove-duplicates-form" action="/debug/api/remove_duplicate_items" method="POST">
                 <div class="form-group">
-                    <label for="task_select">Select Task:</label>
-                    <select id="task_select" name="task_name">
-                        <!-- Options will be populated dynamically -->
-                    </select>
+                    <label>
+                        <input type="checkbox" id="dry_run_duplicates" name="dry_run" checked>
+                        Dry Run (Preview duplicates without deleting)
+                    </label>
                 </div>
-                <button type="submit">Run Task</button>
+                <button type="submit">Find and Remove Duplicates</button>
+                <div id="remove-duplicates-results" class="results-area" style="margin-top: 15px;"></div>
             </form>
         </div>
         <div class="debug_item">
@@ -148,8 +148,8 @@
             </form>
         </div>
         <div class="debug_item">
-            <h3>Clean Up Failed Upgrade Attempts</h3>
-            <p class="description">Remove entries from failed upgrade attempts or blacklist bug. Finds items with both collected AND blacklisted versions, and removes duplicates based on your selection.</p>
+            <h3>Manage Duplicate Versions</h3>
+            <p class="description">Clean up duplicate versions based on quality, state, or version field matching. Handles failed upgrades, blacklist bugs, and multiple collected versions.</p>
             <form id="cleanup-upgrades-form">
                 <div class="form-group">
                     <label for="upgrades_media_type">Media Type:</label>
@@ -165,26 +165,21 @@
                     </label>
                 </div>
                 <div class="form-group">
-                    <label>
-                        <input type="radio" id="keep_collected" name="keep_action" value="keep_collected" checked>
-                        Keep collected, delete blacklisted (for failed upgrades)
-                    </label>
-                    <label>
-                        <input type="radio" id="keep_blacklisted" name="keep_action" value="keep_blacklisted">
-                        Keep blacklisted, delete collected (for blacklist bug)
-                    </label>
+                    <label for="keep_action">Keep Action:</label>
+                    <select id="keep_action" name="keep_action" style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
+                        <option value="keep_collected" selected>Keep collected, delete blacklisted (for failed upgrades)</option>
+                        <option value="keep_blacklisted">Keep blacklisted, delete collected (for blacklist bug)</option>
+                        <option value="keep_best_quality">Keep best quality, delete rest (for multiple collected)</option>
+                    </select>
                 </div>
                 <div class="form-group">
-                    <label>
-                        <input type="radio" id="version_match_all" name="version_match" value="all" checked>
-                        Delete all versions (any version)
-                    </label>
-                    <label>
-                        <input type="radio" id="version_match_same" name="version_match" value="same">
-                        Delete only versions with same version field
-                    </label>
+                    <label for="version_match">Version Match:</label>
+                    <select id="version_match" name="version_match" style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
+                        <option value="all" selected>Delete all versions (any version)</option>
+                        <option value="same">Delete only versions with same version field</option>
+                    </select>
                 </div>
-                <button type="submit">Clean Up Failed Upgrades</button>
+                <button type="submit">Run Cleanup</button>
                 <button type="button" id="view-upgrades-results-btn" style="display: none; margin-top: 10px;">View Last Results</button>
                 <div id="upgrades-progress" style="display: none; margin-top: 15px;">
                     <div class="progress-message">
@@ -2827,44 +2822,121 @@ if (document.readyState === 'loading') {
                     elapsedTimeDiv.textContent = `Completed in ${elapsed}s`;
 
                     if (data.success) {
-                        // Build results HTML for modal
+                        // Build results HTML for modal with pagination
                         const mediaType = document.getElementById('cleanup_media_type').value;
                         const mediaLabel = mediaType === 'show' ? 'shows' : 'movies';
-                        let resultsHtml = '<div class="episode-results-summary">';
-                        resultsHtml += `<p><strong>Total ${mediaLabel.charAt(0).toUpperCase() + mediaLabel.slice(1)}:</strong> ${data.total_movies}</p>`;
-                        resultsHtml += `<p><strong>${data.dry_run ? 'Would Delete' : 'Deleted'}:</strong> ${data.total_deleted} ghostlisted duplicates</p>`;
-                        resultsHtml += `<p><strong>Elapsed Time:</strong> ${data.elapsed_time}s</p>`;
+                        const groupsPerPage = 20;
+                        let currentPage = 1;
+                        const totalGroups = data.groups ? data.groups.length : 0;
+                        const totalPages = Math.ceil(totalGroups / groupsPerPage);
 
-                        if (data.results && data.results.length > 0) {
-                            resultsHtml += `<h4>Sample of ${data.dry_run ? 'duplicates that would be deleted' : 'deleted duplicates'} (showing first ${data.results.length}):</h4>`;
-                            resultsHtml += `<table style="width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 0.9em;">`;
-                            resultsHtml += `<tr style="background: #2a2a2a;"><th style="padding: 8px; text-align: left;">ID</th><th style="padding: 8px; text-align: left;">Title</th><th style="padding: 8px; text-align: left;">Location</th><th style="padding: 8px; text-align: left;">Torrent ID</th><th style="padding: 8px; text-align: left;">Source</th></tr>`;
+                        function renderGhostlistPage(page) {
+                            let resultsHtml = '<div class="episode-results-summary">';
 
-                            data.results.slice(0, 20).forEach(result => {
-                                resultsHtml += `<tr style="border-bottom: 1px solid #333;">`;
-                                resultsHtml += `<td style="padding: 8px;">${result.movie_id}</td>`;
-                                resultsHtml += `<td style="padding: 8px;">${result.title}</td>`;
-                                resultsHtml += `<td style="padding: 8px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${result.location || 'N/A'}">${result.location || 'N/A'}</td>`;
-                                resultsHtml += `<td style="padding: 8px;">${result.torrent_id || 'N/A'}</td>`;
-                                resultsHtml += `<td style="padding: 8px;">${result.source || 'N/A'}</td>`;
-                                resultsHtml += `</tr>`;
-                            });
-                            resultsHtml += `</table>`;
+                            // Improved summary
+                            resultsHtml += `<p><strong>${data.total_movies} Duplicate Groups Found</strong> (each group has multiple versions of the same ${mediaLabel.slice(0, -1)})</p>`;
+                            resultsHtml += `<p><strong>${data.dry_run ? 'Would Delete' : 'Deleted'}:</strong> ${data.total_deleted} ghostlisted items</p>`;
+                            resultsHtml += `<p><strong>Would Keep:</strong> ${data.total_movies} non-ghostlisted items (one per group)</p>`;
+                            resultsHtml += `<p><strong>Elapsed Time:</strong> ${data.elapsed_time}s</p>`;
+
+                            if (data.groups && data.groups.length > 0) {
+                                const startIdx = (page - 1) * groupsPerPage;
+                                const endIdx = Math.min(startIdx + groupsPerPage, totalGroups);
+                                const pageGroups = data.groups.slice(startIdx, endIdx);
+
+                                resultsHtml += `<h4>Duplicate Groups (showing ${startIdx + 1}-${endIdx} of ${totalGroups}):</h4>`;
+                                resultsHtml += `<p style="font-size: 0.9em; color: #888; margin-top: -8px;"><em>Each row is a separate duplicate group. ✓ = kept items, ✗ = deleted items.</em></p>`;
+                                resultsHtml += `<table style="width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 0.85em;">`;
+                                resultsHtml += `<thead><tr style="background: #2a2a2a;"><th style="padding: 8px; text-align: left; width: 80px;">Group #</th><th style="padding: 8px; text-align: left; width: 45%;">Keep (✓)</th><th style="padding: 8px; text-align: left; width: 45%;">Delete (✗)</th></tr></thead>`;
+                                resultsHtml += `<tbody>`;
+
+                                // Check if we have episode data (shows)
+                                const isShowData = pageGroups.length > 0 && pageGroups[0].keep_items.length > 0 && pageGroups[0].keep_items[0].season_number !== undefined;
+
+                                pageGroups.forEach((group, idx) => {
+                                    const groupNum = startIdx + idx + 1;
+                                    resultsHtml += `<tr style="border-bottom: 1px solid #444;">`;
+                                    resultsHtml += `<td style="padding: 8px; vertical-align: top; font-weight: bold;">${groupNum}</td>`;
+
+                                    // Keep column (green)
+                                    resultsHtml += `<td style="padding: 8px; vertical-align: top; border-left: 2px solid #4CAF50; background: rgba(76, 175, 80, 0.1);">`;
+                                    if (group.keep_items && group.keep_items.length > 0) {
+                                        group.keep_items.forEach(item => {
+                                            resultsHtml += `<div style="margin-bottom: 8px; padding: 4px; background: rgba(0,0,0,0.2); border-radius: 3px;">`;
+                                            resultsHtml += `<strong>${item.title}</strong>`;
+                                            if (isShowData) {
+                                                resultsHtml += ` - S${item.season_number}E${item.episode_number}`;
+                                            }
+                                            resultsHtml += `<br><span style="font-size: 0.85em; color: #aaa;">ID: ${item.movie_id} | State: ${item.state} | Source: ${item.source}</span>`;
+                                            resultsHtml += `<br><span style="font-size: 0.85em; color: #888;" title="${item.location}">Location: ${item.location.length > 50 ? item.location.substring(0, 50) + '...' : item.location}</span>`;
+                                            resultsHtml += `</div>`;
+                                        });
+                                    } else {
+                                        resultsHtml += `<em style="color: #888;">None</em>`;
+                                    }
+                                    resultsHtml += `</td>`;
+
+                                    // Delete column (red)
+                                    resultsHtml += `<td style="padding: 8px; vertical-align: top; border-left: 2px solid #f44336; background: rgba(244, 67, 54, 0.1);">`;
+                                    if (group.delete_items && group.delete_items.length > 0) {
+                                        group.delete_items.forEach(item => {
+                                            resultsHtml += `<div style="margin-bottom: 8px; padding: 4px; background: rgba(0,0,0,0.2); border-radius: 3px;">`;
+                                            resultsHtml += `<strong>${item.title}</strong>`;
+                                            if (isShowData) {
+                                                resultsHtml += ` - S${item.season_number}E${item.episode_number}`;
+                                            }
+                                            resultsHtml += `<br><span style="font-size: 0.85em; color: #aaa;">ID: ${item.movie_id} | State: ${item.state} | Source: ${item.source}</span>`;
+                                            resultsHtml += `<br><span style="font-size: 0.85em; color: #888;" title="${item.location}">Location: ${item.location.length > 50 ? item.location.substring(0, 50) + '...' : item.location}</span>`;
+                                            resultsHtml += `</div>`;
+                                        });
+                                    } else {
+                                        resultsHtml += `<em style="color: #888;">None</em>`;
+                                    }
+                                    resultsHtml += `</td>`;
+
+                                    resultsHtml += `</tr>`;
+                                });
+
+                                resultsHtml += `</tbody></table>`;
+
+                                // Pagination controls
+                                if (totalPages > 1) {
+                                    resultsHtml += `<div style="margin-top: 15px; text-align: center;">`;
+                                    resultsHtml += `<button onclick="renderGhostlistPage(${Math.max(1, page - 1)})" style="padding: 5px 10px; margin: 0 5px;" ${page === 1 ? 'disabled' : ''}>Previous</button>`;
+                                    resultsHtml += `<span style="margin: 0 10px;">Page ${page} of ${totalPages}</span>`;
+                                    resultsHtml += `<button onclick="renderGhostlistPage(${Math.min(totalPages, page + 1)})" style="padding: 5px 10px; margin: 0 5px;" ${page === totalPages ? 'disabled' : ''}>Next</button>`;
+                                    resultsHtml += `</div>`;
+                                }
+                            }
+                            resultsHtml += '</div>';
+
+                            const modalBody = document.getElementById('cleanup-modal-body');
+                            modalBody.innerHTML = resultsHtml;
                         }
-                        resultsHtml += '</div>';
 
+                        // Make function global for pagination buttons
+                        window.renderGhostlistPage = renderGhostlistPage;
+
+                        const isDryRun = data.dry_run;
                         const modalTitle = isDryRun ? 'Ghostlisted Duplicates Analysis (Dry Run)' : 'Ghostlisted Duplicates Cleanup Results';
+
+                        // Show modal first
+                        showCleanupResultsModal('', modalTitle);
+
+                        // Then render the content with pagination
+                        renderGhostlistPage(currentPage);
+
+                        // Save data and render function for view results button
                         lastCleanupResults = {
-                            html: resultsHtml,
-                            title: modalTitle
+                            data: data,
+                            mediaType: mediaType,
+                            title: modalTitle,
+                            renderFunction: renderGhostlistPage
                         };
 
                         setTimeout(() => {
                             progressDiv.style.display = 'none';
                         }, 2000);
-
-                        // Show results in modal
-                        showCleanupResultsModal(resultsHtml, modalTitle);
 
                         // Show view results button for later viewing
                         viewResultsBtn.style.display = 'inline-block';
@@ -2893,8 +2965,9 @@ if (document.readyState === 'loading') {
             const viewCleanupResultsBtn = document.getElementById('view-cleanup-results-btn');
             if (viewCleanupResultsBtn) {
                 viewCleanupResultsBtn.addEventListener('click', function() {
-                    if (lastCleanupResults) {
-                        showCleanupResultsModal(lastCleanupResults.html, lastCleanupResults.title);
+                    if (lastCleanupResults && lastCleanupResults.renderFunction) {
+                        showCleanupResultsModal('', lastCleanupResults.title);
+                        lastCleanupResults.renderFunction(1);  // Re-render from page 1
                     }
                 });
             }
@@ -2916,23 +2989,9 @@ if (document.readyState === 'loading') {
                     e.preventDefault();
 
                     const dryRunChecked = document.getElementById('upgrades_dry_run').checked;
-                    const versionMatchRadios = document.getElementsByName('version_match');
-                    let versionMatch = 'all';
-                    for (const radio of versionMatchRadios) {
-                        if (radio.checked) {
-                            versionMatch = radio.value;
-                            break;
-                        }
-                    }
-
-                    const keepActionRadios = document.getElementsByName('keep_action');
-                    let keepAction = 'keep_collected';
-                    for (const radio of keepActionRadios) {
-                        if (radio.checked) {
-                            keepAction = radio.value;
-                            break;
-                        }
-                    }
+                    // Get values from dropdown selects
+                    const versionMatch = document.getElementById('version_match').value;
+                    const keepAction = document.getElementById('keep_action').value;
 
                     const mediaType = document.getElementById('upgrades_media_type').value;
 
@@ -2980,43 +3039,100 @@ if (document.readyState === 'loading') {
                             const finalTime = Math.floor((Date.now() - startTime) / 1000);
                             upgradesElapsedTime.textContent = `Completed in ${finalTime}s`;
 
-                            // Build results HTML for modal
-                            let resultsHtml = '<div class="episode-results-summary">';
-                            const mediaLabel = mediaType === 'show' ? 'shows' : 'movies';
-                            resultsHtml += `<p><strong>Total ${mediaLabel.charAt(0).toUpperCase() + mediaLabel.slice(1)}:</strong> ${data.total_movies}</p>`;
-                            resultsHtml += `<p><strong>${data.dry_run ? 'Would Delete' : 'Deleted'}:</strong> ${data.total_deleted} items</p>`;
-                            resultsHtml += `<p><strong>Action:</strong> ${data.keep_action === 'keep_collected' ? 'Keep collected, delete blacklisted' : 'Keep blacklisted, delete collected'}</p>`;
-                            resultsHtml += `<p><strong>Version Match:</strong> ${data.version_match === 'all' ? 'Any version' : 'Same version only'}</p>`;
-                            resultsHtml += `<p><strong>Elapsed Time:</strong> ${data.elapsed_time}s</p>`;
+                            // Build results HTML for modal with pagination
+                            const groupsPerPage = 20;
+                            let currentPage = 1;
+                            const totalGroups = data.groups ? data.groups.length : 0;
+                            const totalPages = Math.ceil(totalGroups / groupsPerPage);
 
-                            if (data.results && data.results.length > 0) {
-                                resultsHtml += `<h4>Sample of ${data.dry_run ? 'items that would be deleted' : 'deleted items'} (showing first ${data.results.length}):</h4>`;
-                                resultsHtml += `<table style="width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 0.9em;">`;
-                                resultsHtml += `<tr style="background: #2a2a2a;"><th style="padding: 8px; text-align: left;">ID</th><th style="padding: 8px; text-align: left;">Title</th><th style="padding: 8px; text-align: left;">Version</th><th style="padding: 8px; text-align: left;">Location</th><th style="padding: 8px; text-align: left;">Torrent ID</th><th style="padding: 8px; text-align: left;">Source</th></tr>`;
+                            function renderFailedUpgradesPage(page) {
+                                let resultsHtml = '<div class="episode-results-summary">';
+                                const mediaLabel = mediaType === 'show' ? 'shows' : 'movies';
 
-                                data.results.slice(0, 20).forEach(result => {
-                                    resultsHtml += `<tr style="border-bottom: 1px solid #333;">`;
-                                    resultsHtml += `<td style="padding: 8px;">${result.id}</td>`;
-                                    resultsHtml += `<td style="padding: 8px;">${result.title}</td>`;
-                                    resultsHtml += `<td style="padding: 8px;">${result.version}</td>`;
-                                    resultsHtml += `<td style="padding: 8px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${result.location || 'N/A'}">${result.location || 'N/A'}</td>`;
-                                    resultsHtml += `<td style="padding: 8px;">${result.torrent_id || 'N/A'}</td>`;
-                                    resultsHtml += `<td style="padding: 8px;">${result.content_source || 'N/A'}</td>`;
-                                    resultsHtml += `</tr>`;
-                                });
-                                resultsHtml += `</table>`;
+                                // Improved summary
+                                resultsHtml += `<p><strong>${data.total_movies} Duplicate Groups Found</strong> (each group has multiple versions of the same episode/movie)</p>`;
+                                resultsHtml += `<p><strong>${data.dry_run ? 'Would Delete' : 'Deleted'}:</strong> ${data.total_deleted} items</p>`;
+                                resultsHtml += `<p><strong>Would Keep:</strong> ${data.total_movies} items (one per group)</p>`;
+                                resultsHtml += `<p><strong>Action:</strong> ${data.keep_action === 'keep_collected' ? 'Keep collected, delete blacklisted' : 'Keep blacklisted, delete collected'}</p>`;
+                                resultsHtml += `<p><strong>Version Match:</strong> ${data.version_match === 'all' ? 'Any version' : 'Same version only'}</p>`;
+                                resultsHtml += `<p><strong>Elapsed Time:</strong> ${data.elapsed_time}s</p>`;
+
+                                if (data.groups && data.groups.length > 0) {
+                                    const startIdx = (page - 1) * groupsPerPage;
+                                    const endIdx = Math.min(startIdx + groupsPerPage, totalGroups);
+                                    const pageGroups = data.groups.slice(startIdx, endIdx);
+
+                                    resultsHtml += `<h4>Duplicate Groups (showing ${startIdx + 1}-${endIdx} of ${totalGroups}):</h4>`;
+                                    resultsHtml += `<p style="font-size: 0.9em; color: #888; margin-top: -8px;"><em>Each row shows one duplicate group with items to keep (✓) and items to delete (✗).</em></p>`;
+                                    resultsHtml += `<table style="width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 0.9em;">`;
+                                    resultsHtml += `<thead><tr style="background: #2a2a2a;"><th style="padding: 8px; text-align: left;">Group #</th><th style="padding: 8px; text-align: left;">Keep (✓)</th><th style="padding: 8px; text-align: left;">Delete (✗)</th></tr></thead><tbody>`;
+
+                                    pageGroups.forEach((group, idx) => {
+                                        const groupNum = startIdx + idx + 1;
+                                        resultsHtml += `<tr style="border-bottom: 1px solid #333;">`;
+                                        resultsHtml += `<td style="padding: 8px; vertical-align: top;"><strong>${groupNum}</strong></td>`;
+
+                                        // Keep items column
+                                        resultsHtml += `<td style="padding: 8px; border-left: 2px solid #4CAF50; background: rgba(76, 175, 80, 0.1);">`;
+                                        group.keep_items.forEach(item => {
+                                            const episode = item.season_number ? ` S${item.season_number}E${item.episode_number}` : '';
+                                            const scoreDisplay = item.current_score !== undefined && item.current_score !== 'N/A' ? ` | Score: ${typeof item.current_score === 'number' ? item.current_score.toFixed(1) : item.current_score}` : '';
+                                            const fileLocation = item.location && item.location !== 'N/A' ? item.location : 'No file location';
+                                            resultsHtml += `<div style="margin-bottom: 8px;"><strong>${item.title}${episode}</strong><br>`;
+                                            resultsHtml += `<small>ID: ${item.id} | State: ${item.state} | Version: ${item.version}${scoreDisplay}</small><br>`;
+                                            resultsHtml += `<small style="color: #aaa; font-size: 0.85em; word-break: break-all;">File: ${fileLocation}</small></div>`;
+                                        });
+                                        resultsHtml += `</td>`;
+
+                                        // Delete items column
+                                        resultsHtml += `<td style="padding: 8px; border-left: 2px solid #f44336; background: rgba(244, 67, 54, 0.1);">`;
+                                        group.delete_items.forEach(item => {
+                                            const episode = item.season_number ? ` S${item.season_number}E${item.episode_number}` : '';
+                                            const scoreDisplay = item.current_score !== undefined && item.current_score !== 'N/A' ? ` | Score: ${typeof item.current_score === 'number' ? item.current_score.toFixed(1) : item.current_score}` : '';
+                                            const fileLocation = item.location && item.location !== 'N/A' ? item.location : 'No file location';
+                                            resultsHtml += `<div style="margin-bottom: 8px;"><strong>${item.title}${episode}</strong><br>`;
+                                            resultsHtml += `<small>ID: ${item.id} | State: ${item.state} | Version: ${item.version}${scoreDisplay}</small><br>`;
+                                            resultsHtml += `<small style="color: #aaa; font-size: 0.85em; word-break: break-all;">File: ${fileLocation}</small></div>`;
+                                        });
+                                        resultsHtml += `</td>`;
+                                        resultsHtml += `</tr>`;
+                                    });
+                                    resultsHtml += `</tbody></table>`;
+
+                                    // Pagination controls
+                                    if (totalPages > 1) {
+                                        resultsHtml += `<div style="margin-top: 15px; text-align: center;">`;
+                                        resultsHtml += `<button onclick="renderFailedUpgradesPage(${Math.max(1, page - 1)})" style="padding: 5px 10px; margin: 0 5px;" ${page === 1 ? 'disabled' : ''}>Previous</button>`;
+                                        resultsHtml += `<span style="margin: 0 10px;">Page ${page} of ${totalPages}</span>`;
+                                        resultsHtml += `<button onclick="renderFailedUpgradesPage(${Math.min(totalPages, page + 1)})" style="padding: 5px 10px; margin: 0 5px;" ${page === totalPages ? 'disabled' : ''}>Next</button>`;
+                                        resultsHtml += `</div>`;
+                                    }
+                                }
+                                resultsHtml += '</div>';
+
+                                const modalBody = document.getElementById('cleanup-modal-body');
+                                modalBody.innerHTML = resultsHtml;
                             }
-                            resultsHtml += '</div>';
+
+                            // Make function global for pagination buttons
+                            window.renderFailedUpgradesPage = renderFailedUpgradesPage;
 
                             const dryRunChecked = document.getElementById('upgrades_dry_run').checked;
-                            const modalTitle = dryRunChecked ? 'Failed Upgrade Attempts Analysis (Dry Run)' : 'Failed Upgrade Attempts Cleanup Results';
-                            lastCleanupResults = {
-                                html: resultsHtml,
-                                title: modalTitle
-                            };
+                            const modalTitle = dryRunChecked ? 'Duplicate Version Cleanup Analysis (Dry Run)' : 'Duplicate Version Cleanup Results';
 
-                            // Show results in modal
-                            showCleanupResultsModal(resultsHtml, modalTitle);
+                            // Show modal first
+                            showCleanupResultsModal('', modalTitle);
+
+                            // Then render the content with pagination
+                            renderFailedUpgradesPage(currentPage);
+
+                            // Save data and render function for view results button
+                            window.lastFailedUpgradesResults = {
+                                data: data,
+                                mediaType: mediaType,
+                                title: modalTitle,
+                                renderFunction: renderFailedUpgradesPage
+                            };
 
                             // Show view results button for later viewing
                             if (viewUpgradesResultsBtn) {
@@ -3056,8 +3172,9 @@ if (document.readyState === 'loading') {
             // View results button handler
             if (viewUpgradesResultsBtn) {
                 viewUpgradesResultsBtn.addEventListener('click', function() {
-                    if (lastCleanupResults) {
-                        showCleanupResultsModal(lastCleanupResults.html, lastCleanupResults.title);
+                    if (window.lastFailedUpgradesResults && window.lastFailedUpgradesResults.renderFunction) {
+                        showCleanupResultsModal('', window.lastFailedUpgradesResults.title);
+                        window.lastFailedUpgradesResults.renderFunction(1);  // Re-render from page 1
                     }
                 });
             }
@@ -3136,40 +3253,77 @@ if (document.readyState === 'loading') {
                         .then(data => {
                             Loading.hide();
                             if (data.success) {
-                                showPopup({
-                                    type: data.dry_run ? POPUP_TYPES.INFO : POPUP_TYPES.SUCCESS,
-                                    message: data.message,
-                                    title: data.dry_run ? 'Dry Run Results' : 'Duplicate Removal Complete',
-                                    autoClose: false
-                                });
+                                // Build results HTML for modal with pagination
+                                const itemsPerPage = 50;
+                                let currentPage = 1;
+                                const totalGroups = data.preview ? data.preview.length : 0;
+                                const totalPages = Math.ceil(totalGroups / itemsPerPage);
 
-                                let resultsHtml = `<h4>Results:</h4>`;
-                                resultsHtml += `<p><strong>Duplicate Groups Found:</strong> ${data.duplicate_groups}</p>`;
-                                resultsHtml += `<p><strong>Total Duplicate Items:</strong> ${data.total_duplicates}</p>`;
-                                if (!data.dry_run) {
-                                    resultsHtml += `<p><strong>Items Deleted:</strong> ${data.items_deleted}</p>`;
-                                }
+                                function renderDuplicatesPage(page) {
+                                    let resultsHtml = '<div class="episode-results-summary">';
 
-                                if (data.preview && data.preview.length > 0) {
-                                    resultsHtml += '<h4>Preview of Duplicates:</h4>';
-                                    resultsHtml += '<table class="preview-results-table" style="width: 100%; border-collapse: collapse; margin-top: 10px;"><thead><tr style="background-color: #f5f5f5;"><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">File</th><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Count</th><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Keep Item</th><th style="border: 1px solid #ddd; padding: 8px; text-align: left;">Delete Items</th></tr></thead><tbody>';
-                                    data.preview.forEach(group => {
-                                        resultsHtml += `<tr>
-                                            <td style="border: 1px solid #ddd; padding: 8px; word-break: break-all; max-width: 200px;">${group.filled_by_file}</td>
-                                            <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${group.count}</td>
-                                            <td style="border: 1px solid #ddd; padding: 8px;"><strong>${group.keep_item.title}</strong><br><small>ID: ${group.keep_item.id} | State: ${group.keep_item.state}</small></td>
-                                            <td style="border: 1px solid #ddd; padding: 8px;">${group.delete_items.map(item => `<div style="margin-bottom: 5px;"><strong>${item.title}</strong><br><small>ID: ${item.id} | State: ${item.state}</small></div>`).join('')}</td>
-                                        </tr>`;
-                                    });
-                                    resultsHtml += '</tbody></table>';
-                                    if (data.duplicate_groups > data.preview.length) {
-                                        resultsHtml += `<p><em>(Showing first ${data.preview.length} duplicate groups out of ${data.duplicate_groups} total)</em></p>`;
+                                    // Improved summary
+                                    resultsHtml += `<p><strong>${data.duplicate_groups} Duplicate Groups Found</strong> (files with multiple database entries)</p>`;
+                                    resultsHtml += `<p><strong>Total Duplicate Items:</strong> ${data.total_duplicates}</p>`;
+                                    resultsHtml += `<p><strong>${data.dry_run ? 'Would Keep' : 'Kept'}:</strong> ${data.duplicate_groups} items (oldest per file)</p>`;
+                                    if (!data.dry_run) {
+                                        resultsHtml += `<p><strong>Items Deleted:</strong> ${data.items_deleted}</p>`;
                                     }
-                                } else if (data.duplicate_groups === 0) {
-                                    resultsHtml += '<p><em>No duplicate items found in the database.</em></p>';
+
+                                    if (data.preview && data.preview.length > 0) {
+                                        const startIdx = (page - 1) * itemsPerPage;
+                                        const endIdx = Math.min(startIdx + itemsPerPage, totalGroups);
+                                        const pageGroups = data.preview.slice(startIdx, endIdx);
+
+                                        resultsHtml += `<h4>Duplicate Groups (showing ${startIdx + 1}-${endIdx} of ${totalGroups}):</h4>`;
+                                        resultsHtml += '<table class="preview-results-table" style="width: 100%; border-collapse: collapse; margin-top: 10px;"><thead><tr style="background-color: #2a2a2a;"><th style="padding: 8px; text-align: left;">File</th><th style="padding: 8px; text-align: left;">Count</th><th style="padding: 8px; text-align: left;">Keep Item</th><th style="padding: 8px; text-align: left;">Delete Items</th></tr></thead><tbody>';
+                                        pageGroups.forEach(group => {
+                                            const keepGhostlisted = group.keep_item.ghostlisted ? 'True' : 'False';
+                                            const keepTorrentId = group.keep_item.torrent_id || 'N/A';
+                                            resultsHtml += `<tr>
+                                                <td style="border-bottom: 1px solid #333; padding: 8px; word-break: break-all; max-width: 200px;">${group.filled_by_file}</td>
+                                                <td style="border-bottom: 1px solid #333; padding: 8px; text-align: center;">${group.count}</td>
+                                                <td style="border-bottom: 1px solid #333; padding: 8px;"><strong>${group.keep_item.title}</strong><br><small>ID: ${group.keep_item.id} | State: ${group.keep_item.state} | Ghostlisted: ${keepGhostlisted}<br>Torrent ID: ${keepTorrentId}</small></td>
+                                                <td style="border-bottom: 1px solid #333; padding: 8px;">${group.delete_items.map(item => {
+                                                    const ghostlisted = item.ghostlisted ? 'True' : 'False';
+                                                    const torrentId = item.torrent_id || 'N/A';
+                                                    return `<div style="margin-bottom: 5px;"><strong>${item.title}</strong><br><small>ID: ${item.id} | State: ${item.state} | Ghostlisted: ${ghostlisted}<br>Torrent ID: ${torrentId}</small></div>`;
+                                                }).join('')}</td>
+                                            </tr>`;
+                                        });
+                                        resultsHtml += '</tbody></table>';
+
+                                        // Pagination controls
+                                        if (totalPages > 1) {
+                                            resultsHtml += `<div style="margin-top: 15px; text-align: center;">`;
+                                            resultsHtml += `<button onclick="renderDuplicatesPage(${Math.max(1, page - 1)})" style="padding: 5px 10px; margin: 0 5px;" ${page === 1 ? 'disabled' : ''}>Previous</button>`;
+                                            resultsHtml += `<span style="margin: 0 10px;">Page ${page} of ${totalPages}</span>`;
+                                            resultsHtml += `<button onclick="renderDuplicatesPage(${Math.min(totalPages, page + 1)})" style="padding: 5px 10px; margin: 0 5px;" ${page === totalPages ? 'disabled' : ''}>Next</button>`;
+                                            resultsHtml += `</div>`;
+                                        }
+                                    } else if (data.duplicate_groups === 0) {
+                                        resultsHtml += '<p><em>No duplicate items found in the database.</em></p>';
+                                    }
+
+                                    resultsHtml += '</div>';
+
+                                    const modalBody = document.getElementById('cleanup-modal-body');
+                                    modalBody.innerHTML = resultsHtml;
                                 }
 
-                                removeDuplicatesResultsDiv.innerHTML = resultsHtml;
+                                // Make function global for pagination buttons
+                                window.renderDuplicatesPage = renderDuplicatesPage;
+
+                                const modalTitle = data.dry_run ? 'Duplicate Removal Analysis (Dry Run)' : 'Duplicate Removal Results';
+
+                                // Show modal first
+                                showCleanupResultsModal('', modalTitle);
+
+                                // Then render the content with pagination
+                                renderDuplicatesPage(currentPage);
+
+                                // Clear and hide the results div since we're using modal now
+                                removeDuplicatesResultsDiv.innerHTML = '';
                             } else {
                                 throw new Error(data.error || 'An unknown error occurred.');
                             }
