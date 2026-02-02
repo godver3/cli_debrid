@@ -179,6 +179,15 @@
                         <option value="same">Delete only versions with same version field</option>
                     </select>
                 </div>
+                <div class="form-group">
+                    <label for="exclude_patterns">Exclude from deletion (optional):</label>
+                    <input type="text" id="exclude_patterns" name="exclude_patterns"
+                           placeholder="e.g., REMUX, IMAX, Director's Cut, FraMeSToR"
+                           style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
+                    <small style="color: #888; font-size: 0.85em; display: block; margin-top: 5px;">
+                        Enter comma or pipe-separated patterns. Items with filenames containing any of these patterns will be protected from deletion.
+                    </small>
+                </div>
                 <button type="submit">Run Cleanup</button>
                 <button type="button" id="view-upgrades-results-btn" style="display: none; margin-top: 10px;">View Last Results</button>
                 <div id="upgrades-progress" style="display: none; margin-top: 15px;">
@@ -3000,11 +3009,26 @@ if (document.readyState === 'loading') {
                     upgradesProgressBar.style.width = '0%';
                     upgradesProgressMessage.textContent = 'Scanning for duplicates...';
 
+                    // Helper function to format seconds to human-readable time
+                    function formatTime(seconds) {
+                        const hours = Math.floor(seconds / 3600);
+                        const minutes = Math.floor((seconds % 3600) / 60);
+                        const secs = seconds % 60;
+
+                        if (hours > 0) {
+                            return `${hours}h ${minutes}m ${secs}s`;
+                        } else if (minutes > 0) {
+                            return `${minutes}m ${secs}s`;
+                        } else {
+                            return `${secs}s`;
+                        }
+                    }
+
                     // Start the timer
                     const startTime = Date.now();
                     const timerInterval = setInterval(() => {
                         const elapsed = Math.floor((Date.now() - startTime) / 1000);
-                        upgradesElapsedTime.textContent = `Elapsed: ${elapsed}s`;
+                        upgradesElapsedTime.textContent = `Elapsed: ${formatTime(elapsed)}`;
                     }, 1000);
 
                     // Animate progress bar to 30% immediately
@@ -3021,7 +3045,15 @@ if (document.readyState === 'loading') {
                     formData.append('keep_action', keepAction);
                     formData.append('media_type', mediaType);
 
+                    // Add exclude patterns if provided
+                    const excludePatterns = document.getElementById('exclude_patterns').value.trim();
+                    if (excludePatterns) {
+                        formData.append('exclude_patterns', excludePatterns);
+                    }
+
                     // Make the request
+                    let eventSource = null;
+
                     fetch('/debug/api/cleanup_failed_upgrades', {
                         method: 'POST',
                         body: formData
@@ -3030,6 +3062,38 @@ if (document.readyState === 'loading') {
                     .then(data => {
                         clearInterval(timerInterval);
 
+                        // If we got a session_id, connect to SSE for real-time progress
+                        if (data.session_id && !dryRunChecked) {
+                            eventSource = new EventSource(`/debug/api/cleanup_progress/${data.session_id}`);
+
+                            eventSource.onmessage = (event) => {
+                                const progress = JSON.parse(event.data);
+
+                                if (progress.status === 'running') {
+                                    // Update progress bar
+                                    const percentage = (progress.items_processed / progress.total_items) * 100;
+                                    upgradesProgressBar.style.width = `${percentage}%`;
+
+                                    // Update message with phase
+                                    const phaseText = progress.phase === 'plex_deletion' ? 'Deleting from Plex' : 'Processing';
+                                    upgradesProgressMessage.textContent = `${phaseText}: ${progress.items_processed}/${progress.total_items} items`;
+
+                                    // Update elapsed and remaining time (human-readable)
+                                    const elapsedText = formatTime(progress.elapsed);
+                                    const remainingText = formatTime(progress.eta);
+                                    upgradesElapsedTime.textContent = `Elapsed: ${elapsedText} | Remaining: ~${remainingText}`;
+                                }
+
+                                if (progress.status === 'complete' || progress.status === 'error') {
+                                    eventSource.close();
+                                }
+                            };
+
+                            eventSource.onerror = () => {
+                                eventSource.close();
+                            };
+                        }
+
                         if (data.success) {
                             // Update progress to 100%
                             upgradesProgressBar.style.width = '100%';
@@ -3037,7 +3101,7 @@ if (document.readyState === 'loading') {
 
                             // Stop timer
                             const finalTime = Math.floor((Date.now() - startTime) / 1000);
-                            upgradesElapsedTime.textContent = `Completed in ${finalTime}s`;
+                            upgradesElapsedTime.textContent = `Completed in ${formatTime(finalTime)}`;
 
                             // Build results HTML for modal with pagination
                             const groupsPerPage = 20;
@@ -3049,13 +3113,37 @@ if (document.readyState === 'loading') {
                                 let resultsHtml = '<div class="episode-results-summary">';
                                 const mediaLabel = mediaType === 'show' ? 'shows' : 'movies';
 
-                                // Improved summary
-                                resultsHtml += `<p><strong>${data.total_movies} Duplicate Groups Found</strong> (each group has multiple versions of the same episode/movie)</p>`;
+                                // Summary header (full width)
+                                resultsHtml += `<p style="margin-bottom: 15px;"><strong>${data.total_movies} Duplicate Groups Found</strong> (each group has multiple versions of the same episode/movie)</p>`;
+
+                                // Two-column layout for stats
+                                resultsHtml += `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">`;
+
+                                // Left column
+                                resultsHtml += `<div>`;
                                 resultsHtml += `<p><strong>${data.dry_run ? 'Would Delete' : 'Deleted'}:</strong> ${data.total_deleted} items</p>`;
-                                resultsHtml += `<p><strong>Would Keep:</strong> ${data.total_movies} items (one per group)</p>`;
-                                resultsHtml += `<p><strong>Action:</strong> ${data.keep_action === 'keep_collected' ? 'Keep collected, delete blacklisted' : 'Keep blacklisted, delete collected'}</p>`;
+                                if (data.total_excluded && data.total_excluded > 0) {
+                                    resultsHtml += `<p><strong>🛡️ Excluded:</strong> ${data.total_excluded} items</p>`;
+                                }
+                                resultsHtml += `<p><strong>Would Keep:</strong> ${data.total_movies} items</p>`;
+                                resultsHtml += `</div>`;
+
+                                // Right column
+                                resultsHtml += `<div>`;
+
+                                // Determine action text based on keep_action
+                                let actionText = 'Keep collected, delete blacklisted';
+                                if (data.keep_action === 'keep_blacklisted') {
+                                    actionText = 'Keep blacklisted, delete collected';
+                                } else if (data.keep_action === 'keep_best_quality') {
+                                    actionText = 'Keep best quality, delete rest';
+                                }
+                                resultsHtml += `<p><strong>Action:</strong> ${actionText}</p>`;
                                 resultsHtml += `<p><strong>Version Match:</strong> ${data.version_match === 'all' ? 'Any version' : 'Same version only'}</p>`;
                                 resultsHtml += `<p><strong>Elapsed Time:</strong> ${data.elapsed_time}s</p>`;
+                                resultsHtml += `</div>`;
+
+                                resultsHtml += `</div>`; // Close grid
 
                                 if (data.groups && data.groups.length > 0) {
                                     const startIdx = (page - 1) * groupsPerPage;
@@ -3090,7 +3178,17 @@ if (document.readyState === 'loading') {
                                             const episode = item.season_number ? ` S${item.season_number}E${item.episode_number}` : '';
                                             const scoreDisplay = item.current_score !== undefined && item.current_score !== 'N/A' ? ` | Score: ${typeof item.current_score === 'number' ? item.current_score.toFixed(1) : item.current_score}` : '';
                                             const fileLocation = item.location && item.location !== 'N/A' ? item.location : 'No file location';
-                                            resultsHtml += `<div style="margin-bottom: 8px;"><strong>${item.title}${episode}</strong><br>`;
+
+                                            // Check if item is excluded (green background) or deleted (red background)
+                                            const isExcluded = item.action === 'excluded';
+                                            const itemStyle = isExcluded ? 'background: rgba(76, 175, 80, 0.2); padding: 8px; border-radius: 4px; border-left: 3px solid #4CAF50;' : '';
+                                            const statusText = isExcluded ? `🛡️ Excluded from deletion (pattern: ${item.excluded_pattern})` : '';
+
+                                            resultsHtml += `<div style="margin-bottom: 8px; ${itemStyle}">`;
+                                            if (isExcluded) {
+                                                resultsHtml += `<div style="color: #4CAF50; font-weight: bold; margin-bottom: 4px; font-size: 0.9em;">${statusText}</div>`;
+                                            }
+                                            resultsHtml += `<strong>${item.title}${episode}</strong><br>`;
                                             resultsHtml += `<small>ID: ${item.id} | State: ${item.state} | Version: ${item.version}${scoreDisplay}</small><br>`;
                                             resultsHtml += `<small style="color: #aaa; font-size: 0.85em; word-break: break-all;">File: ${fileLocation}</small></div>`;
                                         });
