@@ -5053,12 +5053,14 @@ def remove_duplicate_items():
         cursor = conn.cursor()
         
         # Find all items with filled_by_file that have duplicates
+        # Filter out Sample.mkv files
         cursor.execute("""
             SELECT filled_by_file, COUNT(*) as count, GROUP_CONCAT(id) as ids
-            FROM media_items 
-            WHERE filled_by_file IS NOT NULL 
+            FROM media_items
+            WHERE filled_by_file IS NOT NULL
             AND filled_by_file != ''
-            GROUP BY filled_by_file 
+            AND filled_by_file NOT LIKE '%sample%'
+            GROUP BY filled_by_file
             HAVING COUNT(*) > 1
             ORDER BY count DESC
         """)
@@ -5075,37 +5077,65 @@ def remove_duplicate_items():
             
             # Get details for all items with this filled_by_file
             cursor.execute("""
-                SELECT id, title, type, state, collected_at, version, imdb_id, tmdb_id
-                FROM media_items 
+                SELECT id, title, type, state, collected_at, version, imdb_id, tmdb_id,
+                       ghostlisted, filled_by_torrent_id
+                FROM media_items
                 WHERE id IN ({})
                 ORDER BY collected_at ASC, id ASC
             """.format(','.join(['?'] * len(ids))), ids)
-            
+
             items = cursor.fetchall()
-            
-            # Keep the first item (oldest collected_at, then lowest ID)
-            keep_item = items[0]
-            delete_items = items[1:]
+
+            # Smart selection logic:
+            # 1. Prefer Collected state over others
+            # 2. If all are Blacklisted, prefer ghostlisted=1
+            # 3. Otherwise, keep oldest (existing logic)
+            collected_items = [item for item in items if item['state'] == 'Collected']
+
+            if collected_items:
+                # Prefer Collected items, keep oldest Collected
+                keep_item = collected_items[0]
+                delete_items = [item for item in items if item['id'] != keep_item['id']]
+            else:
+                # No Collected items - check if all are Blacklisted
+                all_blacklisted = all(item['state'] == 'Blacklisted' for item in items)
+
+                if all_blacklisted:
+                    # All are Blacklisted - prefer ghostlisted=1
+                    ghostlisted_items = [item for item in items if item['ghostlisted'] == 1]
+                    if ghostlisted_items:
+                        keep_item = ghostlisted_items[0]  # Keep oldest ghostlisted
+                    else:
+                        keep_item = items[0]  # Fallback to oldest
+                    delete_items = [item for item in items if item['id'] != keep_item['id']]
+                else:
+                    # Mixed states (no Collected) - keep oldest
+                    keep_item = items[0]
+                    delete_items = items[1:]
             
             total_duplicates += len(delete_items)
             items_to_delete.extend([item['id'] for item in delete_items])
-            
-            if len(preview) < 10:  # Limit preview to 10 groups
-                preview.append({
+
+            # Add all groups to preview for pagination
+            preview.append({
                     'filled_by_file': filled_by_file,
                     'count': count,
                     'keep_item': {
                         'id': keep_item['id'],
                         'title': keep_item['title'],
                         'type': keep_item['type'],
-                        'state': keep_item['state']
+                        'state': keep_item['state'],
+                        'ghostlisted': keep_item['ghostlisted'],
+                        'torrent_id': keep_item['filled_by_torrent_id']
                     },
                     'delete_items': [
                         {
                             'id': item['id'],
                             'title': item['title'],
                             'type': item['type'],
-                            'state': item['state']
+                            'state': item['state'],
+                            'ghostlisted': item['ghostlisted'],
+                            'torrent_id': item['filled_by_torrent_id']
                         } for item in delete_items
                     ]
                 })
@@ -5404,12 +5434,12 @@ def fix_episode_numbers():
             'success': True,
             'dry_run': dry_run,
             'mismatches_found': len(mismatches),
-            'mismatches': mismatches[:50],  # Limit to first 50 for display
+            'mismatches': mismatches,  # Return all for pagination
             'fixed_count': fixed_count if not dry_run else 0,
             'duplicates_found': len(duplicates) if show_duplicates else None,
-            'duplicates': duplicates[:20] if show_duplicates else None,  # Limit to first 20
+            'duplicates': duplicates if show_duplicates else None,  # Return all for pagination
             'torrent_duplicates_found': len(torrent_duplicates),
-            'torrent_duplicates': torrent_duplicates[:20],  # Bug-created duplicates
+            'torrent_duplicates': torrent_duplicates,  # Return all for pagination
             'deleted_count': deleted_count if not dry_run else 0
         })
 
@@ -5442,6 +5472,7 @@ def cleanup_ghostlisted_duplicates():
     total_deleted = 0
     total_movies = 0
     results = []
+    groups = []  # Store groups with keep/delete items
 
     try:
         conn = get_db_connection()
@@ -5455,17 +5486,31 @@ def cleanup_ghostlisted_duplicates():
             media_label = "movies"
 
         # Find items with both collected and ghostlisted versions
-        cursor = conn.execute(f"""
-            SELECT imdb_id,
-                   COUNT(*) as total_versions,
-                   SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
-                   SUM(CASE WHEN state = 'Collected' THEN 1 ELSE 0 END) as collected_count
-            FROM media_items
-            WHERE {type_filter} AND imdb_id IS NOT NULL
-            GROUP BY imdb_id
-            HAVING ghostlisted_count > 0 AND collected_count > 0
-            ORDER BY imdb_id
-        """)
+        # For shows, group by season/episode to find actual duplicate episodes
+        if media_type == 'show':
+            cursor = conn.execute(f"""
+                SELECT imdb_id, season_number, episode_number,
+                       COUNT(*) as total_versions,
+                       SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
+                       SUM(CASE WHEN state = 'Collected' THEN 1 ELSE 0 END) as collected_count
+                FROM media_items
+                WHERE {type_filter} AND imdb_id IS NOT NULL
+                GROUP BY imdb_id, season_number, episode_number
+                HAVING ghostlisted_count > 0 AND collected_count > 0
+                ORDER BY imdb_id, season_number, episode_number
+            """)
+        else:
+            cursor = conn.execute(f"""
+                SELECT imdb_id,
+                       COUNT(*) as total_versions,
+                       SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
+                       SUM(CASE WHEN state = 'Collected' THEN 1 ELSE 0 END) as collected_count
+                FROM media_items
+                WHERE {type_filter} AND imdb_id IS NOT NULL
+                GROUP BY imdb_id
+                HAVING ghostlisted_count > 0 AND collected_count > 0
+                ORDER BY imdb_id
+            """)
         mixed_movies = cursor.fetchall()
         cursor.close()
 
@@ -5482,18 +5527,32 @@ def cleanup_ghostlisted_duplicates():
                 'results': []
             })
 
-        # Process each movie
+        # Process each item
         for idx, movie in enumerate(mixed_movies, 1):
             imdb_id = movie['imdb_id']
 
             # Get all versions of this item
-            cursor = conn.execute(f"""
-                SELECT id, title, state, ghostlisted, content_source,
-                       filled_by_file, location_basename, location_on_disk, filled_by_torrent_id
-                FROM media_items
-                WHERE imdb_id = ? AND {type_filter}
-                ORDER BY ghostlisted, id
-            """, (imdb_id,))
+            # For shows, also filter by season/episode to get the correct duplicates
+            if media_type == 'show':
+                season_num = movie['season_number']
+                episode_num = movie['episode_number']
+                cursor = conn.execute(f"""
+                    SELECT id, title, state, ghostlisted, content_source,
+                           filled_by_file, location_basename, location_on_disk, filled_by_torrent_id,
+                           season_number, episode_number
+                    FROM media_items
+                    WHERE imdb_id = ? AND {type_filter}
+                          AND season_number = ? AND episode_number = ?
+                    ORDER BY ghostlisted, id
+                """, (imdb_id, season_num, episode_num))
+            else:
+                cursor = conn.execute(f"""
+                    SELECT id, title, state, ghostlisted, content_source,
+                           filled_by_file, location_basename, location_on_disk, filled_by_torrent_id
+                    FROM media_items
+                    WHERE imdb_id = ? AND {type_filter}
+                    ORDER BY ghostlisted, id
+                """, (imdb_id,))
             versions = cursor.fetchall()
             cursor.close()
 
@@ -5516,17 +5575,72 @@ def cleanup_ghostlisted_duplicates():
                 # Determine which location field to use (first non-null)
                 location = ghost['filled_by_file'] or ghost['location_basename'] or ghost['location_on_disk'] or 'N/A'
 
-                results.append({
+                result_data = {
                     'movie_id': ghost['id'],
                     'title': ghost['title'],
                     'imdb_id': imdb_id,
+                    'state': ghost['state'],
                     'source': ghost['content_source'],
                     'location': location,
                     'torrent_id': ghost['filled_by_torrent_id'] or 'N/A',
                     'action': 'deleted' if not dry_run else 'would_delete'
-                })
+                }
+
+                # Add season/episode info for shows
+                if media_type == 'show':
+                    result_data['season_number'] = ghost['season_number'] if 'season_number' in ghost.keys() else 'N/A'
+                    result_data['episode_number'] = ghost['episode_number'] if 'episode_number' in ghost.keys() else 'N/A'
+
+                results.append(result_data)
 
             total_deleted += len(deleted_ids)
+
+            # Build grouped data for display
+            group_keep_items = []
+            group_delete_items = []
+
+            # Add kept (collected) versions
+            for collected in collected_versions:
+                location = collected['filled_by_file'] or collected['location_basename'] or collected['location_on_disk'] or 'N/A'
+                keep_data = {
+                    'movie_id': collected['id'],
+                    'title': collected['title'],
+                    'imdb_id': imdb_id,
+                    'state': collected['state'],
+                    'source': collected['content_source'],
+                    'location': location,
+                    'torrent_id': collected['filled_by_torrent_id'] or 'N/A',
+                    'action': 'kept'
+                }
+                if media_type == 'show':
+                    keep_data['season_number'] = collected['season_number'] if 'season_number' in collected.keys() else 'N/A'
+                    keep_data['episode_number'] = collected['episode_number'] if 'episode_number' in collected.keys() else 'N/A'
+                group_keep_items.append(keep_data)
+
+            # Add deleted (ghostlisted) versions
+            for ghost in ghostlisted_versions:
+                location = ghost['filled_by_file'] or ghost['location_basename'] or ghost['location_on_disk'] or 'N/A'
+                delete_data = {
+                    'movie_id': ghost['id'],
+                    'title': ghost['title'],
+                    'imdb_id': imdb_id,
+                    'state': ghost['state'],
+                    'source': ghost['content_source'],
+                    'location': location,
+                    'torrent_id': ghost['filled_by_torrent_id'] or 'N/A',
+                    'action': 'deleted' if not dry_run else 'would_delete'
+                }
+                if media_type == 'show':
+                    delete_data['season_number'] = ghost['season_number'] if 'season_number' in ghost.keys() else 'N/A'
+                    delete_data['episode_number'] = ghost['episode_number'] if 'episode_number' in ghost.keys() else 'N/A'
+                group_delete_items.append(delete_data)
+
+            # Add this group
+            group_data = {
+                'keep_items': group_keep_items,
+                'delete_items': group_delete_items
+            }
+            groups.append(group_data)
 
         if not dry_run and total_deleted > 0:
             conn.commit()
@@ -5540,7 +5654,8 @@ def cleanup_ghostlisted_duplicates():
             'total_deleted': total_deleted,
             'elapsed_time': round(elapsed_time, 2),
             'dry_run': dry_run,
-            'results': results[:50]  # Limit to first 50 for display
+            'results': results,  # Return all results for pagination (flat list for backwards compatibility)
+            'groups': groups  # Grouped data for better display
         })
 
     except Exception as e:
@@ -5559,20 +5674,26 @@ def cleanup_ghostlisted_duplicates():
 @debug_bp.route('/api/cleanup_failed_upgrades', methods=['POST'])
 @admin_required
 def cleanup_failed_upgrades():
-    """Remove blacklisted (non-ghostlisted) duplicate entries.
+    """Remove duplicate entries - handles failed upgrades and multiple collected versions.
 
-    Supports both movies and TV shows.
-    Can either keep collected and delete blacklisted, or keep blacklisted and delete collected.
+    Supports both movies and TV shows with three modes:
 
-    This handles failed upgrade attempts where an item has both:
-    - Collected version (any version)
-    - Blacklisted version (ghostlisted=0, state='Blacklisted')
+    1. Keep Collected, Delete Blacklisted (for failed upgrades):
+       Handles items with both Collected and Blacklisted versions
+
+    2. Keep Blacklisted, Delete Collected (for blacklist bug):
+       Reverses the action to fix blacklist bugs
+
+    3. Keep Best Quality, Delete Rest (NEW - for multiple collected):
+       When multiple collected versions exist, keeps the one with the highest
+       current_score and deletes the rest. Uses resolution-based fallback if
+       scores are NULL (2160p > 1080p > 720p > 480p > SD).
 
     Args:
         dry_run: If 'on', only preview what would be deleted
         version_match: If 'same', only delete items with matching version. If 'all', delete all.
         media_type: 'movie' or 'show' (default: 'movie')
-        keep_action: 'keep_collected' or 'keep_blacklisted' (default: 'keep_collected')
+        keep_action: 'keep_collected', 'keep_blacklisted', or 'keep_best_quality' (default: 'keep_collected')
     """
     from database.core import get_db_connection
     import time
@@ -5596,38 +5717,419 @@ def cleanup_failed_upgrades():
             type_filter = "type = 'movie'"
             media_label = "movies"
 
+        # Handle keep_best_quality mode separately (finds items with multiple collected versions)
+        if keep_action == 'keep_best_quality':
+            # Find items with multiple collected (non-ghostlisted) versions
+            # For shows, group by season/episode to find actual duplicate episodes
+            if media_type == 'show':
+                cursor.execute(f"""
+                    SELECT imdb_id, season_number, episode_number,
+                           COUNT(*) as total_versions
+                    FROM media_items
+                    WHERE {type_filter} AND imdb_id IS NOT NULL
+                          AND state = 'Collected' AND ghostlisted = 0
+                    GROUP BY imdb_id, season_number, episode_number
+                    HAVING total_versions > 1
+                    ORDER BY imdb_id, season_number, episode_number
+                """)
+            else:
+                cursor.execute(f"""
+                    SELECT imdb_id,
+                           COUNT(*) as total_versions
+                    FROM media_items
+                    WHERE {type_filter} AND imdb_id IS NOT NULL
+                          AND state = 'Collected' AND ghostlisted = 0
+                    GROUP BY imdb_id
+                    HAVING total_versions > 1
+                    ORDER BY imdb_id
+                """)
+
+            problem_movies = cursor.fetchall()
+            total_movies = len(problem_movies)
+            total_deleted = 0
+            results = []
+            groups = []  # Store groups with keep/delete items
+
+            for movie_row in problem_movies:
+                imdb_id = movie_row[0]
+
+                # Get all collected versions of this item with their scores
+                if media_type == 'show':
+                    season_num = movie_row[1]
+                    episode_num = movie_row[2]
+                    cursor.execute(f"""
+                        SELECT id, title, state, ghostlisted, content_source, version,
+                               filled_by_file, location_basename, location_on_disk, filled_by_torrent_id,
+                               season_number, episode_number, current_score
+                        FROM media_items
+                        WHERE imdb_id = ? AND {type_filter}
+                              AND season_number = ? AND episode_number = ?
+                              AND state = 'Collected' AND ghostlisted = 0
+                        ORDER BY current_score DESC NULLS LAST, id
+                    """, (imdb_id, season_num, episode_num))
+
+                    versions = [dict(zip(['id', 'title', 'state', 'ghostlisted', 'content_source', 'version',
+                                          'filled_by_file', 'location_basename', 'location_on_disk', 'filled_by_torrent_id',
+                                          'season_number', 'episode_number', 'current_score'], row))
+                               for row in cursor.fetchall()]
+                else:
+                    cursor.execute(f"""
+                        SELECT id, title, state, ghostlisted, content_source, version,
+                               filled_by_file, location_basename, location_on_disk, filled_by_torrent_id,
+                               current_score
+                        FROM media_items
+                        WHERE imdb_id = ? AND {type_filter}
+                              AND state = 'Collected' AND ghostlisted = 0
+                        ORDER BY current_score DESC NULLS LAST, id
+                    """, (imdb_id,))
+
+                    versions = [dict(zip(['id', 'title', 'state', 'ghostlisted', 'content_source', 'version',
+                                          'filled_by_file', 'location_basename', 'location_on_disk', 'filled_by_torrent_id',
+                                          'current_score'], row))
+                               for row in cursor.fetchall()]
+
+                # Skip if we don't have multiple versions
+                if len(versions) < 2:
+                    continue
+
+                # Load user's configured version settings and helper function for quality scoring
+                from utilities.settings import get_setting
+                from scraper.functions.rank_results import check_preferred
+
+                scraping_versions = get_setting('Scraping', 'versions', {})
+
+                # Helper function to calculate quality score by matching filename against filters
+                def get_version_quality_score(item):
+                    """Calculate quality score based on version settings and filename matching"""
+                    # Get the version name for this item
+                    version_str = item.get('version', '')
+                    if not version_str:
+                        return 0
+
+                    # Remove asterisks for version matching
+                    clean_version = version_str.rstrip('*').strip()
+
+                    # Get version config (try exact match, then case-insensitive)
+                    version_config = scraping_versions.get(clean_version)
+                    if not version_config:
+                        for ver_name, ver_config in scraping_versions.items():
+                            if ver_name.lower() == clean_version.lower():
+                                version_config = ver_config
+                                break
+
+                    if not version_config:
+                        return 0  # Unknown version
+
+                    # Calculate base quality score from weights and settings
+                    quality_score = 0
+
+                    # Add ALL weight fields
+                    quality_score += float(version_config.get('resolution_weight', 3.0))
+                    quality_score += float(version_config.get('hdr_weight', 3.0))
+                    quality_score += float(version_config.get('size_weight', 3.0))
+                    quality_score += float(version_config.get('bitrate_weight', 3.0))
+                    quality_score += float(version_config.get('similarity_weight', 3.0))
+                    quality_score += float(version_config.get('year_match_weight', 3.0))
+                    quality_score += float(version_config.get('country_weight', 3.0))
+                    quality_score += float(version_config.get('language_weight', 3.0))
+
+                    # Add resolution preference
+                    max_res = version_config.get('max_resolution', '1080p')
+                    if max_res == '2160p':
+                        quality_score += 50
+                    elif max_res == '1080p':
+                        quality_score += 30
+                    elif max_res == '720p':
+                        quality_score += 15
+                    elif max_res == 'SD':
+                        quality_score += 5
+
+                    # Add HDR preference
+                    if version_config.get('enable_hdr', False):
+                        quality_score += 20
+
+                    # Add quality thresholds
+                    min_size = float(version_config.get('min_size_gb', 0))
+                    if min_size > 0:
+                        quality_score += min_size * 0.5
+
+                    min_bitrate = float(version_config.get('min_bitrate_mbps', 0))
+                    if min_bitrate > 0:
+                        quality_score += min_bitrate * 0.2
+
+                    # Get filename from item (first non-null) - fallback to empty string
+                    filename = item.get('filled_by_file') or item.get('location_basename') or item.get('location_on_disk') or ''
+
+                    if filename:
+                        # Use the existing check_preferred function to match patterns
+                        # Match against preferred_filter_in (bonus)
+                        preferred_filter_in = version_config.get('preferred_filter_in', [])
+                        if preferred_filter_in:
+                            in_score, _ = check_preferred(preferred_filter_in, [filename], is_bonus=True)
+                            quality_score += in_score
+
+                        # Match against preferred_filter_out (penalty)
+                        preferred_filter_out = version_config.get('preferred_filter_out', [])
+                        if preferred_filter_out:
+                            out_score, _ = check_preferred(preferred_filter_out, [filename], is_bonus=False)
+                            quality_score += out_score  # out_score is already negative
+
+                    # Penalty for asterisks in version string (less confident match)
+                    asterisk_penalty = version_str.count('*') * 5
+                    quality_score -= asterisk_penalty
+
+                    return quality_score
+
+                # Calculate quality scores for all items and store in dict
+                for v in versions:
+                    v['calculated_quality_score'] = get_version_quality_score(v)
+
+                # Check if we have a mix of scored/unscored items
+                # If ANY item has score 0.0/NULL, ignore ALL scores and use version quality ranking
+                has_scored = any(v.get('current_score') and v.get('current_score') > 0 for v in versions)
+                has_unscored = any(not v.get('current_score') or v.get('current_score') <= 0 for v in versions)
+                use_version_quality_only = has_scored and has_unscored  # Mixed scoring
+
+                def get_sort_key(v):
+                    """Sort key: use scores if all have scores, otherwise use version quality for all"""
+                    if use_version_quality_only:
+                        # Mixed scoring detected - use version quality (already calculated)
+                        score = v.get('current_score')
+                        has_valid_score = 1 if score and score > 0 else 0
+                        return (
+                            v['calculated_quality_score'],  # Primary: version quality
+                            has_valid_score,  # Secondary: prefer items with actual scores
+                            score or 0,  # Tertiary: actual score value as tiebreaker
+                            v['id']  # Final: most recent
+                        )
+                    else:
+                        # All scored or all unscored - use appropriate method
+                        score = v.get('current_score')
+                        if score is None or score <= 0:
+                            return (0, v['calculated_quality_score'], v['id'])
+                        else:
+                            return (1, score, v['id'])
+
+                # When version_match == 'same', only compare versions with the same version field
+                if version_match == 'same':
+                    # Group by version field (strip asterisks for comparison)
+                    version_groups = {}
+                    for v in versions:
+                        ver_field = v.get('version', 'Unknown')
+                        # Strip asterisks to normalize: "Default" == "Default*" == "Default**"
+                        clean_ver_field = ver_field.rstrip('*').strip() if ver_field else 'Unknown'
+                        if clean_ver_field not in version_groups:
+                            version_groups[clean_ver_field] = []
+                        version_groups[clean_ver_field].append(v)
+
+                    # Process each version group separately
+                    for ver_field, ver_list in version_groups.items():
+                        if len(ver_list) < 2:
+                            continue  # Skip groups with only one version
+
+                        # Sort this version group
+                        ver_list.sort(key=get_sort_key, reverse=True)
+
+                        # Keep the first, delete the rest
+                        version_to_keep = ver_list[0]
+                        versions_to_delete = ver_list[1:]
+
+                        # Build group data for this version field group
+                        group_keep_items = []
+                        group_delete_items = []
+
+                        # Add kept version
+                        location = version_to_keep['filled_by_file'] or version_to_keep['location_basename'] or version_to_keep['location_on_disk'] or 'N/A'
+                        keep_data = {
+                            'id': version_to_keep['id'],
+                            'title': version_to_keep['title'],
+                            'state': version_to_keep['state'],
+                            'version': version_to_keep['version'],
+                            'content_source': version_to_keep['content_source'],
+                            'location': location,
+                            'torrent_id': version_to_keep['filled_by_torrent_id'] or 'N/A',
+                            'current_score': version_to_keep.get('calculated_quality_score', version_to_keep.get('current_score', 'N/A'))
+                        }
+                        if media_type == 'show':
+                            keep_data['season_number'] = version_to_keep.get('season_number', 'N/A')
+                            keep_data['episode_number'] = version_to_keep.get('episode_number', 'N/A')
+                        group_keep_items.append(keep_data)
+
+                        # Delete the lower-quality versions
+                        for version in versions_to_delete:
+                            if not dry_run:
+                                cursor.execute("DELETE FROM media_items WHERE id = ?", (version['id'],))
+
+                            total_deleted += 1
+                            location = version['filled_by_file'] or version['location_basename'] or version['location_on_disk'] or 'N/A'
+                            delete_data = {
+                                'id': version['id'],
+                                'title': version['title'],
+                                'state': version['state'],
+                                'version': version['version'],
+                                'content_source': version['content_source'],
+                                'location': location,
+                                'torrent_id': version['filled_by_torrent_id'] or 'N/A',
+                                'action': 'deleted' if not dry_run else 'would_delete',
+                                'current_score': version.get('calculated_quality_score', version.get('current_score', 'N/A'))
+                            }
+                            if media_type == 'show':
+                                delete_data['season_number'] = version.get('season_number', 'N/A')
+                                delete_data['episode_number'] = version.get('episode_number', 'N/A')
+                            group_delete_items.append(delete_data)
+                            results.append(delete_data)
+
+                        # Add this group
+                        group_data = {
+                            'keep_items': group_keep_items,
+                            'delete_items': group_delete_items
+                        }
+                        groups.append(group_data)
+
+                    # Skip the rest of the loop since we've processed all version groups
+                    continue
+
+                # version_match == 'all': Compare across all version fields
+                # Sort by: (has_valid_score, score_or_version_quality, id)
+                versions.sort(key=get_sort_key, reverse=True)
+
+                # Keep the first (best) version, delete the rest
+                version_to_keep = versions[0]
+                versions_to_delete = versions[1:]
+
+                # Build group data
+                group_keep_items = []
+                group_delete_items = []
+
+                # Add kept version
+                location = version_to_keep['filled_by_file'] or version_to_keep['location_basename'] or version_to_keep['location_on_disk'] or 'N/A'
+                keep_data = {
+                    'id': version_to_keep['id'],
+                    'title': version_to_keep['title'],
+                    'state': version_to_keep['state'],
+                    'version': version_to_keep['version'],
+                    'content_source': version_to_keep['content_source'],
+                    'location': location,
+                    'torrent_id': version_to_keep['filled_by_torrent_id'] or 'N/A',
+                    'current_score': version_to_keep.get('calculated_quality_score', version_to_keep.get('current_score', 'N/A'))
+                }
+                if media_type == 'show':
+                    keep_data['season_number'] = version_to_keep.get('season_number', 'N/A')
+                    keep_data['episode_number'] = version_to_keep.get('episode_number', 'N/A')
+                group_keep_items.append(keep_data)
+
+                # Delete the lower-quality versions
+                for version in versions_to_delete:
+                    if not dry_run:
+                        cursor.execute("DELETE FROM media_items WHERE id = ?", (version['id'],))
+
+                    total_deleted += 1
+                    location = version['filled_by_file'] or version['location_basename'] or version['location_on_disk'] or 'N/A'
+                    delete_data = {
+                        'id': version['id'],
+                        'title': version['title'],
+                        'state': version['state'],
+                        'version': version['version'],
+                        'content_source': version['content_source'],
+                        'location': location,
+                        'torrent_id': version['filled_by_torrent_id'] or 'N/A',
+                        'action': 'deleted' if not dry_run else 'would_delete',
+                        'current_score': version.get('calculated_quality_score', version.get('current_score', 'N/A'))
+                    }
+                    if media_type == 'show':
+                        delete_data['season_number'] = version.get('season_number', 'N/A')
+                        delete_data['episode_number'] = version.get('episode_number', 'N/A')
+                    group_delete_items.append(delete_data)
+                    results.append(delete_data)
+
+                # Add this group
+                group_data = {
+                    'keep_items': group_keep_items,
+                    'delete_items': group_delete_items
+                }
+                groups.append(group_data)
+
+            if not dry_run and total_deleted > 0:
+                conn.commit()
+
+            elapsed_time = time.time() - start_time
+
+            return jsonify({
+                'success': True,
+                'message': f'{"Would delete" if dry_run else "Deleted"} {total_deleted} lower-quality duplicates from {total_movies} {media_label} (kept best quality)',
+                'total_movies': total_movies,
+                'total_deleted': total_deleted,
+                'elapsed_time': round(elapsed_time, 2),
+                'dry_run': dry_run,
+                'results': results,
+                'groups': groups
+            })
+
         # Find items with both collected and blacklisted (non-ghostlisted) versions
-        cursor.execute(f"""
-            SELECT imdb_id,
-                   COUNT(*) as total_versions,
-                   SUM(CASE WHEN state = 'Blacklisted' AND ghostlisted = 0 THEN 1 ELSE 0 END) as blacklisted_count,
-                   SUM(CASE WHEN state = 'Collected' THEN 1 ELSE 0 END) as collected_count
-            FROM media_items
-            WHERE {type_filter} AND imdb_id IS NOT NULL
-            GROUP BY imdb_id
-            HAVING blacklisted_count > 0 AND collected_count > 0
-        """)
+        # For shows, group by season/episode to find actual duplicate episodes
+        if media_type == 'show':
+            cursor.execute(f"""
+                SELECT imdb_id, season_number, episode_number,
+                       COUNT(*) as total_versions,
+                       SUM(CASE WHEN state = 'Blacklisted' AND ghostlisted = 0 THEN 1 ELSE 0 END) as blacklisted_count,
+                       SUM(CASE WHEN state = 'Collected' THEN 1 ELSE 0 END) as collected_count
+                FROM media_items
+                WHERE {type_filter} AND imdb_id IS NOT NULL
+                GROUP BY imdb_id, season_number, episode_number
+                HAVING blacklisted_count > 0 AND collected_count > 0
+            """)
+        else:
+            cursor.execute(f"""
+                SELECT imdb_id,
+                       COUNT(*) as total_versions,
+                       SUM(CASE WHEN state = 'Blacklisted' AND ghostlisted = 0 THEN 1 ELSE 0 END) as blacklisted_count,
+                       SUM(CASE WHEN state = 'Collected' THEN 1 ELSE 0 END) as collected_count
+                FROM media_items
+                WHERE {type_filter} AND imdb_id IS NOT NULL
+                GROUP BY imdb_id
+                HAVING blacklisted_count > 0 AND collected_count > 0
+            """)
 
         problem_movies = cursor.fetchall()
         total_movies = len(problem_movies)
         total_deleted = 0
         results = []
+        groups = []  # Store groups with keep/delete items
 
         for movie_row in problem_movies:
             imdb_id = movie_row[0]
 
             # Get all versions of this item
-            cursor.execute(f"""
-                SELECT id, title, state, ghostlisted, content_source, version,
-                       filled_by_file, location_basename, location_on_disk, filled_by_torrent_id
-                FROM media_items
-                WHERE imdb_id = ? AND {type_filter}
-                ORDER BY state, id
-            """, (imdb_id,))
+            # For shows, also filter by season/episode to get the correct duplicates
+            if media_type == 'show':
+                season_num = movie_row[1]
+                episode_num = movie_row[2]
+                cursor.execute(f"""
+                    SELECT id, title, state, ghostlisted, content_source, version,
+                           filled_by_file, location_basename, location_on_disk, filled_by_torrent_id,
+                           season_number, episode_number
+                    FROM media_items
+                    WHERE imdb_id = ? AND {type_filter}
+                          AND season_number = ? AND episode_number = ?
+                    ORDER BY state, id
+                """, (imdb_id, season_num, episode_num))
 
-            versions = [dict(zip(['id', 'title', 'state', 'ghostlisted', 'content_source', 'version',
-                                  'filled_by_file', 'location_basename', 'location_on_disk', 'filled_by_torrent_id'], row))
-                       for row in cursor.fetchall()]
+                versions = [dict(zip(['id', 'title', 'state', 'ghostlisted', 'content_source', 'version',
+                                      'filled_by_file', 'location_basename', 'location_on_disk', 'filled_by_torrent_id',
+                                      'season_number', 'episode_number'], row))
+                           for row in cursor.fetchall()]
+            else:
+                cursor.execute(f"""
+                    SELECT id, title, state, ghostlisted, content_source, version,
+                           filled_by_file, location_basename, location_on_disk, filled_by_torrent_id
+                    FROM media_items
+                    WHERE imdb_id = ? AND {type_filter}
+                    ORDER BY state, id
+                """, (imdb_id,))
+
+                versions = [dict(zip(['id', 'title', 'state', 'ghostlisted', 'content_source', 'version',
+                                      'filled_by_file', 'location_basename', 'location_on_disk', 'filled_by_torrent_id'], row))
+                           for row in cursor.fetchall()]
 
             # Separate collected and blacklisted (non-ghostlisted) versions
             collected_versions = [v for v in versions if v['state'] == 'Collected']
@@ -5640,6 +6142,7 @@ def cleanup_failed_upgrades():
 
             # Determine which versions to delete based on keep_action
             versions_to_delete = []
+            versions_to_keep = []
 
             if keep_action == 'keep_blacklisted':
                 # Delete collected versions, keep blacklisted
@@ -5647,20 +6150,45 @@ def cleanup_failed_upgrades():
                     # Only delete collected versions that match a blacklisted version
                     blacklisted_version_set = {v['version'] for v in blacklisted_versions}
                     versions_to_delete = [v for v in collected_versions if v['version'] in blacklisted_version_set]
+                    versions_to_keep = [v for v in blacklisted_versions if v['version'] in blacklisted_version_set]
                 else:  # 'all'
                     # Delete all collected versions regardless of version field
                     versions_to_delete = collected_versions
+                    versions_to_keep = blacklisted_versions
             else:  # keep_collected
                 # Delete blacklisted versions, keep collected (default behavior)
                 if version_match == 'same':
                     # Only delete blacklisted versions that match a collected version
                     collected_version_set = {v['version'] for v in collected_versions}
                     versions_to_delete = [v for v in blacklisted_versions if v['version'] in collected_version_set]
+                    versions_to_keep = [v for v in collected_versions if v['version'] in collected_version_set]
                 else:  # 'all'
                     # Delete all blacklisted versions regardless of version field
                     versions_to_delete = blacklisted_versions
+                    versions_to_keep = collected_versions
 
-            # Delete the identified versions
+            # Build group data
+            group_keep_items = []
+            group_delete_items = []
+
+            # Process keep items
+            for version in versions_to_keep:
+                location = version['filled_by_file'] or version['location_basename'] or version['location_on_disk'] or 'N/A'
+                keep_data = {
+                    'id': version['id'],
+                    'title': version['title'],
+                    'state': version['state'],
+                    'version': version['version'],
+                    'content_source': version['content_source'],
+                    'location': location,
+                    'torrent_id': version['filled_by_torrent_id'] or 'N/A'
+                }
+                if media_type == 'show':
+                    keep_data['season_number'] = version['season_number'] if 'season_number' in version.keys() else 'N/A'
+                    keep_data['episode_number'] = version['episode_number'] if 'episode_number' in version.keys() else 'N/A'
+                group_keep_items.append(keep_data)
+
+            # Delete the identified versions and collect delete data
             for version in versions_to_delete:
                 if not dry_run:
                     conn.execute("DELETE FROM media_items WHERE id = ?", (version['id'],))
@@ -5670,14 +6198,31 @@ def cleanup_failed_upgrades():
                 # Determine which location field to use (first non-null)
                 location = version['filled_by_file'] or version['location_basename'] or version['location_on_disk'] or 'N/A'
 
-                results.append({
+                delete_data = {
                     'id': version['id'],
                     'title': version['title'],
+                    'state': version['state'],
                     'version': version['version'],
                     'content_source': version['content_source'],
                     'location': location,
                     'torrent_id': version['filled_by_torrent_id'] or 'N/A'
-                })
+                }
+
+                # Add season/episode info for shows
+                if media_type == 'show':
+                    delete_data['season_number'] = version['season_number'] if 'season_number' in version.keys() else 'N/A'
+                    delete_data['episode_number'] = version['episode_number'] if 'episode_number' in version.keys() else 'N/A'
+
+                group_delete_items.append(delete_data)
+                results.append(delete_data)  # Keep for backwards compatibility
+
+            # Create group structure
+            if group_keep_items and group_delete_items:
+                group_data = {
+                    'keep_items': group_keep_items,
+                    'delete_items': group_delete_items
+                }
+                groups.append(group_data)
 
         if not dry_run and total_deleted > 0:
             conn.commit()
@@ -5700,7 +6245,8 @@ def cleanup_failed_upgrades():
             'dry_run': dry_run,
             'version_match': version_match,
             'keep_action': keep_action,
-            'results': results[:50]  # Limit to first 50 for display
+            'results': results,  # Return all results for pagination (flat list)
+            'groups': groups  # Return grouped data for better display
         })
 
     except Exception as e:
