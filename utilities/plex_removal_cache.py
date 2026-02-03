@@ -75,8 +75,11 @@ def cache_plex_removal(item_title: str, item_path: str, episode_title: Optional[
                     # Direct removal failed (possibly 400 error) - try scan & empty trash as fallback
                     logging.warning(f"Immediate removal: Direct Plex removal failed for {item_title}. Trying scan & empty trash...")
                     try:
-                        scan_and_empty_plex_trash()
-                        logging.info(f"Immediate removal: Triggered library scan and trash empty for {item_title}.")
+                        # Determine section type: if episode_title exists, it's a show; otherwise, movie
+                        section_type = 'show' if episode_title else 'movie'
+                        scan_paths = [os.path.dirname(item_path)] if item_path else None
+                        scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
+                        logging.info(f"Immediate removal: Triggered library scan and trash empty for {item_title} (section_type={section_type}).")
                     except Exception as scan_err:
                         logging.warning(f"Immediate removal: Scan & empty trash also failed for {item_title}: {scan_err}.")
             except Exception as e:
@@ -185,8 +188,11 @@ def process_removal_cache(min_age_hours: int = 6) -> None:
                             # Direct removal failed (possibly 400 error) - try scan & empty trash as fallback
                             logging.warning(f"Direct Plex removal failed for {item_title}. Trying scan & empty trash...")
                             try:
-                                scan_and_empty_plex_trash()
-                                logging.info(f"Triggered library scan and trash empty for {item_title}.")
+                                # Determine section type: if episode_title exists, it's a show; otherwise, movie
+                                section_type = 'show' if episode_title else 'movie'
+                                scan_paths = [os.path.dirname(item_path)] if item_path else None
+                                scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
+                                logging.info(f"Triggered library scan and trash empty for {item_title} (section_type={section_type}).")
                                 entry_should_be_kept_in_cache = False # Processed via fallback, don't keep.
                             except Exception as scan_err:
                                 logging.warning(f"Scan & empty trash also failed for {item_title}: {scan_err}. Keeping in cache.")

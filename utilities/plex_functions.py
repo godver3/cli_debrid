@@ -1807,6 +1807,9 @@ def scan_and_empty_plex_trash(paths: list = None, section_type: str = None) -> d
         plex = plexapi.server.PlexServer(plex_url, plex_token)
         sections = plex.library.sections()
 
+        # Track which sections were actually scanned
+        scanned_sections = set()
+
         # Step 1: Scan specific paths or sections
         if paths:
             # Scan only the specific paths provided (much faster than full library scan)
@@ -1821,6 +1824,7 @@ def scan_and_empty_plex_trash(paths: list = None, section_type: str = None) -> d
                                 logger.info(f"Scanning specific path in Plex: {path} (section: {section.title})")
                                 section.update(path=path)
                                 result['paths_scanned'].append(path)
+                                scanned_sections.add(section.key)  # Track this section
                                 logger.info(f"Successfully triggered scan for path: {path}")
                                 break
                 except Exception as e:
@@ -1840,6 +1844,7 @@ def scan_and_empty_plex_trash(paths: list = None, section_type: str = None) -> d
                     logger.info(f"Scanning entire Plex section: {section.title} ({section.type})")
                     section.update()
                     result['paths_scanned'].append(f"[section] {section.title}")
+                    scanned_sections.add(section.key)  # Track this section
                     logger.info(f"Successfully triggered scan for section: {section.title}")
 
                 except Exception as e:
@@ -1852,10 +1857,14 @@ def scan_and_empty_plex_trash(paths: list = None, section_type: str = None) -> d
             logger.info("Waiting for Plex to process scan...")
             time.sleep(2)
 
-        # Step 3: Empty trash for relevant sections
+        # Step 3: Empty trash ONLY for sections that were actually scanned
         for section in sections:
             try:
-                # Filter by section type if specified
+                # Skip if this section wasn't scanned
+                if scanned_sections and section.key not in scanned_sections:
+                    continue
+
+                # Additional filter by section type if specified (backup safety check)
                 if section_type:
                     if section_type == 'movie' and section.type != 'movie':
                         continue

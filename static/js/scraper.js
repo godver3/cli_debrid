@@ -656,6 +656,113 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 <h3>
                     Torrent Results for ${title} (${year})
                 </h3>`;
+
+            // Get versions from page dropdown
+            let versionsToUse = [];
+            const pageVersionSelect = document.getElementById('version-select');
+            if (pageVersionSelect) {
+                versionsToUse = Array.from(pageVersionSelect.options).map(opt => opt.value);
+            } else {
+                versionsToUse = [version];
+            }
+
+            // Strip asterisks from version for comparison
+            const cleanVersion = version.replace(/\*/g, '');
+
+            // Generate version options HTML
+            const versionOptionsHTML = versionsToUse.map(v =>
+                `<option value="${v}" ${v === cleanVersion ? 'selected' : ''}>${v}</option>`
+            ).join('');
+
+            // Fetch symlink folders and build folder dropdown HTML
+            let folderDropdownHTML = '';
+            let showSymlinkControls = false;
+            try {
+                const foldersResponse = await fetch('/scraper/get_symlink_folders');
+                const foldersData = await foldersResponse.json();
+
+                if (foldersData.enabled && foldersData.folders && foldersData.folders.length > 0) {
+                    showSymlinkControls = true;
+                    const folderSettings = foldersData.folder_settings;
+
+                    // Determine which folder to auto-select based on genres
+                    let autoSelectedFolder = null;
+
+                    // Convert genre_ids to lowercase array for checking
+                    let genreList = [];
+                    if (Array.isArray(genre_ids)) {
+                        genreList = genre_ids.map(g => String(g).trim().toLowerCase());
+                    } else if (typeof genre_ids === 'string') {
+                        genreList = genre_ids.split(',').map(g => g.trim().toLowerCase());
+                    } else if (typeof genre_ids === 'number') {
+                        genreList = [String(genre_ids).toLowerCase()];
+                    }
+
+                    // Check genres and match to folder settings
+                    const genreMatches = {
+                        action: ['action', '28'],
+                        horror: ['horror', '27'],
+                        anime: ['animation', '16']
+                    };
+
+                    for (const [folderKey, genreKeywords] of Object.entries(genreMatches)) {
+                        const hasMatch = genreKeywords.some(keyword => genreList.includes(keyword));
+                        if (hasMatch) {
+                            const settingKey = `auto_select_${folderKey}`;
+                            if (folderSettings[settingKey]) {
+                                autoSelectedFolder = folderSettings[`${folderKey}_folder`];
+                                break;
+                            }
+                        }
+                    }
+
+                    // Filter folders by media type
+                    const filteredFolders = foldersData.folders.filter(folder => {
+                        if (folder.is_custom) return true;
+                        if (mediaType === 'movie') {
+                            return folder.allowed_for_movies;
+                        } else {
+                            return folder.allowed_for_tv_shows;
+                        }
+                    });
+
+                    if (filteredFolders.length > 0) {
+                        const folderOptionsHTML = filteredFolders.map(folder => {
+                            const isSelected = folder.name === autoSelectedFolder;
+                            const displayName = folder.is_custom ?
+                                `${folder.name} (${mediaType === 'movie' ? folderSettings.movies_folder_name : folderSettings.tv_shows_folder_name})` :
+                                folder.name;
+                            return `<option value="${folder.name}" data-is-custom="${folder.is_custom}" ${isSelected ? 'selected' : ''}>${displayName}</option>`;
+                        }).join('');
+
+                        folderDropdownHTML = `
+                            <div class="torrent-folder-dropdown-wrapper">
+                                <label for="torrent-folder-select-mobile">Folder:</label>
+                                <select id="torrent-folder-select-mobile" class="torrent-folder-select">
+                                    ${folderOptionsHTML}
+                                </select>
+                            </div>
+                        `;
+                    }
+                }
+            } catch (error) {
+                if (window.DEBUG) console.error('Error fetching symlink folders:', error);
+            }
+
+            // Create mobile controls section
+            const mobileControls = document.createElement('div');
+            mobileControls.className = 'mobile-torrent-controls';
+            mobileControls.innerHTML = `
+                <div class="torrent-version-dropdown-wrapper">
+                    <label for="torrent-version-select-mobile">Version:</label>
+                    <select id="torrent-version-select-mobile" class="torrent-version-select">
+                        ${versionOptionsHTML}
+                    </select>
+                </div>
+                ${folderDropdownHTML}
+            `;
+            overlayContent.appendChild(mobileControls);
+
             const gridContainer = document.createElement('div');
             gridContainer.style.display = 'flex';
             gridContainer.style.flexWrap = 'wrap';
@@ -754,6 +861,22 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 gridContainer.appendChild(torResDiv);
             });
             overlayContent.appendChild(gridContainer);
+
+            // Add version change handler for mobile
+            const versionSelectMobile = document.getElementById('torrent-version-select-mobile');
+            if (versionSelectMobile) {
+                versionSelectMobile.addEventListener('change', async function(e) {
+                    const newVersion = e.target.value;
+                    if (window.DEBUG) console.log(`Mobile version changed from ${version} to ${newVersion}`);
+
+                    // Close current overlay
+                    closeOverlay();
+
+                    // Trigger new search with new version
+                    const multi = mediaType === 'tv' ? true : false;
+                    await selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, newVersion);
+                });
+            }
 
         } else { // Desktop view
             // Check current theme using the same storage key as theme_switcher.js
