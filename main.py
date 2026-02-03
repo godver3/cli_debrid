@@ -127,20 +127,235 @@ def backup_config():
     else:
         logging.warning("config.json not found, no backup created.")
 
-def backup_database(max_backups=3):
+def check_and_perform_restore():
     """
-    Creates a backup of the media_items.db file with a timestamp using SQLite's BACKUP API.
-    This method is safe to use during active database operations and won't cause locking issues.
-    Keeps only the most recent backups (default: 3).
-    Also cleans up orphaned SQLite WAL and SHM files from previous backups.
-
-    Args:
-        max_backups (int): Maximum number of backup files to retain (default: 3)
+    Check if a database restore has been requested and perform it.
+    This runs BEFORE any database connections are opened.
 
     Returns:
-        bool: True if backup was successful, False otherwise
+        bool: True if restore was performed, False otherwise
+    """
+    import json
+    import shutil
+    import traceback
+    from datetime import datetime
+    from utilities.settings import load_config
+
+    config = load_config()
+    config_dir = config.get('config_dir', '/user/config')
+    db_content_dir = config.get('db_content_dir', '/user/db_content')
+
+    restore_flag_path = os.path.join(config_dir, 'restore_backup.json')
+
+    # Check if restore flag exists
+    if not os.path.exists(restore_flag_path):
+        return False
+
+    try:
+        # Read restore request
+        with open(restore_flag_path, 'r') as f:
+            restore_data = json.load(f)
+
+        backup_path = restore_data.get('backup_path')
+        create_safety_backup = restore_data.get('create_safety_backup', True)  # Default to True for safety
+
+        if not backup_path or not os.path.exists(backup_path):
+            logging.error(f"[RESTORE] Backup file not found: {backup_path}")
+            os.remove(restore_flag_path)
+            return False
+
+        # Verify backup integrity
+        if not verify_backup(backup_path, min_size_mb=1):
+            logging.error(f"[RESTORE] Backup verification failed: {backup_path}")
+            os.remove(restore_flag_path)
+            return False
+
+        # Paths
+        db_path = os.path.join(db_content_dir, 'media_items.db')
+        backups_dir = os.path.join(db_content_dir, 'backups')
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        safety_backup_path = os.path.join(backups_dir, f'media_items_pre_restore_{timestamp}.db')
+
+        logging.info(f"[RESTORE] Starting database restoration from: {backup_path}")
+
+        # Create safety backup of current database (if requested)
+        if create_safety_backup and os.path.exists(db_path):
+            # Ensure backups directory exists
+            os.makedirs(backups_dir, exist_ok=True)
+            shutil.copy2(db_path, safety_backup_path)
+            logging.info(f"[RESTORE] Safety backup created: {safety_backup_path}")
+        elif not create_safety_backup:
+            logging.warning("[RESTORE] Safety backup was disabled by user - proceeding without backup")
+
+        # Perform restoration
+        shutil.copy2(backup_path, db_path)
+        logging.info(f"[RESTORE] Database restored successfully from: {backup_path}")
+
+        # Remove restore flag
+        os.remove(restore_flag_path)
+        logging.info("[RESTORE] Restore flag removed. Restoration complete.")
+
+        return True
+
+    except Exception as e:
+        logging.error(f"[RESTORE] Error during restoration: {e}")
+        logging.error(traceback.format_exc())
+
+        # Clean up restore flag on error
+        try:
+            if os.path.exists(restore_flag_path):
+                os.remove(restore_flag_path)
+        except:
+            pass
+
+        return False
+
+def verify_backup(backup_path, min_size_mb=1):
+    """
+    Verify a backup file is valid using lightweight checks.
+
+    Performs 3 quick checks:
+    1. File size > minimum threshold (catches 0-byte files)
+    2. SQLite header validation (first 16 bytes = "SQLite format 3\x00")
+    3. Quick query test (SELECT COUNT(*) FROM media_items)
+
+    Args:
+        backup_path (str): Path to backup file to verify
+        min_size_mb (float): Minimum size in MB (default: 1MB)
+
+    Returns:
+        bool: True if backup is valid, False otherwise
     """
     import sqlite3
+
+    try:
+        # Check 1: File size validation
+        if not os.path.exists(backup_path):
+            logging.error(f"[BACKUP_VERIFY] File does not exist: {backup_path}")
+            return False
+
+        file_size = os.path.getsize(backup_path)
+        file_size_mb = file_size / (1024 * 1024)
+
+        if file_size == 0:
+            logging.error(f"[BACKUP_VERIFY] Backup file is empty (0 bytes): {backup_path}")
+            return False
+
+        if file_size_mb < min_size_mb:
+            logging.error(f"[BACKUP_VERIFY] Backup file too small ({file_size_mb:.2f} MB < {min_size_mb} MB): {backup_path}")
+            return False
+
+        # Check 2: SQLite header validation
+        with open(backup_path, 'rb') as f:
+            header = f.read(16)
+            if not header.startswith(b'SQLite format 3\x00'):
+                logging.error(f"[BACKUP_VERIFY] Invalid SQLite header: {backup_path}")
+                return False
+
+        # Check 3: Quick query test
+        conn = None
+        try:
+            conn = sqlite3.connect(f'file:{backup_path}?mode=ro', uri=True, timeout=5)
+            cursor = conn.execute("SELECT COUNT(*) FROM media_items")
+            count = cursor.fetchone()[0]
+
+            if count == 0:
+                logging.warning(f"[BACKUP_VERIFY] Backup has 0 items in media_items table: {backup_path}")
+                # Don't fail - empty database might be valid in some cases
+
+            logging.debug(f"[BACKUP_VERIFY] Backup verified: {file_size_mb:.1f} MB, {count:,} items")
+            return True
+
+        finally:
+            if conn:
+                conn.close()
+
+    except sqlite3.Error as e:
+        logging.error(f"[BACKUP_VERIFY] SQLite error verifying backup {backup_path}: {e}")
+        return False
+    except Exception as e:
+        logging.error(f"[BACKUP_VERIFY] Error verifying backup {backup_path}: {e}")
+        return False
+
+def get_backup_age_category(backup_path):
+    """
+    Categorize a backup by age for tiered retention.
+
+    Returns:
+        str: 'recent' (< 24h), 'daily' (1-7 days), or 'weekly' (> 7 days)
+    """
+    import time
+    age_seconds = time.time() - os.path.getmtime(backup_path)
+    age_hours = age_seconds / 3600
+
+    if age_hours < 24:
+        return 'recent'
+    elif age_hours < 7 * 24:
+        return 'daily'
+    else:
+        return 'weekly'
+
+def should_create_startup_backup(backup_dir, skip_hours=6):
+    """
+    Check if a startup backup should be created.
+
+    Skips backup if a valid backup exists from the last N hours.
+
+    Args:
+        backup_dir (str): Directory containing backups
+        skip_hours (int): Skip backup if one exists from last N hours
+
+    Returns:
+        bool: True if backup should be created, False to skip
+    """
+    import time
+
+    try:
+        if not os.path.exists(backup_dir):
+            logging.debug("[BACKUP_STARTUP] No backup directory, backup needed")
+            return True
+
+        # Get all valid backups
+        backups = [os.path.join(backup_dir, f) for f in os.listdir(backup_dir)
+                  if f.startswith('media_items_') and f.endswith('.db')]
+
+        if not backups:
+            logging.debug("[BACKUP_STARTUP] No existing backups, backup needed")
+            return True
+
+        # Find most recent valid backup
+        backups.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+        latest_backup = backups[0]
+
+        # Check if backup is recent enough
+        age_seconds = time.time() - os.path.getmtime(latest_backup)
+        age_hours = age_seconds / 3600
+
+        if age_hours < skip_hours:
+            logging.info(f"[BACKUP_STARTUP] Skipping startup backup (latest backup is {age_hours:.1f}h old, threshold: {skip_hours}h)")
+            return False
+
+        logging.debug(f"[BACKUP_STARTUP] Latest backup is {age_hours:.1f}h old, backup needed")
+        return True
+
+    except Exception as e:
+        logging.warning(f"[BACKUP_STARTUP] Error checking backup age, will create backup: {e}")
+        return True
+
+def backup_database(skip_if_recent=False, skip_hours=6):
+    """
+    Creates a backup of the media_items.db file with a timestamp using SQLite's BACKUP API.
+    Uses tiered retention: 1 weekly (>7 days) + 1 daily (1-7 days) + 2 recent (<24h) = 4 total.
+
+    Args:
+        skip_if_recent (bool): If True, skip backup if one exists from last skip_hours
+        skip_hours (int): Hours threshold for skipping backup (default: 6)
+
+    Returns:
+        bool: True if backup was successful or skipped, False on error
+    """
+    import sqlite3
+    import time
 
     try:
         # Get db_content directory from environment variable
@@ -155,13 +370,16 @@ def backup_database(max_backups=3):
         backup_dir = os.path.join(db_content_dir, 'backups')
         os.makedirs(backup_dir, exist_ok=True)
 
+        # Check if we should skip this backup
+        if skip_if_recent and not should_create_startup_backup(backup_dir, skip_hours):
+            return True  # Success - skip is intentional
+
         # Generate backup filename with timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         backup_path = os.path.join(backup_dir, f'media_items_{timestamp}.db')
 
         # Use SQLite's BACKUP API which is safe during active operations
-        # This creates a consistent point-in-time snapshot without locking the database
-        logging.debug(f"Starting SQLite backup from {db_path} to {backup_path}")
+        logging.debug(f"[BACKUP] Starting SQLite backup from {db_path} to {backup_path}")
 
         source_conn = None
         backup_conn = None
@@ -174,11 +392,10 @@ def backup_database(max_backups=3):
             backup_conn = sqlite3.connect(backup_path, timeout=30)
 
             # Perform the backup using SQLite's backup API
-            # This method is transactionally safe and allows concurrent operations
             with backup_conn:
                 source_conn.backup(backup_conn)
 
-            logging.debug(f"SQLite backup completed successfully")
+            logging.debug(f"[BACKUP] SQLite backup completed")
 
         finally:
             if backup_conn:
@@ -186,34 +403,78 @@ def backup_database(max_backups=3):
             if source_conn:
                 source_conn.close()
 
-        # Verify backup was created and get size
-        if not os.path.exists(backup_path):
-            logging.error("Backup file was not created")
+        # Verify backup is valid
+        if not verify_backup(backup_path, min_size_mb=1):
+            logging.error(f"[BACKUP] Backup verification failed, removing invalid backup: {backup_path}")
+            try:
+                os.remove(backup_path)
+            except:
+                pass
             return False
 
         backup_size_mb = os.path.getsize(backup_path) / (1024 * 1024)
-        logging.info(f"Database backup created: {backup_path} ({backup_size_mb:.1f} MB)")
+        logging.info(f"[BACKUP] Database backup created and verified: {os.path.basename(backup_path)} ({backup_size_mb:.1f} MB)")
 
-        # Get list of existing backups and sort by modification time
+        # Get all existing backups and categorize by age
         existing_backups = [os.path.join(backup_dir, f) for f in os.listdir(backup_dir)
                           if f.startswith('media_items_') and f.endswith('.db')]
         existing_backups.sort(key=lambda x: os.path.getmtime(x), reverse=True)
 
-        # Remove older backups, keeping only the most recent
+        # Remove invalid backups (0-byte, corrupted, etc.)
+        invalid_backups = []
+        for backup in existing_backups[:]:  # Copy list for safe iteration
+            if not verify_backup(backup, min_size_mb=1):
+                invalid_backups.append(backup)
+                existing_backups.remove(backup)
+                logging.warning(f"[BACKUP] Found invalid backup, will remove: {os.path.basename(backup)}")
+
+        # Tiered retention: 1 weekly + 1 daily + 2 recent = 4 total
+        categorized = {'weekly': [], 'daily': [], 'recent': []}
+
+        for backup in existing_backups:
+            category = get_backup_age_category(backup)
+            categorized[category].append(backup)
+
+        # Keep only the best backups from each tier
+        backups_to_keep = set()
+
+        # Keep 1 oldest weekly (>7 days)
+        if categorized['weekly']:
+            backups_to_keep.add(categorized['weekly'][-1])  # Oldest weekly
+
+        # Keep 1 daily (1-7 days, prefer oldest in range)
+        if categorized['daily']:
+            backups_to_keep.add(categorized['daily'][-1])  # Oldest daily
+
+        # Keep 2 most recent (<24h)
+        for backup in categorized['recent'][:2]:
+            backups_to_keep.add(backup)
+
+        # If we don't have enough backups in tiers, fill from most recent
+        if len(backups_to_keep) < 4:
+            for backup in existing_backups:
+                if backup not in backups_to_keep:
+                    backups_to_keep.add(backup)
+                    if len(backups_to_keep) >= 4:
+                        break
+
+        # Remove backups not in keep set + invalid backups
+        backups_to_remove = [b for b in existing_backups if b not in backups_to_keep] + invalid_backups
+
         removed_count = 0
-        for old_backup in existing_backups[max_backups:]:
+        for old_backup in backups_to_remove:
             try:
                 os.remove(old_backup)
                 removed_count += 1
-                logging.info(f"Removed old backup: {os.path.basename(old_backup)}")
+                backup_age = get_backup_age_category(old_backup) if old_backup not in invalid_backups else 'invalid'
+                logging.info(f"[BACKUP] Removed {backup_age} backup: {os.path.basename(old_backup)}")
             except Exception as e:
-                logging.warning(f"Failed to remove old backup {old_backup}: {e}")
+                logging.warning(f"[BACKUP] Failed to remove backup {old_backup}: {e}")
 
         if removed_count > 0:
-            logging.info(f"Cleaned up {removed_count} old backup(s), keeping {min(len(existing_backups), max_backups)} most recent")
+            logging.info(f"[BACKUP] Cleaned up {removed_count} backup(s), keeping {len(backups_to_keep)} (tiered retention: 1 weekly + 1 daily + 2 recent)")
 
-        # Clean up orphaned WAL and SHM files from the backups directory
-        # These are leftover SQLite Write-Ahead Log and shared memory files
+        # Clean up orphaned WAL and SHM files
         orphaned_files = [os.path.join(backup_dir, f) for f in os.listdir(backup_dir)
                          if f.endswith(('.db-wal', '.db-shm'))]
 
@@ -221,18 +482,18 @@ def backup_database(max_backups=3):
             for orphan in orphaned_files:
                 try:
                     os.remove(orphan)
-                    logging.debug(f"Removed orphaned SQLite file: {os.path.basename(orphan)}")
+                    logging.debug(f"[BACKUP] Removed orphaned SQLite file: {os.path.basename(orphan)}")
                 except Exception as e:
-                    logging.warning(f"Failed to remove orphaned file {orphan}: {e}")
-            logging.info(f"Cleaned up {len(orphaned_files)} orphaned SQLite WAL/SHM file(s)")
+                    logging.warning(f"[BACKUP] Failed to remove orphaned file {orphan}: {e}")
+            logging.info(f"[BACKUP] Cleaned up {len(orphaned_files)} orphaned SQLite WAL/SHM file(s)")
 
         return True
 
     except sqlite3.Error as e:
-        logging.error(f"SQLite error creating database backup: {str(e)}")
+        logging.error(f"[BACKUP] SQLite error creating database backup: {str(e)}")
         return False
     except Exception as e:
-        logging.error(f"Error creating database backup: {str(e)}")
+        logging.error(f"[BACKUP] Error creating database backup: {str(e)}")
         return False
 
 def get_version():
@@ -1355,9 +1616,14 @@ def main():
     import os
     # --- END EDIT ---
 
+    # Check for database restore request BEFORE any database operations
+    restore_performed = check_and_perform_restore()
+    if restore_performed:
+        logging.info("[STARTUP] Database was restored from backup. Continuing with normal startup...")
+
     setup_directories()
     backup_config()
-    backup_database()
+    backup_database(skip_if_recent=True, skip_hours=6)  # Skip if backup exists from last 6 hours
     
     # Delete not wanted files on startup
     try:

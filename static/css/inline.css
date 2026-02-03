@@ -1527,6 +1527,43 @@ h3 {
     font-weight: 500;
 }
 
+/* Badge Color Classes */
+.badge-danger {
+    background-color: rgba(239, 68, 68, 0.5);
+    color: #fff;
+    border-radius: 0.25rem;
+}
+
+.badge-warning {
+    background-color: rgba(234, 179, 8, 0.5);
+    color: #fff;
+    border-radius: 0.25rem;
+}
+
+.badge-success {
+    background-color: rgba(16, 185, 129, 0.5);
+    color: #fff;
+    border-radius: 0.25rem;
+}
+
+.badge-info {
+    background-color: rgba(59, 130, 246, 0.5);
+    color: #fff;
+    border-radius: 0.25rem;
+}
+
+.badge-secondary {
+    background-color: rgba(107, 114, 128, 0.5);
+    color: #fff;
+    border-radius: 0.25rem;
+}
+
+.badge-dark {
+    background-color: rgba(30, 30, 30, 0.5);
+    color: #fff;
+    border-radius: 0.25rem;
+}
+
 /* Card Styling */
 .card {
     background-color: #1a1a1a;
