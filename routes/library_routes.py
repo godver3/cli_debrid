@@ -3115,6 +3115,7 @@ def delete_season(imdb_id, season_number):
             clear_cache=clear_cache,
             remove_from_content_source=False,  # Content source removal only in delete_show
             skip_database=True,  # We'll handle database ourselves based on auto_ghostlist
+            force_delete_parent_folder=True,  # Force delete season folder even if not empty (symlink mode only, with Plex verification)
             # Plex content-level deletion params - deletes whole season in 1 API call
             plex_deletion_type='season',
             plex_content_title=show_title,

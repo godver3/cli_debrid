@@ -466,7 +466,143 @@ class DeletionManager:
 
         return result
 
-    def _batch_delete_symlinks(self, items: List[dict]) -> dict:
+    def _verify_content_in_plex(self, plex_deletion_type: str, content_title: str,
+                                imdb_id: str = None, tmdb_id: str = None,
+                                season_number: int = None) -> bool:
+        """
+        Verify if content (show/season/movie) still exists in Plex.
+        Used to safely determine if non-empty folders can be force deleted.
+
+        Args:
+            plex_deletion_type: 'show', 'season', or 'movie'
+            content_title: Title to search for
+            imdb_id: Optional IMDB ID for matching
+            tmdb_id: Optional TMDB ID for matching
+            season_number: Season number (required when type='season')
+
+        Returns:
+            True if content exists in Plex, False if not found or error
+        """
+        if not plex_deletion_type or not content_title:
+            logging.warning("[VERIFY_PLEX] Missing deletion type or title - assuming content exists")
+            return True  # Conservative: assume it exists if we can't check
+
+        try:
+            from utilities.settings import get_setting
+            import plexapi.server
+
+            # Get Plex connection
+            if get_setting('File Management', 'file_collection_management') == 'Plex':
+                plex_url = get_setting('Plex', 'url').rstrip('/')
+                plex_token = get_setting('Plex', 'token')
+            elif get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+                plex_url = get_setting('File Management', 'plex_url_for_symlink', default='')
+                plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
+            else:
+                logging.debug("[VERIFY_PLEX] No Plex configuration - assuming content doesn't exist")
+                return False
+
+            if not plex_url or not plex_token:
+                logging.debug("[VERIFY_PLEX] Missing Plex URL/token - assuming content doesn't exist")
+                return False
+
+            plex = plexapi.server.PlexServer(plex_url, plex_token)
+            sections = plex.library.sections()
+
+            logging.info(f"[VERIFY_PLEX] Checking if {plex_deletion_type} '{content_title}' still exists in Plex")
+
+            # Search appropriate library sections
+            if plex_deletion_type in ['show', 'season']:
+                # Search TV show sections
+                for section in sections:
+                    if section.type != 'show':
+                        continue
+
+                    try:
+                        shows = section.search(title=content_title)
+
+                        for show in shows:
+                            # Try to match by ID if provided
+                            matched = False
+
+                            if imdb_id or tmdb_id:
+                                if hasattr(show, 'guids'):
+                                    for guid in show.guids:
+                                        guid_str = str(guid.id) if hasattr(guid, 'id') else str(guid)
+                                        if imdb_id and f'imdb://{imdb_id}' in guid_str:
+                                            matched = True
+                                            break
+                                        if tmdb_id and f'tmdb://{tmdb_id}' in guid_str:
+                                            matched = True
+                                            break
+
+                            # Check title match
+                            if not (imdb_id or tmdb_id) or matched:
+                                if show.title.lower() == content_title.lower() or matched:
+                                    # Show found
+                                    if plex_deletion_type == 'show':
+                                        logging.info(f"[VERIFY_PLEX] Show '{content_title}' FOUND in Plex")
+                                        return True
+
+                                    # For season, check if specific season exists
+                                    if plex_deletion_type == 'season' and season_number is not None:
+                                        for season in show.seasons():
+                                            if season.seasonNumber == season_number:
+                                                logging.info(f"[VERIFY_PLEX] Season {season_number} of '{content_title}' FOUND in Plex")
+                                                return True
+
+                                        logging.info(f"[VERIFY_PLEX] Season {season_number} of '{content_title}' NOT FOUND in Plex")
+                                        return False
+
+                    except Exception as e:
+                        logging.error(f"[VERIFY_PLEX] Error searching section '{section.title}': {e}")
+
+            elif plex_deletion_type == 'movie':
+                # Search movie sections
+                for section in sections:
+                    if section.type != 'movie':
+                        continue
+
+                    try:
+                        movies = section.search(title=content_title)
+
+                        for movie in movies:
+                            # Try to match by ID if provided
+                            matched = False
+
+                            if imdb_id or tmdb_id:
+                                if hasattr(movie, 'guids'):
+                                    for guid in movie.guids:
+                                        guid_str = str(guid.id) if hasattr(guid, 'id') else str(guid)
+                                        if imdb_id and f'imdb://{imdb_id}' in guid_str:
+                                            matched = True
+                                            break
+                                        if tmdb_id and f'tmdb://{tmdb_id}' in guid_str:
+                                            matched = True
+                                            break
+
+                            # Check title match
+                            if not (imdb_id or tmdb_id) or matched:
+                                if movie.title.lower() == content_title.lower() or matched:
+                                    logging.info(f"[VERIFY_PLEX] Movie '{content_title}' FOUND in Plex")
+                                    return True
+
+                    except Exception as e:
+                        logging.error(f"[VERIFY_PLEX] Error searching section '{section.title}': {e}")
+
+            # Content not found in any section
+            logging.info(f"[VERIFY_PLEX] Content '{content_title}' NOT FOUND in Plex")
+            return False
+
+        except Exception as e:
+            logging.error(f"[VERIFY_PLEX] Error connecting to Plex: {e}")
+            # Conservative: assume content exists if we can't verify
+            return True
+
+    def _batch_delete_symlinks(self, items: List[dict], force_delete_parent_folder: bool = False,
+                              plex_deletion_type: str = None, plex_content_title: str = None,
+                              plex_imdb_id: str = None, plex_tmdb_id: str = None,
+                              plex_season_number: int = None) -> dict:
         """
         Batch delete symlinks for multiple items (optimized for performance)
 
@@ -476,11 +612,18 @@ class DeletionManager:
         2. Deletes all symlinks in one pass
         3. Deduplicates parent folders
         4. Cleans up empty folders once at the end
+        5. Optionally force-deletes non-empty folders after Plex verification
 
         This is 5-10x faster than sequential deletion for large batches.
 
         Args:
             items: List of item dicts with location_on_disk
+            force_delete_parent_folder: If True, delete parent folders even if not empty (after Plex verification)
+            plex_deletion_type: Type of deletion ('season', 'show', 'movie') for verification
+            plex_content_title: Content title for Plex verification
+            plex_imdb_id: IMDB ID for Plex verification
+            plex_tmdb_id: TMDB ID for Plex verification
+            plex_season_number: Season number (required when plex_deletion_type='season')
 
         Returns:
             dict with deleted_symlinks, folders_removed, errors
@@ -555,8 +698,8 @@ class DeletionManager:
             # Allow deletion for folders at least 2 levels deep
             return depth >= 2
 
-        # PHASE 4: Clean up empty parent folders (deduplicated)
-        logging.info(f"[BATCH_DELETE_SYMLINKS] Checking {len(parent_folders)} parent folders")
+        # PHASE 4: Clean up parent folders (empty or force delete if verified)
+        logging.info(f"[BATCH_DELETE_SYMLINKS] Checking {len(parent_folders)} parent folders (force_delete={force_delete_parent_folder})")
 
         # Sort by depth (deepest first) to clean up correctly
         sorted_parents = sorted(parent_folders, key=lambda p: p.count(os.sep), reverse=True)
@@ -564,25 +707,77 @@ class DeletionManager:
         for parent_folder in sorted_parents:
             try:
                 if os.path.exists(parent_folder) and is_safe_to_delete_symlink(parent_folder):
-                    if not os.listdir(parent_folder):
+                    is_empty = not os.listdir(parent_folder)
+
+                    if is_empty:
+                        # Always remove empty folders
                         os.rmdir(parent_folder)
                         result['folders_removed'].append(parent_folder)
                         logging.debug(f"[BATCH_DELETE_SYMLINKS] Removed empty folder: {parent_folder}")
+                    elif force_delete_parent_folder and plex_deletion_type:
+                        # Non-empty folder with force delete enabled - verify content no longer in Plex
+                        logging.info(f"[BATCH_DELETE_SYMLINKS] Non-empty folder detected: {parent_folder}")
+
+                        # Verify content no longer exists in Plex before force deleting
+                        content_still_exists = self._verify_content_in_plex(
+                            plex_deletion_type=plex_deletion_type,
+                            content_title=plex_content_title,
+                            imdb_id=plex_imdb_id,
+                            tmdb_id=plex_tmdb_id,
+                            season_number=plex_season_number
+                        )
+
+                        if not content_still_exists:
+                            # Safe to force delete - content confirmed removed from Plex
+                            import shutil
+                            shutil.rmtree(parent_folder)
+                            result['folders_removed'].append(parent_folder)
+                            logging.info(f"[BATCH_DELETE_SYMLINKS] Force deleted non-empty folder (content not in Plex): {parent_folder}")
+                        else:
+                            logging.warning(f"[BATCH_DELETE_SYMLINKS] Content still exists in Plex - skipping force delete of: {parent_folder}")
             except OSError as e:
                 logging.debug(f"[BATCH_DELETE_SYMLINKS] Could not remove folder {parent_folder}: {e}")
+            except Exception as e:
+                logging.error(f"[BATCH_DELETE_SYMLINKS] Error processing folder {parent_folder}: {e}")
+                result['errors'].append(f"Folder cleanup error: {str(e)}")
 
-        # PHASE 5: Clean up empty grandparent folders
+        # PHASE 5: Clean up grandparent folders (empty or force delete if verified)
         sorted_grandparents = sorted(grandparent_folders, key=lambda p: p.count(os.sep), reverse=True)
 
         for grandparent_folder in sorted_grandparents:
             try:
                 if os.path.exists(grandparent_folder) and is_safe_to_delete_symlink(grandparent_folder):
-                    if not os.listdir(grandparent_folder):
+                    is_empty = not os.listdir(grandparent_folder)
+
+                    if is_empty:
+                        # Always remove empty folders
                         os.rmdir(grandparent_folder)
                         result['folders_removed'].append(grandparent_folder)
                         logging.debug(f"[BATCH_DELETE_SYMLINKS] Removed empty grandparent folder: {grandparent_folder}")
+                    elif force_delete_parent_folder and plex_deletion_type == 'show':
+                        # For show deletion, also check grandparent (show folder)
+                        logging.info(f"[BATCH_DELETE_SYMLINKS] Non-empty show folder detected: {grandparent_folder}")
+
+                        # Verify show no longer exists in Plex
+                        content_still_exists = self._verify_content_in_plex(
+                            plex_deletion_type='show',
+                            content_title=plex_content_title,
+                            imdb_id=plex_imdb_id,
+                            tmdb_id=plex_tmdb_id
+                        )
+
+                        if not content_still_exists:
+                            import shutil
+                            shutil.rmtree(grandparent_folder)
+                            result['folders_removed'].append(grandparent_folder)
+                            logging.info(f"[BATCH_DELETE_SYMLINKS] Force deleted non-empty show folder (show not in Plex): {grandparent_folder}")
+                        else:
+                            logging.warning(f"[BATCH_DELETE_SYMLINKS] Show still exists in Plex - skipping force delete of: {grandparent_folder}")
             except OSError as e:
                 logging.debug(f"[BATCH_DELETE_SYMLINKS] Could not remove grandparent {grandparent_folder}: {e}")
+            except Exception as e:
+                logging.error(f"[BATCH_DELETE_SYMLINKS] Error processing grandparent {grandparent_folder}: {e}")
+                result['errors'].append(f"Grandparent cleanup error: {str(e)}")
 
         logging.info(f"[BATCH_DELETE_SYMLINKS] Complete: {len(result['deleted_symlinks'])} symlinks, {len(result['folders_removed'])} folders removed")
 
@@ -2347,7 +2542,16 @@ class DeletionManager:
                 logging.info(f"[DELETE_MULTIPLE] Using BATCH symlink deletion for {len(items_for_batch)} items")
 
                 # Batch delete all symlinks at once
-                batch_result = self._batch_delete_symlinks(items_for_batch)
+                # Only force delete if Plex content-level deletion succeeded (prevents orphaned entries)
+                batch_result = self._batch_delete_symlinks(
+                    items_for_batch,
+                    force_delete_parent_folder=force_delete_parent_folder and plex_content_deleted,
+                    plex_deletion_type=plex_deletion_type,
+                    plex_content_title=plex_content_title,
+                    plex_imdb_id=plex_imdb_id,
+                    plex_tmdb_id=plex_tmdb_id,
+                    plex_season_number=plex_season_number
+                )
 
                 # Single sleep after batch operation (instead of 1 second per item)
                 time.sleep(1)
