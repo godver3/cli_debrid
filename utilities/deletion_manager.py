@@ -2312,7 +2312,7 @@ class DeletionManager:
                         blacklist=blacklist,
                         clear_cache=False if batch_cache_cleared else clear_cache,  # Skip if already done in batch
                         delete_from_debrid=False,  # Already handled in Phase 0
-                        delete_from_media_server=False,  # Batch in Phase 3
+                        delete_from_media_server=delete_from_media_server and not plex_content_deleted,  # Skip if content-level deletion succeeded, otherwise fall back to individual
                         delete_files=False,  # Already handled in batch above
                         delete_symlinks=False,  # IMPORTANT: Already done in batch above
                         remove_from_content_source=remove_from_content_source,
@@ -2340,7 +2340,7 @@ class DeletionManager:
                         blacklist=blacklist,
                         clear_cache=False if batch_cache_cleared else clear_cache,  # Skip if already done in batch
                         delete_from_debrid=False,
-                        delete_from_media_server=False,
+                        delete_from_media_server=delete_from_media_server and not plex_content_deleted,  # Skip if content-level deletion succeeded, otherwise fall back to individual
                         delete_files=delete_files,
                         delete_symlinks=delete_symlinks,
                         remove_from_content_source=remove_from_content_source,
@@ -2361,7 +2361,7 @@ class DeletionManager:
                     blacklist=blacklist,
                     clear_cache=False if batch_cache_cleared else clear_cache,  # Skip if already done in batch
                     delete_from_debrid=False,
-                    delete_from_media_server=False,
+                    delete_from_media_server=delete_from_media_server and not plex_content_deleted,  # Skip if content-level deletion succeeded, otherwise fall back to individual
                     delete_files=delete_files,
                     delete_symlinks=delete_symlinks,
                     remove_from_content_source=remove_from_content_source,

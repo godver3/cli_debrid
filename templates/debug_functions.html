@@ -115,6 +115,28 @@
             </form>
         </div>
         <div class="debug_item">
+            <h3>Restore Database from Backup</h3>
+            <p class="description">Restore the media_items.db database from a previous backup. ⚠️ This requires an application restart and will interrupt all active operations (~60 seconds downtime).</p>
+            <div style="margin-bottom: 15px;">
+                <button type="button" class="btn" onclick="loadBackupsList()">Load Available Backups</button>
+            </div>
+            <div class="form-group" style="margin: 15px 0;">
+                <label>
+                    <input type="checkbox" id="backupBeforeRestore" checked>
+                    Backup current database before restore (Safety backup will be created as <code>media_items_pre_restore_TIMESTAMP.db</code>)
+                </label>
+            </div>
+            <div id="restoreResults" style="margin-top: 15px;"></div>
+        </div>
+        <div class="debug_item">
+            <h3>Clean Up Old Database Files</h3>
+            <p class="description">Scan and remove old database files, manual copies, and corrupted backups from both the backups folder and db_content directory. This helps free up disk space.</p>
+            <div style="margin-bottom: 15px;">
+                <button type="button" class="btn" onclick="scanOldDatabases()">Scan for Old Databases</button>
+            </div>
+            <div id="cleanupResults" style="margin-top: 15px;"></div>
+        </div>
+        <div class="debug_item">
             <h3>Clean Up Ghostlisted Duplicates</h3>
             <p class="description">Remove ghostlisted duplicate entries while keeping collected versions. Finds items with both collected AND ghostlisted versions, and safely removes the ghostlisted duplicates.</p>
             <form id="cleanup-duplicates-form">
@@ -3024,9 +3046,9 @@ if (document.readyState === 'loading') {
                         }
                     }
 
-                    // Start the timer
+                    // Start the timer (will be cleared when SSE starts)
                     const startTime = Date.now();
-                    const timerInterval = setInterval(() => {
+                    let timerInterval = setInterval(() => {
                         const elapsed = Math.floor((Date.now() - startTime) / 1000);
                         upgradesElapsedTime.textContent = `Elapsed: ${formatTime(elapsed)}`;
                     }, 1000);
@@ -3060,10 +3082,12 @@ if (document.readyState === 'loading') {
                     })
                     .then(response => response.json())
                     .then(data => {
-                        clearInterval(timerInterval);
-
                         // If we got a session_id, connect to SSE for real-time progress
                         if (data.session_id && !dryRunChecked) {
+                            // Clear the local timer since SSE will provide better updates
+                            clearInterval(timerInterval);
+                            timerInterval = null;
+
                             eventSource = new EventSource(`/debug/api/cleanup_progress/${data.session_id}`);
 
                             eventSource.onmessage = (event) => {
@@ -3092,6 +3116,9 @@ if (document.readyState === 'loading') {
                             eventSource.onerror = () => {
                                 eventSource.close();
                             };
+                        } else {
+                            // No SSE (dry run or error), keep local timer running
+                            // Timer will be cleared on completion
                         }
 
                         if (data.success) {
@@ -3099,7 +3126,11 @@ if (document.readyState === 'loading') {
                             upgradesProgressBar.style.width = '100%';
                             upgradesProgressMessage.textContent = data.message;
 
-                            // Stop timer
+                            // Stop timer if still running
+                            if (timerInterval) {
+                                clearInterval(timerInterval);
+                                timerInterval = null;
+                            }
                             const finalTime = Math.floor((Date.now() - startTime) / 1000);
                             upgradesElapsedTime.textContent = `Completed in ${formatTime(finalTime)}`;
 
@@ -3968,6 +3999,439 @@ if (document.readyState === 'loading') {
             });
     };
     // --- End Plex Labels Help Function ---
+
+    // --- Backup Restoration Functions ---
+    let selectedBackupPath = null;
+    let selectedBackupFilename = null;
+
+    async function loadBackupsList() {
+        const resultsDiv = document.getElementById('restoreResults');
+        resultsDiv.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="sr-only">Loading...</span></div>';
+
+        try {
+            const response = await fetch('/debug/api/list_database_backups');
+            const data = await response.json();
+
+            if (!data.success) {
+                resultsDiv.innerHTML = `<div class="alert alert-danger">Error: ${data.error}</div>`;
+                return;
+            }
+
+            if (data.backups.length === 0) {
+                resultsDiv.innerHTML = '<div class="alert alert-info">No backup files found.</div>';
+                return;
+            }
+
+            let html = `
+                <table class="table table-sm table-bordered">
+                    <tbody>
+            `;
+
+            data.backups.forEach(backup => {
+                const categoryColors = {
+                    'corrupted': 'danger',
+                    'manual_copy': 'warning',
+                    'old_version': 'info',
+                    'safety_backup': 'secondary',
+                    'recent_backup': 'success',
+                    'orphaned_temp': 'danger',
+                    'unknown': 'dark'
+                };
+                const inlineColors = {
+                    'danger': 'background-color: rgba(239, 68, 68, 0.5); color: #fff; border-radius: 0.25rem;',
+                    'warning': 'background-color: rgba(234, 179, 8, 0.5); color: #fff; border-radius: 0.25rem;',
+                    'success': 'background-color: rgba(16, 185, 129, 0.5); color: #fff; border-radius: 0.25rem;',
+                    'info': 'background-color: rgba(59, 130, 246, 0.5); color: #fff; border-radius: 0.25rem;',
+                    'secondary': 'background-color: rgba(107, 114, 128, 0.5); color: #fff; border-radius: 0.25rem;',
+                    'dark': 'background-color: rgba(30, 30, 30, 0.5); color: #fff; border-radius: 0.25rem;'
+                };
+                const badgeColor = categoryColors[backup.category] || 'secondary';
+                const badgeStyle = inlineColors[badgeColor] || inlineColors['secondary'];
+                const rowClass = backup.is_valid ? '' : 'table-danger';
+                const validBadge = backup.is_valid
+                    ? `<span class="badge badge-success" style="${inlineColors['success']} font-size: 0.75em; padding: 0.4em 0.6em;">✓ Valid</span>`
+                    : `<span class="badge badge-danger" style="${inlineColors['danger']} font-size: 0.75em; padding: 0.4em 0.6em;">✗ Invalid</span>`;
+
+                html += `
+                    <tr class="${rowClass}">
+                        <td style="padding: 8px;">
+                            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                                <input type="radio" name="backupSelection" style="margin-top: 3px; flex-shrink: 0;"
+                                       ${backup.is_valid ? '' : 'disabled'}
+                                       onclick="selectBackup('${backup.path}', '${backup.filename}')">
+                                <div style="flex: 1; min-width: 0; overflow: hidden;">
+                                    <div style="font-weight: 500; margin-bottom: 4px; font-size: 0.9em; word-wrap: break-word;">${backup.filename}</div>
+                                    <div style="font-size: 0.8em; opacity: 0.8; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+                                        <span>Size: ${backup.size_mb} MB</span>
+                                        <span>Age: ${backup.age_display}</span>
+                                        <span class="badge badge-${badgeColor}" style="${badgeStyle} font-size: 0.75em; padding: 0.4em 0.6em;">${backup.category}</span>
+                                        ${validBadge}
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                    </tbody>
+                </table>
+                <button class="btn btn-warning btn-lg" id="restoreBtn" onclick="confirmRestore()" disabled>
+                    <i class="fas fa-undo"></i> Restore Selected Backup
+                </button>
+            `;
+
+            resultsDiv.innerHTML = html;
+
+        } catch (error) {
+            resultsDiv.innerHTML = `<div class="alert alert-danger">Error loading backups: ${error.message}</div>`;
+        }
+    }
+
+    function selectBackup(path, filename) {
+        selectedBackupPath = path;
+        selectedBackupFilename = filename;
+        document.getElementById('restoreBtn').disabled = false;
+    }
+
+    async function confirmRestore() {
+        if (!selectedBackupPath) {
+            alert('Please select a backup to restore.');
+            return;
+        }
+
+        const createBackup = document.getElementById('backupBeforeRestore').checked;
+
+        const confirmMsg = `⚠️ WARNING: DATABASE RESTORATION ⚠️\n\n` +
+            `You are about to restore from:\n${selectedBackupFilename}\n\n` +
+            `IMPORTANT:\n` +
+            `• The container will RESTART automatically\n` +
+            (createBackup ? `• Your current database will be backed up as a safety copy\n` : `• Your current database will NOT be backed up\n`) +
+            `• All current data will be replaced with the backup\n` +
+            `• This action cannot be undone\n\n` +
+            `Are you ABSOLUTELY SURE you want to proceed?`;
+
+        if (!confirm(confirmMsg)) {
+            return;
+        }
+
+        const resultsDiv = document.getElementById('restoreResults');
+        resultsDiv.innerHTML = '<div class="alert alert-warning"><strong>Requesting restore...</strong></div>';
+
+        try {
+            const response = await fetch('/debug/api/request_database_restore', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    backup_path: selectedBackupPath,
+                    create_safety_backup: createBackup
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                // Show countdown and auto-refresh
+                let countdown = 60;
+                resultsDiv.innerHTML = `
+                    <div class="alert alert-success">
+                        <h5><i class="fas fa-check-circle"></i> Restore Request Created</h5>
+                        <p><strong>The container is restarting...</strong></p>
+                        <p>Database will be restored from: <code>${selectedBackupFilename}</code></p>
+                        <p style="font-size: 1.2em; margin-top: 15px;">
+                            <i class="fas fa-sync fa-spin"></i> Auto-refreshing in <strong id="countdown">${countdown}</strong> seconds...
+                        </p>
+                        <p style="font-size: 0.9em; opacity: 0.8; margin-top: 10px;">
+                            <em>You can also refresh manually if the app is ready sooner.</em>
+                        </p>
+                    </div>
+                `;
+
+                // Countdown timer with auto-refresh
+                const countdownInterval = setInterval(() => {
+                    countdown--;
+                    const countdownEl = document.getElementById('countdown');
+                    if (countdownEl) {
+                        countdownEl.textContent = countdown;
+                    }
+
+                    if (countdown <= 0) {
+                        clearInterval(countdownInterval);
+                        location.reload();
+                    }
+                }, 1000);
+            } else {
+                resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${data.error}</div>`;
+            }
+
+        } catch (error) {
+            resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${error.message}</div>`;
+        }
+    }
+    // --- End Backup Restoration Functions ---
+
+    // --- Database Cleanup Functions ---
+    let scanResults = null;
+
+    async function scanOldDatabases() {
+        const resultsDiv = document.getElementById('cleanupResults');
+        resultsDiv.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="sr-only">Scanning...</span></div>';
+
+        try {
+            const response = await fetch('/debug/api/scan_old_databases');
+            const data = await response.json();
+
+            if (!data.success) {
+                resultsDiv.innerHTML = `<div class="alert alert-danger">Error: ${data.error}</div>`;
+                return;
+            }
+
+            scanResults = data;
+            displayScanResults(data);
+
+        } catch (error) {
+            resultsDiv.innerHTML = `<div class="alert alert-danger">Error scanning: ${error.message}</div>`;
+        }
+    }
+
+    function displayScanResults(data) {
+        const resultsDiv = document.getElementById('cleanupResults');
+
+        if (data.total_files === 0) {
+            resultsDiv.innerHTML = '<div class="alert alert-success">✓ No old database files found. Your system is clean!</div>';
+            return;
+        }
+
+        let html = `
+            <div class="alert alert-info">
+                <strong>Scan Results:</strong> Found ${data.total_files} old database files
+                (${data.total_size_mb.toFixed(2)} MB total)
+            </div>
+        `;
+
+        // Backups folder
+        if (data.backups_folder.files.length > 0) {
+            html += `
+                <h5><i class="fas fa-folder"></i> Backups Folder (${data.backups_folder.files.length} files, ${data.backups_folder.total_size_mb.toFixed(2)} MB)</h5>
+                <div style="margin-bottom: 10px;">
+                    <label><input type="checkbox" id="selectAllBackups" onclick="toggleAllBackups(this.checked)"> Select All</label>
+                </div>
+                <table class="table table-sm table-bordered">
+                    <tbody>
+            `;
+
+            data.backups_folder.files.forEach((file, idx) => {
+                const categoryColors = {
+                    'corrupted': 'danger',
+                    'manual_copy': 'warning',
+                    'old_version': 'info',
+                    'safety_backup': 'secondary',
+                    'recent_backup': 'success',
+                    'orphaned_temp': 'danger',
+                    'unknown': 'dark'
+                };
+                const inlineColors = {
+                    'danger': 'background-color: rgba(239, 68, 68, 0.5); color: #fff; border-radius: 0.25rem;',
+                    'warning': 'background-color: rgba(234, 179, 8, 0.5); color: #fff; border-radius: 0.25rem;',
+                    'success': 'background-color: rgba(16, 185, 129, 0.5); color: #fff; border-radius: 0.25rem;',
+                    'info': 'background-color: rgba(59, 130, 246, 0.5); color: #fff; border-radius: 0.25rem;',
+                    'secondary': 'background-color: rgba(107, 114, 128, 0.5); color: #fff; border-radius: 0.25rem;',
+                    'dark': 'background-color: rgba(30, 30, 30, 0.5); color: #fff; border-radius: 0.25rem;'
+                };
+                const badgeColor = categoryColors[file.category] || 'secondary';
+                const badgeStyle = inlineColors[badgeColor] || inlineColors['secondary'];
+
+                html += `
+                    <tr>
+                        <td style="padding: 8px;">
+                            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                                <input type="checkbox" class="backup-checkbox" value="${file.path}" style="margin-top: 3px; flex-shrink: 0;">
+                                <div style="flex: 1; min-width: 0; overflow: hidden;">
+                                    <div style="font-weight: 500; margin-bottom: 4px; font-size: 0.9em; word-wrap: break-word;">${file.filename}</div>
+                                    <div style="font-size: 0.8em; opacity: 0.8; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+                                        <span>Size: ${file.size_mb} MB</span>
+                                        <span>Age: ${file.age_display}</span>
+                                        <span class="badge badge-${badgeColor}" style="${badgeStyle} font-size: 0.75em; padding: 0.4em 0.6em;">${file.category}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                    </tbody>
+                </table>
+            `;
+        }
+
+        // DB Content folder
+        if (data.db_content_folder.files.length > 0) {
+            html += `
+                <h5><i class="fas fa-folder"></i> DB Content Folder (${data.db_content_folder.files.length} files, ${data.db_content_folder.total_size_mb.toFixed(2)} MB)</h5>
+                <div style="margin-bottom: 10px;">
+                    <label><input type="checkbox" id="selectAllContent" onclick="toggleAllContent(this.checked)"> Select All</label>
+                </div>
+                <table class="table table-sm table-bordered">
+                    <tbody>
+            `;
+
+            data.db_content_folder.files.forEach((file, idx) => {
+                const categoryColors = {
+                    'corrupted': 'danger',
+                    'manual_copy': 'warning',
+                    'old_version': 'info',
+                    'safety_backup': 'secondary',
+                    'recent_backup': 'success',
+                    'orphaned_temp': 'danger',
+                    'unknown': 'dark'
+                };
+                const inlineColors = {
+                    'danger': 'background-color: rgba(239, 68, 68, 0.5); color: #fff; border-radius: 0.25rem;',
+                    'warning': 'background-color: rgba(234, 179, 8, 0.5); color: #fff; border-radius: 0.25rem;',
+                    'success': 'background-color: rgba(16, 185, 129, 0.5); color: #fff; border-radius: 0.25rem;',
+                    'info': 'background-color: rgba(59, 130, 246, 0.5); color: #fff; border-radius: 0.25rem;',
+                    'secondary': 'background-color: rgba(107, 114, 128, 0.5); color: #fff; border-radius: 0.25rem;',
+                    'dark': 'background-color: rgba(30, 30, 30, 0.5); color: #fff; border-radius: 0.25rem;'
+                };
+                const badgeColor = categoryColors[file.category] || 'secondary';
+                const badgeStyle = inlineColors[badgeColor] || inlineColors['secondary'];
+
+                html += `
+                    <tr>
+                        <td style="padding: 8px;">
+                            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                                <input type="checkbox" class="content-checkbox" value="${file.path}" style="margin-top: 3px; flex-shrink: 0;">
+                                <div style="flex: 1; min-width: 0; overflow: hidden;">
+                                    <div style="font-weight: 500; margin-bottom: 4px; font-size: 0.9em; word-wrap: break-word;">${file.filename}</div>
+                                    <div style="font-size: 0.8em; opacity: 0.8; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+                                        <span>Size: ${file.size_mb} MB</span>
+                                        <span>Age: ${file.age_display}</span>
+                                        <span class="badge badge-${badgeColor}" style="${badgeStyle} font-size: 0.75em; padding: 0.4em 0.6em;">${file.category}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            html += `
+                    </tbody>
+                </table>
+            `;
+        }
+
+        html += `
+            <div class="mt-3">
+                <button class="btn btn-info btn-lg mr-2" onclick="deleteOldDatabases(true)">
+                    <i class="fas fa-eye"></i> Dry Run (Preview)
+                </button>
+                <button class="btn btn-danger btn-lg" onclick="deleteOldDatabases(false)">
+                    <i class="fas fa-trash"></i> Delete Selected Files
+                </button>
+            </div>
+        `;
+
+        resultsDiv.innerHTML = html;
+    }
+
+    function toggleAllBackups(checked) {
+        document.querySelectorAll('.backup-checkbox').forEach(cb => cb.checked = checked);
+    }
+
+    function toggleAllContent(checked) {
+        document.querySelectorAll('.content-checkbox').forEach(cb => cb.checked = checked);
+    }
+
+    async function deleteOldDatabases(dryRun) {
+        const backupPaths = Array.from(document.querySelectorAll('.backup-checkbox:checked')).map(cb => cb.value);
+        const contentPaths = Array.from(document.querySelectorAll('.content-checkbox:checked')).map(cb => cb.value);
+        const allPaths = [...backupPaths, ...contentPaths];
+
+        if (allPaths.length === 0) {
+            alert('Please select at least one file to delete.');
+            return;
+        }
+
+        if (!dryRun) {
+            const confirmMsg = `⚠️ WARNING: FILE DELETION ⚠️\n\n` +
+                `You are about to DELETE ${allPaths.length} database files.\n\n` +
+                `This action CANNOT be undone!\n\n` +
+                `Are you sure you want to proceed?`;
+
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+        }
+
+        const resultsDiv = document.getElementById('cleanupResults');
+        resultsDiv.innerHTML = `<div class="alert alert-warning"><strong>${dryRun ? 'Running dry run...' : 'Deleting files...'}</strong></div>`;
+
+        try {
+            const response = await fetch('/debug/api/delete_old_databases', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    file_paths: allPaths,
+                    dry_run: dryRun
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                let html = `
+                    <div class="alert alert-${dryRun ? 'info' : 'success'}">
+                        <h5><i class="fas fa-check-circle"></i> ${dryRun ? 'Dry Run Complete' : 'Deletion Complete'}</h5>
+                        <p><strong>Deleted:</strong> ${data.deleted_count} files (${data.total_size_freed_mb.toFixed(2)} MB freed)</p>
+                        <p><strong>Skipped:</strong> ${data.skipped_count} files</p>
+                    </div>
+                `;
+
+                if (data.deleted.length > 0) {
+                    html += '<h6>Deleted Files:</h6><ul>';
+                    data.deleted.forEach(file => {
+                        html += `<li><code>${file}</code></li>`;
+                    });
+                    html += '</ul>';
+                }
+
+                if (data.skipped.length > 0) {
+                    html += '<h6>Skipped Files:</h6><ul>';
+                    data.skipped.forEach(item => {
+                        html += `<li><code>${item.file}</code> - ${item.reason}</li>`;
+                    });
+                    html += '</ul>';
+                }
+
+                if (!dryRun) {
+                    html += '<button class="btn btn-primary mt-3" onclick="scanOldDatabases()">Scan Again</button>';
+                }
+
+                resultsDiv.innerHTML = html;
+
+            } else {
+                resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${data.error}</div>`;
+            }
+
+        } catch (error) {
+            resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${error.message}</div>`;
+        }
+    }
+    // --- End Database Cleanup Functions ---
+
+    // Make functions globally accessible for onclick handlers
+    window.loadBackupsList = loadBackupsList;
+    window.selectBackup = selectBackup;
+    window.confirmRestore = confirmRestore;
+    window.scanOldDatabases = scanOldDatabases;
+    window.toggleAllBackups = toggleAllBackups;
+    window.toggleAllContent = toggleAllContent;
+    window.deleteOldDatabases = deleteOldDatabases;
+
 </script>
 
 <style>

@@ -29,6 +29,14 @@ MAX_RETRIES = 3
 RETRY_DELAY = 1
 BATCH_DELAY = 0.2  # Small delay between batch fetches to reduce Plex CPU spikes
 
+# HTTP timeout configuration for Plex API requests
+# Prevents hanging when Plex stops responding, works with existing retry logic
+PLEX_HTTP_TIMEOUT = aiohttp.ClientTimeout(
+    total=None,      # No total timeout (allow long-running operations)
+    connect=10,      # 10 seconds to establish connection
+    sock_read=30     # 30 seconds max per read operation (prevents hanging)
+)
+
 def process_library_names(library_names: str, all_libraries: dict, libraries_by_key: dict) -> list:
     """
     Process a comma-separated string of library names/ids and return their corresponding library keys.
@@ -557,8 +565,9 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
     all_processed_movies = []
     all_processed_episodes = []
     direct_api_show_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+    shows_processed_count = 0  # Initialize to prevent UnboundLocalError when no show libraries
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(timeout=PLEX_HTTP_TIMEOUT) as session:
         t_libs_start = time.perf_counter()
         if progress_callback: progress_callback('scanning', 'Retrieving library sections...')
         libraries_url = f"{plex_url}/library/sections"
@@ -964,7 +973,7 @@ async def get_recent_from_plex(scan_all_libraries: bool = False):
         # This prevents fetching the same show 100 times for 100 episodes of that show
         show_metadata_cache: Dict[str, Optional[Dict[str, Any]]] = {}
 
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=PLEX_HTTP_TIMEOUT) as session:
             libraries_url = f"{plex_url}/library/sections"
             libraries_data = await fetch_data(session, libraries_url, headers, semaphore)
 

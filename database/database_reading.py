@@ -1576,24 +1576,49 @@ def get_items_by_ids(item_ids: List[int]) -> List[Dict]:
 
 def get_all_episodes_for_show(imdb_id: str) -> List[Dict]:
     """
-    Get all episodes for a show by IMDB ID
+    Get all episodes for a show by IMDB ID (with TMDB ID fallback)
     Used by multi-level deletion (delete entire show)
 
     Args:
-        imdb_id: IMDB identifier of the show
+        imdb_id: IMDB identifier of the show (can also be TMDB ID)
 
     Returns:
         List of episode dicts sorted by season and episode number
     """
     conn = get_db_connection()
     try:
+        # First try with imdb_id
         cursor = conn.execute('''
             SELECT * FROM media_items
             WHERE imdb_id = ?
             AND type = 'episode'
             ORDER BY season_number, episode_number
         ''', (imdb_id,))
-        return [dict(row) for row in cursor.fetchall()]
+        results = [dict(row) for row in cursor.fetchall()]
+
+        # SAFETY: Only use tmdb_id fallback for clearly invalid/missing imdb_id
+        # Prevents accidental mismatches while handling corrupted data
+        is_invalid_imdb = (
+            not imdb_id or  # None or empty
+            imdb_id == 'None' or  # String 'None'
+            (imdb_id.isdigit() and len(imdb_id) > 3)  # Pure number (likely tmdb_id passed instead)
+        )
+
+        if not results and is_invalid_imdb:
+            logging.warning(f"[FALLBACK] No episodes for invalid imdb_id='{imdb_id}', trying tmdb_id (corrupted data)")
+            cursor = conn.execute('''
+                SELECT * FROM media_items
+                WHERE tmdb_id = ?
+                AND type = 'episode'
+                ORDER BY season_number, episode_number
+            ''', (imdb_id,))
+            results = [dict(row) for row in cursor.fetchall()]
+            if results:
+                logging.info(f"[FALLBACK] Found {len(results)} episodes using tmdb_id={imdb_id}")
+            else:
+                logging.error(f"[FALLBACK] No episodes found with tmdb_id={imdb_id}")
+
+        return results
     except Exception as e:
         logging.error(f"Error getting episodes for show {imdb_id}: {e}")
         return []
@@ -1602,11 +1627,11 @@ def get_all_episodes_for_show(imdb_id: str) -> List[Dict]:
 
 def get_all_episodes_for_season(imdb_id: str, season_number: int) -> List[Dict]:
     """
-    Get all episodes for a specific season
+    Get all episodes for a specific season (with TMDB ID fallback)
     Used by multi-level deletion (delete entire season)
 
     Args:
-        imdb_id: IMDB identifier of the show
+        imdb_id: IMDB identifier of the show (can also be TMDB ID)
         season_number: Season number
 
     Returns:
@@ -1614,6 +1639,7 @@ def get_all_episodes_for_season(imdb_id: str, season_number: int) -> List[Dict]:
     """
     conn = get_db_connection()
     try:
+        # First try with imdb_id
         cursor = conn.execute('''
             SELECT * FROM media_items
             WHERE imdb_id = ?
@@ -1621,7 +1647,32 @@ def get_all_episodes_for_season(imdb_id: str, season_number: int) -> List[Dict]:
             AND type = 'episode'
             ORDER BY episode_number
         ''', (imdb_id, season_number))
-        return [dict(row) for row in cursor.fetchall()]
+        results = [dict(row) for row in cursor.fetchall()]
+
+        # SAFETY: Only use tmdb_id fallback for clearly invalid/missing imdb_id
+        # Prevents accidental mismatches while handling corrupted data
+        is_invalid_imdb = (
+            not imdb_id or  # None or empty
+            imdb_id == 'None' or  # String 'None'
+            (imdb_id.isdigit() and len(imdb_id) > 3)  # Pure number (likely tmdb_id passed instead)
+        )
+
+        if not results and is_invalid_imdb:
+            logging.warning(f"[FALLBACK] No episodes for invalid imdb_id='{imdb_id}' S{season_number}, trying tmdb_id (corrupted data)")
+            cursor = conn.execute('''
+                SELECT * FROM media_items
+                WHERE tmdb_id = ?
+                AND season_number = ?
+                AND type = 'episode'
+                ORDER BY episode_number
+            ''', (imdb_id, season_number))
+            results = [dict(row) for row in cursor.fetchall()]
+            if results:
+                logging.info(f"[FALLBACK] Found {len(results)} episodes using tmdb_id={imdb_id} S{season_number}")
+            else:
+                logging.error(f"[FALLBACK] No episodes found with tmdb_id={imdb_id} S{season_number}")
+
+        return results
     except Exception as e:
         logging.error(f"Error getting episodes for season {imdb_id} S{season_number}: {e}")
         return []

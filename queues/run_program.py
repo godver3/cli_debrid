@@ -2866,8 +2866,9 @@ class ProgramRunner:
             # Import here to avoid circular import
             from main import backup_database
 
-            # Run backup with 3 backup retention
-            success = backup_database(max_backups=3)
+            # Run backup with tiered retention (1 weekly + 1 daily + 2 recent)
+            # Scheduled backups always run (skip_if_recent=False)
+            success = backup_database(skip_if_recent=False)
 
             if success:
                 logging.info("[DATABASE_BACKUP] Scheduled database backup completed successfully")
@@ -5779,9 +5780,46 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
     collected_content = None  # Initialize here
     mode = get_setting('File Management', 'file_collection_management')
 
-    # Backfill should work in ANY mode since it only updates existing DB records
-    # with Plex metadata (location_on_disk, resolution, size, imdb_id, tmdb_id, collected_at)
-    if mode == 'Plex' or bypass or backfill:
+    # OPTIMIZATION: For Symlink mode backfill, use filesystem FIRST (instant, no API calls)
+    # This prevents 85K+ Plex API calls and rate limiting/timeouts
+    if backfill and mode in ['Symlink', 'Symlinked/Local'] and not bypass:
+        logging.info(f"[BACKFILL_SYMLINK] Using filesystem-first approach for {mode} mode backfill...")
+        try:
+            from database.database_reading import get_all_media_items
+            from utilities.local_library_scan import local_library_scan
+
+            # Get all Collected items from database
+            db_items = get_all_media_items(state='Collected')
+            logging.info(f"[BACKFILL_SYMLINK] Got {len(db_items)} items from database for filesystem scan")
+
+            if db_items:
+                # Scan filesystem to get size/resolution data (PRIMARY method for symlink mode)
+                scan_results = local_library_scan(db_items)
+                logging.info(f"[BACKFILL_SYMLINK] Filesystem scan completed for {len(scan_results)} items")
+
+                # Convert scan results to expected format
+                filesystem_items = list(scan_results.values())
+
+                if filesystem_items:
+                    movies = [item for item in filesystem_items if item.get('type') == 'movie']
+                    episodes = [item for item in filesystem_items if item.get('type') == 'episode']
+                    logging.info(f"[BACKFILL_SYMLINK] Filesystem found {len(movies)} movies and {len(episodes)} episodes")
+
+                    collected_content = {'movies': movies, 'episodes': episodes}
+                else:
+                    logging.warning(f"[BACKFILL_SYMLINK] Filesystem scan returned 0 items, will fall back to Plex")
+            else:
+                logging.warning(f"[BACKFILL_SYMLINK] No Collected items in database, will fall back to Plex")
+        except Exception as e:
+            logging.error(f"[BACKFILL_SYMLINK] Error during filesystem scan: {e}", exc_info=True)
+            logging.warning(f"[BACKFILL_SYMLINK] Filesystem scan failed, will fall back to Plex")
+
+    # PLEX API PATH: Used for Plex mode users OR as fallback if filesystem failed/returned 0 items
+    # Backward compatible: preserves existing behavior for non-symlink modes
+    if collected_content is None and (mode == 'Plex' or bypass or backfill):
+        if backfill and mode in ['Symlink', 'Symlinked/Local']:
+            logging.info("[BACKFILL_FALLBACK] Filesystem returned no data, falling back to Plex API...")
+
         if backfill:
             logging.info("Getting all collected content from Plex for BACKFILL (with size/resolution fetch)...")
         else:
@@ -5792,7 +5830,7 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
              logging.error(f"Error running run_get_collected_from_plex: {e}", exc_info=True)
              return None # Return None on error during fetch
 
-    elif mode == 'Zurg':
+    elif collected_content is None and mode == 'Zurg':
         logging.info("Getting all collected content from Zurg...")
         try:
              # Assuming a similar function exists or needs to be created for Zurg full scan
@@ -5800,7 +5838,7 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
         except Exception as e:
             logging.error(f"Error running run_get_collected_from_zurg: {e}", exc_info=True)
             return None # Return None on error during fetch
-    else:
+    elif collected_content is None:
         logging.info(f"File collection management mode ('{mode}') does not support full library scan for collected items.")
         return None
 
@@ -5811,8 +5849,8 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
 
         logging.info(f"Retrieved {len(movies)} movies and {len(episodes)} episodes from {mode}.")
 
-        # FILESYSTEM FALLBACK: If Plex returned 0 items and we're in backfill mode with Symlinked/Local,
-        # fall back to filesystem scanning to get size/resolution data
+        # LEGACY FALLBACK: Keep old logic for edge cases (should rarely trigger now)
+        # Only triggers if Plex API was used but returned 0 items
         if backfill and len(movies) == 0 and len(episodes) == 0 and mode == 'Symlinked/Local':
             logging.warning("[BACKFILL_FALLBACK] Plex returned 0 items, falling back to filesystem scan for backfill...")
             try:
