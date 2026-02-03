@@ -1984,6 +1984,33 @@ def delete_items():
 
         logging.info(f"[DELETE_ITEMS] Physical cleanup completed: {result.get('deleted_count', 0)} items processed")
 
+        # CRITICAL CHECK: Verify physical cleanup succeeded before proceeding to database
+        success = result.get('success')
+
+        if success is None:
+            # BUG: success key is missing from result - this should never happen
+            logging.error(f"[DELETE_ITEMS] BUG: 'success' key missing from delete_multiple_items result. Result: {result}")
+            return jsonify({
+                'success': False,
+                'error': 'Internal error: deletion result malformed',
+                'errors': ['Missing success key in deletion result']
+            }), 500
+
+        if not success:
+            # Expected: CRITICAL CHECK aborted physical cleanup (Plex deletion failed)
+            # Do NOT proceed to database or content source removal to prevent orphaned entries
+            logging.error(f"[DELETE_ITEMS] Physical cleanup failed - aborting all remaining operations to prevent orphaned Plex entries")
+            logging.error(f"[DELETE_ITEMS] Errors: {result.get('errors', [])}")
+
+            errors_list = result.get('errors', ['Physical cleanup failed'])
+            return jsonify({
+                'success': False,
+                'error': errors_list[0] if errors_list else 'Physical cleanup failed',
+                'errors': errors_list,
+                'deleted_count': 0,
+                'failed_count': result.get('failed_count', 0)
+            }), 500
+
         # NOW handle database (LAST step) - ghostlist OR delete based on setting
         logging.info(f"[DELETE_ITEMS] DATABASE LAYER - auto_ghostlist={auto_ghostlist}")
 
@@ -2211,6 +2238,33 @@ def delete_show(imdb_id):
 
         logging.info(f"[DELETE_SHOW] Physical cleanup completed: {result.get('deleted_count', 0)} items processed")
 
+        # CRITICAL CHECK: Verify physical cleanup succeeded before proceeding to database
+        success = result.get('success')
+
+        if success is None:
+            # BUG: success key is missing from result - this should never happen
+            logging.error(f"[DELETE_SHOW] BUG: 'success' key missing from delete_multiple_items result. Result: {result}")
+            return jsonify({
+                'success': False,
+                'error': 'Internal error: deletion result malformed',
+                'errors': ['Missing success key in deletion result']
+            }), 500
+
+        if not success:
+            # Expected: CRITICAL CHECK aborted physical cleanup (Plex deletion failed)
+            # Do NOT proceed to database or content source removal to prevent orphaned entries
+            logging.error(f"[DELETE_SHOW] Physical cleanup failed - aborting all remaining operations to prevent orphaned Plex entries")
+            logging.error(f"[DELETE_SHOW] Errors: {result.get('errors', [])}")
+
+            errors_list = result.get('errors', ['Physical cleanup failed'])
+            return jsonify({
+                'success': False,
+                'error': errors_list[0] if errors_list else 'Physical cleanup failed',
+                'errors': errors_list,
+                'deleted_count': 0,
+                'failed_count': result.get('failed_count', 0)
+            }), 500
+
         # NOW handle database (LAST step) - ghostlist OR delete based on setting
         logging.info(f"[DELETE_SHOW] DATABASE LAYER - auto_ghostlist={auto_ghostlist}")
 
@@ -2390,17 +2444,25 @@ def delete_show(imdb_id):
             else:
                 layers_executed.append('Content Source (Failed)')
 
-        return jsonify({
+        # Build response with both 'error' (singular) and 'errors' (plural) for frontend compatibility
+        errors_list = result.get('errors', [])
+        response_data = {
             'success': result['success'],
             'deleted_count': result.get('deleted_count', 0),
             'failed_count': result.get('failed_count', 0),
-            'errors': result.get('errors', []),
+            'errors': errors_list,
             'layers_executed': layers_executed,
             'layers_skipped': layers_skipped,  # New field for skipped layers
             'content_source_removal': content_source_result,
             'auto_ghostlisted': auto_ghostlisted,  # Flag if show was auto-ghostlisted
             'message': f"{'Ghostlisted' if auto_ghostlisted else 'Deleted'} {result.get('deleted_count', 0)} episodes from show"
-        })
+        }
+
+        # Add 'error' (singular) field for frontend compatibility - uses first error if available
+        if errors_list:
+            response_data['error'] = errors_list[0]
+
+        return jsonify(response_data)
 
     except Exception as e:
         logging.error(f"[DELETE_SHOW] Error deleting show {imdb_id}: {e}")
@@ -2520,6 +2582,33 @@ def delete_movie(imdb_id):
         )
 
         logging.info(f"[DELETE_MOVIE] Physical cleanup completed: {result.get('deleted_count', 0)} items processed")
+
+        # CRITICAL CHECK: Verify physical cleanup succeeded before proceeding to database
+        success = result.get('success')
+
+        if success is None:
+            # BUG: success key is missing from result - this should never happen
+            logging.error(f"[DELETE_MOVIE] BUG: 'success' key missing from delete_multiple_items result. Result: {result}")
+            return jsonify({
+                'success': False,
+                'error': 'Internal error: deletion result malformed',
+                'errors': ['Missing success key in deletion result']
+            }), 500
+
+        if not success:
+            # Expected: CRITICAL CHECK aborted physical cleanup (Plex deletion failed)
+            # Do NOT proceed to database or content source removal to prevent orphaned entries
+            logging.error(f"[DELETE_MOVIE] Physical cleanup failed - aborting all remaining operations to prevent orphaned Plex entries")
+            logging.error(f"[DELETE_MOVIE] Errors: {result.get('errors', [])}")
+
+            errors_list = result.get('errors', ['Physical cleanup failed'])
+            return jsonify({
+                'success': False,
+                'error': errors_list[0] if errors_list else 'Physical cleanup failed',
+                'errors': errors_list,
+                'deleted_count': 0,
+                'failed_count': result.get('failed_count', 0)
+            }), 500
 
         # Handle database (LAST step) - ghostlist OR delete based on setting
         logging.info(f"[DELETE_MOVIE] DATABASE LAYER - auto_ghostlist={auto_ghostlist}")
@@ -2653,17 +2742,25 @@ def delete_movie(imdb_id):
             else:
                 layers_executed.append('Content Source (Failed)')
 
-        return jsonify({
+        # Build response with both 'error' (singular) and 'errors' (plural) for frontend compatibility
+        errors_list = result.get('errors', [])
+        response_data = {
             'success': result['success'],
             'deleted_count': result.get('deleted_count', 0),
             'failed_count': result.get('failed_count', 0),
-            'errors': result.get('errors', []),
+            'errors': errors_list,
             'layers_executed': layers_executed,
             'layers_skipped': layers_skipped,
             'content_source_removal': content_source_result,
             'auto_ghostlisted': auto_ghostlisted,
             'message': f"{'Ghostlisted' if auto_ghostlisted else 'Deleted'} movie: {movie_title}"
-        })
+        }
+
+        # Add 'error' (singular) field for frontend compatibility - uses first error if available
+        if errors_list:
+            response_data['error'] = errors_list[0]
+
+        return jsonify(response_data)
 
     except Exception as e:
         logging.error(f"Error deleting movie {imdb_id}: {e}")
@@ -2761,6 +2858,33 @@ def delete_movie_files():
         )
 
         logging.info(f"[DELETE_MOVIE_FILES] Physical cleanup completed: {result.get('deleted_count', 0)} items processed")
+
+        # CRITICAL CHECK: Verify physical cleanup succeeded before proceeding to database
+        success = result.get('success')
+
+        if success is None:
+            # BUG: success key is missing from result - this should never happen
+            logging.error(f"[DELETE_MOVIE_FILES] BUG: 'success' key missing from delete_multiple_items result. Result: {result}")
+            return jsonify({
+                'success': False,
+                'error': 'Internal error: deletion result malformed',
+                'errors': ['Missing success key in deletion result']
+            }), 500
+
+        if not success:
+            # Expected: CRITICAL CHECK aborted physical cleanup (Plex deletion failed)
+            # Do NOT proceed to database or content source removal to prevent orphaned entries
+            logging.error(f"[DELETE_MOVIE_FILES] Physical cleanup failed - aborting all remaining operations to prevent orphaned Plex entries")
+            logging.error(f"[DELETE_MOVIE_FILES] Errors: {result.get('errors', [])}")
+
+            errors_list = result.get('errors', ['Physical cleanup failed'])
+            return jsonify({
+                'success': False,
+                'error': errors_list[0] if errors_list else 'Physical cleanup failed',
+                'errors': errors_list,
+                'deleted_count': 0,
+                'failed_count': result.get('failed_count', 0)
+            }), 500
 
         # Handle database (LAST step) - ghostlist OR delete based on setting
         logging.info(f"[DELETE_MOVIE_FILES] DATABASE LAYER - auto_ghostlist={auto_ghostlist}")
@@ -3001,6 +3125,33 @@ def delete_season(imdb_id, season_number):
 
         logging.info(f"[DELETE_SEASON] Physical cleanup completed: {result.get('deleted_count', 0)} items processed")
 
+        # CRITICAL CHECK: Verify physical cleanup succeeded before proceeding to database
+        success = result.get('success')
+
+        if success is None:
+            # BUG: success key is missing from result - this should never happen
+            logging.error(f"[DELETE_SEASON] BUG: 'success' key missing from delete_multiple_items result. Result: {result}")
+            return jsonify({
+                'success': False,
+                'error': 'Internal error: deletion result malformed',
+                'errors': ['Missing success key in deletion result']
+            }), 500
+
+        if not success:
+            # Expected: CRITICAL CHECK aborted physical cleanup (Plex deletion failed)
+            # Do NOT proceed to database or content source removal to prevent orphaned entries
+            logging.error(f"[DELETE_SEASON] Physical cleanup failed - aborting all remaining operations to prevent orphaned Plex entries")
+            logging.error(f"[DELETE_SEASON] Errors: {result.get('errors', [])}")
+
+            errors_list = result.get('errors', ['Physical cleanup failed'])
+            return jsonify({
+                'success': False,
+                'error': errors_list[0] if errors_list else 'Physical cleanup failed',
+                'errors': errors_list,
+                'deleted_count': 0,
+                'failed_count': result.get('failed_count', 0)
+            }), 500
+
         # NOW handle database (LAST step) - ghostlist OR delete based on setting
         #logging.info(f"[DELETE_SEASON] DATABASE LAYER - auto_ghostlist={auto_ghostlist}")
 
@@ -3124,15 +3275,23 @@ def delete_season(imdb_id, season_number):
         if clear_cache:
             layers_executed.append('Cache')
 
-        return jsonify({
+        # Build response with both 'error' (singular) and 'errors' (plural) for frontend compatibility
+        errors_list = result.get('errors', [])
+        response_data = {
             'success': result['success'],
             'deleted_count': result.get('deleted_count', 0),
             'failed_count': result.get('failed_count', 0),
-            'errors': result.get('errors', []),
+            'errors': errors_list,
             'layers_executed': layers_executed,
             'layers_skipped': layers_skipped,
             'message': f"Season {season_number} deleted - {len(episode_ids)} episodes"
-        })
+        }
+
+        # Add 'error' (singular) field for frontend compatibility - uses first error if available
+        if errors_list:
+            response_data['error'] = errors_list[0]
+
+        return jsonify(response_data)
 
     except Exception as e:
         logging.error(f"Error deleting season {season_number} of show {imdb_id}: {e}")
@@ -3220,6 +3379,33 @@ def delete_episode(imdb_id, season_number, episode_number):
         )
 
         logging.info(f"[DELETE_EPISODE] Physical cleanup completed: {result.get('deleted_count', 0)} items processed")
+
+        # CRITICAL CHECK: Verify physical cleanup succeeded before proceeding to database
+        success = result.get('success')
+
+        if success is None:
+            # BUG: success key is missing from result - this should never happen
+            logging.error(f"[DELETE_EPISODE] BUG: 'success' key missing from delete_multiple_items result. Result: {result}")
+            return jsonify({
+                'success': False,
+                'error': 'Internal error: deletion result malformed',
+                'errors': ['Missing success key in deletion result']
+            }), 500
+
+        if not success:
+            # Expected: CRITICAL CHECK aborted physical cleanup (Plex deletion failed)
+            # Do NOT proceed to database or content source removal to prevent orphaned entries
+            logging.error(f"[DELETE_EPISODE] Physical cleanup failed - aborting all remaining operations to prevent orphaned Plex entries")
+            logging.error(f"[DELETE_EPISODE] Errors: {result.get('errors', [])}")
+
+            errors_list = result.get('errors', ['Physical cleanup failed'])
+            return jsonify({
+                'success': False,
+                'error': errors_list[0] if errors_list else 'Physical cleanup failed',
+                'errors': errors_list,
+                'deleted_count': 0,
+                'failed_count': result.get('failed_count', 0)
+            }), 500
 
         # NOW handle database (LAST step) - ghostlist OR delete based on setting
         #logging.info(f"[DELETE_EPISODE] DATABASE LAYER - auto_ghostlist={auto_ghostlist}")
