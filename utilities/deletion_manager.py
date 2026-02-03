@@ -296,6 +296,7 @@ class DeletionManager:
         if not symlink_base or not os.path.exists(symlink_base):
             logging.warning(f"[SYMLINK_DELETION] Symlink directory does not exist: {symlink_base}")
             result['errors'].append(f"Symlink directory not found: {symlink_base}")
+            result['success'] = False
             return result
 
         # Normalize symlink_base for consistent path comparisons
@@ -307,11 +308,13 @@ class DeletionManager:
             if not dir_contents:
                 logging.warning(f"[SYMLINK_DELETION] Symlink directory is empty: {symlink_base}")
                 result['errors'].append(f"Symlink directory is empty: {symlink_base}")
+                result['success'] = False
                 return result
             logging.debug(f"[SYMLINK_DELETION] Symlink directory verified: {symlink_base} ({len(dir_contents)} items)")
         except PermissionError as e:
             logging.error(f"[SYMLINK_DELETION] Permission denied accessing symlink directory: {symlink_base}")
             result['errors'].append(f"Permission denied: {symlink_base}")
+            result['success'] = False
             return result
 
         def is_safe_to_delete(folder_path):
@@ -485,6 +488,7 @@ class DeletionManager:
         from utilities.settings import get_setting
 
         result = {
+            'success': True,
             'deleted_symlinks': [],
             'folders_removed': [],
             'errors': []
@@ -581,6 +585,9 @@ class DeletionManager:
                 logging.debug(f"[BATCH_DELETE_SYMLINKS] Could not remove grandparent {grandparent_folder}: {e}")
 
         logging.info(f"[BATCH_DELETE_SYMLINKS] Complete: {len(result['deleted_symlinks'])} symlinks, {len(result['folders_removed'])} folders removed")
+
+        # Set final success state based on whether errors occurred
+        result['success'] = len(result['errors']) == 0
 
         return result
 
@@ -781,8 +788,20 @@ class DeletionManager:
             if not success:
                 logging.warning(f"[PLEX_REMOVAL] Direct Plex removal failed for '{item_title}'. Trying scan & empty trash...")
                 try:
-                    scan_and_empty_plex_trash()
-                    logging.info(f"[PLEX_REMOVAL] Triggered library scan and trash empty for '{item_title}'.")
+                    # Determine section type based on item type
+                    section_type = None
+                    item_type = item.get('type')
+                    if item_type == 'movie':
+                        section_type = 'movie'
+                    elif item_type in ('episode', 'show'):
+                        section_type = 'show'
+
+                    # Use parent folder path for scanning (more efficient than full section scan)
+                    import os
+                    scan_paths = [os.path.dirname(item_path)] if item_path else None
+
+                    scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
+                    logging.info(f"[PLEX_REMOVAL] Triggered library scan and trash empty for '{item_title}' (section_type={section_type}).")
                     success = True  # Consider it successful after fallback
                 except Exception as scan_err:
                     logging.warning(f"[PLEX_REMOVAL] Scan & empty trash also failed for '{item_title}': {scan_err}")
@@ -1516,7 +1535,8 @@ class DeletionManager:
                           clear_cache: bool = True, delete_from_debrid: bool = False,
                           delete_from_media_server: bool = True, delete_files: bool = True,
                           delete_symlinks: bool = True, remove_from_content_source: bool = False,
-                          skip_database: bool = False, force_delete_parent_folder: bool = False) -> dict:
+                          skip_database: bool = False, force_delete_parent_folder: bool = False,
+                          skip_filesystem_wait: bool = False) -> dict:
         """
         Delete single item with configurable layers
 
@@ -1531,6 +1551,7 @@ class DeletionManager:
             remove_from_content_source: If True, remove from original source (Trakt, Overseerr, etc.)
             skip_database: If True, skip database operations (for ghostlist where DB already updated)
             force_delete_parent_folder: If True, delete parent folder even if not empty (whole show/movie delete)
+            skip_filesystem_wait: If True, skip the 1-second filesystem wait (used in batch operations where wait happens once for entire batch)
 
         Returns:
         {
@@ -1568,6 +1589,7 @@ class DeletionManager:
             item = get_item_by_id(item_id)
             if not item:
                 result['errors'].append(f"Item {item_id} not found")
+                result['success'] = False  # Explicit for clarity (already False from init)
                 return result
 
             result['title'] = item.get('title', 'Unknown')
@@ -1757,9 +1779,13 @@ class DeletionManager:
                 logging.info(f"[DELETE_TIMING] Phase 2.5 (folder cleanup) took {time.time() - phase_start:.3f}s")
 
                 # Step 3: Wait for filesystem operations to complete
+                # Only wait if filesystem operations were performed AND not skipped for batch operations
                 phase_start = time.time()
-                time.sleep(1)
-                logging.info(f"[DELETE_TIMING] Phase 3 (filesystem wait) took {time.time() - phase_start:.3f}s")
+                if not skip_filesystem_wait and (delete_files or delete_symlinks):
+                    time.sleep(1)
+                    logging.info(f"[DELETE_TIMING] Phase 3 (filesystem wait) took {time.time() - phase_start:.3f}s")
+                else:
+                    logging.info(f"[DELETE_TIMING] Phase 3 (filesystem wait) skipped: {time.time() - phase_start:.3f}s")
 
                 # Step 4: Remove from Plex
                 phase_start = time.time()
@@ -1776,8 +1802,19 @@ class DeletionManager:
                             # Direct removal failed - try scan & empty trash as fallback
                             logging.warning(f"[DELETE_ITEM] Direct Plex removal failed for {item.get('title')}. Trying scan & empty trash...")
                             try:
-                                scan_and_empty_plex_trash()
-                                logging.info(f"[DELETE_ITEM] Triggered library scan and trash empty for {item.get('title')}")
+                                # Determine section type based on item type
+                                section_type = None
+                                if item.get('type') == 'movie':
+                                    section_type = 'movie'
+                                elif item.get('type') in ('episode', 'show'):
+                                    section_type = 'show'
+
+                                # Use parent folder path for scanning
+                                import os
+                                scan_paths = [os.path.dirname(path_for_plex_api)] if path_for_plex_api else None
+
+                                scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
+                                logging.info(f"[DELETE_ITEM] Triggered library scan and trash empty for {item.get('title')} (section_type={section_type})")
                             except Exception as scan_err:
                                 logging.warning(f"[DELETE_ITEM] Scan & empty trash also failed: {scan_err}")
                     except Exception as e:
@@ -1889,6 +1926,7 @@ class DeletionManager:
         except Exception as e:
             logging.error(f"Error deleting item {item_id}: {e}", exc_info=True)
             result['errors'].append(str(e))
+            result['success'] = False  # Explicit for clarity (already False from init)
             return result
 
     def _delete_show_folder(self, item: dict, delete_files: bool = True,
@@ -2180,18 +2218,30 @@ class DeletionManager:
         # CRITICAL CHECK: If Plex deletion was requested but failed, stop here
         # This prevents orphaned Plex entries (items in Plex with no files)
         # Exception: "not found" errors are OK - nothing to delete
-        if delete_from_media_server and plex_deletion_type and not plex_content_deleted:
+        # Exception: "400 Bad Request" errors indicate media deletion is disabled - fallback to path-based deletion
+        if delete_from_media_server and plex_deletion_type and not plex_content_deleted and self.plex_enabled:
             # Check if the error is "not found" - this is OK, nothing to delete
             is_not_found_error = any('not found in Plex' in str(err) for err in aggregate_result['errors'])
 
-            if not is_not_found_error:
+            # Check if the error is "400 Bad Request" (media deletion disabled in Plex settings)
+            # In this case, we can fallback to path-based deletion which doesn't require that setting
+            is_deletion_disabled = any('Plex deletion disabled' in str(err) or '400 Bad Request' in str(err)
+                                      for err in aggregate_result['errors'])
+
+            if not is_not_found_error and not is_deletion_disabled:
                 # Real error occurred - abort to prevent orphaned Plex entries
                 error_msg = f"Plex deletion failed for {plex_deletion_type} '{plex_content_title}'. Aborting to prevent orphaned Plex entries."
                 logging.error(f"[DELETE_MULTIPLE] {error_msg}")
                 aggregate_result['success'] = False
                 aggregate_result['errors'].append(error_msg)
-                aggregate_result['items_deleted'] = 0
+                aggregate_result['deleted_count'] = 0  # Use existing key, not undefined 'items_deleted'
                 return aggregate_result
+            elif is_deletion_disabled:
+                # Media deletion disabled in Plex - fallback to path-based deletion
+                logging.warning(f"[DELETE_MULTIPLE] Content-level Plex deletion disabled (400 Bad Request) - will fallback to path-based deletion")
+                # Clear the 400 error from the list since we're handling it with a fallback
+                aggregate_result['errors'] = [err for err in aggregate_result['errors']
+                                             if 'Plex deletion disabled' not in str(err) and '400 Bad Request' not in str(err)]
             else:
                 # Not found error - this is OK, just log and continue
                 logging.info(f"[DELETE_MULTIPLE] Plex content not found (already deleted or never added) - continuing with other deletion layers")
@@ -2317,7 +2367,8 @@ class DeletionManager:
                         delete_symlinks=False,  # IMPORTANT: Already done in batch above
                         remove_from_content_source=remove_from_content_source,
                         skip_database=True,  # Always skip DB in Phase 1
-                        force_delete_parent_folder=False  # Already handled in batch
+                        force_delete_parent_folder=False,  # Already handled in batch
+                        skip_filesystem_wait=True  # Skip per-item wait, batch-level wait at line 2312
                     )
 
                     # Merge batch results into individual result for tracking
@@ -2345,7 +2396,8 @@ class DeletionManager:
                         delete_symlinks=delete_symlinks,
                         remove_from_content_source=remove_from_content_source,
                         skip_database=True,
-                        force_delete_parent_folder=force_delete_parent_folder and plex_content_deleted
+                        force_delete_parent_folder=force_delete_parent_folder and plex_content_deleted,
+                        skip_filesystem_wait=False  # Keep per-item wait in fallback mode since no batch-level wait
                     )
                     aggregate_result['results'].append(result)
 

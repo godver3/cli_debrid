@@ -1318,8 +1318,12 @@ def delete_item():
                             # Direct removal failed - try scan & empty trash as fallback
                             logging.warning(f"Delete item: Direct Plex removal failed for {item['title']}. Trying scan & empty trash...")
                             try:
-                                scan_and_empty_plex_trash()
-                                logging.info(f"Delete item: Triggered library scan and trash empty for {item['title']}.")
+                                # Determine section type based on item type
+                                import os
+                                section_type = 'movie' if item.get('type') == 'movie' else 'show'
+                                scan_paths = [os.path.dirname(path_to_remove_from_plex)] if path_to_remove_from_plex else None
+                                scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
+                                logging.info(f"Delete item: Triggered library scan and trash empty for {item['title']} (section_type={section_type}).")
                             except Exception as scan_err:
                                 logging.warning(f"Delete item: Scan & empty trash also failed for {item['title']}: {scan_err}. Item may need manual removal from Plex.")
                     except Exception as e:
@@ -1385,8 +1389,12 @@ def delete_item():
                             # Direct removal failed - try scan & empty trash as fallback
                             logging.warning(f"Delete item: Direct Plex removal failed for {item['title']}. Trying scan & empty trash...")
                             try:
-                                scan_and_empty_plex_trash()
-                                logging.info(f"Delete item: Triggered library scan and trash empty for {item['title']}.")
+                                # Determine section type based on item type
+                                import os
+                                section_type = 'movie' if item.get('type') == 'movie' else 'show'
+                                scan_paths = [os.path.dirname(path_to_remove_from_plex)] if path_to_remove_from_plex else None
+                                scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
+                                logging.info(f"Delete item: Triggered library scan and trash empty for {item['title']} (section_type={section_type}).")
                             except Exception as scan_err:
                                 logging.warning(f"Delete item: Scan & empty trash also failed for {item['title']}: {scan_err}. Item may need manual removal from Plex.")
                     except Exception as e:
