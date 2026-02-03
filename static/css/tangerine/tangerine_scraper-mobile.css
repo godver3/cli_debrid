@@ -467,6 +467,67 @@
         box-sizing: border-box;
     }
 
+    /* Mobile torrent controls */
+    .mobile-torrent-controls {
+        width: 100%;
+        padding: 15px 15px 20px 15px;
+        background: rgba(255, 255, 255, 0.03);
+        border-radius: 12px;
+        margin-bottom: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    .mobile-torrent-controls .torrent-version-dropdown-wrapper,
+    .mobile-torrent-controls .torrent-folder-dropdown-wrapper {
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+    }
+
+    /* Add bottom padding when version dropdown is the last child (Plex mode) */
+    .mobile-torrent-controls .torrent-version-dropdown-wrapper:last-child {
+        padding-bottom: 10px;
+    }
+
+    /* Add bottom padding to folder dropdown (Symlink mode) */
+    .mobile-torrent-controls .torrent-folder-dropdown-wrapper {
+        padding-bottom: 10px;
+    }
+
+    .mobile-torrent-controls label {
+        color: #d4d4d4;
+        font-size: 0.9rem;
+        font-weight: 500;
+        white-space: nowrap;
+        min-width: 60px;
+    }
+
+    .mobile-torrent-controls select {
+        flex: 1;
+        padding: 12px 40px 12px 12px;
+        background: #1a1a1a;
+        border: 1px solid #404040;
+        border-radius: 8px;
+        color: #fff;
+        font-size: 0.9rem;
+        min-height: 44px;
+        -webkit-appearance: none;
+        appearance: none;
+        background-image: url("data:image/svg+xml;utf8,<svg fill='white' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/></svg>");
+        background-repeat: no-repeat;
+        background-position: right 10px center;
+        background-size: 20px;
+    }
+
+    .mobile-torrent-controls select:focus {
+        outline: none;
+        border-color: #f97316;
+    }
+
     form#search-form {
         display: flex;
         width: 95%;
