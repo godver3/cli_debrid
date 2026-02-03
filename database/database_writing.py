@@ -685,25 +685,31 @@ def get_preferred_alias(tmdb_id: str, imdb_id: str = None, media_type: str = Non
         conn.close()
 
 @retry_on_db_lock()
-def add_media_item(item: dict) -> int:
+def add_media_item(item: dict, user_initiated: bool = False) -> int:
     """Add a new media item to the database.
-    
+
     Args:
         item: Dictionary containing the media item data
-        
+        user_initiated: If True, bypasses ghostlist/blacklist checks for manual user actions.
+                       When bypassing, uses version-aware logic:
+                       - Same version: Updates existing entry (unghosts + updates torrent info)
+                       - Different version: Inserts new entry (leaves old ghostlisted)
+
     Returns:
         int: The ID of the newly inserted item, or None if insertion failed
     """
     conn = get_db_connection()
     try:
-        # GHOSTLIST CHECK: Don't insert if a ghostlisted version already exists
         imdb_id = item.get('imdb_id')
         tmdb_id = item.get('tmdb_id')
         item_type = item.get('type')
+        version = item.get('version')
 
+        # GHOSTLIST/BLACKLIST CHECK
         if imdb_id or tmdb_id:
+            # Build query to check for ghostlisted/blacklisted entries
             ghostlist_check_query = '''
-                SELECT id FROM media_items
+                SELECT id, version FROM media_items
                 WHERE (imdb_id = ? OR tmdb_id = ?)
                 AND type = ?
                 AND (ghostlisted = 1 OR state = 'Blacklisted')
@@ -714,7 +720,7 @@ def add_media_item(item: dict) -> int:
             # For episodes, also check season/episode number
             if item_type == 'episode' and 'season_number' in item and 'episode_number' in item:
                 ghostlist_check_query = '''
-                    SELECT id FROM media_items
+                    SELECT id, version FROM media_items
                     WHERE (imdb_id = ? OR tmdb_id = ?)
                     AND type = ?
                     AND season_number = ?
@@ -725,10 +731,61 @@ def add_media_item(item: dict) -> int:
                 ghostlist_check_params = [imdb_id, tmdb_id, item_type, item['season_number'], item['episode_number']]
 
             ghostlist_result = conn.execute(ghostlist_check_query, ghostlist_check_params).fetchone()
+
             if ghostlist_result:
-                logging.info(f"⛔ Skipping add_media_item - user has ghostlisted/blacklisted this item (ID: {ghostlist_result[0]}, IMDB: {imdb_id}, Type: {item_type})")
-                conn.close()
-                return None
+                # If NOT user-initiated, block the addition (existing behavior)
+                if not user_initiated:
+                    logging.info(f"⛔ Skipping add_media_item - user has ghostlisted/blacklisted this item (ID: {ghostlist_result[0]}, IMDB: {imdb_id}, Type: {item_type})")
+                    conn.close()
+                    return None
+
+                # User-initiated bypass: Check version to determine action
+                existing_id = ghostlist_result[0]
+                existing_version = ghostlist_result[1]
+
+                # Same version: UPDATE existing entry (unghost + update torrent info)
+                if existing_version == version:
+                    logging.info(f"🔓 User-initiated add: Updating existing ghostlisted/blacklisted entry (ID: {existing_id}, Version: {version})")
+
+                    # Build UPDATE query for relevant fields
+                    update_fields = []
+                    update_values = []
+
+                    # Unghost and reset state
+                    update_fields.append('ghostlisted = ?')
+                    update_values.append(0)
+
+                    # Update torrent-related fields if present
+                    if 'state' in item:
+                        update_fields.append('state = ?')
+                        update_values.append(item['state'])
+                    if 'magnet_link' in item:
+                        update_fields.append('magnet_link = ?')
+                        update_values.append(item['magnet_link'])
+                    if 'scrape_results' in item:
+                        update_fields.append('scrape_results = ?')
+                        update_values.append(item['scrape_results'])
+                    if 'torrent_name' in item:
+                        update_fields.append('torrent_name = ?')
+                        update_values.append(item['torrent_name'])
+
+                    # Always update last_updated
+                    update_fields.append('last_updated = ?')
+                    update_values.append(datetime.now())
+
+                    # Add WHERE clause parameter
+                    update_values.append(existing_id)
+
+                    update_query = f"UPDATE media_items SET {', '.join(update_fields)} WHERE id = ?"
+                    conn.execute(update_query, update_values)
+                    conn.commit()
+
+                    logging.info(f"✅ Updated existing entry ID {existing_id} - unghosted and updated torrent info")
+                    return existing_id
+
+                # Different version: INSERT new entry (leave old ghostlisted alone)
+                else:
+                    logging.info(f"🔓 User-initiated add: Different version detected (existing: {existing_version}, new: {version}). Inserting new entry, leaving old ghostlisted entry (ID: {existing_id}) as-is.")
 
         # Get the column names from the item dictionary
         columns = list(item.keys())

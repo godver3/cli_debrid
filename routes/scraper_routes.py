@@ -615,7 +615,7 @@ def add_torrent_to_debrid():
                                     
                                     # Add episode to database
                                     from database import add_media_item
-                                    episode_id = add_media_item(episode_item)
+                                    episode_id = add_media_item(episode_item, user_initiated=True)
                                     if episode_id:
                                         episode_item['id'] = episode_id
                                         # Add to checking queue
@@ -642,7 +642,7 @@ def add_torrent_to_debrid():
                     # For single episodes or movies, proceed as normal
                     from database import add_media_item
 
-                    item_id = add_media_item(item)
+                    item_id = add_media_item(item, user_initiated=True)
                     if not item_id:
                         raise Exception("Failed to add item to database")
                     
