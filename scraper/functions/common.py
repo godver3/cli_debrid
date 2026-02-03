@@ -47,8 +47,8 @@ def detect_season_episode_info(parsed_info: Union[Dict[str, Any], str]) -> Dict[
     }
     
     # Check for complete series indicators
-    title = parsed_info.get('title', '').lower()
-    original_title = parsed_info.get('original_title', '').lower()
+    title = (parsed_info.get('title', '') or '').lower()
+    original_title = (parsed_info.get('original_title', '') or '').lower()
     # Add PTT's own 'complete' flag to the check
     is_ptt_complete = parsed_info.get('complete', False)
 
