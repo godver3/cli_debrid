@@ -1897,6 +1897,7 @@ def delete_items():
     try:
         from utilities.deletion_manager import DeletionManager
         from database.database_reading import get_items_by_ids
+        from utilities.settings import get_setting
 
         data = request.json
         item_ids = data.get('item_ids', [])
@@ -1922,7 +1923,6 @@ def delete_items():
             }), 404
 
         # Check auto-ghostlist setting (applies to all content types)
-        from utilities.settings import get_setting
         auto_ghostlist = get_setting('Library Manager', 'ghostlist_mode', False)
         auto_ghostlisted = False
 
@@ -2924,6 +2924,7 @@ def delete_season(imdb_id, season_number):
     try:
         from utilities.deletion_manager import DeletionManager
         from database.database_reading import get_all_episodes_for_season
+        from utilities.settings import get_setting
 
         data = request.get_json() or {}
         layers = data.get('layers', ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache'])
@@ -2955,7 +2956,6 @@ def delete_season(imdb_id, season_number):
         logging.info(f"[DELETE_SEASON] Layers requested: {layers}")
 
         # ONLY check auto-ghostlist setting - this determines database behavior
-        from utilities.settings import get_setting
         auto_ghostlist = get_setting('Library Manager', 'ghostlist_mode', False)
         auto_ghostlisted = False
 
