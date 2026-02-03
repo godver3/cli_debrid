@@ -1157,7 +1157,7 @@ def confirm_manual_assignment():
                     'series_title', 'season', 'episode', 'series_year', 'media_type', '_matcher_data', 'item_key'
                 ]}
                 
-                item_id = add_media_item(db_item)
+                item_id = add_media_item(db_item, user_initiated=True)
                 if item_id:
                     added_items_count += 1
                     successfully_added_items.append(item_id)
