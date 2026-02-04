@@ -1323,6 +1323,75 @@
                                 <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
                             {% endif %}
                         </div>
+                        {# Render Plex Labels configuration if available for this source type #}
+                        {% set source_type = config.type %}
+                        {% if settings_schema['Content Sources'].schema is defined and
+                              source_type in settings_schema['Content Sources'].schema and
+                              'plex_labels' in settings_schema['Content Sources'].schema[source_type] %}
+                            {% set plex_labels_config = config.get('plex_labels', {}) if config.get('plex_labels', {}) is mapping else {} %}
+                            {% set plex_labels_schema = settings_schema['Content Sources'].schema[source_type]['plex_labels'].schema %}
+
+                            <div class="settings-form-group" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
+                                <h5 style="margin-bottom: 10px; color: #f4f4f4;">Plex Labels Configuration</h5>
+                                <p class="settings-description" style="margin-bottom: 15px;">
+                                    Configure automatic Plex label assignment for items from this source. Labels help organize your Plex library and can be used for collections or filtering. More Plex label functions can be found on debug functions page.
+                                </p>
+
+                                {# Enabled checkbox #}
+                                <div class="settings-form-group">
+                                    <label class="settings-title">
+                                        <input type="checkbox"
+                                               id="content-sources-{{ source_id }}-plex_labels-enabled"
+                                               name="Content Sources.{{ source_id }}.plex_labels.enabled"
+                                               data-section="Content Sources"
+                                               data-key="{{ source_id }}.plex_labels.enabled"
+                                               onchange="togglePlexLabelsFields('{{ source_id }}')"
+                                               {% if plex_labels_config.get('enabled', False) %}checked{% endif %}>
+                                        Enable Plex Labels
+                                    </label>
+                                    <p class="settings-description">{{ plex_labels_schema.enabled.description }}</p>
+                                </div>
+
+                                {# Plex Labels dependent fields - indented and disabled when Enable Plex Labels is unchecked #}
+                                <div class="plex-labels-dependent-fields" id="plex-labels-dependent-{{ source_id }}" style="margin-left: 10px;">
+                                    {# Label Mode dropdown #}
+                                    <div class="settings-form-group">
+                                        <label for="content-sources-{{ source_id }}-plex_labels-label_mode" class="settings-title">Label Mode:</label>
+                                        <select id="content-sources-{{ source_id }}-plex_labels-label_mode"
+                                                name="Content Sources.{{ source_id }}.plex_labels.label_mode"
+                                                class="settings-input"
+                                                data-section="Content Sources"
+                                                data-key="{{ source_id }}.plex_labels.label_mode"
+                                                onchange="updatePlexLabelsVisibility('{{ source_id }}')"
+                                                {% if not plex_labels_config.get('enabled', False) %}disabled{% endif %}>
+                                            {% for choice in plex_labels_schema.label_mode.choices %}
+                                                <option value="{{ choice }}"
+                                                        {% if plex_labels_config.get('label_mode', plex_labels_schema.label_mode.default) == choice %}selected{% endif %}>
+                                                    {{ choice|title }}
+                                                </option>
+                                            {% endfor %}
+                                        </select>
+                                        <p class="settings-description">{{ plex_labels_schema.label_mode.description }}</p>
+                                    </div>
+
+                                    {# Fixed Label input (shown when label_mode is 'fixed') #}
+                                    <div class="settings-form-group plex-labels-fixed" id="plex-labels-fixed-{{ source_id }}"
+                                         style="display: {% if plex_labels_config.get('label_mode', plex_labels_schema.label_mode.default) == 'fixed' %}block{% else %}none{% endif %};">
+                                        <label for="content-sources-{{ source_id }}-plex_labels-fixed_label" class="settings-title">Fixed Label:</label>
+                                        <input type="text"
+                                               id="content-sources-{{ source_id }}-plex_labels-fixed_label"
+                                               name="Content Sources.{{ source_id }}.plex_labels.fixed_label"
+                                               value="{{ plex_labels_config.get('fixed_label', '') }}"
+                                               class="settings-input"
+                                               data-section="Content Sources"
+                                               data-key="{{ source_id }}.plex_labels.fixed_label"
+                                               placeholder="e.g., Kids Content"
+                                               {% if not plex_labels_config.get('enabled', False) %}disabled{% endif %}>
+                                        <p class="settings-description">{{ plex_labels_schema.fixed_label.description }}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endif %}
 
                     {% else %}
                         {# --- Render fields using the GENERAL loop for other types --- #}
