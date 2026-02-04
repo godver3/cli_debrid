@@ -25,6 +25,37 @@ direct_api = DirectAPI()
 # Initialize TraktMetadata if not already done globally for get_show_status
 trakt_metadata_instance = TraktMetadata()
 
+# Cache for Jackett enabled check to avoid loading config on every call
+_jackett_enabled_cache = None
+_jackett_check_time = 0
+_JACKETT_CACHE_TTL = 60  # Cache for 60 seconds
+
+def _has_jackett_enabled():
+    """
+    Check if any Jackett scrapers are enabled (cached for 60s to avoid repeated config loads)
+
+    Returns:
+        bool: True if at least one Jackett scraper is enabled
+    """
+    global _jackett_enabled_cache, _jackett_check_time
+    current_time = time.time()
+
+    # Return cached value if still fresh
+    if _jackett_enabled_cache is not None and (current_time - _jackett_check_time) < _JACKETT_CACHE_TTL:
+        return _jackett_enabled_cache
+
+    # Load config and check for Jackett
+    from queues.config_manager import load_config
+    config = load_config()
+
+    _jackett_enabled_cache = any(
+        isinstance(s, dict) and s.get('type') == 'Jackett' and s.get('enabled', False)
+        for s in config.get('Scrapers', {}).values()
+    )
+    _jackett_check_time = current_time
+
+    return _jackett_enabled_cache
+
 def parse_json_string(s):
     try:
         return json.loads(s)
@@ -89,26 +120,15 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
     # Convert TMDB ID to IMDb ID if necessary
     if tmdb_id and not imdb_id:
         # Skip TMDB to IMDb conversion for episodes since we only need show-level metadata
-        if item_media_type.lower() == 'episode':
+        if (item_media_type or '').lower() == 'episode':
             logging.debug(f"Skipping TMDB to IMDb conversion for episode with TMDB ID {tmdb_id}")
             return {}
-            
-        if item_media_type == "tv":
+
+        if (item_media_type or '').lower() == "tv":
             converted_item_media_type = "show"
         else:
-            converted_item_media_type = item_media_type
+            converted_item_media_type = item_media_type or 'movie'
 
-        # Check if any Jackett scrapers are enabled and if title contains UFC before attempting conversion
-        from queues.config_manager import load_config
-        config = load_config()
-        has_enabled_jackett = False
-        
-        for instance, settings in config.get('Scrapers', {}).items():
-            if isinstance(settings, dict):
-                if settings.get('type') == 'Jackett' and settings.get('enabled', False):
-                    has_enabled_jackett = True
-                    break
-        
         # Get the title from TMDB metadata or original item
         title = ''
         if tmdb_metadata:
@@ -119,13 +139,15 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
         # Try to convert TMDB to IMDB
         imdb_id, conversion_source = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type=converted_item_media_type)
         
-        # If conversion failed, check if we can proceed with Jackett
+        # If conversion failed, check if we can proceed without IMDb ID
         if not imdb_id:
-            if not has_enabled_jackett or 'UFC' not in title.upper():
-                logging.error(f"Could not find IMDb ID for TMDB ID {tmdb_id}. This is only supported for UFC content with Jackett enabled. A metadata refresh might resolve this.")
-                return {}
-            else:
-                logging.info(f"No IMDb ID found for UFC content with TMDB ID {tmdb_id}, proceeding with Jackett scraper(s)")
+            # Check if this is UFC content
+            is_ufc = 'UFC' in (title or '').upper()
+            has_enabled_jackett = _has_jackett_enabled()
+
+            if is_ufc and has_enabled_jackett:
+                # UFC content with Jackett enabled - proceed without IMDb ID
+                logging.info(f"No IMDb ID found for UFC content (TMDB {tmdb_id}), proceeding with Jackett scraper")
                 # Return metadata from TMDB if available, otherwise return minimal metadata
                 if tmdb_metadata:
                     tmdb_metadata.update({
@@ -145,7 +167,18 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
                     'content_source': original_item.get('content_source') if original_item else None,
                     'content_source_detail': original_item.get('content_source_detail') if original_item else None
                 }
-        logging.info(f"Converted TMDB ID {tmdb_id} to IMDb ID {imdb_id}")
+            elif is_ufc and not has_enabled_jackett:
+                # UFC content but no Jackett enabled
+                logging.error(f"Could not find IMDb ID for TMDB ID {tmdb_id}. UFC content requires Jackett scraper to be enabled.")
+                return {}
+            else:
+                # Normal content - IMDb ID required
+                logging.error(
+                    f"Could not find IMDb ID for TMDB ID {tmdb_id} ('{title}'). "
+                    f"TMDB to IMDb conversion failed. Please try again or verify the content exists on IMDb."
+                )
+                return {}
+        logging.info(f"Converted TMDB ID {tmdb_id} to IMDb ID {imdb_id} (source: {conversion_source})")
 
     # Log the decision point for media_type
     media_type_decision_input = item_media_type.lower() if item_media_type else '<<<MISSING_OR_EMPTY>>>'
