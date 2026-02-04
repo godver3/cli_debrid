@@ -5308,11 +5308,13 @@ def fix_episode_numbers():
             logging.info(f"Fixed {fixed_count} episode numbers")
 
         # Find torrent ID based duplicates (bug-created duplicates)
-        # TMDB FALLBACK: Group by both IDs to prevent mixing IMDB-only and TMDB-only items
+        # TRUE TMDB FALLBACK: Prioritize TMDB ID, use IMDb ID only when TMDB is missing
+        # Uses COALESCE to create unified identifier: 'tmdb_' + TMDB ID if available, else IMDb ID
         if remove_duplicates or show_duplicates:
             torrent_dup_cursor = conn.execute("""
                 SELECT
                     filled_by_torrent_id,
+                    COALESCE('tmdb_' || tmdb_id, imdb_id) as unified_id,
                     imdb_id,
                     tmdb_id,
                     season_number,
@@ -5327,9 +5329,9 @@ def fix_episode_numbers():
                 AND filled_by_torrent_id IS NOT NULL
                 AND filled_by_torrent_id != ''
                 AND (ghostlisted = 0 OR ghostlisted IS NULL)
-                GROUP BY filled_by_torrent_id, imdb_id, tmdb_id, season_number, episode_number
+                GROUP BY filled_by_torrent_id, COALESCE('tmdb_' || tmdb_id, imdb_id), season_number, episode_number
                 HAVING count > 1
-                ORDER BY imdb_id, tmdb_id, season_number, episode_number, filled_by_torrent_id
+                ORDER BY unified_id, season_number, episode_number, filled_by_torrent_id
             """)
 
             torrent_dupes = torrent_dup_cursor.fetchall()
@@ -5410,10 +5412,12 @@ def fix_episode_numbers():
             logging.info(f"Deleted {deleted_count} duplicate entries")
 
         # Find duplicate episodes if requested
-        # TMDB FALLBACK: Group by both IDs to prevent mixing IMDB-only and TMDB-only items
+        # TRUE TMDB FALLBACK: Prioritize TMDB ID, use IMDb ID only when TMDB is missing
+        # Uses COALESCE to create unified identifier: 'tmdb_' + TMDB ID if available, else IMDb ID
         if show_duplicates:
             dup_cursor = conn.execute("""
                 SELECT
+                    COALESCE('tmdb_' || tmdb_id, imdb_id) as unified_id,
                     imdb_id,
                     tmdb_id,
                     season_number,
@@ -5425,9 +5429,9 @@ def fix_episode_numbers():
                 FROM media_items
                 WHERE type = 'episode'
                 AND (ghostlisted = 0 OR ghostlisted IS NULL)
-                GROUP BY imdb_id, tmdb_id, season_number, episode_number
+                GROUP BY COALESCE('tmdb_' || tmdb_id, imdb_id), season_number, episode_number
                 HAVING count > 1
-                ORDER BY imdb_id, tmdb_id, season_number, episode_number
+                ORDER BY unified_id, season_number, episode_number
             """)
 
             duplicates = [dict(row) for row in dup_cursor.fetchall()]
@@ -5493,32 +5497,80 @@ def cleanup_ghostlisted_duplicates():
             media_label = "movies"
 
         # Find items with both collected and ghostlisted versions
-        # For shows, group by season/episode to find actual duplicate episodes
-        # TMDB FALLBACK: Use IMDB ID if available, otherwise use TMDB ID
-        # IMPORTANT: Group by both IDs to prevent mixing IMDB-only and TMDB-only items
+        # Uses TWO-PASS approach via UNION to catch duplicates by EITHER TMDB or IMDb
+        # Pass 1: Group by TMDB (finds items with same TMDB)
+        # Pass 2: Group by IMDb (finds items with same IMDb but different/missing TMDB)
         if media_type == 'show':
             cursor = conn.execute(f"""
-                SELECT imdb_id, tmdb_id, season_number, episode_number,
-                       COUNT(*) as total_versions,
-                       SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
-                       SUM(CASE WHEN state = 'Collected' THEN 1 ELSE 0 END) as collected_count
-                FROM media_items
-                WHERE {type_filter} AND (imdb_id IS NOT NULL OR tmdb_id IS NOT NULL)
-                GROUP BY imdb_id, tmdb_id, season_number, episode_number
-                HAVING ghostlisted_count > 0 AND collected_count > 0
-                ORDER BY imdb_id, tmdb_id, season_number, episode_number
+                SELECT * FROM (
+                    -- Pass 1: TMDB-based duplicates
+                    SELECT 'tmdb_' || tmdb_id as unified_id,
+                           MIN(imdb_id) as imdb_id, tmdb_id, season_number, episode_number,
+                           COUNT(*) as total_versions,
+                           SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
+                           SUM(CASE WHEN state IN ('Collected', 'Upgrading') THEN 1 ELSE 0 END) as collected_count
+                    FROM media_items
+                    WHERE {type_filter} AND tmdb_id IS NOT NULL
+                    GROUP BY tmdb_id, season_number, episode_number
+                    HAVING ghostlisted_count > 0 AND collected_count > 0
+
+                    UNION
+
+                    -- Pass 2: IMDb-based duplicates (where TMDB differs or is missing)
+                    SELECT imdb_id as unified_id,
+                           imdb_id, MIN(tmdb_id) as tmdb_id, season_number, episode_number,
+                           COUNT(*) as total_versions,
+                           SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
+                           SUM(CASE WHEN state IN ('Collected', 'Upgrading') THEN 1 ELSE 0 END) as collected_count
+                    FROM media_items
+                    WHERE {type_filter} AND imdb_id IS NOT NULL
+                          AND imdb_id IN (
+                              SELECT imdb_id FROM media_items
+                              WHERE {type_filter} AND imdb_id IS NOT NULL
+                              GROUP BY imdb_id, season_number, episode_number
+                              HAVING COUNT(DISTINCT tmdb_id) > 1
+                                 OR (COUNT(*) > COUNT(tmdb_id))
+                          )
+                    GROUP BY imdb_id, season_number, episode_number
+                    HAVING ghostlisted_count > 0 AND collected_count > 0
+                )
+                ORDER BY unified_id, season_number, episode_number
             """)
         else:
             cursor = conn.execute(f"""
-                SELECT imdb_id, tmdb_id,
-                       COUNT(*) as total_versions,
-                       SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
-                       SUM(CASE WHEN state = 'Collected' THEN 1 ELSE 0 END) as collected_count
-                FROM media_items
-                WHERE {type_filter} AND (imdb_id IS NOT NULL OR tmdb_id IS NOT NULL)
-                GROUP BY imdb_id, tmdb_id
-                HAVING ghostlisted_count > 0 AND collected_count > 0
-                ORDER BY imdb_id, tmdb_id
+                SELECT * FROM (
+                    -- Pass 1: TMDB-based duplicates
+                    SELECT 'tmdb_' || tmdb_id as unified_id,
+                           MIN(imdb_id) as imdb_id, tmdb_id,
+                           COUNT(*) as total_versions,
+                           SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
+                           SUM(CASE WHEN state IN ('Collected', 'Upgrading') THEN 1 ELSE 0 END) as collected_count
+                    FROM media_items
+                    WHERE {type_filter} AND tmdb_id IS NOT NULL
+                    GROUP BY tmdb_id
+                    HAVING ghostlisted_count > 0 AND collected_count > 0
+
+                    UNION
+
+                    -- Pass 2: IMDb-based duplicates (where TMDB differs or is missing)
+                    SELECT imdb_id as unified_id,
+                           imdb_id, MIN(tmdb_id) as tmdb_id,
+                           COUNT(*) as total_versions,
+                           SUM(CASE WHEN ghostlisted = 1 THEN 1 ELSE 0 END) as ghostlisted_count,
+                           SUM(CASE WHEN state IN ('Collected', 'Upgrading') THEN 1 ELSE 0 END) as collected_count
+                    FROM media_items
+                    WHERE {type_filter} AND imdb_id IS NOT NULL
+                          AND imdb_id IN (
+                              SELECT imdb_id FROM media_items
+                              WHERE {type_filter} AND imdb_id IS NOT NULL
+                              GROUP BY imdb_id
+                              HAVING COUNT(DISTINCT tmdb_id) > 1
+                                 OR (COUNT(*) > COUNT(tmdb_id))
+                          )
+                    GROUP BY imdb_id
+                    HAVING ghostlisted_count > 0 AND collected_count > 0
+                )
+                ORDER BY unified_id
             """)
         mixed_movies = cursor.fetchall()
         cursor.close()
@@ -5538,20 +5590,21 @@ def cleanup_ghostlisted_duplicates():
 
         # Process each item
         for idx, movie in enumerate(mixed_movies, 1):
+            unified_id = movie['unified_id']
             imdb_id = movie['imdb_id']
             tmdb_id = movie['tmdb_id']
 
-            # Build WHERE clause to match BOTH IDs (to prevent mixing IMDB-only and TMDB-only items)
-            # This ensures items are only matched if they have the exact same ID combination
-            if imdb_id and tmdb_id:
-                id_where = "imdb_id = ? AND tmdb_id = ?"
-                id_params = [imdb_id, tmdb_id]
-            elif imdb_id:
-                id_where = "imdb_id = ? AND tmdb_id IS NULL"
-                id_params = [imdb_id]
-            else:  # Only TMDB ID
-                id_where = "tmdb_id = ? AND imdb_id IS NULL"
-                id_params = [tmdb_id]
+            # Build WHERE clause based on group type (TMDB-based or IMDb-based)
+            # The UNION query already separated these into distinct groups
+            if unified_id.startswith('tmdb_'):
+                # TMDB-based group: match all items with this TMDB
+                tmdb_id_value = unified_id.replace('tmdb_', '')
+                id_where = "tmdb_id = ?"
+                id_params = [tmdb_id_value]
+            else:
+                # IMDb-based group: match all items with this IMDb
+                id_where = "imdb_id = ?"
+                id_params = [unified_id]
 
             # Get all versions of this item
             # For shows, also filter by season/episode to get the correct duplicates
@@ -5783,29 +5836,76 @@ def cleanup_failed_upgrades():
         # Handle keep_best_quality mode separately (finds items with multiple collected versions)
         if keep_action == 'keep_best_quality':
             # Find items with multiple collected (non-ghostlisted) versions
-            # For shows, group by season/episode to find actual duplicate episodes
-            # TMDB FALLBACK: Group by both IDs to prevent mixing IMDB-only and TMDB-only items
+            # Uses TWO-PASS approach via UNION to catch duplicates by EITHER TMDB or IMDb
+            # Pass 1: Group by TMDB (finds items with same TMDB)
+            # Pass 2: Group by IMDb (finds items with same IMDb but different/missing TMDB)
             if media_type == 'show':
                 cursor.execute(f"""
-                    SELECT imdb_id, tmdb_id, season_number, episode_number,
-                           COUNT(*) as total_versions
-                    FROM media_items
-                    WHERE {type_filter} AND (imdb_id IS NOT NULL OR tmdb_id IS NOT NULL)
-                          AND state = 'Collected' AND ghostlisted = 0
-                    GROUP BY imdb_id, tmdb_id, season_number, episode_number
-                    HAVING total_versions > 1
-                    ORDER BY imdb_id, tmdb_id, season_number, episode_number
+                    SELECT * FROM (
+                        -- Pass 1: TMDB-based duplicates
+                        SELECT 'tmdb_' || tmdb_id as unified_id,
+                               MIN(imdb_id) as imdb_id, tmdb_id, season_number, episode_number,
+                               COUNT(*) as total_versions
+                        FROM media_items
+                        WHERE {type_filter} AND tmdb_id IS NOT NULL
+                              AND state IN ('Collected', 'Upgrading') AND ghostlisted = 0
+                        GROUP BY tmdb_id, season_number, episode_number
+                        HAVING total_versions > 1
+
+                        UNION
+
+                        -- Pass 2: IMDb-based duplicates (where TMDB differs or is missing)
+                        SELECT imdb_id as unified_id,
+                               imdb_id, MIN(tmdb_id) as tmdb_id, season_number, episode_number,
+                               COUNT(*) as total_versions
+                        FROM media_items
+                        WHERE {type_filter} AND imdb_id IS NOT NULL
+                              AND state IN ('Collected', 'Upgrading') AND ghostlisted = 0
+                              AND imdb_id IN (
+                                  SELECT imdb_id FROM media_items
+                                  WHERE {type_filter} AND imdb_id IS NOT NULL
+                                  GROUP BY imdb_id, season_number, episode_number
+                                  HAVING COUNT(DISTINCT tmdb_id) > 1
+                                     OR (COUNT(*) > COUNT(tmdb_id))
+                              )
+                        GROUP BY imdb_id, season_number, episode_number
+                        HAVING total_versions > 1
+                    )
+                    ORDER BY unified_id, season_number, episode_number
                 """)
             else:
                 cursor.execute(f"""
-                    SELECT imdb_id, tmdb_id,
-                           COUNT(*) as total_versions
-                    FROM media_items
-                    WHERE {type_filter} AND (imdb_id IS NOT NULL OR tmdb_id IS NOT NULL)
-                          AND state = 'Collected' AND ghostlisted = 0
-                    GROUP BY imdb_id, tmdb_id
-                    HAVING total_versions > 1
-                    ORDER BY imdb_id, tmdb_id
+                    SELECT * FROM (
+                        -- Pass 1: TMDB-based duplicates
+                        SELECT 'tmdb_' || tmdb_id as unified_id,
+                               MIN(imdb_id) as imdb_id, tmdb_id,
+                               COUNT(*) as total_versions
+                        FROM media_items
+                        WHERE {type_filter} AND tmdb_id IS NOT NULL
+                              AND state IN ('Collected', 'Upgrading') AND ghostlisted = 0
+                        GROUP BY tmdb_id
+                        HAVING total_versions > 1
+
+                        UNION
+
+                        -- Pass 2: IMDb-based duplicates (where TMDB differs or is missing)
+                        SELECT imdb_id as unified_id,
+                               imdb_id, MIN(tmdb_id) as tmdb_id,
+                               COUNT(*) as total_versions
+                        FROM media_items
+                        WHERE {type_filter} AND imdb_id IS NOT NULL
+                              AND state IN ('Collected', 'Upgrading') AND ghostlisted = 0
+                              AND imdb_id IN (
+                                  SELECT imdb_id FROM media_items
+                                  WHERE {type_filter} AND imdb_id IS NOT NULL
+                                  GROUP BY imdb_id
+                                  HAVING COUNT(DISTINCT tmdb_id) > 1
+                                     OR (COUNT(*) > COUNT(tmdb_id))
+                              )
+                        GROUP BY imdb_id
+                        HAVING total_versions > 1
+                    )
+                    ORDER BY unified_id
                 """)
 
             problem_movies = cursor.fetchall()
@@ -5818,24 +5918,26 @@ def cleanup_failed_upgrades():
             total_excluded = 0  # Count of items excluded by patterns
 
             for movie_row in problem_movies:
-                imdb_id = movie_row[0]
-                tmdb_id = movie_row[1]
+                unified_id = movie_row[0]
+                imdb_id = movie_row[1]
+                tmdb_id = movie_row[2]
 
-                # Build WHERE clause to match BOTH IDs (to prevent mixing IMDB-only and TMDB-only items)
-                if imdb_id and tmdb_id:
-                    id_where = "imdb_id = ? AND tmdb_id = ?"
-                    id_params = [imdb_id, tmdb_id]
-                elif imdb_id:
-                    id_where = "imdb_id = ? AND tmdb_id IS NULL"
-                    id_params = [imdb_id]
-                else:  # Only TMDB ID
-                    id_where = "tmdb_id = ? AND imdb_id IS NULL"
-                    id_params = [tmdb_id]
+                # Build WHERE clause based on group type (TMDB-based or IMDb-based)
+                # The UNION query already separated these into distinct groups
+                if unified_id.startswith('tmdb_'):
+                    # TMDB-based group: match all items with this TMDB
+                    tmdb_id_value = unified_id.replace('tmdb_', '')
+                    id_where = "tmdb_id = ?"
+                    id_params = [tmdb_id_value]
+                else:
+                    # IMDb-based group: match all items with this IMDb
+                    id_where = "imdb_id = ?"
+                    id_params = [unified_id]
 
                 # Get all collected versions of this item with their scores
                 if media_type == 'show':
-                    season_num = movie_row[2]
-                    episode_num = movie_row[3]
+                    season_num = movie_row[3]
+                    episode_num = movie_row[4]
                     cursor.execute(f"""
                         SELECT id, title, state, ghostlisted, content_source, version,
                                filled_by_file, location_basename, location_on_disk, filled_by_torrent_id,
@@ -6456,7 +6558,7 @@ def cleanup_failed_upgrades():
                            for row in cursor.fetchall()]
 
             # Separate collected and blacklisted (non-ghostlisted) versions
-            collected_versions = [v for v in versions if v['state'] == 'Collected']
+            collected_versions = [v for v in versions if v['state'] in ('Collected', 'Upgrading')]
             blacklisted_versions = [v for v in versions if v['state'] == 'Blacklisted' and v['ghostlisted'] == 0]
 
             # Safety check: ensure we have both types before proceeding
