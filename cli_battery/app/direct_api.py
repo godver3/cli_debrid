@@ -7,6 +7,7 @@ import logging
 from sqlalchemy.orm import Session as SqlAlchemySession
 from .trakt_metadata import TraktMetadata
 from functools import lru_cache
+import concurrent.futures
 
 # Aliases & caching utilities
 from typing import Tuple as _Tup, Optional as _Opt, Dict as _Dict, Any as _Any
@@ -140,10 +141,67 @@ class DirectAPI:
             return None, None
 
     @staticmethod
+    def _validate_imdb_id_parallel(tmdb_id: str, media_type: str, primary_imdb: str) -> Tuple[Optional[str], bool]:
+        """
+        Validate IMDb ID by cross-checking with TMDB External IDs API in parallel.
+
+        Args:
+            tmdb_id: TMDB ID to validate
+            media_type: 'movie' or 'tv'/'show'
+            primary_imdb: IMDb ID from primary source (Trakt)
+
+        Returns:
+            Tuple of (validated_imdb_id, is_validated)
+            - If validation matches: (primary_imdb, True)
+            - If validation conflicts: (tmdb_api_imdb, False) - use TMDB as authoritative
+            - If validation fails: (primary_imdb, False) - keep primary but flag it
+        """
+        try:
+            from utilities.settings import get_setting
+            import requests
+
+            tmdb_api_key = get_setting('TMDB', 'api_key')
+            if not tmdb_api_key:
+                logger.debug(f"No TMDB API key, skipping validation for {tmdb_id}")
+                return primary_imdb, False
+
+            # Determine endpoint based on media type
+            if media_type == 'movie':
+                tmdb_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}/external_ids?api_key={tmdb_api_key}"
+            else:  # Default to TV for 'show', 'tv', or None
+                tmdb_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/external_ids?api_key={tmdb_api_key}"
+
+            tmdb_response = requests.get(tmdb_url, timeout=5)
+            if tmdb_response.status_code == 200:
+                tmdb_data = tmdb_response.json()
+                tmdb_imdb_id = tmdb_data.get('imdb_id')
+
+                if tmdb_imdb_id:
+                    if tmdb_imdb_id == primary_imdb:
+                        logger.info(f"✓ Validated TMDB {tmdb_id} → {primary_imdb} (Trakt and TMDB agree)")
+                        return primary_imdb, True
+                    else:
+                        logger.warning(
+                            f"⚠ Conflict for TMDB {tmdb_id}: Trakt={primary_imdb}, TMDB API={tmdb_imdb_id}. "
+                            f"Using TMDB API as authoritative source."
+                        )
+                        return tmdb_imdb_id, False
+                else:
+                    logger.debug(f"TMDB API has no IMDb ID for {tmdb_id}, keeping Trakt result")
+                    return primary_imdb, False
+            else:
+                logger.debug(f"TMDB API validation failed (status {tmdb_response.status_code}), keeping Trakt result")
+                return primary_imdb, False
+
+        except Exception as e:
+            logger.debug(f"Validation error for {tmdb_id}: {e}. Keeping primary result.")
+            return primary_imdb, False
+
+    @staticmethod
     def tmdb_to_imdb(tmdb_id: str, media_type: str = None) -> Optional[str]:
         """
-        Convert TMDB ID to IMDB ID with comprehensive fallback system.
-        
+        Convert TMDB ID to IMDB ID with comprehensive fallback system and validation.
+
         Fallback layers:
         1. Primary: Trakt TMDB-to-IMDB API (via MetadataManager)
         2. Fallback 1: TMDB External IDs API (most authoritative)
@@ -158,8 +216,36 @@ class DirectAPI:
                 imdb_id, source = MetadataManager.tmdb_to_imdb(tmdb_id, media_type=media_type, session=session)
                 if imdb_id:
                     logger.info(f"DirectAPI.tmdb_to_imdb: Primary method succeeded for {tmdb_id} -> {imdb_id}")
+
+                    # Validate the result if it came from Trakt/battery cache
+                    if source in ['trakt', 'battery']:
+                        # Run validation in parallel with a short timeout
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(DirectAPI._validate_imdb_id_parallel, tmdb_id, media_type, imdb_id)
+                            try:
+                                validated_imdb, is_validated = future.result(timeout=10)
+                                if validated_imdb != imdb_id:
+                                    logger.warning(f"Validation corrected TMDB {tmdb_id}: {imdb_id} -> {validated_imdb}")
+                                    # Update cache with corrected value
+                                    try:
+                                        with managed_session() as cache_session:
+                                            from .metadata_manager import TMDBToIMDBMapping
+                                            mapping = cache_session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
+                                            if mapping:
+                                                mapping.imdb_id = validated_imdb
+                                                logger.info(f"Updated cache with corrected mapping: {tmdb_id} -> {validated_imdb}")
+                                    except Exception as cache_err:
+                                        logger.warning(f"Could not update cache: {cache_err}")
+                                    return validated_imdb, 'validated'
+                                elif is_validated:
+                                    return imdb_id, 'validated'
+                            except concurrent.futures.TimeoutError:
+                                logger.debug(f"Validation timed out for {tmdb_id}, using Trakt result")
+                            except Exception as val_err:
+                                logger.debug(f"Validation failed for {tmdb_id}: {val_err}, using Trakt result")
+
                     return imdb_id, source
-                    
+
             logger.warning(f"DirectAPI.tmdb_to_imdb: Primary method failed for {tmdb_id}, trying fallbacks...")
             
             # Fallback 1: TMDB External IDs API (most reliable since TMDB is authoritative)
