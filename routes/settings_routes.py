@@ -1524,24 +1524,69 @@ def update_settings():
                 plex_updates['shows_libraries'] = ','.join([lib.strip() for lib in raw_shows_libraries.split(',') if lib.strip()]) if raw_shows_libraries else ''
 
 
-        # Validate Plex libraries if Plex is selected
-        file_management = new_settings.get('File Management', config.get('File Management', {})) # Use existing config as fallback
-        if file_management.get('file_collection_management') == 'Plex':
-            # Use potentially updated plex_settings from new_settings, or fallback to existing config
-            plex_settings_for_validation = new_settings.get('Plex', config.get('Plex', {}))
-            
-            movie_libraries_for_validation = plex_settings_for_validation.get('movie_libraries', '').strip()
-            show_libraries_for_validation = plex_settings_for_validation.get('shows_libraries', '').strip()
-            
-            logging.info(f"Validating Plex libraries - Movie: '{movie_libraries_for_validation}', Shows: '{show_libraries_for_validation}'")
-            
-            if not movie_libraries_for_validation or not show_libraries_for_validation:
-                error_msg = "When using Plex as your library management system, you must specify both a movie library and a TV show library."
-                logging.error(f"Settings validation failed: {error_msg}")
-                return jsonify({
-                    "status": "error",
-                    "message": error_msg
-                }), 400
+        # Validate Plex libraries ONLY if user is actively changing to Plex mode or changing Plex library settings
+        # Don't validate if they're just saving other settings and Plex happens to be the current mode
+        should_validate_plex = False
+
+        if 'File Management' in new_settings:
+            new_file_mgmt = new_settings.get('File Management', {})
+            old_file_mgmt = config.get('File Management', {})
+
+            new_mode = new_file_mgmt.get('file_collection_management', '')
+            old_mode = old_file_mgmt.get('file_collection_management', '')
+
+            logging.info(f"DEBUG Plex validation - Old mode: '{old_mode}', New mode: '{new_mode}'")
+
+            # Check if user is changing TO Plex mode (not already on Plex)
+            if new_mode == 'Plex' and old_mode != 'Plex':
+                logging.info("DEBUG User is switching TO Plex mode - validation will be required")
+                should_validate_plex = True
+
+        # Check if Plex library settings are being actively changed
+        if 'Plex' in new_settings:
+            new_plex = new_settings.get('Plex', {})
+            old_plex = config.get('Plex', {})
+
+            # Handle None values properly
+            old_movie_libs = (old_plex.get('movie_libraries') or '').strip()
+            old_show_libs = (old_plex.get('shows_libraries') or '').strip()
+            new_movie_libs = (new_plex.get('movie_libraries') or '').strip()
+            new_show_libs = (new_plex.get('shows_libraries') or '').strip()
+
+            logging.info(f"DEBUG Plex libraries - Old: movie='{old_movie_libs}', show='{old_show_libs}' | New: movie='{new_movie_libs}', show='{new_show_libs}'")
+
+            if new_movie_libs != old_movie_libs or new_show_libs != old_show_libs:
+                # Only validate if we're actually setting new values (not clearing them accidentally)
+                if new_movie_libs or new_show_libs:
+                    logging.info("DEBUG Plex libraries changed to non-empty values - validation will be required")
+                    should_validate_plex = True
+                else:
+                    logging.info("DEBUG Plex libraries changed to empty (probably from different settings page) - skipping validation and restoring old values")
+                    # Restore old values to prevent accidental clearing
+                    new_settings['Plex']['movie_libraries'] = old_movie_libs
+                    new_settings['Plex']['shows_libraries'] = old_show_libs
+
+        logging.info(f"DEBUG Should validate Plex: {should_validate_plex}")
+
+        # Only validate if we detected a relevant change
+        if should_validate_plex:
+            file_management = new_settings.get('File Management', config.get('File Management', {}))
+            if file_management.get('file_collection_management') == 'Plex':
+                plex_settings_for_validation = new_settings.get('Plex', config.get('Plex', {}))
+                movie_libraries_for_validation = (plex_settings_for_validation.get('movie_libraries') or '').strip()
+                show_libraries_for_validation = (plex_settings_for_validation.get('shows_libraries') or '').strip()
+
+                logging.info(f"Validating Plex libraries - Movie: '{movie_libraries_for_validation}', Shows: '{show_libraries_for_validation}'")
+
+                if not movie_libraries_for_validation or not show_libraries_for_validation:
+                    error_msg = "When using Plex as your library management system, you must specify both a movie library and a TV show library."
+                    logging.error(f"Settings validation failed: {error_msg}")
+                    return jsonify({
+                        "status": "error",
+                        "message": error_msg
+                    }), 400
+        else:
+            logging.info("Plex validation skipped - no relevant changes detected")
 
         # Handle mutual exclusivity between Plex and Jellyfin/Emby settings
         # Check the Media Server Type to determine which settings to keep
