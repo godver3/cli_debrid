@@ -1,17 +1,19 @@
 import logging
 from routes.api_tracker import api
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from database.database_reading import get_imdb_aliases
 import time
 import random
 from http.client import RemoteDisconnected
 import base64
 
-def scrape_aiostreams_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
+def scrape_aiostreams_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, tmdb_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Scrape AIOStreams instance for pre-resolved stream URLs.
     AIOStreams is a Stremio addon that returns direct streaming URLs, not torrent magnets.
+
+    Supports both IMDB and TMDB IDs. IMDB ID is preferred, falls back to TMDB if IMDB is not available.
     """
     base_url = settings.get('url', '').rstrip('/')
     # Remove /manifest.json if present (user might paste the full Stremio addon URL)
@@ -19,17 +21,38 @@ def scrape_aiostreams_instance(instance: str, settings: Dict[str, Any], imdb_id:
         base_url = base_url[:-14]  # Remove the last 14 characters ('/manifest.json')
 
     try:
-        # Get all IMDB aliases for this ID
-        imdb_ids = get_imdb_aliases(imdb_id)
+        # Determine which ID to use and get ID list
+        id_list = []
+        id_format = None
+
+        if imdb_id:
+            # Get all IMDB aliases for this ID
+            id_list = get_imdb_aliases(imdb_id)
+            id_format = 'imdb'
+            logging.debug(f"Using IMDB ID format with {len(id_list)} aliases")
+        elif tmdb_id:
+            # Use TMDB ID (no aliases needed)
+            id_list = [tmdb_id]
+            id_format = 'tmdb'
+            logging.info(f"No IMDB ID available, using TMDB ID: {tmdb_id}")
+        else:
+            logging.error("Neither IMDB ID nor TMDB ID provided for AIOStreams scraper")
+            return []
+
         all_results = []
 
-        # Scrape for each IMDB ID (original + aliases)
-        for current_imdb_id in imdb_ids:
-            # Ensure IMDB ID has 'tt' prefix
-            if not current_imdb_id.startswith('tt'):
-                current_imdb_id = f'tt{current_imdb_id}'
+        # Scrape for each ID (IMDB aliases or single TMDB)
+        for current_id in id_list:
+            # Format ID based on type
+            if id_format == 'imdb':
+                # Ensure IMDB ID has 'tt' prefix
+                if not current_id.startswith('tt'):
+                    current_id = f'tt{current_id}'
+                formatted_id = current_id
+            else:  # tmdb
+                formatted_id = f'tmdb:{current_id}'
 
-            url = construct_url(base_url, current_imdb_id, content_type, season, episode)
+            url = construct_url(base_url, formatted_id, content_type, season, episode)
             response = fetch_data(url)
 
             if not response:
@@ -55,22 +78,30 @@ def scrape_aiostreams_instance(instance: str, settings: Dict[str, Any], imdb_id:
         logging.error(f"Error in scrape_aiostreams_instance for {instance}: {str(e)}", exc_info=True)
         return []
 
-def construct_url(base_url: str, imdb_id: str, content_type: str, season: int = None, episode: int = None) -> str:
+def construct_url(base_url: str, media_id: str, content_type: str, season: Optional[int] = None, episode: Optional[int] = None) -> str:
     """
     Construct AIOStreams API URL following Stremio addon format.
     Format: /stream/{type}/{id}.json
-    For series: /stream/series/{imdb_id}:{season}:{episode}.json
-    For movies: /stream/movie/{imdb_id}.json
+
+    Supports both IMDB and TMDB IDs:
+    - IMDB: tt1234567 or tt1234567:1:5
+    - TMDB: tmdb:12345 or tmdb:12345:1:5
+
+    For series: /stream/series/{id}:{season}:{episode}.json
+    For movies: /stream/movie/{id}.json
     """
     if season is not None and episode is None:
         episode = 1
 
+    # For series, append season and episode to the ID
+    formatted_id = media_id
+    if content_type == "episode" and season is not None and episode is not None:
+        formatted_id = f"{media_id}:{season}:{episode}"
+
     if content_type == "movie":
-        return f"{base_url}/stream/movie/{imdb_id}.json"
-    elif content_type == "episode" and season is not None and episode is not None:
-        return f"{base_url}/stream/series/{imdb_id}:{season}:{episode}.json"
+        return f"{base_url}/stream/movie/{formatted_id}.json"
     elif content_type == "episode":
-        return f"{base_url}/stream/series/{imdb_id}.json"
+        return f"{base_url}/stream/series/{formatted_id}.json"
     else:
         logging.error("Invalid content type provided. Must be 'movie' or 'episode'.")
         return ""
@@ -367,10 +398,12 @@ def parse_results(streams: List[Dict[str, Any]], instance: str) -> List[Dict[str
     return results
 
 
-def scrape_aiostreams_api(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
+def scrape_aiostreams_api(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False, tmdb_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Scrape AIOStreams API endpoint for streams.
     Uses the new AIOStreams API with basic authentication.
+
+    Supports both IMDB and TMDB IDs. IMDB ID is preferred, falls back to TMDB if IMDB is not available.
 
     Settings should contain:
     - base_url: AIOStreams instance base URL (e.g., https://aiostreams.example.com)
@@ -386,17 +419,38 @@ def scrape_aiostreams_api(instance: str, settings: Dict[str, Any], imdb_id: str,
         return []
 
     try:
-        # Get all IMDB aliases for this ID
-        imdb_ids = get_imdb_aliases(imdb_id)
+        # Determine which ID to use and get ID list
+        id_list = []
+        id_format = None
+
+        if imdb_id:
+            # Get all IMDB aliases for this ID
+            id_list = get_imdb_aliases(imdb_id)
+            id_format = 'imdb'
+            logging.debug(f"Using IMDB ID format with {len(id_list)} aliases")
+        elif tmdb_id:
+            # Use TMDB ID (no aliases needed)
+            id_list = [tmdb_id]
+            id_format = 'tmdb'
+            logging.info(f"No IMDB ID available, using TMDB ID: {tmdb_id}")
+        else:
+            logging.error("Neither IMDB ID nor TMDB ID provided for AIOStreams API scraper")
+            return []
+
         all_results = []
 
-        # Scrape for each IMDB ID (original + aliases)
-        for current_imdb_id in imdb_ids:
-            # Ensure IMDB ID has 'tt' prefix
-            if not current_imdb_id.startswith('tt'):
-                current_imdb_id = f'tt{current_imdb_id}'
+        # Scrape for each ID (IMDB aliases or single TMDB)
+        for current_id in id_list:
+            # Format ID based on type
+            if id_format == 'imdb':
+                # Ensure IMDB ID has 'tt' prefix
+                if not current_id.startswith('tt'):
+                    current_id = f'tt{current_id}'
+                formatted_id = current_id
+            else:  # tmdb
+                formatted_id = f'tmdb:{current_id}'
 
-            url = construct_api_url(base_url, current_imdb_id, content_type, season, episode)
+            url = construct_api_url(base_url, formatted_id, content_type, season, episode)
             response = fetch_api_data(url, uuid, password)
 
             if not response or not response.get('success'):
@@ -426,22 +480,27 @@ def scrape_aiostreams_api(instance: str, settings: Dict[str, Any], imdb_id: str,
         return []
 
 
-def construct_api_url(base_url: str, imdb_id: str, content_type: str, season: int = None, episode: int = None) -> str:
+def construct_api_url(base_url: str, media_id: str, content_type: str, season: Optional[int] = None, episode: Optional[int] = None) -> str:
     """
     Construct AIOStreams API URL.
     Format: /api/v1/search?type={type}&id={id}&requiredFields=infoHash
-    For series: id=tt12637874:1:5 (imdb:season:episode)
-    For movies: id=tt0099785
+
+    Supports both IMDB and TMDB IDs:
+    - IMDB series: id=tt12637874:1:5 (imdb:season:episode)
+    - TMDB series: id=tmdb:2131:1:5 (tmdb_id:season:episode)
+    - IMDB movies: id=tt0099785
+    - TMDB movies: id=tmdb:550
     """
     if season is not None and episode is None:
         episode = 1
 
     api_type = "movie" if content_type == "movie" else "series"
 
+    # For series, append season and episode to the ID
     if content_type == "movie":
-        search_id = imdb_id
+        search_id = media_id
     elif content_type == "episode" and season is not None and episode is not None:
-        search_id = f"{imdb_id}:{season}:{episode}"
+        search_id = f"{media_id}:{season}:{episode}"
     else:
         logging.error("Invalid content type or missing season/episode for series")
         return ""

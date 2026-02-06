@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 MAX_CONCURRENT_REQUESTS = 50  # Back to original but with small delays between batches
 OPTIMAL_PAGE_SIZE = 500  # Reduced from 2500 for gentler scanning
+EPISODE_BATCH_SIZE = 15  # Balanced batch size - prevents NAS timeouts while keeping good performance
+EPISODE_BATCH_DELAY = 0.5  # Moderate delay between episode batches
 CHUNK_SIZE = 10
 MAX_RETRIES = 3
 RETRY_DELAY = 1
@@ -188,9 +190,14 @@ async def get_library_contents(session: aiohttp.ClientSession, plex_url: str, li
 
     # Process pages in small batches with delays to reduce Plex CPU load
     if remaining_offsets:
-        batch_size = MAX_CONCURRENT_REQUESTS  # Process this many pages at a time
+        # Use smaller batch size for episodes to prevent overwhelming Plex on NAS systems
+        # Episodes are more expensive than movies and can cause timeouts with high concurrency
+        is_episode_library = item_type == 4
+        batch_size = EPISODE_BATCH_SIZE if is_episode_library else MAX_CONCURRENT_REQUESTS
+        batch_delay = EPISODE_BATCH_DELAY if is_episode_library else BATCH_DELAY
+
         total_batches = (len(remaining_offsets) + batch_size - 1) // batch_size
-        logger.info(f"Fetching {len(remaining_offsets)} additional pages from library {library_key}{type_str} in {total_batches} batches of {batch_size}")
+        logger.info(f"Fetching {len(remaining_offsets)} additional pages from library {library_key}{type_str} in {total_batches} batches of {batch_size} (episode_mode={is_episode_library})")
 
         for batch_num, batch_start in enumerate(range(0, len(remaining_offsets), batch_size), start=1):
             batch_offsets = remaining_offsets[batch_start:batch_start + batch_size]
@@ -209,7 +216,8 @@ async def get_library_contents(session: aiohttp.ClientSession, plex_url: str, li
 
             # Add delay between batches to let Plex breathe
             if batch_num < total_batches:
-                await asyncio.sleep(BATCH_DELAY)
+                logger.debug(f"Waiting {batch_delay}s before next batch...")
+                await asyncio.sleep(batch_delay)
 
     logger.info(f"Retrieved {len(all_metadata)} items in total from library {library_key}{type_str} (Concurrent Pagination)")
     return all_metadata
