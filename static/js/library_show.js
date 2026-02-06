@@ -987,7 +987,7 @@ function createEpisodeRow(episodes, seasonNumber) {
         ` : '';
 
         filesHtml = `${searchIcon}`;
-    } else if (files.length > 0 || isBlacklisted || isCollected || isUpgrading || isFinalScrape || isFinalCheck || isSleeping || firstEp.state === 'Unknown') {
+    } else if (files.length > 0 || isBlacklisted || isCollected || isUpgrading || isFinalScrape || isFinalCheck || isSleeping || isUnreleased || isWanted || firstEp.state === 'Unknown') {
         const filesButtonHtml = files.length > 0 ? `
             <button class="files-toggle-btn" type="button" title="Toggle file list">
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">

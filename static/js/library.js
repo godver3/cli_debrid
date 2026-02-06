@@ -1025,8 +1025,11 @@ async function fetchMissingPoster(tmdbId, mediaType, card) {
         const data = await response.json();
 
         if (data.success && data.poster_path) {
-            // Update the poster image
-            const img = card.querySelector('.media-poster');
+            // Update the poster image - handle both grid view (.media-poster img) and list view (.list-col-poster img)
+            // Also handle case where 'card' is already the img element itself
+            const img = card.tagName === 'IMG' ? card :
+                        (card.querySelector('.media-poster img') ||
+                         card.querySelector('.list-col-poster img'));
             if (img) {
                 img.src = `/scraper/tmdb_image/w300${data.poster_path}`;
                 img.classList.remove('placeholder');
@@ -1045,8 +1048,11 @@ async function fetchMissingPosterByImdb(imdbId, mediaType, card) {
         const data = await response.json();
 
         if (data.success && data.poster_path) {
-            // Update the poster image
-            const img = card.querySelector('.media-poster');
+            // Update the poster image - handle both grid view (.media-poster img) and list view (.list-col-poster img)
+            // Also handle case where 'card' is already the img element itself
+            const img = card.tagName === 'IMG' ? card :
+                        (card.querySelector('.media-poster img') ||
+                         card.querySelector('.list-col-poster img'));
             if (img) {
                 img.src = `/scraper/tmdb_image/w300${data.poster_path}`;
                 img.classList.remove('placeholder');
