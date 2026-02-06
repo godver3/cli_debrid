@@ -1,0 +1,175 @@
+/**
+ * Trailer Modal Styles - Tangerine Theme
+ */
+
+.trailer-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.trailer-modal.show {
+    opacity: 1;
+}
+
+.trailer-modal-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.9);
+    cursor: pointer;
+}
+
+.trailer-modal-content {
+    position: relative;
+    background: #2a1810;
+    border: 1px solid rgba(255, 138, 0, 0.3);
+    border-radius: 8px;
+    width: 90%;
+    max-width: 1200px;
+    max-height: 90vh;
+    overflow: hidden;
+    box-shadow: 0 10px 40px rgba(255, 138, 0, 0.3);
+    transform: scale(0.9);
+    transition: transform 0.2s ease;
+    z-index: 1;
+}
+
+.trailer-modal.show .trailer-modal-content {
+    transform: scale(1);
+}
+
+.trailer-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid rgba(255, 138, 0, 0.3);
+    background: rgba(255, 138, 0, 0.1);
+}
+
+.trailer-modal-header h3 {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+.trailer-close-btn {
+    background: none;
+    border: none;
+    color: #ffffff;
+    font-size: 2rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: background 0.2s ease, transform 0.1s ease;
+}
+
+.trailer-close-btn:hover {
+    background: rgba(255, 138, 0, 0.2);
+    transform: scale(1.1);
+}
+
+.trailer-close-btn:active {
+    transform: scale(0.95);
+}
+
+.trailer-video-container {
+    position: relative;
+    padding-bottom: 56.25%; /* 16:9 aspect ratio */
+    height: 0;
+    overflow: hidden;
+    background: #000;
+}
+
+.trailer-video-container iframe {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
+}
+
+/* Button styles for trailer button */
+#btn-trailer {
+    cursor: pointer;
+    background: none;
+    border: 1px solid rgba(255, 138, 0, 0.4);
+    transition: all 0.2s ease;
+}
+
+#btn-trailer:hover {
+    border-color: rgba(255, 138, 0, 0.7);
+    background: rgba(255, 138, 0, 0.1);
+}
+
+#btn-trailer svg {
+    transition: transform 0.2s ease;
+}
+
+#btn-trailer:hover svg {
+    transform: scale(1.2);
+}
+
+/* Animations */
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes slideOutRight {
+    from {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    to {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+    .trailer-modal-content {
+        width: 95%;
+        max-width: none;
+    }
+
+    .trailer-modal-header {
+        padding: 0.75rem 1rem;
+    }
+
+    .trailer-modal-header h3 {
+        font-size: 1rem;
+    }
+
+    .trailer-close-btn {
+        font-size: 1.5rem;
+        width: 28px;
+        height: 28px;
+    }
+}

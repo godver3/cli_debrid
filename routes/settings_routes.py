@@ -1502,7 +1502,30 @@ def update_settings():
         if requires_restart:
             logging.info(f"Settings requiring restart detected: {', '.join(set(restart_reasons))}")
 
+        # Detect if ONLY UI settings are being changed (no restart/reload needed)
+        # Compare new settings with current config to find what actually changed
+        ui_only_categories = {'Library Manager', 'Discover Settings'}
+        actually_changed_categories = set()
+
+        for category, values in new_settings.items():
+            current_values = config.get(category, {})
+            if values != current_values:
+                actually_changed_categories.add(category)
+                logging.debug(f"Detected change in category: {category}")
+
+        # Skip restart if: (1) nothing changed OR (2) only UI settings changed
+        skip_restart = (len(actually_changed_categories) == 0 or
+                       actually_changed_categories.issubset(ui_only_categories))
+
         logging.info("Received settings update request.")
+
+        if skip_restart:
+            if len(actually_changed_categories) == 0:
+                logging.info("No settings changed - will skip restart")
+            else:
+                logging.info(f"UI-only settings change detected ({', '.join(actually_changed_categories)}) - will skip restart")
+        else:
+            logging.info(f"Settings requiring full reinitialization: {', '.join(actually_changed_categories)}")
         # Optional: Log specific sections if needed for debugging
         # logging.info(f"File Management: {json.dumps(new_settings.get('File Management', {}), indent=2)}")
         # logging.info(f"Plex: {json.dumps(new_settings.get('Plex', {}), indent=2)}")
@@ -1725,6 +1748,16 @@ def update_settings():
         # Save the updated main config object atomically (assuming save_config does this)
         save_config(config)
         logging.info("Main configuration saved successfully.")
+
+        # For no changes or UI-only changes, skip cache clearing and reinitialization
+        if skip_restart:
+            logging.info("Skipping cache clearing and component reinitialization.")
+            response_data = {
+                "status": "success",
+                "message": "Settings updated successfully. No restart required.",
+                "requires_restart": False
+            }
+            return jsonify(response_data)
 
         # Clear content source cache files
         try:

@@ -233,6 +233,11 @@ input:checked + .toggle-slider:before {
     color: #e0e0e0;
 }
 
+/* Clickable stat items */
+.stats-box.collection-stats .stat-item-clickable {
+    cursor: pointer;
+}
+
 /* Top stats grid */
 .top-stats {
     display: grid;
@@ -257,6 +262,9 @@ input:checked + .toggle-slider:before {
     font-weight: 700;
     position: relative;
     padding-left: 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
 }
 
 .stats-box h3::before {
@@ -268,6 +276,19 @@ input:checked + .toggle-slider:before {
     width: 4px;
     background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
     border-radius: 2px;
+}
+
+.stats-box h3 .calendar-link {
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: #e17c52;
+    text-decoration: none;
+    transition: opacity 0.2s ease;
+    white-space: nowrap;
+}
+
+.stats-box h3 .calendar-link:hover {
+    opacity: 0.7;
 }
 
 /* List styles for aired/airing/upcoming */
@@ -561,7 +582,7 @@ span.upgrade-arrow {
 .file-details .filename {
     color: #808080;  /* Keep the filename text gray */
     display: block;
-    margin-top: 4px;
+    /* margin-top: 4px; */
     font-family: monospace;
 }
 
@@ -638,6 +659,9 @@ body[data-theme="tangerine"] .recently-upgraded-section .file-details .filename[
 .compact-view .file-details .filename {
     font-size: 0.85em;
     word-break: break-word;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 @media (max-width: 1280px) {
@@ -1066,4 +1090,97 @@ input[type="text"], input[type="number"], input[type="email"], input[type="passw
     .hide-mobile-text {
         display: none;
     }
+}
+/* Quality Badges for Recently Added/Upgraded sections */
+.quality-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.195rem 0.15rem 0.125rem 0.15rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    border-radius: 0.25rem;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+    line-height: 1 !important;
+    margin-right: 0.25rem;
+}
+
+.quality-badge.resolution {
+    background: rgba(139, 92, 246, 0.2);
+    color: #c4b5fd;
+    border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.quality-badge.source {
+    background: rgba(6, 182, 212, 0.2);
+    color: #67e8f9;
+    border: 1px solid rgba(6, 182, 212, 0.3);
+}
+
+.quality-badge.codec {
+    background: rgba(16, 185, 129, 0.2);
+    color: #6ee7b7;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.quality-badge.audio {
+    background: rgba(251, 146, 60, 0.2);
+    color: #fdba74;
+    border: 1px solid rgba(251, 146, 60, 0.3);
+}
+
+.quality-badge.hdr {
+    background: rgba(234, 179, 8, 0.2);
+    color: #fde047;
+    border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.quality-badge.group {
+    background: rgba(168, 85, 247, 0.2);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.quality-badge.extension {
+    background: rgba(100, 116, 139, 0.2);
+    color: #94a3b8;
+    border: 1px solid rgba(100, 116, 139, 0.3);
+}
+
+.stats-card .release-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    /* margin-top: 0.25rem; */
+}
+
+.stats-card .filename.has-badges {
+    display: block;
+    margin-top: 0.5rem;
+}
+
+/* Upgraded tags container with old >> new format */
+.upgraded-tags-container {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    /* margin-top: 0.5rem; */
+    flex-wrap: wrap;
+}
+
+.upgrade-arrow {
+    color: #e17c52;
+    font-weight: bold;
+    font-size: 0.875rem;
+    margin: 0 0.25rem;
+}
+
+/* Reduce gap between individual badges */
+.quality-badge {
+    margin-right: 0.15rem !important;
+    margin-bottom: 0.15rem;
+}
+
+.stats-card .release-tags {
+    gap: 0.15rem !important;
 }

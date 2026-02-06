@@ -71,6 +71,12 @@ function initializeElements() {
     refreshBtn = document.getElementById('refresh-btn');
     searchClearBtn = document.getElementById('search-clear-btn');
 
+    // Check for URL parameters first (takes precedence over localStorage)
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlType = urlParams.get('type');
+    const urlStatus = urlParams.get('status');
+    const urlSort = urlParams.get('sort');
+
     // Load filter values from localStorage if available
     const savedFilters = {
         statusFilter: localStorage.getItem('libraryStatusFilter'),
@@ -80,15 +86,21 @@ function initializeElements() {
         duplicatesStateFilter: localStorage.getItem('libraryDuplicatesStateFilter')
     };
 
-    // Apply saved values to DOM elements and state
-    if (savedFilters.statusFilter) {
+    // Apply values to DOM elements and state (URL params take precedence)
+    if (urlStatus) {
+        statusFilter.value = urlStatus;
+        libraryState.statusFilter = urlStatus;
+    } else if (savedFilters.statusFilter) {
         statusFilter.value = savedFilters.statusFilter;
         libraryState.statusFilter = savedFilters.statusFilter;
     } else {
         libraryState.statusFilter = statusFilter.value;
     }
 
-    if (savedFilters.typeFilter) {
+    if (urlType) {
+        typeFilter.value = urlType;
+        libraryState.typeFilter = urlType;
+    } else if (savedFilters.typeFilter) {
         typeFilter.value = savedFilters.typeFilter;
         libraryState.typeFilter = savedFilters.typeFilter;
     } else {
@@ -109,7 +121,10 @@ function initializeElements() {
         }
     }
 
-    if (savedFilters.sortBy) {
+    if (urlSort) {
+        sortSelect.value = urlSort;
+        libraryState.sortBy = urlSort;
+    } else if (savedFilters.sortBy) {
         sortSelect.value = savedFilters.sortBy;
         libraryState.sortBy = savedFilters.sortBy;
     } else {
