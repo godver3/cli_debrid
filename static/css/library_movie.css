@@ -416,11 +416,19 @@ button.btn.btn-sm.btn-danger.delete-movie-file-btn {
     text-decoration: none;
     font-size: 0.75rem;
     transition: all 0.2s ease;
+    cursor: pointer;
 }
 
 .link-btn:hover {
     background: rgba(255, 255, 255, 0.1);
     opacity: 0.8;
+}
+
+.link-btn .link-icon {
+    height: 14px;
+    width: auto;
+    object-fit: contain;
+    display: inline-block;
 }
 
 

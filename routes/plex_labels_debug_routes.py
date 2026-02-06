@@ -27,6 +27,10 @@ plex_labels_debug_bp = Blueprint('plex_labels_debug', __name__)
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
 DB_PATH = os.path.join(DB_CONTENT_DIR, 'media_items.db')
 
+# Built-in labels that are always active (created by core app features)
+# These should NEVER be considered orphaned regardless of content source state
+BUILTIN_LABELS = {'cd-library', 'cd-discover'}
+
 
 @plex_labels_debug_bp.route('/debug/plex-labels/search')
 def search_by_label():
@@ -567,13 +571,14 @@ def cleanup_orphaned_stream():
         try:
             # Get active sources
             settings = get_all_settings()
+            # Build active sources set (lowercase for case-insensitive matching)
             active_sources = set()
             for category, cat_settings in settings.items():
                 if isinstance(cat_settings, dict):
                     for key, value in cat_settings.items():
                         if key.endswith('_plex_labels') and value:
                             source_key = key.replace('_plex_labels', '')
-                            active_sources.add(source_key)
+                            active_sources.add(source_key.lower())
 
             conn = sqlite3.connect(DB_PATH)
             conn.row_factory = sqlite3.Row
@@ -599,7 +604,12 @@ def cleanup_orphaned_stream():
                 removed_any = False
 
                 for label, sources in list(labels_dict.items()):
-                    orphaned_sources = [s for s in sources if s not in active_sources and s != 'manual']
+                    # Skip built-in application labels (always active)
+                    if label in BUILTIN_LABELS:
+                        continue
+
+                    # Check for orphaned sources (case-insensitive, excluding manual)
+                    orphaned_sources = [s for s in sources if s.lower() not in active_sources and s != 'manual']
                     if orphaned_sources:
                         for source in orphaned_sources:
                             try:
@@ -808,10 +818,11 @@ def find_orphaned():
         all_settings = get_all_settings()
         content_sources = all_settings.get('Content Sources', {})
 
+        # Build active sources set (lowercase for case-insensitive matching)
         active_sources = set()
         for source_id, config in content_sources.items():
             if config.get('plex_labels', {}).get('enabled', False):
-                active_sources.add(source_id)
+                active_sources.add(source_id.lower())
 
         # Find all labels in database
         conn = sqlite3.connect(DB_PATH)
@@ -828,9 +839,13 @@ def find_orphaned():
         for row in cursor.fetchall():
             plex_labels = parse_plex_labels(row['plex_labels'])
             for label, info in plex_labels.items():
-                # Check if any sources for this label are still active
+                # Skip built-in application labels (always active)
+                if label in BUILTIN_LABELS:
+                    continue
+
+                # Check if any sources for this label are still active (case-insensitive)
                 source_list = info.get('sources', [])
-                has_active_source = any(source in active_sources for source in source_list)
+                has_active_source = any(source.lower() in active_sources for source in source_list)
                 if not has_active_source:
                     if label not in orphaned_labels:
                         orphaned_labels[label] = 0
@@ -868,10 +883,11 @@ def cleanup_orphaned():
         all_settings = get_all_settings()
         content_sources = all_settings.get('Content Sources', {})
 
+        # Build active sources set (lowercase for case-insensitive matching)
         active_sources = set()
         for source_id, config in content_sources.items():
             if config.get('plex_labels', {}).get('enabled', False):
-                active_sources.add(source_id)
+                active_sources.add(source_id.lower())
 
         logging.info(f"cleanup_orphaned: Found {len(active_sources)} active content sources")
 
@@ -901,9 +917,13 @@ def cleanup_orphaned():
             plex_labels = parse_plex_labels(row['plex_labels'])
 
             for label, info in plex_labels.items():
-                # Remove sources that are no longer active
+                # Skip built-in application labels (always active)
+                if label in BUILTIN_LABELS:
+                    continue
+
+                # Remove sources that are no longer active (case-insensitive)
                 source_list = info.get('sources', [])
-                orphaned_sources = [s for s in source_list if s not in active_sources]
+                orphaned_sources = [s for s in source_list if s.lower() not in active_sources]
                 for source in orphaned_sources:
                     try:
                         remove_label_from_item(item_id, label, source, remove_from_plex=True)

@@ -320,6 +320,11 @@ function renderMovieHeader(movie) {
         }
     }
 
+    // Initialize trailer button
+    if (movie.tmdb_id && typeof initializeTrailerButton === 'function') {
+        initializeTrailerButton(movie.tmdb_id, 'movie');
+    }
+
     // Set overview in sidebar
     const overviewEl = document.getElementById('movie-overview');
     if (overviewEl) {

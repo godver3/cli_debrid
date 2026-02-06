@@ -290,18 +290,40 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                             if watch_history_conn.execute(query_wh, params_wh).fetchone():
                                 skip_stats['already_watched'] += 1; items_skipped += 1; continue
                 else:
-                    season = item.get('season_number'); episode = item.get('episode_number')
+                    # TIERED FALLBACK: Check watch history with IMDb, then TMDb, then show_title
+                    # This prevents cross-ID matching and handles title mismatches
+                    season = item.get('season_number')
+                    episode = item.get('episode_number')
                     show_title_wh = normalized_title
-                    if (imdb_id or tmdb_id) and season is not None and episode is not None:
-                        query_wh = """SELECT 1 FROM watch_history WHERE type = 'episode' AND season = ? AND episode = ? AND show_title = ? AND ("""
-                        params_wh = [season, episode, show_title_wh]
-                        conditions_wh = []
-                        if imdb_id: conditions_wh.append("imdb_id = ?"); params_wh.append(imdb_id)
-                        if tmdb_id: conditions_wh.append("tmdb_id = ?"); params_wh.append(tmdb_id)
-                        if conditions_wh:
-                           query_wh += " OR ".join(conditions_wh) + ")"
-                           if watch_history_conn.execute(query_wh, params_wh).fetchone():
-                                skip_stats['already_watched'] += 1; items_skipped += 1; continue
+
+                    if season is not None and episode is not None:
+                        is_watched = False
+
+                        # Tier 1: IMDb ID + season + episode (most reliable)
+                        if imdb_id:
+                            query_wh = """SELECT 1 FROM watch_history
+                                         WHERE type = 'episode' AND season = ? AND episode = ? AND imdb_id = ?"""
+                            if watch_history_conn.execute(query_wh, [season, episode, imdb_id]).fetchone():
+                                is_watched = True
+
+                        # Tier 2: TMDb ID + season + episode (fallback if no IMDb or not found)
+                        if not is_watched and tmdb_id:
+                            query_wh = """SELECT 1 FROM watch_history
+                                         WHERE type = 'episode' AND season = ? AND episode = ? AND tmdb_id = ?"""
+                            if watch_history_conn.execute(query_wh, [season, episode, tmdb_id]).fetchone():
+                                is_watched = True
+
+                        # Tier 3: show_title + season + episode (final fallback)
+                        if not is_watched and show_title_wh:
+                            query_wh = """SELECT 1 FROM watch_history
+                                         WHERE type = 'episode' AND season = ? AND episode = ? AND show_title = ?"""
+                            if watch_history_conn.execute(query_wh, [season, episode, show_title_wh]).fetchone():
+                                is_watched = True
+
+                        if is_watched:
+                            skip_stats['already_watched'] += 1
+                            items_skipped += 1
+                            continue
             
             is_blacklisted_in_db = False
             if item_type == 'movie':

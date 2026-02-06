@@ -268,6 +268,12 @@ function displayContent(data) {
         traktLink.style.display = 'inline-flex';
     }
 
+    // Initialize trailer button
+    if (data.tmdb_id && typeof initializeTrailerButton === 'function') {
+        const mediaType = data.media_type === 'tv' ? 'show' : 'movie';
+        initializeTrailerButton(data.tmdb_id, mediaType);
+    }
+
     // Display cast
     if (data.cast && data.cast.length > 0) {
         displayCast(data.cast);

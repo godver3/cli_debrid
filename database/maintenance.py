@@ -1278,8 +1278,136 @@ def run_library_maintenance():
             run_symlink_library_maintenance()
         else:
             logging.warning(f"Unknown collection management type: {collection_type}")
-        
+
         logging.info("Library maintenance task completed successfully")
-        
+
     except Exception as e:
         logging.error(f"Error in library maintenance task: {str(e)}")
+
+def sync_episode_metadata():
+    """
+    Sync episode metadata (titles, etc.) from Trakt/TMDB for all collected shows.
+    Updates episode titles that have changed since initial collection.
+    """
+    import sqlite3
+    from cli_battery.app.direct_api import DirectAPI
+    from datetime import datetime
+
+    logging.info("Starting episode metadata sync task")
+
+    # Connect to media_items.db
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    db_path = os.path.join(db_content_dir, 'media_items.db')
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    total_shows_processed = 0
+    total_episodes_updated = 0
+
+    try:
+        # Get all unique shows by grouping collected/upgrading episodes
+        cursor.execute("""
+            SELECT
+                imdb_id,
+                title,
+                COUNT(*) as episode_count
+            FROM media_items
+            WHERE type = 'episode'
+              AND state IN ('Collected', 'Upgrading')
+              AND imdb_id IS NOT NULL
+            GROUP BY imdb_id
+            ORDER BY imdb_id
+        """)
+        shows = cursor.fetchall()
+
+        logging.info(f"Found {len(shows)} shows to sync episode metadata")
+
+        for show in shows:
+            try:
+                show_imdb_id = show['imdb_id']
+                show_title = show['title']
+                episode_count = show['episode_count']
+
+                logging.info(f"Syncing metadata for '{show_title}' ({show_imdb_id}) - {episode_count} episodes")
+
+                # Get fresh metadata from DirectAPI
+                metadata, source = DirectAPI.get_show_metadata(show_imdb_id)
+
+                if not metadata or 'seasons' not in metadata:
+                    logging.warning(f"No metadata found for {show_title} ({show_imdb_id})")
+                    continue
+
+                # Update episode titles from fresh metadata
+                show_updates = 0
+                # metadata['seasons'] is a dict: {season_number: {'episodes': {episode_number: {...}}}}
+                for season_number, season_data in metadata['seasons'].items():
+                    if 'episodes' in season_data and isinstance(season_data['episodes'], dict):
+                        for episode_number, episode_data in season_data['episodes'].items():
+                            episode_title = episode_data.get('title', f"Episode {episode_number}")
+
+                            if episode_title and season_number is not None and episode_number is not None:
+                                # Check if episode exists and if title is different
+                                cursor.execute("""
+                                    SELECT id, episode_title
+                                    FROM media_items
+                                    WHERE imdb_id = ?
+                                      AND type = 'episode'
+                                      AND season_number = ?
+                                      AND episode_number = ?
+                                      AND state IN ('Collected', 'Upgrading')
+                                    LIMIT 1
+                                """, (show_imdb_id, season_number, episode_number))
+
+                                existing = cursor.fetchone()
+                                if existing:
+                                    current_title = existing['episode_title']
+
+                                    # Only update if title changed
+                                    if current_title != episode_title:
+                                        cursor.execute("""
+                                            UPDATE media_items
+                                            SET episode_title = ?,
+                                                metadata_updated = ?,
+                                                last_updated = ?
+                                            WHERE id = ?
+                                        """, (
+                                            episode_title,
+                                            datetime.now(),
+                                            datetime.now(),
+                                            existing['id']
+                                        ))
+
+                                        if cursor.rowcount > 0:
+                                            show_updates += 1
+                                            logging.info(f"  Updated S{season_number:02d}E{episode_number:02d}: '{current_title}' -> '{episode_title}'")
+
+                if show_updates > 0:
+                    logging.info(f"Updated {show_updates} episode titles for '{show_title}' from {source}")
+                    total_episodes_updated += show_updates
+
+                total_shows_processed += 1
+
+                # Commit after each show to avoid losing progress
+                conn.commit()
+
+            except Exception as e:
+                try:
+                    show_title_err = show['title'] if 'title' in show.keys() else 'Unknown'
+                    show_imdb_err = show['imdb_id'] if 'imdb_id' in show.keys() else 'N/A'
+                except:
+                    show_title_err = 'Unknown'
+                    show_imdb_err = 'N/A'
+                logging.error(f"Error syncing metadata for show {show_title_err} (IMDb: {show_imdb_err}): {str(e)}")
+                conn.rollback()
+                continue
+
+        logging.info(f"Episode metadata sync completed: Processed {total_shows_processed} shows, updated {total_episodes_updated} episode titles")
+
+    except Exception as e:
+        logging.error(f"Error in episode metadata sync task: {str(e)}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        cursor.close()
+        conn.close()
