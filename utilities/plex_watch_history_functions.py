@@ -4,7 +4,7 @@ import sqlite3
 import logging
 from plexapi.server import PlexServer
 from utilities.settings import get_setting
-from cli_battery.app.trakt_metadata import TraktMetadata
+from cli_battery.app import trakt_client
 from datetime import datetime, timedelta
 import requests
 
@@ -15,7 +15,6 @@ async def get_watch_history_from_plex():
     Returns a dictionary with counts of processed movies and episodes.
     """
     try:
-        trakt = TraktMetadata()
         processed = {
             'movies': 0,
             'episodes': 0,
@@ -241,10 +240,10 @@ async def find_imdb_id(cursor, item_info, title, trakt):
                         search_year = int(year_part)
                         title = title_parts[0].strip()
             
-            url = f"{trakt.base_url}/search/movie?query={title}"
+            url = f"{trakt_client.TRAKT_BASE_URL}/search/movie?query={title}"
             if search_year:
                 url += f"&years={search_year}"
-            response = trakt._make_request(url)
+            response = trakt_client._make_request(url)
             if response and response.status_code == 200:
                 results = response.json()
                 if results:
@@ -252,8 +251,8 @@ async def find_imdb_id(cursor, item_info, title, trakt):
         else:
             show_title = item_info['grandparentTitle']
             if show_title:
-                url = f"{trakt.base_url}/search/show?query={show_title}"
-                response = trakt._make_request(url)
+                url = f"{trakt_client.TRAKT_BASE_URL}/search/show?query={show_title}"
+                response = trakt_client._make_request(url)
                 if response and response.status_code == 200:
                     results = response.json()
                     if results:

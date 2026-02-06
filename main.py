@@ -79,8 +79,6 @@ from logging_config import stop_global_profiling, start_global_profiling
 import babelfish
 
 # Global variables
-metadata_process = None
-metadata_lock = threading.Lock()
 global_program_runner_instance = None
 
 def get_babelfish_data_dir():
@@ -731,18 +729,6 @@ def setup_tray_icon():
             program_runner_instance.stop()
             print("Main program stopped.")
 
-        # Terminate the metadata battery process
-        global metadata_process # Keep metadata_process global for now
-        with metadata_lock:
-            if metadata_process and metadata_process.poll() is None:
-                print("Stopping metadata battery...")
-                metadata_process.terminate()
-                try:
-                    metadata_process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    metadata_process.kill()
-                print("Metadata battery stopped.")
-
         # Terminate any running phalanx_db_hyperswarm processes
         try:
             # Find any node/npm processes running phalanx_db_hyperswarm
@@ -882,25 +868,12 @@ def stop_program(from_signal=False):
     # Access ProgramRunner singleton directly
     from queues.run_program import ProgramRunner
     program_runner_instance = ProgramRunner() # Get singleton instance
-    # Keep metadata_process global for now
-    global metadata_process 
     print("\nStopping the program...")
 
     # Stop the main program runner using the instance
     if program_runner_instance and program_runner_instance.is_running():
         program_runner_instance.stop()
         print("Main program stopped.")
-
-    # Terminate the metadata battery process
-    with metadata_lock:
-        if metadata_process and metadata_process.poll() is None:
-            print("Stopping metadata battery...")
-            metadata_process.terminate()
-            try:
-                metadata_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                metadata_process.kill()
-            print("Metadata battery stopped.")
 
     # Find and terminate all related processes
     try:
@@ -1604,10 +1577,6 @@ def migrate_theatrical_release_dates():
     logging.info("Theatrical release date migration started in background thread.")
 
 def main():
-    # Remove global program_runner from here as well
-    global metadata_process 
-    metadata_process = None 
-
     logging.info("Starting the program...")
 
     # --- START EDIT: Import flask_app and _execute_start_program here ---
@@ -2259,15 +2228,6 @@ def main():
         set_setting('Scraping', 'upgrading_percentage_threshold', '0.1')
         logging.info("Set blank upgrading_percentage_threshold to default value of 0.1")
 
-    import os
-    # Get battery port from environment variable
-    battery_port = int(os.environ.get('CLI_DEBRID_BATTERY_PORT', '5001'))
-    battery_host = os.environ.get('CLI_DEBRID_BATTERY_HOST', 'localhost')
-    
-    # Set metadata battery URL with the correct port
-    set_setting('Metadata Battery', 'url', f'http://{battery_host}:{battery_port}')
-    logging.info(f"Set metadata battery URL to http://{battery_host}:{battery_port}")
-
     ensure_settings_file()
     # verify_database() # No longer needed here
     validate_not_wanted_entries()
@@ -2329,13 +2289,7 @@ def main():
         tray_thread.daemon = True
         tray_thread.start()
 
-    # Run the metadata battery only on Windows
-    is_windows = platform.system() == 'Windows'
-    if is_windows:
-        # Start the metadata battery
-        print("Running on Windows. Starting metadata battery...")
-    else:
-        print("Running on a non-Windows system. Metadata battery will not be started.")
+    # Metadata battery is now in-process (no separate process needed)
 
     # Always print this message
     print("Running in console mode.")

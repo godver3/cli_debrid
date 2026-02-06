@@ -66,7 +66,7 @@ from typing import List, Dict, Any, Tuple
 from utilities.settings import get_setting
 from database.database_reading import get_media_item_presence
 from queues.config_manager import load_config
-from cli_battery.app.trakt_metadata import TraktMetadata
+from cli_battery.app import trakt_client
 from cli_battery.app.direct_api import DirectAPI
 import os
 import pickle
@@ -194,15 +194,14 @@ def get_show_status(imdb_id: str) -> str:
     """Get the status of a TV show from Trakt."""
     start_time = time.time()
     try:
-        trakt = TraktMetadata()
-        search_result = trakt._search_by_imdb(imdb_id)
+        search_result = trakt_client.search_by_imdb(imdb_id)
         if search_result and search_result['type'] == 'show':
             show = search_result['show']
             slug = show['ids']['slug']
             
             # Get the full show data using the slug
-            url = f"{trakt.base_url}/shows/{slug}?extended=full"
-            response = trakt._make_request(url)
+            url = f"{trakt_client.TRAKT_BASE_URL}/shows/{slug}?extended=full"
+            response = trakt_client._make_request(url)
             if response and response.status_code == 200:
                 show_data = response.json()
                 status = show_data.get('status', '').lower()
