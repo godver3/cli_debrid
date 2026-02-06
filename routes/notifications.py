@@ -17,7 +17,7 @@ from database.core import (
     mark_all_db_notifications_read
 )
 import math # Add math import for ceiling division
-from queues.config_manager import get_overseerr_instances # Added import
+from queues.config_manager import get_overseerr_instances, get_content_source_display_names # Added import
 
 # Global notification buffer
 notification_buffer = []
@@ -138,6 +138,9 @@ def format_notification_content(notifications, notification_type, notification_c
         'blacklisted': "🚫" # New emoji for blacklisted
     }
 
+    # Get content source display names mapping once for efficiency
+    content_source_display_names = get_content_source_display_names()
+
     # For system notifications (stop/crash/start/pause/resume), we'll use a different format
     if notification_category in ['program_stop', 'program_crash', 'program_start', 'queue_pause', 'queue_resume', 'queue_start', 'queue_stop', 'upgrade_failed']:
         emoji = EMOJIS.get(notification_category, "ℹ️")
@@ -233,7 +236,9 @@ def format_notification_content(notifications, notification_type, notification_c
         # Add content source information if enabled and available for collected or upgraded items
         if enable_detailed_info and (new_state == 'Collected' or new_state == 'Upgraded'):
             if content_source:
-                formatted_title += f"\nSource: {content_source}"
+                # Convert content source ID to display name
+                display_name = content_source_display_names.get(content_source, content_source)
+                formatted_title += f"\nSource: {display_name}"
             if content_source_detail:
                 formatted_title += f"\nRequested by: {content_source_detail}"
             if filled_by_file:
@@ -519,6 +524,10 @@ def store_notification(title, message, notification_type='info', link=None):
 def _send_notifications(notifications, enabled_notifications, notification_category=None):
     # Attempt to store notifications in the database first
     storage_successful = True
+
+    # Get content source display names mapping for this function scope
+    content_source_display_names = get_content_source_display_names()
+
     try:
         # Handle system operation notifications
         if notification_category in ['program_crash', 'program_stop', 'program_start',
@@ -652,7 +661,9 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
                     # Add source information if available
                     source_info = []
                     if notification.get('content_source'):
-                        source_info.append(f"Source: {notification['content_source']}")
+                        # Convert content source ID to display name
+                        display_name = content_source_display_names.get(notification['content_source'], notification['content_source'])
+                        source_info.append(f"Source: {display_name}")
                     if notification.get('content_source_detail'):
                         source_info.append(f"Requested by: {notification['content_source_detail']}")
                     if notification.get('filled_by_file'):
