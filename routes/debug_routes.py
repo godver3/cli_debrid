@@ -3692,8 +3692,8 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                 
                 best_match_from_search = None
                 if final_search_results:
-                    from cli_battery.app.metadata_manager import MetadataManager 
-                    best_match_from_search = MetadataManager.find_best_match_from_results(
+                    from cli_battery.app.direct_api import DirectAPI
+                    best_match_from_search = DirectAPI.find_best_match_from_results(
                         original_query_title=title_for_best_match_selection, 
                         query_year=parsed_year,
                         search_results=final_search_results

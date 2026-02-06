@@ -15,15 +15,13 @@ from collections import Counter
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cli_battery.app.direct_api import DirectAPI
-from cli_battery.app.trakt_metadata import TraktMetadata
+from cli_battery.app import trakt_client
 from cli_battery.app.database import DatabaseManager
 from database.database_reading import get_media_item_presence, get_all_media_items, get_show_episode_identifiers_from_db, get_media_item_ids
 
 # Initialize DirectAPI at module level
 direct_api = DirectAPI()
 
-# Initialize TraktMetadata if not already done globally for get_show_status
-trakt_metadata_instance = TraktMetadata()
 
 # Cache for Jackett enabled check to avoid loading config on every call
 _jackett_enabled_cache = None
@@ -524,17 +522,17 @@ def get_show_status(imdb_id: str) -> str:
     global trakt_metadata_instance
     try:
         # Ensure rate limit is checked if needed within TraktMetadata methods
-        # trakt_metadata_instance._check_rate_limit() # Assuming TraktMetadata handles this internally
+        # trakt_client._check_rate_limit() # Assuming TraktMetadata handles this internally
         
-        search_result = trakt_metadata_instance._search_by_imdb(imdb_id)
+        search_result = trakt_client.search_by_imdb(imdb_id)
         if search_result and search_result.get('type') == 'show':
             show = search_result.get('show')
             if show and show.get('ids') and show['ids'].get('slug'):
                 slug = show['ids']['slug']
                 
                 # Get the full show data using the slug
-                url = f"{trakt_metadata_instance.base_url}/shows/{slug}?extended=full"
-                response = trakt_metadata_instance._make_request(url)
+                url = f"{trakt_client.TRAKT_BASE_URL}/shows/{slug}?extended=full"
+                response = trakt_client._make_request(url)
                 if response and response.status_code == 200:
                     show_data = response.json()
                     status = show_data.get('status', '').lower()
@@ -631,7 +629,7 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     if movie_imdb_ids_to_fetch:
         logging.debug(f"Bulk fetching metadata for {len(movie_imdb_ids_to_fetch)} movie IMDb IDs...")
         try:
-            if not trakt_metadata_instance._check_rate_limit():
+            if not trakt_client._check_rate_limit():
                 logging.warning("Trakt rate limit potentially hit before bulk movie fetch.")
             fetched_movies = direct_api.get_bulk_movie_metadata(list(movie_imdb_ids_to_fetch))
             bulk_movie_metadata.update(fetched_movies)
@@ -647,7 +645,7 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
     if show_imdb_ids_to_fetch:
         logging.debug(f"Bulk fetching metadata for {len(show_imdb_ids_to_fetch)} show IMDb IDs...")
         try:
-            if not trakt_metadata_instance._check_rate_limit():
+            if not trakt_client._check_rate_limit():
                 logging.warning("Trakt rate limit potentially hit before bulk show fetch.")
             fetched_shows = direct_api.get_bulk_show_metadata(list(show_imdb_ids_to_fetch))
             bulk_show_metadata.update(fetched_shows)
@@ -672,7 +670,7 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
         fetched_individually_count = 0
         for imdb_id_val, representative_item_val in ids_to_fetch_individually.items():
             try:
-                if not trakt_metadata_instance._check_rate_limit():
+                if not trakt_client._check_rate_limit():
                     logging.warning("Trakt rate limit reached during individual fetches. Waiting (handled by TraktMetadata).")
                 
                 logging.debug(f"Fetching individual metadata for missing IMDb: {imdb_id_val}")
@@ -721,8 +719,8 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
 
             # --- Check for staleness from bulk data ---
             if metadata and 'item_updated_at' in metadata:
-                from cli_battery.app.metadata_manager import MetadataManager
-                if MetadataManager.is_metadata_stale(metadata['item_updated_at']):
+                from cli_battery.app.staleness import is_stale as _is_battery_stale
+                if _is_battery_stale('show', None, metadata['item_updated_at']):
                     logging.info(f"Bulk metadata for {imdb_id} is stale (updated: {metadata['item_updated_at']}). Forcing a refresh.")
                     try:
                         refreshed_metadata, _ = direct_api.force_refresh_metadata(imdb_id)

@@ -6,8 +6,7 @@ import feedparser
 from typing import List, Dict, Any, Tuple, Union
 from utilities.settings import get_setting
 from database.database_reading import get_media_item_presence
-from cli_battery.app.metadata_manager import MetadataManager
-from cli_battery.app.trakt_metadata import TraktMetadata
+from cli_battery.app import trakt_client
 from cli_battery.app.database import DatabaseManager
 
 # Get db_content directory from environment variable with fallback
@@ -47,9 +46,8 @@ def extract_imdb_id(guid: str, title: str = None) -> str:
                 return imdb_id
 
             # If not in database, use Trakt to get it and store for future
-            trakt = TraktMetadata()
-            url = f"{trakt.base_url}/search/tvdb/{tvdb_id}?type=show"
-            response = trakt._make_request(url)
+            url = f"{trakt_client.TRAKT_BASE_URL}/search/tvdb/{tvdb_id}?type=show"
+            response = trakt_client._make_request(url)
             if response and response.status_code == 200:
                 results = response.json()
                 if results and len(results) > 0:
@@ -71,16 +69,13 @@ def extract_imdb_id(guid: str, title: str = None) -> str:
 def get_show_status(imdb_id: str) -> str:
     """Get the status of a TV show from Trakt."""
     try:
-        trakt = TraktMetadata()
-        # Assuming _search_by_imdb is available or we adapt to what TraktMetadata provides
-        # For simplicity, let's assume a similar structure to plex_watchlist.py
-        search_result = trakt._search_by_imdb(imdb_id) # This might need adjustment if TraktMetadata API differs
+        search_result = trakt_client.search_by_imdb(imdb_id)
         if search_result and search_result['type'] == 'show':
             show = search_result['show']
             slug = show['ids']['slug']
             
-            url = f"{trakt.base_url}/shows/{slug}?extended=full"
-            response = trakt._make_request(url)
+            url = f"{trakt_client.TRAKT_BASE_URL}/shows/{slug}?extended=full"
+            response = trakt_client._make_request(url)
             if response and response.status_code == 200:
                 show_data = response.json()
                 status = show_data.get('status', '').lower()

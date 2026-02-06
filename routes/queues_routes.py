@@ -5,7 +5,6 @@ from queues.queue_manager import QueueManager
 import logging
 from .program_operation_routes import get_program_status
 from queues.initialization import get_initialization_status
-from cli_battery.app.limiter import limiter
 from utilities.settings import get_setting
 import json
 import time
@@ -271,10 +270,6 @@ _items_per_hour_cache = {
 }
 ITEMS_PER_HOUR_CACHE_DURATION = 30  # 5 minutes
 
-def init_limiter(app):
-    """Initialize the rate limiter with the Flask app"""
-    limiter.init_app(app)
-
 def consolidate_items(items, limit=None):
     # Add timing for performance monitoring
     start_time = time.time()
@@ -514,7 +509,6 @@ def index():
 
 @queues_bp.route('/api/queue_contents')
 @user_required
-@limiter.limit("1 per 5 seconds")
 def api_queue_contents():
     # --- Performance logging ---
     start_time = time.time()

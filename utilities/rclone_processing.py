@@ -20,7 +20,7 @@ from utilities.post_processing import handle_state_change
 
 # Scraping/Metadata Imports (Careful with potential cycles here too)
 from scraper.functions.ptt_parser import parse_with_ptt
-from cli_battery.app.trakt_metadata import TraktMetadata
+from cli_battery.app import trakt_client
 from cli_battery.app.direct_api import DirectAPI
 from fuzzywuzzy import fuzz
 
@@ -426,7 +426,6 @@ def process_rclone_file(file_path: str) -> Dict[str, Any]:
         logging.debug(f"[RcloneProcessing] PTT Parsing result: {parsed_info}")
 
         # Initialize APIs
-        trakt = TraktMetadata()
         api = DirectAPI() # Assuming DirectAPI handles TMDB/TVDB etc.
 
         # Clean up title for search
@@ -468,9 +467,9 @@ def process_rclone_file(file_path: str) -> Dict[str, Any]:
                        query += " US"
                        logging.info(f"[RcloneProcessing] Appended ' US' to Trakt search query: '{query}'")
 
-        url = f"{trakt.base_url}/search/{search_type}?query={query}"
+        url = f"{trakt_client.TRAKT_BASE_URL}/search/{search_type}?query={query}"
         logging.debug(f"[RcloneProcessing] Trakt search URL: {url}")
-        response = trakt._make_request(url)
+        response = trakt_client._make_request(url)
 
         if not response or response.status_code != 200:
             logging.error(f"[RcloneProcessing] Failed to search Trakt for '{sanitized_title}'. Status: {response.status_code if response else 'No response'}")

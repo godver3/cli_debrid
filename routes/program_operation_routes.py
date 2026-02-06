@@ -251,9 +251,6 @@ def check_service_connectivity():
     if get_setting('File Management', 'file_collection_management') == 'Plex':
         plex_url = get_setting('Plex', 'url')
         plex_token = get_setting('Plex', 'token')
-    metadata_battery_url_from_settings = get_setting('Metadata Battery', 'url') # Get the full URL
-    # battery_port is no longer strictly needed here if metadata_battery_url_from_settings is complete
-    
     # Get debrid provider settings
     debrid_provider = get_setting('Debrid Provider', 'provider')
     debrid_api_key = get_setting('Debrid Provider', 'api_key')
@@ -481,127 +478,47 @@ def check_service_connectivity():
 
     # Check Metadata Battery connectivity and Trakt authorization
     try:
-        # Log the URL being used
-        
-        # The metadata_battery_url_from_settings should be complete (host and port)
-        # No need to reconstruct it.
-        if not metadata_battery_url_from_settings:
-            logging.error("Metadata Battery URL not configured in settings")
-            raise RequestException("Metadata Battery URL not configured in settings.")
+        from cli_battery.app.direct_api import DirectAPI
+        result = DirectAPI.check_trakt_auth()
+        trakt_status = result.get('status')
 
-        # Log the exact request being made
-        request_url = f"{metadata_battery_url_from_settings}/check_trakt_auth"
-        
-        # Log request timing
-        import time
-        request_start = time.time()
-        
-        response = api.get(request_url, timeout=5)
-        
-        request_duration = time.time() - request_start
-        
-        # Log response details
-        try:
-            response_text = response.text
-        except Exception as e:
-            logging.error(f"Error reading response body: {e}")
-        
-        response.raise_for_status()
-        
-        # Parse JSON response
-        try:
-            response_json = response.json()
-            trakt_status = response_json.get('status')
-        except Exception as e:
-            logging.error(f"Error parsing JSON response: {e}")
-            trakt_status = None
-        
         if trakt_status != 'authorized':
             logging.warning("Metadata Battery is reachable, but Trakt is not authorized.")
-            
+
             # Attempt automatic re-authentication
             auto_reauth_success = attempt_trakt_auto_reauth()
             if auto_reauth_success:
                 logging.info("Automatic Trakt re-authentication successful. Re-checking authorization...")
-                # Re-check the authorization status
-                try:
-                    recheck_start = time.time()
-                    response = api.get(request_url, timeout=5)
-                    recheck_duration = time.time() - recheck_start
-                    
-                    response.raise_for_status()
-                    trakt_status = response.json().get('status')
-                    
-                    if trakt_status == 'authorized':
-                        logging.info("Trakt authorization restored after automatic re-authentication.")
-                    else:
-                        logging.warning("Trakt still not authorized after automatic re-authentication attempt.")
-                        services_reachable = False
-                        failed_services_details.append({
-                            "service": "Trakt",
-                            "type": "UNAUTHORIZED",
-                            "message": "Trakt not authorized via Metadata Battery after auto-reauth attempt. Manual re-authorization is required. Please re-authorize Trakt in the settings UI."
-                        })
-                except Exception as recheck_error:
-                    logging.error(f"Error re-checking Trakt authorization after auto-reauth: {recheck_error}")
-                    if hasattr(recheck_error, 'response') and recheck_error.response is not None:
-                        logging.error(f"Re-check error response status: {recheck_error.response.status_code}")
-                        logging.error(f"Re-check error response text: {recheck_error.response.text}")
+                result = DirectAPI.check_trakt_auth()
+                trakt_status = result.get('status')
+
+                if trakt_status == 'authorized':
+                    logging.info("Trakt authorization restored after automatic re-authentication.")
+                else:
+                    logging.warning("Trakt still not authorized after automatic re-authentication attempt.")
                     services_reachable = False
                     failed_services_details.append({
                         "service": "Trakt",
                         "type": "UNAUTHORIZED",
-                        "message": "Trakt not authorized via Metadata Battery after auto-reauth attempt. Manual re-authorization is required. Please re-authorize Trakt in the settings UI."
+                        "message": "Trakt not authorized after auto-reauth attempt. Manual re-authorization is required. Please re-authorize Trakt in the settings UI."
                     })
             else:
                 logging.warning("Automatic Trakt re-authentication failed.")
                 services_reachable = False
-                
-                # Check if the failure was due to expired refresh token
-                error_message = "Trakt not authorized via Metadata Battery. Automatic re-authentication failed. Manual re-authorization is required. Please re-authorize Trakt in the settings UI."
-                
+
+                error_message = "Trakt not authorized. Automatic re-authentication failed. Manual re-authorization is required. Please re-authorize Trakt in the settings UI."
+
                 if is_refresh_token_expired():
                     error_message = "Trakt refresh token has expired. Manual re-authentication is required. Please re-authorize Trakt in the settings UI."
-                
+
                 failed_services_details.append({
                     "service": "Trakt",
                     "type": "UNAUTHORIZED",
                     "message": error_message
                 })
-            
-    except RequestException as e:
-        logging.error("=== METADATA BATTERY REQUEST EXCEPTION ===")
-        logging.error(f"Exception type: {type(e).__name__}")
-        logging.error(f"Exception message: {str(e)}")
-        
-        if hasattr(e, 'response') and e.response is not None:
-            logging.error(f"Response status code: {e.response.status_code}")
-            logging.error(f"Response reason: {e.response.reason}")
-            logging.error(f"Response URL: {e.response.url}")
-            logging.error(f"Response headers: {dict(e.response.headers)}")
-            logging.error(f"Response content: {e.response.text}")
-            
-            # Log additional response details
-            try:
-                logging.error(f"Response encoding: {e.response.encoding}")
-                logging.error(f"Response apparent encoding: {e.response.apparent_encoding}")
-            except Exception as enc_error:
-                logging.error(f"Error getting response encoding: {enc_error}")
-        else:
-            logging.error("No response object in exception")
-            logging.error(f"Exception args: {e.args}")
-        
-        services_reachable = False
-        status_code = e.response.status_code if hasattr(e, 'response') and e.response is not None else None
-        failed_services_details.append({"service": "Metadata Battery", "type": "CONNECTION_ERROR", "status_code": status_code, "message": str(e)})
-        
+
     except Exception as e:
-        logging.error("=== METADATA BATTERY UNEXPECTED EXCEPTION ===")
-        logging.error(f"Unexpected exception type: {type(e).__name__}")
-        logging.error(f"Unexpected exception message: {str(e)}")
-        import traceback
-        logging.error(f"Traceback: {traceback.format_exc()}")
-        
+        logging.error(f"Error checking Trakt auth via battery: {e}")
         services_reachable = False
         failed_services_details.append({"service": "Metadata Battery", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)})
     
