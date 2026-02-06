@@ -216,12 +216,12 @@ def async_get_collected_from_plex(collection_type):
                 get_and_add_recent_collected_from_plex()
             message = 'Successfully retrieved and added recent collected items from Library'
         elif collection_type == 'backfill':
-            # Backfill works in all modes - it updates existing records with Plex metadata
-            # (location_on_disk, resolution, size, imdb_id, tmdb_id, collected_at)
-            # without adding new items based on file presence
-            logging.info("Running backfill to update existing records with Plex metadata")
+            # Backfill works in all modes - it updates existing records with current metadata
+            # Symlink mode: Updates file sizes from filesystem (fast, no API calls)
+            # Plex mode: Updates metadata from Plex API (location_on_disk, resolution, size, imdb_id, tmdb_id, collected_at)
+            logging.info("Running backfill to update existing records with current metadata")
             get_and_add_all_collected_from_plex(backfill=True)
-            message = 'Successfully backfilled Plex data for already-Collected items'
+            message = 'Successfully backfilled metadata for already-Collected items'
         else:
             raise ValueError('Invalid collection type')
 

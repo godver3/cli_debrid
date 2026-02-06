@@ -107,8 +107,22 @@ async function loadShowData() {
             showData = data.show;
             seasonsData = data.seasons;
 
+            // Add phantom rows for missing episodes before stats calculation
+            addPhantomRowsToSeasonData(seasonsData);
+
             renderShowHeader(showData);
             renderSeasons(seasonsData);
+
+            // Check for season parameter in URL and switch to that season
+            const urlParams = new URLSearchParams(window.location.search);
+            const seasonParam = urlParams.get('season');
+            if (seasonParam) {
+                const seasonNumber = parseInt(seasonParam);
+                // Use setTimeout to ensure tabs are fully rendered before switching
+                setTimeout(() => {
+                    switchTab(seasonNumber);
+                }, 100);
+            }
 
             // Initialize deletion handlers after data is loaded
             initializeDeletionHandlers();
@@ -133,6 +147,52 @@ async function loadShowData() {
         console.error('[Show Detail] Error loading data:', error);
         showError('Failed to load show details. Please try again.');
     }
+}
+
+/**
+ * Add phantom rows for missing episodes to seasonsData before stats calculation
+ * This ensures the "Get Missing" count includes gaps in episode numbering
+ */
+function addPhantomRowsToSeasonData(seasons) {
+    seasons.forEach(season => {
+        // Only process if season has episodes
+        if (!season.episodes || season.episodes.length === 0) {
+            return;
+        }
+
+        // Group episodes by episode_number
+        const episodeGroups = {};
+        season.episodes.forEach(ep => {
+            const epNum = ep.episode_number;
+            if (!episodeGroups[epNum]) {
+                episodeGroups[epNum] = [];
+            }
+            episodeGroups[epNum].push(ep);
+        });
+
+        // Find gaps from episode 1 to max episode
+        const episodeNumbers = Object.keys(episodeGroups).map(n => parseInt(n));
+        if (episodeNumbers.length > 0) {
+            const maxEp = Math.max(...episodeNumbers);
+
+            // Add phantom episodes for gaps
+            for (let i = 1; i <= maxEp; i++) {
+                if (!episodeGroups[i]) {
+                    season.episodes.push({
+                        episode_number: i,
+                        episode_title: `Episode ${i}`,
+                        state: 'Missing',
+                        filled_by_file: null,
+                        is_phantom: true,
+                        imdb_id: null,
+                        tmdb_id: null,
+                        size: null,
+                        version: null
+                    });
+                }
+            }
+        }
+    });
 }
 
 function renderShowHeader(show) {
@@ -253,9 +313,15 @@ function renderShowHeader(show) {
                 collectedEpisodes++;
             } else {
                 // Check if any episode is in movable state (Blacklisted/Error/Ghostlisted, not Unreleased)
-                const hasMovableState = episodes.some(ep =>
-                    ['Blacklisted', 'Error', 'Ghostlisted'].includes(ep.state)
-                );
+                // Note: Phantom rows are excluded because they don't exist in DB and can't be moved to Wanted
+                const hasMovableState = episodes.some(ep => {
+                    // Skip phantom rows (client-side only, not in database)
+                    if (ep.is_phantom === true) {
+                        return false;
+                    }
+                    // Include episodes in movable states
+                    return ['Blacklisted', 'Error', 'Ghostlisted'].includes(ep.state);
+                });
                 if (hasMovableState) {
                     missingMovableEpisodes++;
                 }
@@ -334,6 +400,11 @@ function renderShowHeader(show) {
         } else if (show.tmdb_id) {
             traktLink.href = `https://trakt.tv/shows/${show.tmdb_id}`;
         }
+    }
+
+    // Initialize trailer button
+    if (show.tmdb_id && typeof initializeTrailerButton === 'function') {
+        initializeTrailerButton(show.tmdb_id, 'show');
     }
 
     // Set overview in sidebar
@@ -589,6 +660,31 @@ function createSeasonPanel(season, isActive) {
         episodeGroups[epNum].push(ep);
     });
 
+    // Detect gaps in episode numbering and create phantom rows
+    const episodeNumbers = Object.keys(episodeGroups).map(n => parseInt(n)).sort((a, b) => a - b);
+    if (episodeNumbers.length > 0) {
+        const maxEp = Math.max(...episodeNumbers);
+
+        // Check for gaps from episode 1 to max episode
+        // This catches missing episodes at the start and in the middle
+        for (let i = 1; i <= maxEp; i++) {
+            if (!episodeGroups[i]) {
+                // Create phantom row for missing episode
+                episodeGroups[i] = [{
+                    episode_number: i,
+                    episode_title: `Episode ${i}`,
+                    state: 'Missing',
+                    filled_by_file: null,
+                    is_phantom: true,
+                    imdb_id: null,
+                    tmdb_id: null,
+                    size: null,
+                    version: null
+                }];
+            }
+        }
+    }
+
     // Render each episode
     Object.keys(episodeGroups).sort((a, b) => parseInt(a) - parseInt(b)).forEach(epNum => {
         const episodes = episodeGroups[epNum];
@@ -677,19 +773,28 @@ function createEpisodeRow(episodes, seasonNumber) {
     // episodes is an array of entries for the same episode number
     // (can have multiple entries if there are multiple files/versions)
     const firstEp = episodes[0];
+    const isPhantom = firstEp.is_phantom || false;
     const isCollected = episodes.some(ep => ep.state === 'Collected');
     const isUpgrading = episodes.some(ep => ep.state === 'Upgrading');
     const isBlacklisted = episodes.some(ep => ep.state === 'Blacklisted');
     const isUnreleased = episodes.some(ep => ep.state === 'Unreleased');
     const isWanted = episodes.some(ep => ep.state === 'Wanted');
     const isFinalScrape = episodes.some(ep => ep.state === 'Final_Scrape');
+    const isFinalCheck = episodes.some(ep => ep.state === 'Final_Check');
+    const isSleeping = episodes.some(ep => ep.state === 'Sleeping');
 
     const row = document.createElement('div');
-    row.className = 'episode-row';
+    row.className = isPhantom ? 'episode-row phantom-row' : 'episode-row';
 
     // Status icon
     let statusIcon = '';
-    if (isCollected) {
+    if (isPhantom) {
+        statusIcon = `
+            <svg class="episode-status-icon phantom-missing" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="stroke-dasharray: 4 4;">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+        `;
+    } else if (isCollected) {
         statusIcon = `
             <svg class="episode-status-icon collected" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
                 <path fill-rule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12zm13.36-1.814a.75.75 0 10-1.22-.872l-3.236 4.53L9.53 12.22a.75.75 0 00-1.06 1.06l2.25 2.25a.75.75 0 001.14-.094l3.75-5.25z" clip-rule="evenodd" />
@@ -864,9 +969,25 @@ function createEpisodeRow(episodes, seasonNumber) {
     }
 
     // Files - show all files in popup
-    // Show action icons for collected episodes OR blacklisted episodes OR unknown state OR final_scrape state
+    // Show action icons for collected episodes OR blacklisted episodes OR unknown state OR final_scrape state OR final_check state OR sleeping state
     let filesHtml = '';
-    if (files.length > 0 || isBlacklisted || isCollected || isUpgrading || isFinalScrape || firstEp.state === 'Unknown') {
+    if (isPhantom) {
+        // Phantom rows: show search button only (no delete or move-to-wanted buttons)
+        // Since phantom rows don't exist in database, they can't be moved to wanted
+        const searchIcon = hasUserPermissions ? `
+            <button class="search-episode-btn" type="button" title="Search for this episode"
+                    data-imdb-id=""
+                    data-tmdb-id=""
+                    data-season="${seasonNumber}"
+                    data-episode="${firstEp.episode_number}">
+                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" width="16" height="16">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M10 21h7a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v11m0 5l4.879-4.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242z"></path>
+                </svg>
+            </button>
+        ` : '';
+
+        filesHtml = `${searchIcon}`;
+    } else if (files.length > 0 || isBlacklisted || isCollected || isUpgrading || isFinalScrape || isFinalCheck || isSleeping || firstEp.state === 'Unknown') {
         const filesButtonHtml = files.length > 0 ? `
             <button class="files-toggle-btn" type="button" title="Toggle file list">
                 <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">

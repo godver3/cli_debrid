@@ -406,11 +406,19 @@ button.btn.btn-sm.btn-danger.delete-season-btn {
     text-decoration: none;
     font-size: 0.75rem;
     transition: all 0.2s ease;
+    cursor: pointer;
 }
 
 .link-btn:hover {
     background: rgba(255, 107, 53, 0.2);
     opacity: 0.8;
+}
+
+.link-btn .link-icon {
+    height: 14px;
+    width: auto;
+    object-fit: contain;
+    display: inline-block;
 }
 
 .show-year {
@@ -2211,4 +2219,41 @@ td#scraper-source .source-badge {
         box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4) !important;
     }
         
+}
+/* ==========================================================================
+   Phantom Episode Rows (Missing Episodes) - Tangerine Theme
+   ========================================================================== */
+
+.episode-row.phantom-row {
+    opacity: 0.6;
+    background: repeating-linear-gradient(
+        45deg,
+        rgba(29, 35, 42, 0.4),
+        rgba(29, 35, 42, 0.4) 10px,
+        rgba(15, 19, 25, 0.4) 10px,
+        rgba(15, 19, 25, 0.4) 20px
+    );
+    border-left: 3px dashed rgba(239, 68, 68, 0.5);
+}
+
+.episode-row.phantom-row .episode-number {
+    color: rgba(96, 165, 250, 0.4);
+    font-style: italic;
+}
+
+.episode-row.phantom-row .episode-title {
+    color: rgba(255, 255, 255, 0.4);
+    font-style: italic;
+}
+
+.episode-row.phantom-row .episode-meta {
+    opacity: 0.3;
+}
+
+.phantom-missing {
+    color: rgba(239, 68, 68, 0.7);
+}
+
+.phantom-missing svg {
+    stroke: rgba(239, 68, 68, 0.7);
 }

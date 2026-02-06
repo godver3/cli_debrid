@@ -279,6 +279,7 @@ class ProgramRunner:
             'task_update_movie_ids': 50600,        # Run every ~14 hours
             'task_update_movie_titles': 55600,     # Run every ~15 hours
             'task_refresh_release_dates': 36600,   # Run every 10h 10m (10 hours + 600s stagger to avoid overlap with early_releases)
+            'task_sync_episode_metadata': 24 * 60 * 60,  # Run every 24 hours to sync episode titles from TMDB/Trakt
             # 'task_generate_airtime_report': 3600,  # Run every hour
             'task_run_library_maintenance': 12 * 60 * 60, # Run every twelve hours (if enabled)
             'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours (if enabled)
@@ -432,7 +433,7 @@ class ProgramRunner:
             'task_generate_airtime_report', 'task_sync_time', 'task_check_trakt_early_releases',
             'task_reconcile_queues', 'task_refresh_download_stats',
             'task_update_show_ids', 'task_update_show_titles', 'task_update_movie_ids',
-            'task_update_movie_titles', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
+            'task_update_movie_titles', 'task_sync_episode_metadata', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
             'task_check_database_health', 'task_run_library_maintenance',
             'task_verify_symlinked_files', 'task_update_statistics_summary',
             'task_precompute_airing_shows',
@@ -2477,7 +2478,7 @@ class ProgramRunner:
             'task_generate_airtime_report', 'task_sync_time', 'task_check_trakt_early_releases',
             'task_reconcile_queues', 'task_refresh_download_stats',
             'task_update_show_ids', 'task_update_show_titles', 'task_update_movie_ids',
-            'task_update_movie_titles', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
+            'task_update_movie_titles', 'task_sync_episode_metadata', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
             'task_check_database_health', 'task_run_library_maintenance',
             'task_verify_symlinked_files', 'task_update_statistics_summary',
             'task_precompute_airing_shows',
@@ -3994,6 +3995,14 @@ class ProgramRunner:
             update_movie_titles()
         except Exception as e:
             logging.error(f"Error in task_update_movie_titles: {str(e)}")
+
+    def task_sync_episode_metadata(self):
+        """Sync episode metadata (titles, etc.) from Trakt/TMDB for all collected shows."""
+        try:
+            from database.maintenance import sync_episode_metadata
+            sync_episode_metadata()
+        except Exception as e:
+            logging.error(f"Error in task_sync_episode_metadata: {str(e)}")
 
     def trigger_task(self, task_name):
         """Manually trigger a task to run immediately by adding it to APScheduler's queue."""
@@ -5778,6 +5787,7 @@ def append_runtime_airtime(items):
 
 def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
     collected_content = None  # Initialize here
+    data_source = 'plex'  # Track data source for accurate logging
     mode = get_setting('File Management', 'file_collection_management')
 
     # OPTIMIZATION: For Symlink mode backfill, use filesystem FIRST (instant, no API calls)
@@ -5806,6 +5816,7 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
                     logging.info(f"[BACKFILL_SYMLINK] Filesystem found {len(movies)} movies and {len(episodes)} episodes")
 
                     collected_content = {'movies': movies, 'episodes': episodes}
+                    data_source = 'filesystem'  # Mark that we used filesystem scan
                 else:
                     logging.warning(f"[BACKFILL_SYMLINK] Filesystem scan returned 0 items, will fall back to Plex")
             else:
@@ -5821,7 +5832,7 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
             logging.info("[BACKFILL_FALLBACK] Filesystem returned no data, falling back to Plex API...")
 
         if backfill:
-            logging.info("Getting all collected content from Plex for BACKFILL (with size/resolution fetch)...")
+            logging.info("[BACKFILL_PLEX] Getting all collected content from Plex API (with size/resolution fetch)...")
         else:
             logging.info("Getting all collected content from Plex...")
         try:
@@ -5877,13 +5888,14 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
 
                         # Update collected_content to include filesystem data
                         collected_content = {'movies': movies, 'episodes': episodes}
+                        data_source = 'filesystem'  # Mark that we used filesystem scan
             except Exception as e:
                 logging.error(f"[BACKFILL_FALLBACK] Error during filesystem fallback: {e}", exc_info=True)
 
         # Don't return None if some items were skipped during add_collected_items
         if len(movies) > 0 or len(episodes) > 0:
             from database import add_collected_items # Keep import local
-            add_collected_items(movies + episodes, backfill=backfill)
+            add_collected_items(movies + episodes, backfill=backfill, data_source=data_source)
             logging.info(f"Finished adding {len(movies) + len(episodes)} collected items to database.")
 
             # -------- Memory cleanup to avoid JSON blob retention --------
