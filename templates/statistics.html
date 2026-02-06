@@ -5,7 +5,8 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/statistics.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/scraper.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/scraper-mobile.css') }}">
-<script src="{{ url_for('static', filename='js/tangerine_filename_formatter.js') }}"></script>
+<!-- Disabled: Using quality badges instead of pipe-separated format -->
+<!-- <script src="{{ url_for('static', filename='js/tangerine_filename_formatter.js') }}"></script> -->
 {% endblock %}
 {% block title %}Home{% endblock %}
 
@@ -576,105 +577,62 @@
                 item.parentNode.replaceChild(newItem, item);
                 
                 newItem.addEventListener('click', function(e) {
+                    // Don't trigger if clicking on action buttons
+                    if (e.target.closest('.search-episode-btn, .refresh-btn, .rescrape-btn, .episode-actions')) {
+                        return;
+                    }
+
                     // Prevent event from bubbling to parent elements
                     e.stopPropagation();
-                    
+
                     // Get data attributes
-                    const title = this.dataset.title;
                     const imdbId = this.dataset.imdbId;
                     const tmdbId = this.dataset.tmdbId;
+                    const inLibrary = this.dataset.inLibrary === 'true';
+                    const mediaType = this.dataset.mediaType;
                     const season = this.dataset.season;
-                    const episode = this.dataset.episode;
-                    
-                    // Log the values for debugging
-                    console.log('Clicked item data:', {
-                        title,
-                        imdbId,
-                        tmdbId,
-                        season,
-                        episode,
-                        'has-imdb': !!imdbId,
-                        'has-tmdb': !!tmdbId
-                    });
-                    
-                    // Set modal title
-                    modalTitle.textContent = `View "${title}" on External Sites`;
-                    
-                    // Extract base show title (remove season/episode info)
-                    const baseTitle = title.split(' S')[0];
-                    
-                    // Set links based on available IDs
-                    
-                    // IMDB links
-                    if (imdbId) {
-                        // For TV shows with season and episode
-                        if (season && episode) {
-                            imdbLink.href = `https://www.imdb.com/title/${imdbId}/episodes?season=${season}`;
-                        } else {
-                            // For movies or shows without season/episode info
-                            imdbLink.href = `https://www.imdb.com/title/${imdbId}/`;
-                        }
-                        imdbLink.style.display = 'flex';
-                    } else {
-                        // Fallback to search
-                        imdbLink.href = `https://www.imdb.com/find?q=${encodeURIComponent(baseTitle)}`;
-                        imdbLink.style.display = 'flex';
-                    }
-                    
-                    // TMDB links
-                    if (tmdbId) {
-                        // For TV shows with season and episode
-                        if (season && episode) {
-                            tmdbLink.href = `https://www.themoviedb.org/tv/${tmdbId}/season/${season}/episode/${episode}`;
-                        } else {
-                            // Check if it's a movie or TV show based on title format
-                            if (title.includes(' S') && title.includes('E')) {
-                                tmdbLink.href = `https://www.themoviedb.org/tv/${tmdbId}`;
+
+                    // Determine which page to navigate to
+                    let url;
+
+                    if (inLibrary) {
+                        // Navigate to library page
+                        if (mediaType === 'episode' && imdbId) {
+                            // For episodes/shows, go to library show page with season parameter
+                            url = `/library/show/${imdbId}`;
+                            if (season) {
+                                url += `?season=${season}`;
+                            }
+                        } else if (mediaType === 'movie' && imdbId) {
+                            // For movies, go to library movie page
+                            url = `/library/movie/${imdbId}`;
+                        } else if (tmdbId) {
+                            // Fallback to TMDB ID
+                            if (mediaType === 'episode') {
+                                url = `/library/show/${tmdbId}`;
+                                if (season) {
+                                    url += `?season=${season}`;
+                                }
                             } else {
-                                tmdbLink.href = `https://www.themoviedb.org/movie/${tmdbId}`;
-                            }
-                        }
-                        tmdbLink.style.display = 'flex';
-                    } else {
-                        // Fallback to search
-                        tmdbLink.href = `https://www.themoviedb.org/search?query=${encodeURIComponent(baseTitle)}`;
-                        tmdbLink.style.display = 'flex';
-                    }
-                    
-                    // Trakt links
-                    if (imdbId || tmdbId) {
-                        // For TV shows with season and episode
-                        if (season && episode) {
-                            if (imdbId) {
-                                // Direct link to episode using IMDB ID
-                                traktLink.href = `https://trakt.tv/shows/${imdbId}/seasons/${season}/episodes/${episode}`;
-                            } else if (tmdbId) {
-                                // Direct link to episode using TMDB ID
-                                traktLink.href = `https://trakt.tv/shows/${tmdbId}/seasons/${season}/episodes/${episode}`;
-                            }
-                        } else if (title.includes(' S') && title.includes('E')) {
-                            // For TV shows without specific episode - go to show page
-                            if (imdbId) {
-                                traktLink.href = `https://trakt.tv/shows/${imdbId}`;
-                            } else if (tmdbId) {
-                                traktLink.href = `https://trakt.tv/shows/${tmdbId}`;
-                            }
-                        } else {
-                            // For movies
-                            if (imdbId) {
-                                traktLink.href = `https://trakt.tv/movies/${imdbId}`;
-                            } else if (tmdbId) {
-                                traktLink.href = `https://trakt.tv/movies/${tmdbId}`;
+                                url = `/library/movie/${tmdbId}`;
                             }
                         }
                     } else {
-                        // Fallback to search by title when no IDs available
-                        traktLink.href = `https://trakt.tv/search?query=${encodeURIComponent(baseTitle)}`;
+                        // Navigate to discover details page
+                        if (tmdbId) {
+                            const type = mediaType === 'episode' ? 'tv' : 'movie';
+                            url = `/discover/details/${tmdbId}/${type}`;
+                        } else if (imdbId) {
+                            // Try with IMDb ID as fallback
+                            const type = mediaType === 'episode' ? 'tv' : 'movie';
+                            url = `/discover/details/${imdbId}/${type}`;
+                        }
                     }
-                    traktLink.style.display = 'flex';
-                    
-                    // Show modal
-                    modal.style.display = 'block';
+
+                    // Navigate to the URL
+                    if (url) {
+                        window.location.href = url;
+                    }
                 });
             });
         }
@@ -893,7 +851,7 @@
     <div class="stats-container">
         <div class="stats-box collection-stats tangerine-only" id="collection_stats_tangerine">
             <div class="stat-items">
-                <div class="stat-item">
+                <div class="stat-item stat-item-clickable" onclick="window.location.href='/library?status=all&type=movie&sort=added_desc'">
                     <div class="stat-content">
                         <div class="stat-icon">
                             <i class="fas fa-film"></i>
@@ -908,7 +866,7 @@
                         <span class="stat-badge warning">{{ stats.wanted_movies|default(0) }} wanted</span>
                     </div> -->
                 </div>
-                <div class="stat-item">
+                <div class="stat-item stat-item-clickable" onclick="window.location.href='/library?status=all&type=show&sort=added_desc'">
                     <div class="stat-content">
                         <div class="stat-icon">
                             <i class="fas fa-tv"></i>
@@ -967,7 +925,7 @@
                     </div> -->
                 </div>
                 {% endif %}
-                <div class="stat-item">
+                <div class="stat-item stat-item-clickable" onclick="window.location.href='/performance/dashboard'">
                     <div class="stat-content">
                         <div class="stat-icon">
                             <i class="fas fa-clock"></i>
@@ -1017,16 +975,21 @@
 
         <div class="top-stats">
             <div class="stats-box recently-aired" id="recently_aired">
-                <h3>Recently Aired</h3>
+                <h3>
+                    Recently Aired
+                    <a href="/statistics/calendar" class="calendar-link tangerine-only">Calendar →</a>
+                </h3>
                 <ul>
                     {% for item in recently_aired %}
                     <li>
-                        <div class="show-info clickable" 
+                        <div class="show-info clickable"
                              data-title="{{ item.title }}"
                              data-imdb-id="{{ item.imdb_id }}"
                              data-tmdb-id="{{ item.tmdb_id }}"
                              data-season="{{ item.season_number }}"
-                             data-episode="{{ item.episode_number }}">
+                             data-episode="{{ item.episode_number }}"
+                             data-in-library="{{ 'true' if item.display_status in ['collected', 'checking_upgrade'] else 'false' }}"
+                             data-media-type="episode">
                             {# Determine class based on display_status #}
                             {% set status_class = '' %}
                             {% if item.display_status == 'uncollected' %}
@@ -1091,7 +1054,10 @@
             </div>
 
             <div class="stats-box airing-soon" id="airing_soon">
-                <h3>Airing Soon</h3>
+                <h3>
+                    Airing Soon
+                    <a href="/statistics/calendar" class="calendar-link tangerine-only">Calendar →</a>
+                </h3>
                 <ul>
                     {% for item in airing_soon %}
                     <li class="clickable"
@@ -1099,7 +1065,9 @@
                         data-imdb-id="{{ item.imdb_id }}"
                         data-tmdb-id="{{ item.tmdb_id }}"
                         data-season="{{ item.season_number }}"
-                        data-episode="{{ item.episode_number }}">
+                        data-episode="{{ item.episode_number }}"
+                        data-in-library="true"
+                        data-media-type="episode">
                         <span class="show-title">{{ item.title }}</span>
                         <span class="air-time">{{ item.formatted_datetime }}</span>
                     </li>
@@ -1108,14 +1076,19 @@
             </div>
 
             <div class="stats-box upcoming-releases" id="upcoming_releases">
-                <h3>Upcoming Releases</h3>
+                <h3>
+                    Upcoming Releases
+                    <a href="/statistics/calendar" class="calendar-link tangerine-only">Calendar →</a>
+                </h3>
                 <ul>
                     {% for release in upcoming_releases %}
                     <li class="clickable"
                         data-title="{{ release.titles if release.titles else '' }}"
                         data-release-date="{{ release.release_date }}"
                         data-tmdb-id="{{ release.tmdb_ids if release.tmdb_ids and release.tmdb_ids|length > 0 else '' }}"
-                        data-imdb-id="{{ release.imdb_ids if release.imdb_ids and release.imdb_ids|length > 0 else '' }}">
+                        data-imdb-id="{{ release.imdb_ids if release.imdb_ids and release.imdb_ids|length > 0 else '' }}"
+                        data-in-library="false"
+                        data-media-type="movie">
                         <span class="titles">{{ release.titles }}</span>
                         <span class="release-date">{{ release.formatted_date }}</span>
                     </li>
@@ -1132,14 +1105,21 @@
 
         <div class="recently-added">
             <div class="stats-box recently-added-section-top" id="recently_added_movies">
-                <h3>Recently Added Movies</h3>
+                <h3>
+                    Recently Added Movies
+                    <a href="/library?status=collected&type=movie&sort=added_desc" class="calendar-link tangerine-only">View All →</a>
+                </h3>
                 <div class="stats-cards-container">
                     {% for movie in recently_added.movies %}
-                    <div class="stats-card">
+                    <div class="stats-card clickable"
+                         data-imdb-id="{{ movie.imdb_id }}"
+                         data-tmdb-id="{{ movie.tmdb_id }}"
+                         data-in-library="true"
+                         data-media-type="movie">
                         {% if compact_view %}
                         <div class="file-details">
                             <span class="title">{{ movie.title }} ({{ movie.year }})</span>
-                            <span class="metadata">Version: {{ movie.version }} - {{ movie.formatted_collected_at or movie.formatted_date or 'Unknown' }}</span>
+                            <span class="metadata">Version: {{ movie.version }}{% if movie.formatted_size %} <span style="color: #e17c52;">•</span> Size: {{ movie.formatted_size }}{% endif %} <span style="color: #e17c52;">•</span> {{ movie.formatted_collected_at or movie.formatted_date or 'Unknown' }}</span>
                             <span class="filename">{{ movie.filled_by_file }}</span>
                         </div>
                         {% else %}
@@ -1147,7 +1127,7 @@
                             <img src="{{ movie.poster_url }}" alt="{{ movie.title }} poster" class="poster" loading="lazy">
                             <div class="stats-poster-hover">
                                 <span class="title">{{ movie.title }} ({{ movie.year }})</span>
-                                <span class="metadata">Version: {{ movie.version }} - {{ movie.formatted_collected_at or movie.formatted_date or 'Unknown' }}</span>
+                                <span class="metadata">Version: {{ movie.version }}{% if movie.formatted_size %} <span style="color: #e17c52;">•</span> Size: {{ movie.formatted_size }}{% endif %} <span style="color: #e17c52;">•</span> {{ movie.formatted_collected_at or movie.formatted_date or 'Unknown' }}</span>
                                 <span class="filename">{{ movie.filled_by_file }}</span>
                             </div>
                         </div>
@@ -1158,22 +1138,31 @@
             </div>
             
             <div class="stats-box recently-added-section-bottom" id="recently_added_shows">
-                <h3>Recently Added Shows</h3>
+                <h3>
+                    Recently Added Shows
+                    <a href="/library?status=collected&type=show&sort=added_desc" class="calendar-link tangerine-only">View All →</a>
+                </h3>
                 <div class="stats-cards-container">
                     {% for show in recently_added.shows %}
-                    <div class="stats-card">
+                    <div class="stats-card clickable"
+                         data-imdb-id="{{ show.imdb_id }}"
+                         data-tmdb-id="{{ show.tmdb_id }}"
+                         data-season="{{ show.season_number }}"
+                         data-episode="{{ show.episode_number }}"
+                         data-in-library="true"
+                         data-media-type="episode">
                         {% if compact_view %}
                         <div class="file-details">
-                            <span class="title">{{ show.title }}</span>
-                            <span class="metadata">{% if show.season_number is not none and show.episode_number is not none %}S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }}{% endif %}{% if show.year %} ({{ show.year }}){% endif %}{% if show.version %} - Version: {{ show.version }}{% endif %} - {{ show.formatted_collected_at or show.formatted_date or 'Unknown' }}</span>
+                            <span class="title">{{ show.title }}{% if show.year %} ({{ show.year }}){% endif %}</span>
+                            <span class="metadata">{% if show.season_number is not none and show.episode_number is not none %}S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }} <span style="color: #e17c52;">•</span> {% endif %}{% if show.version %}Version: {{ show.version }}{% if show.formatted_size %} <span style="color: #e17c52;">•</span> Size: {{ show.formatted_size }}{% endif %} <span style="color: #e17c52;">•</span> {% endif %}{{ show.formatted_collected_at or show.formatted_date or 'Unknown' }}</span>
                             <span class="filename">{{ show.filled_by_file }}</span>
                         </div>
                         {% else %}
                         <div class="stats-poster-container">
                             <img src="{{ show.poster_url }}" alt="{{ show.title }} poster" class="poster" loading="lazy">
                             <div class="stats-poster-hover">
-                                <span class="title">{{ show.title }}</span>
-                                <span class="metadata">{% if show.season_number is not none and show.episode_number is not none %}S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }}{% endif %}{% if show.year %} ({{ show.year }}){% endif %}{% if show.version %} - Version: {{ show.version }}{% endif %} - {{ show.formatted_collected_at or show.formatted_date or 'Unknown' }}</span>
+                                <span class="title">{{ show.title }}{% if show.year %} ({{ show.year }}){% endif %}</span>
+                                <span class="metadata">{% if show.season_number is not none and show.episode_number is not none %}S{{ '%02d'|format(show.season_number) }}E{{ '%02d'|format(show.episode_number) }} <span style="color: #e17c52;">•</span> {% endif %}{% if show.version %}Version: {{ show.version }}{% if show.formatted_size %} <span style="color: #e17c52;">•</span> Size: {{ show.formatted_size }}{% endif %} <span style="color: #e17c52;">•</span> {% endif %}{{ show.formatted_collected_at or show.formatted_date or 'Unknown' }}</span>
                                 <span class="filename">{{ show.filled_by_file }}</span>
                             </div>
                         </div>
@@ -1184,14 +1173,23 @@
             </div>
             
             <div class="stats-box recently-upgraded-section" id="recently_upgraded">
-                <h3>Recently Upgraded</h3>
+                <h3>
+                    Recently Upgraded
+                    <a href="/library?status=upgraded&type=all&sort=added_desc" class="calendar-link tangerine-only">View All →</a>
+                </h3>
                 <div class="stats-cards-container">
                     {% for item in recently_upgraded %}
-                    <div class="stats-card">
+                    <div class="stats-card clickable"
+                         data-imdb-id="{{ item.imdb_id }}"
+                         data-tmdb-id="{{ item.tmdb_id }}"
+                         {% if item.type == 'episode' %}data-season="{{ item.season_number }}"
+                         data-episode="{{ item.episode_number }}"{% endif %}
+                         data-in-library="true"
+                         data-media-type="{{ item.type }}">
                         {% if compact_view %}
                         <div class="file-details">
                             <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
-                            <span class="metadata">{% if item.type == 'episode' and item.season_number is not none and item.episode_number is not none %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number)}} -{% endif %}{% if item.version %} Version: {{ item.version }}{% endif %} - {{ item.formatted_date }}</span>
+                            <span class="metadata">{% if item.type == 'episode' and item.season_number is not none and item.episode_number is not none %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number)}} <span style="color: #e17c52;">•</span> {% endif %}{% if item.version %}Version: {{ item.version }}{% if item.formatted_size %} <span style="color: #e17c52;">•</span> Size: {{ item.formatted_size }}{% endif %} <span style="color: #e17c52;">•</span> {% endif %}{{ item.formatted_date }}</span>
                             <span class="filename" data-label="From:">{{ item.upgrading_from }}</span>
                             <span class="filename" data-label="To:">{{ item.filled_by_file }}</span>
                         </div>
@@ -1200,7 +1198,7 @@
                             <img src="{{ item.poster_url }}" alt="{{ item.title }} poster" class="poster" loading="lazy">
                             <div class="stats-poster-hover">
                                 <span class="title">{{ item.title }}{% if item.year %} ({{ item.year }}){% endif %}</span>
-                                <span class="metadata">{% if item.type == 'episode' and item.season_number is not none and item.episode_number is not none %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }}{% endif %}{% if item.version %} - Version: {{ item.version }}{% endif %} - {{ item.formatted_date }}</span>
+                                <span class="metadata">{% if item.type == 'episode' and item.season_number is not none and item.episode_number is not none %}S{{ '%02d'|format(item.season_number) }}E{{ '%02d'|format(item.episode_number) }} <span style="color: #e17c52;">•</span> {% endif %}{% if item.version %}Version: {{ item.version }}{% if item.formatted_size %} <span style="color: #e17c52;">•</span> Size: {{ item.formatted_size }}{% endif %} <span style="color: #e17c52;">•</span> {% endif %}{{ item.formatted_date }}</span>
                                 <span class="filename" data-label="From:">{{ item.upgrading_from }}</span>
                                 <span class="filename" data-label="To:">{{ item.filled_by_file }}</span>
                             </div>
@@ -1648,5 +1646,188 @@
         <div id="overlayContent"></div>
     </div>
 </div>
+
+<script>
+// Convert filenames to quality badges on statistics page (Tangerine theme only)
+function applyQualityBadges() {
+    // Only apply badges for tangerine theme
+    const currentTheme = document.body.getAttribute('data-theme');
+    if (currentTheme !== 'tangerine') {
+        console.log('Not tangerine theme, skipping badge application');
+        return;
+    }
+
+    // Check if functions are available
+    if (typeof extractQualityTags !== 'function' || typeof createQualityBadge !== 'function') {
+        console.warn('Quality badge functions not available yet, retrying...');
+        setTimeout(applyQualityBadges, 100);
+        return;
+    }
+
+    console.log('Applying quality badges...');
+
+    // Find all filename elements in both views (compact and poster)
+    const filenameElements = document.querySelectorAll('.file-details .filename, .stats-poster-hover .filename');
+    console.log('Found filename elements:', filenameElements.length);
+
+    // Group by parent card to handle upgraded items with From/To
+    const processedCards = new Set();
+
+    filenameElements.forEach(filenameSpan => {
+        // Find the parent stats-card
+        const card = filenameSpan.closest('.stats-card');
+        if (!card || processedCards.has(card)) {
+            return;
+        }
+
+        // Check if this card has already been processed
+        if (card.hasAttribute('data-badges-applied')) {
+            return;
+        }
+
+        // Check if this is a recently-upgraded item (has both From and To)
+        const fromSpan = card.querySelector('.filename[data-label="From:"]');
+        const toSpan = card.querySelector('.filename[data-label="To:"]');
+
+        if (fromSpan && toSpan) {
+            // Recently Upgraded: Show both old >> new
+            // Store original filenames if not already stored
+            if (!fromSpan.hasAttribute('data-original-filename')) {
+                fromSpan.setAttribute('data-original-filename', fromSpan.textContent.trim());
+            }
+            if (!toSpan.hasAttribute('data-original-filename')) {
+                toSpan.setAttribute('data-original-filename', toSpan.textContent.trim());
+            }
+
+            const oldFilename = fromSpan.getAttribute('data-original-filename');
+            const newFilename = toSpan.getAttribute('data-original-filename');
+
+            if (oldFilename && newFilename) {
+                console.log('Processing upgraded item:', oldFilename, '>>', newFilename);
+                const oldTags = extractQualityTags(oldFilename);
+                const newTags = extractQualityTags(newFilename);
+                console.log('Old tags:', oldTags.map(t => `${t.type}:${t.value}`).join(', '));
+                console.log('New tags:', newTags.map(t => `${t.type}:${t.value}`).join(', '));
+
+                if (oldTags.length > 0 || newTags.length > 0) {
+                    const oldBadgesHTML = oldTags.map(tag => createQualityBadge(tag)).join('');
+                    const newBadgesHTML = newTags.map(tag => createQualityBadge(tag)).join('');
+
+                    // Check if container already exists
+                    let container = card.querySelector('.upgraded-tags-container');
+                    if (!container) {
+                        // Create container for both
+                        container = document.createElement('div');
+                        container.className = 'upgraded-tags-container';
+                        container.innerHTML = `
+                            <div class="release-tags">${oldBadgesHTML}</div>
+                            <span class="upgrade-arrow">>></span>
+                            <div class="release-tags">${newBadgesHTML}</div>
+                        `;
+
+                        // Insert container before the fromSpan
+                        fromSpan.parentNode.insertBefore(container, fromSpan);
+                    } else {
+                        // Container exists, just update content and show it
+                        container.innerHTML = `
+                            <div class="release-tags">${oldBadgesHTML}</div>
+                            <span class="upgrade-arrow">>></span>
+                            <div class="release-tags">${newBadgesHTML}</div>
+                        `;
+                    }
+
+                    // Show container and hide the original spans
+                    container.style.display = '';
+                    fromSpan.style.display = 'none';
+                    toSpan.style.display = 'none';
+                }
+            }
+            processedCards.add(card);
+            card.setAttribute('data-badges-applied', 'true');
+        } else {
+            // Regular item: Just convert the single filename
+            const filenameSpan = card.querySelector('.filename');
+            if (filenameSpan) {
+                // Store original filename if not already stored
+                if (!filenameSpan.hasAttribute('data-original-filename')) {
+                    filenameSpan.setAttribute('data-original-filename', filenameSpan.textContent.trim());
+                }
+
+                const filename = filenameSpan.getAttribute('data-original-filename');
+                console.log('Processing regular item:', filename);
+
+                if (filename) {
+                    const qualityTags = extractQualityTags(filename);
+                    console.log('Extracted tags:', qualityTags.map(t => `${t.type}:${t.value}`).join(', '));
+                    if (qualityTags.length > 0) {
+                        const badgesHTML = qualityTags.map(tag => createQualityBadge(tag)).join('');
+                        filenameSpan.innerHTML = `<div class="release-tags">${badgesHTML}</div>`;
+                        card.setAttribute('data-badges-applied', 'true');
+                    }
+                }
+            }
+            processedCards.add(card);
+        }
+    });
+
+    console.log('Finished applying badges to', processedCards.size, 'cards');
+}
+
+// Restore original filenames (for classic theme)
+function restoreOriginalFilenames() {
+    console.log('Restoring original filenames for classic theme...');
+
+    // Restore regular filename elements
+    const filenameElements = document.querySelectorAll('.filename[data-original-filename]');
+    filenameElements.forEach(element => {
+        const originalFilename = element.getAttribute('data-original-filename');
+        if (originalFilename && element.textContent !== originalFilename) {
+            element.textContent = originalFilename;
+        }
+        // Make sure the element is visible
+        element.style.display = '';
+    });
+
+    // Hide badge containers and show original From/To spans
+    const upgradedContainers = document.querySelectorAll('.upgraded-tags-container');
+    upgradedContainers.forEach(container => {
+        container.style.display = 'none';
+    });
+
+    // Show hidden From/To spans
+    const hiddenSpans = document.querySelectorAll('.filename[data-label="From:"][style*="display: none"], .filename[data-label="To:"][style*="display: none"]');
+    hiddenSpans.forEach(span => {
+        span.style.display = '';
+    });
+
+    // Clear badges-applied flags
+    document.querySelectorAll('.stats-card[data-badges-applied]').forEach(card => {
+        card.removeAttribute('data-badges-applied');
+    });
+}
+
+// Apply badges on page load
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded, waiting for scripts...');
+    // Wait a bit to ensure all scripts are loaded
+    setTimeout(applyQualityBadges, 200);
+});
+
+// Re-apply badges on theme change
+document.addEventListener('themeChanged', function(event) {
+    console.log('Theme changed to:', event.detail.theme);
+
+    if (event.detail.theme === 'tangerine') {
+        // Clear badges-applied flags to allow reprocessing
+        document.querySelectorAll('.stats-card[data-badges-applied]').forEach(card => {
+            card.removeAttribute('data-badges-applied');
+        });
+        setTimeout(applyQualityBadges, 100);
+    } else {
+        // Restore original filenames for classic theme
+        restoreOriginalFilenames();
+    }
+});
+</script>
 
 {% endblock %}

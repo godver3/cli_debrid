@@ -386,7 +386,7 @@
                     <select id="collection_type" name="collection_type" required>
                         <option value="all">All</option>
                         <option value="recent">Recent</option>
-                        <option value="backfill">Backfill (Update Plex data for already-Collected items)</option>
+                        <option value="backfill">Backfill (Update file sizes for already-Collected items)</option>
                     </select>
                 </div>
                 <button type="submit">Get Plex Collected</button>
@@ -3137,58 +3137,130 @@ if (document.readyState === 'loading') {
                             // Build results HTML for modal with pagination
                             const groupsPerPage = 20;
                             let currentPage = 1;
-                            const totalGroups = data.groups ? data.groups.length : 0;
-                            const totalPages = Math.ceil(totalGroups / groupsPerPage);
+                            let showExcluded = true; // Track toggle state
 
-                            function renderFailedUpgradesPage(page) {
+                            function renderFailedUpgradesPage(page, forceShowExcluded) {
+                                // Update showExcluded if explicitly passed
+                                if (forceShowExcluded !== undefined) {
+                                    showExcluded = forceShowExcluded;
+                                }
+
+                                // Filter groups based on showExcluded setting
+                                let displayGroups = data.groups || [];
+                                if (!showExcluded) {
+                                    // Only show groups that have at least one non-excluded item
+                                    displayGroups = displayGroups.filter(group => {
+                                        return group.delete_items && group.delete_items.some(item => item.action !== 'excluded');
+                                    });
+                                }
+
+                                const totalGroups = displayGroups.length;
+                                const totalPages = Math.ceil(totalGroups / groupsPerPage);
+
+                                // Adjust page if out of bounds
+                                if (page > totalPages && totalPages > 0) {
+                                    page = totalPages;
+                                }
+
                                 let resultsHtml = '<div class="episode-results-summary">';
                                 const mediaLabel = mediaType === 'show' ? 'shows' : 'movies';
 
-                                // Summary header (full width)
-                                resultsHtml += `<p style="margin-bottom: 15px;"><strong>${data.total_movies} Duplicate Groups Found</strong> (each group has multiple versions of the same episode/movie)</p>`;
+                                // Compact horizontal summary section with responsive layout
+                                resultsHtml += `<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 15px 20px; padding: 12px; background: rgba(255, 255, 255, 0.03); border-radius: 4px; margin-bottom: 15px; font-size: 0.95em;">`;
 
-                                // Two-column layout for stats
-                                resultsHtml += `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">`;
+                                // Groups found
+                                resultsHtml += `<div style="flex: 0 0 auto;"><strong>${data.total_movies} Groups Found</strong></div>`;
+                                resultsHtml += `<div style="border-left: 1px solid #444; height: 20px;"></div>`;
 
-                                // Left column
-                                resultsHtml += `<div>`;
-                                resultsHtml += `<p><strong>${data.dry_run ? 'Would Delete' : 'Deleted'}:</strong> ${data.total_deleted} items</p>`;
+                                // Stats in horizontal row
+                                resultsHtml += `<div style="flex: 0 0 auto;"><strong>${data.dry_run ? 'Would Delete' : 'Deleted'}:</strong> ${data.total_deleted}</div>`;
+
                                 if (data.total_excluded && data.total_excluded > 0) {
-                                    resultsHtml += `<p><strong>🛡️ Excluded:</strong> ${data.total_excluded} items</p>`;
+                                    resultsHtml += `<div style="flex: 0 0 auto;"><strong>🛡️ Excluded:</strong> ${data.total_excluded}</div>`;
                                 }
-                                resultsHtml += `<p><strong>Would Keep:</strong> ${data.total_movies} items</p>`;
-                                resultsHtml += `</div>`;
 
-                                // Right column
-                                resultsHtml += `<div>`;
+                                resultsHtml += `<div style="flex: 0 0 auto;"><strong>Keep:</strong> ${data.total_movies}</div>`;
+                                resultsHtml += `<div style="border-left: 1px solid #444; height: 20px;"></div>`;
 
-                                // Determine action text based on keep_action
+                                // Action details
                                 let actionText = 'Keep collected, delete blacklisted';
                                 if (data.keep_action === 'keep_blacklisted') {
                                     actionText = 'Keep blacklisted, delete collected';
                                 } else if (data.keep_action === 'keep_best_quality') {
-                                    actionText = 'Keep best quality, delete rest';
+                                    actionText = 'Keep best quality';
                                 }
-                                resultsHtml += `<p><strong>Action:</strong> ${actionText}</p>`;
-                                resultsHtml += `<p><strong>Version Match:</strong> ${data.version_match === 'all' ? 'Any version' : 'Same version only'}</p>`;
-                                resultsHtml += `<p><strong>Elapsed Time:</strong> ${data.elapsed_time}s</p>`;
-                                resultsHtml += `</div>`;
+                                resultsHtml += `<div style="flex: 0 0 auto;"><strong>Action:</strong> ${actionText}</div>`;
 
-                                resultsHtml += `</div>`; // Close grid
+                                resultsHtml += `<div style="flex: 0 0 auto;"><strong>Version:</strong> ${data.version_match === 'all' ? 'Any' : 'Same only'}</div>`;
 
-                                if (data.groups && data.groups.length > 0) {
+                                resultsHtml += `<div style="flex: 0 0 auto;"><strong>Time:</strong> ${data.elapsed_time}s</div>`;
+
+                                resultsHtml += `</div>`; // Close horizontal stats
+
+                                // Function to generate pagination controls HTML
+                                function getPaginationHTML(page, totalPages) {
+                                    if (totalPages <= 1) return '';
+
+                                    let paginationHtml = `<div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; margin: 15px 0; padding: 10px; background: rgba(255, 255, 255, 0.05); border-radius: 4px;">`;
+
+                                    // Previous button
+                                    paginationHtml += `<button onclick="renderFailedUpgradesPage(${Math.max(1, page - 1)})" style="padding: 8px 12px; min-width: 80px;" ${page === 1 ? 'disabled' : ''}>Previous</button>`;
+
+                                    // Page info and go to page input
+                                    paginationHtml += `<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;">`;
+                                    paginationHtml += `<span>Page ${page} of ${totalPages}</span>`;
+                                    paginationHtml += `<span style="color: #666;">|</span>`;
+                                    paginationHtml += `<label style="display: flex; align-items: center; gap: 5px;">`;
+                                    paginationHtml += `<span style="white-space: nowrap;">Go to:</span>`;
+                                    paginationHtml += `<input type="number" id="gotoPageInput_${page}" min="1" max="${totalPages}" placeholder="${page}" style="width: 60px; padding: 6px; text-align: center; background: #1a1a1a; border: 1px solid #444; color: white; border-radius: 3px;">`;
+                                    paginationHtml += `<button onclick="const input = document.getElementById('gotoPageInput_${page}'); const pageNum = parseInt(input.value); if (pageNum >= 1 && pageNum <= ${totalPages}) renderFailedUpgradesPage(pageNum);" style="padding: 6px 10px;">Go</button>`;
+                                    paginationHtml += `</label>`;
+                                    paginationHtml += `</div>`;
+
+                                    // Next button
+                                    paginationHtml += `<button onclick="renderFailedUpgradesPage(${Math.min(totalPages, page + 1)})" style="padding: 8px 12px; min-width: 80px;" ${page === totalPages ? 'disabled' : ''}>Next</button>`;
+
+                                    paginationHtml += `</div>`;
+                                    return paginationHtml;
+                                }
+
+                                if (displayGroups && displayGroups.length > 0) {
                                     const startIdx = (page - 1) * groupsPerPage;
                                     const endIdx = Math.min(startIdx + groupsPerPage, totalGroups);
-                                    const pageGroups = data.groups.slice(startIdx, endIdx);
+                                    const pageGroups = displayGroups.slice(startIdx, endIdx);
 
-                                    resultsHtml += `<h4>Duplicate Groups (showing ${startIdx + 1}-${endIdx} of ${totalGroups}):</h4>`;
-                                    resultsHtml += `<p style="font-size: 0.9em; color: #888; margin-top: -8px;"><em>Each row shows one duplicate group with items to keep (✓) and items to delete (✗).</em></p>`;
+                                    const displaySuffix = !showExcluded ? ' (excluding fully-excluded groups)' : '';
+
+                                    // Container for heading and checkbox
+                                    resultsHtml += `<div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; flex-wrap: wrap; margin-bottom: 10px;">`;
+
+                                    // Left side: Heading and description
+                                    resultsHtml += `<div style="flex: 1 1 auto; min-width: 300px;">`;
+                                    resultsHtml += `<h4 style="margin: 0 0 5px 0;">Duplicate Groups (showing ${startIdx + 1}-${endIdx} of ${totalGroups}${displaySuffix}):</h4>`;
+                                    resultsHtml += `<p style="font-size: 0.9em; color: #888; margin: 0;"><em>Each row shows one duplicate group with items to keep (✓) and items to delete (✗).</em></p>`;
+                                    resultsHtml += `</div>`;
+
+                                    // Right side: Excluded toggle if there are excluded items
+                                    if (data.total_excluded && data.total_excluded > 0) {
+                                        resultsHtml += `<label style="flex: 0 0 auto; display: flex; align-items: center; cursor: pointer; user-select: none; background: rgba(76, 175, 80, 0.15); padding: 6px 12px; border-radius: 3px; align-self: center;">`;
+                                        const checkedAttr = showExcluded ? 'checked' : '';
+                                        resultsHtml += `<input type="checkbox" id="toggleExcludedItems" ${checkedAttr} style="margin-right: 8px; width: 16px; height: 16px; cursor: pointer;">`;
+                                        resultsHtml += `<span style="font-weight: 500; white-space: nowrap;">Show Excluded (${data.total_excluded})</span>`;
+                                        resultsHtml += `</label>`;
+                                    }
+
+                                    resultsHtml += `</div>`; // Close heading container
+
+                                    // Add pagination at top
+                                    resultsHtml += getPaginationHTML(page, totalPages);
+
                                     resultsHtml += `<table style="width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 0.9em;">`;
                                     resultsHtml += `<thead><tr style="background: #2a2a2a;"><th style="padding: 8px; text-align: left;">Group #</th><th style="padding: 8px; text-align: left;">Keep (✓)</th><th style="padding: 8px; text-align: left;">Delete (✗)</th></tr></thead><tbody>`;
 
                                     pageGroups.forEach((group, idx) => {
                                         const groupNum = startIdx + idx + 1;
-                                        resultsHtml += `<tr style="border-bottom: 1px solid #333;">`;
+
+                                        resultsHtml += `<tr class="duplicate-row" style="border-bottom: 1px solid #333;">`;
                                         resultsHtml += `<td style="padding: 8px; vertical-align: top;"><strong>${groupNum}</strong></td>`;
 
                                         // Keep items column
@@ -3214,8 +3286,9 @@ if (document.readyState === 'loading') {
                                             const isExcluded = item.action === 'excluded';
                                             const itemStyle = isExcluded ? 'background: rgba(76, 175, 80, 0.2); padding: 8px; border-radius: 4px; border-left: 3px solid #4CAF50;' : '';
                                             const statusText = isExcluded ? `🛡️ Excluded from deletion (pattern: ${item.excluded_pattern})` : '';
+                                            const excludedClass = isExcluded ? ' excluded-item' : '';
 
-                                            resultsHtml += `<div style="margin-bottom: 8px; ${itemStyle}">`;
+                                            resultsHtml += `<div class="duplicate-item${excludedClass}" style="margin-bottom: 8px; ${itemStyle}">`;
                                             if (isExcluded) {
                                                 resultsHtml += `<div style="color: #4CAF50; font-weight: bold; margin-bottom: 4px; font-size: 0.9em;">${statusText}</div>`;
                                             }
@@ -3228,19 +3301,31 @@ if (document.readyState === 'loading') {
                                     });
                                     resultsHtml += `</tbody></table>`;
 
-                                    // Pagination controls
-                                    if (totalPages > 1) {
-                                        resultsHtml += `<div style="margin-top: 15px; text-align: center;">`;
-                                        resultsHtml += `<button onclick="renderFailedUpgradesPage(${Math.max(1, page - 1)})" style="padding: 5px 10px; margin: 0 5px;" ${page === 1 ? 'disabled' : ''}>Previous</button>`;
-                                        resultsHtml += `<span style="margin: 0 10px;">Page ${page} of ${totalPages}</span>`;
-                                        resultsHtml += `<button onclick="renderFailedUpgradesPage(${Math.min(totalPages, page + 1)})" style="padding: 5px 10px; margin: 0 5px;" ${page === totalPages ? 'disabled' : ''}>Next</button>`;
-                                        resultsHtml += `</div>`;
-                                    }
+                                    // Add pagination at bottom
+                                    resultsHtml += getPaginationHTML(page, totalPages);
                                 }
                                 resultsHtml += '</div>';
 
                                 const modalBody = document.getElementById('cleanup-modal-body');
                                 modalBody.innerHTML = resultsHtml;
+
+                                // Add event listener for excluded items toggle
+                                const toggleCheckbox = document.getElementById('toggleExcludedItems');
+                                if (toggleCheckbox) {
+                                    toggleCheckbox.addEventListener('change', function() {
+                                        // Re-render the page with new filter setting (go to page 1)
+                                        renderFailedUpgradesPage(1, this.checked);
+                                    });
+                                }
+
+                                // Apply initial visibility based on showExcluded state
+                                if (!showExcluded) {
+                                    // Hide individual excluded items in mixed rows
+                                    const excludedItems = document.querySelectorAll('.excluded-item');
+                                    excludedItems.forEach(item => {
+                                        item.style.display = 'none';
+                                    });
+                                }
                             }
 
                             // Make function global for pagination buttons
@@ -3768,7 +3853,7 @@ if (document.readyState === 'loading') {
             .then(response => response.json())
             .then(data => {
                 if (data.success && data.orphaned_labels && data.orphaned_labels.length > 0) {
-                    let html = `<p style="color: #ffd93d;">Found ${data.orphaned_labels.length} orphaned label(s):</p><ul style="margin-top: 10px;">`;
+                    let html = `<p style="color: #ffd93d;">Found ${data.orphaned_labels.length} orphaned label(s):</p><ul style="margin-top: 10px; padding-left: 25px;">`;
                     data.orphaned_labels.forEach(label => {
                         html += `<li style="padding: 5px 0;">${label.label} (${label.item_count} items)</li>`;
                     });

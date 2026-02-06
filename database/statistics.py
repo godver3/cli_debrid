@@ -436,7 +436,7 @@ async def get_recently_added_items(movie_limit=None, show_limit=None):
         movie_query = (
             """
             SELECT title, year, collected_at, imdb_id, tmdb_id,
-                   version, filled_by_title, filled_by_file
+                   version, filled_by_title, filled_by_file, size
             FROM media_items
             WHERE type = 'movie'
               AND upgraded = 0
@@ -454,7 +454,7 @@ async def get_recently_added_items(movie_limit=None, show_limit=None):
             """
             SELECT title, year, collected_at, imdb_id, tmdb_id,
                    version, filled_by_title, filled_by_file,
-                   season_number, episode_number
+                   season_number, episode_number, size
             FROM media_items
             WHERE type = 'episode'
               AND upgraded = 0
@@ -487,7 +487,8 @@ async def get_recently_added_items(movie_limit=None, show_limit=None):
                 'tmdb_id': row['tmdb_id'],
                 'version': row['version'],
                 'filled_by_title': row['filled_by_title'] or row['filled_by_file'],
-                'filled_by_file': row['filled_by_file']
+                'filled_by_file': row['filled_by_file'],
+                'size': row['size']
             })
             if len(movies_list) >= movie_limit:
                 break
@@ -510,7 +511,8 @@ async def get_recently_added_items(movie_limit=None, show_limit=None):
                 'filled_by_title': row['filled_by_title'] or row['filled_by_file'],
                 'filled_by_file': row['filled_by_file'],
                 'season_number': row['season_number'],
-                'episode_number': row['episode_number']
+                'episode_number': row['episode_number'],
+                'size': row['size']
             })
             if len(shows_list) >= show_limit:
                 break
@@ -587,7 +589,7 @@ async def get_recently_upgraded_items(upgraded_limit=None):
                 title, year, type, imdb_id, tmdb_id, version,
                 filled_by_title, filled_by_file, upgrading_from,
                 last_updated, collected_at, original_collected_at,
-                season_number, episode_number
+                season_number, episode_number, size
             FROM media_items
             WHERE upgraded = 1 AND collected_at IS NOT NULL
             AND (ghostlisted IS NULL OR ghostlisted = 0)
@@ -635,7 +637,9 @@ async def get_recently_upgraded_items(upgraded_limit=None):
                     'last_updated': item['last_updated'],
                     'collected_at': item['collected_at'],
                     'original_collected_at': item['original_collected_at'],
-                    'tmdb_id': item['tmdb_id']
+                    'tmdb_id': item['tmdb_id'],
+                    'imdb_id': item['imdb_id'],
+                    'size': item['size']
                 }
                 
                 if item['type'] == 'episode':

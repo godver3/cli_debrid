@@ -19,6 +19,18 @@ from functools import wraps
 from typing import Optional, Dict, List, Any
 import calendar
 
+def format_file_size(size_gb):
+    """Format file size from GB to human-readable format (GB, MB, etc.)"""
+    if not size_gb or size_gb == 0:
+        return None
+
+    # Size is already in GB from database
+    if size_gb >= 1:  # 1 GB or more
+        return f"{size_gb:.1f}GB" if size_gb < 100 else f"{size_gb:.0f}GB"
+    else:  # Less than 1 GB, show in MB
+        size_mb = size_gb * 1024
+        return f"{size_mb:.0f}MB"
+
 def cache_for_seconds(seconds):
     """Cache the result of a function for the specified number of seconds."""
     def decorator(func):
@@ -598,20 +610,22 @@ def root():
         if 'movies' in recently_added_data:
             for movie in recently_added_data['movies']:
                 movie['formatted_date'] = format_datetime_preference(
-                    movie['collected_at'], 
+                    movie['collected_at'],
                     use_24hour_format
                 )
                 movie['formatted_collected_at'] = movie['formatted_date']
+                movie['formatted_size'] = format_file_size(movie.get('size'))
                 recently_added['movies'].append(movie)
         
         # Process shows
         if 'shows' in recently_added_data:
             for show in recently_added_data['shows']:
                 show['formatted_date'] = format_datetime_preference(
-                    show['collected_at'], 
+                    show['collected_at'],
                     use_24hour_format
                 )
                 show['formatted_collected_at'] = show['formatted_date']
+                show['formatted_size'] = format_file_size(show.get('size'))
                 recently_added['shows'].append(show)
         
         # Get recently upgraded items
@@ -626,10 +640,13 @@ def root():
             for item in recently_upgraded:
                 # Format the upgrade date using collected_at for better differentiation
                 item['formatted_date'] = format_datetime_preference(
-                    item['collected_at'], 
+                    item['collected_at'],
                     use_24hour_format
                 )
-                
+
+                # Format file size
+                item['formatted_size'] = format_file_size(item.get('size'))
+
                 # For original_collected_at, use the existing value if available
                 if item.get('original_collected_at'):
                     item['original_collected_at'] = format_datetime_preference(
@@ -1180,10 +1197,13 @@ def index_api():
             for item in recently_upgraded:
                 # Format the upgrade date using collected_at for better differentiation
                 item['formatted_date'] = format_datetime_preference(
-                    item['collected_at'], 
+                    item['collected_at'],
                     use_24hour_format
                 )
-                
+
+                # Format file size
+                item['formatted_size'] = format_file_size(item.get('size'))
+
                 # For original_collected_at, use the existing value if available
                 if item.get('original_collected_at'):
                     item['original_collected_at'] = format_datetime_preference(

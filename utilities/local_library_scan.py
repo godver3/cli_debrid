@@ -1275,15 +1275,54 @@ def local_library_scan(items: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]
     """
     Scan local library for specific items' files when Symlinked/Local is enabled.
     This is used as an alternative to Plex scanning when working with symlinked files.
-    
+
+    Gets file size for backfill by reading from filesystem directly (fast, no Plex API calls).
+
     Args:
-        items: List of items to scan for
-    
+        items: List of items to scan for (from database)
+
     Returns:
-        Dict mapping item IDs to their found file information
+        Dict mapping item IDs to their found file information with size_gb
     """
-    # Disabled for now
-    return {}
+    results = {}
+    scanned_count = 0
+    size_found_count = 0
+
+    logging.info(f"[LOCAL_LIBRARY_SCAN] Starting scan of {len(items)} items from database")
+
+    for item in items:
+        item_id = item.get('id')
+        if not item_id:
+            continue
+
+        location = item.get('location_on_disk')
+        if not location:
+            logging.debug(f"[LOCAL_LIBRARY_SCAN] Item {item_id} has no location_on_disk, skipping")
+            continue
+
+        scanned_count += 1
+
+        # Check if file exists and get size
+        if os.path.exists(location):
+            try:
+                size_bytes = os.path.getsize(location)
+                size_gb = round(size_bytes / (1024**3), 2) if size_bytes else None
+
+                if size_gb is not None:
+                    # Add size to item data
+                    item_with_size = item.copy()
+                    item_with_size['size_gb'] = size_gb
+                    item_with_size['location'] = location
+                    results[item_id] = item_with_size
+                    size_found_count += 1
+                    logging.debug(f"[LOCAL_LIBRARY_SCAN] Item {item_id}: {size_gb}GB")
+            except OSError as e:
+                logging.warning(f"[LOCAL_LIBRARY_SCAN] Could not get size for {location}: {e}")
+        else:
+            logging.debug(f"[LOCAL_LIBRARY_SCAN] File not found: {location}")
+
+    logging.info(f"[LOCAL_LIBRARY_SCAN] Scanned {scanned_count} items, found size for {size_found_count}")
+    return results
 
 def recent_local_library_scan(items: List[Dict[str, Any]], max_files: int = 500) -> Dict[str, Dict[str, Any]]:
     """

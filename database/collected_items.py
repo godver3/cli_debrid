@@ -107,11 +107,30 @@ def _cache_tmdb_artwork(media_items_batch):
     else:
         logging.debug(f"[Artwork Cache] All {skipped_count} items already cached, no updates needed")
 
-def add_collected_items(media_items_batch, recent=False, backfill=False):
+def add_collected_items(media_items_batch, recent=False, backfill=False, data_source='plex'):
+    """
+    Add or update collected media items in the database.
+
+    Args:
+        media_items_batch: List of media items to add/update
+        recent: True when adding new items from Plex/Zurg
+        backfill: True when updating file sizes/metadata for existing items
+        data_source: Source of the data ('plex' or 'filesystem')
+    """
     from datetime import datetime, timedelta
     from utilities.settings import get_setting
     from queues.upgrading_queue import log_successful_upgrade
     from metadata.metadata import get_show_airtime_by_imdb_id
+
+    # Check if watch history filtering is enabled
+    do_not_add_watched = get_setting('Debug', 'do_not_add_plex_watch_history_items_to_queue', False)
+    watch_history_conn = None
+    if do_not_add_watched:
+        db_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        watch_db_path = os.path.join(db_dir, 'watch_history.db')
+        if os.path.exists(watch_db_path):
+            watch_history_conn = get_db_connection(watch_db_path)
+            logging.debug("Watch history filtering enabled for collected items")
 
     # Check if Plex library checks are disabled
     if get_setting('Plex', 'disable_plex_library_checks', default=False):
@@ -119,7 +138,12 @@ def add_collected_items(media_items_batch, recent=False, backfill=False):
         return plex_collection_disabled(media_items_batch)
 
     # Cache posters and backdrops from TMDB
-    _cache_tmdb_artwork(media_items_batch)
+    # Skip during backfill - existing items already have cached artwork
+    if not backfill:
+        _cache_tmdb_artwork(media_items_batch)
+        logging.info(f"Cached TMDB artwork for {len(media_items_batch)} items")
+    else:
+        logging.info(f"[BACKFILL] Skipping artwork caching for {len(media_items_batch)} existing items (performance optimization)")
 
     conn = get_db_connection()
     try:
@@ -562,9 +586,12 @@ def add_collected_items(media_items_batch, recent=False, backfill=False):
 
                             if should_update:
                                 if backfill:
-                                    logging.info(f"[Backfill] Updating Plex fields for already-{existing_db_item['state']} item {db_item_id} ({item_identifier})")
+                                    if data_source == 'filesystem':
+                                        logging.info(f"[Backfill] Updating file size for already-{existing_db_item['state']} item {db_item_id} ({item_identifier})")
+                                    else:
+                                        logging.info(f"[Backfill] Updating Plex fields (size/resolution) for already-{existing_db_item['state']} item {db_item_id} ({item_identifier})")
                                 else:
-                                    logging.debug(f"Updating missing Plex fields for already-{existing_db_item['state']} item {db_item_id} ({item_identifier})")
+                                    logging.debug(f"Updating missing metadata fields for already-{existing_db_item['state']} item {db_item_id} ({item_identifier})")
                                 conn.execute('''
                                     UPDATE media_items
                                     SET location_on_disk = ?,
@@ -635,6 +662,56 @@ def add_collected_items(media_items_batch, recent=False, backfill=False):
                             logging.info(f"⛔ Skipping {item_identifier} - user has ghostlisted/blacklisted this item (ID: {ghostlist_result['id']})")
                             continue
 
+                        # WATCH HISTORY CHECK: Skip if item has been watched
+                        if do_not_add_watched and watch_history_conn:
+                            is_watched = False
+
+                            if item_type == 'movie':
+                                # Check movie watch history
+                                if imdb_id or tmdb_id:
+                                    # Tier 1: IMDb ID
+                                    if imdb_id:
+                                        query_wh = "SELECT 1 FROM watch_history WHERE type = 'movie' AND imdb_id = ?"
+                                        if watch_history_conn.execute(query_wh, [imdb_id]).fetchone():
+                                            is_watched = True
+
+                                    # Tier 2: TMDb ID (fallback)
+                                    if not is_watched and tmdb_id:
+                                        query_wh = "SELECT 1 FROM watch_history WHERE type = 'movie' AND tmdb_id = ?"
+                                        if watch_history_conn.execute(query_wh, [tmdb_id]).fetchone():
+                                            is_watched = True
+
+                            elif item_type == 'episode':
+                                # Check episode watch history
+                                season = item.get('season_number')
+                                episode = item.get('episode_number')
+
+                                if season is not None and episode is not None:
+                                    # Tier 1: IMDb ID + season + episode (most reliable)
+                                    if imdb_id:
+                                        query_wh = """SELECT 1 FROM watch_history
+                                                     WHERE type = 'episode' AND season = ? AND episode = ? AND imdb_id = ?"""
+                                        if watch_history_conn.execute(query_wh, [season, episode, imdb_id]).fetchone():
+                                            is_watched = True
+
+                                    # Tier 2: TMDb ID + season + episode (fallback if no IMDb or not found)
+                                    if not is_watched and tmdb_id:
+                                        query_wh = """SELECT 1 FROM watch_history
+                                                     WHERE type = 'episode' AND season = ? AND episode = ? AND tmdb_id = ?"""
+                                        if watch_history_conn.execute(query_wh, [season, episode, tmdb_id]).fetchone():
+                                            is_watched = True
+
+                                    # Tier 3: show_title + season + episode (final fallback)
+                                    if not is_watched and normalized_title:
+                                        query_wh = """SELECT 1 FROM watch_history
+                                                     WHERE type = 'episode' AND season = ? AND episode = ? AND show_title = ?"""
+                                        if watch_history_conn.execute(query_wh, [season, episode, normalized_title]).fetchone():
+                                            is_watched = True
+
+                            if is_watched:
+                                logging.info(f"⛔ Skipping {item_identifier} - item has been watched (watch history)")
+                                continue
+
                         if item_type == 'movie':
                             conn.execute('''
                                 INSERT OR REPLACE INTO media_items
@@ -677,8 +754,8 @@ def add_collected_items(media_items_batch, recent=False, backfill=False):
         # logging.info(f"Finished processing main batch loop in {time.time() - start_time_batch:.4f} seconds.")
 
         # --- Post-loop cleanup ---
-        # Skip cleanup during backfill - backfill only updates existing records with Plex metadata
-        # and should not delete items that Plex might not have scanned yet
+        # Skip cleanup during backfill - backfill only updates existing records with source metadata (filesystem or Plex)
+        # and should not delete items that might not have been scanned yet
         if not recent and not backfill:
             # logging.info("Starting post-loop cleanup for missing files.")
             # start_cleanup_time = time.time()
@@ -798,6 +875,8 @@ def add_collected_items(media_items_batch, recent=False, backfill=False):
         raise
     finally:
         conn.close()
+        if watch_history_conn:
+            watch_history_conn.close()
 
 def plex_collection_disabled(media_items_batch: List[Dict[str, Any]]) -> bool:
     """

@@ -4,6 +4,7 @@
 
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/library_movie.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/trailer_modal.css') }}">
 <script>
     // Dynamically load theme-specific scraper CSS
     (function() {
@@ -207,6 +208,7 @@
 
                             <div class="links-row">
                                 <a id="link-tmdb" href="#" target="_blank" rel="noopener noreferrer" class="link-btn">
+                                    <img src="{{ url_for('static', filename='images/tmdb.png') }}" alt="TMDB" class="link-icon">
                                     TMDB
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <path d="M15 3h6v6"></path>
@@ -215,6 +217,7 @@
                                     </svg>
                                 </a>
                                 <a id="link-imdb" href="#" target="_blank" rel="noopener noreferrer" class="link-btn">
+                                    <img src="{{ url_for('static', filename='images/imdb.png') }}" alt="IMDb" class="link-icon">
                                     IMDb
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <path d="M15 3h6v6"></path>
@@ -223,6 +226,7 @@
                                     </svg>
                                 </a>
                                 <a id="link-trakt" href="#" target="_blank" rel="noopener noreferrer" class="link-btn">
+                                    <img src="{{ url_for('static', filename='images/trakt.png') }}" alt="Trakt" class="link-icon">
                                     Trakt
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <path d="M15 3h6v6"></path>
@@ -230,6 +234,12 @@
                                         <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
                                     </svg>
                                 </a>
+                                <button id="btn-trailer" class="link-btn" style="display: none;" title="Watch Trailer">
+                                    Trailer
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                    </svg>
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -377,4 +387,5 @@
 <script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}?v=20260118"></script>
 <script src="{{ url_for('static', filename='js/scraper.js') }}?v={{ range(10000, 99999) | random }}"></script>
 <script src="{{ url_for('static', filename='js/library_movie.js') }}"></script>
+<script src="{{ url_for('static', filename='js/trailer_modal.js') }}"></script>
 {% endblock %}

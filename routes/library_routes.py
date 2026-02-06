@@ -409,10 +409,14 @@ def get_library_data():
         # Base query with deduplication using GROUP BY on tmdb_id/imdb_id
         # This is FAST because it happens in SQL, not Python
         # Exclude ghostlisted items (ghostlisted=1)
+        # FIX: Use MAX(collected_at) and MAX(release_date) for correct sorting after GROUP BY
         query = """
             SELECT
                 id, title, year, type, tmdb_id, imdb_id, state,
-                version, resolution, collected_at, size, release_date,
+                version, resolution,
+                MAX(collected_at) as collected_at,
+                size,
+                MAX(release_date) as release_date,
                 MIN(id) as first_id
             FROM media_items
             WHERE 1=1
@@ -637,19 +641,22 @@ def get_library_data():
         query += " GROUP BY COALESCE(NULLIF(tmdb_id, ''), NULLIF(imdb_id, ''), title || year)"
 
         # Sorting
+        # FIX: Use MAX() aggregate functions for fields used after GROUP BY
         sort_field, sort_order = parse_sort(sort_by)
         if sort_field == 'title':
             query += f" ORDER BY title COLLATE NOCASE {sort_order.upper()}"
         elif sort_field == 'year':
             query += f" ORDER BY year {sort_order.upper()}"
         elif sort_field == 'collected_at':
-            query += f" ORDER BY collected_at {sort_order.upper()}"
+            # Use MAX(collected_at) since we're grouping
+            query += f" ORDER BY MAX(collected_at) {sort_order.upper()}"
         elif sort_field == 'release_date':
             # For release date sorting, put NULL and "Unknown" values last regardless of sort order
+            # Use MAX(release_date) since we're grouping
             if sort_order == 'asc':
-                query += " ORDER BY CASE WHEN release_date IS NULL OR release_date = 'Unknown' THEN 1 ELSE 0 END, release_date ASC"
+                query += " ORDER BY CASE WHEN MAX(release_date) IS NULL OR MAX(release_date) = 'Unknown' THEN 1 ELSE 0 END, MAX(release_date) ASC"
             else:
-                query += " ORDER BY CASE WHEN release_date IS NULL OR release_date = 'Unknown' THEN 1 ELSE 0 END, release_date DESC"
+                query += " ORDER BY CASE WHEN MAX(release_date) IS NULL OR MAX(release_date) = 'Unknown' THEN 1 ELSE 0 END, MAX(release_date) DESC"
         else:
             query += " ORDER BY title COLLATE NOCASE ASC"
 
@@ -1491,10 +1498,10 @@ def move_missing_to_wanted():
 @user_required
 def refresh_show_metadata(media_id):
     """
-    Refresh show metadata from TMDB and update database
+    Refresh show metadata from TMDB/Trakt and update episode titles in database
     """
     try:
-        from metadata.metadata import get_metadata
+        from cli_battery.app.direct_api import DirectAPI
 
         # Get the show from database
         db_content = get_db_connection()
@@ -1503,8 +1510,20 @@ def refresh_show_metadata(media_id):
         # Determine if media_id is IMDB or TMDB format
         if media_id.startswith('tt'):
             id_field = 'imdb_id'
+            imdb_id = media_id
         else:
             id_field = 'tmdb_id'
+            # Need to get imdb_id from database for TMDB-only shows
+            cursor.execute("SELECT imdb_id FROM media_items WHERE tmdb_id = ? AND type = 'episode' LIMIT 1", (media_id,))
+            result = cursor.fetchone()
+            if not result or not result[0]:
+                cursor.close()
+                db_content.close()
+                return jsonify({
+                    'success': False,
+                    'error': 'Cannot refresh metadata for shows without IMDb ID'
+                }), 400
+            imdb_id = result[0]
 
         query = f"""
             SELECT imdb_id, tmdb_id, title, type
@@ -1526,43 +1545,70 @@ def refresh_show_metadata(media_id):
 
         imdb_id, tmdb_id, title, media_type = show
 
-        # Get fresh metadata from TMDB
-        if tmdb_id:
-            metadata = get_metadata(imdb_id=imdb_id, tmdb_id=int(tmdb_id), item_media_type='tv')
+        # Get fresh metadata from DirectAPI (includes episode data)
+        metadata, source = DirectAPI.get_show_metadata(imdb_id)
 
-            # Update the metadata_updated timestamp for all episodes of this show
-            # This will trigger a refresh on next metadata sync
-            if metadata:
-                update_query = """
-                    UPDATE media_items
-                    SET
-                        metadata_updated = ?,
-                        last_updated = ?
-                    WHERE {id_field} = ? AND type = 'episode'
-                """.format(id_field=id_field)
-
-                cursor.execute(update_query, (
-                    datetime.now(),
-                    datetime.now(),
-                    media_id
-                ))
-                db_content.commit()
-
-            cursor.close()
-            db_content.close()
-
-            logging.info(f"Refreshed metadata for {title} (TMDB: {tmdb_id})")
-        else:
+        if not metadata:
             cursor.close()
             db_content.close()
             return jsonify({
                 'success': False,
-                'error': 'Show does not have a TMDB ID'
-            }), 400
+                'error': f'Could not fetch metadata from {source or "API"}'
+            }), 500
+
+        # Update episode titles from fresh metadata
+        updated_count = 0
+        if 'seasons' in metadata:
+            for season_number, season_data in metadata['seasons'].items():
+                if 'episodes' in season_data:
+                    for episode_number, episode_data in season_data['episodes'].items():
+                        episode_title = episode_data.get('title', f"Episode {episode_number}")
+
+                        if episode_title and season_number is not None and episode_number is not None:
+                            # Update episode title in database
+                            cursor.execute("""
+                                UPDATE media_items
+                                SET episode_title = ?,
+                                    metadata_updated = ?,
+                                    last_updated = ?
+                                WHERE imdb_id = ?
+                                  AND type = 'episode'
+                                  AND season_number = ?
+                                  AND episode_number = ?
+                            """, (
+                                episode_title,
+                                datetime.now(),
+                                datetime.now(),
+                                imdb_id,
+                                season_number,
+                                episode_number
+                            ))
+                            if cursor.rowcount > 0:
+                                updated_count += cursor.rowcount
+
+        # Also update timestamps for all episodes (even if title didn't change)
+        cursor.execute(f"""
+            UPDATE media_items
+            SET metadata_updated = ?,
+                last_updated = ?
+            WHERE {id_field} = ? AND type = 'episode'
+        """, (
+            datetime.now(),
+            datetime.now(),
+            media_id
+        ))
+
+        db_content.commit()
+        cursor.close()
+        db_content.close()
+
+        logging.info(f"Refreshed metadata for {title} (IMDb: {imdb_id}): Updated {updated_count} episode titles from {source}")
 
         return jsonify({
             'success': True,
-            'message': f'Metadata refreshed for {title}'
+            'message': f'Metadata refreshed for {title}',
+            'updated_episodes': updated_count,
+            'source': source
         })
 
     except Exception as e:
@@ -1578,20 +1624,29 @@ def refresh_show_metadata(media_id):
 @user_required
 def refresh_movie_metadata(media_id):
     """
-    Refresh movie metadata from TMDB and update database
+    Refresh movie metadata from TMDB/Trakt and update database
     """
     try:
-        from metadata.metadata import get_metadata
+        from cli_battery.app.direct_api import DirectAPI
 
-        # Get the show from database
+        # Get the movie from database
         db_content = get_db_connection()
         cursor = db_content.cursor()
 
         # Determine if media_id is IMDB or TMDB format
         if media_id.startswith('tt'):
             id_field = 'imdb_id'
+            imdb_id = media_id
         else:
             id_field = 'tmdb_id'
+            # Need to get imdb_id from database for TMDB-only movies
+            cursor.execute("SELECT imdb_id FROM media_items WHERE tmdb_id = ? AND type = 'movie' LIMIT 1", (media_id,))
+            result = cursor.fetchone()
+            if result and result[0]:
+                imdb_id = result[0]
+            else:
+                # TMDB-only movie (like UFC) - we can still update some fields
+                imdb_id = None
 
         query = f"""
             SELECT imdb_id, tmdb_id, title, type
@@ -1601,9 +1656,9 @@ def refresh_movie_metadata(media_id):
         """
 
         cursor.execute(query, (media_id,))
-        show = cursor.fetchone()
+        movie = cursor.fetchone()
 
-        if not show:
+        if not movie:
             cursor.close()
             db_content.close()
             return jsonify({
@@ -1611,45 +1666,82 @@ def refresh_movie_metadata(media_id):
                 'error': 'Movie not found'
             }), 404
 
-        imdb_id, tmdb_id, title, media_type = show
+        imdb_id, tmdb_id, title, media_type = movie
 
-        # Get fresh metadata from TMDB
-        if tmdb_id:
-            metadata = get_metadata(imdb_id=imdb_id, tmdb_id=int(tmdb_id), item_media_type='tv')
-
-            # Update the metadata_updated timestamp for all episodes of this show
-            # This will trigger a refresh on next metadata sync
-            if metadata:
-                update_query = """
-                    UPDATE media_items
-                    SET
-                        metadata_updated = ?,
-                        last_updated = ?
-                    WHERE {id_field} = ? AND type = 'movie'
-                """.format(id_field=id_field)
-
-                cursor.execute(update_query, (
-                    datetime.now(),
-                    datetime.now(),
-                    media_id
-                ))
-                db_content.commit()
-
-            cursor.close()
-            db_content.close()
-
-            logging.info(f"Refreshed metadata for {title} (TMDB: {tmdb_id})")
+        # Get fresh metadata from DirectAPI
+        if imdb_id:
+            metadata, source = DirectAPI.get_movie_metadata(imdb_id)
+        elif tmdb_id:
+            # For TMDB-only movies, try to get metadata from TMDB
+            from metadata.metadata import get_tmdb_metadata
+            metadata = get_tmdb_metadata(str(tmdb_id), 'movie')
+            source = 'TMDB'
         else:
             cursor.close()
             db_content.close()
             return jsonify({
                 'success': False,
-                'error': 'Movie does not have a TMDB ID'
+                'error': 'Movie has neither IMDb nor TMDB ID'
             }), 400
+
+        if not metadata:
+            cursor.close()
+            db_content.close()
+            return jsonify({
+                'success': False,
+                'error': f'Could not fetch metadata from {source or "API"}'
+            }), 500
+
+        # Update movie metadata in database
+        update_fields = []
+        update_values = []
+
+        if 'title' in metadata and metadata['title']:
+            update_fields.append('title = ?')
+            update_values.append(metadata['title'])
+
+        if 'year' in metadata and metadata['year']:
+            update_fields.append('year = ?')
+            update_values.append(metadata['year'])
+
+        if 'genres' in metadata and metadata['genres']:
+            # Convert list to comma-separated string
+            genres_str = ', '.join(metadata['genres']) if isinstance(metadata['genres'], list) else metadata['genres']
+            update_fields.append('genres = ?')
+            update_values.append(genres_str)
+
+        if 'runtime' in metadata and metadata['runtime']:
+            update_fields.append('runtime = ?')
+            update_values.append(metadata['runtime'])
+
+        # Always update timestamps
+        update_fields.extend(['metadata_updated = ?', 'last_updated = ?'])
+        update_values.extend([datetime.now(), datetime.now()])
+
+        if update_fields:
+            update_query = f"""
+                UPDATE media_items
+                SET {', '.join(update_fields)}
+                WHERE {id_field} = ? AND type = 'movie'
+            """
+            update_values.append(media_id)
+
+            cursor.execute(update_query, update_values)
+            updated_count = cursor.rowcount
+            db_content.commit()
+        else:
+            updated_count = 0
+
+        cursor.close()
+        db_content.close()
+
+        logging.info(f"Refreshed metadata for {title} (IMDb: {imdb_id}, TMDB: {tmdb_id}): Updated {updated_count} records from {source}")
 
         return jsonify({
             'success': True,
-            'message': f'Metadata refreshed for {title}'
+            'message': f'Metadata refreshed for {title}',
+            'updated_count': updated_count,
+            'source': source
         })
 
     except Exception as e:
@@ -1660,7 +1752,77 @@ def refresh_movie_metadata(media_id):
             'success': False,
             'error': str(e)
         }), 500
-    
+
+@library_bp.route('/api/trailer/<media_type>/<tmdb_id>', methods=['GET'])
+def get_trailer(media_type, tmdb_id):
+    """
+    Fetch trailer from TMDB API for a given movie or TV show.
+    Returns YouTube trailer key and metadata.
+    """
+    try:
+        from utilities.settings import get_setting
+        import requests
+
+        tmdb_api_key = get_setting('TMDB', 'api_key')
+        if not tmdb_api_key:
+            return jsonify({
+                'success': False,
+                'error': 'TMDB API key not configured'
+            }), 400
+
+        # Determine endpoint based on media type
+        endpoint = 'tv' if media_type == 'show' else 'movie'
+        url = f"https://api.themoviedb.org/3/{endpoint}/{tmdb_id}/videos"
+
+        response = requests.get(
+            url,
+            params={'api_key': tmdb_api_key},
+            timeout=10
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        # Filter for trailers from YouTube
+        trailers = [
+            v for v in data.get('results', [])
+            if v.get('site') == 'YouTube' and v.get('type') in ['Trailer', 'Teaser']
+        ]
+
+        if not trailers:
+            return jsonify({
+                'success': False,
+                'error': 'No trailer found'
+            }), 404
+
+        # Return the first official trailer, or first trailer if no official one
+        official_trailer = next((t for t in trailers if t.get('official')), None)
+        trailer = official_trailer if official_trailer else trailers[0]
+
+        return jsonify({
+            'success': True,
+            'trailer': {
+                'key': trailer['key'],
+                'name': trailer['name'],
+                'site': trailer['site'],
+                'type': trailer['type']
+            }
+        })
+
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Error fetching trailer from TMDB: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Failed to fetch trailer from TMDB'
+        }), 500
+    except Exception as e:
+        logging.error(f"Error in get_trailer: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
 @library_bp.route('/clear_cache', methods=['POST'])
 @admin_required
 def clear_cache():
