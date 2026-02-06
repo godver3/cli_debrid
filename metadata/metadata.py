@@ -141,43 +141,11 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
         
         # If conversion failed, check if we can proceed without IMDb ID
         if not imdb_id:
-            # Check if this is UFC content
-            is_ufc = 'UFC' in (title or '').upper()
-            has_enabled_jackett = _has_jackett_enabled()
-
-            if is_ufc and has_enabled_jackett:
-                # UFC content with Jackett enabled - proceed without IMDb ID
-                logging.info(f"No IMDb ID found for UFC content (TMDB {tmdb_id}), proceeding with Jackett scraper")
-                # Return metadata from TMDB if available, otherwise return minimal metadata
-                if tmdb_metadata:
-                    tmdb_metadata.update({
-                        'tmdb_id': tmdb_id,
-                        'content_source': original_item.get('content_source') if original_item else None,
-                        'content_source_detail': original_item.get('content_source_detail') if original_item else None
-                    })
-                    return tmdb_metadata
-                return {
-                    'tmdb_id': tmdb_id,
-                    'title': title or 'Unknown Title',
-                    'year': original_item.get('year') if original_item else None,
-                    'genres': original_item.get('genres', []) if original_item else [],
-                    'runtime': None,
-                    'airs': {},
-                    'country': '',
-                    'content_source': original_item.get('content_source') if original_item else None,
-                    'content_source_detail': original_item.get('content_source_detail') if original_item else None
-                }
-            elif is_ufc and not has_enabled_jackett:
-                # UFC content but no Jackett enabled
-                logging.error(f"Could not find IMDb ID for TMDB ID {tmdb_id}. UFC content requires Jackett scraper to be enabled.")
-                return {}
-            else:
-                # Normal content - IMDb ID required
-                logging.error(
+            logging.error(
                     f"Could not find IMDb ID for TMDB ID {tmdb_id} ('{title}'). "
                     f"TMDB to IMDb conversion failed. Please try again or verify the content exists on IMDb."
                 )
-                return {}
+            return {}
         logging.info(f"Converted TMDB ID {tmdb_id} to IMDb ID {imdb_id} (source: {conversion_source})")
 
     # Log the decision point for media_type
