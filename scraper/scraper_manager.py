@@ -236,15 +236,19 @@ class ScraperManager:
                     # Add specific args only if the scraper accepts them
                     if scraper_type == 'Jackett':
                          common_args["genres"] = genres
-                         common_args["tmdb_id"] = tmdb_id 
+                         common_args["tmdb_id"] = tmdb_id
                          common_args["is_translated_search"] = is_translated
                     elif scraper_type == 'Prowlarr':
-                         common_args["tmdb_id"] = tmdb_id 
+                         common_args["tmdb_id"] = tmdb_id
                          # Prowlarr's scrape_prowlarr_instance function signature:
-                         # (instance, settings, imdb_id, title, year, content_type, 
+                         # (instance, settings, imdb_id, title, year, content_type,
                          #  season, episode, multi, tmdb_id)
                          # Most are in common_args. tmdb_id is added here.
                          # It doesn't take 'genres' or 'is_translated_search'.
+                    elif scraper_type in ['AIOStreams', 'AIOStreams-API']:
+                         common_args["tmdb_id"] = tmdb_id
+                         # AIOStreams supports both IMDB and TMDB IDs
+                         # Will use TMDB as fallback when IMDB is not available
                     # Add more elif for other scrapers if they need specific args
 
                     results = self.scrapers[scraper_type](**common_args)
@@ -260,41 +264,47 @@ class ScraperManager:
                     logging.error(f"Error preparing to scrape {scraper_type} instance \'{instance}\': {str(e)}", exc_info=True)
                 return instance, scraper_type, [] # Return empty list on error
 
-        # If no IMDB ID is available, only use Nyaa (for anime) and Jackett scrapers
+        # If no IMDB ID is available, check if we have TMDB ID for fallback
         if not imdb_id:
-            logging.info("No IMDB ID available - limiting scrapers to Nyaa (if anime) and Jackett")
-            
-            # For anime episodes, try Nyaa first
-            if is_anime and is_episode:
-                nyaa_settings = self.get_scraper_settings('Nyaa')
-                nyaa_enabled = nyaa_settings.get('enabled', False) if nyaa_settings else False
-                
-                if nyaa_enabled:
-                    logging.info(f"Trying Nyaa for anime episode without IMDB ID: {title}")
-                    instance, scraper_type, results = run_scraper('Nyaa', 'Nyaa', nyaa_settings, is_translated_search)
+            # If we also don't have TMDB ID, only use title-based scrapers
+            if not tmdb_id:
+                logging.info("No IMDB ID or TMDB ID available - limiting scrapers to title-based: Nyaa (if anime), Jackett, and Zilean")
+
+                # For anime episodes, try Nyaa first
+                if is_anime and is_episode:
+                    nyaa_settings = self.get_scraper_settings('Nyaa')
+                    nyaa_enabled = nyaa_settings.get('enabled', False) if nyaa_settings else False
+
+                    if nyaa_enabled:
+                        logging.info(f"Trying Nyaa for anime episode without IMDB/TMDB ID: {title}")
+                        instance, scraper_type, results = run_scraper('Nyaa', 'Nyaa', nyaa_settings, is_translated_search)
+                        if results:
+                            all_results.extend(results)
+                            instance_summary[instance] = {'type': scraper_type, 'count': len(results)}
+                            return all_results
+
+                # Try title-based scrapers: Jackett and Zilean
+                for instance, settings in self.config.get('Scrapers', {}).items():
+                    current_settings = self.get_scraper_settings(instance)
+                    if not current_settings.get('enabled', False):
+                        continue
+
+                    scraper_type = current_settings.get('type')
+                    # Allow Jackett and Zilean (both work with title only)
+                    if scraper_type not in ['Jackett', 'Zilean']:
+                        continue
+
+                    logging.info(f"Running {scraper_type} scraper '{instance}' without IMDB/TMDB ID (title-based search)")
+                    instance, scraper_type, results = run_scraper(instance, scraper_type, current_settings, is_translated_search)
                     if results:
                         all_results.extend(results)
                         instance_summary[instance] = {'type': scraper_type, 'count': len(results)}
-                        return all_results
 
-            # Try Jackett scrapers
-            for instance, settings in self.config.get('Scrapers', {}).items():
-                current_settings = self.get_scraper_settings(instance)
-                if not current_settings.get('enabled', False):
-                    continue
-                
-                scraper_type = current_settings.get('type')
-                if scraper_type != 'Jackett':
-                    continue
-
-                logging.info(f"Running Jackett scraper '{instance}' without IMDB ID")
-                instance, scraper_type, results = run_scraper(instance, scraper_type, current_settings, is_translated_search)
-                if results:
-                    all_results.extend(results)
-                    instance_summary[instance] = {'type': scraper_type, 'count': len(results)}
-
-            self._log_scraper_report(title, year, instance_summary)
-            return all_results
+                self._log_scraper_report(title, year, instance_summary)
+                return all_results
+            else:
+                # We have TMDB ID - allow TMDB-capable scrapers (Jackett, Prowlarr, AIOStreams) + title-based (Zilean)
+                logging.info(f"No IMDB ID but TMDB ID available ({tmdb_id}) - allowing TMDB-capable and title-based scrapers")
         
         # For anime episodes, use ONLY Nyaa if enabled and it returns results
         logging.info(f"[ScraperManager] Anime check: is_anime={is_anime}, is_episode={is_episode}.")
