@@ -499,6 +499,13 @@ def ensure_settings_file():
                  'version_order': ['Default']
              }
 
+        # Zurg WebDAV defaults (for fast file checks on macOS)
+        if 'Zurg' not in config:
+            config['Zurg'] = {
+                'webdav_url': '',
+                'use_webdav_for_checks': False
+            }
+
         # Now try to load and merge .env config (Keep this logic, ensure load_env_config works)
         logging.debug("ensure_settings_file: Attempting to load and merge .env config.")
         env_config = load_env_config()
