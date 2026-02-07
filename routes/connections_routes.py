@@ -339,8 +339,8 @@ def _check_path_with_timeout(path, timeout_sec=5):
             if result['exists']:
                 result['accessible'] = os.access(path, os.R_OK)
                 if result['accessible']:
-                    # Try to read first directory entry to verify mount is responsive
-                    next(os.scandir(path), None)
+                    # Quick listdir to verify mount is responsive
+                    os.listdir(path)
                     result['listed'] = True
         except Exception as e:
             result['error'] = str(e)
