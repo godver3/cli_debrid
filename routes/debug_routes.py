@@ -2447,20 +2447,22 @@ def verify_torrent(hash_value):
 @admin_required
 def get_trakt_token_status():
     try:
-        from cli_battery.app.trakt_auth import TraktAuth
-        trakt_auth = TraktAuth()
-        
-        token_data = trakt_auth.get_token_data()
-        last_refresh = trakt_auth.get_last_refresh_time()
-        expires_at = trakt_auth.get_expiration_time()
-        
+        from cli_battery.app import trakt_auth
+        from utilities.settings import get_setting
+
+        access_token = get_setting('Trakt', 'access_token', default='')
+        expires_at = get_setting('Trakt', 'expires_at', default='')
+        last_refresh = get_setting('Trakt', 'last_refresh', default='')
+        token_data = {
+            'access_token': access_token[:10] + '...' if access_token else None,
+            'expires_at': expires_at,
+            'last_refresh': last_refresh,
+        }
+
         logging.debug(f"Trakt token status - Token Data: {token_data}")
         logging.debug(f"Trakt token status - Last Refresh: {last_refresh}")
         logging.debug(f"Trakt token status - Expires At: {expires_at}")
-        
-        # Ensure last_refresh is included in both places for compatibility
-        token_data['last_refresh'] = last_refresh
-        
+
         status = {
             'is_authenticated': trakt_auth.is_authenticated(),
             'token_data': token_data,

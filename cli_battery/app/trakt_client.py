@@ -28,7 +28,7 @@ _post_times: deque = deque()
 _last_request_time: float = 0.0
 _MAX_GET_REQUESTS = 1000
 _GET_WINDOW = 300  # 5 min
-_MIN_INTERVAL = 0.5  # 500 ms
+_MIN_INTERVAL = 0.5  # 500 ms — Cloudflare 429s below this in practice
 
 
 def _check_rate_limit(method: str = 'GET') -> bool:
@@ -100,7 +100,15 @@ def _make_request(url: str, method: str = 'GET', max_retries: int = 4,
             logger.error("Token refresh failed after 401.")
             return None
 
-        if resp.status_code in (429, 500, 502, 503, 504):
+        if resp.status_code == 429:
+            retry_after = int(resp.headers.get('Retry-After', delay))
+            logger.warning(f"Attempt {attempt + 1}/{max_retries} got 429 for {url}, backing off {retry_after}s")
+            if attempt < max_retries - 1:
+                time.sleep(retry_after)
+                continue
+            return None
+
+        if resp.status_code in (500, 502, 503, 504):
             logger.warning(f"Attempt {attempt + 1}/{max_retries} got {resp.status_code} for {url}")
             if attempt < max_retries - 1:
                 time.sleep(delay)
@@ -177,16 +185,8 @@ def search_by_imdb(imdb_id: str):
 
 def get_show_data(imdb_id: str) -> Optional[dict]:
     """Get full show metadata (extended=full) + aliases + seasons/episodes."""
-    search_result = search_by_imdb(imdb_id)
-    if not search_result or search_result.get('type') != 'show':
-        return None
-
-    show = search_result['show']
-    trakt_id = show['ids'].get('trakt')
-    if not trakt_id:
-        return None
-
-    url = f"{TRAKT_BASE_URL}/shows/{trakt_id}?extended=full"
+    # Trakt accepts IMDb IDs directly — no search step needed
+    url = f"{TRAKT_BASE_URL}/shows/{imdb_id}?extended=full"
     resp = _make_request(url)
     if not resp or resp.status_code != 200:
         return None
