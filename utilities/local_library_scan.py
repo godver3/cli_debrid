@@ -3,7 +3,6 @@ from typing import List, Dict, Any, Optional, Callable
 import os
 import sys  # Import sys module
 from utilities.settings import get_setting
-from utilities.zurg_webdav import webdav_exists
 import shutil
 from pathlib import Path
 import re
@@ -499,7 +498,7 @@ def create_symlink(source_path: str, dest_path: str, media_item_id: int = None, 
         logging.error("Source or destination path is empty.")
         return False
     
-    if not webdav_exists(source_path):
+    if not os.path.exists(source_path):
         logging.error(f"Source path does not exist: {source_path}")
         return False
         
@@ -662,7 +661,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 potential_folder = os.path.join(original_path, original_torrent_title)
                 potential_path = os.path.join(potential_folder, current_filename)
                 logging.debug(f"Attempt 1: Checking path using original_scraped_torrent_title: {potential_path}")
-                if webdav_exists(potential_path):
+                if os.path.exists(potential_path):
                     source_file = potential_path
                     source_folder = potential_folder
                     found_file = True
@@ -675,7 +674,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     potential_folder = os.path.join(original_path, original_torrent_title_trimmed)
                     potential_path = os.path.join(potential_folder, current_filename)
                     logging.debug(f"Attempt 2: Checking path using trimmed original_scraped_torrent_title: {potential_path}")
-                    if webdav_exists(potential_path):
+                    if os.path.exists(potential_path):
                         source_file = potential_path
                         source_folder = potential_folder
                         found_file = True
@@ -686,7 +685,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 potential_folder = os.path.join(original_path, real_debrid_original_title)
                 potential_path = os.path.join(potential_folder, current_filename)
                 logging.debug(f"Attempt 3 (New): Checking path using real_debrid_original_title: {potential_path}")
-                if webdav_exists(potential_path):
+                if os.path.exists(potential_path):
                     source_file = potential_path
                     source_folder = potential_folder
                     found_file = True
@@ -699,7 +698,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     potential_folder = os.path.join(original_path, real_debrid_original_title_trimmed)
                     potential_path = os.path.join(potential_folder, current_filename)
                     logging.debug(f"Attempt 4 (New): Checking path using trimmed real_debrid_original_title: {potential_path}")
-                    if webdav_exists(potential_path):
+                    if os.path.exists(potential_path):
                         source_file = potential_path
                         source_folder = potential_folder
                         found_file = True
@@ -710,7 +709,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 potential_folder = os.path.join(original_path, filled_by_title)
                 potential_path = os.path.join(potential_folder, current_filename)
                 logging.debug(f"Attempt 5: Checking path using filled_by_title: {potential_path}")
-                if webdav_exists(potential_path):
+                if os.path.exists(potential_path):
                     source_file = potential_path
                     source_folder = potential_folder
                     found_file = True
@@ -723,7 +722,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                     potential_folder = os.path.join(original_path, filled_by_title_trimmed)
                     potential_path = os.path.join(potential_folder, current_filename)
                     logging.debug(f"Attempt 6: Checking path using trimmed filled_by_title: {potential_path}")
-                    if webdav_exists(potential_path):
+                    if os.path.exists(potential_path):
                         source_file = potential_path
                         source_folder = potential_folder
                         found_file = True
@@ -733,7 +732,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             if not found_file:
                  potential_path = os.path.join(original_path, current_filename)
                  logging.debug(f"Attempt 7: Checking direct path under original_files_path: {potential_path}")
-                 if webdav_exists(potential_path):
+                 if os.path.exists(potential_path):
                      source_file = potential_path
                      source_folder = original_path  # The folder is the original_path itself
                      found_file = True

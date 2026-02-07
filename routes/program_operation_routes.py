@@ -4,7 +4,6 @@ from .database_routes import perform_database_migration
 from routes.extensions import initialize_app 
 from queues.config_manager import load_config 
 from utilities.settings import get_setting
-from utilities.zurg_webdav import get_webdav_client
 import threading
 from queues.run_program import ProgramRunner, _setup_scheduler_listeners
 from flask_login import login_required
@@ -264,21 +263,12 @@ def check_service_connectivity():
         original_path = get_setting('File Management', 'original_files_path')
         symlinked_path = get_setting('File Management', 'symlinked_files_path')
         
-        # Check original files path - use WebDAV if configured (much faster on macOS)
-        webdav_client = get_webdav_client()
-        if webdav_client and webdav_client.is_zurg_path(original_path):
-            # Use fast WebDAV check instead of slow FUSE operations
-            if not webdav_client.is_accessible():
-                logging.error(f"Cannot access Zurg WebDAV server for original files path: {original_path}")
-                services_reachable = False
-                failed_services_details.append({"service": f"Original files path ({original_path})", "type": "CONFIG_ERROR", "message": "Cannot access Zurg WebDAV server."})
-            elif not webdav_client.has_content():
-                logging.warning(f"Original files path appears empty (via WebDAV): {original_path}")
-        elif not os.path.exists(original_path):
+        # Check original files path
+        if not os.path.exists(original_path):
             logging.error(f"Cannot access original files path: {original_path}")
             services_reachable = False
             failed_services_details.append({"service": f"Original files path ({original_path})", "type": "CONFIG_ERROR", "message": "Cannot access original files path."})
-        elif not next(os.scandir(original_path), None):
+        elif not os.listdir(original_path):
             logging.warning(f"Original files path is empty: {original_path}")
             
         # Check symlinked files path
