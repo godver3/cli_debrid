@@ -357,9 +357,11 @@ class DirectAPI:
                 ).filter_by(imdb_id=imdb_id).first()
 
                 if item and not is_stale(item.type or 'movie', item.media_status, item.last_trakt_fetch):
+                    logging.debug(f"get_movie_metadata {imdb_id}: cache HIT")
                     return _build_metadata_dict(item), 'battery'
 
                 # Stale or missing — refresh
+                logging.debug(f"get_movie_metadata {imdb_id}: cache MISS (stale={item is not None})")
                 data = _refresh_movie(imdb_id, session)
                 if data:
                     return data, 'trakt'
@@ -471,18 +473,34 @@ class DirectAPI:
     def get_bulk_movie_metadata(imdb_ids: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
         logger.info(f"DirectAPI.get_bulk_movie_metadata called for {len(imdb_ids)} movie IDs.")
         try:
+            result: dict = {}
+
+            # Phase 1: bulk DB lookup for cached items
             with managed_session() as session:
                 items = session.query(Item).options(
                     selectinload(Item.item_metadata),
                 ).filter(Item.imdb_id.in_(imdb_ids), Item.type == 'movie').all()
 
-                result: dict = {}
                 for item in items:
-                    result[item.imdb_id] = _build_metadata_dict(item)
+                    if not is_stale(item.type or 'movie', item.media_status, item.last_trakt_fetch):
+                        result[item.imdb_id] = _build_metadata_dict(item)
 
-                found = sum(1 for v in result.values() if v is not None)
-                logger.info(f"get_bulk_movie_metadata returning {found}/{len(imdb_ids)}")
-                return result
+            # Phase 2: fetch missing items from Trakt
+            missing = [iid for iid in imdb_ids if iid not in result]
+            if missing:
+                logger.info(f"get_bulk_movie_metadata: {len(result)} cached, fetching {len(missing)} from Trakt")
+                for iid in missing:
+                    try:
+                        with managed_session() as session:
+                            data = _refresh_movie(iid, session)
+                            result[iid] = data
+                    except Exception as e:
+                        logging.warning(f"get_bulk_movie_metadata: failed to fetch {iid}: {e}")
+                        result[iid] = None
+
+            found = sum(1 for v in result.values() if v is not None)
+            logger.info(f"get_bulk_movie_metadata returning {found}/{len(imdb_ids)}")
+            return result
         except Exception as e:
             logging.error(f"DirectAPI.get_bulk_movie_metadata: {e}", exc_info=True)
             return {iid: None for iid in imdb_ids}
@@ -491,7 +509,6 @@ class DirectAPI:
 
     @staticmethod
     def get_show_metadata(imdb_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-        logging.info(f"DirectAPI.get_show_metadata called for {imdb_id}")
         try:
             with managed_session() as session:
                 item = session.query(Item).options(
@@ -500,6 +517,7 @@ class DirectAPI:
                 ).filter_by(imdb_id=imdb_id).first()
 
                 if item and not is_stale(item.type or 'show', item.media_status, item.last_trakt_fetch):
+                    logging.debug(f"get_show_metadata {imdb_id}: cache HIT")
                     md = _build_show_metadata_dict(item)
                     _fetch_and_store_xem(item, session, md)
                     if imdb_id == LEGO_MASTERS_US_IMDB_ID and 'seasons' in md:
@@ -507,6 +525,7 @@ class DirectAPI:
                     return md, 'battery'
 
                 # Stale or missing
+                logging.debug(f"get_show_metadata {imdb_id}: cache MISS (stale={item is not None})")
                 data = _refresh_show(imdb_id, session)
                 if data:
                     if imdb_id == LEGO_MASTERS_US_IMDB_ID and 'seasons' in data:
@@ -641,27 +660,29 @@ class DirectAPI:
     def get_bulk_show_metadata(imdb_ids: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
         logger.info(f"DirectAPI.get_bulk_show_metadata called for {len(imdb_ids)} show IDs.")
         try:
+            result: dict = {}
+            items_missing_xem: dict = {}
+            tvdb_ids_to_fetch: dict = {}
+
+            # Phase 1: bulk DB lookup for cached items
             with managed_session() as session:
                 items = session.query(Item).options(
                     selectinload(Item.item_metadata),
                     selectinload(Item.seasons).selectinload(Season.episodes),
                 ).filter(Item.imdb_id.in_(imdb_ids), Item.type == 'show').all()
 
-                result: dict = {}
-                items_missing_xem: dict = {}
-                tvdb_ids_to_fetch: dict = {}
-
                 for item in items:
-                    md = _build_show_metadata_dict(item)
-                    result[item.imdb_id] = md
+                    if not is_stale(item.type or 'show', item.media_status, item.last_trakt_fetch):
+                        md = _build_show_metadata_dict(item)
+                        result[item.imdb_id] = md
 
-                    # Check XEM
-                    if 'xem_mapping' not in md:
-                        items_missing_xem[item.id] = item.imdb_id
-                        ids = md.get('ids', {})
-                        tvdb_id = ids.get('tvdb') if isinstance(ids, dict) else None
-                        if tvdb_id:
-                            tvdb_ids_to_fetch[tvdb_id] = item.id
+                        # Check XEM
+                        if 'xem_mapping' not in md:
+                            items_missing_xem[item.id] = item.imdb_id
+                            ids = md.get('ids', {})
+                            tvdb_id = ids.get('tvdb') if isinstance(ids, dict) else None
+                            if tvdb_id:
+                                tvdb_ids_to_fetch[tvdb_id] = item.id
 
                 # Fetch missing XEM mappings
                 for tvdb_id, item_id in tvdb_ids_to_fetch.items():
@@ -683,17 +704,28 @@ class DirectAPI:
                     except Exception as e:
                         logger.error(f"XEM fetch error for TVDB {tvdb_id}: {e}")
 
-                # Apply Lego Masters fix
-                if LEGO_MASTERS_US_IMDB_ID in result and result[LEGO_MASTERS_US_IMDB_ID]:
-                    md = result[LEGO_MASTERS_US_IMDB_ID]
-                    if 'seasons' in md:
-                        md['seasons'] = _apply_lego_masters_us_season_fix(md['seasons'])
+            # Phase 2: fetch missing items from Trakt
+            missing = [iid for iid in imdb_ids if iid not in result]
+            if missing:
+                logger.info(f"get_bulk_show_metadata: {len(result)} cached, fetching {len(missing)} from Trakt")
+                for iid in missing:
+                    try:
+                        with managed_session() as session:
+                            data = _refresh_show(iid, session)
+                            result[iid] = data
+                    except Exception as e:
+                        logging.warning(f"get_bulk_show_metadata: failed to fetch {iid}: {e}")
+                        result[iid] = None
 
-                not_found = set(imdb_ids) - {item.imdb_id for item in items}
-                if not_found:
-                    logger.info(f"Not found in battery: {list(not_found)}")
+            # Apply Lego Masters fix
+            if LEGO_MASTERS_US_IMDB_ID in result and result[LEGO_MASTERS_US_IMDB_ID]:
+                md = result[LEGO_MASTERS_US_IMDB_ID]
+                if 'seasons' in md:
+                    md['seasons'] = _apply_lego_masters_us_season_fix(md['seasons'])
 
-                return result
+            found = sum(1 for v in result.values() if v is not None)
+            logger.info(f"get_bulk_show_metadata returning {found}/{len(imdb_ids)}")
+            return result
         except Exception as e:
             logging.error(f"DirectAPI.get_bulk_show_metadata: {e}", exc_info=True)
             return {iid: None for iid in imdb_ids}
