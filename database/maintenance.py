@@ -592,12 +592,12 @@ def run_plex_library_maintenance():
             
         # Check if mount location appears to be empty
         try:
-            # Use os.listdir() to check if directory has any contents
-            dir_contents = os.listdir(mounted_path)
-            if not dir_contents:
+            # Use os.scandir() to check if directory has any contents (fast, doesn't enumerate all)
+            first_entry = next(os.scandir(mounted_path), None)
+            if not first_entry:
                 logging.error(f"Mount location appears to be empty, possible mount issue: {mounted_path}")
                 return
-            logging.info(f"Mount location verified with {len(dir_contents)} items")
+            logging.info(f"Mount location verified as accessible")
         except Exception as e:
             logging.error(f"Error accessing mount location {mounted_path}: {str(e)}")
             return
@@ -1167,7 +1167,7 @@ def run_symlink_library_maintenance(skip_phase_1=False, skip_phase_2=False):
                 logging.error(f"Original files path {original_files_path} does not exist. Maintenance cannot proceed as target files cannot be verified.")
                 return
             try:
-                os.listdir(original_files_path) # Check accessibility
+                next(os.scandir(original_files_path), None)  # Check accessibility (fast, doesn't enumerate all)
                 logging.info(f"Original files path {original_files_path} is accessible.")
             except OSError as e:
                 logging.error(f"Error accessing original files path {original_files_path}: {str(e)}. Maintenance cannot proceed as target files cannot be verified.")
