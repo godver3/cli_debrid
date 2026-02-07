@@ -243,6 +243,15 @@ SETTINGS_SCHEMA = {
             "sensitive": True
         }
     },
+    "TVDB": {
+        "tab": "Additional Settings",
+        "api_key": {
+            "type": "string",
+            "description": "TVDB v4 API key - when set, uses TVDB instead of Trakt for metadata lookups. Get a key at <a href='https://thetvdb.com/api-information' target='_blank'>thetvdb.com/api-information</a>",
+            "default": "",
+            "sensitive": True
+        }
+    },
     "MDBList": {
         "tab": "Additional Settings",
         "api_key": {

@@ -18,9 +18,21 @@ from .logger_config import logger
 from .database import init_db, Session as DbSession, Item, Season, Episode, Metadata, managed_session
 from .staleness import is_stale, should_recheck_null_airdate
 from . import trakt_client
+from . import tvdb_client
 
 _stop_event = threading.Event()
 _thread: threading.Thread | None = None
+
+
+def _get_metadata_client():
+    """Return tvdb_client if TVDB API key is set, else trakt_client."""
+    if tvdb_client.is_available():
+        return tvdb_client
+    return trakt_client
+
+
+def _get_metadata_source_name() -> str:
+    return 'tvdb' if tvdb_client.is_available() else 'trakt'
 
 CYCLE_INTERVAL = 600  # 10 minutes
 REQUEST_INTERVAL = 3  # seconds between Trakt API calls
@@ -87,14 +99,16 @@ def _refresh_from_updates():
         since = _last_updates_check
 
     since_iso = since.isoformat()
-    logger.info(f"Refresh worker: checking Trakt /updates since {since_iso}")
+    source = _get_metadata_source_name().upper()
+    client = _get_metadata_client()
+    logger.info(f"Refresh worker: checking {source} /updates since {since_iso}")
 
-    # Collect IMDb IDs that Trakt says have been updated
+    # Collect IMDb IDs that the metadata provider says have been updated
     updated_show_ids: set = set()
     updated_movie_ids: set = set()
 
     try:
-        updated_shows = trakt_client.get_updated_shows(since_iso)
+        updated_shows = client.get_updated_shows(since_iso)
         updated_show_ids = {s['imdb_id'] for s in updated_shows}
     except Exception as e:
         logger.error(f"Error fetching show updates: {e}")
@@ -103,13 +117,13 @@ def _refresh_from_updates():
         return
 
     try:
-        updated_movies = trakt_client.get_updated_movies(since_iso)
+        updated_movies = client.get_updated_movies(since_iso)
         updated_movie_ids = {m['imdb_id'] for m in updated_movies}
     except Exception as e:
         logger.error(f"Error fetching movie updates: {e}")
 
     if not updated_show_ids and not updated_movie_ids:
-        logger.info("Refresh worker: no updates reported by Trakt.")
+        logger.info(f"Refresh worker: no updates reported by {source}.")
         _last_updates_check = datetime.now(timezone.utc)
         return
 
@@ -127,7 +141,7 @@ def _refresh_from_updates():
     shows_to_refresh = [r[0] for r in known_shows]
     movies_to_refresh = [r[0] for r in known_movies]
 
-    logger.info(f"Refresh worker: Trakt reports {len(updated_show_ids)} show updates, "
+    logger.info(f"Refresh worker: {source} reports {len(updated_show_ids)} show updates, "
                 f"{len(updated_movie_ids)} movie updates. "
                 f"We have {len(shows_to_refresh)} shows and {len(movies_to_refresh)} movies to refresh.")
 
@@ -155,7 +169,7 @@ def _refresh_from_updates():
             logger.error(f"Error refreshing movie {imdb_id} from updates: {e}")
         time.sleep(REQUEST_INTERVAL)
 
-    logger.info(f"Refresh worker: refreshed {refreshed} items from Trakt /updates.")
+    logger.info(f"Refresh worker: refreshed {refreshed} items from {source} /updates.")
     _last_updates_check = datetime.now(timezone.utc)
 
 
@@ -251,7 +265,7 @@ def _recheck_null_airdates():
 
         logger.info(f"Refresh worker: re-checking NULL airdates for {imdb_id} ({title})")
         try:
-            seasons_data, _ = trakt_client.get_show_seasons_and_episodes(imdb_id, include_specials=True)
+            seasons_data, _ = _get_metadata_client().get_show_seasons_and_episodes(imdb_id, include_specials=True)
             if seasons_data:
                 with managed_session() as session:
                     from .direct_api import _upsert_seasons_and_episodes
