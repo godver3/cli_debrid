@@ -177,6 +177,8 @@ def run_migrations(eng):
                 if 'last_trakt_fetch' not in columns:
                     logger.info("Adding last_trakt_fetch column to items table...")
                     conn.execute(text("ALTER TABLE items ADD COLUMN last_trakt_fetch DATETIME"))
+                    conn.execute(text("UPDATE items SET last_trakt_fetch = updated_at WHERE last_trakt_fetch IS NULL AND updated_at IS NOT NULL"))
+                    logger.info("Seeded last_trakt_fetch from updated_at for existing items.")
 
             conn.commit()
             logger.info("Database migrations completed successfully.")

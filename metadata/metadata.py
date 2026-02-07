@@ -686,10 +686,10 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
             metadata = bulk_show_metadata[imdb_id]
 
             # --- Check for staleness from bulk data ---
-            if metadata and 'item_updated_at' in metadata:
+            if metadata and 'last_trakt_fetch' in metadata:
                 from cli_battery.app.staleness import is_stale as _is_battery_stale
-                if _is_battery_stale('show', None, metadata['item_updated_at']):
-                    logging.info(f"Bulk metadata for {imdb_id} is stale (updated: {metadata['item_updated_at']}). Forcing a refresh.")
+                if _is_battery_stale('show', metadata.get('media_status'), metadata['last_trakt_fetch']):
+                    logging.info(f"Bulk metadata for {imdb_id} is stale (last_trakt_fetch: {metadata['last_trakt_fetch']}). Forcing a refresh.")
                     try:
                         refreshed_metadata, _ = direct_api.force_refresh_metadata(imdb_id)
                         if refreshed_metadata:

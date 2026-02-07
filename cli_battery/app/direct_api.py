@@ -26,6 +26,7 @@ from .database import (
     get_timezone_aware_now,
 )
 from . import trakt_client
+from . import tvdb_client
 from . import trakt_auth
 from .staleness import is_stale, should_recheck_null_airdate, is_tmdb_mapping_stale
 from .xem_utils import fetch_xem_mapping
@@ -64,6 +65,18 @@ def _ensure_worker():
         logger.warning(f"Could not start refresh worker: {e}")
 
 
+def _get_metadata_client():
+    """Return tvdb_client if TVDB API key is set, else trakt_client."""
+    if tvdb_client.is_available():
+        return tvdb_client
+    return trakt_client
+
+
+def _get_metadata_source_name() -> str:
+    """Return 'tvdb' or 'trakt' depending on which client is active."""
+    return 'tvdb' if tvdb_client.is_available() else 'trakt'
+
+
 def _get_local_tz():
     try:
         from metadata.metadata import _get_local_timezone
@@ -94,26 +107,28 @@ def _format_seasons_from_orm(seasons) -> dict:
 
 
 def _refresh_show(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
-    """Fetch full show data from Trakt, persist to DB, return show dict."""
-    show_data = trakt_client.get_show_data(imdb_id)
+    """Fetch full show data from metadata provider, persist to DB, return show dict."""
+    client = _get_metadata_client()
+    show_data = client.get_show_data(imdb_id)
     if not show_data:
-        logger.warning(f"Trakt returned no show data for {imdb_id}")
+        logger.warning(f"{_get_metadata_source_name().upper()} returned no show data for {imdb_id}")
         return None
 
     show_data.setdefault('type', 'show')
-    _persist_item(imdb_id, show_data, session)
+    _persist_item(imdb_id, dict(show_data), session)
     return show_data
 
 
 def _refresh_movie(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
-    """Fetch full movie data from Trakt, persist to DB, return movie dict."""
-    movie_data = trakt_client.get_movie_data(imdb_id)
+    """Fetch full movie data from metadata provider, persist to DB, return movie dict."""
+    client = _get_metadata_client()
+    movie_data = client.get_movie_data(imdb_id)
     if not movie_data:
-        logger.warning(f"Trakt returned no movie data for {imdb_id}")
+        logger.warning(f"{_get_metadata_source_name().upper()} returned no movie data for {imdb_id}")
         return None
 
     movie_data.setdefault('type', 'movie')
-    _persist_item(imdb_id, movie_data, session)
+    _persist_item(imdb_id, dict(movie_data), session)
     return movie_data
 
 
@@ -164,7 +179,7 @@ def _persist_item(imdb_id: str, data: dict, session: SqlAlchemySession):
         elif not isinstance(value, str):
             processed = str(value)
         session.add(Metadata(item_id=item.id, key=key, value=processed,
-                             provider='trakt', last_updated=now))
+                             provider=_get_metadata_source_name(), last_updated=now))
 
     # Seasons + episodes (shows only)
     if seasons_data and isinstance(seasons_data, dict):
@@ -302,11 +317,12 @@ def _build_show_metadata_dict(item: Item) -> dict:
         md['seasons'] = _format_seasons_from_orm(item.seasons)
     else:
         md['seasons'] = {}
-    # Preserve item timestamp for staleness callers
-    updated_at = item.updated_at
-    if updated_at and updated_at.tzinfo is None:
-        updated_at = updated_at.replace(tzinfo=_get_local_tz())
-    md['item_updated_at'] = updated_at
+    # Preserve staleness fields for callers
+    last_fetch = item.last_trakt_fetch
+    if last_fetch and last_fetch.tzinfo is None:
+        last_fetch = last_fetch.replace(tzinfo=timezone.utc)
+    md['last_trakt_fetch'] = last_fetch
+    md['media_status'] = item.media_status
     return md
 
 
@@ -364,7 +380,7 @@ class DirectAPI:
                 logging.debug(f"get_movie_metadata {imdb_id}: cache MISS (stale={item is not None})")
                 data = _refresh_movie(imdb_id, session)
                 if data:
-                    return data, 'trakt'
+                    return data, _get_metadata_source_name()
 
                 # Trakt failed but we have stale data
                 if item:
@@ -390,8 +406,9 @@ class DirectAPI:
                         except (json.JSONDecodeError, TypeError):
                             pass
 
-                # Fetch from Trakt
-                releases = trakt_client.get_movie_release_dates(imdb_id)
+                # Fetch from metadata provider
+                releases = _get_metadata_client().get_movie_release_dates(imdb_id)
+                source = _get_metadata_source_name()
                 if releases:
                     # Store if we have an item
                     if item:
@@ -403,9 +420,9 @@ class DirectAPI:
                         else:
                             session.add(Metadata(
                                 item_id=item.id, key='release_dates',
-                                value=json.dumps(releases), provider='trakt', last_updated=now,
+                                value=json.dumps(releases), provider=source, last_updated=now,
                             ))
-                    return releases, 'trakt'
+                    return releases, source
 
                 # Return stale data if available
                 if item and md:
@@ -437,7 +454,7 @@ class DirectAPI:
                 # Refresh to get aliases
                 data = _refresh_movie(imdb_id, session)
                 if data and 'aliases' in data:
-                    return data['aliases'], 'trakt'
+                    return data['aliases'], _get_metadata_source_name()
 
                 if item and md:
                     try:
@@ -488,7 +505,7 @@ class DirectAPI:
             # Phase 2: fetch missing items from Trakt
             missing = [iid for iid in imdb_ids if iid not in result]
             if missing:
-                logger.info(f"get_bulk_movie_metadata: {len(result)} cached, fetching {len(missing)} from Trakt")
+                logger.info(f"get_bulk_movie_metadata: {len(result)} cached, fetching {len(missing)} from {_get_metadata_source_name().upper()}")
                 for iid in missing:
                     try:
                         with managed_session() as session:
@@ -530,7 +547,7 @@ class DirectAPI:
                 if data:
                     if imdb_id == LEGO_MASTERS_US_IMDB_ID and 'seasons' in data:
                         data['seasons'] = _apply_lego_masters_us_season_fix(data['seasons'])
-                    return data, 'trakt'
+                    return data, _get_metadata_source_name()
 
                 if item:
                     md = _build_show_metadata_dict(item)
@@ -556,8 +573,8 @@ class DirectAPI:
                         seasons = _apply_lego_masters_us_season_fix(seasons)
                     return seasons, 'battery'
 
-                # Fetch from Trakt
-                seasons_data, source = trakt_client.get_show_seasons_and_episodes(imdb_id, include_specials=True)
+                # Fetch from metadata provider
+                seasons_data, source = _get_metadata_client().get_show_seasons_and_episodes(imdb_id, include_specials=True)
                 if seasons_data and item:
                     _upsert_seasons_and_episodes(item, seasons_data, session)
                     item.updated_at = datetime.now(_get_local_tz())
@@ -595,7 +612,7 @@ class DirectAPI:
 
                 data = _refresh_show(imdb_id, session)
                 if data and 'aliases' in data:
-                    return data['aliases'], 'trakt'
+                    return data['aliases'], _get_metadata_source_name()
 
                 if item and md:
                     try:
@@ -707,7 +724,7 @@ class DirectAPI:
             # Phase 2: fetch missing items from Trakt
             missing = [iid for iid in imdb_ids if iid not in result]
             if missing:
-                logger.info(f"get_bulk_show_metadata: {len(result)} cached, fetching {len(missing)} from Trakt")
+                logger.info(f"get_bulk_show_metadata: {len(result)} cached, fetching {len(missing)} from {_get_metadata_source_name().upper()}")
                 for iid in missing:
                     try:
                         with managed_session() as session:
@@ -766,8 +783,8 @@ class DirectAPI:
                 if mapping and not is_tmdb_mapping_stale(mapping.updated_at):
                     return mapping.imdb_id, 'battery'
 
-                # Primary: Trakt
-                imdb_id, source = trakt_client.convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
+                # Primary: metadata provider
+                imdb_id, source = _get_metadata_client().convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
                 if imdb_id:
                     # Validate via TMDB API
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
@@ -828,7 +845,7 @@ class DirectAPI:
                         year = int(date_str[:4]) if date_str else None
                         if title:
                             search_type = 'show' if media_type in ('tv', 'show') else 'movie'
-                            results = trakt_client.search_media(title, year=year, media_type=search_type)
+                            results = _get_metadata_client().search_media(title, year=year, media_type=search_type)
                             if results:
                                 for r in results:
                                     if r.get('imdb_id') and r.get('tmdb_id') == int(tmdb_id):
@@ -852,19 +869,20 @@ class DirectAPI:
                 item = session.query(Item).filter_by(imdb_id=imdb_id).first()
                 item_type = item.type if item else None
 
+                source = _get_metadata_source_name()
                 if item_type == 'movie':
                     data = _refresh_movie(imdb_id, session)
-                    return data, 'trakt' if data else None
+                    return data, source if data else None
                 elif item_type == 'show':
                     data = _refresh_show(imdb_id, session)
-                    return data, 'trakt' if data else None
+                    return data, source if data else None
                 else:
                     # Try show first, then movie
                     data = _refresh_show(imdb_id, session)
                     if data:
-                        return data, 'trakt'
+                        return data, source
                     data = _refresh_movie(imdb_id, session)
-                    return data, 'trakt' if data else None
+                    return data, source if data else None
         except Exception as e:
             logging.error(f"DirectAPI.force_refresh_metadata {imdb_id}: {e}", exc_info=True)
             return None, None
@@ -878,7 +896,7 @@ class DirectAPI:
                     session.delete(existing)
                     session.flush()
 
-                imdb_id, source = trakt_client.convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
+                imdb_id, source = _get_metadata_client().convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
                 if imdb_id:
                     session.add(TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=imdb_id))
                 return imdb_id, source
@@ -893,11 +911,12 @@ class DirectAPI:
                      media_type: Optional[str] = None) -> Tuple[Optional[List[Dict]], Optional[str]]:
         logger.info(f"DirectAPI.search_media: query='{query}', year={year}, type={media_type}")
         try:
-            results = trakt_client.search_media(query=query, year=year, media_type=media_type)
+            client = _get_metadata_client()
+            results = client.search_media(query=query, year=year, media_type=media_type)
             if year is not None and (not results or len(results) == 0):
                 logger.info(f"Year-filtered search empty, retrying without year")
-                results = trakt_client.search_media(query=query, year=None, media_type=media_type)
-            source = 'trakt' if results is not None else None
+                results = client.search_media(query=query, year=None, media_type=media_type)
+            source = _get_metadata_source_name() if results is not None else None
             return results, source
         except Exception as e:
             logger.error(f"DirectAPI.search_media '{query}': {e}", exc_info=True)
