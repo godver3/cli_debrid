@@ -454,7 +454,7 @@ def get_physical_release_date(imdb_id: Optional[str] = None) -> Optional[str]:
     physical_releases = []
     for country, country_releases in release_dates.items():
         for release in country_releases:
-            if release.get('type', '').lower() == 'physical' and release.get('date'):
+            if (release.get('type') or '').lower() == 'physical' and release.get('date'):
                 try:
                     release_date = datetime.strptime(release.get('date'), "%Y-%m-%d")
                     physical_releases.append(release_date)
@@ -475,7 +475,7 @@ def get_theatrical_release_date(imdb_id: Optional[str] = None) -> Optional[str]:
     theatrical_releases = []
     for country, country_releases in release_dates.items():
         for release in country_releases:
-            if release.get('type', '').lower() in ['theatrical', 'theatrical (limited)', 'limited'] and release.get('date'):
+            if (release.get('type') or '').lower() in ['theatrical', 'theatrical (limited)', 'limited'] and release.get('date'):
                 try:
                     release_date = datetime.strptime(release.get('date'), "%Y-%m-%d")
                     theatrical_releases.append(release_date)
@@ -975,7 +975,7 @@ def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = Non
                 try:
                     release_date = datetime.strptime(release_date_str, "%Y-%m-%d")
                     all_releases.append(release_date)
-                    release_type = release.get('type', 'unknown').lower()
+                    release_type = (release.get('type') or 'unknown').lower()
                     if release_type in ['digital', 'physical', 'tv']:  
                         digital_physical_releases.append(release_date)
                     elif release_type in ['theatrical', 'theatrical (limited)', 'limited']: # Added 'limited' here
@@ -1078,7 +1078,7 @@ def refresh_release_dates():
         try:
             item_dict = dict(item)
             title = item_dict.get('title', 'Unknown Title')
-            media_type = item_dict.get('type', 'Unknown Type').lower()
+            media_type = (item_dict.get('type') or 'Unknown Type').lower()
             imdb_id = item_dict.get('imdb_id')
             season_number = item_dict.get('season_number')
             episode_number = item_dict.get('episode_number')

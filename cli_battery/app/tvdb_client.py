@@ -316,6 +316,19 @@ def _build_show_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
         'slug': raw.get('slug', ''),
     }
 
+    # Extract TMDB ID from remoteIds
+    remote_ids = raw.get('remoteIds', []) or raw.get('remote_ids', [])
+    if isinstance(remote_ids, list):
+        for rid in remote_ids:
+            if isinstance(rid, dict):
+                source = (rid.get('sourceName', '') or '').lower()
+                if 'tmdb' in source or 'themoviedb' in source:
+                    try:
+                        ids['tmdb'] = int(rid.get('id', ''))
+                    except (ValueError, TypeError):
+                        pass
+                    break
+
     # Extract year from firstAired
     year = None
     first_aired = raw.get('firstAired', '')
@@ -569,6 +582,19 @@ def _build_movie_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
         'slug': raw.get('slug', ''),
     }
 
+    # Extract TMDB ID from remoteIds
+    remote_ids = raw.get('remoteIds', []) or raw.get('remote_ids', [])
+    if isinstance(remote_ids, list):
+        for rid in remote_ids:
+            if isinstance(rid, dict):
+                source = (rid.get('sourceName', '') or '').lower()
+                if 'tmdb' in source or 'themoviedb' in source:
+                    try:
+                        ids['tmdb'] = int(rid.get('id', ''))
+                    except (ValueError, TypeError):
+                        pass
+                    break
+
     # Extract year
     year = None
     if raw.get('year'):
@@ -610,7 +636,11 @@ def _build_movie_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
 
 
 def _extract_movie_releases(raw: dict) -> Optional[dict]:
-    """Extract release dates from TVDB movie data."""
+    """Extract release dates from TVDB movie data.
+
+    TVDB releases only have country, date, and detail fields — no type field.
+    We default to 'theatrical' since TVDB primarily tracks theatrical dates.
+    """
     releases_raw = raw.get('releases', [])
     if not releases_raw:
         return None
@@ -621,7 +651,19 @@ def _extract_movie_releases(raw: dict) -> Optional[dict]:
             continue
         country = release.get('country')
         date_str = release.get('date')
-        release_type = release.get('type')
+        # TVDB has no 'type' field — use 'detail' as hint, default to 'theatrical'
+        # 'global' country entries are typically premiere dates
+        detail = (release.get('detail') or '').lower()
+        if 'physical' in detail:
+            release_type = 'physical'
+        elif 'digital' in detail:
+            release_type = 'digital'
+        elif 'premiere' in detail or country == 'global':
+            release_type = 'premiere'
+        elif 'tv' in detail:
+            release_type = 'tv'
+        else:
+            release_type = 'theatrical'
         if country and date_str:
             # Normalize date to YYYY-MM-DD
             date_part = date_str[:10] if len(date_str) >= 10 else date_str
@@ -662,8 +704,86 @@ def get_movie_aliases(imdb_id: str) -> Optional[dict]:
     return aliases if aliases else None
 
 
+# TMDB release type integer → string mapping
+_TMDB_RELEASE_TYPES = {
+    1: 'premiere',
+    2: 'theatrical (limited)',
+    3: 'theatrical',
+    4: 'digital',
+    5: 'physical',
+    6: 'tv',
+}
+
+
+def _fetch_tmdb_release_dates(tmdb_id: int, api_key: str) -> Optional[dict]:
+    """Fetch typed release dates from TMDB for a movie.
+
+    Returns Trakt-compatible dict: {'us': [{'date': 'YYYY-MM-DD', 'type': 'theatrical'}, ...], ...}
+    """
+    try:
+        resp = requests.get(
+            f"https://api.themoviedb.org/3/movie/{tmdb_id}/release_dates",
+            params={'api_key': api_key},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            logger.debug(f"TMDB release dates request failed for tmdb_id={tmdb_id}: HTTP {resp.status_code}")
+            return None
+
+        data = resp.json()
+        results = data.get('results', [])
+        if not results:
+            return None
+
+        formatted: defaultdict = defaultdict(list)
+        for entry in results:
+            country = (entry.get('iso_3166_1') or '').lower()
+            if not country:
+                continue
+            for rd in entry.get('release_dates', []):
+                type_int = rd.get('type')
+                release_type = _TMDB_RELEASE_TYPES.get(type_int)
+                date_str = rd.get('release_date', '')
+                if release_type and date_str:
+                    date_part = date_str[:10]
+                    formatted[country].append({
+                        'date': date_part,
+                        'type': release_type,
+                    })
+
+        return dict(formatted) if formatted else None
+    except Exception as e:
+        logger.debug(f"TMDB release dates error for tmdb_id={tmdb_id}: {e}")
+        return None
+
+
+def _resolve_tmdb_id_from_imdb(imdb_id: str, api_key: str) -> Optional[int]:
+    """Resolve an IMDb ID to a TMDB movie ID via TMDB's /find endpoint."""
+    try:
+        resp = requests.get(
+            f"https://api.themoviedb.org/3/find/{imdb_id}",
+            params={'api_key': api_key, 'external_source': 'imdb_id'},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return None
+
+        data = resp.json()
+        movie_results = data.get('movie_results', [])
+        if movie_results:
+            return movie_results[0].get('id')
+        return None
+    except Exception as e:
+        logger.debug(f"TMDB find by IMDb error for {imdb_id}: {e}")
+        return None
+
+
 def get_movie_release_dates(imdb_id: str) -> Optional[dict]:
-    """Fetch release dates for a movie."""
+    """Fetch release dates for a movie.
+
+    Fetches TVDB releases first, then supplements with TMDB typed release dates
+    (digital, physical, etc.) when a TMDB API key is configured.
+    """
     tvdb_id = _resolve_tvdb_id(imdb_id, media_type='movie')
     if not tvdb_id:
         return None
@@ -674,7 +794,48 @@ def get_movie_release_dates(imdb_id: str) -> Optional[dict]:
         return None
 
     raw = resp.json().get('data', {})
-    return _extract_movie_releases(raw)
+    releases = _extract_movie_releases(raw) or {}
+
+    # Supplement with TMDB typed release dates if API key is available
+    try:
+        from utilities.settings import get_setting
+        tmdb_api_key = get_setting('TMDB', 'api_key', default='')
+    except Exception:
+        tmdb_api_key = ''
+
+    if tmdb_api_key:
+        # Try to get TMDB ID from TVDB remoteIds first
+        tmdb_id = None
+        remote_ids = raw.get('remoteIds', []) or raw.get('remote_ids', [])
+        if isinstance(remote_ids, list):
+            for rid in remote_ids:
+                if isinstance(rid, dict):
+                    source = (rid.get('sourceName', '') or '').lower()
+                    if 'tmdb' in source or 'themoviedb' in source:
+                        try:
+                            tmdb_id = int(rid.get('id', ''))
+                        except (ValueError, TypeError):
+                            pass
+                        break
+
+        # Fallback: resolve via TMDB find endpoint
+        if not tmdb_id:
+            tmdb_id = _resolve_tmdb_id_from_imdb(imdb_id, tmdb_api_key)
+
+        if tmdb_id:
+            tmdb_releases = _fetch_tmdb_release_dates(tmdb_id, tmdb_api_key)
+            if tmdb_releases:
+                # Merge: for each country, add TMDB releases for types not already present
+                for country, tmdb_entries in tmdb_releases.items():
+                    existing_types = {
+                        (r.get('type') or '').lower()
+                        for r in releases.get(country, [])
+                    }
+                    for entry in tmdb_entries:
+                        if (entry.get('type') or '').lower() not in existing_types:
+                            releases.setdefault(country, []).append(entry)
+
+    return releases if releases else None
 
 
 def get_updated_shows(since_iso: str) -> List[dict]:

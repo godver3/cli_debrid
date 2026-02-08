@@ -455,7 +455,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
             filtered_media_items_batch_after_existence_check.append(item)
 
         media_items_batch = filtered_media_items_batch_after_existence_check
-        
+
+        _tmdb_lookup_cache = {}  # Cache tmdb lookups within this batch to avoid repeated calls for the same imdb_id
         movies_to_insert = []
         episodes_to_insert = []
         show_titles_to_potentially_update = set()
@@ -477,12 +478,20 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 continue
 
             if not item.get('tmdb_id'):
-                from metadata.metadata import get_tmdb_id_and_media_type
-                tmdb_id_meta, media_type_meta = get_tmdb_id_and_media_type(item['imdb_id'])
-                if tmdb_id_meta:
-                    item['tmdb_id'] = str(tmdb_id_meta)
+                imdb_id_lookup = item['imdb_id']
+                if imdb_id_lookup in _tmdb_lookup_cache:
+                    cached_tmdb = _tmdb_lookup_cache[imdb_id_lookup]
+                    if cached_tmdb:
+                        item['tmdb_id'] = cached_tmdb
                 else:
-                    logging.warning(f"Unable to retrieve tmdb_id for {item.get('title', 'Unknown')} (IMDb ID: {item['imdb_id']})")
+                    from metadata.metadata import get_tmdb_id_and_media_type
+                    tmdb_id_meta, media_type_meta = get_tmdb_id_and_media_type(imdb_id_lookup)
+                    if tmdb_id_meta:
+                        item['tmdb_id'] = str(tmdb_id_meta)
+                        _tmdb_lookup_cache[imdb_id_lookup] = str(tmdb_id_meta)
+                    else:
+                        _tmdb_lookup_cache[imdb_id_lookup] = None
+                        logging.warning(f"Unable to retrieve tmdb_id for {item.get('title', 'Unknown')} (IMDb ID: {imdb_id_lookup})")
 
             normalized_title = normalize_string(str(item.get('title', 'Unknown')))
             item_type = 'episode' if 'season_number' in item and 'episode_number' in item else 'movie'
