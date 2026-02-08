@@ -14,7 +14,6 @@ from content_checkers.overseerr import get_overseerr_details, get_overseerr_head
 from routes.api_tracker import api
 from typing import Dict, Any
 from scraper.functions.ptt_parser import parse_with_ptt
-from cli_battery.app.trakt_metadata import TraktMetadata
 from cli_battery.app.direct_api import DirectAPI
 from fuzzywuzzy import fuzz
 from database.core import get_db_connection

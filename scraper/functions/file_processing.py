@@ -285,12 +285,21 @@ def get_media_info_for_bitrate(media_items: List[Dict[str, Any]]) -> List[Dict[s
                     item['episode_count'] = 1
                     item['runtime'] = db_runtime
                 else:
-                    metadata_start_time = time.time()
-                    metadata = get_metadata(tmdb_id=item['tmdb_id'], item_media_type='movie')
-                    metadata_duration = time.time() - metadata_start_time
-                    total_metadata_time += metadata_duration
-                    #logging.debug(f"Item {item_idx} ('{item.get('title', 'N/A')}') get_metadata (movie) took {metadata_duration:.4f}s")
-                    item['runtime'] = metadata.get('runtime', 100)
+                    tmdb_id_for_meta = item.get('tmdb_id')
+                    imdb_id_for_meta = item.get('imdb_id')
+
+                    if not tmdb_id_for_meta and imdb_id_for_meta:
+                        tmdb_id_for_meta, _ = get_tmdb_id_and_media_type(imdb_id_for_meta)
+
+                    if tmdb_id_for_meta or imdb_id_for_meta:
+                        metadata_start_time = time.time()
+                        metadata = get_metadata(tmdb_id=tmdb_id_for_meta, imdb_id=imdb_id_for_meta, item_media_type='movie')
+                        metadata_duration = time.time() - metadata_start_time
+                        total_metadata_time += metadata_duration
+                        item['runtime'] = metadata.get('runtime', 100)
+                    else:
+                        logging.warning(f"Could not fetch details for movie: {item.get('title', 'N/A')}")
+                        item['runtime'] = 100
                     item['episode_count'] = 1
         
             elif item['media_type'] == 'episode':

@@ -858,7 +858,7 @@ def filter_results(
             # Content type specific checks
             if is_movie and not is_ufc:
                 parsed_year = parsed_info.get('year')
-                if parsed_year:
+                if parsed_year and year is not None:
                     if isinstance(parsed_year, list):
                         if not any(abs(int(py) - year) <= 1 for py in parsed_year):
                             result['filter_reason'] = f"Year mismatch: {parsed_year} (expected: {year})"
@@ -914,7 +914,7 @@ def filter_results(
                             parsed_year = extracted_year
                             logging.info(f"PTT didn't parse year, extracted {extracted_year} from title: '{original_title}'")
                     
-                    if parsed_year:
+                    if parsed_year and year is not None:
                         # For TV shows, we should compare against the season's air date, not the original show premiere
                         # Get the season-specific year if available, otherwise fall back to the original year
                         target_year = year  # Default to original year

@@ -50,16 +50,15 @@ def update_show_ids():
                 if not metadata:
                     logging.warning(f"No metadata found in API for show {show_title} (imdb_id: {show_imdb_id})")
                     # Try searching Trakt directly
-                    from cli_battery.app.trakt_metadata import TraktMetadata
-                    trakt = TraktMetadata()
-                    
+                    from cli_battery.app import trakt_client
+
                     sanitized_title = show_title
                     if '(' in show_title:
                         sanitized_title = show_title[:show_title.rfind('(')].strip()
-                    
+
                     logging.info(f"Searching Trakt for show '{sanitized_title}'{f' ({show_year})' if show_year else ''}")
-                    url = f"{trakt.base_url}/search/show?query={sanitized_title}"
-                    response = trakt._make_request(url)
+                    url = f"{trakt_client.TRAKT_BASE_URL}/search/show?query={sanitized_title}"
+                    response = trakt_client._make_request(url)
                     
                     if response and response.status_code == 200:
                         results = response.json()
@@ -332,16 +331,15 @@ def update_movie_ids():
                 if not metadata:
                     logging.warning(f"No metadata found in API for movie {movie_title} (imdb_id: {movie_imdb_id})")
                     # Try searching Trakt directly
-                    from cli_battery.app.trakt_metadata import TraktMetadata
-                    trakt = TraktMetadata()
-                    
+                    from cli_battery.app import trakt_client
+
                     sanitized_title = movie_title
                     if '(' in movie_title:
                         sanitized_title = movie_title[:movie_title.rfind('(')].strip()
-                    
+
                     logging.info(f"Searching Trakt for movie '{sanitized_title}'{f' ({movie_year})' if movie_year else ''}")
-                    url = f"{trakt.base_url}/search/movie?query={sanitized_title}"
-                    response = trakt._make_request(url)
+                    url = f"{trakt_client.TRAKT_BASE_URL}/search/movie?query={sanitized_title}"
+                    response = trakt_client._make_request(url)
                     
                     if response and response.status_code == 200:
                         results = response.json()

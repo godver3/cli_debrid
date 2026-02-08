@@ -5484,7 +5484,10 @@ class ProgramRunner:
         """Get the current thread's CPU time in seconds."""
         try:
             if resource is not None and hasattr(resource, 'getrusage'):
-                return resource.getrusage(resource.RUSAGE_THREAD).ru_utime
+                if hasattr(resource, 'RUSAGE_THREAD'):
+                    return resource.getrusage(resource.RUSAGE_THREAD).ru_utime
+                else:
+                    return resource.getrusage(resource.RUSAGE_SELF).ru_utime
             else:
                 return time.process_time()
         except Exception as e:
