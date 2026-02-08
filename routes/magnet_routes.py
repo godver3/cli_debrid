@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from queues.media_matcher import MediaMatcher
 import logging
 from cli_battery.app.direct_api import DirectAPI
-from cli_battery.app.trakt_metadata import TraktMetadata
+from cli_battery.app import trakt_client
 import os
 import re
 from database.torrent_tracking import record_torrent_addition, update_torrent_tracking, get_torrent_history
@@ -668,9 +668,7 @@ def prepare_manual_assignment():
         if media_type in ['tv', 'show']:
             try:
                 # --- MODIFICATION: Use TraktMetadata and pass flag ---
-                trakt_metadata = TraktMetadata()
-                # Pass include_specials=True here
-                seasons_data, source = trakt_metadata.get_show_seasons_and_episodes(metadata.get('imdb_id'), include_specials=True)
+                seasons_data, source = trakt_client.get_show_seasons_and_episodes(metadata.get('imdb_id'), include_specials=True)
                 logging.debug(f"Fetched seasons data (incl specials) from {source} for {metadata.get('imdb_id')} in prepare_manual_assignment")
                 # --- END MODIFICATION ---
                 
@@ -1122,10 +1120,9 @@ def confirm_manual_assignment():
                     # Re-fetch season data if necessary
                     if 'seasons' not in metadata:
                         try:
-                            # --- MODIFICATION: Use TraktMetadata and pass flag ---
-                            trakt_metadata = TraktMetadata()
+                            # --- MODIFICATION: Use trakt_client and pass flag ---
                             # Pass include_specials=True here
-                            seasons_data, source = trakt_metadata.get_show_seasons_and_episodes(metadata.get('imdb_id'), include_specials=True)
+                            seasons_data, source = trakt_client.get_show_seasons_and_episodes(metadata.get('imdb_id'), include_specials=True)
                             logging.debug(f"Fetched seasons data (incl specials) from {source} for {metadata.get('imdb_id')} in confirm_manual_assignment")
                             # --- END MODIFICATION ---
                             
