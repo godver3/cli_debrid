@@ -28,6 +28,58 @@ EPISODE_BATCH_SIZE = 15  # Balanced batch size - prevents NAS timeouts while kee
 EPISODE_BATCH_DELAY = 0.5  # Moderate delay between episode batches
 CHUNK_SIZE = 10
 MAX_RETRIES = 3
+
+def normalize_plex_resolution(resolution: str) -> str:
+    """
+    Normalize Plex videoResolution to standard format.
+
+    Plex returns values like "4k", "1080", "720", "sd" but we want standardized
+    "p" format like "2160p", "1080p", etc.
+
+    Backwards compatible: if already normalized (e.g., "2160p"), returns as-is.
+
+    Args:
+        resolution: Raw resolution from Plex videoResolution
+
+    Returns:
+        Normalized resolution string (e.g., "2160p", "1080p")
+    """
+    if not resolution:
+        return None
+
+    resolution_lower = resolution.lower().strip()
+
+    # Normalization map for Plex-specific formats
+    resolution_map = {
+        '4k': '2160p',
+        'uhd': '2160p',
+        '8k': '4320p',
+        '2k': '1440p',
+        'qhd': '1440p',
+        'fhd': '1080p',
+        'hd': '720p',
+        'sd': '480p',
+        # Map numeric-only to standard "p" format
+        '2160': '2160p',
+        '1440': '1440p',
+        '1080': '1080p',
+        '720': '720p',
+        '576': '576p',
+        '480': '480p',
+    }
+
+    # Check if it needs normalization
+    if resolution_lower in resolution_map:
+        return resolution_map[resolution_lower]
+
+    # Already in correct format (e.g., "2160p", "1080i") - return as-is
+    # Supports both progressive (p) and interlaced (i) formats
+    if re.match(r'^\d{3,4}[pi]$', resolution_lower):
+        return resolution_lower
+
+    # Unknown format - return original value
+    logger.debug(f"Unknown resolution format from Plex: {resolution}")
+    return resolution
 RETRY_DELAY = 1
 BATCH_DELAY = 0.2  # Small delay between batch fetches to reduce Plex CPU spikes
 
@@ -389,6 +441,16 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
                             except Exception as fs_error:
                                 logger.debug(f"Could not get filesystem size for {part['file']}: {fs_error}")
 
+                        # Extract resolution from Plex media
+                        if hasattr(media, 'videoResolution') and media.videoResolution:
+                            raw_resolution = media.videoResolution
+                            normalized_resolution = normalize_plex_resolution(raw_resolution)
+                            episode_entry['resolution'] = normalized_resolution
+                            logger.debug(f"[ResolutionExtract] Episode S{season_number}E{episode_number}: raw={raw_resolution}, normalized={normalized_resolution}")
+                        else:
+                            episode_entry['resolution'] = None
+                            logger.debug(f"[ResolutionExtract] Episode S{season_number}E{episode_number}: No videoResolution available")
+
                         episode_entries.append(episode_entry)
 
     if not episode_entries:
@@ -507,6 +569,16 @@ async def process_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
                                     logger.debug(f"[SizeExtract-Filesystem] Movie {movie_data['title']}: Got size from filesystem: {movie_entry['size_gb']}GB")
                             except Exception as fs_error:
                                 logger.debug(f"[SizeExtract-Filesystem] Movie {movie_data['title']}: Could not get filesystem size: {fs_error}")
+
+                        # Extract resolution from Plex media
+                        if hasattr(media, 'videoResolution') and media.videoResolution:
+                            raw_resolution = media.videoResolution
+                            normalized_resolution = normalize_plex_resolution(raw_resolution)
+                            movie_entry['resolution'] = normalized_resolution
+                            logger.debug(f"[ResolutionExtract] Movie {movie_data['title']}: raw={raw_resolution}, normalized={normalized_resolution}")
+                        else:
+                            movie_entry['resolution'] = None
+                            logger.debug(f"[ResolutionExtract] Movie {movie_data['title']}: No videoResolution available")
 
                         movie_entries.append(movie_entry)
 
@@ -2610,7 +2682,8 @@ def get_plex_file_info(file_path: str) -> dict:
                                     if os.path.basename(part.file) == filename:
                                         size_bytes = part.size if part.size else 0
                                         size_gb = round(size_bytes / (1024**3), 2) if size_bytes else None
-                                        resolution = media.videoResolution if hasattr(media, 'videoResolution') else None
+                                        raw_resolution = media.videoResolution if hasattr(media, 'videoResolution') else None
+                                        resolution = normalize_plex_resolution(raw_resolution) if raw_resolution else None
                                         logger.debug(f"Found file {filename} in Plex: size={size_gb}GB, resolution={resolution}")
                                         return {'size_gb': size_gb, 'resolution': resolution, 'location': part.file}
                         except Exception:
@@ -2626,7 +2699,8 @@ def get_plex_file_info(file_path: str) -> dict:
                                         if os.path.basename(part.file) == filename:
                                             size_bytes = part.size if part.size else 0
                                             size_gb = round(size_bytes / (1024**3), 2) if size_bytes else None
-                                            resolution = media.videoResolution if hasattr(media, 'videoResolution') else None
+                                            raw_resolution = media.videoResolution if hasattr(media, 'videoResolution') else None
+                                            resolution = normalize_plex_resolution(raw_resolution) if raw_resolution else None
                                             logger.debug(f"Found file {filename} in Plex: size={size_gb}GB, resolution={resolution}")
                                             return {'size_gb': size_gb, 'resolution': resolution, 'location': part.file}
                             except Exception:

@@ -393,13 +393,14 @@ def get_library_data():
         status_filter = request.args.get('status', default='all', type=str)
         duplicates_state = request.args.get('duplicates_state', default='all', type=str)
         media_type_filter = request.args.get('media_type', default='all', type=str)
+        resolution_filter = request.args.get('resolution', default='all', type=str)
         sort_by = request.args.get('sort', default='title_asc', type=str)
 
         # Enforce limits
         limit = max(1, min(limit, MAX_BATCH_SIZE))
         offset = max(0, offset)
 
-        logging.info(f"Library data request: limit={limit}, offset={offset}, search='{search_term}', status={status_filter}, duplicates_state={duplicates_state}, type={media_type_filter}, sort={sort_by}")
+        logging.info(f"Library data request: limit={limit}, offset={offset}, search='{search_term}', status={status_filter}, duplicates_state={duplicates_state}, type={media_type_filter}, resolution={resolution_filter}, sort={sort_by}")
 
         # Build SQL query - do everything at database level for speed
         query_start = time.time()
@@ -627,6 +628,17 @@ def get_library_data():
             count_query += " AND type IN (?, ?)"
             params.extend(['episode', 'show'])
             count_params.extend(['episode', 'show'])
+
+        # Resolution filter
+        if resolution_filter != 'all':
+            if resolution_filter == 'unknown':
+                query += " AND (resolution IS NULL OR resolution = '')"
+                count_query += " AND (resolution IS NULL OR resolution = '')"
+            else:
+                query += " AND resolution = ?"
+                count_query += " AND resolution = ?"
+                params.append(resolution_filter)
+                count_params.append(resolution_filter)
 
         # Search filter
         if search_term:
