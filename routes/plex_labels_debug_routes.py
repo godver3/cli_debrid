@@ -1082,6 +1082,38 @@ def backfill_content_source_detail_endpoint():
         return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
 
 
+@plex_labels_debug_bp.route('/debug/plex-labels/backfill-resolution', methods=['POST'])
+def backfill_resolution_endpoint():
+    """Backfill resolution for Collected items with NULL resolution from stored paths"""
+    from queues.run_program import backfill_resolution_from_stored_paths
+
+    try:
+        result = backfill_resolution_from_stored_paths()
+
+        if result.get('success'):
+            message = f'Backfilled resolution for {result["updated"]} items'
+            if result.get('failed', 0) > 0:
+                message += f' ({result["failed"]} failed)'
+
+            return jsonify({
+                'success': True,
+                'message': message,
+                'total_items': result['total_items'],
+                'updated': result['updated'],
+                'failed': result['failed'],
+                'by_resolution': result.get('by_resolution', {})
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': f'Error: {result.get("error", "Unknown error")}'
+            }), 500
+
+    except Exception as e:
+        logging.error(f"Error in resolution backfill endpoint: {e}", exc_info=True)
+        return jsonify({'success': False, 'message': f'Error: {str(e)}'}), 500
+
+
 @plex_labels_debug_bp.route('/debug/plex-labels/sources-list')
 def sources_list():
     """Get list of content sources with Plex labels enabled"""
