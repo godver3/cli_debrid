@@ -54,6 +54,81 @@ class PlexRateLimiter:
 _rate_limiter = PlexRateLimiter()
 
 
+class ShowLabelCache:
+    """Cache to track which shows have already had labels applied
+
+    Prevents redundant Plex API calls when processing multiple episodes of the same show.
+    Uses imdb_id/tmdb_id as the show identifier.
+    """
+
+    def __init__(self, ttl_seconds: int = 3600):
+        """
+        Args:
+            ttl_seconds: Time-to-live for cache entries (default 1 hour)
+        """
+        self.cache = {}  # (show_id, label) -> timestamp
+        self.ttl = ttl_seconds
+
+    def was_recently_applied(self, imdb_id: Optional[str], tmdb_id: Optional[str], label: str) -> bool:
+        """Check if label was recently applied to this show
+
+        Args:
+            imdb_id: IMDb ID of the show (preferred)
+            tmdb_id: TMDB ID of the show (fallback)
+            label: Label to check
+
+        Returns:
+            True if label was applied to this show within TTL
+        """
+        show_id = imdb_id or tmdb_id
+        if not show_id:
+            return False
+
+        cache_key = (show_id, label)
+
+        # Check if in cache and not expired
+        if cache_key in self.cache:
+            age = time.time() - self.cache[cache_key]
+            if age < self.ttl:
+                logging.debug(f"[LabelCache] HIT: Label '{label}' was applied to show {show_id} {age:.1f}s ago (within {self.ttl}s TTL)")
+                return True
+            else:
+                # Expired, remove from cache
+                logging.debug(f"[LabelCache] EXPIRED: Label '{label}' for show {show_id} was {age:.1f}s ago (exceeds {self.ttl}s TTL)")
+                del self.cache[cache_key]
+
+        return False
+
+    def mark_as_applied(self, imdb_id: Optional[str], tmdb_id: Optional[str], label: str):
+        """Mark label as applied to this show
+
+        Args:
+            imdb_id: IMDb ID of the show (preferred)
+            tmdb_id: TMDB ID of the show (fallback)
+            label: Label that was applied
+        """
+        show_id = imdb_id or tmdb_id
+        if not show_id:
+            return
+
+        cache_key = (show_id, label)
+        self.cache[cache_key] = time.time()
+        logging.debug(f"[LabelCache] STORED: Label '{label}' for show {show_id}")
+
+    def clear_expired(self):
+        """Remove expired entries from cache"""
+        now = time.time()
+        expired_keys = [k for k, v in self.cache.items() if now - v >= self.ttl]
+        for key in expired_keys:
+            del self.cache[key]
+        if expired_keys:
+            logging.debug(f"[LabelCache] Cleared {len(expired_keys)} expired entries")
+
+
+# Global show label cache instance
+_show_label_cache = ShowLabelCache()
+
+
 def sanitize_label(label: str) -> str:
     """
     Sanitize label for Plex compatibility
@@ -379,6 +454,23 @@ def apply_label_to_plex(item_id: int, label: str) -> bool:
     from database.database_reading import get_media_item_by_id
 
     try:
+        # Get item data to check type and IDs
+        item_data = get_media_item_by_id(item_id)
+        if not item_data:
+            logging.warning(f"Item {item_id} not found in database")
+            return False
+
+        # For episodes (TV shows), check cache BEFORE making expensive Plex API calls
+        # This prevents redundant API calls when processing multiple episodes of the same show
+        if item_data.get('type') == 'episode':
+            imdb_id = item_data.get('imdb_id')
+            tmdb_id = item_data.get('tmdb_id')
+
+            # Check if we recently applied this label to this show
+            if _show_label_cache.was_recently_applied(imdb_id, tmdb_id, label):
+                logging.info(f"[LabelCache] Skipping Plex API call for item {item_id} - label '{label}' was recently applied to show {imdb_id or tmdb_id}")
+                return True  # Return True because label is already on the show
+
         # Rate limiting
         _rate_limiter.wait_if_needed()
 
@@ -423,6 +515,13 @@ def apply_label_to_plex(item_id: int, label: str) -> bool:
             conn.close()
         except Exception as timestamp_error:
             logging.warning(f"Failed to update plex_labels_last_synced timestamp for item {item_id}: {timestamp_error}")
+
+        # Cache the label application for episodes to prevent redundant calls for other episodes of the same show
+        if item_data.get('type') == 'episode':
+            imdb_id = item_data.get('imdb_id')
+            tmdb_id = item_data.get('tmdb_id')
+            _show_label_cache.mark_as_applied(imdb_id, tmdb_id, label)
+            logging.debug(f"[LabelCache] Marked label '{label}' as applied for show {imdb_id or tmdb_id}")
 
         return True
 

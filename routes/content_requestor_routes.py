@@ -187,6 +187,7 @@ def request_content():
         # Add content source to all items
         for item in all_items:
             item['content_source'] = 'content_requestor'
+            item['content_source_detail'] = 'CD-Discover'
             
         # Pass versions dictionary to add_wanted_items
         add_wanted_items(all_items, versions)
