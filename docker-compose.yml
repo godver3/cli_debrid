@@ -5,7 +5,6 @@ services:
     container_name: cli_debrid
     ports:
       - "5000:5000"
-      - "5001:5001"
       - "8888:8888"
     volumes:
       - /host/location/db_content:/user/db_content
