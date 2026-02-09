@@ -166,7 +166,10 @@ def _resolve_tvdb_id(imdb_id: str, media_type: str = None) -> Optional[int]:
     """IMDb → TVDB ID, cached in TVDBToIMDBMapping table."""
     # Check cache first
     with managed_session() as session:
-        mapping = session.query(TVDBToIMDBMapping).filter_by(imdb_id=imdb_id).first()
+        query = session.query(TVDBToIMDBMapping).filter_by(imdb_id=imdb_id)
+        if media_type:
+            query = query.filter_by(media_type=media_type)
+        mapping = query.first()
         if mapping:
             return int(mapping.tvdb_id)
 
@@ -209,15 +212,16 @@ def _resolve_tvdb_id(imdb_id: str, media_type: str = None) -> Optional[int]:
                 _cache_tvdb_mapping(str(tvdb_id), imdb_id, detected_type)
                 return int(tvdb_id)
 
-    # Last resort: take the first result with any ID
-    for item in data:
-        for key in ('series', 'movie'):
-            inner = item.get(key)
-            if isinstance(inner, dict) and inner.get('id'):
-                tvdb_id = inner['id']
-                detected_type = 'show' if key == 'series' else 'movie'
-                _cache_tvdb_mapping(str(tvdb_id), imdb_id, detected_type)
-                return int(tvdb_id)
+    # Last resort: take the first result with any ID (only when no type filter)
+    if not media_type:
+        for item in data:
+            for key in ('series', 'movie'):
+                inner = item.get(key)
+                if isinstance(inner, dict) and inner.get('id'):
+                    tvdb_id = inner['id']
+                    detected_type = 'show' if key == 'series' else 'movie'
+                    _cache_tvdb_mapping(str(tvdb_id), imdb_id, detected_type)
+                    return int(tvdb_id)
 
     return None
 
@@ -607,8 +611,24 @@ def get_movie_data(imdb_id: str) -> Optional[dict]:
     if aliases:
         data['aliases'] = aliases
 
-    # Release dates
-    releases = _extract_movie_releases(raw)
+    # Release dates (TVDB + TMDB supplement)
+    releases = _extract_movie_releases(raw) or {}
+    tmdb_api_key = _get_tmdb_api_key()
+    if tmdb_api_key:
+        tmdb_id = data.get('ids', {}).get('tmdb')
+        if not tmdb_id:
+            tmdb_id = _resolve_tmdb_id_from_imdb(imdb_id, tmdb_api_key, media_type='movie')
+        if tmdb_id:
+            tmdb_releases = _fetch_tmdb_release_dates(tmdb_id, tmdb_api_key)
+            if tmdb_releases:
+                for country, tmdb_entries in tmdb_releases.items():
+                    existing_types = {
+                        (r.get('type') or '').lower()
+                        for r in releases.get(country, [])
+                    }
+                    for entry in tmdb_entries:
+                        if (entry.get('type') or '').lower() not in existing_types:
+                            releases.setdefault(country, []).append(entry)
     if releases:
         data['release_dates'] = releases
 
