@@ -291,25 +291,30 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
             # Keep release_date as 'Unknown' and airtime as default '19:00'
     else:
         # No first_aired string, try to use show's default airtime if available
+        # Convert from the show's network timezone to the user's local timezone
         airs = show_item.get('airs', {})
         default_airtime_str = airs.get('time')
+        show_timezone_str = airs.get('timezone')
         if default_airtime_str:
             try:
-                 # Try parsing with seconds first (HH:MM:SS)
                 try:
                     air_time_obj = datetime.strptime(default_airtime_str, "%H:%M:%S").time()
                 except ValueError:
-                    # If that fails, try without seconds (HH:MM)
                     air_time_obj = datetime.strptime(default_airtime_str, "%H:%M").time()
-                airtime = air_time_obj.strftime("%H:%M")
-                # logging.debug(f"Using show's default airtime: {airtime} as fallback.")
+
+                if show_timezone_str:
+                    try:
+                        show_tz = ZoneInfo(show_timezone_str)
+                        today = datetime.now().date()
+                        show_air_dt = datetime.combine(today, air_time_obj).replace(tzinfo=show_tz)
+                        local_air_dt = show_air_dt.astimezone(_get_local_timezone())
+                        airtime = local_air_dt.strftime("%H:%M")
+                    except Exception:
+                        airtime = air_time_obj.strftime("%H:%M")
+                else:
+                    airtime = air_time_obj.strftime("%H:%M")
             except ValueError:
                  logging.warning(f"Invalid show default airtime format: {default_airtime_str}. Using default 19:00.")
-                 # airtime remains '19:00'
-        else:
-            # logging.debug("No first_aired data and no default show airtime. Using default 19:00.")
-            # airtime remains '19:00'
-            pass
 
     episode_item = {
         'imdb_id': show_item['imdb_id'],
@@ -960,8 +965,8 @@ def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = Non
         logging.warning(f"No release dates found for IMDb ID: {imdb_id}")
         return media_details.get('released', 'Unknown')
 
-    #logging.debug(f"Release dates: {release_dates}")
-    
+    logging.debug(f"Release dates for {imdb_id}: {release_dates}")
+
     current_date = datetime.now()
     digital_physical_releases = []
     theatrical_releases = []
@@ -1016,7 +1021,11 @@ def get_release_date(media_details: Dict[str, Any], imdb_id: Optional[str] = Non
         return max(old_premiere_releases).strftime("%Y-%m-%d")
 
     # If we've reached this point, there are no suitable release dates
-    logging.warning(f"No valid release date found for IMDb ID: {imdb_id}.")
+    logging.warning(f"No valid release date found for IMDb ID: {imdb_id}. "
+                    f"digital/physical={len(digital_physical_releases)}, "
+                    f"theatrical={len(theatrical_releases)}, "
+                    f"premiere={len(premiere_releases)}, "
+                    f"all={len(all_releases)}")
     return "Unknown"
 
 def parse_date(date_str: Optional[str]) -> Optional[str]:

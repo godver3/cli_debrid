@@ -252,14 +252,38 @@ def _extract_aliases(translations: list) -> dict:
     return dict(aliases)
 
 
-def _format_air_date(date_str: str | None) -> str | None:
-    """Convert TVDB 'YYYY-MM-DD' to ISO 8601 for iso8601.parse_date compatibility."""
+def _format_air_date(date_str: str | None, airs_time: str | None = None,
+                     airs_timezone: str | None = None) -> str | None:
+    """Convert TVDB 'YYYY-MM-DD' to ISO 8601 UTC datetime.
+
+    TVDB episode dates are in the show's local timezone (date-only).  When
+    *airs_time* (HH:MM) and *airs_timezone* (IANA tz name) are provided we
+    combine them with the date to produce a proper UTC timestamp, matching what
+    Trakt returns.  Otherwise we fall back to midnight UTC.
+    """
     if not date_str:
         return None
-    # Already ISO 8601 format
+    # Already ISO 8601 format with time component
     if 'T' in date_str:
         return date_str
-    # YYYY-MM-DD → YYYY-MM-DDT00:00:00.000Z
+
+    if airs_time and airs_timezone:
+        try:
+            from zoneinfo import ZoneInfo
+            # Parse "HH:MM" (or "HH:MM:SS")
+            parts = airs_time.split(':')
+            hour = int(parts[0])
+            minute = int(parts[1]) if len(parts) > 1 else 0
+            show_tz = ZoneInfo(airs_timezone)
+            naive_dt = datetime.strptime(date_str[:10], '%Y-%m-%d').replace(
+                hour=hour, minute=minute)
+            local_dt = naive_dt.replace(tzinfo=show_tz)
+            utc_dt = local_dt.astimezone(timezone.utc)
+            return utc_dt.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        except Exception:
+            pass  # Fall through to midnight UTC
+
+    # Fallback — no airs info available
     return f"{date_str}T00:00:00.000Z"
 
 
@@ -277,7 +301,10 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
     """Get full show metadata + aliases + seasons/episodes."""
     tvdb_id = _resolve_tvdb_id(imdb_id, media_type='show')
     if not tvdb_id:
-        logger.warning(f"TVDB: could not resolve IMDb {imdb_id} to TVDB ID")
+        logger.warning(f"TVDB: could not resolve IMDb {imdb_id} to TVDB ID, trying TMDB fallback")
+        tmdb_api_key = _get_tmdb_api_key()
+        if tmdb_api_key:
+            return _fetch_tmdb_show_data(imdb_id, tmdb_api_key)
         return None
 
     url = f"{TVDB_BASE_URL}/series/{tvdb_id}/extended?meta=translations,episodes"
@@ -395,6 +422,11 @@ def _extract_seasons_from_extended(raw: dict) -> Optional[dict]:
     if not seasons_raw:
         return None
 
+    # Extract show-level airs info for proper datetime construction
+    airs_time = raw.get('airsTime')  # e.g. "20:00"
+    network = raw.get('originalNetwork')
+    airs_timezone = network.get('timezone', 'America/New_York') if isinstance(network, dict) else None
+
     # Group episodes by season number
     eps_by_season: defaultdict = defaultdict(list)
     if episodes_raw:
@@ -430,7 +462,7 @@ def _extract_seasons_from_extended(raw: dict) -> Optional[dict]:
                 'title': ep.get('name', ''),
                 'overview': ep.get('overview', ''),
                 'runtime': ep.get('runtime', 0),
-                'first_aired': _format_air_date(ep.get('aired')),
+                'first_aired': _format_air_date(ep.get('aired'), airs_time, airs_timezone),
                 'imdb_id': None,  # TVDB doesn't provide per-episode IMDb IDs
                 'absolute': ep.get('absoluteNumber'),
             }
@@ -458,9 +490,14 @@ def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) 
     raw = resp.json().get('data', {})
     seasons = _extract_seasons_from_extended(raw)
 
+    # Extract airs info for paginated fallback
+    airs_time = raw.get('airsTime')
+    network = raw.get('originalNetwork')
+    airs_timezone = network.get('timezone', 'America/New_York') if isinstance(network, dict) else None
+
     if not seasons:
         # Fallback: paginated episodes endpoint
-        seasons = _fetch_episodes_paginated(tvdb_id)
+        seasons = _fetch_episodes_paginated(tvdb_id, airs_time, airs_timezone)
 
     if seasons and not include_specials:
         seasons.pop(0, None)
@@ -468,7 +505,8 @@ def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) 
     return seasons, 'tvdb' if seasons else None
 
 
-def _fetch_episodes_paginated(tvdb_id: int) -> Optional[dict]:
+def _fetch_episodes_paginated(tvdb_id: int, airs_time: str | None = None,
+                              airs_timezone: str | None = None) -> Optional[dict]:
     """Fetch episodes via the paginated /episodes/default endpoint."""
     all_episodes: list = []
     page = 0
@@ -513,7 +551,7 @@ def _fetch_episodes_paginated(tvdb_id: int) -> Optional[dict]:
                 'title': ep.get('name', ''),
                 'overview': ep.get('overview', ''),
                 'runtime': ep.get('runtime', 0),
-                'first_aired': _format_air_date(ep.get('aired')),
+                'first_aired': _format_air_date(ep.get('aired'), airs_time, airs_timezone),
                 'imdb_id': None,
                 'absolute': ep.get('absoluteNumber'),
             }
@@ -546,7 +584,10 @@ def get_movie_data(imdb_id: str) -> Optional[dict]:
     """Get full movie metadata + aliases + release dates."""
     tvdb_id = _resolve_tvdb_id(imdb_id, media_type='movie')
     if not tvdb_id:
-        logger.warning(f"TVDB: could not resolve IMDb {imdb_id} to TVDB movie ID")
+        logger.warning(f"TVDB: could not resolve IMDb {imdb_id} to TVDB movie ID, trying TMDB fallback")
+        tmdb_api_key = _get_tmdb_api_key()
+        if tmdb_api_key:
+            return _fetch_tmdb_movie_data(imdb_id, tmdb_api_key)
         return None
 
     url = f"{TVDB_BASE_URL}/movies/{tvdb_id}/extended?meta=translations"
@@ -757,8 +798,8 @@ def _fetch_tmdb_release_dates(tmdb_id: int, api_key: str) -> Optional[dict]:
         return None
 
 
-def _resolve_tmdb_id_from_imdb(imdb_id: str, api_key: str) -> Optional[int]:
-    """Resolve an IMDb ID to a TMDB movie ID via TMDB's /find endpoint."""
+def _resolve_tmdb_id_from_imdb(imdb_id: str, api_key: str, media_type: str = 'movie') -> Optional[int]:
+    """Resolve an IMDb ID to a TMDB ID via TMDB's /find endpoint."""
     try:
         resp = requests.get(
             f"https://api.themoviedb.org/3/find/{imdb_id}",
@@ -769,12 +810,138 @@ def _resolve_tmdb_id_from_imdb(imdb_id: str, api_key: str) -> Optional[int]:
             return None
 
         data = resp.json()
-        movie_results = data.get('movie_results', [])
-        if movie_results:
-            return movie_results[0].get('id')
+        if media_type == 'show':
+            tv_results = data.get('tv_results', [])
+            if tv_results:
+                return tv_results[0].get('id')
+        else:
+            movie_results = data.get('movie_results', [])
+            if movie_results:
+                return movie_results[0].get('id')
         return None
     except Exception as e:
         logger.debug(f"TMDB find by IMDb error for {imdb_id}: {e}")
+        return None
+
+
+def _get_tmdb_api_key() -> str:
+    """Return the configured TMDB API key, or empty string."""
+    try:
+        from utilities.settings import get_setting
+        return get_setting('TMDB', 'api_key', default='') or ''
+    except Exception:
+        return ''
+
+
+def _fetch_tmdb_movie_data(imdb_id: str, api_key: str) -> Optional[dict]:
+    """Fetch movie metadata from TMDB as fallback when TVDB cannot resolve the ID."""
+    tmdb_id = _resolve_tmdb_id_from_imdb(imdb_id, api_key, media_type='movie')
+    if not tmdb_id:
+        return None
+
+    try:
+        resp = requests.get(
+            f"https://api.themoviedb.org/3/movie/{tmdb_id}",
+            params={'api_key': api_key},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return None
+
+        raw = resp.json()
+        year = None
+        release_date = raw.get('release_date', '')
+        if release_date and len(release_date) >= 4:
+            try:
+                year = int(release_date[:4])
+            except ValueError:
+                pass
+
+        status_raw = (raw.get('status') or '').lower()
+        status = 'released' if status_raw == 'released' else status_raw
+
+        genres = [g.get('name', '') for g in raw.get('genres', []) if isinstance(g, dict)]
+
+        data = {
+            'title': raw.get('title', ''),
+            'year': year,
+            'ids': {'imdb': imdb_id, 'tmdb': tmdb_id},
+            'overview': raw.get('overview', ''),
+            'runtime': raw.get('runtime'),
+            'status': status,
+            'genres': genres,
+            'type': 'movie',
+        }
+
+        logger.info(f"TMDB fallback: got movie metadata for {imdb_id} (tmdb_id={tmdb_id})")
+        return data
+    except Exception as e:
+        logger.debug(f"TMDB movie data error for {imdb_id}: {e}")
+        return None
+
+
+def _fetch_tmdb_show_data(imdb_id: str, api_key: str) -> Optional[dict]:
+    """Fetch show metadata from TMDB as fallback when TVDB cannot resolve the ID."""
+    tmdb_id = _resolve_tmdb_id_from_imdb(imdb_id, api_key, media_type='show')
+    if not tmdb_id:
+        return None
+
+    try:
+        resp = requests.get(
+            f"https://api.themoviedb.org/3/tv/{tmdb_id}",
+            params={'api_key': api_key},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return None
+
+        raw = resp.json()
+        year = None
+        first_air = raw.get('first_air_date', '')
+        if first_air and len(first_air) >= 4:
+            try:
+                year = int(first_air[:4])
+            except ValueError:
+                pass
+
+        status_raw = (raw.get('status') or '').lower()
+        status_map = {
+            'returning series': 'returning series',
+            'ended': 'ended',
+            'canceled': 'canceled',
+            'in production': 'in production',
+        }
+        status = status_map.get(status_raw, status_raw)
+
+        genres = [g.get('name', '') for g in raw.get('genres', []) if isinstance(g, dict)]
+
+        # Build seasons dict
+        seasons = {}
+        for s in raw.get('seasons', []):
+            sn = s.get('season_number')
+            if sn is not None:
+                seasons[str(sn)] = {
+                    'number': sn,
+                    'episode_count': s.get('episode_count', 0),
+                    'episodes': {},
+                }
+
+        data = {
+            'title': raw.get('name', ''),
+            'year': year,
+            'ids': {'imdb': imdb_id, 'tmdb': tmdb_id},
+            'overview': raw.get('overview', ''),
+            'runtime': (raw.get('episode_run_time') or [None])[0],
+            'status': status,
+            'genres': genres,
+            'type': 'show',
+            'seasons': seasons,
+        }
+
+        logger.info(f"TMDB fallback: got show metadata for {imdb_id} (tmdb_id={tmdb_id})")
+        return data
+    except Exception as e:
+        logger.debug(f"TMDB show data error for {imdb_id}: {e}")
         return None
 
 
@@ -785,7 +952,17 @@ def get_movie_release_dates(imdb_id: str) -> Optional[dict]:
     (digital, physical, etc.) when a TMDB API key is configured.
     """
     tvdb_id = _resolve_tvdb_id(imdb_id, media_type='movie')
+    tmdb_api_key = _get_tmdb_api_key()
+
     if not tvdb_id:
+        # TVDB can't resolve — try TMDB-only release dates
+        if tmdb_api_key:
+            tmdb_id = _resolve_tmdb_id_from_imdb(imdb_id, tmdb_api_key, media_type='movie')
+            if tmdb_id:
+                releases = _fetch_tmdb_release_dates(tmdb_id, tmdb_api_key)
+                if releases:
+                    logger.info(f"TMDB fallback: got release dates for {imdb_id} (tmdb_id={tmdb_id})")
+                    return releases
         return None
 
     url = f"{TVDB_BASE_URL}/movies/{tvdb_id}/extended"
@@ -795,13 +972,6 @@ def get_movie_release_dates(imdb_id: str) -> Optional[dict]:
 
     raw = resp.json().get('data', {})
     releases = _extract_movie_releases(raw) or {}
-
-    # Supplement with TMDB typed release dates if API key is available
-    try:
-        from utilities.settings import get_setting
-        tmdb_api_key = get_setting('TMDB', 'api_key', default='')
-    except Exception:
-        tmdb_api_key = ''
 
     if tmdb_api_key:
         # Try to get TMDB ID from TVDB remoteIds first
@@ -824,6 +994,7 @@ def get_movie_release_dates(imdb_id: str) -> Optional[dict]:
 
         if tmdb_id:
             tmdb_releases = _fetch_tmdb_release_dates(tmdb_id, tmdb_api_key)
+            logger.debug(f"TMDB supplement for {imdb_id} (tmdb_id={tmdb_id}): {tmdb_releases}")
             if tmdb_releases:
                 # Merge: for each country, add TMDB releases for types not already present
                 for country, tmdb_entries in tmdb_releases.items():
@@ -834,6 +1005,8 @@ def get_movie_release_dates(imdb_id: str) -> Optional[dict]:
                     for entry in tmdb_entries:
                         if (entry.get('type') or '').lower() not in existing_types:
                             releases.setdefault(country, []).append(entry)
+        else:
+            logger.debug(f"TMDB supplement for {imdb_id}: could not resolve TMDB ID")
 
     return releases if releases else None
 

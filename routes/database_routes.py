@@ -1319,7 +1319,6 @@ def delete_item():
                             logging.warning(f"Delete item: Direct Plex removal failed for {item['title']}. Trying scan & empty trash...")
                             try:
                                 # Determine section type based on item type
-                                import os
                                 section_type = 'movie' if item.get('type') == 'movie' else 'show'
                                 scan_paths = [os.path.dirname(path_to_remove_from_plex)] if path_to_remove_from_plex else None
                                 scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
@@ -1390,9 +1389,8 @@ def delete_item():
                             logging.warning(f"Delete item: Direct Plex removal failed for {item['title']}. Trying scan & empty trash...")
                             try:
                                 # Determine section type based on item type
-                                import os
                                 section_type = 'movie' if item.get('type') == 'movie' else 'show'
-                                scan_paths = [os.path.dirname(path_to_remove_from_plex)] if path_to_remove_from_plex else None
+                                scan_paths = [os.path.dirname(path_for_plex_api_call)] if path_for_plex_api_call else None
                                 scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
                                 logging.info(f"Delete item: Triggered library scan and trash empty for {item['title']} (section_type={section_type}).")
                             except Exception as scan_err:

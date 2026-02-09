@@ -183,10 +183,10 @@ def _persist_item(imdb_id: str, data: dict, session: SqlAlchemySession):
 
     # Seasons + episodes (shows only)
     if seasons_data and isinstance(seasons_data, dict):
-        _upsert_seasons_and_episodes(item, seasons_data, session)
+        _upsert_seasons_and_episodes(item.id, seasons_data, session)
 
 
-def _upsert_seasons_and_episodes(item: Item, seasons_data: dict, session: SqlAlchemySession):
+def _upsert_seasons_and_episodes(item_id: int, seasons_data: dict, session: SqlAlchemySession):
     """Bulk upsert seasons and episodes using SQLite ON CONFLICT."""
     import iso8601
 
@@ -211,7 +211,7 @@ def _upsert_seasons_and_episodes(item: Item, seasons_data: dict, session: SqlAlc
                 episode_count = 0
 
         season_rows.append({
-            'item_id': item.id,
+            'item_id': item_id,
             'season_number': season_number,
             'episode_count': episode_count,
         })
@@ -246,7 +246,7 @@ def _upsert_seasons_and_episodes(item: Item, seasons_data: dict, session: SqlAlc
 
     season_map = {
         s.season_number: s.id
-        for s in session.query(Season.id, Season.season_number).filter_by(item_id=item.id).all()
+        for s in session.query(Season.id, Season.season_number).filter_by(item_id=item_id).all()
     }
 
     ep_rows = []
@@ -398,36 +398,42 @@ class DirectAPI:
                     selectinload(Item.item_metadata),
                 ).filter_by(imdb_id=imdb_id).first()
 
+                item_id = None
+                md = None
+                stale_value = None
                 if item:
+                    item_id = item.id
                     md = next((m for m in item.item_metadata if m.key == 'release_dates'), None)
+                    if md:
+                        stale_value = md.value
                     if md and not is_stale('movie', item.media_status, item.last_trakt_fetch):
                         try:
                             return json.loads(md.value), 'battery'
                         except (json.JSONDecodeError, TypeError):
                             pass
 
-                # Fetch from metadata provider
+                # Fetch from metadata provider (may open nested sessions, detaching item)
                 releases = _get_metadata_client().get_movie_release_dates(imdb_id)
                 source = _get_metadata_source_name()
                 if releases:
                     # Store if we have an item
-                    if item:
-                        existing = session.query(Metadata).filter_by(item_id=item.id, key='release_dates').first()
+                    if item_id is not None:
+                        existing = session.query(Metadata).filter_by(item_id=item_id, key='release_dates').first()
                         now = datetime.now(_get_local_tz())
                         if existing:
                             existing.value = json.dumps(releases)
                             existing.last_updated = now
                         else:
                             session.add(Metadata(
-                                item_id=item.id, key='release_dates',
+                                item_id=item_id, key='release_dates',
                                 value=json.dumps(releases), provider=source, last_updated=now,
                             ))
                     return releases, source
 
                 # Return stale data if available
-                if item and md:
+                if stale_value is not None:
                     try:
-                        return json.loads(md.value), 'battery'
+                        return json.loads(stale_value), 'battery'
                     except (json.JSONDecodeError, TypeError):
                         pass
                 return None, None
@@ -567,28 +573,35 @@ class DirectAPI:
                     selectinload(Item.seasons).selectinload(Season.episodes),
                 ).filter_by(imdb_id=imdb_id, type='show').first()
 
-                if item and item.seasons and not is_stale('show', item.media_status, item.last_trakt_fetch):
-                    seasons = _format_seasons_from_orm(item.seasons)
-                    if imdb_id == LEGO_MASTERS_US_IMDB_ID:
-                        seasons = _apply_lego_masters_us_season_fix(seasons)
-                    return seasons, 'battery'
+                # Eagerly capture item_id and stale seasons before external calls
+                # that may open nested managed_sessions and detach the item
+                item_id = item.id if item else None
+                stale_seasons = None
+                if item and item.seasons:
+                    if not is_stale('show', item.media_status, item.last_trakt_fetch):
+                        seasons = _format_seasons_from_orm(item.seasons)
+                        if imdb_id == LEGO_MASTERS_US_IMDB_ID:
+                            seasons = _apply_lego_masters_us_season_fix(seasons)
+                        return seasons, 'battery'
+                    stale_seasons = _format_seasons_from_orm(item.seasons)
 
-                # Fetch from metadata provider
+                # Fetch from metadata provider (may open nested sessions)
                 seasons_data, source = _get_metadata_client().get_show_seasons_and_episodes(imdb_id, include_specials=True)
-                if seasons_data and item:
-                    _upsert_seasons_and_episodes(item, seasons_data, session)
-                    item.updated_at = datetime.now(_get_local_tz())
+                if seasons_data and item_id is not None:
+                    _upsert_seasons_and_episodes(item_id, seasons_data, session)
+                    session.query(Item).filter_by(id=item_id).update(
+                        {'updated_at': datetime.now(_get_local_tz())}
+                    )
 
                 if seasons_data:
                     if imdb_id == LEGO_MASTERS_US_IMDB_ID:
                         seasons_data = _apply_lego_masters_us_season_fix(seasons_data)
                     return seasons_data, source
 
-                if item and item.seasons:
-                    seasons = _format_seasons_from_orm(item.seasons)
+                if stale_seasons is not None:
                     if imdb_id == LEGO_MASTERS_US_IMDB_ID:
-                        seasons = _apply_lego_masters_us_season_fix(seasons)
-                    return seasons, 'battery'
+                        stale_seasons = _apply_lego_masters_us_season_fix(stale_seasons)
+                    return stale_seasons, 'battery'
                 return None, None
         except Exception as e:
             logging.error(f"DirectAPI.get_show_seasons {imdb_id}: {e}", exc_info=True)
