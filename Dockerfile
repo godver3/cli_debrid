@@ -4,10 +4,10 @@ FROM python:3.11-slim
 # Set the working directory in the container
 WORKDIR /app
 
-# Install build dependencies, supervisor, and Node.js
+# Install build dependencies and Node.js
 RUN apt-get update && \
-    apt-get install -y gcc supervisor gosu nodejs npm ffmpeg \
-    python3-pip python3-setuptools build-essential gyp && \
+    apt-get install -y gcc gosu nodejs npm ffmpeg \
+    build-essential gyp && \
     # Cleanup
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
@@ -19,8 +19,9 @@ ENV PGID=0
 # Copy only the requirements file first to leverage Docker cache
 COPY requirements-linux.txt .
 
-# Upgrade pip and install necessary build tools
-RUN pip install --upgrade pip setuptools wheel
+# Upgrade pip and install necessary build tools (including supervisor)
+# Pin setuptools<78 because pkg_resources was removed in v78+ and supervisor needs it
+RUN pip install --upgrade pip "setuptools<78" wheel supervisor
 
 # Install the requirements
 RUN pip install --no-cache-dir -r requirements-linux.txt
@@ -59,10 +60,11 @@ ENV TERM=xterm
 RUN sed -i 's/^export LC_ALL=C.UTF-8/# export LC_ALL=C.UTF-8/' /etc/profile && \
     sed -i 's/^clear/# clear/' /etc/profile
 
-# Expose ports for both Flask apps and phalanx_db_hyperswarm
-EXPOSE 5000 5001 8888
+# Expose ports for Flask app and phalanx_db_hyperswarm
+EXPOSE 5000 8888
 
 # Copy supervisord configuration
+RUN mkdir -p /etc/supervisor/conf.d
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
 # Create an entrypoint script
