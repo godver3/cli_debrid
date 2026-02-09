@@ -11,6 +11,7 @@ from utilities.web_scraper import get_media_details
 from scraper.scraper import scrape
 from utilities.manual_scrape import get_details
 from utilities.web_scraper import search_trakt
+from utilities.local_library_scan import extract_resolution_from_filename
 from queues.torrent_processor import TorrentProcessor
 from queues.media_matcher import MediaMatcher
 from typing import Dict, Any, Tuple
@@ -507,12 +508,20 @@ def add_torrent_to_debrid():
                 # Get the torrent title from torrent_info's filename
                 filled_by_title = torrent_info.get('filename', '') or os.path.basename(os.path.dirname(largest_file['path']))
 
+                # Extract resolution from torrent title
+                resolution = extract_resolution_from_filename(original_scraped_torrent_title) if original_scraped_torrent_title else None
+                if not resolution:
+                    # Fallback: try extracting from the actual file name
+                    resolution = extract_resolution_from_filename(filled_by_file)
+                logging.info(f"Extracted resolution for {title}: {resolution}")
+
                 # Create media item
                 item = {
                     'title': title,
                     'year': year,
                     'type': 'episode' if media_type in ['tv', 'show'] else 'movie',
                     'version': final_version_for_item, # Use the determined version
+                    'resolution': resolution,
                     'tmdb_id': tmdb_id,
                     'imdb_id': imdb_id,
                     'state': 'Checking',
@@ -526,6 +535,7 @@ def add_torrent_to_debrid():
                     'current_score': current_score,
                     'real_debrid_original_title': torrent_info.get('original_filename'),
                     'content_source': 'content_requestor',
+                    'content_source_detail': 'CD-Discover',
                     'selected_folder': selected_folder,  # User-selected folder from dropdown
                     'selected_folder_is_custom': selected_folder_is_custom  # Flag for custom vs standard folders
                 }

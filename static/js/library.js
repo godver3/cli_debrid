@@ -24,6 +24,7 @@ window.libraryState = {
     statusFilter: 'collected',
     duplicatesStateFilter: 'all',
     typeFilter: 'all',
+    resolutionFilter: 'all',
     sortBy: 'title_asc',
     totalCount: 0,
     currentView: localStorage.getItem('libraryView') || 'grid', // Remember last view
@@ -32,7 +33,7 @@ window.libraryState = {
 
 // DOM elements
 let mediaGrid, loadingIndicator, emptyState, resultsInfo;
-let searchInput, statusFilter, duplicatesStateFilter, typeFilter, sortSelect, refreshBtn, searchClearBtn;
+let searchInput, statusFilter, duplicatesStateFilter, typeFilter, resolutionFilter, sortSelect, refreshBtn, searchClearBtn;
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
@@ -67,6 +68,7 @@ function initializeElements() {
     statusFilter = document.getElementById('status-filter');
     duplicatesStateFilter = document.getElementById('duplicates-state-filter');
     typeFilter = document.getElementById('type-filter');
+    resolutionFilter = document.getElementById('resolution-filter');
     sortSelect = document.getElementById('sort-select');
     refreshBtn = document.getElementById('refresh-btn');
     searchClearBtn = document.getElementById('search-clear-btn');
@@ -81,6 +83,7 @@ function initializeElements() {
     const savedFilters = {
         statusFilter: localStorage.getItem('libraryStatusFilter'),
         typeFilter: localStorage.getItem('libraryTypeFilter'),
+        resolutionFilter: localStorage.getItem('libraryResolutionFilter'),
         sortBy: localStorage.getItem('librarySortBy'),
         searchTerm: localStorage.getItem('librarySearchTerm'),
         duplicatesStateFilter: localStorage.getItem('libraryDuplicatesStateFilter')
@@ -105,6 +108,14 @@ function initializeElements() {
         libraryState.typeFilter = savedFilters.typeFilter;
     } else {
         libraryState.typeFilter = typeFilter.value;
+    }
+
+    // Resolution filter
+    if (savedFilters.resolutionFilter) {
+        resolutionFilter.value = savedFilters.resolutionFilter;
+        libraryState.resolutionFilter = savedFilters.resolutionFilter;
+    } else {
+        libraryState.resolutionFilter = resolutionFilter.value;
     }
 
     // Update sort options based on status filter (before restoring sort value)
@@ -191,6 +202,7 @@ function attachEventListeners() {
         duplicatesStateFilter.addEventListener('change', handleDuplicatesStateChange);
     }
     typeFilter.addEventListener('change', handleFilterChange);
+    resolutionFilter.addEventListener('change', handleFilterChange);
     sortSelect.addEventListener('change', handleFilterChange);
 
     // Refresh button
@@ -254,11 +266,13 @@ function handleDuplicatesStateChange() {
 function handleFilterChange() {
     libraryState.statusFilter = statusFilter.value;
     libraryState.typeFilter = typeFilter.value;
+    libraryState.resolutionFilter = resolutionFilter.value;
     libraryState.sortBy = sortSelect.value;
 
     // Save filter values to localStorage
     localStorage.setItem('libraryStatusFilter', libraryState.statusFilter);
     localStorage.setItem('libraryTypeFilter', libraryState.typeFilter);
+    localStorage.setItem('libraryResolutionFilter', libraryState.resolutionFilter);
     localStorage.setItem('librarySortBy', libraryState.sortBy);
 
     resetAndReload();
@@ -457,6 +471,7 @@ async function fetchItems(isReset = false) {
         status: libraryState.statusFilter,
         duplicates_state: libraryState.duplicatesStateFilter,
         media_type: libraryState.typeFilter,
+        resolution: libraryState.resolutionFilter,
         sort: libraryState.sortBy
     });
 

@@ -622,6 +622,17 @@
                             style="padding: 8px 16px; width: 100%; background-color: #28a745;">Sync All Labels</button>
                     <div id="sync-labels-status" style="margin-top: 15px;"></div>
                 </div>
+
+                <!-- Backfill Resolution -->
+                <div class="label-items">
+                    <h4 style="margin-bottom: 10px;">Backfill Resolution Data</h4>
+                    <p class="description" style="margin-bottom: 10px;">
+                        Extract resolution (2160p, 1080p, etc.) from stored file paths for Collected items missing resolution data. This is safe to run multiple times.
+                    </p>
+                    <button type="button" onclick="backfillResolution()" class="btn"
+                            style="padding: 8px 16px; width: 100%; background-color: #17a2b8;">Backfill Resolution</button>
+                    <div id="backfill-resolution-status" style="margin-top: 15px;"></div>
+                </div>
             </div>
         </div>
 
@@ -3939,6 +3950,55 @@ if (document.readyState === 'loading') {
                     dummyBtn,
                     { actionVerb: 'Syncing labels for', countKey: 'synced', itemKey: 'item_title' }
                 );
+            }
+        });
+    }
+
+    // Backfill Resolution Function
+    window.backfillResolution = function() {
+        const statusDiv = document.getElementById('backfill-resolution-status');
+
+        showConfirmationModal({
+            title: 'Backfill Resolution Data',
+            message: 'This will extract resolution data (2160p, 1080p, etc.) from stored file paths for all Collected items with NULL resolution. This is safe to run multiple times and will not overwrite existing resolution data.',
+            confirmText: 'Start Backfill',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                statusDiv.innerHTML = '<div class="progress-message"><span class="operation-spinner"></span><span>Backfilling resolution data...</span></div>';
+
+                fetch('/debug/plex-labels/backfill-resolution', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        let resultHtml = `<div class="success-message">${data.message}</div>`;
+                        resultHtml += `<div style="margin-top: 10px;"><strong>Summary:</strong></div>`;
+                        resultHtml += `<div>Total items processed: ${data.total_items}</div>`;
+                        resultHtml += `<div>Successfully updated: ${data.updated}</div>`;
+                        if (data.failed > 0) {
+                            resultHtml += `<div>Failed: ${data.failed}</div>`;
+                        }
+
+                        if (data.by_resolution && Object.keys(data.by_resolution).length > 0) {
+                            resultHtml += `<div style="margin-top: 10px;"><strong>By Resolution:</strong></div>`;
+                            for (const [resolution, count] of Object.entries(data.by_resolution)) {
+                                resultHtml += `<div>&nbsp;&nbsp;${resolution}: ${count} items</div>`;
+                            }
+                        }
+
+                        statusDiv.innerHTML = resultHtml;
+                    } else {
+                        statusDiv.innerHTML = `<div class="error-message">${data.message}</div>`;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    statusDiv.innerHTML = `<div class="error-message">Error: ${error.message}</div>`;
+                });
             }
         });
     }

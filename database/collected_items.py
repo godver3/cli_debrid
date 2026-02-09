@@ -526,7 +526,9 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                 UPDATE media_items
                                 SET state = ?, last_updated = ?, collected_at = ?,
                                     original_collected_at = COALESCE(original_collected_at, ?),
-                                    location_on_disk = ?, upgraded = ?, resolution = ?, size = ?
+                                    location_on_disk = ?, upgraded = ?,
+                                    resolution = COALESCE(?, resolution),
+                                    size = COALESCE(?, size)
                                 WHERE id = ?
                             ''', (new_state, datetime.now(), collected_at, existing_collected_at,
                                   current_plex_location, is_upgrade, item.get('resolution'), item.get('size_gb'), db_item_id))
