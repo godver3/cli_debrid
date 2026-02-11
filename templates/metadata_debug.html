@@ -15,6 +15,7 @@
         <input type="text" id="imdbIdInput" placeholder="Enter IMDB ID (e.g., tt1234567)" style="flex:1;">
         <button id="fetchBtn" class="primary">Fetch</button>
         <button id="deleteBtn" class="danger">Recreate</button>
+        <button id="deleteOnlyBtn" class="danger">Delete</button>
     </div>
     <div id="status" style="margin-top: 0.5rem; color: #888;"></div>
 
@@ -38,6 +39,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const imdbInput = document.getElementById('imdbIdInput');
     const fetchBtn = document.getElementById('fetchBtn');
     const deleteBtn = document.getElementById('deleteBtn');
+    const deleteOnlyBtn = document.getElementById('deleteOnlyBtn');
     const status = document.getElementById('status');
     const result = document.getElementById('result');
     const itemBlock = document.getElementById('itemBlock');
@@ -107,8 +109,38 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    function deleteOnlyByImdb() {
+        const imdbId = (imdbInput.value || '').trim();
+        if (!imdbId) { setStatus('Please enter an IMDB ID.', true); return; }
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Confirm',
+            message: `Delete item ${imdbId}? This will not re-fetch.`,
+            confirmText: 'Yes',
+            cancelText: 'No',
+            onConfirm: () => {
+                setStatus('Deleting...');
+                fetch(`/metadata/api/delete/${encodeURIComponent(imdbId)}`, { method: 'POST' })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data && data.success) {
+                            setStatus('Deleted.');
+                            result.style.display = 'none';
+                            itemBlock.textContent = '';
+                            metadataBlock.textContent = '';
+                            seasonsBlock.textContent = '';
+                        } else {
+                            setStatus('Delete failed.' + (data.error ? ` ${data.error}` : ''), true);
+                        }
+                    })
+                    .catch(() => setStatus('Error deleting item.', true));
+            }
+        });
+    }
+
     fetchBtn.addEventListener('click', fetchMetadata);
     deleteBtn.addEventListener('click', deleteByImdb);
+    deleteOnlyBtn.addEventListener('click', deleteOnlyByImdb);
     imdbInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); fetchMetadata(); }});
 });
 </script>
