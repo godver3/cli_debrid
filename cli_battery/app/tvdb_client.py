@@ -329,11 +329,14 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
     if aliases:
         show_data['aliases'] = aliases
 
-    # Seasons + episodes
-    seasons = _extract_seasons_from_extended(raw)
-    if seasons is None:
-        # Fallback: separate seasons/episodes call
-        seasons, _ = get_show_seasons_and_episodes(imdb_id, include_specials=True)
+    # Seasons + episodes — prefer English paginated endpoint for correct titles
+    airs_time = raw.get('airsTime')
+    network = raw.get('originalNetwork')
+    airs_timezone = network.get('timezone', 'America/New_York') if isinstance(network, dict) else None
+    seasons = _fetch_episodes_paginated(tvdb_id, airs_time, airs_timezone)
+    if not seasons:
+        # Fallback to extended response (may have non-English titles)
+        seasons = _extract_seasons_from_extended(raw)
     show_data['seasons'] = seasons
 
     return show_data
@@ -492,16 +495,17 @@ def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) 
         return None, None
 
     raw = resp.json().get('data', {})
-    seasons = _extract_seasons_from_extended(raw)
 
-    # Extract airs info for paginated fallback
+    # Extract airs info for datetime construction
     airs_time = raw.get('airsTime')
     network = raw.get('originalNetwork')
     airs_timezone = network.get('timezone', 'America/New_York') if isinstance(network, dict) else None
 
+    # Prefer English paginated endpoint for correct episode titles
+    seasons = _fetch_episodes_paginated(tvdb_id, airs_time, airs_timezone)
     if not seasons:
-        # Fallback: paginated episodes endpoint
-        seasons = _fetch_episodes_paginated(tvdb_id, airs_time, airs_timezone)
+        # Fallback to extended response (may have non-English titles)
+        seasons = _extract_seasons_from_extended(raw)
 
     if seasons and not include_specials:
         seasons.pop(0, None)
@@ -515,7 +519,7 @@ def _fetch_episodes_paginated(tvdb_id: int, airs_time: str | None = None,
     all_episodes: list = []
     page = 0
     while True:
-        url = f"{TVDB_BASE_URL}/series/{tvdb_id}/episodes/default?page={page}"
+        url = f"{TVDB_BASE_URL}/series/{tvdb_id}/episodes/default/eng?page={page}"
         resp = _make_request(url)
         if not resp or resp.status_code != 200:
             break
