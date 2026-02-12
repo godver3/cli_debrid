@@ -393,6 +393,198 @@ def remap_plex_paths_to_mount(items: List[Dict[str, Any]], mount_path: str) -> L
 
     return remapped_items
 
+
+def _clean_separators_in_string(s: str) -> str:
+    """
+    Clean up orphaned separators (like ' - ', ' () ', empty brackets) in a string.
+    This is used after removing template components to clean up the resulting string.
+    """
+    # Remove empty parentheses with surrounding spaces/dashes
+    s = re.sub(r'\s*-\s*\(\s*\)', '', s)
+    s = re.sub(r'\(\s*\)', '', s)
+    # Remove empty square brackets with surrounding spaces/dashes
+    s = re.sub(r'\s*-\s*\[\s*\]', '', s)
+    s = re.sub(r'\[\s*\]', '', s)
+    # Remove orphaned dashes (consecutive or leading/trailing)
+    s = re.sub(r'\s*-\s*-\s*', ' - ', s)
+    s = re.sub(r'^\s*-\s*', '', s)
+    s = re.sub(r'\s*-\s*$', '', s)
+    # Remove multiple consecutive spaces
+    s = re.sub(r'\s{2,}', ' ', s)
+    return s.strip()
+
+
+def truncate_path_components(
+    template: str,
+    template_vars: Dict[str, Any],
+    base_path: str,
+    directory_parts: List[str],
+    extension: str,
+    max_path_length: int = 255
+) -> str:
+    """
+    Intelligently truncate filename components to fit within max_path_length.
+
+    This function systematically removes or truncates components in priority order:
+    1. Remove {original_filename} (lowest priority)
+    2. Remove {content_source}
+    3. Remove {tmdb_id}
+    4. Remove {resolution}
+    5. Remove {version}
+    6. Truncate {episode_title}
+    7. Remove {imdb_id}
+    8. Truncate {title} (last resort)
+
+    Critical info (NEVER removed/truncated):
+    - {season_number}, {episode_number}
+    - {year}, {season_year}
+
+    Args:
+        template: The filename template string (just the filename part, not directories)
+        template_vars: Dictionary of template variables and their values
+        base_path: The base path (symlink root)
+        directory_parts: List of directory parts between base_path and filename
+        extension: File extension (including the dot)
+        max_path_length: Maximum allowed path length (default 255)
+
+    Returns:
+        The sanitized filename (including extension) that fits within the path limit
+    """
+    # Define the priority order for removal (low priority first)
+    # These are removed completely before moving to truncation
+    removal_priority = [
+        'original_filename',
+        'content_source',
+        'tmdb_id',
+        'resolution',
+        'version',
+    ]
+
+    # Define components that can be truncated (in order)
+    truncatable_components = [
+        'episode_title',
+        'imdb_id',  # Remove imdb_id before truncating title
+        'title',
+    ]
+
+    # Create a working copy of template_vars
+    working_vars = dict(template_vars)
+
+    def calculate_full_path(filename_part: str) -> str:
+        """Calculate the full path given a filename part."""
+        dir_path = os.path.join(base_path, *directory_parts) if directory_parts else base_path
+        return os.path.join(dir_path, filename_part)
+
+    def format_and_sanitize() -> str:
+        """Format the template with current vars and sanitize."""
+        try:
+            formatted = template.format(**working_vars)
+        except KeyError as e:
+            logging.warning(f"[TruncatePath] Missing template variable: {e}")
+            formatted = template
+
+        # Clean up orphaned separators
+        formatted = _clean_separators_in_string(formatted)
+
+        # Sanitize the filename
+        sanitized = sanitize_filename(formatted)
+
+        # Ensure extension is present
+        if not sanitized.endswith(extension):
+            sanitized += extension
+
+        return sanitized
+
+    def get_current_length() -> int:
+        """Get the current full path length."""
+        sanitized = format_and_sanitize()
+        full_path = calculate_full_path(sanitized)
+        return len(full_path)
+
+    # Check if path is already valid
+    if get_current_length() <= max_path_length:
+        return format_and_sanitize()
+
+    logging.debug(f"[TruncatePath] Path too long ({get_current_length()} > {max_path_length}). Starting component-based truncation.")
+
+    # Phase 1: Remove components in priority order
+    for component in removal_priority:
+        if component in working_vars and working_vars[component]:
+            original_value = working_vars[component]
+            working_vars[component] = ''
+
+            current_length = get_current_length()
+            if current_length <= max_path_length:
+                logging.info(f"[TruncatePath] Removed '{component}' (was: '{str(original_value)[:50]}...'). Path now valid ({current_length} chars).")
+                return format_and_sanitize()
+            else:
+                logging.debug(f"[TruncatePath] Removed '{component}' (was: '{str(original_value)[:50]}...'). Still too long ({current_length} chars). Continuing...")
+
+    # Phase 2: Truncate components in priority order
+    for component in truncatable_components:
+        if component == 'imdb_id':
+            # Special case: remove imdb_id completely before truncating title
+            if component in working_vars and working_vars[component]:
+                original_value = working_vars[component]
+                working_vars[component] = ''
+
+                current_length = get_current_length()
+                if current_length <= max_path_length:
+                    logging.info(f"[TruncatePath] Removed '{component}' (was: '{original_value}'). Path now valid ({current_length} chars).")
+                    return format_and_sanitize()
+                else:
+                    logging.debug(f"[TruncatePath] Removed '{component}' (was: '{original_value}'). Still too long ({current_length} chars). Continuing...")
+            continue
+
+        if component in working_vars and working_vars[component]:
+            original_value = str(working_vars[component])
+            if len(original_value) <= 4:  # Too short to truncate meaningfully
+                continue
+
+            excess = get_current_length() - max_path_length
+            # We need to remove 'excess' characters, but also add '...' (3 chars)
+            # So we remove (excess + 3) characters from the component
+            chars_to_remove = excess + 3
+
+            if len(original_value) > chars_to_remove:
+                truncated_value = original_value[:-(chars_to_remove)] + '...'
+                working_vars[component] = truncated_value
+
+                current_length = get_current_length()
+                if current_length <= max_path_length:
+                    logging.info(f"[TruncatePath] Truncated '{component}' from '{original_value[:30]}...' to '{truncated_value}'. Path now valid ({current_length} chars).")
+                    return format_and_sanitize()
+                else:
+                    # If still too long, try more aggressive truncation
+                    # Keep at least 10 characters + '...'
+                    min_length = 13  # 10 chars + '...'
+                    while len(working_vars[component]) > min_length:
+                        working_vars[component] = working_vars[component][:-4] + '...'
+                        current_length = get_current_length()
+                        if current_length <= max_path_length:
+                            logging.info(f"[TruncatePath] Aggressively truncated '{component}' to '{working_vars[component]}'. Path now valid ({current_length} chars).")
+                            return format_and_sanitize()
+
+                    logging.debug(f"[TruncatePath] Truncated '{component}' to minimum length. Still too long ({get_current_length()} chars). Continuing...")
+
+    # If we get here, we've done everything we can with the component-based approach
+    # Fall back to the legacy truncation as a last resort
+    sanitized = format_and_sanitize()
+    full_path = calculate_full_path(sanitized)
+
+    if len(full_path) > max_path_length:
+        excess = len(full_path) - max_path_length
+        filename_without_ext = os.path.splitext(sanitized)[0]
+        if len(filename_without_ext) > excess + 3:
+            truncated_filename = filename_without_ext[:-(excess + 3)] + "..."
+            sanitized = truncated_filename + extension
+            logging.warning(f"[TruncatePath] Used legacy truncation as final fallback. Result: '{sanitized}'")
+        else:
+            logging.error(f"[TruncatePath] Cannot truncate filename sufficiently. Path will exceed limit: {full_path}")
+
+    return sanitized
+
+
 def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup: bool = False) -> str:
     """Get the full path for the symlink based on settings and metadata."""
     import json
@@ -787,27 +979,19 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         for i, part_template_segment in enumerate(path_parts_from_template):
             formatted_part = part_template_segment.format(**template_vars)
             sanitized_template_part = sanitize_filename(formatted_part)
-            
+
             if i == len(path_parts_from_template) - 1: # This is the filename part
-                if not sanitized_template_part.endswith(extension):
-                    sanitized_template_part += extension
-                
-                # Path length check
-                # 'parts' at this point contains: ordered_prefix_parts + any preceding template directory parts
-                current_dir_parts_for_check = os.path.join(final_symlinked_path_root, *parts)
-                potential_full_path = os.path.join(current_dir_parts_for_check, sanitized_template_part)
-                
-                max_path_length = 255 
-                if len(potential_full_path) > max_path_length:
-                    excess = len(potential_full_path) - max_path_length
-                    filename_without_ext = os.path.splitext(sanitized_template_part)[0]
-                    if len(filename_without_ext) > excess + 3: # +3 for "..."
-                        truncated_filename = filename_without_ext[:-(excess + 3)] + "..."
-                        sanitized_template_part = truncated_filename + extension
-                        logging.debug(f"[SymlinkPath] Truncated filename from {len(potential_full_path)} to {len(os.path.join(current_dir_parts_for_check, sanitized_template_part))} due to path length limit.")
-                    else:
-                        logging.warning(f"[SymlinkPath] Filename '{sanitized_template_part}' too short to truncate meaningfully for path length limit. Full path: {potential_full_path}")
-                final_filename = sanitized_template_part
+                # Use the new component-based truncation strategy
+                # This will intelligently remove/truncate components in priority order
+                max_path_length = 255
+                final_filename = truncate_path_components(
+                    template=part_template_segment,
+                    template_vars=template_vars,
+                    base_path=final_symlinked_path_root,
+                    directory_parts=parts,
+                    extension=extension,
+                    max_path_length=max_path_length
+                )
             else: # This is a directory part from the template
                 if sanitized_template_part: # Ensure not empty
                     parts.append(sanitized_template_part)
