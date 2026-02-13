@@ -55,96 +55,47 @@ def truncate_path_components(
     max_path_length: int = 255
 ) -> str:
     """
-    Intelligently truncate filename components to fit within max_path_length.
+    Truncate filename components to fit within max_path_length.
 
-    This function systematically removes or truncates components in priority order:
-    1. Remove {original_filename} (lowest priority)
-    2. Remove {content_source}
-    3. Remove {tmdb_id}
-    4. Remove {resolution}
-    5. Remove {version}
-    6. Truncate {episode_title}
-    7. Remove {imdb_id}
-    8. Truncate {title} (last resort)
-
-    Critical info (NEVER removed/truncated):
-    - {season_number}, {episode_number}
-    - {year}, {season_year}
+    Removal priority (lowest first): original_filename, content_source, tmdb_id, resolution, version
+    Then truncates: episode_title, title
+    Last resort: remove imdb_id (kept as long as possible for Plex scanning)
+    Never touches: season_number, episode_number, year, season_year
     """
-    # Define the priority order for removal (low priority first)
-    removal_priority = [
-        'original_filename',
-        'content_source',
-        'tmdb_id',
-        'resolution',
-        'version',
-    ]
-
-    # Define components that can be truncated (in order)
-    truncatable_components = [
-        'episode_title',
-        'imdb_id',  # Remove imdb_id before truncating title
-        'title',
-    ]
-
-    # Create a working copy of template_vars
+    removal_priority = ['original_filename', 'content_source', 'tmdb_id', 'resolution', 'version']
+    truncatable_components = ['episode_title', 'title']
     working_vars = dict(template_vars)
 
     def calculate_full_path(filename_part: str) -> str:
-        """Calculate the full path given a filename part."""
         dir_path = os.path.join(base_path, *directory_parts) if directory_parts else base_path
         return os.path.join(dir_path, filename_part)
 
     def format_and_sanitize() -> str:
-        """Format the template with current vars and sanitize."""
         try:
             formatted = template.format(**working_vars)
         except KeyError:
             formatted = template
-
-        # Clean up orphaned separators
         formatted = _clean_separators_in_string(formatted)
-
-        # Sanitize the filename
         sanitized = sanitize_filename(formatted)
-
-        # Ensure extension is present
         if not sanitized.endswith(extension):
             sanitized += extension
-
         return sanitized
 
     def get_current_length() -> int:
-        """Get the current full path length."""
-        sanitized = format_and_sanitize()
-        full_path = calculate_full_path(sanitized)
-        return len(full_path)
+        return len(calculate_full_path(format_and_sanitize()))
 
-    # Check if path is already valid
     if get_current_length() <= max_path_length:
         return format_and_sanitize()
 
-    # Phase 1: Remove components in priority order
+    # Remove components in priority order
     for component in removal_priority:
         if component in working_vars and working_vars[component]:
             working_vars[component] = ''
-
-            current_length = get_current_length()
-            if current_length <= max_path_length:
+            if get_current_length() <= max_path_length:
                 return format_and_sanitize()
 
-    # Phase 2: Truncate components in priority order
+    # Truncate episode_title and title (preserve imdb_id for Plex)
     for component in truncatable_components:
-        if component == 'imdb_id':
-            # Special case: remove imdb_id completely before truncating title
-            if component in working_vars and working_vars[component]:
-                working_vars[component] = ''
-
-                current_length = get_current_length()
-                if current_length <= max_path_length:
-                    return format_and_sanitize()
-            continue
-
         if component in working_vars and working_vars[component]:
             original_value = str(working_vars[component])
             if len(original_value) <= 4:  # Too short to truncate meaningfully
@@ -165,20 +116,23 @@ def truncate_path_components(
                     min_length = 13
                     while len(working_vars[component]) > min_length:
                         working_vars[component] = working_vars[component][:-4] + '...'
-                        current_length = get_current_length()
-                        if current_length <= max_path_length:
+                        if get_current_length() <= max_path_length:
                             return format_and_sanitize()
 
-    # Fall back to legacy truncation as a last resort
+    # Last resort: remove imdb_id (after exhausting title truncation)
+    if 'imdb_id' in working_vars and working_vars['imdb_id']:
+        working_vars['imdb_id'] = ''
+        if get_current_length() <= max_path_length:
+            return format_and_sanitize()
+
+    # Legacy fallback
     sanitized = format_and_sanitize()
     full_path = calculate_full_path(sanitized)
-
     if len(full_path) > max_path_length:
         excess = len(full_path) - max_path_length
         filename_without_ext = os.path.splitext(sanitized)[0]
         if len(filename_without_ext) > excess + 3:
-            truncated_filename = filename_without_ext[:-(excess + 3)] + "..."
-            sanitized = truncated_filename + extension
+            sanitized = filename_without_ext[:-(excess + 3)] + "..." + extension
 
     return sanitized
 
