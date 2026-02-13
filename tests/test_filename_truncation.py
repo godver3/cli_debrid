@@ -58,9 +58,8 @@ def truncate_path_components(
     Truncate filename components to fit within max_path_length.
 
     Removal priority (lowest first): original_filename, content_source, tmdb_id, resolution, version
-    Then truncates: episode_title, title
-    Last resort: remove imdb_id (kept as long as possible for Plex scanning)
-    Never touches: season_number, episode_number, year, season_year
+    Then truncates: episode_title, title (aggressively if needed)
+    Never removed: imdb_id, season_number, episode_number, year, season_year
     """
     removal_priority = ['original_filename', 'content_source', 'tmdb_id', 'resolution', 'version']
     truncatable_components = ['episode_title', 'title']
@@ -119,13 +118,7 @@ def truncate_path_components(
                         if get_current_length() <= max_path_length:
                             return format_and_sanitize()
 
-    # Last resort: remove imdb_id (after exhausting title truncation)
-    if 'imdb_id' in working_vars and working_vars['imdb_id']:
-        working_vars['imdb_id'] = ''
-        if get_current_length() <= max_path_length:
-            return format_and_sanitize()
-
-    # Legacy fallback
+    # Legacy fallback (imdb_id is never removed)
     sanitized = format_and_sanitize()
     full_path = calculate_full_path(sanitized)
     if len(full_path) > max_path_length:
