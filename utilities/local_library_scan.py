@@ -419,11 +419,12 @@ def truncate_path_components(
     Truncate filename components to fit within max_path_length.
 
     Removal priority (lowest first): original_filename, content_source, tmdb_id, resolution, version
-    Then truncates: episode_title, imdb_id (removed), title
+    Then truncates: episode_title, title
+    Last resort: remove imdb_id (kept as long as possible for Plex scanning)
     Never touches: season_number, episode_number, year, season_year
     """
     removal_priority = ['original_filename', 'content_source', 'tmdb_id', 'resolution', 'version']
-    truncatable_components = ['episode_title', 'imdb_id', 'title']
+    truncatable_components = ['episode_title', 'title']
     working_vars = dict(template_vars)
 
     def calculate_full_path(filename_part: str) -> str:
@@ -461,16 +462,8 @@ def truncate_path_components(
                 return format_and_sanitize()
             logging.debug(f"[TruncatePath] Removed '{component}', still too long ({current_length} chars).")
 
-    # Truncate remaining components
+    # Truncate episode_title and title (preserve imdb_id for Plex)
     for component in truncatable_components:
-        if component == 'imdb_id':
-            if component in working_vars and working_vars[component]:
-                working_vars[component] = ''
-                if get_current_length() <= max_path_length:
-                    logging.info(f"[TruncatePath] Removed 'imdb_id'. Path now valid.")
-                    return format_and_sanitize()
-            continue
-
         if component in working_vars and working_vars[component]:
             original_value = str(working_vars[component])
             if len(original_value) <= 4:
@@ -489,6 +482,13 @@ def truncate_path_components(
                     if get_current_length() <= max_path_length:
                         logging.info(f"[TruncatePath] Truncated '{component}' to '{working_vars[component]}'.")
                         return format_and_sanitize()
+
+    # Last resort: remove imdb_id (after exhausting title truncation)
+    if 'imdb_id' in working_vars and working_vars['imdb_id']:
+        working_vars['imdb_id'] = ''
+        if get_current_length() <= max_path_length:
+            logging.warning(f"[TruncatePath] Removed 'imdb_id' as last resort. Path now valid.")
+            return format_and_sanitize()
 
     # Legacy fallback
     sanitized = format_and_sanitize()
