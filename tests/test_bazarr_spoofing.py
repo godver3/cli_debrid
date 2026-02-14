@@ -652,5 +652,49 @@ class TestAdditionalHelpers(unittest.TestCase):
             self.assertIn(field, result, f"Missing required field: {field}")
 
 
+class TestMediaInfoParsing(unittest.TestCase):
+    """Test media info parsing from filenames.
+
+    Note: These tests verify the basic structure. The actual parsing
+    is done in the real module with ReleaseParser/guessit.
+    """
+
+    def test_movie_file_structure_includes_expected_fields(self):
+        """Test that movie file resource includes expected structure."""
+        # The standalone test implementation has basic structure
+        # The real implementation adds mediaInfo
+        item = {
+            'id': 1,
+            'tmdb_id': '12345',
+            'title': 'Test Movie',
+            'year': 2024,
+            'file_path': '/movies/Test.Movie.2024.1080p.WEB-DL.x265-GROUP/test.mkv',
+            'version': '1080p WEB-DL'
+        }
+
+        result = create_movie_resource(item)
+
+        # Check basic structure exists
+        self.assertIn('movieFile', result)
+        self.assertIn('quality', result['movieFile'])
+        self.assertIn('releaseGroup', result['movieFile'])
+
+    def test_episode_file_structure_includes_expected_fields(self):
+        """Test that episode file resource includes expected structure."""
+        item = {
+            'id': 1,
+            'season_number': 1,
+            'episode_number': 1,
+            'file_path': '/tv/Show/Season 01/S01E01.1080p.HDTV.x264-LOL.mkv',
+            'version': '1080p HDTV'
+        }
+
+        result = create_episode_file_resource(item, series_id=12345)
+
+        # Check basic structure exists
+        self.assertIn('quality', result)
+        self.assertIn('releaseGroup', result)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
 from utilities.settings import get_setting, set_setting
+from utilities.release_parser import ReleaseParser
 from database.core import get_db_connection
 
 # Create blueprint - mounted at root to handle /api/v3/* and /signalr/* paths
@@ -79,7 +80,8 @@ def get_collected_movies() -> List[Dict[str, Any]]:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, imdb_id, tmdb_id, title, year, file_path,
-                   location_on_disk, genres, runtime, collected_at, version
+                   location_on_disk, genres, runtime, collected_at, version,
+                   filled_by_file, resolution
             FROM media_items
             WHERE state = 'Collected'
             AND type = 'movie'
@@ -100,7 +102,9 @@ def get_collected_movies() -> List[Dict[str, Any]]:
                 'genres': row[7],
                 'runtime': row[8],
                 'collected_at': row[9],
-                'version': row[10]
+                'version': row[10],
+                'filled_by_file': row[11],
+                'resolution': row[12]
             })
         return movies
     finally:
@@ -149,7 +153,8 @@ def get_episodes_for_series(show_id: str) -> List[Dict[str, Any]]:
         cursor.execute("""
             SELECT id, imdb_id, tmdb_id, title, episode_title, year,
                    season_number, episode_number, file_path,
-                   location_on_disk, collected_at, version
+                   location_on_disk, collected_at, version,
+                   filled_by_file, resolution
             FROM media_items
             WHERE state = 'Collected'
             AND type = 'episode'
@@ -172,7 +177,9 @@ def get_episodes_for_series(show_id: str) -> List[Dict[str, Any]]:
                 'file_path': row[8],
                 'location_on_disk': row[9],
                 'collected_at': row[10],
-                'version': row[11]
+                'version': row[11],
+                'filled_by_file': row[12],
+                'resolution': row[13]
             })
         return episodes
     finally:
@@ -186,7 +193,8 @@ def get_movie_by_id(movie_id: int) -> Optional[Dict[str, Any]]:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, imdb_id, tmdb_id, title, year, file_path,
-                   location_on_disk, genres, runtime, collected_at, version
+                   location_on_disk, genres, runtime, collected_at, version,
+                   filled_by_file, resolution
             FROM media_items
             WHERE (id = ? OR tmdb_id = ? OR tmdb_id = ?)
             AND state = 'Collected'
@@ -207,7 +215,9 @@ def get_movie_by_id(movie_id: int) -> Optional[Dict[str, Any]]:
                 'genres': row[7],
                 'runtime': row[8],
                 'collected_at': row[9],
-                'version': row[10]
+                'version': row[10],
+                'filled_by_file': row[11],
+                'resolution': row[12]
             }
         return None
     finally:
@@ -359,6 +369,91 @@ def parse_genres(genres_str: str) -> List[str]:
         return [g.strip() for g in genres_str.split(',') if g.strip()]
 
 
+def parse_media_info(filename: str, version: str = None) -> Dict[str, Any]:
+    """
+    Parse media info (codec, audio, release group) from filename.
+
+    Returns dict with:
+        - video_codec: str (e.g., 'x265', 'x264', 'HEVC')
+        - audio_codec: str (e.g., 'AAC', 'DTS', 'TrueHD')
+        - release_group: str (e.g., 'SPARKS', 'YTS')
+        - resolution: str (e.g., '1080p', '2160p')
+    """
+    result = {
+        'video_codec': '',
+        'audio_codec': '',
+        'release_group': '',
+        'resolution': ''
+    }
+
+    # Try parsing filename first, then version string
+    parse_target = filename or version or ''
+    if not parse_target:
+        return result
+
+    try:
+        # Use ReleaseParser to extract info
+        parsed = ReleaseParser.parse_with_guessit(parse_target)
+        if not parsed or parsed.get('codec') is None:
+            # Fall back to regex parsing
+            parsed = ReleaseParser.parse_with_regex(parse_target)
+
+        # Map parsed values
+        if parsed.get('codec'):
+            result['video_codec'] = str(parsed['codec'])
+        if parsed.get('audio'):
+            result['audio_codec'] = str(parsed['audio'])
+        if parsed.get('resolution'):
+            result['resolution'] = str(parsed['resolution'])
+
+        # Get release group
+        release_group = ReleaseParser.extract_release_group(parse_target)
+        if release_group:
+            result['release_group'] = release_group
+
+    except Exception as e:
+        logging.debug(f"Error parsing media info from '{parse_target}': {e}")
+
+    return result
+
+
+def create_media_info(parsed: Dict[str, Any], file_path: str = '') -> Dict[str, Any]:
+    """Create Radarr/Sonarr mediaInfo object from parsed data."""
+    # Map codec names to Radarr/Sonarr format
+    video_codec = parsed.get('video_codec', '')
+    audio_codec = parsed.get('audio_codec', '')
+
+    # Get resolution as integer
+    resolution_str = parsed.get('resolution', '')
+    resolution_int = 0
+    if '2160' in resolution_str or '4k' in resolution_str.lower():
+        resolution_int = 2160
+    elif '1080' in resolution_str:
+        resolution_int = 1080
+    elif '720' in resolution_str:
+        resolution_int = 720
+    elif '480' in resolution_str:
+        resolution_int = 480
+
+    return {
+        'audioBitrate': 0,
+        'audioChannels': 2.0,
+        'audioCodec': audio_codec,
+        'audioLanguages': 'English',
+        'audioStreamCount': 1,
+        'videoBitDepth': 10 if 'x265' in video_codec.lower() or 'hevc' in video_codec.lower() else 8,
+        'videoBitrate': 0,
+        'videoCodec': video_codec,
+        'videoFps': 23.976,
+        'videoDynamicRange': 'HDR' if 'HDR' in video_codec.upper() else 'SDR',
+        'videoDynamicRangeType': '',
+        'resolution': f'{resolution_int}p' if resolution_int else '',
+        'runTime': '0:00:00',
+        'scanType': 'Progressive',
+        'subtitles': ''
+    }
+
+
 def create_movie_resource(item: Dict[str, Any]) -> Dict[str, Any]:
     """Create a Radarr-compatible MovieResource from database item."""
     tmdb_id = int(item.get('tmdb_id') or 0) if item.get('tmdb_id') else 0
@@ -378,6 +473,16 @@ def create_movie_resource(item: Dict[str, Any]) -> Dict[str, Any]:
     movie_file_id = generate_unique_id(item.get('id'), 'moviefile')
     quality = detect_quality_from_version(item.get('version', ''))
 
+    # Parse media info from filename
+    filename = item.get('filled_by_file', '') or os.path.basename(file_path)
+    media_info_parsed = parse_media_info(filename, item.get('version', ''))
+    media_info = create_media_info(media_info_parsed, file_path)
+
+    # Use database resolution if available, otherwise from parsed
+    db_resolution = item.get('resolution', '')
+    if db_resolution:
+        media_info['resolution'] = db_resolution
+
     # Build movie file object
     movie_file = {
         'id': movie_file_id,
@@ -388,8 +493,9 @@ def create_movie_resource(item: Dict[str, Any]) -> Dict[str, Any]:
         'dateAdded': added_time.isoformat() + 'Z',
         'quality': quality,
         'languages': [{'id': 1, 'name': 'English'}],
-        'sceneName': '',
-        'releaseGroup': ''
+        'sceneName': filename,
+        'releaseGroup': media_info_parsed.get('release_group', ''),
+        'mediaInfo': media_info
     }
 
     return {
@@ -570,6 +676,17 @@ def create_episode_resource(item: Dict[str, Any], series_id: int, series_title: 
     # Build episode file object for inclusion
     file_path = get_file_path(item)
     file_size = get_file_size(file_path)
+
+    # Parse media info from filename
+    filename = item.get('filled_by_file', '') or os.path.basename(file_path)
+    media_info_parsed = parse_media_info(filename, item.get('version', ''))
+    media_info = create_media_info(media_info_parsed, file_path)
+
+    # Use database resolution if available
+    db_resolution = item.get('resolution', '')
+    if db_resolution:
+        media_info['resolution'] = db_resolution
+
     episode_file = {
         'id': episode_file_id,
         'seriesId': series_id,
@@ -580,8 +697,9 @@ def create_episode_resource(item: Dict[str, Any], series_id: int, series_title: 
         'dateAdded': air_date.isoformat() + 'Z',
         'quality': quality,
         'languages': languages,
-        'sceneName': '',
-        'releaseGroup': ''
+        'sceneName': filename,
+        'releaseGroup': media_info_parsed.get('release_group', ''),
+        'mediaInfo': media_info
     }
 
     return {
@@ -629,6 +747,16 @@ def create_episode_file_resource(item: Dict[str, Any], series_id: int) -> Dict[s
     else:
         added_time = datetime.now(timezone.utc)
 
+    # Parse media info from filename
+    filename = item.get('filled_by_file', '') or os.path.basename(file_path)
+    media_info_parsed = parse_media_info(filename, item.get('version', ''))
+    media_info = create_media_info(media_info_parsed, file_path)
+
+    # Use database resolution if available
+    db_resolution = item.get('resolution', '')
+    if db_resolution:
+        media_info['resolution'] = db_resolution
+
     return {
         'id': episode_file_id,
         'seriesId': series_id,
@@ -639,8 +767,9 @@ def create_episode_file_resource(item: Dict[str, Any], series_id: int) -> Dict[s
         'dateAdded': added_time.isoformat() + 'Z',
         'quality': quality,
         'languages': [{'id': 1, 'name': 'English'}],
-        'sceneName': '',
-        'releaseGroup': ''
+        'sceneName': filename,
+        'releaseGroup': media_info_parsed.get('release_group', ''),
+        'mediaInfo': media_info
     }
 
 
