@@ -42,6 +42,7 @@ from .symlink_tools_routes import symlink_tools_bp
 from .metadata_routes import metadata_bp
 from .plex_labels_debug_routes import plex_labels_debug_bp
 from .discover_routes import discover_bp
+from .bazarr_spoofing_routes import bazarr_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
@@ -166,7 +167,8 @@ def register_blueprints(app):
         (symlink_tools_bp, '/symlink_tools'),
         (metadata_bp, '/metadata'),
         (plex_labels_debug_bp, ''),
-        (discover_bp, '/discover')
+        (discover_bp, '/discover'),
+        (bazarr_bp, '')  # Mounted at root for /api/v3/* and /signalr/* paths
     ]
     
     for blueprint, url_prefix in blueprints:
