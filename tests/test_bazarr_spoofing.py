@@ -33,8 +33,7 @@ def generate_api_key():
 
 def generate_unique_id(base_id, prefix=''):
     """Generate a unique integer ID from various input types."""
-    if isinstance(base_id, int):
-        return base_id
+    # Always use hash to ensure prefix is incorporated
     hash_input = f"{prefix}{base_id}".encode()
     return int(hashlib.md5(hash_input).hexdigest()[:8], 16)
 
@@ -325,8 +324,18 @@ class TestBazarrSpoofingHelpers(unittest.TestCase):
 
     def test_generate_unique_id_int(self):
         """Test unique ID generation from integer."""
-        result = generate_unique_id(12345)
-        self.assertEqual(result, 12345)
+        result1 = generate_unique_id(12345, 'episode')
+        result2 = generate_unique_id(12345, 'episode')
+        result3 = generate_unique_id(12345, 'episodefile')
+
+        # Same input should produce same output
+        self.assertEqual(result1, result2)
+
+        # Different prefix should produce different output
+        self.assertNotEqual(result1, result3)
+
+        # Result should be an integer
+        self.assertIsInstance(result1, int)
 
     def test_generate_unique_id_string(self):
         """Test unique ID generation from string."""

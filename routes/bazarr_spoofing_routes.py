@@ -305,11 +305,13 @@ def detect_quality_from_version(version: str) -> Dict[str, Any]:
 
 
 def generate_unique_id(base_id: Any, prefix: str = '') -> int:
-    """Generate a unique integer ID from various input types."""
-    if isinstance(base_id, int):
-        return base_id
+    """Generate a unique integer ID from various input types.
 
-    # Generate hash-based ID for string IDs
+    Always incorporates the prefix to ensure different entity types
+    (episode, episodefile, series, movie) get different IDs even with
+    the same base_id.
+    """
+    # Always use hash to ensure prefix is incorporated
     hash_input = f"{prefix}{base_id}".encode()
     return int(hashlib.md5(hash_input).hexdigest()[:8], 16)
 
