@@ -461,21 +461,21 @@
         <!-- API Key with Generate/Copy buttons -->
         <div class="settings-form-group">
             <label for="bazarr-api_key" class="settings-title">API Key:</label>
-            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+            <div style="display: flex; gap: 8px; align-items: center;">
                 <input type="password" id="bazarr-api_key" name="Bazarr Integration.api_key"
                        value="{{ settings.get('Bazarr Integration', {}).get('api_key', '') }}"
-                       class="settings-input" style="flex: 1; min-width: 200px;"
+                       class="settings-input" style="flex: 1; min-width: 200px; max-width: 400px;"
                        data-section="Bazarr Integration" data-key="api_key">
                 <button type="button" id="bazarr-generate-key" class="settings-button"
-                        style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap;">
                     Generate
                 </button>
                 <button type="button" id="bazarr-copy-key" class="settings-button"
-                        style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap;">
                     Copy
                 </button>
                 <button type="button" id="bazarr-show-key" class="settings-button"
-                        style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                        style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap;">
                     Show
                 </button>
             </div>
@@ -504,19 +504,6 @@
             <p class="settings-description">Version number to report to Bazarr. Change only if Bazarr requires a specific version.</p>
         </div>
 
-        <!-- Test Connection Button -->
-        <div class="settings-form-group">
-            <label class="settings-title">Test Connection:</label>
-            <div style="display: flex; gap: 8px; align-items: center;">
-                <button type="button" id="bazarr-test-connection" class="settings-button"
-                        style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                    Test Connection
-                </button>
-                <span id="bazarr-connection-status" style="margin-left: 10px;"></span>
-            </div>
-            <p class="settings-description">Test that the Bazarr spoofing API is working correctly.</p>
-        </div>
-
         <!-- Connection Info Box -->
         <div class="settings-form-group">
             <div style="background: #e7f3ff; border: 1px solid #b3d7ff; padding: 15px; border-radius: 4px; margin-top: 10px;">
@@ -530,13 +517,6 @@
             </div>
         </div>
 
-        <!-- Media Stats -->
-        <div class="settings-form-group" id="bazarr-media-stats" style="display: none;">
-            <div style="background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; border-radius: 4px;">
-                <p style="margin: 0; font-weight: bold;"><i class="fas fa-check-circle"></i> Available Media</p>
-                <p style="margin: 5px 0 0 0;">Movies: <span id="bazarr-movie-count">0</span> | TV Series: <span id="bazarr-series-count">0</span></p>
-            </div>
-        </div>
         {% endif %}
     </div>
 </div>
@@ -602,54 +582,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 apiKeyInput.type = 'password';
                 showKeyBtn.textContent = 'Show';
             }
-        });
-    }
-
-    // Test Connection
-    const testConnectionBtn = document.getElementById('bazarr-test-connection');
-    const connectionStatus = document.getElementById('bazarr-connection-status');
-    const mediaStats = document.getElementById('bazarr-media-stats');
-    const movieCount = document.getElementById('bazarr-movie-count');
-    const seriesCount = document.getElementById('bazarr-series-count');
-
-    if (testConnectionBtn) {
-        testConnectionBtn.addEventListener('click', function() {
-            connectionStatus.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Testing...';
-            connectionStatus.style.color = '#666';
-
-            fetch('/settings/api/bazarr/test')
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === 'ready') {
-                    connectionStatus.innerHTML = '<i class="fas fa-check-circle"></i> Connected - ' + data.service_type.toUpperCase();
-                    connectionStatus.style.color = '#28a745';
-
-                    // Show media stats
-                    if (mediaStats && movieCount && seriesCount) {
-                        mediaStats.style.display = 'block';
-                        movieCount.textContent = data.movie_count || 0;
-                        seriesCount.textContent = data.series_count || 0;
-                    }
-                } else if (!data.enabled) {
-                    connectionStatus.innerHTML = '<i class="fas fa-exclamation-circle"></i> Spoofing not enabled';
-                    connectionStatus.style.color = '#ffc107';
-                    mediaStats.style.display = 'none';
-                } else if (!data.has_api_key) {
-                    connectionStatus.innerHTML = '<i class="fas fa-exclamation-circle"></i> No API key configured';
-                    connectionStatus.style.color = '#ffc107';
-                    mediaStats.style.display = 'none';
-                } else {
-                    connectionStatus.innerHTML = '<i class="fas fa-times-circle"></i> Not configured';
-                    connectionStatus.style.color = '#dc3545';
-                    mediaStats.style.display = 'none';
-                }
-            })
-            .catch(error => {
-                console.error('Error testing connection:', error);
-                connectionStatus.innerHTML = '<i class="fas fa-times-circle"></i> Error testing connection';
-                connectionStatus.style.color = '#dc3545';
-                if (mediaStats) mediaStats.style.display = 'none';
-            });
         });
     }
 
