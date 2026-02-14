@@ -5,7 +5,7 @@
 </div>
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "Library Manager" %}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "Library Manager" and section != "Bazarr Integration" %}
     <div class="settings-section">
         <div class="settings-section-header">
             <h4>{{ section }}</h4>
@@ -426,6 +426,240 @@
     </div>
     {% endif %}
 {% endfor %}
+
+<!-- Bazarr Integration Section -->
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>Bazarr Integration</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        {% if settings.get('File Management', {}).get('file_collection_management') != 'Symlinked/Local' %}
+        <!-- Unavailable Warning -->
+        <div class="settings-form-group">
+            <div style="background: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 4px;">
+                <p style="margin: 0; font-weight: bold; color: #721c24;"><i class="fas fa-exclamation-triangle"></i> Not Available</p>
+                <p style="margin: 10px 0 0 0; color: #721c24;">
+                    Bazarr Integration requires <strong>Symlinked/Local</strong> file collection management mode.
+                </p>
+                <p style="margin: 5px 0 0 0; color: #856404; font-size: 0.9em;">
+                    Your current mode is <strong>{{ settings.get('File Management', {}).get('file_collection_management', 'Plex') }}</strong>.
+                    To use Bazarr Integration, change your File Collection Management setting in Required Settings.
+                </p>
+            </div>
+        </div>
+        {% else %}
+        <!-- Enable Spoofing -->
+        <div class="settings-form-group">
+            <label for="bazarr-enabled" class="settings-title">Enable Bazarr Spoofing:</label>
+            <input type="checkbox" id="bazarr-enabled" name="Bazarr Integration.enabled"
+                   data-section="Bazarr Integration" data-key="enabled"
+                   {% if settings.get('Bazarr Integration', {}).get('enabled') %}checked{% endif %}>
+            <p class="settings-description">Enable Radarr/Sonarr API spoofing for Bazarr subtitle integration. When enabled, cli_debrid will expose API endpoints that allow Bazarr to connect as if this were Radarr/Sonarr.</p>
+        </div>
+
+        <!-- API Key with Generate/Copy buttons -->
+        <div class="settings-form-group">
+            <label for="bazarr-api_key" class="settings-title">API Key:</label>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                <input type="password" id="bazarr-api_key" name="Bazarr Integration.api_key"
+                       value="{{ settings.get('Bazarr Integration', {}).get('api_key', '') }}"
+                       class="settings-input" style="flex: 1; min-width: 200px;"
+                       data-section="Bazarr Integration" data-key="api_key">
+                <button type="button" id="bazarr-generate-key" class="settings-button"
+                        style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    Generate
+                </button>
+                <button type="button" id="bazarr-copy-key" class="settings-button"
+                        style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    Copy
+                </button>
+                <button type="button" id="bazarr-show-key" class="settings-button"
+                        style="padding: 8px 16px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    Show
+                </button>
+            </div>
+            <p class="settings-description">API key for Bazarr authentication. Click 'Generate' to create a new key, or enter your own. This key must be used when configuring Bazarr.</p>
+        </div>
+
+        <!-- Service Type -->
+        <div class="settings-form-group">
+            <label for="bazarr-service_type" class="settings-title">Service Type:</label>
+            <select id="bazarr-service_type" name="Bazarr Integration.service_type" class="settings-input"
+                    data-section="Bazarr Integration" data-key="service_type">
+                <option value="auto" {% if settings.get('Bazarr Integration', {}).get('service_type') == 'auto' %}selected{% endif %}>Auto (Both)</option>
+                <option value="radarr" {% if settings.get('Bazarr Integration', {}).get('service_type') == 'radarr' %}selected{% endif %}>Radarr Only</option>
+                <option value="sonarr" {% if settings.get('Bazarr Integration', {}).get('service_type') == 'sonarr' %}selected{% endif %}>Sonarr Only</option>
+            </select>
+            <p class="settings-description">Which service to emulate. 'Auto' exposes both Radarr (movies) and Sonarr (TV) endpoints.</p>
+        </div>
+
+        <!-- Spoofed Version -->
+        <div class="settings-form-group">
+            <label for="bazarr-spoofed_version" class="settings-title">Spoofed Version:</label>
+            <input type="text" id="bazarr-spoofed_version" name="Bazarr Integration.spoofed_version"
+                   value="{{ settings.get('Bazarr Integration', {}).get('spoofed_version', '5.14.0.9383') }}"
+                   class="settings-input"
+                   data-section="Bazarr Integration" data-key="spoofed_version">
+            <p class="settings-description">Version number to report to Bazarr. Change only if Bazarr requires a specific version.</p>
+        </div>
+
+        <!-- Test Connection Button -->
+        <div class="settings-form-group">
+            <label class="settings-title">Test Connection:</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="button" id="bazarr-test-connection" class="settings-button"
+                        style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                    Test Connection
+                </button>
+                <span id="bazarr-connection-status" style="margin-left: 10px;"></span>
+            </div>
+            <p class="settings-description">Test that the Bazarr spoofing API is working correctly.</p>
+        </div>
+
+        <!-- Connection Info Box -->
+        <div class="settings-form-group">
+            <div style="background: #e7f3ff; border: 1px solid #b3d7ff; padding: 15px; border-radius: 4px; margin-top: 10px;">
+                <p style="margin: 0 0 10px 0; font-weight: bold;"><i class="fas fa-info-circle"></i> Bazarr Configuration</p>
+                <p style="margin: 5px 0; font-family: monospace;">URL: <span id="bazarr-url">http://your-host:5000</span></p>
+                <p style="margin: 5px 0; font-family: monospace;">API Key: <span style="color: #666;">(copy from above)</span></p>
+                <p style="margin: 10px 0 0 0; font-size: 0.9em; color: #666;">
+                    In Bazarr, add a new Radarr/Sonarr connection using the URL and API key above.
+                    Bazarr will then be able to discover your collected movies and TV shows.
+                </p>
+            </div>
+        </div>
+
+        <!-- Media Stats -->
+        <div class="settings-form-group" id="bazarr-media-stats" style="display: none;">
+            <div style="background: #d4edda; border: 1px solid #c3e6cb; padding: 15px; border-radius: 4px;">
+                <p style="margin: 0; font-weight: bold;"><i class="fas fa-check-circle"></i> Available Media</p>
+                <p style="margin: 5px 0 0 0;">Movies: <span id="bazarr-movie-count">0</span> | TV Series: <span id="bazarr-series-count">0</span></p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Bazarr API Key Generation
+    const generateKeyBtn = document.getElementById('bazarr-generate-key');
+    const apiKeyInput = document.getElementById('bazarr-api_key');
+
+    if (generateKeyBtn && apiKeyInput) {
+        generateKeyBtn.addEventListener('click', function() {
+            fetch('/settings/api/bazarr/generate_key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.api_key) {
+                    apiKeyInput.value = data.api_key;
+                    apiKeyInput.type = 'text';
+                    document.getElementById('bazarr-show-key').textContent = 'Hide';
+                    alert('New API key generated! Remember to save settings and update your Bazarr configuration.');
+                } else {
+                    alert('Failed to generate API key');
+                }
+            })
+            .catch(error => {
+                console.error('Error generating API key:', error);
+                alert('Error generating API key. Check console for details.');
+            });
+        });
+    }
+
+    // Copy API Key
+    const copyKeyBtn = document.getElementById('bazarr-copy-key');
+    if (copyKeyBtn && apiKeyInput) {
+        copyKeyBtn.addEventListener('click', function() {
+            const key = apiKeyInput.value;
+            if (key) {
+                navigator.clipboard.writeText(key).then(() => {
+                    const originalText = copyKeyBtn.textContent;
+                    copyKeyBtn.textContent = 'Copied!';
+                    setTimeout(() => { copyKeyBtn.textContent = originalText; }, 2000);
+                }).catch(err => {
+                    console.error('Failed to copy:', err);
+                    alert('Failed to copy to clipboard');
+                });
+            } else {
+                alert('No API key to copy. Generate one first.');
+            }
+        });
+    }
+
+    // Show/Hide API Key
+    const showKeyBtn = document.getElementById('bazarr-show-key');
+    if (showKeyBtn && apiKeyInput) {
+        showKeyBtn.addEventListener('click', function() {
+            if (apiKeyInput.type === 'password') {
+                apiKeyInput.type = 'text';
+                showKeyBtn.textContent = 'Hide';
+            } else {
+                apiKeyInput.type = 'password';
+                showKeyBtn.textContent = 'Show';
+            }
+        });
+    }
+
+    // Test Connection
+    const testConnectionBtn = document.getElementById('bazarr-test-connection');
+    const connectionStatus = document.getElementById('bazarr-connection-status');
+    const mediaStats = document.getElementById('bazarr-media-stats');
+    const movieCount = document.getElementById('bazarr-movie-count');
+    const seriesCount = document.getElementById('bazarr-series-count');
+
+    if (testConnectionBtn) {
+        testConnectionBtn.addEventListener('click', function() {
+            connectionStatus.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Testing...';
+            connectionStatus.style.color = '#666';
+
+            fetch('/settings/api/bazarr/test')
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'ready') {
+                    connectionStatus.innerHTML = '<i class="fas fa-check-circle"></i> Connected - ' + data.service_type.toUpperCase();
+                    connectionStatus.style.color = '#28a745';
+
+                    // Show media stats
+                    if (mediaStats && movieCount && seriesCount) {
+                        mediaStats.style.display = 'block';
+                        movieCount.textContent = data.movie_count || 0;
+                        seriesCount.textContent = data.series_count || 0;
+                    }
+                } else if (!data.enabled) {
+                    connectionStatus.innerHTML = '<i class="fas fa-exclamation-circle"></i> Spoofing not enabled';
+                    connectionStatus.style.color = '#ffc107';
+                    mediaStats.style.display = 'none';
+                } else if (!data.has_api_key) {
+                    connectionStatus.innerHTML = '<i class="fas fa-exclamation-circle"></i> No API key configured';
+                    connectionStatus.style.color = '#ffc107';
+                    mediaStats.style.display = 'none';
+                } else {
+                    connectionStatus.innerHTML = '<i class="fas fa-times-circle"></i> Not configured';
+                    connectionStatus.style.color = '#dc3545';
+                    mediaStats.style.display = 'none';
+                }
+            })
+            .catch(error => {
+                console.error('Error testing connection:', error);
+                connectionStatus.innerHTML = '<i class="fas fa-times-circle"></i> Error testing connection';
+                connectionStatus.style.color = '#dc3545';
+                if (mediaStats) mediaStats.style.display = 'none';
+            });
+        });
+    }
+
+    // Update URL display with actual host
+    const urlSpan = document.getElementById('bazarr-url');
+    if (urlSpan) {
+        urlSpan.textContent = window.location.protocol + '//' + window.location.host;
+    }
+});
+</script>
 
 <!-- Phalanx DB Settings Section -->
 <div class="settings-section">
