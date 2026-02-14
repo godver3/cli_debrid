@@ -14,7 +14,7 @@ import hashlib
 import secrets
 import time
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
 from utilities.settings import get_setting, save_setting
@@ -24,10 +24,7 @@ from database.core import get_db_connection
 bazarr_bp = Blueprint('bazarr', __name__)
 
 # Process start time for system status
-PROCESS_START_TIME = datetime.utcnow()
-
-# SignalR connection tracking
-signalr_connections = {}
+PROCESS_START_TIME = datetime.now(timezone.utc)
 
 # ============================================================================
 # Authentication
@@ -54,12 +51,12 @@ def require_bazarr_auth(f):
         api_key = request.headers.get('X-Api-Key') or request.args.get('apikey')
 
         if not api_key:
-            logging.warning(f"Missing API key for Bazarr endpoint: {request.path}")
+            logging.warning(f"Bazarr auth failed: missing API key for {request.path}")
             return jsonify({'error': 'Unauthorized'}), 401
 
         configured_key = get_setting('Bazarr Integration', 'api_key', '')
-        if not configured_key or api_key.lower() != configured_key.lower():
-            logging.warning(f"Invalid API key for Bazarr endpoint: {request.path}")
+        if not configured_key or api_key != configured_key:
+            logging.warning(f"Bazarr auth failed: invalid API key for {request.path}")
             return jsonify({'error': 'Unauthorized'}), 401
 
         return f(*args, **kwargs)
@@ -372,9 +369,9 @@ def create_movie_resource(item: Dict[str, Any]) -> Dict[str, Any]:
         try:
             added_time = datetime.fromisoformat(collected_at.replace('Z', '+00:00'))
         except ValueError:
-            added_time = datetime.utcnow()
+            added_time = datetime.now(timezone.utc)
     else:
-        added_time = datetime.utcnow()
+        added_time = datetime.now(timezone.utc)
 
     movie_file_id = generate_unique_id(item.get('id'), 'moviefile')
     quality = detect_quality_from_version(item.get('version', ''))
@@ -515,7 +512,7 @@ def create_series_resource(item: Dict[str, Any], episodes: List[Dict[str, Any]] 
         'lastAired': None,
         'nextAiring': None,
         'previousAiring': None,
-        'lastInfoSync': datetime.utcnow().isoformat() + 'Z',
+        'lastInfoSync': datetime.now(timezone.utc).isoformat() + 'Z',
         'seriesType': 'standard',
         'cleanTitle': title.lower().replace(' ', ''),
         'imdbId': item.get('imdb_id') or '',
@@ -523,7 +520,7 @@ def create_series_resource(item: Dict[str, Any], episodes: List[Dict[str, Any]] 
         'rootFolderPath': root_folder_path,
         'genres': parse_genres(item.get('genres', '')),
         'tags': [],
-        'added': datetime.utcnow().isoformat() + 'Z',
+        'added': datetime.now(timezone.utc).isoformat() + 'Z',
         'statistics': {
             'seasonCount': len(seasons),
             'episodeFileCount': len(episodes) if episodes else 0,
@@ -560,9 +557,9 @@ def create_episode_resource(item: Dict[str, Any], series_id: int, series_title: 
         try:
             air_date = datetime.fromisoformat(collected_at.replace('Z', '+00:00'))
         except ValueError:
-            air_date = datetime.utcnow()
+            air_date = datetime.now(timezone.utc)
     else:
-        air_date = datetime.utcnow()
+        air_date = datetime.now(timezone.utc)
 
     # Get quality and language info for root level
     quality = detect_quality_from_version(item.get('version', ''))
@@ -626,9 +623,9 @@ def create_episode_file_resource(item: Dict[str, Any], series_id: int) -> Dict[s
         try:
             added_time = datetime.fromisoformat(collected_at.replace('Z', '+00:00'))
         except ValueError:
-            added_time = datetime.utcnow()
+            added_time = datetime.now(timezone.utc)
     else:
-        added_time = datetime.utcnow()
+        added_time = datetime.now(timezone.utc)
 
     return {
         'id': episode_file_id,
@@ -1000,8 +997,8 @@ def command():
             'id': 1,
             'name': 'Command',
             'status': 'completed',
-            'queued': datetime.utcnow().isoformat() + 'Z',
-            'ended': datetime.utcnow().isoformat() + 'Z'
+            'queued': datetime.now(timezone.utc).isoformat() + 'Z',
+            'ended': datetime.now(timezone.utc).isoformat() + 'Z'
         })
     return jsonify([])
 
@@ -1077,12 +1074,12 @@ def check_signalr_auth() -> Optional[tuple]:
     api_key = request.headers.get('X-Api-Key') or request.args.get('apikey')
 
     if not api_key:
-        logging.warning(f"Missing API key for SignalR endpoint: {request.path}")
+        logging.warning(f"SignalR auth failed: missing API key for {request.path}")
         return jsonify({'error': 'Unauthorized'}), 401
 
     configured_key = get_setting('Bazarr Integration', 'api_key', '')
-    if not configured_key or api_key.lower() != configured_key.lower():
-        logging.warning(f"Invalid API key for SignalR endpoint: {request.path}")
+    if not configured_key or api_key != configured_key:
+        logging.warning(f"SignalR auth failed: invalid API key for {request.path}")
         return jsonify({'error': 'Unauthorized'}), 401
 
     return None

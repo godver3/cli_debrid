@@ -16,7 +16,7 @@ import os
 import json
 import secrets
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Add the project root to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -118,9 +118,9 @@ def create_movie_resource(item):
         try:
             added_time = datetime.fromisoformat(collected_at.replace('Z', '+00:00'))
         except ValueError:
-            added_time = datetime.utcnow()
+            added_time = datetime.now(timezone.utc)
     else:
-        added_time = datetime.utcnow()
+        added_time = datetime.now(timezone.utc)
 
     movie_file_id = generate_unique_id(item.get('id'), 'moviefile')
     quality = detect_quality_from_version(item.get('version', ''))
@@ -223,7 +223,7 @@ def create_series_resource(item, episodes=None):
         'lastAired': None,
         'nextAiring': None,
         'previousAiring': None,
-        'lastInfoSync': datetime.utcnow().isoformat() + 'Z',
+        'lastInfoSync': datetime.now(timezone.utc).isoformat() + 'Z',
         'seriesType': 'standard',
         'cleanTitle': (item.get('title') or '').lower().replace(' ', ''),
         'imdbId': item.get('imdb_id') or '',
@@ -231,7 +231,7 @@ def create_series_resource(item, episodes=None):
         'rootFolderPath': os.path.dirname(series_path) if series_path else '/tv',
         'genres': parse_genres(item.get('genres', '')),
         'tags': [],
-        'added': datetime.utcnow().isoformat() + 'Z'
+        'added': datetime.now(timezone.utc).isoformat() + 'Z'
     }
 
 
@@ -245,9 +245,9 @@ def create_episode_resource(item, series_id, series_title=None):
         try:
             air_date = datetime.fromisoformat(collected_at.replace('Z', '+00:00'))
         except ValueError:
-            air_date = datetime.utcnow()
+            air_date = datetime.now(timezone.utc)
     else:
-        air_date = datetime.utcnow()
+        air_date = datetime.now(timezone.utc)
 
     return {
         'id': episode_id,
@@ -285,9 +285,9 @@ def create_episode_file_resource(item, series_id):
         try:
             added_time = datetime.fromisoformat(collected_at.replace('Z', '+00:00'))
         except ValueError:
-            added_time = datetime.utcnow()
+            added_time = datetime.now(timezone.utc)
     else:
-        added_time = datetime.utcnow()
+        added_time = datetime.now(timezone.utc)
 
     return {
         'id': episode_file_id,
