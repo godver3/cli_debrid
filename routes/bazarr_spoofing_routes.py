@@ -17,7 +17,7 @@ import json
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
-from utilities.settings import get_setting, save_setting
+from utilities.settings import get_setting, set_setting
 from database.core import get_db_connection
 
 # Create blueprint - mounted at root to handle /api/v3/* and /signalr/* paths
@@ -1265,7 +1265,7 @@ def handle_signalr_sse():
 def generate_bazarr_key():
     """Generate a new API key for Bazarr integration."""
     new_key = generate_api_key()
-    save_setting('Bazarr Integration', 'api_key', new_key)
+    set_setting('Bazarr Integration', 'api_key', new_key)
     return jsonify({'success': True, 'api_key': new_key})
 
 
