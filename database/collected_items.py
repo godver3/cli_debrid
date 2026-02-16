@@ -558,6 +558,13 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                 # start_notification_time = time.time()
                                 add_to_collected_notifications(updated_item_dict)
                                 # logging.debug(f"add_to_collected_notifications for item {db_item_id} took {time.time() - start_notification_time:.4f} seconds.")
+
+                                # Notify Bazarr via SignalR if integration is enabled
+                                try:
+                                    from routes.bazarr_signalr import notify_media_collected
+                                    notify_media_collected(updated_item_dict, item.get('type', 'movie'))
+                                except Exception as bazarr_err:
+                                    logging.debug(f"Bazarr SignalR notification skipped: {bazarr_err}")
                             else:
                                 logging.warning(f"Could not fetch updated item with ID {db_item_id} after update for notification.")
                         else:
