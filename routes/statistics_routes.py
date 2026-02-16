@@ -682,6 +682,10 @@ def root():
             use_24hour_format
         )
     
+    # Get available versions for torrent modal dropdown
+    from utilities.web_scraper import get_available_versions
+    versions = get_available_versions()
+
     # Log total time
     render_start_time = time.perf_counter()
     template_rendered = render_template('statistics.html',
@@ -693,7 +697,8 @@ def root():
                          recently_upgraded=recently_upgraded,
                          use_24hour_format=use_24hour_format,
                          compact_view=compact_view,
-                         limited_env=limited_env)
+                         limited_env=limited_env,
+                         versions=versions)
     logging.debug(f"Statistics page load: Total route processing took {(time.perf_counter() - overall_start_time)*1000:.2f}ms. END")
 
     return template_rendered

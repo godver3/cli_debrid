@@ -284,7 +284,6 @@ def create_episode_item(show_item: Dict[str, Any], season_number: int, episode_n
             # Use the localized datetime for both date and time
             release_date = premiere_dt_local_tz.strftime("%Y-%m-%d")
             airtime = premiere_dt_local_tz.strftime("%H:%M")
-            # logging.debug(f"Calculated local release date: {release_date}, local airtime: {airtime} from UTC {first_aired_str}")
 
         except (ValueError, iso8601.ParseError) as e: # Catch iso8601.ParseError too
             logging.warning(f"Invalid datetime format or timezone conversion error: {first_aired_str} - {e}")

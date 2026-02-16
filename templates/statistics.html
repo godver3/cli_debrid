@@ -7,10 +7,29 @@
 <link rel="stylesheet" href="{{ url_for('static', filename='css/scraper-mobile.css') }}">
 <!-- Disabled: Using quality badges instead of pipe-separated format -->
 <!-- <script src="{{ url_for('static', filename='js/tangerine_filename_formatter.js') }}"></script> -->
+<style>
+    /* Show desktop uptime format by default, hide mobile */
+    .uptime-desktop { display: inline; }
+    .uptime-mobile { display: none; }
+
+    /* On mobile screens, hide desktop and show mobile format */
+    @media (max-width: 768px) {
+        .uptime-desktop { display: none; }
+        .uptime-mobile { display: inline; }
+    }
+</style>
 {% endblock %}
 {% block title %}Home{% endblock %}
 
 {% block content %}
+<!-- Hidden version select for torrent modal dropdown (populated server-side like library_show.html) -->
+<select id="version-select" style="display: none;">
+    {% for version in versions %}
+        <option value="{{ version }}">{{ version }}</option>
+    {% endfor %}
+    <option value="No Version">No Version</option>
+</select>
+
 <!-- Add modal for external links -->
 <div id="external-links-modal" class="modal">
     <div class="modal-content" id="external-links-modal-content">
@@ -912,7 +931,7 @@
                             <i class="fas fa-chart-line"></i>
                         </div>
                         <div class="stat-text-content">
-                            <div class="stat-label"><span class="hide-mobile-text">Daily </span>Usage</div>
+                            <div class="stat-label">Usage</div>
                             <div class="stat-number">
                                 <span id="daily_usage">{{ stats.usage_stats_data.percentage }}%</span>
                             </div>
@@ -932,11 +951,18 @@
                         </div>
                         <div class="stat-text-content">
                             <div class="stat-label">Uptime</div>
-                            <div class="stat-number">{{ '%dd %dh %dm' | format(
-                                stats.uptime // 86400,
-                                (stats.uptime % 86400) // 3600,
-                                (stats.uptime % 3600) // 60
-                            ) }}</div>
+                            <div class="stat-number">
+                                <span class="uptime-desktop">{{ '%dd %dh %dm' | format(
+                                    stats.uptime // 86400,
+                                    (stats.uptime % 86400) // 3600,
+                                    (stats.uptime % 3600) // 60
+                                ) }}</span>
+                                <span class="uptime-mobile">{{ '%dd%dh%dm' | format(
+                                    stats.uptime // 86400,
+                                    (stats.uptime % 86400) // 3600,
+                                    (stats.uptime % 3600) // 60
+                                ) }}</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1078,7 +1104,7 @@
             <div class="stats-box upcoming-releases" id="upcoming_releases">
                 <h3>
                     Upcoming Releases
-                    <a href="/statistics/calendar" class="calendar-link tangerine-only">Calendar →</a>
+                    <a href="/library?status=upcoming&type=movie&sort=release_asc" class="calendar-link tangerine-only">View All →</a>
                 </h3>
                 <ul>
                     {% for release in upcoming_releases %}

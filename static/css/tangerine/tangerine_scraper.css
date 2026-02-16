@@ -2615,3 +2615,273 @@ tr.filtered-out-item {
     font-weight: 500;
     font-size: 0.9em;
 }
+
+/* ========================================
+   FOLDER ICON - Desktop Only, Tangerine Only
+   ======================================== */
+
+/* Size cell wrapper for flex layout */
+.size-cell-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+}
+
+.size-value {
+    font-size: 14px;
+}
+
+/* Folder icon button - only visible on desktop in Tangerine theme */
+.folder-icon-btn {
+    background: transparent !important;
+    border: 1px solid rgba(255, 107, 53, 0.3) !important;
+    border-radius: 6px !important;
+    padding: 3px 4px !important;
+    cursor: pointer;
+    color: var(--text-secondary) !important;
+    transition: all 0.2s ease;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px !important;
+    width: auto !important;  /* Override the 90% width from .overlay-content td button */
+    max-width: none !important;
+    margin: 0 !important;
+    text-transform: none !important;
+    font-weight: normal !important;
+}
+
+.folder-icon-btn:hover {
+    background: rgba(255, 107, 53, 0.1) !important;
+    border-color: var(--primary-color) !important;
+    color: var(--primary-color) !important;
+    transform: translateY(-1px);
+}
+
+.folder-icon-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* Hide folder icon on mobile */
+@media (max-width: 768px) {
+    .folder-icon-btn.desktop-only {
+        display: none !important;
+    }
+}
+
+/* ========================================
+   FILE LIST MODAL
+   ======================================== */
+
+.file-list-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(5px);
+    z-index: 10000;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+
+.file-list-modal {
+    background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+    border: 1px solid rgba(255, 107, 53, 0.3);
+    border-radius: var(--border-radius-md);
+    max-width: 800px;
+    width: 100%;
+    max-height: 600px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+.file-list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid rgba(255, 107, 53, 0.2);
+}
+
+.file-list-header h3 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+    background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-hover) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.file-list-close {
+    background: transparent;
+    border: none;
+    font-size: 2rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    line-height: 1;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+}
+
+.file-list-close:hover {
+    background: rgba(255, 107, 53, 0.1);
+    color: var(--primary-color);
+}
+
+.file-list-torrent-title {
+    padding: 12px 24px;
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    word-wrap: break-word;
+}
+
+.file-list-metadata {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 10px 24px;
+    font-size: 0.85rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.metadata-item {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.metadata-label {
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.metadata-value {
+    color: var(--text-primary);
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+}
+
+.file-list-count {
+    padding: 8px 24px;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.file-list-content {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 0;
+    max-height: 400px; /* Limit to ~10 rows visible */
+}
+
+/* File list table */
+.file-list-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.file-list-table thead {
+    position: sticky;
+    top: 0;
+    background: linear-gradient(135deg, #1a1a1a 0%, #0a0a0a 100%);
+    z-index: 1;
+}
+
+.file-list-table th {
+    padding: 12px 24px;
+    text-align: left;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid rgba(255, 107, 53, 0.2);
+}
+
+.file-list-table tbody tr {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    transition: background 0.2s ease;
+}
+
+.file-list-table tbody tr:hover {
+    background: rgba(255, 107, 53, 0.05);
+}
+
+.file-list-table td {
+    padding: 12px 24px;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.file-list-table .file-name {
+    word-wrap: break-word;
+    word-break: break-all;
+    max-width: 0; /* Force wrapping */
+}
+
+.file-list-table .file-size {
+    white-space: nowrap;
+    font-weight: 500;
+    text-align: right;
+}
+
+/* Scrollbar styling for file list */
+.file-list-content::-webkit-scrollbar {
+    width: 8px;
+}
+
+.file-list-content::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+.file-list-content::-webkit-scrollbar-thumb {
+    background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-hover) 100%);
+    border-radius: 4px;
+}
+
+.file-list-content::-webkit-scrollbar-thumb:hover {
+    background: var(--primary-hover);
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+    .file-list-modal {
+        max-width: 95%;
+        max-height: 85vh;
+    }
+
+    .file-list-table th,
+    .file-list-table td {
+        padding: 10px 12px;
+        font-size: 0.85rem;
+    }
+
+    .file-list-header h3 {
+        font-size: 1.2rem;
+    }
+}
+
+/* Hide trailer text on mobile, show only play icon */
+@media (max-width: 768px) {
+    .trailer-text {
+        display: none !important;
+    }
+}

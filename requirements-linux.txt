@@ -48,3 +48,4 @@ tld>=0.13
 feedparser==6.0.11
 Markdown==3.8
 Flask-Compress==1.15
+simple-websocket>=1.0.0

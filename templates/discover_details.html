@@ -177,7 +177,11 @@
                                     <div class="movie-meta">
                                         <span id="show-status-badge" class="status-badge">Ended</span>
                                         <span id="show-rating-text">-</span>
-                                        <span class="separator">•</span>
+                                        <span id="show-rating-separator" class="separator" style="display: none;">•</span>
+                                        <span id="movie-certification-text" style="display: none;"></span>
+                                        <span id="certification-separator" class="separator" style="display: none;">•</span>
+                                        <span id="movie-network-text" style="display: none;"></span>
+                                        <span id="network-separator" class="separator" style="display: none;">•</span>
                                         <span id="movie-runtime-text">-</span>
                                         <span class="separator">•</span>
                                         <span id="movie-genres-text">-</span>
@@ -191,35 +195,24 @@
                                 <a id="link-tmdb" href="#" target="_blank" rel="noopener noreferrer" class="link-btn">
                                     <img src="{{ url_for('static', filename='images/tmdb.png') }}" alt="TMDB" class="link-icon">
                                     TMDB
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M15 3h6v6"></path>
-                                        <path d="M10 14 21 3"></path>
-                                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                                    </svg>
+                                </a>
+                                <a id="link-tvdb" href="#" target="_blank" rel="noopener noreferrer" class="link-btn" style="display: none;">
+                                    <img src="{{ url_for('static', filename='images/tvdb.png') }}" alt="TVDB" class="link-icon">
+                                    TVDB
                                 </a>
                                 <a id="link-imdb" href="#" target="_blank" rel="noopener noreferrer" class="link-btn" style="display: none;">
                                     <img src="{{ url_for('static', filename='images/imdb.png') }}" alt="IMDb" class="link-icon">
                                     IMDb
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M15 3h6v6"></path>
-                                        <path d="M10 14 21 3"></path>
-                                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                                    </svg>
                                 </a>
                                 <a id="link-trakt" href="#" target="_blank" rel="noopener noreferrer" class="link-btn" style="display: none;">
                                     <img src="{{ url_for('static', filename='images/trakt.png') }}" alt="Trakt" class="link-icon">
                                     Trakt
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M15 3h6v6"></path>
-                                        <path d="M10 14 21 3"></path>
-                                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                                    </svg>
                                 </a>
-                                <button id="btn-trailer" class="link-btn" style="display: none;" title="Watch Trailer">
-                                    Trailer
+                                <button id="btn-trailer" class="link-btn" style="display: none;" title="Watch Trailer">                                    
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
                                         <polygon points="5 3 19 12 5 21 5 3"></polygon>
                                     </svg>
+                                    <span class="trailer-text">Trailer</span>
                                 </button>
                             </div>
                         </div>
@@ -289,6 +282,10 @@
                         <div class="detail-row">
                             <span class="detail-label">TMDB ID</span>
                             <a id="tmdb-link-detail" href="#" target="_blank" class="detail-link">-</a>
+                        </div>
+                        <div class="detail-row" id="tvdb-row" style="display: none;">
+                            <span class="detail-label">TVDB ID</span>
+                            <a id="tvdb-link-detail" href="#" target="_blank" class="detail-link">-</a>
                         </div>
                         <div class="detail-row" id="imdb-row" style="display: none;">
                             <span class="detail-label">IMDb</span>

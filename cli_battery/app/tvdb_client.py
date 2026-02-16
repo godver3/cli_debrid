@@ -61,6 +61,34 @@ _STATUS_MAP = {
     'Planned': 'planned',
 }
 
+# Network name → IANA timezone mapping for international networks
+# Used when TVDB doesn't provide timezone in originalNetwork.timezone
+_NETWORK_TIMEZONE_MAP = {
+    # South Korean networks
+    'KBS': 'Asia/Seoul',
+    'KBS 2': 'Asia/Seoul',
+    'KBS1': 'Asia/Seoul',
+    'KBS2': 'Asia/Seoul',
+    'MBC': 'Asia/Seoul',
+    'SBS': 'Asia/Seoul',
+    'tvN': 'Asia/Seoul',
+    'JTBC': 'Asia/Seoul',
+    'OCN': 'Asia/Seoul',
+    # Japanese networks
+    'NHK': 'Asia/Tokyo',
+    'Fuji TV': 'Asia/Tokyo',
+    'TBS': 'Asia/Tokyo',
+    'TV Tokyo': 'Asia/Tokyo',
+    'TV Asahi': 'Asia/Tokyo',
+    'Nippon TV': 'Asia/Tokyo',
+    # UK networks
+    'BBC One': 'Europe/London',
+    'BBC Two': 'Europe/London',
+    'ITV': 'Europe/London',
+    'Channel 4': 'Europe/London',
+    # Add more as needed
+}
+
 
 def is_available() -> bool:
     """Check if TVDB API key is configured."""
@@ -256,20 +284,126 @@ def _extract_aliases(translations: list) -> dict:
     return dict(aliases)
 
 
+def _get_trakt_episode_air_date(imdb_id: str, season: int, episode: int) -> str | None:
+    """Fetch episode first_aired from Trakt as fallback when TVDB has incomplete data."""
+    try:
+        from . import trakt_client
+        seasons_data, source = trakt_client.get_show_seasons_and_episodes(imdb_id, include_specials=True)
+        if seasons_data and season in seasons_data:
+            season_data = seasons_data[season]
+            if 'episodes' in season_data and episode in season_data['episodes']:
+                ep_data = season_data['episodes'][episode]
+                return ep_data.get('first_aired')
+    except Exception as e:
+        logger.debug(f"Could not fetch Trakt episode data for {imdb_id} S{season:02d}E{episode:02d}: {e}")
+    return None
+
+
+def _batch_fetch_episode_air_dates(imdb_id: str, tmdb_id: int = None) -> dict:
+    """Batch-fetch all episode air dates from TMDB first (fast), then Trakt as fallback.
+
+    Returns a dict: {(season, episode): 'YYYY-MM-DDTHH:MM:SS.000Z', ...}
+    This avoids making 100+ individual API calls for each episode.
+
+    Flow: TVDB → TMDB (batch) → Trakt (batch with 30s timeout) → midnight UTC fallback
+    """
+    air_dates = {}
+
+    # Try TMDB first (faster, no rate limits)
+    if tmdb_id:
+        try:
+            from utilities.settings import get_setting
+            tmdb_api_key = get_setting('TMDB', 'api_key', '')
+            if tmdb_api_key:
+                logger.info(f"Batch-fetching episode air dates from TMDB for {imdb_id} (TMDB ID: {tmdb_id})")
+                url = f"https://api.themoviedb.org/3/tv/{tmdb_id}?api_key={tmdb_api_key}&append_to_response=external_ids"
+                resp = requests.get(url, timeout=15)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    seasons = data.get('seasons', [])
+
+                    # Fetch each season's episodes
+                    for season_info in seasons:
+                        season_num = season_info.get('season_number')
+                        if season_num is None:
+                            continue
+
+                        season_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_num}?api_key={tmdb_api_key}"
+                        season_resp = requests.get(season_url, timeout=15)
+                        if season_resp.status_code == 200:
+                            season_data = season_resp.json()
+                            episodes = season_data.get('episodes', [])
+                            for ep in episodes:
+                                ep_num = ep.get('episode_number')
+                                air_date = ep.get('air_date')
+                                # TMDB returns date + time in 'air_date' field
+                                if air_date and ep_num is not None:
+                                    # Convert TMDB format to ISO 8601 UTC
+                                    if 'T' not in air_date:
+                                        air_date = f"{air_date}T00:00:00.000Z"
+                                    air_dates[(season_num, ep_num)] = air_date
+
+                    if air_dates:
+                        logger.info(f"✅ TMDB: Fetched {len(air_dates)} episode air dates for {imdb_id}")
+                        return air_dates
+        except Exception as e:
+            logger.debug(f"TMDB batch fetch failed for {imdb_id}: {e}")
+
+    # Fallback to Trakt (all episodes in one call) - with increased timeout
+    try:
+        from . import trakt_client
+        logger.info(f"Batch-fetching episode air dates from Trakt for {imdb_id}")
+
+        # Temporarily increase timeout for batch operations (10s is too short for shows with many episodes)
+        old_timeout = trakt_client.REQUEST_TIMEOUT
+        try:
+            trakt_client.REQUEST_TIMEOUT = 30  # Increase from 10s to 30s for batch fetch
+            seasons_data, source = trakt_client.get_show_seasons_and_episodes(imdb_id, include_specials=True)
+            if seasons_data:
+                for season_num, season_data in seasons_data.items():
+                    if 'episodes' in season_data:
+                        for ep_num, ep_data in season_data['episodes'].items():
+                            first_aired = ep_data.get('first_aired')
+                            if first_aired:
+                                air_dates[(season_num, ep_num)] = first_aired
+
+                if air_dates:
+                    logger.info(f"✅ Trakt: Fetched {len(air_dates)} episode air dates for {imdb_id}")
+                    return air_dates
+        finally:
+            trakt_client.REQUEST_TIMEOUT = old_timeout  # Always restore original timeout
+
+    except Exception as e:
+        logger.warning(f"Trakt batch fetch failed for {imdb_id}: {e}")
+
+    return air_dates
+
+
 def _format_air_date(date_str: str | None, airs_time: str | None = None,
-                     airs_timezone: str | None = None) -> str | None:
+                     airs_timezone: str | None = None, imdb_id: str = None,
+                     season: int = None, episode: int = None,
+                     cached_air_dates: dict = None) -> str | None:
     """Convert TVDB 'YYYY-MM-DD' to ISO 8601 UTC datetime.
 
     TVDB episode dates are in the show's local timezone (date-only).  When
     *airs_time* (HH:MM) and *airs_timezone* (IANA tz name) are provided we
     combine them with the date to produce a proper UTC timestamp, matching what
-    Trakt returns.  Otherwise we fall back to midnight UTC.
+    Trakt returns.
+
+    If TVDB only provides date without time, and no timezone is available,
+    looks up cached air date from TMDB/Trakt batch fetch to avoid individual API calls.
     """
     if not date_str:
         return None
     # Already ISO 8601 format with time component
     if 'T' in date_str:
         return date_str
+
+    # If no timezone available, check cached air dates first (from batch fetch)
+    if not airs_timezone and cached_air_dates and season is not None and episode is not None:
+        cached_date = cached_air_dates.get((season, episode))
+        if cached_date:
+            return cached_date
 
     if airs_time and airs_timezone:
         try:
@@ -298,6 +432,24 @@ def _map_status(tvdb_status: str | None) -> str | None:
     return _STATUS_MAP.get(tvdb_status, tvdb_status.lower())
 
 
+def _infer_timezone_from_network(network_name: str | None) -> str | None:
+    """Infer IANA timezone from network name when TVDB doesn't provide it."""
+    if not network_name:
+        return None
+
+    # Direct match
+    if network_name in _NETWORK_TIMEZONE_MAP:
+        return _NETWORK_TIMEZONE_MAP[network_name]
+
+    # Partial match (case-insensitive)
+    network_lower = network_name.lower()
+    for net_key, tz in _NETWORK_TIMEZONE_MAP.items():
+        if net_key.lower() in network_lower:
+            return tz
+
+    return None
+
+
 # ─── Public API (matches trakt_client signatures) ────────────────────────────
 
 
@@ -314,11 +466,15 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
     url = f"{TVDB_BASE_URL}/series/{tvdb_id}/extended?meta=translations,episodes"
     resp = _make_request(url)
     if not resp or resp.status_code != 200:
-        return None
+        logger.warning(f"TVDB metadata fetch failed for show {imdb_id} (TVDB ID: {tvdb_id}), trying Trakt fallback")
+        from . import trakt_client
+        return trakt_client.get_show_data(imdb_id)
 
     raw = resp.json().get('data', {})
     if not raw:
-        return None
+        logger.warning(f"TVDB returned empty data for show {imdb_id} (TVDB ID: {tvdb_id}), trying Trakt fallback")
+        from . import trakt_client
+        return trakt_client.get_show_data(imdb_id)
 
     # Build Trakt-compatible show dict
     show_data = _build_show_dict(raw, imdb_id, tvdb_id)
@@ -332,8 +488,23 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
     # Seasons + episodes — prefer English paginated endpoint for correct titles
     airs_time = raw.get('airsTime')
     network = raw.get('originalNetwork')
-    airs_timezone = network.get('timezone', 'America/New_York') if isinstance(network, dict) else None
-    seasons = _fetch_episodes_paginated(tvdb_id, airs_time, airs_timezone)
+    airs_timezone = network.get('timezone') if isinstance(network, dict) else None
+
+    # If TVDB doesn't provide timezone, try to infer from network name
+    if not airs_timezone and airs_time:
+        network_name = network.get('name') if isinstance(network, dict) else None
+        inferred_tz = _infer_timezone_from_network(network_name)
+        if inferred_tz:
+            airs_timezone = inferred_tz
+            logger.info(f"TVDB: Inferred timezone '{inferred_tz}' for network '{network_name}' (show {imdb_id})")
+        else:
+            logger.debug(f"TVDB: No timezone for show {imdb_id} (network: {network_name}), will use TMDB/Trakt batch fetch")
+
+    # Get TMDB ID for batch fetching episode air dates
+    tmdb_id = raw.get('remoteIds', [])
+    tmdb_id = next((r.get('id') for r in tmdb_id if r.get('sourceName') == 'TheMovieDB.com'), None)
+
+    seasons = _fetch_episodes_paginated(tvdb_id, airs_time, airs_timezone, imdb_id, tmdb_id)
     if not seasons:
         # Fallback to extended response (may have non-English titles)
         seasons = _extract_seasons_from_extended(raw)
@@ -374,14 +545,14 @@ def _build_show_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
 
     # Find English overview, fallback to default
     overview = raw.get('overview', '')
-    for t in raw.get('translations', {}).get('overviewTranslations', []):
+    for t in (raw.get('translations', {}).get('overviewTranslations') or []):
         if t.get('language') == 'eng':
             overview = t.get('overview', overview)
             break
 
     # Find English title, fallback to name
     title = raw.get('name', '')
-    for t in raw.get('translations', {}).get('nameTranslations', []):
+    for t in (raw.get('translations', {}).get('nameTranslations') or []):
         if t.get('language') == 'eng':
             title = t.get('name', title)
             break
@@ -397,7 +568,15 @@ def _build_show_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
     if raw.get('airsTime'):
         airs['time'] = raw['airsTime']
     if raw.get('originalNetwork'):
-        airs['timezone'] = raw['originalNetwork'].get('timezone', 'America/New_York')
+        network_tz = raw['originalNetwork'].get('timezone')
+        if network_tz:
+            airs['timezone'] = network_tz
+        elif airs.get('time'):
+            # Try to infer timezone from network name
+            network_name = raw['originalNetwork'].get('name')
+            inferred_tz = _infer_timezone_from_network(network_name)
+            if inferred_tz:
+                airs['timezone'] = inferred_tz
 
     show_data = {
         'title': title,
@@ -407,7 +586,7 @@ def _build_show_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
         'runtime': raw.get('averageRuntime') or raw.get('defaultSeasonType'),
         'status': _map_status(raw.get('status', {}).get('name') if isinstance(raw.get('status'), dict) else raw.get('status')),
         'network': raw.get('originalNetwork', {}).get('name', '') if isinstance(raw.get('originalNetwork'), dict) else '',
-        'genres': [g.get('name', '') for g in raw.get('genres', []) if isinstance(g, dict)],
+        'genres': [g.get('name', '') for g in (raw.get('genres') or []) if isinstance(g, dict)],
         'type': 'show',
     }
 
@@ -432,7 +611,14 @@ def _extract_seasons_from_extended(raw: dict) -> Optional[dict]:
     # Extract show-level airs info for proper datetime construction
     airs_time = raw.get('airsTime')  # e.g. "20:00"
     network = raw.get('originalNetwork')
-    airs_timezone = network.get('timezone', 'America/New_York') if isinstance(network, dict) else None
+    airs_timezone = network.get('timezone') if isinstance(network, dict) else None
+
+    # If TVDB doesn't provide timezone, try to infer from network name
+    if not airs_timezone and airs_time:
+        network_name = network.get('name') if isinstance(network, dict) else None
+        inferred_tz = _infer_timezone_from_network(network_name)
+        if inferred_tz:
+            airs_timezone = inferred_tz
 
     # Group episodes by season number
     eps_by_season: defaultdict = defaultdict(list)
@@ -469,7 +655,10 @@ def _extract_seasons_from_extended(raw: dict) -> Optional[dict]:
                 'title': ep.get('name', ''),
                 'overview': ep.get('overview', ''),
                 'runtime': ep.get('runtime', 0),
-                'first_aired': _format_air_date(ep.get('aired'), airs_time, airs_timezone),
+                'first_aired': _format_air_date(
+                    ep.get('aired'), airs_time, airs_timezone,
+                    imdb_id=imdb_id, season=season_number, episode=ep_num
+                ),
                 'imdb_id': None,  # TVDB doesn't provide per-episode IMDb IDs
                 'absolute': ep.get('absoluteNumber'),
             }
@@ -486,23 +675,38 @@ def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) 
     """Fetch seasons and episodes for a show."""
     tvdb_id = _resolve_tvdb_id(imdb_id, media_type='show')
     if not tvdb_id:
-        return None, None
+        logger.warning(f"TVDB: could not resolve IMDb {imdb_id} to TVDB ID for episodes, trying Trakt fallback")
+        from . import trakt_client
+        return trakt_client.get_show_seasons_and_episodes(imdb_id, include_specials=include_specials)
 
     # Try extended endpoint first
     url = f"{TVDB_BASE_URL}/series/{tvdb_id}/extended?meta=episodes"
     resp = _make_request(url)
     if not resp or resp.status_code != 200:
-        return None, None
+        logger.warning(f"TVDB episodes fetch failed for show {imdb_id} (TVDB ID: {tvdb_id}), trying Trakt fallback")
+        from . import trakt_client
+        return trakt_client.get_show_seasons_and_episodes(imdb_id, include_specials=include_specials)
 
     raw = resp.json().get('data', {})
 
     # Extract airs info for datetime construction
     airs_time = raw.get('airsTime')
     network = raw.get('originalNetwork')
-    airs_timezone = network.get('timezone', 'America/New_York') if isinstance(network, dict) else None
+    airs_timezone = network.get('timezone') if isinstance(network, dict) else None
+
+    # If TVDB doesn't provide timezone, try to infer from network name
+    if not airs_timezone and airs_time:
+        network_name = network.get('name') if isinstance(network, dict) else None
+        inferred_tz = _infer_timezone_from_network(network_name)
+        if inferred_tz:
+            airs_timezone = inferred_tz
+
+    # Get TMDB ID for batch fetching episode air dates
+    tmdb_id = raw.get('remoteIds', [])
+    tmdb_id = next((r.get('id') for r in tmdb_id if r.get('sourceName') == 'TheMovieDB.com'), None)
 
     # Prefer English paginated endpoint for correct episode titles
-    seasons = _fetch_episodes_paginated(tvdb_id, airs_time, airs_timezone)
+    seasons = _fetch_episodes_paginated(tvdb_id, airs_time, airs_timezone, imdb_id, tmdb_id)
     if not seasons:
         # Fallback to extended response (may have non-English titles)
         seasons = _extract_seasons_from_extended(raw)
@@ -514,7 +718,8 @@ def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) 
 
 
 def _fetch_episodes_paginated(tvdb_id: int, airs_time: str | None = None,
-                              airs_timezone: str | None = None) -> Optional[dict]:
+                              airs_timezone: str | None = None, imdb_id: str = None,
+                              tmdb_id: int = None) -> Optional[dict]:
     """Fetch episodes via the paginated /episodes/default endpoint."""
     all_episodes: list = []
     page = 0
@@ -541,6 +746,11 @@ def _fetch_episodes_paginated(tvdb_id: int, airs_time: str | None = None,
     if not all_episodes:
         return None
 
+    # Batch-fetch episode air dates from TMDB/Trakt if no timezone available
+    cached_air_dates = {}
+    if not airs_timezone and imdb_id:
+        cached_air_dates = _batch_fetch_episode_air_dates(imdb_id, tmdb_id)
+
     # Group into seasons
     eps_by_season: defaultdict = defaultdict(list)
     for ep in all_episodes:
@@ -559,7 +769,11 @@ def _fetch_episodes_paginated(tvdb_id: int, airs_time: str | None = None,
                 'title': ep.get('name', ''),
                 'overview': ep.get('overview', ''),
                 'runtime': ep.get('runtime', 0),
-                'first_aired': _format_air_date(ep.get('aired'), airs_time, airs_timezone),
+                'first_aired': _format_air_date(
+                    ep.get('aired'), airs_time, airs_timezone,
+                    imdb_id=imdb_id, season=sn, episode=ep_num,
+                    cached_air_dates=cached_air_dates
+                ),
                 'imdb_id': None,
                 'absolute': ep.get('absoluteNumber'),
             }
@@ -601,11 +815,15 @@ def get_movie_data(imdb_id: str) -> Optional[dict]:
     url = f"{TVDB_BASE_URL}/movies/{tvdb_id}/extended?meta=translations"
     resp = _make_request(url)
     if not resp or resp.status_code != 200:
-        return None
+        logger.warning(f"TVDB metadata fetch failed for movie {imdb_id} (TVDB ID: {tvdb_id}), trying Trakt fallback")
+        from . import trakt_client
+        return trakt_client.get_movie_data(imdb_id)
 
     raw = resp.json().get('data', {})
     if not raw:
-        return None
+        logger.warning(f"TVDB returned empty data for movie {imdb_id} (TVDB ID: {tvdb_id}), trying Trakt fallback")
+        from . import trakt_client
+        return trakt_client.get_movie_data(imdb_id)
 
     data = _build_movie_dict(raw, imdb_id, tvdb_id)
 
@@ -679,11 +897,11 @@ def _build_movie_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
     # Find English overview/title
     title = raw.get('name', '')
     overview = raw.get('overview', '')
-    for t in raw.get('translations', {}).get('nameTranslations', []):
+    for t in raw.get('translations', {}).get('nameTranslations', []) or []:
         if t.get('language') == 'eng' and t.get('name'):
             title = t['name']
             break
-    for t in raw.get('translations', {}).get('overviewTranslations', []):
+    for t in raw.get('translations', {}).get('overviewTranslations', []) or []:
         if t.get('language') == 'eng':
             overview = t.get('overview', overview)
             break
@@ -695,7 +913,7 @@ def _build_movie_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
         'overview': overview,
         'runtime': raw.get('runtime'),
         'status': _map_status(raw.get('status', {}).get('name') if isinstance(raw.get('status'), dict) else raw.get('status')),
-        'genres': [g.get('name', '') for g in raw.get('genres', []) if isinstance(g, dict)],
+        'genres': [g.get('name', '') for g in (raw.get('genres') or []) if isinstance(g, dict)],
         'type': 'movie',
     }
 
@@ -884,7 +1102,7 @@ def _fetch_tmdb_movie_data(imdb_id: str, api_key: str) -> Optional[dict]:
         status_raw = (raw.get('status') or '').lower()
         status = 'released' if status_raw == 'released' else status_raw
 
-        genres = [g.get('name', '') for g in raw.get('genres', []) if isinstance(g, dict)]
+        genres = [g.get('name', '') for g in (raw.get('genres') or []) if isinstance(g, dict)]
 
         data = {
             'title': raw.get('title', ''),
@@ -937,11 +1155,11 @@ def _fetch_tmdb_show_data(imdb_id: str, api_key: str) -> Optional[dict]:
         }
         status = status_map.get(status_raw, status_raw)
 
-        genres = [g.get('name', '') for g in raw.get('genres', []) if isinstance(g, dict)]
+        genres = [g.get('name', '') for g in (raw.get('genres') or []) if isinstance(g, dict)]
 
         # Build seasons dict
         seasons = {}
-        for s in raw.get('seasons', []):
+        for s in (raw.get('seasons') or []):
             sn = s.get('season_number')
             if sn is not None:
                 seasons[str(sn)] = {

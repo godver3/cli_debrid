@@ -161,7 +161,7 @@ class APITracker:
         domain = urlparse(url).netloc
         if domain in self.monitored_domains:
             self.rate_limiter.check_limits(domain)
-        
+
         try:
             self.current_url = url
             self._args = None
@@ -177,7 +177,7 @@ class APITracker:
         domain = urlparse(url).netloc
         if domain in self.monitored_domains:
             self.rate_limiter.check_limits(domain)
-        
+
         try:
             self.current_url = url
             self._args = None
@@ -193,7 +193,7 @@ class APITracker:
         domain = urlparse(url).netloc
         if domain in self.monitored_domains:
             self.rate_limiter.check_limits(domain)
-        
+
         try:
             self.current_url = url
             self._args = None
@@ -209,7 +209,7 @@ class APITracker:
         domain = urlparse(url).netloc
         if domain in self.monitored_domains:
             self.rate_limiter.check_limits(domain)
-        
+
         try:
             self.current_url = url
             self._args = None

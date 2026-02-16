@@ -84,7 +84,8 @@ input[type="text"]:focus, input[type="number"]:focus, select:focus {
 select#status-filter,
 select#type-filter,
 select#sort-select,
-select#duplicates-state-filter {
+select#duplicates-state-filter,
+select#resolution-filter  {
     padding: 10px;
     background-color: #3a3a3a;
     border: 1px solid #555;

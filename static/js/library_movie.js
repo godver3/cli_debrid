@@ -238,21 +238,44 @@ function renderMovieHeader(movie) {
         pageBackdrop.style.display = 'block';
     }
 
-    // Set inline metadata for movies
-    const yearText = document.getElementById('movie-year-text');
-    if (yearText && movie.rating) {
-        // Display rating with 1 decimal point and star icon
-        const ratingValue = parseFloat(movie.rating).toFixed(1);
-        yearText.innerHTML = `
-            <span style="display: inline-flex; align-items: center; gap: 0.25rem; vertical-align: bottom;">
-                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="width: 1em; height: 1em; display: block;">
+    // Set rating with star icon in meta section
+    const ratingText = document.getElementById('movie-rating-text');
+    const ratingSeparator = document.getElementById('movie-rating-separator');
+    if (ratingText) {
+        if (movie.rating) {
+            // Display rating with 1 decimal point and star icon
+            const ratingValue = parseFloat(movie.rating).toFixed(1);
+            ratingText.innerHTML = `
+                <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="width: 1em; height: 1em; display: inline-block; vertical-align: text-top; margin-right: 0.25rem;">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"></path>
-                </svg>
-                <span>${ratingValue}</span>
-            </span>
-        `;
-    } else if (yearText) {
-        yearText.textContent = '-';
+                </svg>${ratingValue}
+            `;
+            // Show the separator after rating
+            if (ratingSeparator) {
+                ratingSeparator.style.display = 'inline';
+            }
+        } else {
+            ratingText.style.display = 'none';
+            // Hide the separator if no rating
+            if (ratingSeparator) {
+                ratingSeparator.style.display = 'none';
+            }
+        }
+    }
+
+    // Set certification (check both certification and content_rating fields)
+    const certificationText = document.getElementById('movie-certification-text');
+    const certificationSeparator = document.getElementById('movie-certification-separator');
+    if (certificationText && certificationSeparator) {
+        const cert = movie.certification || movie.content_rating;
+        if (cert) {
+            certificationText.textContent = cert;
+            certificationText.style.display = 'inline';
+            certificationSeparator.style.display = 'inline';
+        } else {
+            certificationText.style.display = 'none';
+            certificationSeparator.style.display = 'none';
+        }
     }
 
     const runtimeText = document.getElementById('movie-runtime-text');
@@ -463,27 +486,32 @@ function createFileRow(file, rowNumber, movie) {
     number.textContent = rowNumber;
 
     // Status indicator (green checkmark for Collected, red X for Blacklisted, blue clock for Unreleased, purple magnifying glass for Wanted)
-    const status = document.createElement('div');
-    status.className = 'movie-file-status-icon';
+
     const isCollected = file.state === 'Collected';
     const isUpgrading = file.state === 'Upgrading';
     const isBlacklisted = file.state === 'Blacklisted';
     const isUnreleased = file.state === 'Unreleased';
     const isWanted = file.state === 'Wanted';
 
+    let statusIcon = '';
     if (isCollected) {
-        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#4CAF50"><path fill-rule="evenodd" d="M1.875 10c0-4.487 3.638-8.125 8.125-8.125s8.125 3.638 8.125 8.125-3.638 8.125-8.125 8.125S1.875 14.487 1.875 10zm11.133-1.512a.625.625 0 10-1.016-.726l-2.697 3.775-1.42-1.42a.625.625 0 00-.884.883l1.875 1.875a.625.625 0 00.95-.078l3.125-4.375z" clip-rule="evenodd" /></svg>';
+        statusIcon = `<svg class="movie-file-status-icon" width="20" height="20" viewBox="0 0 20 20" fill="#4CAF50"><path fill-rule="evenodd" d="M1.875 10c0-4.487 3.638-8.125 8.125-8.125s8.125 3.638 8.125 8.125-3.638 8.125-8.125 8.125S1.875 14.487 1.875 10zm11.133-1.512a.625.625 0 10-1.016-.726l-2.697 3.775-1.42-1.42a.625.625 0 00-.884.883l1.875 1.875a.625.625 0 00.95-.078l3.125-4.375z" clip-rule="evenodd" /></svg>`;
     } else if (isBlacklisted) {
-        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#ef4444"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm-1.433 5.808a.625.625 0 10-.884.884L9.117 10l-1.434 1.433a.625.625 0 10.884.884L10 10.883l1.433 1.434a.625.625 0 10.884-.884L10.883 10l1.434-1.433a.625.625 0 10-.884-.884L10 9.117l-1.433-1.434z" clip-rule="evenodd" /></svg>';
+        statusIcon = `<svg class="movie-file-status-icon" width="20" height="20" viewBox="0 0 20 20" fill="#ef4444"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm-1.433 5.808a.625.625 0 10-.884.884L9.117 10l-1.434 1.433a.625.625 0 10.884.884L10 10.883l1.433 1.434a.625.625 0 10.884-.884L10.883 10l1.434-1.433a.625.625 0 10-.884-.884L10 9.117l-1.433-1.434z" clip-rule="evenodd" /></svg>`;
     } else if (isUpgrading) {
-        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#60a5fa"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm.442 4.558a.625.625 0 00-.884 0l-2.5 2.5a.625.625 0 10.884.884l1.433-1.434v5.159a.625.625 0 001.25 0V8.383l1.433 1.434a.625.625 0 10.884-.884l-2.5-2.5z" clip-rule="evenodd" /></svg>';
+        statusIcon = `<svg class="movie-file-status-icon" width="20" height="20" viewBox="0 0 20 20" fill="#60a5fa"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm.442 4.558a.625.625 0 00-.884 0l-2.5 2.5a.625.625 0 10.884.884l1.433-1.434v5.159a.625.625 0 001.25 0V8.383l1.433 1.434a.625.625 0 10.884-.884l-2.5-2.5z" clip-rule="evenodd" /></svg>`;
     } else if (isUnreleased) {
-        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#e0e0e0"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zM10 6.875a.625.625 0 01.625.625v3.075l1.9 1.9a.625.625 0 11-.884.884l-2.083-2.083a.625.625 0 01-.183-.442V7.5a.625.625 0 01.625-.625z" clip-rule="evenodd" /></svg>';
+        statusIcon= `<svg class="movie-file-status-icon" width="20" height="20" viewBox="0 0 20 20" fill="#e0e0e0"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zM10 6.875a.625.625 0 01.625.625v3.075l1.9 1.9a.625.625 0 11-.884.884l-2.083-2.083a.625.625 0 01-.183-.442V7.5a.625.625 0 01.625-.625z" clip-rule="evenodd" /></svg>`;
     } else if (isWanted) {
-        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#fbbf24"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm3.567 6.017a.625.625 0 010 .884l-2.5 2.5a.625.625 0 01-.884-.884l1.434-1.434H7.5a.625.625 0 010-1.25h4.117l-1.434-1.434a.625.625 0 01.884-.884l2.5 2.5zm-7.134 4.633a.625.625 0 010-.884l2.5-2.5a.625.625 0 01.884.884l-1.434 1.434H12.5a.625.625 0 010 1.25H8.383l1.434 1.434a.625.625 0 01-.884.884l-2.5-2.5z" clip-rule="evenodd" /></svg>';
+        statusIcon = `<svg class="movie-file-status-icon" width="20" height="20" viewBox="0 0 20 20" fill="#fbbf24"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm3.567 6.017a.625.625 0 010 .884l-2.5 2.5a.625.625 0 01-.884-.884l1.434-1.434H7.5a.625.625 0 010-1.25h4.117l-1.434-1.434a.625.625 0 01.884-.884l2.5 2.5zm-7.134 4.633a.625.625 0 010-.884l2.5-2.5a.625.625 0 01.884.884l-1.434 1.434H12.5a.625.625 0 010 1.25H8.383l1.434 1.434a.625.625 0 01-.884.884l-2.5-2.5z" clip-rule="evenodd" /></svg>`;
     } else {
-        status.innerHTML = '<svg width="20" height="20" viewBox="0 0 20 20" fill="#666"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm-1.433 5.808a.625.625 0 10-.884.884L9.117 10l-1.434 1.433a.625.625 0 10.884.884L10 10.883l1.433 1.434a.625.625 0 10.884-.884L10.883 10l1.434-1.433a.625.625 0 10-.884-.884L10 9.117l-1.433-1.434z" clip-rule="evenodd" /></svg>';
+        statusIcon = `<svg class="movie-file-status-icon" width="20" height="20" viewBox="0 0 20 20" fill="#666"><path fill-rule="evenodd" d="M10 1.875c-4.487 0-8.125 3.638-8.125 8.125s3.638 8.125 8.125 8.125 8.125-3.638 8.125-8.125S14.487 1.875 10 1.875zm-1.433 5.808a.625.625 0 10-.884.884L9.117 10l-1.434 1.433a.625.625 0 10.884.884L10 10.883l1.433 1.434a.625.625 0 10.884-.884L10.883 10l1.434-1.433a.625.625 0 10-.884-.884L10 9.117l-1.433-1.434z" clip-rule="evenodd" /></svg>`;
     }
+
+    // Create status icon element from SVG string
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = statusIcon.trim();
+    const statusIconElement = tempDiv.firstChild;
 
     // File info section
     const info = document.createElement('div');
@@ -610,7 +638,7 @@ function createFileRow(file, rowNumber, movie) {
     }
 
     row.appendChild(number);
-    row.appendChild(status);
+    row.appendChild(statusIconElement);
     row.appendChild(info);
     row.appendChild(actions);
 

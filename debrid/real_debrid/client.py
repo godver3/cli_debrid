@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 import tempfile
 import os
 import time
-from urllib.parse import unquote
 import hashlib
 import bencodepy
 import inspect
@@ -497,9 +496,8 @@ class RealDebridProvider(DebridProvider):
                     result = make_request('PUT', '/torrents/addTorrent', self.api_key, data=file_content)
             # Handle magnet link only if no temp file was used
             elif magnet_link:
-                # URL decode the magnet link if needed
-                if '%' in magnet_link:
-                    magnet_link = unquote(magnet_link)
+                # Don't URL decode - requests library handles encoding for POST form data
+                # If we decode first, it can corrupt the magnet link
 
                 # Check if torrent already exists
                 if hash_value:
@@ -512,6 +510,7 @@ class RealDebridProvider(DebridProvider):
                             return torrent['id']
 
                 # Add magnet link
+                logging.debug(f"Adding magnet with hash {hash_value[:16] if hash_value else 'unknown'}...")
                 data = {'magnet': magnet_link}
                 result = make_request('POST', '/torrents/addMagnet', self.api_key, data=data)
             else:

@@ -31,13 +31,15 @@ PRESETS_FILE = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'disc
 
 discover_bp = Blueprint('discover', __name__)
 
-def add_db_status_and_episode_info(results):
+def add_db_status_and_episode_info(results, use_battery=False):
     """
     Add database status and episode info to results.
     For TV shows with episodes in the database, adds episode_info dict.
 
     Args:
         results: List of result items with 'id' and 'media_type' fields
+        use_battery: If True, try Battery for season counts (slower but more accurate).
+                     If False, skip Battery and only use TMDB (faster for discovery browsing).
     """
     if not results:
         return
@@ -50,8 +52,7 @@ def add_db_status_and_episode_info(results):
     tv_show_ids = [str(item['id']) for item in results if item.get('media_type') == 'tv']
     episode_info = get_cached_episode_info(tv_show_ids) if tv_show_ids else {}
 
-    # For TV shows in DB, fetch season/episode counts from TMDB if not already present
-    tmdb_api_key = get_setting('TMDB', 'api_key', '')
+    # For TV shows in DB, try Battery first, then fetch season/episode counts from TMDB if needed
     tv_shows_needing_counts = []
     for item in results:
         if item.get('media_type') == 'tv' and episode_info.get(str(item['id'])):
@@ -59,7 +60,37 @@ def add_db_status_and_episode_info(results):
             if not item.get('number_of_seasons') or not item.get('number_of_episodes'):
                 tv_shows_needing_counts.append(item)
 
-    # Fetch counts from TMDB for shows in DB
+    # Try Battery first for shows in library (faster, cached data) - only if requested
+    if use_battery and tv_shows_needing_counts:
+        try:
+            from cli_battery.app.direct_api import DirectAPI
+            for item in tv_shows_needing_counts[:]:  # Use slice to allow removal during iteration
+                try:
+                    # Convert TMDB ID to IMDb ID
+                    imdb_id, _ = DirectAPI.tmdb_to_imdb(str(item['id']), media_type='show')
+                    if imdb_id:
+                        # Try to get metadata from Battery
+                        battery_metadata, source = DirectAPI.get_show_metadata(imdb_id)
+                        if battery_metadata and battery_metadata.get('seasons'):
+                            seasons_data = battery_metadata['seasons']
+                            if isinstance(seasons_data, dict):
+                                # Exclude Season 0 (specials) from both season and episode counts
+                                item['number_of_seasons'] = len([s for s in seasons_data.keys() if s != '0' and s != 0])
+                                total_eps = sum(
+                                    s.get('episode_count', 0)
+                                    for k, s in seasons_data.items()
+                                    if isinstance(s, dict) and k != '0' and k != 0
+                                )
+                                item['number_of_episodes'] = total_eps
+                                tv_shows_needing_counts.remove(item)
+                                logging.debug(f"Battery provided season counts for TMDB {item['id']} from {source}")
+                except Exception as e:
+                    logging.debug(f"Battery lookup failed for TMDB {item['id']}: {e}")
+        except ImportError:
+            logging.debug("Battery not available, falling back to TMDB")
+
+    # Fetch counts from TMDB for remaining shows
+    tmdb_api_key = get_setting('TMDB', 'api_key', '')
     if tv_shows_needing_counts and tmdb_api_key:
         import requests
         for item in tv_shows_needing_counts:
@@ -68,8 +99,12 @@ def add_db_status_and_episode_info(results):
                 response = requests.get(url, timeout=5)
                 if response.status_code == 200:
                     data = response.json()
-                    item['number_of_seasons'] = data.get('number_of_seasons', 0)
-                    item['number_of_episodes'] = data.get('number_of_episodes', 0)
+                    # Exclude Season 0 (specials) from counts
+                    seasons = data.get('seasons', [])
+                    non_special_seasons = [s for s in seasons if s.get('season_number', 0) != 0]
+                    item['number_of_seasons'] = len(non_special_seasons)
+                    item['number_of_episodes'] = sum(s.get('episode_count', 0) for s in non_special_seasons)
+                    logging.debug(f"TMDB API provided season counts for {item['id']} (excluding specials)")
             except Exception as e:
                 logging.debug(f"Failed to fetch TMDB counts for {item['id']}: {e}")
 
@@ -81,20 +116,32 @@ def add_db_status_and_episode_info(results):
             item_episode_info = episode_info.get(str(item['id']))
             item['episode_info'] = item_episode_info
 
-            # Check if TV show is fully in DB (all seasons and episodes)
-            # Only redirect to library if EVERYTHING exists
+            # Override status based on wanted episodes and TMDB comparison
+            # Partial = some episodes collected/blacklisted AND (some wanted OR missing from DB entirely)
+            # This ensures correct navigation: Partial → discover details, Collected → library
             if item_episode_info and item['db_status'] != 'missing':
-                tmdb_total_seasons = item.get('number_of_seasons', 0)
-                tmdb_total_episodes = item.get('number_of_episodes', 0)
-                db_seasons = item_episode_info.get('distinct_seasons', 0)
-                db_episodes = item_episode_info.get('total_episodes', 0)
+                # Get episode state counts
+                collected = item_episode_info.get('collected_episodes', 0)
+                blacklisted = item_episode_info.get('blacklisted_episodes', 0)
+                wanted = item_episode_info.get('wanted_episodes', 0)
+                db_total = item_episode_info.get('total_episodes', 0)  # Episodes that exist in DB
 
-                # Override to "partial" if incomplete coverage
-                # Also override if we don't have TMDB counts (safety check)
-                if tmdb_total_seasons == 0 or tmdb_total_episodes == 0:
-                    item['db_status'] = 'partial'
-                elif db_seasons < tmdb_total_seasons or db_episodes < tmdb_total_episodes:
-                    item['db_status'] = 'partial'
+                # Get TMDB total (excluding Season 0)
+                tmdb_total = item.get('number_of_episodes', 0)
+
+                # Check if we're missing episodes entirely from the DB
+                missing_from_db = (tmdb_total > 0 and db_total < tmdb_total)
+
+                # Determine status
+                if (collected > 0 or blacklisted > 0):
+                    # We have some collected/blacklisted episodes
+                    if wanted > 0 or missing_from_db:
+                        # Either has wanted episodes OR missing episodes entirely from DB
+                        item['db_status'] = 'partial'
+                    else:
+                        # All episodes accounted for and collected/blacklisted
+                        item['db_status'] = 'collected'
+                # If only wanted/unreleased episodes (no collected/blacklisted), keep current status
 
 def get_digital_release_date(tmdb_id, media_type, tmdb_api_key):
     """
@@ -139,6 +186,50 @@ def get_digital_release_date(tmdb_id, media_type, tmdb_api_key):
     except Exception as e:
         logging.debug(f"Error fetching digital release date for {media_type} {tmdb_id}: {e}")
         return {}
+
+def get_certification(tmdb_id, media_type, tmdb_api_key, region='US'):
+    """
+    Fetch content certification/rating for a specific region from TMDB.
+    For movies: uses release_dates endpoint (e.g., US: G, PG, PG-13, R, NC-17)
+    For TV shows: uses content_ratings endpoint (e.g., US: TV-Y, TV-PG, TV-14, TV-MA)
+    Returns certification string or empty string if not found.
+    """
+    try:
+        if media_type == 'movie':
+            # For movies, use the release_dates endpoint
+            url = f"https://api.themoviedb.org/3/movie/{tmdb_id}/release_dates?api_key={tmdb_api_key}"
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            # Find certification for the specified region
+            for country in data.get('results', []):
+                if country.get('iso_3166_1') == region:
+                    for release in country.get('release_dates', []):
+                        cert = release.get('certification', '').strip()
+                        if cert:
+                            return cert
+        else:
+            # For TV shows, use the content_ratings endpoint
+            url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/content_ratings?api_key={tmdb_api_key}"
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            # Find content rating for the specified region
+            for rating in data.get('results', []):
+                if rating.get('iso_3166_1') == region:
+                    cert = rating.get('rating', '').strip()
+                    if cert:
+                        return cert
+
+        # Log when no certification is found to help with debugging
+        if logging.getLogger().isEnabledFor(logging.DEBUG):
+            logging.debug(f"No certification found for {media_type} {tmdb_id} in region {region}")
+        return ''
+    except Exception as e:
+        logging.error(f"Error fetching certification for {media_type} {tmdb_id} ({region}): {e}")
+        return ''
 
 def enrich_with_digital_dates(results, media_type, tmdb_api_key):
     """
@@ -262,7 +353,7 @@ def search():
                     })
 
             # Add database status and episode info
-            add_db_status_and_episode_info(results)
+            add_db_status_and_episode_info(results, use_battery=False)
 
             return jsonify({
                 'results': results,
@@ -335,7 +426,7 @@ def search():
                     logging.debug(f"TMDB TV lookup failed for {tmdb_id}: {e}")
 
             # Add database status and episode info
-            add_db_status_and_episode_info(results)
+            add_db_status_and_episode_info(results, use_battery=False)
 
             return jsonify({
                 'results': results,
@@ -540,8 +631,8 @@ def trending():
         # Enrich with digital release dates
         results = enrich_with_digital_dates(results, 'all', tmdb_api_key)
 
-        # Add database status and episode info
-        add_db_status_and_episode_info(results)
+        # Add database status and episode info (skip Battery for faster discovery browsing)
+        add_db_status_and_episode_info(results, use_battery=False)
 
         logging.info(f"Trending: {media_type} with anime={anime_filter}, returned {len(results)} results")
 
@@ -657,6 +748,58 @@ def get_keyword(keyword_id):
         return jsonify({'error': 'Internal server error'}), 500
 
 
+@discover_bp.route('/api/certifications')
+@user_required
+def get_certifications():
+    """
+    Get certifications for a specific region and media type from TMDB
+    Used to populate certification filter dropdown based on selected watch region
+    """
+    try:
+        tmdb_api_key = get_setting('TMDB', 'api_key', '')
+        if not tmdb_api_key:
+            return jsonify({'error': 'TMDB API key not configured'}), 400
+
+        region = request.args.get('region', 'US').upper()
+        media_type = request.args.get('type', 'movie')  # 'movie' or 'tv'
+
+        # Fetch certifications from TMDB
+        if media_type == 'tv':
+            url = f"https://api.themoviedb.org/3/certification/tv/list?api_key={tmdb_api_key}"
+        else:
+            url = f"https://api.themoviedb.org/3/certification/movie/list?api_key={tmdb_api_key}"
+
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        # Extract certifications for the specified region
+        certifications_data = data.get('certifications', {})
+        region_certs = certifications_data.get(region, [])
+
+        # Format certifications for dropdown
+        certifications = [
+            {
+                'certification': cert.get('certification', ''),
+                'meaning': cert.get('meaning', ''),
+                'order': cert.get('order', 999)
+            }
+            for cert in region_certs
+        ]
+
+        # Sort by order
+        certifications.sort(key=lambda x: x['order'])
+
+        return jsonify({'certifications': certifications, 'region': region})
+
+    except requests.exceptions.RequestException as e:
+        logging.error(f"TMDB certifications API error: {e}")
+        return jsonify({'error': 'Failed to fetch certifications'}), 500
+    except Exception as e:
+        logging.error(f"Get certifications error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
 @discover_bp.route('/api/companies')
 @user_required
 def search_companies():
@@ -753,6 +896,16 @@ def filter_content():
         # Runtime filters
         runtime_min = request.args.get('runtime_min', '')
         runtime_max = request.args.get('runtime_max', '')
+
+        # Revenue filters (box office earnings, in millions)
+        # Certification filters (range selector with gte/lte)
+        certification_min = request.args.get('certification.gte', '')
+        certification_max = request.args.get('certification.lte', '')
+        certification_country = request.args.get('certification_country', '')
+
+        # Legacy certification filters (for backward compatibility)
+        certification = request.args.get('certification', '')
+        certification_exclude = request.args.get('certification_exclude', '')
 
         # Production company (include and exclude)
         production_company = request.args.get('production_company', '')
@@ -972,6 +1125,66 @@ def filter_content():
                 except ValueError:
                     pass
 
+        # Certification filtering (content rating)
+        # TMDB: certification parameter has confusing behavior - "certification=G" returns G and LESS restrictive
+        # For exact matches, use both .gte and .lte with same value
+        # NOTE: Certifications are region-specific and tied to watch_region parameter
+
+        # New range selector format (certification.gte and certification.lte from frontend)
+        if certification_min or certification_max:
+            country = certification_country or watch_region or 'US'
+            if certification_min:
+                params.append(f"certification.gte={certification_min}")
+                logging.info(f"[Discover Filter] Certification min: {certification_min}")
+            if certification_max:
+                params.append(f"certification.lte={certification_max}")
+                logging.info(f"[Discover Filter] Certification max: {certification_max}")
+            params.append(f"certification_country={country}")
+        # Legacy format (comma-separated certifications)
+        elif certification:
+            # Split multiple certifications (comma-separated from frontend)
+            certs = [c.strip() for c in certification.split(',') if c.strip()]
+
+            if len(certs) == 1:
+                # Single certification - use exact match with .gte and .lte
+                params.append(f"certification.gte={certs[0]}")
+                params.append(f"certification.lte={certs[0]}")
+                params.append(f"certification_country={watch_region}")
+                logging.info(f"[Discover Filter] Single certification filter: {certs[0]}")
+            else:
+                # Multiple certifications - use range approach
+                # TMDB API limitation: Can't do exact OR matching, so we get a range
+                # Example: Selecting "G" and "PG-13" will return G, PG, and PG-13
+                # Define certification order (US ratings)
+                cert_order_us = ['G', 'PG', 'PG-13', 'R', 'NC-17']
+                cert_order_tv = ['TV-Y', 'TV-Y7', 'TV-G', 'TV-PG', 'TV-14', 'TV-MA']
+
+                # Determine which order to use based on first certification
+                if any(c.startswith('TV-') for c in certs):
+                    cert_order = cert_order_tv
+                else:
+                    cert_order = cert_order_us
+
+                # Get indices of selected certifications
+                cert_indices = []
+                for cert in certs:
+                    if cert in cert_order:
+                        cert_indices.append(cert_order.index(cert))
+
+                if cert_indices:
+                    # Get range from lowest to highest selected certification
+                    min_cert = cert_order[min(cert_indices)]
+                    max_cert = cert_order[max(cert_indices)]
+
+                    params.append(f"certification.gte={min_cert}")
+                    params.append(f"certification.lte={max_cert}")
+                    params.append(f"certification_country={watch_region}")
+                    logging.info(f"[Discover Filter] Multiple certifications: {','.join(certs)} -> range {min_cert} to {max_cert}")
+                else:
+                    # Fallback if certifications not recognized
+                    logging.warning(f"[Discover Filter] Unrecognized certifications: {','.join(certs)}")
+        # Note: TMDB doesn't have a direct "without_certification" param for exclusion
+
         # Production company filtering (now accepts direct TMDB company IDs)
         # TMDB: with_companies uses pipe for OR logic (match any company)
         if production_company:
@@ -1002,15 +1215,10 @@ def filter_content():
 
         url = base_url + "&" + "&".join(params)
 
-        logging.info(f"[Discover Filter] Media type: {media_type}")
-        logging.info(f"[Discover Filter] Date field: {date_field}")
-        logging.info(f"[Discover Filter] Watch Provider filter: {watch_provider} (region: {watch_region})")
-        logging.info(f"[Discover Filter] Network filter: {network}")
-        logging.info(f"[Discover Filter] Language filter: {language}")
-        logging.info(f"[Discover Filter] Country filter: {country}")
-        logging.info(f"[Discover Filter] Genres filter: {selected_genres}")
-        logging.info(f"[Discover Filter] Keywords filter: {keywords} (exclude: {keywords_exclude})")
-        logging.info(f"[Discover Filter] TMDB API URL: {url}")
+        # Log filters (hide API key for security)
+        url_without_key = url.split('api_key=')[0] + 'api_key=***' + (url.split('api_key=')[1].split('&', 1)[1] if '&' in url.split('api_key=')[1] else '')
+        cert_info = f"{certification_min}-{certification_max}" if (certification_min or certification_max) else (certification or 'none')
+        logging.debug(f"[Discover] Type={media_type}, Page={page}, Genres={selected_genres}, Cert={cert_info}, URL={url_without_key}")
 
         response = requests.get(url, timeout=15)
         response.raise_for_status()
@@ -1020,8 +1228,8 @@ def filter_content():
         # Add database status information
         results = data.get('results', [])
         total_results = data.get('total_results', 0)
-        
-        logging.info(f"[Discover Filter] TMDB returned {len(results)} results on page {page}, total available: {total_results}")
+
+        logging.debug(f"[Discover] Page {page}: {len(results)} results (total: {total_results})")
         
         # Enrich with digital release dates
         if results:
@@ -1035,7 +1243,7 @@ def filter_content():
                     item['media_type'] = media_type
 
             # Add database status and episode info
-            add_db_status_and_episode_info(results)
+            add_db_status_and_episode_info(results, use_battery=False)
         
         return jsonify(data)
 
@@ -1134,6 +1342,10 @@ def get_details(tmdb_id):
             if digital_date:
                 data['release_date'] = digital_date
 
+        # Get certification based on user's preferred region
+        certification_region = get_setting('TMDB', 'certification_region', 'US')
+        certification = get_certification(tmdb_id, media_type, tmdb_api_key, certification_region)
+
         # Get database status
         tmdb_id_str = str(tmdb_id)
         db_statuses_result = get_cached_db_statuses([tmdb_id_str])  # Returns Dict[str, str]
@@ -1155,6 +1367,7 @@ def get_details(tmdb_id):
             'genres': [g['name'] for g in data.get('genres', [])],
             'status': data.get('status', ''),
             'tagline': data.get('tagline', ''),
+            'certification': certification,
             'imdb_id': data.get('external_ids', {}).get('imdb_id') or data.get('imdb_id'),
             'media_type': media_type,
             'db_status': db_status
@@ -1613,9 +1826,32 @@ def details_data(tmdb_id, media_type):
     """
     API endpoint to fetch TMDB details for missing content
     Returns full metadata for display on detail page
+
+    For discover details, always use TMDB API to ensure complete metadata
+    (posters, backdrops, ratings, etc.) regardless of library status.
+    Battery is better suited for library detail pages.
     """
     try:
+        # Get TMDB API key early (needed for all requests)
         tmdb_api_key = get_setting('TMDB', 'api_key', '')
+
+        # Check library status for db_status field
+        in_library = False
+        try:
+            from database.core import get_db_connection
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            if media_type == 'tv':
+                cursor.execute("SELECT COUNT(*) FROM media_items WHERE tmdb_id = ? AND type = 'episode' LIMIT 1", (str(tmdb_id),))
+            else:
+                cursor.execute("SELECT COUNT(*) FROM media_items WHERE tmdb_id = ? AND type = 'movie' LIMIT 1", (str(tmdb_id),))
+            in_library = cursor.fetchone()[0] > 0
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            logging.debug(f"Library check failed for TMDB {tmdb_id}: {e}")
+
+        # Always use TMDB API for discover details to ensure complete metadata
         if not tmdb_api_key:
             return jsonify({'error': 'TMDB API key not configured'}), 400
 
@@ -1625,9 +1861,57 @@ def details_data(tmdb_id, media_type):
         else:
             url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={tmdb_api_key}&language=en-US&append_to_response=credits,external_ids,release_dates"
 
+        logging.info(f"Fetching TMDB metadata for {tmdb_id}")
         response = requests.get(url, timeout=15)
         response.raise_for_status()
         data = response.json()
+
+        # For TV shows: Use TVDB for seasons/episodes if TVDB API key is configured
+        # This ensures proper season splits (not TMDB absolute numbering for anime)
+        if media_type == 'tv':
+            tvdb_api_key = get_setting('TVDB', 'api_key', '')
+            if tvdb_api_key:
+                try:
+                    from cli_battery.app import tvdb_client
+
+                    # Get IMDb ID from TMDB response
+                    imdb_id_from_tmdb = data.get('external_ids', {}).get('imdb_id')
+                    if imdb_id_from_tmdb:
+                        logging.info(f"Fetching TVDB seasons for {tmdb_id} (IMDb: {imdb_id_from_tmdb}) for proper season structure")
+
+                        # Fetch show data from TVDB (returns full show metadata including seasons)
+                        tvdb_show_data = tvdb_client.get_show_data(imdb_id_from_tmdb)
+
+                        if tvdb_show_data and 'seasons' in tvdb_show_data:
+                            # TVDB seasons format: {season_number: {'episode_count': N, 'episodes': {...}}}
+                            # TMDB seasons format: [{'season_number': N, 'episode_count': M}, ...]
+                            # Convert TVDB dict format to TMDB list format
+                            tvdb_seasons_dict = tvdb_show_data['seasons']
+                            tvdb_seasons_list = []
+                            for season_num, season_data in tvdb_seasons_dict.items():
+                                if isinstance(season_data, dict):
+                                    tvdb_seasons_list.append({
+                                        'season_number': int(season_num) if str(season_num).isdigit() else season_num,
+                                        'episode_count': season_data.get('episode_count', 0),
+                                        'name': f"Season {season_num}",
+                                    })
+
+                            # Sort by season number
+                            tvdb_seasons_list.sort(key=lambda s: s['season_number'] if isinstance(s['season_number'], int) else 999)
+
+                            # Replace TMDB seasons with TVDB seasons (proper structure, English titles)
+                            data['seasons'] = tvdb_seasons_list
+                            data['number_of_seasons'] = len([s for s in tvdb_seasons_list if s.get('season_number', 0) > 0])
+                            # Recalculate total episode count from TVDB seasons (exclude season 0)
+                            data['number_of_episodes'] = sum([s.get('episode_count', 0) for s in tvdb_seasons_list if s.get('season_number', 0) > 0])
+                            logging.info(f"✅ Using TVDB seasons for proper structure ({data['number_of_seasons']} seasons, {data['number_of_episodes']} total episodes)")
+                        else:
+                            logging.debug(f"TVDB returned no season data, using TMDB seasons as fallback")
+                except Exception as e:
+                    logging.warning(f"Failed to fetch TVDB seasons for {tmdb_id}: {e}")
+                    import traceback
+                    logging.debug(f"TVDB error traceback: {traceback.format_exc()}")
+                    # Continue with TMDB seasons as fallback
 
         # Enrich with digital release date if it's a movie
         if media_type == 'movie':
@@ -1645,31 +1929,41 @@ def details_data(tmdb_id, media_type):
                         content_rating = rating.get('rating', '')
                         break
 
+            # Safe extraction of list fields (handle both TMDB and Battery formats)
+            genres = data.get('genres', [])
+            genres_list = [g['name'] for g in genres] if isinstance(genres, list) and all(isinstance(g, dict) for g in genres) else (genres if isinstance(genres, list) else [])
+
+            networks = data.get('networks', [])
+            networks_list = [n['name'] for n in networks] if isinstance(networks, list) and all(isinstance(n, dict) for n in networks) else (networks if isinstance(networks, list) else [])
+
+            created_by = data.get('created_by', [])
+            created_by_list = [c['name'] for c in created_by] if isinstance(created_by, list) and all(isinstance(c, dict) for c in created_by) else (created_by if isinstance(created_by, list) else [])
+
             result = {
                 'id': data.get('id'),
-                'title': data.get('name'),
-                'original_title': data.get('original_name'),
+                'title': data.get('name') or data.get('title'),
+                'original_title': data.get('original_name') or data.get('original_title'),
                 'year': str(data.get('first_air_date', ''))[:4] if data.get('first_air_date') else '',
                 'overview': data.get('overview'),
                 'poster_path': data.get('poster_path'),
                 'backdrop_path': data.get('backdrop_path'),
                 'vote_average': data.get('vote_average'),
                 'vote_count': data.get('vote_count'),
-                'genres': [g['name'] for g in data.get('genres', [])],
+                'genres': genres_list,
                 'first_air_date': data.get('first_air_date'),
                 'last_air_date': data.get('last_air_date'),
                 'status': data.get('status'),
                 'number_of_seasons': data.get('number_of_seasons'),
                 'number_of_episodes': data.get('number_of_episodes'),
-                'episode_run_time': data.get('episode_run_time', []),
-                'networks': [n['name'] for n in data.get('networks', [])],
-                'created_by': [c['name'] for c in data.get('created_by', [])],
+                'episode_run_time': data.get('episode_run_time', []) if isinstance(data.get('episode_run_time'), list) else [],
+                'networks': networks_list,
+                'created_by': created_by_list,
                 'content_rating': content_rating,
                 'media_type': 'tv',
                 'tmdb_id': data.get('id'),
-                'imdb_id': data.get('external_ids', {}).get('imdb_id'),
-                'tvdb_id': data.get('external_ids', {}).get('tvdb_id'),
-                'seasons': data.get('seasons', [])
+                'imdb_id': data.get('external_ids', {}).get('imdb_id') if isinstance(data.get('external_ids'), dict) else None,
+                'tvdb_id': data.get('external_ids', {}).get('tvdb_id') if isinstance(data.get('external_ids'), dict) else None,
+                'seasons': data.get('seasons', []) if isinstance(data.get('seasons'), list) else []
             }
         else:
             # Get certification (US)
@@ -1683,6 +1977,10 @@ def details_data(tmdb_id, media_type):
                                 break
                         break
 
+            # Safe extraction of list fields (handle both TMDB and Battery formats)
+            genres = data.get('genres', [])
+            genres_list = [g['name'] for g in genres] if isinstance(genres, list) and all(isinstance(g, dict) for g in genres) else (genres if isinstance(genres, list) else [])
+
             result = {
                 'id': data.get('id'),
                 'title': data.get('title'),
@@ -1693,7 +1991,7 @@ def details_data(tmdb_id, media_type):
                 'backdrop_path': data.get('backdrop_path'),
                 'vote_average': data.get('vote_average'),
                 'vote_count': data.get('vote_count'),
-                'genres': [g['name'] for g in data.get('genres', [])],
+                'genres': genres_list,
                 'release_date': data.get('release_date'),
                 'runtime': data.get('runtime'),
                 'status': data.get('status'),
@@ -1703,26 +2001,30 @@ def details_data(tmdb_id, media_type):
                 'certification': certification,
                 'media_type': 'movie',
                 'tmdb_id': data.get('id'),
-                'imdb_id': data.get('imdb_id') or data.get('external_ids', {}).get('imdb_id')
+                'imdb_id': data.get('imdb_id') or (data.get('external_ids', {}).get('imdb_id') if isinstance(data.get('external_ids'), dict) else None)
             }
 
-        # Get cast (top 10)
-        if 'credits' in data and 'cast' in data['credits']:
-            result['cast'] = [
-                {'name': c.get('name', ''), 'character': c.get('character', ''), 'profile_path': c.get('profile_path')}
-                for c in data['credits']['cast'][:10]
-            ]
+        # Get cast (top 10) - safe extraction
+        if 'credits' in data and isinstance(data.get('credits'), dict) and 'cast' in data['credits']:
+            cast = data['credits']['cast']
+            if isinstance(cast, list):
+                result['cast'] = [
+                    {'name': c.get('name', ''), 'character': c.get('character', ''), 'profile_path': c.get('profile_path')}
+                    for c in cast[:10] if isinstance(c, dict)
+                ]
 
-        # Get director/creator
-        if 'credits' in data and 'crew' in data['credits']:
-            directors = [c['name'] for c in data['credits']['crew'] if c.get('job') == 'Director']
-            result['directors'] = directors
+        # Get director/creator - safe extraction
+        if 'credits' in data and isinstance(data.get('credits'), dict) and 'crew' in data['credits']:
+            crew = data['credits']['crew']
+            if isinstance(crew, list):
+                directors = [c['name'] for c in crew if isinstance(c, dict) and c.get('job') == 'Director']
+                result['directors'] = directors
 
         # Add default version from settings for scraping
         result['default_version'] = get_default_version()
 
-        # Add database status
-        add_db_status_and_episode_info([result])
+        # Add database status (use Battery for accurate counts on detail page)
+        add_db_status_and_episode_info([result], use_battery=True)
 
         return jsonify(result)
 
@@ -1738,6 +2040,7 @@ def details_data(tmdb_id, media_type):
 def season_episodes(tmdb_id, season_number):
     """
     API endpoint to fetch episode details for a specific season
+    Uses TVDB if API key configured (for proper season structure), otherwise TMDB
     Returns episode list with air dates, names, and runtime, merged with database info
     """
     try:
@@ -1747,11 +2050,71 @@ def season_episodes(tmdb_id, season_number):
         if not tmdb_api_key:
             return jsonify({'error': 'TMDB API key not configured'}), 400
 
-        url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_number}?api_key={tmdb_api_key}&language=en-US"
+        # Try TVDB first if API key is configured (for proper season structure)
+        tvdb_api_key = get_setting('TVDB', 'api_key', '')
+        data = None
 
-        response = requests.get(url, timeout=15)
-        response.raise_for_status()
-        data = response.json()
+        logging.info(f"Season episodes request for TMDB {tmdb_id}, season {season_number}")
+        logging.info(f"TVDB API key configured: {bool(tvdb_api_key)}")
+
+        if tvdb_api_key:
+            try:
+                from cli_battery.app import tvdb_client
+                from cli_battery.app.direct_api import DirectAPI
+
+                # Get IMDb ID from TMDB
+                logging.info(f"Converting TMDB ID {tmdb_id} to IMDb ID...")
+                imdb_id, source = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type='tv')
+                logging.info(f"IMDb ID resolution: {imdb_id} from {source}")
+
+                if imdb_id:
+                    logging.info(f"Fetching TVDB episodes for season {season_number} of TMDB ID {tmdb_id} (IMDb: {imdb_id})")
+                    tvdb_show_data = tvdb_client.get_show_data(imdb_id)
+                    logging.info(f"TVDB show data received: {bool(tvdb_show_data)}")
+
+                    if tvdb_show_data and 'seasons' in tvdb_show_data:
+                        # TVDB seasons format: {season_number: {'episode_count': N, 'episodes': {...}}}
+                        tvdb_seasons = tvdb_show_data['seasons']
+
+                        # Get the requested season
+                        season_data = tvdb_seasons.get(season_number) or tvdb_seasons.get(str(season_number))
+
+                        if season_data and 'episodes' in season_data:
+                            # Convert TVDB episode format to TMDB-like format
+                            # TVDB: {ep_num: {'title': ..., 'overview': ..., 'first_aired': ..., 'runtime': ...}}
+                            # TMDB: [{'episode_number': N, 'name': ..., 'overview': ..., 'air_date': ..., 'runtime': ...}]
+                            tvdb_episodes = season_data['episodes']
+                            episodes_list = []
+
+                            for ep_num, ep_data in tvdb_episodes.items():
+                                if isinstance(ep_data, dict):
+                                    episodes_list.append({
+                                        'episode_number': int(ep_num) if str(ep_num).isdigit() else ep_num,
+                                        'name': ep_data.get('title', f"Episode {ep_num}"),
+                                        'overview': ep_data.get('overview', ''),
+                                        'air_date': ep_data.get('first_aired', '').split('T')[0] if ep_data.get('first_aired') else None,
+                                        'runtime': ep_data.get('runtime', 0),
+                                        'still_path': None  # TVDB doesn't provide episode stills
+                                    })
+
+                            # Create TMDB-compatible response
+                            data = {
+                                'season_number': season_number,
+                                'episodes': sorted(episodes_list, key=lambda x: x['episode_number'])
+                            }
+                            logging.info(f"✅ Using TVDB episodes for season {season_number} ({len(episodes_list)} episodes)")
+            except Exception as e:
+                logging.warning(f"Failed to fetch TVDB episodes for season {season_number}: {e}")
+                import traceback
+                logging.debug(f"TVDB error traceback: {traceback.format_exc()}")
+
+        # Fallback to TMDB if TVDB didn't work
+        if not data:
+            logging.info(f"Fetching TMDB episodes for season {season_number} of TMDB ID {tmdb_id}")
+            url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_number}?api_key={tmdb_api_key}&language=en-US"
+            response = requests.get(url, timeout=15)
+            response.raise_for_status()
+            data = response.json()
 
         # Query database for episodes in this show/season
         conn = get_db_connection()
@@ -2178,7 +2541,7 @@ def flixpatrol_top10(platform):
                 item.pop('_tmdb_id', None)
 
             # Add database status and episode info
-            add_db_status_and_episode_info(enriched_items)
+            add_db_status_and_episode_info(enriched_items, use_battery=False)
 
         return jsonify({
             'success': True,

@@ -144,7 +144,7 @@
                 </svg>
                 <span class="action-text">Request</span>
             </button>
-            <button id="btn-refresh-tmdb" class="action-btn ghost-btn" title="Refresh from TMDB" aria-label="Refresh metadata from TMDB">
+            <button id="btn-refresh-tmdb" class="action-btn ghost-btn" title="Refresh Metadata" aria-label="Refresh Metadata">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
                     <path d="M21 3v5h-5"></path>
@@ -189,8 +189,10 @@
                                 <div class="movie-title-content">
                                     <h1 id="movie-title" class="movie-title"></h1>
                                     <div class="movie-meta">
-                                        <span id="movie-year-text">-</span>
-                                        <span class="separator">•</span>
+                                        <span id="movie-rating-text">-</span>
+                                        <span id="movie-rating-separator" class="separator" style="display: none;">•</span>
+                                        <span id="movie-certification-text" style="display: none;"></span>
+                                        <span id="movie-certification-separator" class="separator" style="display: none;">•</span>
                                         <span id="movie-runtime-text">-</span>
                                         <span class="separator">•</span>
                                         <span id="movie-genres-text">-</span>
@@ -210,35 +212,20 @@
                                 <a id="link-tmdb" href="#" target="_blank" rel="noopener noreferrer" class="link-btn">
                                     <img src="{{ url_for('static', filename='images/tmdb.png') }}" alt="TMDB" class="link-icon">
                                     TMDB
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M15 3h6v6"></path>
-                                        <path d="M10 14 21 3"></path>
-                                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                                    </svg>
                                 </a>
                                 <a id="link-imdb" href="#" target="_blank" rel="noopener noreferrer" class="link-btn">
                                     <img src="{{ url_for('static', filename='images/imdb.png') }}" alt="IMDb" class="link-icon">
                                     IMDb
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M15 3h6v6"></path>
-                                        <path d="M10 14 21 3"></path>
-                                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                                    </svg>
                                 </a>
                                 <a id="link-trakt" href="#" target="_blank" rel="noopener noreferrer" class="link-btn">
                                     <img src="{{ url_for('static', filename='images/trakt.png') }}" alt="Trakt" class="link-icon">
                                     Trakt
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                        <path d="M15 3h6v6"></path>
-                                        <path d="M10 14 21 3"></path>
-                                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-                                    </svg>
                                 </a>
                                 <button id="btn-trailer" class="link-btn" style="display: none;" title="Watch Trailer">
-                                    Trailer
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
                                         <polygon points="5 3 19 12 5 21 5 3"></polygon>
                                     </svg>
+                                    <span class="trailer-text">Trailer</span>
                                 </button>
                             </div>
                         </div>

@@ -277,6 +277,21 @@ function renderShowHeader(show) {
         }
     }
 
+    // Set certification (check both certification and content_rating fields)
+    const certificationText = document.getElementById('show-certification-text');
+    const certificationSeparator = document.getElementById('show-certification-separator');
+    if (certificationText && certificationSeparator) {
+        const cert = show.certification || show.content_rating;
+        if (cert) {
+            certificationText.textContent = cert;
+            certificationText.style.display = 'inline';
+            certificationSeparator.style.display = 'inline';
+        } else {
+            certificationText.style.display = 'none';
+            certificationSeparator.style.display = 'none';
+        }
+    }
+
     const networkText = document.getElementById('show-network-text');
     if (networkText && show.network) {
         networkText.textContent = show.network;
@@ -387,6 +402,19 @@ function renderShowHeader(show) {
         tmdbLink.href = `https://www.themoviedb.org/tv/${show.tmdb_id}`;
     }
 
+    const tvdbLink = document.getElementById('link-tvdb');
+    if (tvdbLink && show.title) {
+        // TVDB uses slug-based URLs (e.g., /series/star-trek-starfleet-academy)
+        // Generate slug from title: lowercase, replace spaces with hyphens, remove special chars
+        const slug = show.title
+            .toLowerCase()
+            .replace(/[^\w\s-]/g, '') // Remove special characters except spaces and hyphens
+            .replace(/\s+/g, '-')      // Replace spaces with hyphens
+            .replace(/-+/g, '-')       // Replace multiple hyphens with single hyphen
+            .trim();
+        tvdbLink.href = `https://thetvdb.com/series/${slug}`;
+    }
+
     const imdbLink = document.getElementById('link-imdb');
     if (imdbLink && show.imdb_id) {
         imdbLink.href = `https://www.imdb.com/title/${show.imdb_id}`;
@@ -445,6 +473,19 @@ function renderShowHeader(show) {
     if (tmdbLinkDetail && show.tmdb_id) {
         tmdbLinkDetail.href = `https://www.themoviedb.org/tv/${show.tmdb_id}`;
         tmdbLinkDetail.textContent = show.tmdb_id;
+    }
+
+    const tvdbLinkDetail = document.getElementById('tvdb-link-detail');
+    if (tvdbLinkDetail && show.title) {
+        // TVDB uses slug-based URLs, generate slug from title
+        const slug = show.title
+            .toLowerCase()
+            .replace(/[^\w\s-]/g, '') // Remove special characters except spaces and hyphens
+            .replace(/\s+/g, '-')      // Replace spaces with hyphens
+            .replace(/-+/g, '-')       // Replace multiple hyphens with single hyphen
+            .trim();
+        tvdbLinkDetail.href = `https://thetvdb.com/series/${slug}`;
+        tvdbLinkDetail.textContent = show.tvdb_id || 'View on TVDB';
     }
 
     const imdbLinkDetail = document.getElementById('imdb-link-detail');
@@ -772,7 +813,40 @@ function getHighestQualityEpisode(episodes) {
 function createEpisodeRow(episodes, seasonNumber) {
     // episodes is an array of entries for the same episode number
     // (can have multiple entries if there are multiple files/versions)
-    const firstEp = episodes[0];
+
+    // Sort episodes to prioritize better states and proper metadata
+    // Priority: Collected > Upgrading > others > Unreleased (placeholders)
+    const statePriority = {
+        'Collected': 1,
+        'Upgrading': 2,
+        'Wanted': 3,
+        'Scraping': 4,
+        'Final_Scrape': 5,
+        'Final_Check': 6,
+        'Sleeping': 7,
+        'Blacklisted': 8,
+        'Unreleased': 9  // Unreleased placeholders have lowest priority
+    };
+
+    const sortedEpisodes = [...episodes].sort((a, b) => {
+        const aPriority = statePriority[a.state] || 99;
+        const bPriority = statePriority[b.state] || 99;
+
+        // If priorities are different, use that
+        if (aPriority !== bPriority) {
+            return aPriority - bPriority;
+        }
+
+        // If same priority, prefer entries with actual episode titles over generic ones
+        const aHasTitle = a.episode_title && !a.episode_title.startsWith('Episode ');
+        const bHasTitle = b.episode_title && !b.episode_title.startsWith('Episode ');
+        if (aHasTitle && !bHasTitle) return -1;
+        if (!aHasTitle && bHasTitle) return 1;
+
+        return 0;
+    });
+
+    const firstEp = sortedEpisodes[0];
     const isPhantom = firstEp.is_phantom || false;
     const isCollected = episodes.some(ep => ep.state === 'Collected');
     const isUpgrading = episodes.some(ep => ep.state === 'Upgrading');

@@ -2859,3 +2859,10 @@ span[data-bitrate]:hover::after {
         padding-bottom: 10px;
     }
 }
+
+/* Hide trailer text on mobile, show only play icon */
+@media (max-width: 768px) {
+    .trailer-text {
+        display: none !important;
+    }
+}

@@ -160,7 +160,24 @@ def make_request(
             
     except api.exceptions.Timeout:
         raise ProviderUnavailableError("Request timed out")
-        
+
+    except api.exceptions.HTTPError as e:
+        # Handle HTTP errors that were raised by api_tracker's raise_for_status()
+        # Check for 404 on addMagnet
+        if e.response is not None and e.response.status_code == 404:
+            if method == 'POST' and endpoint == '/torrents/addMagnet':
+                # Log the response body for debugging
+                try:
+                    error_body = e.response.json()
+                    error_details = error_body.get('error_details', 'Unknown error')
+                    logging.error(f"Real-Debrid addMagnet failed: {error_details}")
+                except:
+                    logging.error(f"Real-Debrid addMagnet failed with 404")
+                # Raise error with details
+                raise RealDebridAPIError(f"Invalid magnet link or torrent unavailable")
+        # Re-raise other HTTP errors
+        raise ProviderUnavailableError(f"Request failed: {str(e)}")
+
     except api.exceptions.RequestException as e:
         if should_retry_error(e):
             raise RealDebridAPIError(f"Temporary service error: {str(e)}")

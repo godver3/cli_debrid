@@ -891,7 +891,7 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         for i, part_template_segment in enumerate(path_parts_from_template):
             formatted_part = part_template_segment.format(**template_vars)
             sanitized_template_part = sanitize_filename(formatted_part)
-
+            
             if i == len(path_parts_from_template) - 1: # This is the filename part
                 # Use the new component-based truncation strategy
                 # This will intelligently remove/truncate components in priority order

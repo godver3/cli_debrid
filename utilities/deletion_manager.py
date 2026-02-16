@@ -1479,8 +1479,8 @@ class DeletionManager:
                                 logging.error(f"[CONTENT_SOURCE_REMOVAL] Exception removing from MDBList '{list_name}': {e}")
                                 result['sources_failed'].append(source_label)
                                 result['details'][source_label] = {'success': False, 'message': str(e)}
-            elif not mdblist_api_key and mdblist_sources:
-                logging.warning(f"[CONTENT_SOURCE_REMOVAL] MDBList sources configured but API key is missing")
+                elif not mdblist_api_key and mdblist_sources:
+                    logging.warning(f"[CONTENT_SOURCE_REMOVAL] MDBList sources configured but API key is missing")
 
             # Build summary message
             if not result['sources_attempted']:

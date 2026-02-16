@@ -4,6 +4,8 @@
  * Features advanced filtering, search, and visual browsing
  */
 
+/* global showToast */
+
 // State management
 window.discoverState = {
     currentTab: 'trending',
@@ -49,6 +51,8 @@ window.discoverState = {
         excludedLanguages: [],
         selectedCountries: [],
         excludedCountries: [],
+        certificationMin: '',
+        certificationMax: '',
         selectedProviders: [],
         excludedProviders: [],
         watchRegion: 'US',
@@ -76,7 +80,7 @@ window.discoverState = {
 };
 
 // DOM elements
-let searchInput, searchClearBtn, filterToggleBtn, filterDrawer, filterOverlay;
+let searchInput, searchClearBtn, filterToggleBtn, filterDrawer, filterOverlay, filterCloseBtn;
 let tabButtons, resultsGrid, loadingState, emptyState, errorState, pagination;
 let ratingSlider, ratingDisplay, yearFromInput, yearToInput, genresContainer;
 let loadMoreBtn;
@@ -131,8 +135,10 @@ function saveFiltersToStorage() {
             titleFilter: state.filters.titleFilter,
             runtimeMin: state.filters.runtimeMin,
             runtimeMax: state.filters.runtimeMax,
+            certificationMin: state.filters.certificationMin,
+            certificationMax: state.filters.certificationMax,
             includeVideo: state.filters.includeVideo,
-            
+
             // Cache keyword/company names (needed for chip display)
             keywordCache: state.filters.keywordCache || {},
             companyCache: state.filters.companyCache || {}
@@ -200,6 +206,17 @@ function loadSidebarListsFromStorage() {
     } catch (e) {
         console.error('[Lists Filter] Failed to load saved lists:', e);
         return null;
+    }
+}
+
+/**
+ * Clear sidebar lists from localStorage
+ */
+function clearSavedSidebarLists() {
+    try {
+        localStorage.removeItem('discoverSidebarLists');
+    } catch (e) {
+        console.error('[Lists Filter] Failed to clear saved lists:', e);
     }
 }
 
@@ -278,7 +295,8 @@ document.addEventListener('DOMContentLoaded', async function() {
             (savedFilters.excludedNetworks && savedFilters.excludedNetworks.length > 0) ||
             (savedFilters.selectedCompanies && savedFilters.selectedCompanies.length > 0) ||
             (savedFilters.excludedCompanies && savedFilters.excludedCompanies.length > 0) ||
-            savedFilters.runtimeMin > 0 || savedFilters.runtimeMax < 300;
+            savedFilters.runtimeMin > 0 || savedFilters.runtimeMax < 300 ||
+            savedFilters.certificationMin || savedFilters.certificationMax;
         
         if (hasActiveFilters) {
             // Merge saved filters with current state (preserving any new filter properties)
@@ -697,8 +715,11 @@ function initializeSemanticUI() {
     if (watchRegionSelect) {
         watchRegionSelect.addEventListener('change', (e) => {
             state.filters.watchRegion = e.target.value;
+            loadCertifications(e.target.value);
             updateActiveFilters();
         });
+        // Load certifications for initial region on page load
+        loadCertifications(watchRegionSelect.value);
     }
 
     // Initialize all chips input containers with include/exclude support
@@ -708,11 +729,121 @@ function initializeSemanticUI() {
     initializeChipsInput('provider', state.filters.selectedProviders, state.filters.excludedProviders, () => updateActiveFilters());
     initializeChipsInput('network', state.filters.selectedNetworks, state.filters.excludedNetworks, () => updateActiveFilters());
 
+    // Initialize certification range selects
+    const certMinSelect = document.getElementById('certification-min-select');
+    const certMaxSelect = document.getElementById('certification-max-select');
+    if (certMinSelect) {
+        certMinSelect.addEventListener('change', function() {
+            state.filters.certificationMin = this.value;
+            updateActiveFilters();
+        });
+    }
+    if (certMaxSelect) {
+        certMaxSelect.addEventListener('change', function() {
+            state.filters.certificationMax = this.value;
+            updateActiveFilters();
+        });
+    }
+
     // Initialize keyword filter with dynamic search
     initializeKeywordFilter();
     
     // Initialize company filter with dynamic search
     initializeCompanyFilter();
+}
+
+/**
+ * Load certifications based on selected watch region into range selects
+ */
+async function loadCertifications(region) {
+    const certMinSelect = document.getElementById('certification-min-select');
+    const certMaxSelect = document.getElementById('certification-max-select');
+    if (!certMinSelect || !certMaxSelect) return;
+
+    try {
+        let mediaType = window.discoverState.filters.mediaType || 'movie';
+
+        // For 'all', fetch both movie and TV certifications
+        if (mediaType === 'all') {
+            // Fetch both movie and TV certifications and combine them
+            const [movieResponse, tvResponse] = await Promise.all([
+                fetch(`/discover/api/certifications?region=${region}&type=movie`),
+                fetch(`/discover/api/certifications?region=${region}&type=tv`)
+            ]);
+
+            const movieData = movieResponse.ok ? await movieResponse.json() : { certifications: [] };
+            const tvData = tvResponse.ok ? await tvResponse.json() : { certifications: [] };
+
+            const movieCerts = (movieData.certifications || []).map(c => ({ ...c, type: 'Movie' }));
+            const tvCerts = (tvData.certifications || []).map(c => ({ ...c, type: 'TV' }));
+
+            // Combine and sort by order
+            const allCertifications = [...movieCerts, ...tvCerts].sort((a, b) => a.order - b.order);
+
+            // Populate both selects
+            populateCertificationSelects(certMinSelect, certMaxSelect, allCertifications, true);
+
+        } else {
+            // Single media type
+            const response = await fetch(`/discover/api/certifications?region=${region}&type=${mediaType}`);
+
+            if (!response.ok) {
+                console.warn('[Discover] Failed to load certifications');
+                return;
+            }
+
+            const data = await response.json();
+            const certifications = (data.certifications || []).sort((a, b) => a.order - b.order);
+
+            // Populate both selects
+            populateCertificationSelects(certMinSelect, certMaxSelect, certifications, false);
+        }
+
+    } catch (error) {
+        console.error('[Discover] Error loading certifications:', error);
+    }
+}
+
+/**
+ * Populate certification select dropdowns
+ */
+function populateCertificationSelects(minSelect, maxSelect, certifications, showType) {
+    const state = window.discoverState;
+
+    // Save current selections
+    const currentMin = state.filters.certificationMin;
+    const currentMax = state.filters.certificationMax;
+
+    // Blur and reset selects to prevent dropdown state issues
+    minSelect.blur();
+    maxSelect.blur();
+
+    // Clear existing options except "Any"
+    minSelect.innerHTML = '<option value="">Any</option>';
+    maxSelect.innerHTML = '<option value="">Any</option>';
+
+    // Populate options
+    certifications.forEach(cert => {
+        const label = showType ? `${cert.certification} (${cert.type})` : cert.certification;
+
+        const minOption = document.createElement('option');
+        minOption.value = cert.certification;
+        minOption.textContent = label;
+        minSelect.appendChild(minOption);
+
+        const maxOption = document.createElement('option');
+        maxOption.value = cert.certification;
+        maxOption.textContent = label;
+        maxSelect.appendChild(maxOption);
+    });
+
+    // Restore selections if they still exist in new list
+    if (currentMin && Array.from(minSelect.options).some(opt => opt.value === currentMin)) {
+        minSelect.value = currentMin;
+    }
+    if (currentMax && Array.from(maxSelect.options).some(opt => opt.value === currentMax)) {
+        maxSelect.value = currentMax;
+    }
 }
 
 /**
@@ -1401,6 +1532,9 @@ function clearChipsInput(name) {
     } else if (name === 'company') {
         state.filters.selectedCompanies = [];
         state.filters.excludedCompanies = [];
+    } else if (name === 'certification') {
+        state.filters.selectedCertifications = [];
+        state.filters.excludedCertifications = [];
     }
 
     // Clear chips display
@@ -1940,6 +2074,20 @@ function clearRuntimeFilter() {
 }
 
 /**
+ * Clear certification filter
+ */
+function clearCertificationFilter() {
+    const state = window.discoverState;
+    state.filters.certificationMin = '';
+    state.filters.certificationMax = '';
+    const certMinSelect = document.getElementById('certification-min-select');
+    const certMaxSelect = document.getElementById('certification-max-select');
+    if (certMinSelect) certMinSelect.value = '';
+    if (certMaxSelect) certMaxSelect.value = '';
+    updateActiveFilters();
+}
+
+/**
  * Clear production company filter
  */
 function clearProductionCompanyFilter() {
@@ -2001,6 +2149,8 @@ function clearAllFilters() {
         excludedLanguages: [],
         selectedCountries: [],
         excludedCountries: [],
+        certificationMin: '',
+        certificationMax: '',
         selectedProviders: [],
         excludedProviders: [],
         watchRegion: 'US',
@@ -2203,6 +2353,10 @@ function applyAdvancedFilters(closeDrawer = true) {
         // Runtime
         runtime_min: state.filters.runtimeMin > 0 ? state.filters.runtimeMin : '',
         runtime_max: state.filters.runtimeMax < 300 ? state.filters.runtimeMax : '',
+        // Certification (range with gte/lte)
+        'certification.gte': state.filters.certificationMin || '',
+        'certification.lte': state.filters.certificationMax || '',
+        certification_country: state.filters.watchRegion || 'US',
         // Production Company (include and exclude)
         production_company: state.filters.selectedCompanies.join(','),
         production_company_exclude: state.filters.excludedCompanies.join(',')
@@ -2753,6 +2907,23 @@ function updateActiveFilters() {
         });
     }
 
+    // Certification Range
+    if (state.filters.certificationMin || state.filters.certificationMax) {
+        let label = 'Certification: ';
+        if (state.filters.certificationMin && state.filters.certificationMax) {
+            label += `${state.filters.certificationMin} to ${state.filters.certificationMax}`;
+        } else if (state.filters.certificationMin) {
+            label += `${state.filters.certificationMin} and above`;
+        } else {
+            label += `${state.filters.certificationMax} and below`;
+        }
+        activeFilters.push({
+            key: 'certification',
+            label: label,
+            removeFn: () => { clearCertificationFilter(); updateActiveFilters(); }
+        });
+    }
+
     if (state.filters.productionCompany) {
         const companyNames = {
             'universal': 'Universal Pictures',
@@ -3092,7 +3263,9 @@ function triggerLiveFiltering() {
         f.selectedCompanies.length > 0 ||
         f.excludedCompanies.length > 0 ||
         f.runtimeMin > 0 ||
-        f.runtimeMax < 300;
+        f.runtimeMax < 300 ||
+        f.certificationMin ||
+        f.certificationMax;
 
     // Clear any existing timeout
     if (window.liveFilterTimeout) {
@@ -3132,6 +3305,12 @@ function setMediaType(type) {
 
     // Update genre dropdown to show appropriate genres for this media type
     renderGenreFilters();
+
+    // Reload certifications for the new media type
+    const watchRegionSelect = document.getElementById('watch-region');
+    if (watchRegionSelect) {
+        loadCertifications(watchRegionSelect.value);
+    }
 
     // Update active filters display
     updateActiveFilters();
@@ -3349,6 +3528,8 @@ function clearFiltersAndReload() {
         excludedLanguages: [],
         selectedCountries: [],
         excludedCountries: [],
+        certificationMin: '',
+        certificationMax: '',
         selectedProviders: [],
         excludedProviders: [],
         watchRegion: 'US',
@@ -3515,7 +3696,9 @@ function restoreFilterUI() {
     // Runtime inputs
     if (state.runtimeMinInput && f.runtimeMin) state.runtimeMinInput.value = f.runtimeMin;
     if (state.runtimeMaxInput && f.runtimeMax) state.runtimeMaxInput.value = f.runtimeMax;
-    
+
+    // Revenue inputs
+
     // Watch region
     const watchRegionSelect = document.getElementById('watch-region');
     if (watchRegionSelect && f.watchRegion) {
@@ -3589,6 +3772,9 @@ function restoreChipsFromState() {
         }
         if (f.selectedNetworks || f.excludedNetworks) {
             applyChipsFromSavedFilters('network', f.selectedNetworks || [], f.excludedNetworks || []);
+        }
+        if (f.selectedCertifications || f.excludedCertifications) {
+            applyChipsFromSavedFilters('certification', f.selectedCertifications || [], f.excludedCertifications || []);
         }
     }
 }
@@ -3706,6 +3892,9 @@ function filterValidResults(results) {
                 return false;
             }
         }
+
+        // Certification filters are handled entirely by TMDB API on backend
+        // No client-side filtering needed - TMDB returns pre-filtered results
 
         return true;
     });
@@ -4527,7 +4716,7 @@ function checkEditMode() {
 
         // Open the filter drawer after a short delay
         setTimeout(() => {
-            openFilterDrawer();
+            openFilters();
         }, 500);
     }
 }
@@ -4607,7 +4796,7 @@ async function loadAdaptiveListForEdit(sourceId) {
 
             // Open the filter drawer
             setTimeout(() => {
-                openFilterDrawer();
+                openFilters();
             }, 300);
         }
     } catch (error) {
@@ -7007,14 +7196,44 @@ function getPlatformIcon(iconName) {
 }
 
 /**
+ * Select a list without needing the itemElement (for programmatic selection)
+ */
+function selectSidebarList(source, listId, listName) {
+    const state = window.sidebarListsState;
+
+    // Check if already selected
+    const existingIndex = state.selectedLists.findIndex(l => l.source === source && l.listId === listId);
+
+    if (existingIndex < 0) {
+        // Add to selection if not already present
+        state.selectedLists.push({ source, listId, listName });
+    }
+
+    // Update chips display
+    renderSidebarListChips();
+
+    // Update filter availability based on list selection
+    updateFilterAvailability();
+
+    // Update active filters display
+    updateActiveFilters();
+
+    // Save lists selection to localStorage
+    saveSidebarListsToStorage();
+
+    // Reload content with selected list
+    loadSidebarListContent(source, listId);
+}
+
+/**
  * Toggle a list selection (add/remove chip)
  */
 function toggleSidebarList(itemElement, source, listId, listName) {
     const state = window.sidebarListsState;
-    
+
     // Check if already selected
     const existingIndex = state.selectedLists.findIndex(l => l.source === source && l.listId === listId);
-    
+
     if (existingIndex >= 0) {
         // Remove from selection
         state.selectedLists.splice(existingIndex, 1);
@@ -7024,19 +7243,19 @@ function toggleSidebarList(itemElement, source, listId, listName) {
         state.selectedLists.push({ source, listId, listName });
         itemElement.classList.add('included');
     }
-    
+
     // Update chips display
     renderSidebarListChips();
-    
+
     // Update filter availability based on list selection
     updateFilterAvailability();
-    
+
     // Update active filters display
     updateActiveFilters();
-    
+
     // Save lists selection to localStorage
     saveSidebarListsToStorage();
-    
+
     // Reload content with all selected lists
     loadAllSelectedLists();
 }
