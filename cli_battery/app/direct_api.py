@@ -23,7 +23,7 @@ from .database import (
     init_db, Session as DbSession, managed_session,
     Item, Metadata, Season, Episode, Poster,
     TMDBToIMDBMapping, TVDBToIMDBMapping, DatabaseManager,
-    get_timezone_aware_now,
+    get_timezone_aware_now, normalize_imdb_id,
 )
 from . import trakt_client
 from . import tvdb_client
@@ -134,6 +134,17 @@ def _refresh_movie(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
 
 def _persist_item(imdb_id: str, data: dict, session: SqlAlchemySession):
     """Upsert Item row + all Metadata rows + seasons/episodes."""
+    from .database import normalize_imdb_id
+
+    # Validate and normalize IMDb ID
+    normalized_imdb_id = normalize_imdb_id(imdb_id)
+    if normalized_imdb_id != imdb_id:
+        if normalized_imdb_id is None:
+            logger.warning(f"Rejecting item with invalid IMDb ID: {imdb_id!r}")
+            return
+        logger.info(f"Normalized IMDb ID: {imdb_id!r} -> {normalized_imdb_id!r}")
+        imdb_id = normalized_imdb_id
+
     now = datetime.now(_get_local_tz())
     item = session.query(Item).filter_by(imdb_id=imdb_id).first()
 
@@ -366,6 +377,11 @@ class DirectAPI:
 
     @staticmethod
     def get_movie_metadata(imdb_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        # Guard: Prevent None or invalid imdb_id from reaching database
+        if not imdb_id or imdb_id == 'None' or not isinstance(imdb_id, str) or not imdb_id.strip():
+            logger.warning(f"DirectAPI.get_movie_metadata called with invalid imdb_id: {repr(imdb_id)}")
+            return None, None
+
         try:
             with managed_session() as session:
                 item = session.query(Item).options(
@@ -496,20 +512,36 @@ class DirectAPI:
     def get_bulk_movie_metadata(imdb_ids: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
         logger.info(f"DirectAPI.get_bulk_movie_metadata called for {len(imdb_ids)} movie IDs.")
         try:
+            # Filter out None/empty/invalid IMDb IDs to prevent disk I/O errors
+            valid_ids = []
+            for iid in imdb_ids:
+                if iid and isinstance(iid, str) and iid.strip() and iid != 'None':
+                    normalized = normalize_imdb_id(iid)
+                    if normalized:
+                        valid_ids.append(normalized)
+
+            if len(valid_ids) < len(imdb_ids):
+                logger.warning(f"get_bulk_movie_metadata: filtered {len(imdb_ids) - len(valid_ids)} invalid IDs")
+
             result: dict = {}
+
+            # Return empty results for invalid IDs
+            for iid in imdb_ids:
+                if iid not in valid_ids:
+                    result[iid] = None
 
             # Phase 1: bulk DB lookup for cached items
             with managed_session() as session:
                 items = session.query(Item).options(
                     selectinload(Item.item_metadata),
-                ).filter(Item.imdb_id.in_(imdb_ids), Item.type == 'movie').all()
+                ).filter(Item.imdb_id.in_(valid_ids), Item.type == 'movie').all()
 
                 for item in items:
                     if not is_stale(item.type or 'movie', item.media_status, item.last_trakt_fetch):
                         result[item.imdb_id] = _build_metadata_dict(item)
 
             # Phase 2: fetch missing items from Trakt
-            missing = [iid for iid in imdb_ids if iid not in result]
+            missing = [iid for iid in valid_ids if iid not in result]
             if missing:
                 logger.info(f"get_bulk_movie_metadata: {len(result)} cached, fetching {len(missing)} from {_get_metadata_source_name().upper()}")
                 for iid in missing:
@@ -532,6 +564,11 @@ class DirectAPI:
 
     @staticmethod
     def get_show_metadata(imdb_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        # Guard: Prevent None or invalid imdb_id from reaching database
+        if not imdb_id or imdb_id == 'None' or not isinstance(imdb_id, str) or not imdb_id.strip():
+            logger.warning(f"DirectAPI.get_show_metadata called with invalid imdb_id: {repr(imdb_id)}")
+            return None, None
+
         try:
             with managed_session() as session:
                 item = session.query(Item).options(
@@ -567,6 +604,11 @@ class DirectAPI:
 
     @staticmethod
     def get_show_seasons(imdb_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        # Guard: Prevent None or invalid imdb_id from reaching database
+        if not imdb_id or imdb_id == 'None' or not isinstance(imdb_id, str) or not imdb_id.strip():
+            logger.warning(f"DirectAPI.get_show_seasons called with invalid imdb_id: {repr(imdb_id)}")
+            return None, None
+
         try:
             with managed_session() as session:
                 item = session.query(Item).options(
@@ -661,10 +703,21 @@ class DirectAPI:
     def get_bulk_show_airs(imdb_ids: list) -> dict:
         logger.info(f"DirectAPI.get_bulk_show_airs called for {len(imdb_ids)} IDs.")
         try:
+            # Filter out None/empty/invalid IMDb IDs to prevent disk I/O errors
+            valid_ids = []
+            for iid in imdb_ids:
+                if iid and isinstance(iid, str) and iid.strip() and iid != 'None':
+                    normalized = normalize_imdb_id(iid)
+                    if normalized:
+                        valid_ids.append(normalized)
+
+            if len(valid_ids) < len(imdb_ids):
+                logger.warning(f"get_bulk_show_airs: filtered {len(imdb_ids) - len(valid_ids)} invalid IDs")
+
             with managed_session() as session:
                 items = session.query(Item).options(
                     selectinload(Item.item_metadata),
-                ).filter(Item.imdb_id.in_(imdb_ids), Item.type == 'show').all()
+                ).filter(Item.imdb_id.in_(valid_ids), Item.type == 'show').all()
 
                 result: dict = {}
                 for item in items:
@@ -690,16 +743,32 @@ class DirectAPI:
     def get_bulk_show_metadata(imdb_ids: List[str]) -> Dict[str, Optional[Dict[str, Any]]]:
         logger.info(f"DirectAPI.get_bulk_show_metadata called for {len(imdb_ids)} show IDs.")
         try:
+            # Filter out None/empty/invalid IMDb IDs to prevent disk I/O errors
+            valid_ids = []
+            for iid in imdb_ids:
+                if iid and isinstance(iid, str) and iid.strip() and iid != 'None':
+                    normalized = normalize_imdb_id(iid)
+                    if normalized:
+                        valid_ids.append(normalized)
+
+            if len(valid_ids) < len(imdb_ids):
+                logger.warning(f"get_bulk_show_metadata: filtered {len(imdb_ids) - len(valid_ids)} invalid IDs")
+
             result: dict = {}
             items_missing_xem: dict = {}
             tvdb_ids_to_fetch: dict = {}
+
+            # Return empty results for invalid IDs
+            for iid in imdb_ids:
+                if iid not in valid_ids:
+                    result[iid] = None
 
             # Phase 1: bulk DB lookup for cached items
             with managed_session() as session:
                 items = session.query(Item).options(
                     selectinload(Item.item_metadata),
                     selectinload(Item.seasons).selectinload(Season.episodes),
-                ).filter(Item.imdb_id.in_(imdb_ids), Item.type == 'show').all()
+                ).filter(Item.imdb_id.in_(valid_ids), Item.type == 'show').all()
 
                 for item in items:
                     if not is_stale(item.type or 'show', item.media_status, item.last_trakt_fetch):
@@ -735,7 +804,7 @@ class DirectAPI:
                         logger.error(f"XEM fetch error for TVDB {tvdb_id}: {e}")
 
             # Phase 2: fetch missing items from Trakt
-            missing = [iid for iid in imdb_ids if iid not in result]
+            missing = [iid for iid in valid_ids if iid not in result]
             if missing:
                 logger.info(f"get_bulk_show_metadata: {len(result)} cached, fetching {len(missing)} from {_get_metadata_source_name().upper()}")
                 for iid in missing:
@@ -787,6 +856,71 @@ class DirectAPI:
             return primary_imdb, False
 
     @staticmethod
+    def _mdblist_tmdb_to_imdb(tmdb_id: str, media_type: str = None) -> Optional[str]:
+        """
+        Use MDBList API to convert TMDB ID to IMDb ID.
+
+        Note: Caller must check is_mdblist_configured() before calling.
+
+        Args:
+            tmdb_id: TMDB ID to convert
+            media_type: 'movie' or 'show'/'tv'
+
+        Returns:
+            IMDb ID if found, None otherwise
+        """
+        try:
+            import requests
+            from utilities.mdblist_api import get_mdblist_api_key, MDBLIST_API_BASE
+
+            api_key = get_mdblist_api_key()
+
+            # MDBList API endpoint for TMDB lookup
+            # Format: https://mdblist.com/api/?apikey=XXX&tm={tmdb_id}
+            url = f"{MDBLIST_API_BASE}/?apikey={api_key}&tm={tmdb_id}"
+
+            logger.debug(f"MDBList API call: {url.replace(api_key, 'REDACTED')}")
+            resp = requests.get(url, timeout=10)
+            logger.debug(f"MDBList API response status: {resp.status_code}")
+
+            if resp.status_code == 200:
+                data = resp.json()
+
+                # MDBList API returns single item or list
+                if isinstance(data, dict):
+                    imdb_id = data.get('imdb_id') or data.get('imdbid')
+                    if imdb_id and imdb_id.startswith('tt'):
+                        return imdb_id
+                elif isinstance(data, list) and len(data) > 0:
+                    # Use first result if it matches media_type
+                    for item in data:
+                        item_type = item.get('mediatype', '').lower()
+                        # Match media_type if specified
+                        if media_type:
+                            if (media_type in ('tv', 'show') and item_type in ('show', 'tv')) or \
+                               (media_type == 'movie' and item_type == 'movie'):
+                                imdb_id = item.get('imdb_id') or item.get('imdbid')
+                                if imdb_id and imdb_id.startswith('tt'):
+                                    return imdb_id
+                        else:
+                            # No media_type filter, use first result
+                            imdb_id = item.get('imdb_id') or item.get('imdbid')
+                            if imdb_id and imdb_id.startswith('tt'):
+                                return imdb_id
+            elif resp.status_code == 401:
+                logger.warning(f"MDBList API: Invalid API key")
+            elif resp.status_code == 429:
+                logger.warning(f"MDBList API: Rate limit exceeded")
+            else:
+                logger.warning(f"MDBList API: HTTP {resp.status_code}")
+
+            return None
+
+        except Exception as e:
+            logger.error(f"MDBList TMDB lookup error: {e}")
+            return None
+
+    @staticmethod
     def tmdb_to_imdb(tmdb_id: str, media_type: str = None) -> Tuple[Optional[str], Optional[str]]:
         logger.info(f"DirectAPI.tmdb_to_imdb for TMDB {tmdb_id} type={media_type}")
         try:
@@ -797,7 +931,29 @@ class DirectAPI:
                     return mapping.imdb_id, 'battery'
 
                 # Primary: metadata provider
-                imdb_id, source = _get_metadata_client().convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
+                # Check if using Trakt and if it's currently rate limited
+                metadata_client_name = _get_metadata_source_name()
+                skip_trakt = False
+
+                if metadata_client_name == 'trakt':
+                    try:
+                        from utilities.trakt_coordinator import GlobalTraktCoordinator
+                        cooldown_status = GlobalTraktCoordinator.get_instance().get_cooldown_status()
+                        if cooldown_status['active']:
+                            remaining = cooldown_status['remaining_seconds']
+                            logger.info(f"⏭️ Skipping Trakt (rate limited, {remaining:.0f}s remaining), trying fallback methods")
+                            skip_trakt = True
+                            imdb_id = None
+                    except Exception as e:
+                        logger.debug(f"Could not check Trakt cooldown status: {e}")
+                        skip_trakt = False
+
+                if not skip_trakt:
+                    imdb_id, source = _get_metadata_client().convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
+                else:
+                    imdb_id = None
+                    source = None
+
                 if imdb_id:
                     # Validate via TMDB API
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
@@ -822,6 +978,7 @@ class DirectAPI:
                     return imdb_id, source
 
             # Fallback: TMDB External IDs
+            logger.info(f"Attempting TMDB External IDs fallback for TMDB ID {tmdb_id} (type: {media_type})")
             try:
                 from utilities.settings import get_setting
                 import requests as req
@@ -830,18 +987,53 @@ class DirectAPI:
                 if tmdb_api_key:
                     endpoint = 'movie' if media_type == 'movie' else 'tv'
                     url = f"https://api.themoviedb.org/3/{endpoint}/{tmdb_id}/external_ids?api_key={tmdb_api_key}"
+                    logger.debug(f"TMDB External IDs API call: {url.replace(tmdb_api_key, 'REDACTED')}")
                     resp = req.get(url, timeout=10)
+                    logger.debug(f"TMDB External IDs response status: {resp.status_code}")
                     if resp.status_code == 200:
                         tmdb_data = resp.json()
                         tmdb_imdb = tmdb_data.get('imdb_id')
                         if tmdb_imdb:
+                            logger.info(f"✓ TMDB External IDs fallback SUCCESS: Found IMDb ID {tmdb_imdb} for TMDB {tmdb_id}")
                             with managed_session() as session:
                                 session.add(TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=tmdb_imdb))
                             return tmdb_imdb, 'tmdb_external_ids'
+                        else:
+                            logger.warning(f"✗ TMDB External IDs fallback: No IMDb ID in response for TMDB {tmdb_id}")
+                    else:
+                        logger.warning(f"✗ TMDB External IDs fallback: HTTP {resp.status_code} for TMDB {tmdb_id}")
+                else:
+                    logger.warning(f"✗ TMDB External IDs fallback: No TMDB API key configured")
             except Exception as e:
-                logger.warning(f"TMDB fallback failed: {e}")
+                logger.warning(f"✗ TMDB External IDs fallback failed for TMDB {tmdb_id}: {e}")
+
+            # Fallback: MDBList API (if configured)
+            logger.info(f"Attempting MDBList API fallback for TMDB ID {tmdb_id} (type: {media_type})")
+            try:
+                from utilities.mdblist_api import is_mdblist_configured
+
+                if is_mdblist_configured():
+                    # Try MDBList lookup by TMDB ID
+                    mdblist_imdb = DirectAPI._mdblist_tmdb_to_imdb(tmdb_id, media_type)
+                    if mdblist_imdb:
+                        logger.info(f"✓ MDBList API fallback SUCCESS: Found IMDb ID {mdblist_imdb} for TMDB {tmdb_id}")
+                        with managed_session() as session:
+                            mapping = session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
+                            if mapping:
+                                mapping.imdb_id = mdblist_imdb
+                                mapping.updated_at = datetime.now(_get_local_tz())
+                            else:
+                                session.add(TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=mdblist_imdb))
+                        return mdblist_imdb, 'mdblist'
+                    else:
+                        logger.warning(f"✗ MDBList API fallback: No IMDb ID found for TMDB {tmdb_id}")
+                else:
+                    logger.debug(f"✗ MDBList API fallback: No API key configured")
+            except Exception as e:
+                logger.warning(f"✗ MDBList API fallback failed for TMDB {tmdb_id}: {e}")
 
             # Fallback: Trakt title search
+            logger.info(f"Attempting Trakt title search fallback for TMDB ID {tmdb_id} (type: {media_type})")
             try:
                 from utilities.settings import get_setting
                 import requests as req
@@ -850,24 +1042,57 @@ class DirectAPI:
                 if tmdb_api_key:
                     endpoint = 'movie' if media_type == 'movie' else 'tv'
                     url = f"https://api.themoviedb.org/3/{endpoint}/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
+                    logger.debug(f"TMDB details API call: {url.replace(tmdb_api_key, 'REDACTED')}")
                     resp = req.get(url, timeout=10)
+                    logger.debug(f"TMDB details response status: {resp.status_code}")
                     if resp.status_code == 200:
                         details = resp.json()
                         title = details.get('title') or details.get('name')
                         date_str = details.get('release_date') or details.get('first_air_date')
                         year = int(date_str[:4]) if date_str else None
                         if title:
+                            logger.debug(f"Searching Trakt for title='{title}', year={year}, type={media_type}")
                             search_type = 'show' if media_type in ('tv', 'show') else 'movie'
                             results = _get_metadata_client().search_media(title, year=year, media_type=search_type)
                             if results:
+                                logger.debug(f"Trakt search returned {len(results)} results for '{title}'")
                                 for r in results:
                                     if r.get('imdb_id') and r.get('tmdb_id') == int(tmdb_id):
+                                        logger.info(f"✓ Trakt title search fallback SUCCESS: Exact match found IMDb ID {r['imdb_id']} for TMDB {tmdb_id}")
                                         return r['imdb_id'], 'trakt_title_search'
                                 for r in results:
                                     if r.get('imdb_id'):
+                                        logger.warning(f"⚠ Trakt title search fallback: Using first result IMDb ID {r['imdb_id']} (not exact TMDB match) for TMDB {tmdb_id}")
                                         return r['imdb_id'], 'trakt_title_search_fallback'
+                                logger.warning(f"✗ Trakt title search fallback: Found {len(results)} results but none have IMDb IDs for TMDB {tmdb_id}")
+                            else:
+                                logger.warning(f"✗ Trakt title search fallback: No results found for '{title}' (year: {year})")
+                        else:
+                            logger.warning(f"✗ Trakt title search fallback: No title found in TMDB response for TMDB {tmdb_id}")
+                    else:
+                        logger.warning(f"✗ Trakt title search fallback: HTTP {resp.status_code} from TMDB for TMDB {tmdb_id}")
+                else:
+                    logger.warning(f"✗ Trakt title search fallback: No TMDB API key configured")
             except Exception as e:
-                logger.warning(f"Trakt title search fallback failed: {e}")
+                logger.warning(f"✗ Trakt title search fallback failed for TMDB {tmdb_id}: {e}")
+
+            logger.error(f"❌ All TMDB→IMDb conversion methods failed for TMDB ID {tmdb_id} (type: {media_type})")
+
+            # Cache the failure to prevent repeated API calls for known-missing mappings
+            # Use NULL to indicate "no mapping exists"
+            try:
+                with managed_session() as session:
+                    mapping = session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
+                    if mapping:
+                        # Update existing mapping to mark as "no mapping found"
+                        mapping.imdb_id = None
+                        mapping.updated_at = datetime.now(_get_local_tz())
+                    else:
+                        # Create new entry with NULL imdb_id
+                        session.add(TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=None))
+                    logger.info(f"Cached failed TMDB→IMDb lookup for {tmdb_id} (will retry after staleness period)")
+            except Exception as e:
+                logger.debug(f"Could not cache failed lookup: {e}")
 
             return None, None
         except Exception as e:

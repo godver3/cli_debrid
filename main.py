@@ -462,10 +462,16 @@ def backup_database(skip_if_recent=False, skip_hours=6):
         removed_count = 0
         for old_backup in backups_to_remove:
             try:
-                os.remove(old_backup)
-                removed_count += 1
-                backup_age = get_backup_age_category(old_backup) if old_backup not in invalid_backups else 'invalid'
-                logging.info(f"[BACKUP] Removed {backup_age} backup: {os.path.basename(old_backup)}")
+                if os.path.exists(old_backup):
+                    os.remove(old_backup)
+                    removed_count += 1
+                    backup_age = get_backup_age_category(old_backup) if old_backup not in invalid_backups else 'invalid'
+                    logging.info(f"[BACKUP] Removed {backup_age} backup: {os.path.basename(old_backup)}")
+                else:
+                    logging.debug(f"[BACKUP] Backup already removed: {os.path.basename(old_backup)}")
+            except FileNotFoundError:
+                # File was removed between exists check and remove call (race condition)
+                logging.debug(f"[BACKUP] Backup already removed (race condition): {os.path.basename(old_backup)}")
             except Exception as e:
                 logging.warning(f"[BACKUP] Failed to remove backup {old_backup}: {e}")
 

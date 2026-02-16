@@ -1273,18 +1273,29 @@ def get_media_items_presence_batch(tmdb_ids: list[int]) -> dict[int, str]:
             tmdb_states[tmdb_id].add(state)
 
         # Apply the same logic as get_media_item_presence_overall for each ID
+        # "Partial" should ONLY mean: some episodes collected/blacklisted AND some actively wanted
         result = {}
+        wanted_states = {'Wanted', 'Scraping', 'Adding', 'Checking', 'Sleeping'}
+
         for tmdb_id in tmdb_ids:
             # Look up using string key since database returns tmdb_id as TEXT
             states = tmdb_states.get(str(tmdb_id), set())
 
             if not states:
                 result[tmdb_id] = "Missing"
-            elif 'Blacklisted' in states:
+            elif 'Blacklisted' in states and len(states) == 1:
+                # All episodes blacklisted
                 result[tmdb_id] = 'Blacklisted'
-            elif 'Collected' in states:
-                result[tmdb_id] = 'Collected' if len(states) == 1 else 'Partial'
+            elif 'Collected' in states or 'Blacklisted' in states:
+                # Has some collected or blacklisted episodes
+                # Check if there are any actively wanted episodes
+                if any(state in wanted_states for state in states):
+                    result[tmdb_id] = 'Partial'
+                else:
+                    # All episodes are either Collected, Blacklisted, or Unreleased (no wanted)
+                    result[tmdb_id] = 'Collected'
             else:
+                # No collected/blacklisted episodes, return first state (likely Wanted or Unreleased)
                 result[tmdb_id] = next(iter(states))
 
         return result

@@ -181,6 +181,8 @@ def _refresh_stale_fallback():
     are handled on-demand when accessed).
     """
     logger.info("Refresh worker: checking staleness fallback...")
+    from .database import is_valid_imdb_id
+
     with managed_session() as session:
         # Only check items that have been fetched before but are now stale
         # Skip NULL last_trakt_fetch — those get populated on-demand
@@ -190,6 +192,7 @@ def _refresh_stale_fallback():
         candidates = [
             (i.imdb_id, i.title, i.type, i.media_status, i.last_trakt_fetch)
             for i in items
+            if i.imdb_id and is_valid_imdb_id(i.imdb_id)  # Skip items without valid IMDb IDs
         ]
 
     stale_shows = []
@@ -263,6 +266,16 @@ def _recheck_null_airdates():
         if _stop_event.is_set():
             break
 
+        # Skip items without valid IMDb IDs
+        if not imdb_id:
+            logger.debug(f"Refresh worker: skipping {title} (no IMDb ID)")
+            continue
+
+        from .database import is_valid_imdb_id
+        if not is_valid_imdb_id(imdb_id):
+            logger.warning(f"Refresh worker: skipping {title} - invalid IMDb ID format: {imdb_id}")
+            continue
+
         logger.info(f"Refresh worker: re-checking NULL airdates for {imdb_id} ({title})")
         try:
             seasons_data, _ = _get_metadata_client().get_show_seasons_and_episodes(imdb_id, include_specials=True)
@@ -271,7 +284,7 @@ def _recheck_null_airdates():
                     from .direct_api import _upsert_seasons_and_episodes
                     item = session.query(Item).filter_by(id=db_id).first()
                     if item:
-                        _upsert_seasons_and_episodes(item, seasons_data, session)
+                        _upsert_seasons_and_episodes(item.id, seasons_data, session)
 
                     # Mark all NULL-airdate episodes for this show as checked
                     now = datetime.now(timezone.utc)

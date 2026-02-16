@@ -206,16 +206,15 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 batch = movie_imdb_list[i:i + batch_size]
                 placeholders = ', '.join(['?'] * len(batch))
                 query = f'''
-                    SELECT imdb_id, version, state FROM media_items
+                    SELECT imdb_id, version, state, ghostlisted FROM media_items
                     WHERE type = 'movie' AND imdb_id IN ({placeholders})
-                    AND (ghostlisted IS NULL OR ghostlisted = FALSE)
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
                     movie_id = str(row['imdb_id'])
                     if movie_id not in existing_movies:
                         existing_movies[movie_id] = []
-                    existing_movies[movie_id].append((strip_version(row['version']), row['state']))
+                    existing_movies[movie_id].append((strip_version(row['version']), row['state'], row['ghostlisted']))
 
         if movie_tmdb_ids:
             movie_tmdb_list = list(movie_tmdb_ids)
@@ -223,16 +222,15 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 batch = movie_tmdb_list[i:i + batch_size]
                 placeholders = ', '.join(['?'] * len(batch))
                 query = f'''
-                    SELECT tmdb_id, version, state FROM media_items
+                    SELECT tmdb_id, version, state, ghostlisted FROM media_items
                     WHERE type = 'movie' AND tmdb_id IN ({placeholders})
-                    AND (ghostlisted IS NULL OR ghostlisted = FALSE)
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
                     movie_id = str(row['tmdb_id'])
                     if movie_id not in existing_movies:
                         existing_movies[movie_id] = []
-                    existing_movies[movie_id].append((strip_version(row['version']), row['state']))
+                    existing_movies[movie_id].append((strip_version(row['version']), row['state'], row['ghostlisted']))
 
         existing_episodes = {}
 
@@ -242,16 +240,15 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 batch = episode_imdb_list[i:i + batch_size]
                 placeholders = ', '.join(['?'] * len(batch))
                 query = f'''
-                    SELECT imdb_id, season_number, episode_number, version, state FROM media_items
+                    SELECT imdb_id, season_number, episode_number, version, state, ghostlisted FROM media_items
                     WHERE type = 'episode' AND imdb_id IN ({placeholders})
-                    AND (ghostlisted IS NULL OR ghostlisted = FALSE)
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
                     key = (str(row['imdb_id']), row['season_number'], row['episode_number'])
                     if key not in existing_episodes:
                         existing_episodes[key] = []
-                    existing_episodes[key].append((strip_version(row['version']), row['state']))
+                    existing_episodes[key].append((strip_version(row['version']), row['state'], row['ghostlisted']))
 
         if episode_tmdb_ids:
             episode_tmdb_list = list(episode_tmdb_ids)
@@ -259,16 +256,15 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 batch = episode_tmdb_list[i:i + batch_size]
                 placeholders = ', '.join(['?'] * len(batch))
                 query = f'''
-                    SELECT tmdb_id, season_number, episode_number, version, state FROM media_items
+                    SELECT tmdb_id, season_number, episode_number, version, state, ghostlisted FROM media_items
                     WHERE type = 'episode' AND tmdb_id IN ({placeholders})
-                    AND (ghostlisted IS NULL OR ghostlisted = FALSE)
                 '''
                 rows = conn.execute(query, tuple(batch)).fetchall()
                 for row in rows:
                     key = (str(row['tmdb_id']), row['season_number'], row['episode_number'])
                     if key not in existing_episodes:
                         existing_episodes[key] = []
-                    existing_episodes[key].append((strip_version(row['version']), row['state']))
+                    existing_episodes[key].append((strip_version(row['version']), row['state'], row['ghostlisted']))
 
         filtered_media_items_batch_after_existence_check = []
         for item in media_items_batch:
@@ -332,10 +328,10 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     existing_versions_states_check.extend(existing_movies[imdb_id])
                 if tmdb_id and tmdb_id in existing_movies and (not imdb_id or imdb_id != tmdb_id):
                     existing_versions_states_check.extend(existing_movies[tmdb_id])
-                for _, state in existing_versions_states_check:
-                    if state == 'Blacklisted':
+                for _, state, ghostlisted in existing_versions_states_check:
+                    if state == 'Blacklisted' or ghostlisted == 1:
                         is_blacklisted_in_db = True; break
-            else: 
+            else:
                 season_number_check = item.get('season_number'); episode_number_check = item.get('episode_number')
                 existing_versions_states_check = []
                 imdb_key_check = None; tmdb_key_check = None
@@ -346,8 +342,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     tmdb_key_check = (str(tmdb_id), season_number_check, episode_number_check)
                     if tmdb_key_check in existing_episodes and (not imdb_key_check or imdb_key_check != tmdb_key_check):
                          existing_versions_states_check.extend(existing_episodes[tmdb_key_check])
-                for _, state in existing_versions_states_check:
-                    if state == 'Blacklisted':
+                for _, state, ghostlisted in existing_versions_states_check:
+                    if state == 'Blacklisted' or ghostlisted == 1:
                         is_blacklisted_in_db = True; break
             
             if is_blacklisted_in_db:
@@ -362,7 +358,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     existing_versions_states_check_collected.extend(existing_movies[imdb_id])
                 if tmdb_id and tmdb_id in existing_movies and (not imdb_id or imdb_id != tmdb_id):
                     existing_versions_states_check_collected.extend(existing_movies[tmdb_id])
-                for _, state in existing_versions_states_check_collected:
+                for _, state, _ in existing_versions_states_check_collected:
                     if state in ('Collected', 'Upgrading'):
                         is_collected_or_upgrading_in_db = True; break
             else:
@@ -376,7 +372,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     tmdb_key_check_collected = (str(tmdb_id), season_number_check_collected, episode_number_check_collected)
                     if tmdb_key_check_collected in existing_episodes and (not imdb_key_check_collected or imdb_key_check_collected != tmdb_key_check_collected):
                          existing_versions_states_check_collected.extend(existing_episodes[tmdb_key_check_collected])
-                for _, state in existing_versions_states_check_collected:
+                for _, state, _ in existing_versions_states_check_collected:
                     if state in ('Collected', 'Upgrading'):
                         is_collected_or_upgrading_in_db = True; break
 
@@ -388,10 +384,10 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 skip = False; media_id_vs = imdb_id or tmdb_id
                 existing_versions_set_vs = set(); existing_states_set_vs = set()
                 if imdb_id and imdb_id in existing_movies:
-                    for version_vs, state_vs in existing_movies[imdb_id]:
+                    for version_vs, state_vs, _ in existing_movies[imdb_id]:
                         existing_versions_set_vs.add(version_vs); existing_states_set_vs.add(state_vs)
                 if tmdb_id and tmdb_id in existing_movies and (not imdb_id or imdb_id != tmdb_id):
-                    for version_vs, state_vs in existing_movies[tmdb_id]:
+                    for version_vs, state_vs, _ in existing_movies[tmdb_id]:
                         existing_versions_set_vs.add(version_vs); existing_states_set_vs.add(state_vs)
 
                 if not enable_granular_versions:
@@ -423,12 +419,12 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 if imdb_id:
                     imdb_key_vs = (str(imdb_id), season_number_vs, episode_number_vs)
                     if imdb_key_vs in existing_episodes:
-                        for version_vs, state_vs in existing_episodes[imdb_key_vs]:
+                        for version_vs, state_vs, _ in existing_episodes[imdb_key_vs]:
                             existing_versions_set_vs.add(version_vs); existing_states_set_vs.add(state_vs)
                 if tmdb_id:
                     tmdb_key_vs = (str(tmdb_id), season_number_vs, episode_number_vs)
                     if tmdb_key_vs in existing_episodes and (not imdb_key_vs or imdb_key_vs != tmdb_key_vs):
-                        for version_vs, state_vs in existing_episodes[tmdb_key_vs]:
+                        for version_vs, state_vs, _ in existing_episodes[tmdb_key_vs]:
                             existing_versions_set_vs.add(version_vs); existing_states_set_vs.add(state_vs)
 
                 if not enable_granular_versions:
@@ -633,16 +629,48 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         show_titles_to_potentially_update.add(
                             (item.get('imdb_id'), item.get('tmdb_id'), item.get('title'))
                         )
-                    
+
                     airtime = item.get('airtime') or '19:00'
                     initial_state = 'Wanted'
                     if get_setting('Debug', 'allow_partial_overseerr_requests'):
                          initial_state = 'Wanted' if item.get('is_requested_season', True) else 'Blacklisted'
                     blacklisted_date = datetime.now(timezone.utc) if initial_state == 'Blacklisted' else None
 
+                    # Battery fallback for Unknown release dates
+                    release_date = item.get('release_date')
+                    if not release_date or str(release_date).lower() == 'unknown':
+                        imdb_id = item.get('imdb_id')
+                        season_num = item.get('season_number')
+                        episode_num = item.get('episode_number')
+
+                        if imdb_id and season_num is not None and episode_num is not None:
+                            try:
+                                from cli_battery.app.direct_api import DirectAPI
+                                metadata, _ = DirectAPI.get_show_metadata(imdb_id)
+
+                                if metadata and 'seasons' in metadata:
+                                    season_data = metadata['seasons'].get(str(season_num))
+                                    if season_data and 'episodes' in season_data:
+                                        episode_data_battery = season_data['episodes'].get(str(episode_num))
+                                        if episode_data_battery and 'first_aired' in episode_data_battery:
+                                            first_aired = episode_data_battery['first_aired']
+                                            if first_aired:
+                                                # Extract date from first_aired (format: "2026-02-14 04:00:00" or "2026-02-14T04:00:00")
+                                                try:
+                                                    first_aired_str = str(first_aired).replace('T', ' ')
+                                                    if ' ' in first_aired_str:
+                                                        release_date = first_aired_str.split(' ', 1)[0][:10]  # YYYY-MM-DD
+                                                    else:
+                                                        release_date = first_aired_str[:10]
+                                                    logging.info(f"Battery fallback: Found air date {release_date} for {normalized_title} S{season_num}E{episode_num}")
+                                                except Exception as e:
+                                                    logging.warning(f"Could not parse Battery first_aired '{first_aired}': {e}")
+                            except Exception as e:
+                                logging.debug(f"Battery fallback failed for {normalized_title} S{season_num}E{episode_num}: {e}")
+
                     episode_data = (
                         item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
-                        item.get('release_date'), initial_state, 'episode',
+                        release_date, initial_state, 'episode',
                         item['season_number'], item['episode_number'], item.get('episode_title', ''),
                         datetime.now(), version, item.get('runtime'), airtime, genres, item.get('country', '').lower(),
                         blacklisted_date, item.get('requested_season', False), item.get('content_source'), item.get('content_source_detail')

@@ -1343,11 +1343,28 @@ def sync_episode_metadata():
                     if 'episodes' in season_data and isinstance(season_data['episodes'], dict):
                         for episode_number, episode_data in season_data['episodes'].items():
                             episode_title = episode_data.get('title', f"Episode {episode_number}")
+                            first_aired = episode_data.get('first_aired')
+
+                            # Extract date and time from first_aired (format: "2026-02-14 04:00:00" or "2026-02-14T04:00:00")
+                            release_date = None
+                            airtime = None
+                            if first_aired:
+                                try:
+                                    # Handle both space and T separator formats
+                                    first_aired_str = str(first_aired).replace('T', ' ')
+                                    if ' ' in first_aired_str:
+                                        date_part, time_part = first_aired_str.split(' ', 1)
+                                        release_date = date_part[:10]  # YYYY-MM-DD
+                                        airtime = time_part[:5]  # HH:MM
+                                    else:
+                                        release_date = first_aired_str[:10]
+                                except Exception as e:
+                                    logging.warning(f"Could not parse first_aired '{first_aired}' for {show_title} S{season_number}E{episode_number}: {e}")
 
                             if episode_title and season_number is not None and episode_number is not None:
-                                # Check if episode exists and if title is different
+                                # Check if episode exists
                                 cursor.execute("""
-                                    SELECT id, episode_title
+                                    SELECT id, episode_title, release_date, airtime
                                     FROM media_items
                                     WHERE imdb_id = ?
                                       AND type = 'episode'
@@ -1360,17 +1377,38 @@ def sync_episode_metadata():
                                 existing = cursor.fetchone()
                                 if existing:
                                     current_title = existing['episode_title']
+                                    current_release_date = existing['release_date']
+                                    current_airtime = existing['airtime']
 
-                                    # Only update if title changed
+                                    # Check if any field needs updating
+                                    needs_update = False
+                                    updates = []
+
                                     if current_title != episode_title:
+                                        needs_update = True
+                                        updates.append(f"title: '{current_title}' -> '{episode_title}'")
+
+                                    if release_date and (not current_release_date or current_release_date == 'Unknown'):
+                                        needs_update = True
+                                        updates.append(f"release_date: '{current_release_date}' -> '{release_date}'")
+
+                                    if airtime and current_airtime != airtime:
+                                        needs_update = True
+                                        updates.append(f"airtime: '{current_airtime}' -> '{airtime}'")
+
+                                    if needs_update:
                                         cursor.execute("""
                                             UPDATE media_items
                                             SET episode_title = ?,
+                                                release_date = COALESCE(?, release_date),
+                                                airtime = COALESCE(?, airtime),
                                                 metadata_updated = ?,
                                                 last_updated = ?
                                             WHERE id = ?
                                         """, (
                                             episode_title,
+                                            release_date,
+                                            airtime,
                                             datetime.now(),
                                             datetime.now(),
                                             existing['id']
@@ -1378,7 +1416,7 @@ def sync_episode_metadata():
 
                                         if cursor.rowcount > 0:
                                             show_updates += 1
-                                            logging.info(f"  Updated S{season_number:02d}E{episode_number:02d}: '{current_title}' -> '{episode_title}'")
+                                            logging.info(f"  Updated S{season_number:02d}E{episode_number:02d}: {', '.join(updates)}")
 
                 if show_updates > 0:
                     logging.info(f"Updated {show_updates} episode titles for '{show_title}' from {source}")

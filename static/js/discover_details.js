@@ -144,6 +144,21 @@ function displayContent(data) {
         }
     }
 
+    // Set certification (check both certification and content_rating fields)
+    const certificationText = document.getElementById('movie-certification-text');
+    const certificationSeparator = document.getElementById('certification-separator');
+    if (certificationText && certificationSeparator) {
+        const cert = data.certification || data.content_rating;
+        if (cert) {
+            certificationText.textContent = cert;
+            certificationText.style.display = 'inline';
+            certificationSeparator.style.display = 'inline';
+        } else {
+            certificationText.style.display = 'none';
+            certificationSeparator.style.display = 'none';
+        }
+    }
+
     // Set poster
     const posterImg = document.getElementById('poster-img');
     if (data.poster_path) {
@@ -178,6 +193,25 @@ function displayContent(data) {
 
     // Set year
     //document.getElementById('movie-year-text').textContent = data.year || '-';
+
+    // Set network (for TV shows in meta section)
+    const networkText = document.getElementById('movie-network-text');
+    const networkSeparator = document.getElementById('network-separator');
+    if (data.media_type === 'tv' && networkText && networkSeparator) {
+        const networks = (data.networks || []).join(', ');
+        if (networks) {
+            networkText.textContent = networks;
+            networkText.style.display = 'inline';
+            networkSeparator.style.display = 'inline';
+        } else {
+            networkText.style.display = 'none';
+            networkSeparator.style.display = 'none';
+        }
+    } else if (networkText && networkSeparator) {
+        // Hide network for movies
+        networkText.style.display = 'none';
+        networkSeparator.style.display = 'none';
+    }
 
     // Set runtime/episodes
     if (data.media_type === 'tv') {
@@ -248,6 +282,19 @@ function displayContent(data) {
     const tmdbLinkDetail = document.getElementById('tmdb-link-detail');
     tmdbLinkDetail.href = `https://www.themoviedb.org/${tmdbType}/${data.tmdb_id}`;
     tmdbLinkDetail.textContent = data.tmdb_id;
+
+    // Set TVDB link if available (TV shows only)
+    if (data.media_type === 'tv' && data.tvdb_id) {
+        const tvdbLink = document.getElementById('link-tvdb');
+        tvdbLink.href = `https://thetvdb.com/series/${data.tvdb_id}`;
+        tvdbLink.style.display = 'inline-flex';
+
+        const tvdbRow = document.getElementById('tvdb-row');
+        tvdbRow.style.display = 'flex';
+        const tvdbLinkDetail = document.getElementById('tvdb-link-detail');
+        tvdbLinkDetail.href = `https://thetvdb.com/series/${data.tvdb_id}`;
+        tvdbLinkDetail.textContent = data.tvdb_id;
+    }
 
     // Set IMDb link if available
     if (data.imdb_id) {
@@ -435,8 +482,10 @@ function displaySeasonEpisodes(seasonNumber, episodes, showData) {
     // Sort episodes by episode number
     episodes.sort((a, b) => a.episode_number - b.episode_number);
 
-    // Count collected episodes for season tab update
-    const collectedCount = episodes.filter(ep => ep.db_data && ep.db_data.state === 'Collected').length;
+    // Count collected episodes for season tab update (includes Upgrading state)
+    const collectedCount = episodes.filter(ep =>
+        ep.db_data && (ep.db_data.state === 'Collected' || ep.db_data.state === 'Upgrading')
+    ).length;
     updateSeasonTabProgress(seasonNumber, collectedCount, episodes.length);
 
     // Render each episode

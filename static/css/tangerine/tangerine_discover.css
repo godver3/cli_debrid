@@ -550,7 +550,8 @@ body:has(.discover-container) {
     .filter-section-inner .filter-group:has(#keyword-container),
     .filter-section-inner .filter-group:has(#provider-container),
     .filter-section-inner .filter-group:has(#network-container),
-    .filter-section-inner .filter-group:has(#company-container) {
+    .filter-section-inner .filter-group:has(#company-container),
+    .filter-section-inner .filter-group:has(#certification-min-select) {
         grid-column: 1 / -1;
     }
 
@@ -937,7 +938,7 @@ body:has(.discover-container) {
 
 .results-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 160px));
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 1.5rem;
     padding-bottom: 2rem;
     justify-content: start;
@@ -1416,7 +1417,7 @@ body:has(.discover-container) {
     .filter-drawer { width: 100%; right: -100%; }
     .modal-body { flex-direction: column; }
     .modal-poster { width: 100%; max-width: 200px; margin: 0 auto; }
-    .results-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+    .results-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
 }
 
 @keyframes slideIn {
@@ -3572,4 +3573,11 @@ body:has(.discover-container) {
         transparent 100%
     );
     margin: 15px 0;
+}
+
+/* Hide trailer text on mobile, show only play icon */
+@media (max-width: 768px) {
+    .trailer-text {
+        display: none;
+    }
 }

@@ -137,39 +137,6 @@
             <div id="cleanupResults" style="margin-top: 15px;"></div>
         </div>
         <div class="debug_item">
-            <h3>Clean Up Ghostlisted Duplicates</h3>
-            <p class="description">Remove ghostlisted duplicate entries while keeping collected versions. Finds items with both collected AND ghostlisted versions, and safely removes the ghostlisted duplicates.</p>
-            <form id="cleanup-duplicates-form">
-                <div class="form-group">
-                    <label for="cleanup_media_type">Media Type:</label>
-                    <select id="cleanup_media_type" name="media_type">
-                        <option value="movie" selected>Movies</option>
-                        <option value="show">Shows</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label>
-                        <input type="checkbox" id="cleanup_dry_run" name="dry_run" checked>
-                        Dry Run (Preview what will be deleted without actually deleting)
-                    </label>
-                </div>
-                <button type="submit">Clean Up Duplicates</button>
-                <button type="button" id="view-cleanup-results-btn" style="display: none; margin-top: 10px;">View Last Results</button>
-                <div id="cleanup-progress" style="display: none; margin-top: 15px;">
-                    <div class="progress-message">
-                        <span class="operation-spinner"></span>
-                        <span id="cleanup-progress-message">Scanning for duplicates...</span>
-                    </div>
-                    <div style="margin-top: 10px;">
-                        <div style="background: #2a2a2a; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
-                            <div id="cleanup-progress-bar" style="background: #4ecdc4; height: 6px; width: 0%; transition: width 0.3s;"></div>
-                        </div>
-                        <div id="cleanup-elapsed-time" style="color: #95a5a6; font-size: 12px;">Elapsed: 0s</div>
-                    </div>
-                </div>
-            </form>
-        </div>
-        <div class="debug_item">
             <h3>Manage Duplicate Versions</h3>
             <p class="description">Clean up duplicate versions based on quality, state, or version field matching. Handles failed upgrades, blacklist bugs, and multiple collected versions.</p>
             <form id="cleanup-upgrades-form">
@@ -191,6 +158,8 @@
                     <select id="keep_action" name="keep_action" style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
                         <option value="keep_collected" selected>Keep collected, delete blacklisted (for failed upgrades)</option>
                         <option value="keep_blacklisted">Keep blacklisted, delete collected (for blacklist bug)</option>
+                        <option value="keep_collected_delete_ghostlisted">Keep collected, delete ghostlisted</option>
+                        <option value="keep_ghostlisted_delete_collected">Keep ghostlisted, delete collected</option>
                         <option value="keep_best_quality">Keep best quality, delete rest (for multiple collected)</option>
                     </select>
                 </div>
@@ -2820,202 +2789,6 @@ if (document.readyState === 'loading') {
         }
         // --- End Fix Episode Numbers Logic ---
 
-        // --- Clean Up Ghostlisted Duplicates Logic ---
-        const cleanupForm = document.getElementById('cleanup-duplicates-form');
-        const cleanupResults = {data: null};
-
-        if (cleanupForm) {
-            cleanupForm.addEventListener('submit', function(e) {
-                e.preventDefault();
-
-                const formData = new FormData(this);
-                const isDryRun = formData.get('dry_run') === 'on';
-                const progressDiv = document.getElementById('cleanup-progress');
-                const progressBar = document.getElementById('cleanup-progress-bar');
-                const progressMessage = document.getElementById('cleanup-progress-message');
-                const elapsedTimeDiv = document.getElementById('cleanup-elapsed-time');
-                const viewResultsBtn = document.getElementById('view-cleanup-results-btn');
-
-                // Show progress UI
-                progressDiv.style.display = 'block';
-                progressBar.style.width = '0%';
-                progressMessage.textContent = isDryRun ? 'Analyzing duplicates...' : 'Cleaning up duplicates...';
-
-                // Start timer
-                const startTime = Date.now();
-                const timerInterval = setInterval(() => {
-                    const elapsed = Math.floor((Date.now() - startTime) / 1000);
-                    elapsedTimeDiv.textContent = `Elapsed: ${elapsed}s`;
-                }, 1000);
-
-                // Simulate progress (since we don't have streaming in this simple implementation)
-                progressBar.style.width = '30%';
-
-                fetch('/debug/api/cleanup_ghostlisted_duplicates', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    clearInterval(timerInterval);
-                    progressBar.style.width = '100%';
-
-                    const elapsed = Math.floor((Date.now() - startTime) / 1000);
-                    elapsedTimeDiv.textContent = `Completed in ${elapsed}s`;
-
-                    if (data.success) {
-                        // Build results HTML for modal with pagination
-                        const mediaType = document.getElementById('cleanup_media_type').value;
-                        const mediaLabel = mediaType === 'show' ? 'shows' : 'movies';
-                        const groupsPerPage = 20;
-                        let currentPage = 1;
-                        const totalGroups = data.groups ? data.groups.length : 0;
-                        const totalPages = Math.ceil(totalGroups / groupsPerPage);
-
-                        function renderGhostlistPage(page) {
-                            let resultsHtml = '<div class="episode-results-summary">';
-
-                            // Improved summary
-                            resultsHtml += `<p><strong>${data.total_movies} Duplicate Groups Found</strong> (each group has multiple versions of the same ${mediaLabel.slice(0, -1)})</p>`;
-                            resultsHtml += `<p><strong>${data.dry_run ? 'Would Delete' : 'Deleted'}:</strong> ${data.total_deleted} ghostlisted items</p>`;
-                            resultsHtml += `<p><strong>Would Keep:</strong> ${data.total_movies} non-ghostlisted items (one per group)</p>`;
-                            resultsHtml += `<p><strong>Elapsed Time:</strong> ${data.elapsed_time}s</p>`;
-
-                            if (data.groups && data.groups.length > 0) {
-                                const startIdx = (page - 1) * groupsPerPage;
-                                const endIdx = Math.min(startIdx + groupsPerPage, totalGroups);
-                                const pageGroups = data.groups.slice(startIdx, endIdx);
-
-                                resultsHtml += `<h4>Duplicate Groups (showing ${startIdx + 1}-${endIdx} of ${totalGroups}):</h4>`;
-                                resultsHtml += `<p style="font-size: 0.9em; color: #888; margin-top: -8px;"><em>Each row is a separate duplicate group. ✓ = kept items, ✗ = deleted items.</em></p>`;
-                                resultsHtml += `<table style="width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 0.85em;">`;
-                                resultsHtml += `<thead><tr style="background: #2a2a2a;"><th style="padding: 8px; text-align: left; width: 80px;">Group #</th><th style="padding: 8px; text-align: left; width: 45%;">Keep (✓)</th><th style="padding: 8px; text-align: left; width: 45%;">Delete (✗)</th></tr></thead>`;
-                                resultsHtml += `<tbody>`;
-
-                                // Check if we have episode data (shows)
-                                const isShowData = pageGroups.length > 0 && pageGroups[0].keep_items.length > 0 && pageGroups[0].keep_items[0].season_number !== undefined;
-
-                                pageGroups.forEach((group, idx) => {
-                                    const groupNum = startIdx + idx + 1;
-                                    resultsHtml += `<tr style="border-bottom: 1px solid #444;">`;
-                                    resultsHtml += `<td style="padding: 8px; vertical-align: top; font-weight: bold;">${groupNum}</td>`;
-
-                                    // Keep column (green)
-                                    resultsHtml += `<td style="padding: 8px; vertical-align: top; border-left: 2px solid #4CAF50; background: rgba(76, 175, 80, 0.1);">`;
-                                    if (group.keep_items && group.keep_items.length > 0) {
-                                        group.keep_items.forEach(item => {
-                                            resultsHtml += `<div style="margin-bottom: 8px; padding: 4px; background: rgba(0,0,0,0.2); border-radius: 3px;">`;
-                                            resultsHtml += `<strong>${item.title}</strong>`;
-                                            if (isShowData) {
-                                                resultsHtml += ` - S${item.season_number}E${item.episode_number}`;
-                                            }
-                                            resultsHtml += `<br><span style="font-size: 0.85em; color: #aaa;">ID: ${item.movie_id} | State: ${item.state} | Source: ${item.source}</span>`;
-                                            resultsHtml += `<br><span style="font-size: 0.85em; color: #888;" title="${item.location}">Location: ${item.location.length > 50 ? item.location.substring(0, 50) + '...' : item.location}</span>`;
-                                            resultsHtml += `</div>`;
-                                        });
-                                    } else {
-                                        resultsHtml += `<em style="color: #888;">None</em>`;
-                                    }
-                                    resultsHtml += `</td>`;
-
-                                    // Delete column (red)
-                                    resultsHtml += `<td style="padding: 8px; vertical-align: top; border-left: 2px solid #f44336; background: rgba(244, 67, 54, 0.1);">`;
-                                    if (group.delete_items && group.delete_items.length > 0) {
-                                        group.delete_items.forEach(item => {
-                                            resultsHtml += `<div style="margin-bottom: 8px; padding: 4px; background: rgba(0,0,0,0.2); border-radius: 3px;">`;
-                                            resultsHtml += `<strong>${item.title}</strong>`;
-                                            if (isShowData) {
-                                                resultsHtml += ` - S${item.season_number}E${item.episode_number}`;
-                                            }
-                                            resultsHtml += `<br><span style="font-size: 0.85em; color: #aaa;">ID: ${item.movie_id} | State: ${item.state} | Source: ${item.source}</span>`;
-                                            resultsHtml += `<br><span style="font-size: 0.85em; color: #888;" title="${item.location}">Location: ${item.location.length > 50 ? item.location.substring(0, 50) + '...' : item.location}</span>`;
-                                            resultsHtml += `</div>`;
-                                        });
-                                    } else {
-                                        resultsHtml += `<em style="color: #888;">None</em>`;
-                                    }
-                                    resultsHtml += `</td>`;
-
-                                    resultsHtml += `</tr>`;
-                                });
-
-                                resultsHtml += `</tbody></table>`;
-
-                                // Pagination controls
-                                if (totalPages > 1) {
-                                    resultsHtml += `<div style="margin-top: 15px; text-align: center;">`;
-                                    resultsHtml += `<button onclick="renderGhostlistPage(${Math.max(1, page - 1)})" style="padding: 5px 10px; margin: 0 5px;" ${page === 1 ? 'disabled' : ''}>Previous</button>`;
-                                    resultsHtml += `<span style="margin: 0 10px;">Page ${page} of ${totalPages}</span>`;
-                                    resultsHtml += `<button onclick="renderGhostlistPage(${Math.min(totalPages, page + 1)})" style="padding: 5px 10px; margin: 0 5px;" ${page === totalPages ? 'disabled' : ''}>Next</button>`;
-                                    resultsHtml += `</div>`;
-                                }
-                            }
-                            resultsHtml += '</div>';
-
-                            const modalBody = document.getElementById('cleanup-modal-body');
-                            modalBody.innerHTML = resultsHtml;
-                        }
-
-                        // Make function global for pagination buttons
-                        window.renderGhostlistPage = renderGhostlistPage;
-
-                        const isDryRun = data.dry_run;
-                        const modalTitle = isDryRun ? 'Ghostlisted Duplicates Analysis (Dry Run)' : 'Ghostlisted Duplicates Cleanup Results';
-
-                        // Show modal first
-                        showCleanupResultsModal('', modalTitle);
-
-                        // Then render the content with pagination
-                        renderGhostlistPage(currentPage);
-
-                        // Save data and render function for view results button
-                        lastCleanupResults = {
-                            data: data,
-                            mediaType: mediaType,
-                            title: modalTitle,
-                            renderFunction: renderGhostlistPage
-                        };
-
-                        setTimeout(() => {
-                            progressDiv.style.display = 'none';
-                        }, 2000);
-
-                        // Show view results button for later viewing
-                        viewResultsBtn.style.display = 'inline-block';
-                    } else {
-                        progressDiv.style.display = 'none';
-                        showPopup({
-                            type: POPUP_TYPES.ERROR,
-                            message: data.error || 'An unknown error occurred',
-                            title: 'Error'
-                        });
-                    }
-                })
-                .catch(error => {
-                    clearInterval(timerInterval);
-                    progressDiv.style.display = 'none';
-                    console.error('Error:', error);
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        message: 'Network error occurred. Check console for details.',
-                        title: 'Error'
-                    });
-                });
-            });
-
-            // View results button handler
-            const viewCleanupResultsBtn = document.getElementById('view-cleanup-results-btn');
-            if (viewCleanupResultsBtn) {
-                viewCleanupResultsBtn.addEventListener('click', function() {
-                    if (lastCleanupResults && lastCleanupResults.renderFunction) {
-                        showCleanupResultsModal('', lastCleanupResults.title);
-                        lastCleanupResults.renderFunction(1);  // Re-render from page 1
-                    }
-                });
-            }
-        }
-        // --- End Clean Up Ghostlisted Duplicates Logic ---
-
         // --- Clean Up Failed Upgrade Attempts Logic ---
         {
             const upgradesForm = document.getElementById('cleanup-upgrades-form');
@@ -3197,6 +2970,10 @@ if (document.readyState === 'loading') {
                                 let actionText = 'Keep collected, delete blacklisted';
                                 if (data.keep_action === 'keep_blacklisted') {
                                     actionText = 'Keep blacklisted, delete collected';
+                                } else if (data.keep_action === 'keep_collected_delete_ghostlisted') {
+                                    actionText = 'Keep collected, delete ghostlisted';
+                                } else if (data.keep_action === 'keep_ghostlisted_delete_collected') {
+                                    actionText = 'Keep ghostlisted, delete collected';
                                 } else if (data.keep_action === 'keep_best_quality') {
                                     actionText = 'Keep best quality';
                                 }
@@ -3279,9 +3056,10 @@ if (document.readyState === 'loading') {
                                         group.keep_items.forEach(item => {
                                             const episode = item.season_number ? ` S${item.season_number}E${item.episode_number}` : '';
                                             const scoreDisplay = item.current_score !== undefined && item.current_score !== 'N/A' ? ` | Score: ${typeof item.current_score === 'number' ? item.current_score.toFixed(1) : item.current_score}` : '';
+                                            const ghostlistedStatus = item.ghostlisted !== undefined ? (item.ghostlisted ? 'True' : 'False') : 'N/A';
                                             const fileLocation = item.location && item.location !== 'N/A' ? item.location : 'No file location';
                                             resultsHtml += `<div style="margin-bottom: 8px;"><strong>${item.title}${episode}</strong><br>`;
-                                            resultsHtml += `<small>ID: ${item.id} | State: ${item.state} | Version: ${item.version}${scoreDisplay}</small><br>`;
+                                            resultsHtml += `<small>ID: ${item.id} | State: ${item.state} | Version: ${item.version} | Ghostlisted: ${ghostlistedStatus}${scoreDisplay}</small><br>`;
                                             resultsHtml += `<small style="color: #aaa; font-size: 0.85em; word-break: break-all;">File: ${fileLocation}</small></div>`;
                                         });
                                         resultsHtml += `</td>`;
@@ -3291,6 +3069,7 @@ if (document.readyState === 'loading') {
                                         group.delete_items.forEach(item => {
                                             const episode = item.season_number ? ` S${item.season_number}E${item.episode_number}` : '';
                                             const scoreDisplay = item.current_score !== undefined && item.current_score !== 'N/A' ? ` | Score: ${typeof item.current_score === 'number' ? item.current_score.toFixed(1) : item.current_score}` : '';
+                                            const ghostlistedStatus = item.ghostlisted !== undefined ? (item.ghostlisted ? 'True' : 'False') : 'N/A';
                                             const fileLocation = item.location && item.location !== 'N/A' ? item.location : 'No file location';
 
                                             // Check if item is excluded (green background) or deleted (red background)
@@ -3304,7 +3083,7 @@ if (document.readyState === 'loading') {
                                                 resultsHtml += `<div style="color: #4CAF50; font-weight: bold; margin-bottom: 4px; font-size: 0.9em;">${statusText}</div>`;
                                             }
                                             resultsHtml += `<strong>${item.title}${episode}</strong><br>`;
-                                            resultsHtml += `<small>ID: ${item.id} | State: ${item.state} | Version: ${item.version}${scoreDisplay}</small><br>`;
+                                            resultsHtml += `<small>ID: ${item.id} | State: ${item.state} | Version: ${item.version} | Ghostlisted: ${ghostlistedStatus}${scoreDisplay}</small><br>`;
                                             resultsHtml += `<small style="color: #aaa; font-size: 0.85em; word-break: break-all;">File: ${fileLocation}</small></div>`;
                                         });
                                         resultsHtml += `</td>`;
@@ -3858,24 +3637,48 @@ if (document.readyState === 'loading') {
         const resultsDiv = document.getElementById('orphaned-labels-results');
         const cleanupBtn = document.getElementById('orphaned-cleanup-btn');
 
-        resultsDiv.innerHTML = '<p>Searching for orphaned labels...</p>';
+        resultsDiv.innerHTML = '<p>Searching for orphaned labels and unconfigured sources...</p>';
 
         fetch('/debug/plex-labels/find-orphaned')
             .then(response => response.json())
             .then(data => {
-                if (data.success && data.orphaned_labels && data.orphaned_labels.length > 0) {
-                    let html = `<p style="color: #ffd93d;">Found ${data.orphaned_labels.length} orphaned label(s):</p><ul style="margin-top: 10px; padding-left: 25px;">`;
-                    data.orphaned_labels.forEach(label => {
-                        html += `<li style="padding: 5px 0;">${label.label} (${label.item_count} items)</li>`;
-                    });
-                    html += '</ul>';
-                    resultsDiv.innerHTML = html;
-                    cleanupBtn.disabled = false;
-                } else if (data.orphaned_labels && data.orphaned_labels.length === 0) {
-                    resultsDiv.innerHTML = '<p style="color: #4ecdc4;">No orphaned labels found!</p>';
-                    cleanupBtn.disabled = true;
+                if (data.success) {
+                    const hasOrphanedLabels = data.orphaned_labels && data.orphaned_labels.length > 0;
+                    const hasOrphanedSources = data.orphaned_sources && data.orphaned_sources.length > 0;
+
+                    if (hasOrphanedLabels || hasOrphanedSources) {
+                        let html = '';
+
+                        // Show orphaned labels (Type 1)
+                        if (hasOrphanedLabels) {
+                            html += `<p style="color: #ffd93d; font-weight: bold; margin-top: 10px;">Orphaned Labels (${data.labels_count}):</p>`;
+                            html += `<p style="font-size: 0.9em; margin-bottom: 10px;">Labels from sources no longer in config</p>`;
+                            html += '<ul style="margin-top: 5px; padding-left: 25px;">';
+                            data.orphaned_labels.forEach(label => {
+                                html += `<li style="padding: 5px 0;">${label.label} (${label.item_count} items)</li>`;
+                            });
+                            html += '</ul>';
+                        }
+
+                        // Show unconfigured sources (Type 2)
+                        if (hasOrphanedSources) {
+                            html += `<p style="color: #ff6b6b; font-weight: bold; margin-top: 15px;">Unconfigured Sources (${data.sources_count}):</p>`;
+                            html += `<p style="font-size: 0.9em; margin-bottom: 10px;">Items from sources not in config</p>`;
+                            html += '<ul style="margin-top: 5px; padding-left: 25px;">';
+                            data.orphaned_sources.forEach(source => {
+                                html += `<li style="padding: 5px 0;">${source.source} (${source.item_count} items)</li>`;
+                            });
+                            html += '</ul>';
+                        }
+
+                        resultsDiv.innerHTML = html;
+                        cleanupBtn.disabled = false;
+                    } else {
+                        resultsDiv.innerHTML = '<p style="color: #4ecdc4;">No orphaned labels or unconfigured sources found!</p>';
+                        cleanupBtn.disabled = true;
+                    }
                 } else {
-                    resultsDiv.innerHTML = `<p style="color: #ff6b6b;">${data.message || 'Error finding orphaned labels'}</p>`;
+                    resultsDiv.innerHTML = `<p style="color: #ff6b6b;">${data.message || 'Error finding orphaned items'}</p>`;
                     cleanupBtn.disabled = true;
                 }
             })
@@ -3892,38 +3695,125 @@ if (document.readyState === 'loading') {
         showPopup({
             type: POPUP_TYPES.CONFIRM,
             title: 'Confirm Cleanup',
-            message: 'Are you sure you want to cleanup orphaned labels? This will remove them from all items and cannot be undone.',
+            message: 'Are you sure you want to cleanup orphaned data? This will:\n1. Remove labels from inactive sources\n2. Clear source metadata from items with unconfigured sources\n\nThis cannot be undone.',
             confirmText: 'Cleanup',
             cancelText: 'Cancel',
             onConfirm: () => {
-                // Get orphaned labels data from current display
-                const orphanedText = resultsDiv.textContent;
-                const match = orphanedText.match(/Found (\d+) orphaned/);
-
-                if (match && match[1]) {
-                    const count = parseInt(match[1]);
-                    const estimatedSeconds = count * 10; // ~10 seconds per orphaned label (affects multiple items)
-                    const estimatedMinutes = Math.ceil(estimatedSeconds / 60);
-                    resultsDiv.innerHTML = `
-                        <div class="progress-message">
-                            <span class="operation-spinner"></span>
-                            <span>Cleaning up ${count} orphaned label(s)...</span>
-                        </div>
-                        <div class="progress-estimate">Estimated time: ${estimatedMinutes} minute(s)</div>
-                    `;
-                } else {
-                    resultsDiv.innerHTML = '<div class="progress-message"><span class="operation-spinner"></span><span>Cleaning up orphaned labels...</span></div>';
-                }
-
+                resultsDiv.innerHTML = '<div class="progress-message"><span class="operation-spinner"></span><span>Starting cleanup...</span></div>';
                 cleanupBtn.disabled = true;
 
-                handleStreamingProgress(
-                    '/debug/plex-labels/cleanup-orphaned-stream',
-                    {},
-                    resultsDiv,
-                    cleanupBtn,
-                    { actionVerb: 'Cleaning up', countKey: 'cleaned', itemKey: 'item_title' }
-                );
+                // Handle custom two-phase streaming progress
+                fetch('/debug/plex-labels/cleanup-orphaned-stream', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                })
+                .then(response => {
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+
+                    function processText({ done, value }) {
+                        if (done) {
+                            cleanupBtn.disabled = false;
+                            return;
+                        }
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop();
+
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const data = JSON.parse(line.slice(6));
+
+                                    if (data.error) {
+                                        resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${data.error}</p>`;
+                                        cleanupBtn.disabled = false;
+                                        return;
+                                    }
+
+                                    if (data.status === 'started') {
+                                        const phaseLabel = data.phase === 1 ? 'Phase 1: Cleaning orphaned labels' : 'Phase 2: Clearing orphaned source metadata';
+                                        resultsDiv.innerHTML = `
+                                            <div class="progress-message">
+                                                <span class="operation-spinner"></span>
+                                                <span>${phaseLabel}</span>
+                                            </div>
+                                            <div style="margin-top: 10px;">
+                                                <div style="color: #95a5a6; font-size: 12px;">Progress: 0/${data.total}</div>
+                                            </div>
+                                        `;
+                                    }
+
+                                    if (data.status === 'progress') {
+                                        const percent = Math.round((data.current / data.total) * 100);
+                                        const estMinutes = Math.floor(data.estimated_remaining_seconds / 60);
+                                        const estSeconds = data.estimated_remaining_seconds % 60;
+                                        const elapsedMinutes = Math.floor(data.elapsed_seconds / 60);
+                                        const elapsedSeconds = data.elapsed_seconds % 60;
+
+                                        let itemInfo = '';
+                                        let countInfo = '';
+                                        let phaseLabel = '';
+
+                                        if (data.phase === 1) {
+                                            phaseLabel = 'Phase 1: Cleaning orphaned labels';
+                                            itemInfo = data.item_title || 'Unknown';
+                                            countInfo = `Labels cleaned: ${data.labels_cleaned}`;
+                                        } else {
+                                            phaseLabel = 'Phase 2: Clearing source metadata';
+                                            itemInfo = `${data.item_title || 'Unknown'} (${data.source})`;
+                                            countInfo = `Sources cleaned: ${data.sources_cleaned}`;
+                                        }
+
+                                        resultsDiv.innerHTML = `
+                                            <div class="progress-message">
+                                                <span class="operation-spinner"></span>
+                                                <span>${phaseLabel}: ${itemInfo}</span>
+                                            </div>
+                                            <div style="margin-top: 10px;">
+                                                <div style="background: #2a2a2a; border-radius: 4px; overflow: hidden; margin-bottom: 8px;">
+                                                    <div style="background: #4ecdc4; height: 6px; width: ${percent}%; transition: width 0.3s;"></div>
+                                                </div>
+                                                <div style="color: #95a5a6; font-size: 12px;">Progress: ${data.current}/${data.total} (${percent}%) - ${countInfo}</div>
+                                                <div style="color: #95a5a6; font-size: 12px;">Elapsed: ${elapsedMinutes}m ${elapsedSeconds}s | Remaining: ~${estMinutes}m ${estSeconds}s</div>
+                                            </div>
+                                        `;
+                                    }
+
+                                    if (data.status === 'complete') {
+                                        let message = '<p style="color: #4ecdc4;">Cleanup Complete!</p>';
+                                        message += `<div style="margin-top: 10px;">`;
+                                        message += `<div>• Labels cleaned: ${data.labels_cleaned} (from ${data.total_phase1} items checked)</div>`;
+                                        message += `<div>• Sources cleaned: ${data.sources_cleaned} (from ${data.total_phase2} items checked)</div>`;
+                                        message += `<div style="color: #95a5a6; font-size: 12px; margin-top: 8px;">Total time: ${Math.floor(data.elapsed_seconds / 60)}m ${data.elapsed_seconds % 60}s</div>`;
+                                        message += `</div>`;
+
+                                        resultsDiv.innerHTML = message;
+                                        cleanupBtn.disabled = false;
+                                    }
+
+                                    if (data.status === 'error') {
+                                        resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${data.error}</p>`;
+                                        cleanupBtn.disabled = false;
+                                    }
+                                } catch (e) {
+                                    console.error('Error parsing SSE data:', e);
+                                }
+                            }
+                        }
+
+                        return reader.read().then(processText);
+                    }
+
+                    return reader.read().then(processText);
+                })
+                .catch(error => {
+                    resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+                    cleanupBtn.disabled = false;
+                });
             }
         });
     }

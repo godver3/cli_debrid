@@ -11,7 +11,8 @@ from debrid import get_debrid_provider
 import logging
 import requests
 from datetime import datetime
-from .discover_routes import get_digital_release_date
+from .discover_routes import get_digital_release_date, get_certification
+from .poster_cache import load_cache, save_cache
 
 library_bp = Blueprint('library', __name__, url_prefix='/library')
 
@@ -441,9 +442,10 @@ def get_library_data():
             count_query += " AND state IN ('Collected', 'Upgrading') AND state != 'Unreleased'"
         elif status_filter == 'missing':
             # For movies: No collected/upgrading files AND not ANY duplicates (all duplicates shown in Duplicates filter)
-            # For TV shows: Partially collected (at least 1 collected/upgrading, but not all episodes)
+            # For TV shows: Partially collected (at least 1 collected/upgrading, but not all RELEASED episodes)
             # Also exclude Unreleased items (they belong in Upcoming filter) and queue states
             # Note: Upgrading is treated as Collected (we have it, just getting better version)
+            # Fixed: Only count released episodes in total (exclude Unreleased from denominator)
             query += """ AND state NOT IN ('Unreleased', 'Final Scrape', 'Scraping', 'Wanted') AND (
                 (type = 'movie' AND state NOT IN ('Collected', 'Upgrading') AND imdb_id NOT IN (
                     SELECT imdb_id
@@ -460,7 +462,7 @@ def get_library_data():
                     AND (ghostlisted = 0 OR ghostlisted IS NULL)
                     GROUP BY tmdb_id
                     HAVING COUNT(DISTINCT CASE WHEN state IN ('Collected', 'Upgrading') THEN season_number || '-' || episode_number END) > 0
-                    AND COUNT(DISTINCT CASE WHEN state IN ('Collected', 'Upgrading') THEN season_number || '-' || episode_number END) < COUNT(DISTINCT season_number || '-' || episode_number)
+                    AND COUNT(DISTINCT CASE WHEN state IN ('Collected', 'Upgrading') THEN season_number || '-' || episode_number END) < COUNT(DISTINCT CASE WHEN state != 'Unreleased' THEN season_number || '-' || episode_number END)
                 ))
             )"""
             count_query += """ AND state NOT IN ('Unreleased', 'Final Scrape', 'Scraping', 'Wanted') AND (
@@ -479,7 +481,7 @@ def get_library_data():
                     AND (ghostlisted = 0 OR ghostlisted IS NULL)
                     GROUP BY tmdb_id
                     HAVING COUNT(DISTINCT CASE WHEN state IN ('Collected', 'Upgrading') THEN season_number || '-' || episode_number END) > 0
-                    AND COUNT(DISTINCT CASE WHEN state IN ('Collected', 'Upgrading') THEN season_number || '-' || episode_number END) < COUNT(DISTINCT season_number || '-' || episode_number)
+                    AND COUNT(DISTINCT CASE WHEN state IN ('Collected', 'Upgrading') THEN season_number || '-' || episode_number END) < COUNT(DISTINCT CASE WHEN state != 'Unreleased' THEN season_number || '-' || episode_number END)
                 ))
             )"""
         elif status_filter == 'blacklist':
@@ -1189,23 +1191,18 @@ def show_detail_data(media_id):
         # Convert seasons dict to list and sort
         seasons_list = sorted(seasons.values(), key=lambda x: x['season_number'])
 
-        # Get poster and backdrop from cache
-        from routes.poster_cache import get_cached_poster_url
-        # Use tmdb_id from show_data if available, otherwise use the media_id we queried with
-        cache_id = show_data['tmdb_id'] or media_id
-        poster_url = get_cached_poster_url(cache_id, 'tv')
-        backdrop_url = get_cached_poster_url(f"{cache_id}_backdrop", 'tv')
-
-        # Fetch TMDB metadata if tmdb_id is available
-        # If no tmdb_id but imdb_id exists, try to look up tmdb_id from imdb_id
+        # Initialize metadata variables
         overview = None
         genres = None
         network = None
         status = None
         rating = None
         vote_count = None
+        tmdb_poster_path = None
+        tmdb_backdrop_path = None
         tmdb_id = show_data['tmdb_id']
         tvdb_id = None  # TODO: Extract from database if available
+        tvdb_slug = None  # TVDB slug for correct URL format
 
         # If no TMDB ID but IMDB ID exists, try to look it up
         if not tmdb_id and show_data['imdb_id']:
@@ -1215,40 +1212,94 @@ def show_detail_data(media_id):
             if tmdb_id:
                 logging.info(f"Found TMDB ID {tmdb_id} for show {show_data['title']} via IMDB lookup")
 
+        # Try Battery first for basic metadata (overview, genres, network, status)
+        battery_metadata = None
+        if show_data['imdb_id']:
+            try:
+                from cli_battery.app.direct_api import DirectAPI
+                logging.info(f"Fetching metadata from Battery for show {show_data['imdb_id']}")
+                battery_metadata, source = DirectAPI.get_show_metadata(show_data['imdb_id'])
+                if battery_metadata:
+                    logging.info(f"Battery metadata retrieved from {source}")
+                    overview = battery_metadata.get('overview', '')
+                    genres_list = battery_metadata.get('genres', [])
+                    if isinstance(genres_list, list):
+                        genres = ', '.join(genres_list) if genres_list else None
+                    else:
+                        genres = genres_list
+                    network = battery_metadata.get('network', '')
+                    status = battery_metadata.get('status', '')
+                    # Get TVDB ID and slug from Battery metadata
+                    battery_ids = battery_metadata.get('ids', {})
+                    if isinstance(battery_ids, dict):
+                        tvdb_id = battery_ids.get('tvdb')
+                        tvdb_slug = battery_ids.get('slug')  # Get TVDB slug for proper URL format
+                    logging.info(f"Battery metadata - overview: {len(overview) if overview else 0} chars, genres: {genres}, network: {network}, status: {status}, tvdb_slug: {tvdb_slug}")
+            except Exception as e:
+                logging.warning(f"Battery metadata fetch failed for {show_data['imdb_id']}: {e}")
+
+        # Always fetch TMDB for ratings and vote counts (not available from Battery)
+        # Also used as fallback if Battery didn't provide basic metadata
         if tmdb_id:
             tmdb_api_key = get_setting('TMDB', 'api_key')
             if tmdb_api_key:
                 try:
                     details_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
-                    logging.info(f"Fetching TMDB metadata for show {tmdb_id}")
+                    if battery_metadata:
+                        logging.info(f"Fetching TMDB ratings for show {tmdb_id} (to supplement Battery data)")
+                    else:
+                        logging.info(f"Fetching TMDB metadata for show {tmdb_id} (Battery unavailable)")
                     details_response = requests.get(details_url)
                     details_response.raise_for_status()
                     details_data = details_response.json()
 
-                    overview = details_data.get('overview', '')
-                    genres_list = details_data.get('genres', [])
-                    genres = ', '.join([g['name'] for g in genres_list]) if genres_list else None
-
-                    # Get network (first network if multiple)
-                    networks_list = details_data.get('networks', [])
-                    if networks_list:
-                        network = networks_list[0].get('name', '')
-
-                    status = details_data.get('status', '')
+                    # Always get ratings from TMDB
                     rating = details_data.get('vote_average')  # TMDB rating (0-10)
                     vote_count = details_data.get('vote_count')  # Number of votes
 
-                    # Get TVDB ID if available in external_ids
-                    tvdb_id = details_data.get('external_ids', {}).get('tvdb_id')
+                    # Get poster and backdrop paths from TMDB
+                    tmdb_poster_path = details_data.get('poster_path')
+                    tmdb_backdrop_path = details_data.get('backdrop_path')
 
-                    logging.info(f"TMDB metadata fetched - overview: {len(overview) if overview else 0} chars, genres: {genres}, network: {network}, status: {status}, rating: {rating}, vote_count: {vote_count}")
+                    # If Battery didn't provide data, use TMDB for everything
+                    if not battery_metadata:
+                        overview = details_data.get('overview', '')
+                        genres_list = details_data.get('genres', [])
+                        genres = ', '.join([g['name'] for g in genres_list]) if genres_list else None
+
+                        # Get network (first network if multiple)
+                        networks_list = details_data.get('networks', [])
+                        if networks_list:
+                            network = networks_list[0].get('name', '')
+
+                        status = details_data.get('status', '')
+
+                    # Get TVDB ID if not already from Battery
+                    if not tvdb_id:
+                        tvdb_id = details_data.get('external_ids', {}).get('tvdb_id')
+
+                    logging.info(f"TMDB data: rating: {rating}, vote_count: {vote_count}, poster: {tmdb_poster_path}, backdrop: {tmdb_backdrop_path}")
 
                 except Exception as e:
                     logging.error(f"Error fetching TMDB metadata for show {tmdb_id}: {e}")
             else:
-                logging.warning(f"TMDB API key not configured, skipping metadata fetch for show {tmdb_id}")
-        else:
-            logging.warning(f"No TMDB ID available for show {show_data['title']}, skipping metadata fetch")
+                logging.warning(f"TMDB API key not configured, skipping ratings fetch for show {tmdb_id}")
+        elif not battery_metadata:
+            logging.warning(f"No TMDB ID or IMDb ID available for show {show_data['title']}, skipping metadata fetch")
+
+        # Get poster and backdrop URLs from cache, with TMDB fallback
+        from routes.poster_cache import get_cached_poster_url
+        cache_id = tmdb_id or show_data['imdb_id'] or media_id
+        poster_url = get_cached_poster_url(cache_id, 'tv')
+        backdrop_url = get_cached_poster_url(f"{cache_id}_backdrop", 'tv')
+
+        # If not in cache, use TMDB paths directly
+        if not poster_url and tmdb_poster_path:
+            poster_url = f"https://image.tmdb.org/t/p/w500{tmdb_poster_path}"
+            logging.info(f"Using TMDB poster path directly (cache empty): {poster_url}")
+        if not backdrop_url and tmdb_backdrop_path:
+            backdrop_url = f"https://image.tmdb.org/t/p/original{tmdb_backdrop_path}"
+            logging.info(f"Using TMDB backdrop path directly (cache empty): {backdrop_url}")
 
         # Extract storage path from first episode's filled_by_file or use location_on_disk
         storage_path = show_data['location_on_disk'] if show_data['location_on_disk'] else None
@@ -1342,6 +1393,12 @@ def show_detail_data(media_id):
         # Get auto-ghostlist setting
         auto_ghostlist_enabled = get_setting('Library Manager', 'ghostlist_mode', False)
 
+        # Fetch certification based on user's preferred region
+        certification = ''
+        if show_data['tmdb_id'] and tmdb_api_key:
+            certification_region = get_setting('TMDB', 'certification_region', 'US')
+            certification = get_certification(show_data['tmdb_id'], 'tv', tmdb_api_key, certification_region)
+
         return jsonify({
             'success': True,
             'show': {
@@ -1355,6 +1412,7 @@ def show_detail_data(media_id):
                 'backdrop_url': backdrop_url,
                 'overview': overview,
                 'genres': genres,
+                'certification': certification,
                 'network': network,
                 'status': status,
                 'rating': rating,
@@ -1557,8 +1615,8 @@ def refresh_show_metadata(media_id):
 
         imdb_id, tmdb_id, title, media_type = show
 
-        # Get fresh metadata from DirectAPI (includes episode data)
-        metadata, source = DirectAPI.get_show_metadata(imdb_id)
+        # Force fresh metadata from TVDB/Trakt (not cached - ensures English titles)
+        metadata, source = DirectAPI.force_refresh_metadata(imdb_id)
 
         if not metadata:
             cursor.close()
@@ -1568,19 +1626,38 @@ def refresh_show_metadata(media_id):
                 'error': f'Could not fetch metadata from {source or "API"}'
             }), 500
 
-        # Update episode titles from fresh metadata
+        # Update episode titles and air dates from fresh metadata
         updated_count = 0
         if 'seasons' in metadata:
             for season_number, season_data in metadata['seasons'].items():
                 if 'episodes' in season_data:
                     for episode_number, episode_data in season_data['episodes'].items():
                         episode_title = episode_data.get('title', f"Episode {episode_number}")
+                        first_aired = episode_data.get('first_aired')
+
+                        # Extract date and time from first_aired
+                        release_date = None
+                        airtime = None
+                        if first_aired:
+                            try:
+                                # Handle both space and T separator formats
+                                first_aired_str = str(first_aired).replace('T', ' ')
+                                if ' ' in first_aired_str:
+                                    date_part, time_part = first_aired_str.split(' ', 1)
+                                    release_date = date_part[:10]  # YYYY-MM-DD
+                                    airtime = time_part[:5]  # HH:MM
+                                else:
+                                    release_date = first_aired_str[:10]
+                            except Exception as e:
+                                logging.warning(f"Could not parse first_aired '{first_aired}' for S{season_number}E{episode_number}: {e}")
 
                         if episode_title and season_number is not None and episode_number is not None:
-                            # Update episode title in database
+                            # Update episode metadata in database
                             cursor.execute("""
                                 UPDATE media_items
                                 SET episode_title = ?,
+                                    release_date = COALESCE(?, release_date),
+                                    airtime = COALESCE(?, airtime),
                                     metadata_updated = ?,
                                     last_updated = ?
                                 WHERE imdb_id = ?
@@ -1589,6 +1666,8 @@ def refresh_show_metadata(media_id):
                                   AND episode_number = ?
                             """, (
                                 episode_title,
+                                release_date,
+                                airtime,
                                 datetime.now(),
                                 datetime.now(),
                                 imdb_id,
@@ -1597,6 +1676,58 @@ def refresh_show_metadata(media_id):
                             ))
                             if cursor.rowcount > 0:
                                 updated_count += cursor.rowcount
+
+        # Fetch fresh show-level metadata from TMDB
+        tmdb_updated = False
+        if tmdb_id:
+            try:
+                tmdb_api_key = get_setting('TMDB', 'api_key')
+                if tmdb_api_key:
+                    import requests
+                    # Fetch show details from TMDB
+                    tmdb_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}?api_key={tmdb_api_key}"
+                    response = requests.get(tmdb_url, timeout=10)
+                    response.raise_for_status()
+                    tmdb_data = response.json()
+
+                    # Extract show-level metadata (only fields that exist in database)
+                    show_title = tmdb_data.get('name', title)
+                    show_year = tmdb_data.get('first_air_date', '')[:4] if tmdb_data.get('first_air_date') else None
+                    genres = ', '.join([g['name'] for g in tmdb_data.get('genres', [])])
+                    status = tmdb_data.get('status', '')
+
+                    # Update show-level metadata in media_items (title and genres for episodes)
+                    cursor.execute("""
+                        UPDATE media_items
+                        SET title = ?,
+                            genres = ?
+                        WHERE imdb_id = ? AND type = 'episode'
+                    """, (
+                        show_title,
+                        genres,
+                        imdb_id
+                    ))
+
+                    # Update show-level metadata in tv_shows table (title, year, status)
+                    cursor.execute("""
+                        UPDATE tv_shows
+                        SET title = ?,
+                            year = ?,
+                            status = ?,
+                            last_updated = ?
+                        WHERE imdb_id = ?
+                    """, (
+                        show_title,
+                        show_year,
+                        status,
+                        datetime.now(),
+                        imdb_id
+                    ))
+
+                    tmdb_updated = True
+                    logging.info(f"Updated TMDB metadata for {show_title} in both media_items and tv_shows tables")
+            except Exception as e:
+                logging.warning(f"Failed to update TMDB metadata: {e}")
 
         # Also update timestamps for all episodes (even if title didn't change)
         cursor.execute(f"""
@@ -1614,13 +1745,28 @@ def refresh_show_metadata(media_id):
         cursor.close()
         db_content.close()
 
-        logging.info(f"Refreshed metadata for {title} (IMDb: {imdb_id}): Updated {updated_count} episode titles from {source}")
+        # Clear poster/backdrop cache to force fresh fetch from TMDB on next load
+        if tmdb_id:
+            try:
+                cache = load_cache()
+                poster_key = f"{tmdb_id}_tv"
+                backdrop_key = f"{tmdb_id}_backdrop_tv"
+                cache.pop(poster_key, None)
+                cache.pop(backdrop_key, None)
+                save_cache(cache)
+                logging.info(f"Cleared poster/backdrop cache for show {tmdb_id}")
+            except Exception as e:
+                logging.warning(f"Failed to clear poster cache: {e}")
+
+        logging.info(f"Refreshed metadata for {title} (IMDb: {imdb_id}): Updated {updated_count} episode titles from {source}{', TMDB data updated' if tmdb_updated else ''}")
 
         return jsonify({
             'success': True,
             'message': f'Metadata refreshed for {title}',
             'updated_episodes': updated_count,
-            'source': source
+            'tmdb_updated': tmdb_updated,
+            'source': source,
+            'cache_cleared': tmdb_id is not None
         })
 
     except Exception as e:
@@ -1726,6 +1872,35 @@ def refresh_movie_metadata(media_id):
             update_fields.append('runtime = ?')
             update_values.append(metadata['runtime'])
 
+        # Also fetch fresh TMDB data if we have tmdb_id to update additional fields
+        tmdb_updated = False
+        if tmdb_id:
+            try:
+                tmdb_api_key = get_setting('TMDB', 'api_key')
+                if tmdb_api_key:
+                    import requests
+                    # Fetch movie details from TMDB
+                    tmdb_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={tmdb_api_key}"
+                    response = requests.get(tmdb_url, timeout=10)
+                    response.raise_for_status()
+                    tmdb_data = response.json()
+
+                    # Update genres from TMDB (this column exists)
+                    if tmdb_data.get('genres'):
+                        genres_str = ', '.join([g['name'] for g in tmdb_data['genres']])
+                        update_fields.append('genres = ?')
+                        update_values.append(genres_str)
+
+                    # Update runtime from TMDB if not already set
+                    if tmdb_data.get('runtime') and 'runtime = ?' not in update_fields:
+                        update_fields.append('runtime = ?')
+                        update_values.append(tmdb_data['runtime'])
+
+                    tmdb_updated = True
+                    logging.info(f"Updated TMDB metadata for {title}")
+            except Exception as e:
+                logging.warning(f"Failed to update TMDB metadata: {e}")
+
         # Always update timestamps
         update_fields.extend(['metadata_updated = ?', 'last_updated = ?'])
         update_values.extend([datetime.now(), datetime.now()])
@@ -1747,13 +1922,28 @@ def refresh_movie_metadata(media_id):
         cursor.close()
         db_content.close()
 
-        logging.info(f"Refreshed metadata for {title} (IMDb: {imdb_id}, TMDB: {tmdb_id}): Updated {updated_count} records from {source}")
+        # Clear poster/backdrop cache to force fresh fetch from TMDB on next load
+        if tmdb_id:
+            try:
+                cache = load_cache()
+                poster_key = f"{tmdb_id}_movie"
+                backdrop_key = f"{tmdb_id}_backdrop_movie"
+                cache.pop(poster_key, None)
+                cache.pop(backdrop_key, None)
+                save_cache(cache)
+                logging.info(f"Cleared poster/backdrop cache for movie {tmdb_id}")
+            except Exception as e:
+                logging.warning(f"Failed to clear poster cache: {e}")
+
+        logging.info(f"Refreshed metadata for {title} (IMDb: {imdb_id}, TMDB: {tmdb_id}): Updated {updated_count} records from {source}{', TMDB data updated' if tmdb_updated else ''}")
 
         return jsonify({
             'success': True,
             'message': f'Metadata refreshed for {title}',
             'updated_count': updated_count,
-            'source': source
+            'tmdb_updated': tmdb_updated,
+            'source': source,
+            'cache_cleared': tmdb_id is not None
         })
 
     except Exception as e:
@@ -3882,12 +4072,14 @@ def movie_detail_data(media_id):
             if tmdb_id:
                 logging.info(f"Found TMDB ID {tmdb_id} for movie {movie_data['title']} via IMDB lookup")
 
+        # Always use TMDB API for complete metadata (posters, backdrops, ratings)
+        # This ensures all display fields are populated correctly
         if tmdb_id:
             tmdb_api_key = get_setting('TMDB', 'api_key')
             if tmdb_api_key:
                 try:
                     details_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
-                    logging.info(f"Fetching TMDB metadata for movie {tmdb_id}")
+                    logging.info(f"Fetching TMDB metadata for movie {tmdb_id} (Battery fallback)")
                     details_response = requests.get(details_url)
                     details_response.raise_for_status()
                     details_data = details_response.json()
@@ -3908,8 +4100,8 @@ def movie_detail_data(media_id):
                     logging.error(f"Error fetching TMDB metadata for movie {tmdb_id}: {e}")
             else:
                 logging.warning(f"TMDB API key not configured, skipping metadata fetch for movie {tmdb_id}")
-        else:
-            logging.warning(f"No TMDB ID available for movie {movie_data['title']}, skipping metadata fetch")
+        elif not battery_metadata:
+            logging.warning(f"No TMDB ID or IMDb ID available for movie {movie_data['title']}, skipping metadata fetch")
 
         # Get content source display name
         content_sources = []
@@ -3984,7 +4176,13 @@ def movie_detail_data(media_id):
         elif movie_data['release_date']:
             # No TMDB, use database date
             clean_release_date = str(movie_data['release_date']).split('T')[0].split(' ')[0]
-        
+
+        # Fetch certification based on user's preferred region
+        certification = ''
+        if movie_data['tmdb_id'] and tmdb_api_key:
+            certification_region = get_setting('TMDB', 'certification_region', 'US')
+            certification = get_certification(movie_data['tmdb_id'], 'movie', tmdb_api_key, certification_region)
+
         response_data = {
             'success': True,
             'movie': {
@@ -4006,6 +4204,7 @@ def movie_detail_data(media_id):
                 'backdrop_url': backdrop_url,
                 'overview': overview,
                 'genres': genres,
+                'certification': certification,
                 'runtime': runtime,
                 'rating': rating,
                 'vote_count': vote_count,
