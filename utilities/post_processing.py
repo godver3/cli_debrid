@@ -163,10 +163,15 @@ def handle_state_change(item: Dict[str, Any]) -> None:
 
             # Apply Plex labels based on content source configuration
             try:
-                logging.info(f"POST-PROCESSING: About to apply Plex labels for item {fresh_item.get('id')} ({fresh_item.get('title')})")
-                from utilities.plex_label_manager import apply_labels_for_item
-                result = apply_labels_for_item(dict(fresh_item))
-                logging.info(f"POST-PROCESSING: Plex labels application returned {result} for item {fresh_item.get('id')}")
+                from utilities.plex_label_manager import apply_labels_for_item, is_plex_labels_enabled_anywhere
+
+                # Only process labels if at least one content source has them enabled
+                if is_plex_labels_enabled_anywhere():
+                    logging.info(f"POST-PROCESSING: About to apply Plex labels for item {fresh_item.get('id')} ({fresh_item.get('title')})")
+                    result = apply_labels_for_item(dict(fresh_item))
+                    logging.info(f"POST-PROCESSING: Plex labels application returned {result} for item {fresh_item.get('id')}")
+                else:
+                    logging.debug(f"POST-PROCESSING: Plex labels disabled globally, skipping label application")
             except Exception as e:
                 logging.error(f"Failed to apply Plex labels: {str(e)}")
                 logging.exception("Plex labels traceback:")

@@ -201,7 +201,19 @@ export function updateSettings() {
         settingsData['Custom Post-Processing'][key] = input.type === 'checkbox' ? input.checked : input.value;
     });
 
-    
+    // Create Bazarr Integration section if it doesn't exist
+    if (!settingsData['Bazarr Integration']) {
+        settingsData['Bazarr Integration'] = {};
+    }
+
+    // Handle Bazarr Integration settings
+    const bazarrIntegrationInputs = document.querySelectorAll('[id^="bazarr-"][name^="Bazarr Integration."]');
+    bazarrIntegrationInputs.forEach(input => {
+        const key = input.name.split('.')[1];
+        settingsData['Bazarr Integration'][key] = input.type === 'checkbox' ? input.checked : input.value;
+    });
+
+
     // Ensure UI Settings section exists
     if (!settingsData['UI Settings']) {
         settingsData['UI Settings'] = {};
@@ -600,6 +612,12 @@ export function updateSettings() {
     const tmdbApiKeyInput = document.getElementById('tmdb-api-key');
     if (tmdbApiKeyInput) {
         settingsData['TMDB']['api_key'] = tmdbApiKeyInput.value;
+    }
+
+    // Add TMDB certification region
+    const tmdbCertificationRegionSelect = document.getElementById('tmdb-certification-region');
+    if (tmdbCertificationRegionSelect) {
+        settingsData['TMDB']['certification_region'] = tmdbCertificationRegionSelect.value;
     }
 
     // Add this block to handle the Uncached Handling Method

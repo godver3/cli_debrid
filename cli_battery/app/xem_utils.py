@@ -23,10 +23,13 @@ def fetch_xem_mapping(tvdb_id: int) -> Optional[List[Dict[str, Any]]]:
 
     params = {'id': tvdb_id, 'origin': 'tvdb'}
     url = f"{XEM_API_URL}"
+    headers = {
+        'User-Agent': 'cli_debrid/1.0 (https://github.com/godver3/cli_debrid)'
+    }
 
     try:
         logger.info(f"Querying TheXEM for TVDB ID {tvdb_id}...")
-        response = requests.get(url, params=params, timeout=15) # Increased timeout slightly
+        response = requests.get(url, params=params, headers=headers, timeout=15) # Increased timeout slightly
         response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
 
         data = response.json()

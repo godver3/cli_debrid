@@ -241,6 +241,12 @@ SETTINGS_SCHEMA = {
             "description": "TMDB API key - used for poster retrieval and release date supplementation when TVDB is primary metadata source (not 'API Read Access Token')",
             "default": "",
             "sensitive": True
+        },
+        "certification_region": {
+            "type": "select",
+            "description": "Content rating region - select which country's certification system to display (e.g., US: R, PG-13 | GB: 15, 12A | CA: 14A, 18A)",
+            "default": "US",
+            "choices": ["US", "GB", "CA", "AU", "DE", "FR", "ES", "IT", "JP", "KR", "BR", "MX", "IN", "NL", "SE", "NO", "DK", "FI", "NZ", "IE", "AT", "CH", "BE", "PT", "PL", "RU", "TR", "AR", "CL", "CO"]
         }
     },
     "TVDB": {

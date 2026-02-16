@@ -3822,3 +3822,10 @@ select#discoverEpisodeView {
 .filter-disabled button {
     cursor: not-allowed !important;
 }
+
+/* Hide trailer text on mobile, show only play icon */
+@media (max-width: 768px) {
+    .trailer-text {
+        display: none;
+    }
+}

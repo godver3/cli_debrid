@@ -604,7 +604,7 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                 conn.execute('''
                                     UPDATE media_items
                                     SET location_on_disk = ?,
-                                        resolution = COALESCE(resolution, ?),
+                                        resolution = COALESCE(?, resolution),
                                         size = CASE WHEN size IS NULL OR size = 0 THEN ? ELSE size END,
                                         imdb_id = COALESCE(NULLIF(imdb_id, ''), ?),
                                         tmdb_id = COALESCE(NULLIF(tmdb_id, ''), ?),

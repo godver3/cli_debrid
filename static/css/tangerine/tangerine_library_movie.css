@@ -1165,11 +1165,80 @@ ease;
 /* ==========================================================================
    Responsive Design
    ========================================================================== */
-
-@media (max-width: 1024px) {
+@media (max-width: 1200px) {
     .release-tags {
-        display: inline;
+        display: block;
         align-self: center;
+        line-height: 3;
+    }
+    .release-title-wrapper {
+        display: contents;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .movie-main-grid {
+        grid-template-columns: 1.8fr 1fr;
+    }
+    .movie-sidebar {
+        width: 100%;
+        max-width: fit-content;
+    }
+    .movie-title {
+        font-size: 1.5rem;
+    }
+    .details-row {
+        gap: 0.5rem;
+        font-size: 0.845rem;
+    }
+    .quality-badge {
+        margin-right: 4px;
+    }
+    .status-badge {
+        font-size: 0.65rem;
+    }
+    .movie-meta {
+        font-size: 0.745rem;
+    }
+    .movie-file-row {
+        display: block;
+    }
+    .movie-file-number {
+        display: inline;
+    }
+    .movie-file-status-icon {
+        vertical-align: sub;
+    }
+    .movie-file-info-section {
+        display: contents;
+    }
+    .movie-file-title {
+        display: inline;
+        line-height: 30px;
+    }
+    .movie-file-meta {
+        line-height: 5px;
+        padding-bottom: 10px;
+    }
+    .file-action-btn {
+        display: inline-block;
+        margin-left: 0;
+        margin-right: 5px;
+        line-height: 0;
+        white-space: nowrap;
+    }
+
+}
+
+@media (max-width: 768px) {
+    .release-tags {
+        display: block;
+        align-self: center;
+        line-height: 3;
+    }
+    .release-title-wrapper {
+        display: contents;
+        flex-direction: column;
+        gap: 6px;
     }
     .quality-badge {
         margin-right: 4px;
@@ -1368,6 +1437,8 @@ ease;
         padding: 1rem;
     }
 }
+
+
 
 /* Prevent scrolling when modal is open */
 body.modal-open {
@@ -2062,4 +2133,11 @@ td#scraper-source .source-badge {
     background: #c82333;
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(220, 53, 69, 0.4);
+}
+
+/* Hide trailer text on mobile, show only play icon */
+@media (max-width: 768px) {
+    .trailer-text {
+        display: none;
+    }
 }

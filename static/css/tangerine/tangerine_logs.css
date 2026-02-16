@@ -430,6 +430,7 @@
             /* Default adjusted height for mobile browser UI */
             height: calc(100vh - 100px); 
             border-radius: 0;
+            bottom: 50px;
         }
 
         /* Override height if running as standalone PWA or fullscreen */
@@ -443,6 +444,7 @@
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
+            padding-top: 53px;
         }
 
         #log-level-filter,
@@ -461,12 +463,12 @@
             position: absolute !important;
             left: 50%;
             transform: translateX(-50%);
-            margin-top: 120px;
+            margin-top: 159px;
             width: 90px;
         }
 
         #pause-indicator {
-            top: 124px !important;
+            top: 162px !important;
             right: 10px !important;
         }
 

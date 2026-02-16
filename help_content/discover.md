@@ -68,6 +68,18 @@ Click the **Filters** button to open the filter drawer. Filters are organized in
 *   **Runtime:**
     *   Set minimum and maximum runtime in minutes.
 
+*   **Certification (Rating):**
+    *   Filter content by age certification/content rating (e.g., G, PG, PG-13, R, NC-17 for US).
+    *   **Minimum:** Select a minimum certification to show only that rating and above (more restrictive).
+        *   Example: Min = "PG-13" shows PG-13, R, and NC-17 content.
+    *   **Maximum:** Select a maximum certification to show only that rating and below (less restrictive).
+        *   Example: Max = "PG-13" shows G, PG, and PG-13 content.
+    *   **Range:** Set both min and max to create a specific range.
+        *   Example: Min = "PG", Max = "PG-13" shows only PG and PG-13 content.
+    *   Certifications automatically load based on your selected **Watch Region** (set in Providers section).
+    *   Different regions have different rating systems (MPAA for US, BBFC for UK, etc.).
+    *   **Note:** Certification filtering is only available for movies in TMDB's discover API.
+
 **Active Filters:**
 
 *   Applied filters appear as chips at the top of the filter panel.
