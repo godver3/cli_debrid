@@ -2080,5 +2080,30 @@ SETTINGS_SCHEMA = {
             "default": "discover",
             "choices": ["discover", "add_media"]
         }
+    },
+    "Bazarr Integration": {
+        "tab": "Additional Settings",
+        "enabled": {
+            "type": "boolean",
+            "description": "Enable Radarr/Sonarr API spoofing for Bazarr subtitle integration. When enabled, cli_debrid will expose API endpoints that allow Bazarr to connect as if this were Radarr/Sonarr.",
+            "default": False
+        },
+        "api_key": {
+            "type": "string",
+            "description": "API key for Bazarr authentication. Click 'Generate' to create a new key, or enter your own. This key must be used when configuring Bazarr.",
+            "default": "",
+            "sensitive": True
+        },
+        "service_type": {
+            "type": "string",
+            "description": "Which service to emulate. 'Auto' exposes both Radarr (movies) and Sonarr (TV) endpoints.",
+            "default": "auto",
+            "choices": ["auto", "radarr", "sonarr"]
+        },
+        "spoofed_version": {
+            "type": "string",
+            "description": "Version number to report to Bazarr. Change only if Bazarr requires a specific version.",
+            "default": "5.14.0.9383"
+        }
     }
 }
