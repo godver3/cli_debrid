@@ -46,6 +46,55 @@ def retry_on_db_lock(max_attempts=5, initial_wait=0.1, backoff_factor=2):
     return decorator
 
 
+def is_valid_imdb_id(imdb_id: str) -> bool:
+    """
+    Validate IMDb ID format.
+
+    Valid format: tt followed by 7-10 digits (e.g., tt1234567, tt12345678)
+
+    Args:
+        imdb_id: The IMDb ID to validate
+
+    Returns:
+        True if valid IMDb ID format, False otherwise
+    """
+    import re
+    if not imdb_id:
+        return False
+    return bool(re.match(r'^tt\d{7,10}$', imdb_id))
+
+
+def normalize_imdb_id(imdb_id: Optional[str]) -> Optional[str]:
+    """
+    Normalize IMDb ID by removing trailing slashes and whitespace.
+    Returns None if the ID is not a valid IMDb ID format.
+
+    Args:
+        imdb_id: The IMDb ID to normalize
+
+    Returns:
+        Normalized IMDb ID if valid, None otherwise
+    """
+    if not imdb_id:
+        return None
+
+    # Remove trailing/leading slashes and whitespace
+    normalized = imdb_id.strip().rstrip('/')
+
+    # Validate the normalized ID
+    if is_valid_imdb_id(normalized):
+        return normalized
+
+    # If it's numeric only (likely Trakt/TMDB ID), return None
+    if normalized.isdigit():
+        logger.warning(f"Rejecting numeric-only ID '{normalized}' - likely Trakt/TMDB ID, not IMDb ID")
+        return None
+
+    # If it doesn't match valid format, return None
+    logger.warning(f"Rejecting invalid IMDb ID format: '{imdb_id}'")
+    return None
+
+
 Base = declarative_base()
 
 # Scoped session — configured by init_db()

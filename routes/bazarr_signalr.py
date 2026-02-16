@@ -9,7 +9,6 @@ Event sequence matches CineSync implementation:
 - For episodes: series(added) -> 3s delay -> series(updated) -> 2s delay -> episodeFile(added)
 """
 
-import json
 import logging
 import threading
 import time

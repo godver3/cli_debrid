@@ -277,34 +277,34 @@ input, textarea, [contenteditable="true"] {
 
 .media-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(160px, 160px));
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 1.5rem;
     padding-bottom: 2rem;
     justify-content: start;
 }
 
-/* Responsive grid columns - all use 160px fixed width */
+/* Responsive grid columns - posters grow to fill available space */
 @media (min-width: 480px) {
     .media-grid {
-        grid-template-columns: repeat(auto-fill, minmax(160px, 160px));
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     }
 }
 
 @media (min-width: 768px) {
     .media-grid {
-        grid-template-columns: repeat(auto-fill, minmax(160px, 160px));
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     }
 }
 
 @media (min-width: 1024px) {
     .media-grid {
-        grid-template-columns: repeat(auto-fill, minmax(160px, 160px));
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     }
 }
 
 @media (min-width: 1440px) {
     .media-grid {
-        grid-template-columns: repeat(auto-fill, minmax(159px, 159px));
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     }
 }
 
@@ -1112,4 +1112,11 @@ input, textarea, [contenteditable="true"] {
     width: 18px;
     height: 18px;
     cursor: pointer;
+}
+
+/* Hide trailer text on mobile, show only play icon */
+@media (max-width: 768px) {
+    .trailer-text {
+        display: none;
+    }
 }

@@ -220,7 +220,7 @@ class CheckingQueue:
                     try:
                         hash_value = extract_hash_from_magnet(magnet)
                         add_to_not_wanted(hash_value)
-                    except:
+                    except Exception:
                         # If extract_hash_from_magnet is not available in debrid.common
                         import re
                         hash_match = re.search(r'btih:([a-zA-Z0-9]+)', magnet)
@@ -883,8 +883,9 @@ class CheckingQueue:
                                     queue_manager.move_to_collected(item_in_torrent_group, "Checking", skip_notification=True)
                                     # Sync labels now that item is detected in Plex
                                     try:
-                                        from utilities.plex_label_manager import sync_labels_to_plex_for_item
-                                        sync_labels_to_plex_for_item(item_in_torrent_group['id'])
+                                        from utilities.plex_label_manager import sync_labels_to_plex_for_item, is_plex_labels_enabled_anywhere
+                                        if is_plex_labels_enabled_anywhere():
+                                            sync_labels_to_plex_for_item(item_in_torrent_group['id'])
                                     except Exception as e:
                                         logging.error(f"Error syncing labels for item {item_in_torrent_group['id']}: {e}")
                                 elif current_item_state:
@@ -892,8 +893,9 @@ class CheckingQueue:
                                     queue_manager.move_to_collected(item_in_torrent_group, "Checking", skip_notification=True)
                                     # Sync labels now that item is detected in Plex
                                     try:
-                                        from utilities.plex_label_manager import sync_labels_to_plex_for_item
-                                        sync_labels_to_plex_for_item(item_in_torrent_group['id'])
+                                        from utilities.plex_label_manager import sync_labels_to_plex_for_item, is_plex_labels_enabled_anywhere
+                                        if is_plex_labels_enabled_anywhere():
+                                            sync_labels_to_plex_for_item(item_in_torrent_group['id'])
                                     except Exception as e:
                                         logging.error(f"Error syncing labels for item {item_in_torrent_group['id']}: {e}")
                                 else:

@@ -697,6 +697,11 @@ class ProgramRunner:
         if saved_states_to_apply:
             logging.info("Applying saved task toggles after default snapshot capture...")
             for task_name, enabled in saved_states_to_apply.items():
+                # Skip non-task entries (like version tracking fields)
+                if not task_name.startswith('task_'):
+                    logging.debug(f"Skipping non-task entry in task_toggles.json: {task_name}")
+                    continue
+
                 normalized_name = self._normalize_task_name(task_name)
                 if normalized_name not in self.original_task_intervals and normalized_name not in self.task_intervals:
                     logging.warning(f"Task '{normalized_name}' in task_toggles.json not defined in intervals. Skipping toggle application.")
@@ -1782,35 +1787,27 @@ class ProgramRunner:
             elif source_type == 'Other Plex Watchlist':
                 # Import the function here
                 from content_checkers.plex_watchlist import get_wanted_from_other_plex_watchlist
-                
-                other_watchlists = []
-                # Use self.content_sources which should be populated
-                all_sources = self.get_content_sources() if hasattr(self, 'get_content_sources') else {}
-                for source_id, source_data in all_sources.items():
-                    if source_id.startswith('Other Plex Watchlist_'):
-                        # Fetch versions specific to this 'Other' source config
-                        other_source_versions = source_data.get('versions', []) # Default list
-                        other_watchlists.append({
-                            'username': source_data.get('username', ''),
-                            'token': source_data.get('token', ''),
-                            'versions': other_source_versions # Pass its specific config
-                        })
-                
-                for watchlist in other_watchlists:
-                    if watchlist['username'] and watchlist['token']:
-                        try:
-                             # Pass the versions specific to this friend's config
-                            watchlist_content = get_wanted_from_other_plex_watchlist(
-                                username=watchlist['username'],
-                                token=watchlist['token'],
-                                versions=watchlist['versions'] # Use the versions from the loop
-                            )
-                            # Extend the main wanted_content list
-                            # Note: This assumes get_wanted_from_other_plex_watchlist returns the same tuple format
-                            wanted_content.extend(watchlist_content)
-                        except Exception as e:
-                            logging.error(f"Failed to fetch Other Plex watchlist for {watchlist['username']}: {str(e)}")
-                            continue
+
+                # Process only the specific source being called, not all Other Plex Watchlist sources
+                # The 'data' parameter contains the configuration for this specific source
+                username = data.get('username', '')
+                token = data.get('token', '')
+
+                if username and token:
+                    try:
+                        # Fetch watchlist for this specific user only
+                        wanted_content = get_wanted_from_other_plex_watchlist(
+                            username=username,
+                            token=token,
+                            versions=versions_from_config
+                        )
+                        logging.info(f"Successfully fetched watchlist for {username} from source {source}")
+                    except Exception as e:
+                        logging.error(f"Failed to fetch Other Plex watchlist for {username} (source: {source}): {str(e)}")
+                        wanted_content = [([], versions_from_config)]
+                else:
+                    logging.warning(f"Other Plex Watchlist source {source} is missing username or token")
+                    wanted_content = [([], versions_from_config)]
             elif source_type == 'Adaptive List':
                 from content_checkers.adaptive_list import get_wanted_from_adaptive_list
                 # Get the list configurations from the source data
@@ -3331,7 +3328,7 @@ class ProgramRunner:
                 return
 
             from utilities.plex_label_manager import sync_pending_labels
-            synced = sync_pending_labels(max_items=50)
+            synced = sync_pending_labels(max_items=100)
             if synced > 0:
                 logging.info(f"Synced {synced} Plex labels")
         except Exception as e:

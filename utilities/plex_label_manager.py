@@ -16,11 +16,19 @@ from database.core import retry_on_db_lock
 
 # Rate limiting configuration
 PLEX_API_DELAY = 0.1  # 100ms between API calls
-MAX_LABELS_PER_MINUTE = 300  # Conservative limit
+MAX_LABELS_PER_MINUTE = 1000  # Increased from 300 - most Plex servers can handle this
 
 
 class PlexRateLimiter:
-    """Rate limiter for Plex API calls to prevent overwhelming the server"""
+    """Rate limiter for Plex API calls to prevent overwhelming the server
+
+    Uses gradual slowdown instead of hard cutoff to avoid long waits:
+    - Calls 1-800: Normal speed (100ms delay)
+    - Calls 801-1000: Medium slowdown (500ms delay)
+    - Calls 1001+: Heavy slowdown (1000ms delay)
+
+    This prevents the 60-second waits that occurred with hard cutoff at 300 calls/min.
+    """
 
     def __init__(self):
         self.last_call = 0
@@ -28,7 +36,7 @@ class PlexRateLimiter:
         self.minute_start = time.time()
 
     def wait_if_needed(self):
-        """Wait if necessary to respect rate limits"""
+        """Wait if necessary to respect rate limits using gradual slowdown"""
         now = time.time()
 
         # Reset counter every minute
@@ -36,17 +44,22 @@ class PlexRateLimiter:
             self.calls_this_minute = 0
             self.minute_start = now
 
-        # Hit limit? Wait for next minute
-        if self.calls_this_minute >= MAX_LABELS_PER_MINUTE:
-            wait_time = 60 - (now - self.minute_start)
-            if wait_time > 0:
-                logging.info(f"Plex rate limit reached ({MAX_LABELS_PER_MINUTE}/min), waiting {wait_time:.1f}s")
-                time.sleep(wait_time)
-                self.calls_this_minute = 0
-                self.minute_start = time.time()
+        # Gradual slowdown instead of hard cutoff
+        # This prevents long waits while still protecting the Plex server
+        if self.calls_this_minute >= 1000:
+            # Heavy slowdown - 1 second delay
+            delay = 1.0
+            logging.debug(f"[RateLimit] Heavy slowdown: {self.calls_this_minute} calls/min (1s delay)")
+        elif self.calls_this_minute >= 800:
+            # Medium slowdown - 500ms delay
+            delay = 0.5
+            if self.calls_this_minute == 800:
+                logging.info(f"[RateLimit] Approaching limit: {self.calls_this_minute}/{MAX_LABELS_PER_MINUTE} calls/min (500ms delay)")
+        else:
+            # Normal speed - 100ms delay
+            delay = PLEX_API_DELAY
 
-        # Standard delay between calls
-        time.sleep(PLEX_API_DELAY)
+        time.sleep(delay)
         self.calls_this_minute += 1
 
 
@@ -506,11 +519,50 @@ def apply_label_to_plex(item_id: int, label: str) -> bool:
             from database.core import get_db_connection
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute('''
-                UPDATE media_items
-                SET plex_labels_last_synced = ?
-                WHERE id = ?
-            ''', (time.strftime('%Y-%m-%d %H:%M:%S'), item_id))
+            # For episodes, update ALL episodes of the same show to prevent redundant API calls
+            # For movies, just update the single item
+            if item_data.get('type') == 'episode':
+                imdb_id = item_data.get('imdb_id')
+                tmdb_id = item_data.get('tmdb_id')
+                title = item_data.get('title')
+                timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+
+                # Priority: imdb_id > tmdb_id > title (don't compare imdb_id with tmdb_id - different ID systems)
+                if imdb_id:
+                    cursor.execute('''
+                        UPDATE media_items
+                        SET plex_labels_last_synced = ?
+                        WHERE type = 'episode'
+                        AND imdb_id = ?
+                    ''', (timestamp, imdb_id))
+                    rows_affected = cursor.rowcount
+                    logging.debug(f"Updated plex_labels_last_synced for {rows_affected} episode(s) using imdb_id '{imdb_id}'")
+                elif tmdb_id:
+                    cursor.execute('''
+                        UPDATE media_items
+                        SET plex_labels_last_synced = ?
+                        WHERE type = 'episode'
+                        AND tmdb_id = ?
+                    ''', (timestamp, tmdb_id))
+                    rows_affected = cursor.rowcount
+                    logging.debug(f"Updated plex_labels_last_synced for {rows_affected} episode(s) using tmdb_id '{tmdb_id}'")
+                else:
+                    # Fallback to title if no IDs available (less reliable)
+                    cursor.execute('''
+                        UPDATE media_items
+                        SET plex_labels_last_synced = ?
+                        WHERE type = 'episode'
+                        AND title = ?
+                    ''', (timestamp, title))
+                    rows_affected = cursor.rowcount
+                    logging.debug(f"Updated plex_labels_last_synced for {rows_affected} episode(s) using title '{title}'")
+            else:
+                # For movies, just update the single item
+                cursor.execute('''
+                    UPDATE media_items
+                    SET plex_labels_last_synced = ?
+                    WHERE id = ?
+                ''', (time.strftime('%Y-%m-%d %H:%M:%S'), item_id))
             conn.commit()
             conn.close()
         except Exception as timestamp_error:
@@ -526,6 +578,15 @@ def apply_label_to_plex(item_id: int, label: str) -> bool:
         return True
 
     except Exception as e:
+        # Handle timeout errors with a softer warning (Plex server may be busy or unresponsive)
+        error_str = str(e)
+        if 'timeout' in error_str.lower() or 'timed out' in error_str.lower():
+            item_data = get_media_item_by_id(item_id)
+            item_title = item_data.get('title', f'item {item_id}') if item_data else f'item {item_id}'
+            logging.warning(f"Plex server unavailable or overloaded while applying label '{label}' to '{item_title}' - will retry on next sync")
+            return False
+
+        # For other errors, log full details
         logging.error(f"Error applying label '{label}' to Plex for item {item_id}: {e}", exc_info=True)
         return False
 
@@ -652,6 +713,27 @@ def get_labels_for_item(item_id: int) -> Dict[str, List[str]]:
         cursor.close()
 
 
+def is_plex_labels_enabled_anywhere() -> bool:
+    """
+    Check if Plex labels are enabled in at least one content source
+
+    Returns:
+        True if any content source has Plex labels enabled, False otherwise
+    """
+    try:
+        from utilities.settings import get_all_settings
+        settings = get_all_settings()
+        content_sources = settings.get('Content Sources', {})
+
+        return any(
+            source.get('plex_labels', {}).get('enabled', False)
+            for source in content_sources.values()
+        )
+    except Exception as e:
+        logging.error(f"Error checking if Plex labels enabled: {e}", exc_info=True)
+        return False
+
+
 def get_label_config_for_source(source_name: str) -> Optional[Dict[str, Any]]:
     """
     Get label configuration for a content source
@@ -704,8 +786,15 @@ def determine_labels_for_item(item: Dict[str, Any]) -> List[str]:
     if not content_source:
         return []
 
-    # Handle internal CLI Debrid sources (no config needed)
+    # Handle internal CLI Debrid sources (no config needed, but respect global enable state)
     if content_source in ['content_requestor', 'content_requester', 'Collected_1']:
+        # Check if ANY content source has Plex labels enabled
+        # This prevents labels on scraper adds when feature is disabled everywhere
+        if not is_plex_labels_enabled_anywhere():
+            logging.debug(f"Plex labels disabled globally - skipping internal source '{content_source}' label")
+            return []
+
+        # Original logic: apply label from content_source_detail
         if content_source_detail and content_source_detail.lower() != 'unknown':
             return [sanitize_label(content_source_detail)]
         else:
@@ -881,12 +970,17 @@ def sync_labels_to_plex_for_item(item_id: int) -> int:
         cursor.close()
 
 
-def get_collected_items_with_pending_labels(limit: int = 100) -> List[int]:
+def get_collected_items_with_pending_labels(movie_limit: int = 50, show_limit: int = 50) -> List[int]:
     """
-    Get IDs of Collected items that have labels in database but may not be synced to Plex
+    Get IDs of Collected items that have labels in database but haven't been synced to Plex yet
+
+    Only returns items where:
+    - plex_labels_last_synced IS NULL (never synced), OR
+    - plex_labels_last_synced < last_updated (labels changed after last sync)
 
     Args:
-        limit: Maximum number of items to return
+        movie_limit: Maximum number of movies to return
+        show_limit: Maximum number of shows (via representative episodes) to return
 
     Returns:
         List of item IDs
@@ -897,29 +991,38 @@ def get_collected_items_with_pending_labels(limit: int = 100) -> List[int]:
     try:
         # Get movies directly, and one representative episode per show (using MIN(id))
         # Database has 'movie' and 'episode' types, no 'show' type
+        # Only get items that need syncing (never synced or labels updated since last sync)
+        # Get 50 movies and 50 shows separately for balanced processing
         cursor.execute('''
-            SELECT id FROM (
+            SELECT id, last_updated FROM (
                 SELECT id, last_updated FROM media_items
-                WHERE state = 'Collected'
+                WHERE state IN ('Collected', 'Upgrading')
                 AND type = 'movie'
                 AND plex_labels IS NOT NULL
                 AND plex_labels != 'null'
                 AND plex_labels != '{}'
+                AND (plex_labels_last_synced IS NULL OR plex_labels_last_synced < last_updated)
+                ORDER BY last_updated DESC
+                LIMIT ?
+            )
 
-                UNION
+            UNION ALL
 
+            SELECT id, last_updated FROM (
                 SELECT MIN(id) as id, MAX(last_updated) as last_updated
                 FROM media_items
-                WHERE state = 'Collected'
+                WHERE state IN ('Collected', 'Upgrading')
                 AND type = 'episode'
                 AND plex_labels IS NOT NULL
                 AND plex_labels != 'null'
                 AND plex_labels != '{}'
+                AND (plex_labels_last_synced IS NULL OR plex_labels_last_synced < last_updated)
                 GROUP BY title, tmdb_id
+                ORDER BY last_updated DESC
+                LIMIT ?
             )
             ORDER BY last_updated DESC
-            LIMIT ?
-        ''', (limit,))
+        ''', (movie_limit, show_limit))
 
         return [row['id'] for row in cursor.fetchall()]
 
@@ -927,7 +1030,7 @@ def get_collected_items_with_pending_labels(limit: int = 100) -> List[int]:
         cursor.close()
 
 
-def sync_pending_labels(max_items: int = 50) -> int:
+def sync_pending_labels(max_items: int = 100) -> int:
     """
     Sync labels for Collected items that have labels in database
 
@@ -935,19 +1038,23 @@ def sync_pending_labels(max_items: int = 50) -> int:
     (e.g., item wasn't in Plex yet when label was first attempted)
 
     Args:
-        max_items: Maximum number of items to process in one run
+        max_items: Maximum number of items to process in one run (split equally between movies and shows)
 
     Returns:
         Total number of labels synced
     """
     try:
-        item_ids = get_collected_items_with_pending_labels(limit=max_items)
+        # Split max_items equally between movies and shows
+        movie_limit = max_items // 2
+        show_limit = max_items // 2
+
+        item_ids = get_collected_items_with_pending_labels(movie_limit=movie_limit, show_limit=show_limit)
 
         if not item_ids:
             logging.debug("No items with pending labels to sync")
             return 0
 
-        logging.info(f"Syncing labels for {len(item_ids)} Collected items")
+        logging.info(f"Syncing labels for {len(item_ids)} Collected items (up to {movie_limit} movies + {show_limit} shows)")
 
         total_synced = 0
         for item_id in item_ids:
@@ -1238,7 +1345,7 @@ def regenerate_labels_from_backfilled_details(incremental: bool = False, days_ba
             cursor.execute('''
                 SELECT DISTINCT content_source, tmdb_id, type
                 FROM media_items
-                WHERE state = 'Collected'
+                WHERE state IN ('Collected', 'Upgrading')
                 AND content_source IS NOT NULL
                 AND content_source_detail IS NOT NULL
                 AND content_source_detail != 'Unknown'
@@ -1252,7 +1359,7 @@ def regenerate_labels_from_backfilled_details(incremental: bool = False, days_ba
             cursor.execute('''
                 SELECT DISTINCT content_source, tmdb_id, type
                 FROM media_items
-                WHERE state = 'Collected'
+                WHERE state IN ('Collected', 'Upgrading')
                 AND content_source IS NOT NULL
                 AND content_source_detail IS NOT NULL
                 AND content_source_detail != 'Unknown'
@@ -1264,7 +1371,9 @@ def regenerate_labels_from_backfilled_details(incremental: bool = False, days_ba
         regenerated_count = 0
         items_processed = 0
         skipped_no_labels = 0
+        items_to_sync = []  # Collect items for Plex syncing after DB updates
 
+        # Phase 1: Update database labels (fast, no Plex API calls)
         for unique_item in unique_items:
             content_source = unique_item['content_source']
             tmdb_id = unique_item['tmdb_id']
@@ -1284,11 +1393,12 @@ def regenerate_labels_from_backfilled_details(incremental: bool = False, days_ba
 
             # Get content_source_detail and content_sources from one representative item
             cursor.execute('''
-                SELECT content_source_detail, content_sources
+                SELECT content_source_detail, content_sources, id, title
                 FROM media_items
                 WHERE content_source = ?
                 AND tmdb_id = ?
-                AND state = 'Collected'
+                AND state IN ('Collected', 'Upgrading')
+                ORDER BY id ASC
                 LIMIT 1
             ''', (content_source, tmdb_id))
 
@@ -1298,6 +1408,8 @@ def regenerate_labels_from_backfilled_details(incremental: bool = False, days_ba
 
             detail_value = detail_row['content_source_detail']
             existing_content_sources = parse_content_sources(detail_row['content_sources'])
+            item_id = detail_row['id']
+            item_title = detail_row['title']
 
             # Use determine_labels_for_item logic to generate label
             # Create a temporary item dict to pass to the function
@@ -1337,60 +1449,71 @@ def regenerate_labels_from_backfilled_details(incremental: bool = False, days_ba
                 SET plex_labels = ?, content_sources = ?
                 WHERE content_source = ?
                 AND tmdb_id = ?
-                AND state = 'Collected'
+                AND state IN ('Collected', 'Upgrading')
             ''', (new_labels_json, new_content_sources_json, content_source, tmdb_id))
 
             rows_updated = cursor.rowcount
             regenerated_count += rows_updated
             items_processed += 1
 
-            # Now sync to Plex for one representative item
-            cursor.execute('''
-                SELECT id, title
-                FROM media_items
-                WHERE content_source = ?
-                AND tmdb_id = ?
-                AND state = 'Collected'
-                ORDER BY id ASC
-                LIMIT 1
-            ''', (content_source, tmdb_id))
+            # Collect item for Plex syncing (we'll do this after closing DB connection)
+            items_to_sync.append({
+                'item_id': item_id,
+                'item_title': item_title,
+                'labels': labels,
+                'rows_updated': rows_updated
+            })
 
-            item_row = cursor.fetchone()
-            if item_row:
-                item_id = item_row['id']
-                item_title = item_row['title']
-
-                try:
-                    # Apply each label to Plex
-                    for label in labels:
-                        success = apply_label_to_plex(item_id, label)
-                        if success:
-                            logging.info(f"Regenerated and synced label '{label}' for {item_title} ({rows_updated} database rows)")
-                        else:
-                            logging.warning(f"Label '{label}' regenerated but Plex sync failed for {item_title}")
-                except Exception as e:
-                    logging.error(f"Error syncing labels to Plex for {item_title}: {e}")
-
-            # Commit every 20 items to release database lock
-            if items_processed % 20 == 0:
+            # Commit every 100 items during DB phase for progress tracking
+            if items_processed % 100 == 0:
                 conn.commit()
-                logging.info(f"Processed {items_processed}/{len(unique_items)} unique items")
+                logging.info(f"Database phase: {items_processed}/{len(unique_items)} unique items processed")
 
+        # Commit all database changes and close connection before Plex API calls
         conn.commit()
         cursor.close()
         conn.close()
+        conn = None
+
+        logging.info(f"Database phase complete: {regenerated_count} rows updated for {items_processed} unique items")
+        logging.info(f"Starting Plex sync phase for {len(items_to_sync)} items...")
+
+        # Phase 2: Sync labels to Plex (slow, opens its own DB connections)
+        synced_count = 0
+        for idx, sync_item in enumerate(items_to_sync, 1):
+            item_id = sync_item['item_id']
+            item_title = sync_item['item_title']
+            labels = sync_item['labels']
+            rows_updated = sync_item['rows_updated']
+
+            try:
+                # Apply each label to Plex (this will open its own DB connection)
+                for label in labels:
+                    success = apply_label_to_plex(item_id, label)
+                    if success:
+                        logging.info(f"[{idx}/{len(items_to_sync)}] Synced label '{label}' for {item_title} ({rows_updated} database rows)")
+                    else:
+                        logging.warning(f"[{idx}/{len(items_to_sync)}] Label '{label}' in DB but Plex sync failed for {item_title}")
+                synced_count += 1
+            except Exception as e:
+                logging.error(f"Error syncing labels to Plex for {item_title}: {e}")
+
+            # Log progress every 100 items
+            if idx % 100 == 0:
+                logging.info(f"Plex sync progress: {idx}/{len(items_to_sync)} items")
 
         mode_suffix = f" ({mode_desc} mode)" if incremental else ""
-        logging.info(f"Label regeneration complete{mode_suffix}: {regenerated_count} database rows updated, {items_processed} items processed")
+        logging.info(f"Regeneration complete{mode_suffix}: {regenerated_count} DB rows updated, {synced_count} items synced to Plex")
         logging.info(f"Skipped {skipped_no_labels} items (Plex labels not enabled)")
 
         return {
             'success': True,
             'total_regenerated': regenerated_count,
             'unique_items': items_processed,
+            'synced_to_plex': synced_count,
             'skipped_no_labels': skipped_no_labels,
             'mode': mode_desc,
-            'message': f'Regenerated labels for {regenerated_count} items ({items_processed} unique TMDB IDs){mode_suffix}'
+            'message': f'Regenerated {regenerated_count} DB rows, synced {synced_count} to Plex ({items_processed} unique TMDB IDs){mode_suffix}'
         }
 
     except Exception as e:
@@ -1408,17 +1531,18 @@ def regenerate_labels_from_backfilled_details(incremental: bool = False, days_ba
 def backfill_missing_labels() -> Dict[str, Any]:
     """
     Generate and sync Plex labels ONLY for items with NULL/empty plex_labels.
-    
+
     This is useful for:
     - Items that missed label generation due to errors
     - Items added before Plex labels were enabled
     - Catching up without overwriting existing labels
-    
+
     Unlike regenerate_labels_from_backfilled_details(), this:
     - Only processes items with NULL or empty plex_labels
     - Preserves existing labels on other items
     - Safe to run multiple times
-    
+    - Uses separate connections for DB updates and Plex API calls to avoid locks
+
     Returns:
         Dictionary with success status and statistics
     """
@@ -1434,16 +1558,17 @@ def backfill_missing_labels() -> Dict[str, Any]:
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Get all unique (content_source, tmdb_id) combinations for Collected items
-        # that have content_source_detail but NO plex_labels
+        # Get all unique (content_source, tmdb_id) combinations for Collected/Upgrading items
+        # that have content_source_detail but NO plex_labels AND haven't been synced
         cursor.execute('''
             SELECT DISTINCT content_source, tmdb_id, type
             FROM media_items
-            WHERE state = 'Collected'
+            WHERE state IN ('Collected', 'Upgrading')
             AND content_source IS NOT NULL
             AND content_source_detail IS NOT NULL
             AND content_source_detail != 'Unknown'
             AND (plex_labels IS NULL OR plex_labels = '')
+            AND plex_labels_last_synced IS NULL
         ''')
 
         unique_items = cursor.fetchall()
@@ -1464,7 +1589,11 @@ def backfill_missing_labels() -> Dict[str, Any]:
         backfilled_count = 0
         items_processed = 0
         skipped_no_labels = 0
+        skipped_no_config = {}  # Track items skipped by unconfigured source
+        skipped_no_labels_by_source = {}  # Track items skipped by disabled label sources
+        items_to_sync = []  # Collect items for Plex syncing after DB updates
 
+        # Phase 1: Update database labels (fast, no Plex API calls)
         for unique_item in unique_items:
             content_source = unique_item['content_source']
             tmdb_id = unique_item['tmdb_id']
@@ -1473,6 +1602,8 @@ def backfill_missing_labels() -> Dict[str, Any]:
             # Check if this source has Plex labels enabled
             if content_source not in ['content_requestor', 'content_requester', 'Collected_1']:
                 if content_source not in content_sources:
+                    # Track and warn about unconfigured sources
+                    skipped_no_config[content_source] = skipped_no_config.get(content_source, 0) + 1
                     continue
 
                 source_config = content_sources[content_source]
@@ -1480,16 +1611,18 @@ def backfill_missing_labels() -> Dict[str, Any]:
 
                 if not plex_labels_config.get('enabled', False):
                     skipped_no_labels += 1
+                    skipped_no_labels_by_source[content_source] = skipped_no_labels_by_source.get(content_source, 0) + 1
                     continue
 
             # Get content_source_detail and content_sources from one representative item
             cursor.execute('''
-                SELECT content_source_detail, content_sources
+                SELECT content_source_detail, content_sources, id, title
                 FROM media_items
                 WHERE content_source = ?
                 AND tmdb_id = ?
-                AND state = 'Collected'
+                AND state IN ('Collected', 'Upgrading')
                 AND (plex_labels IS NULL OR plex_labels = '')
+                ORDER BY id ASC
                 LIMIT 1
             ''', (content_source, tmdb_id))
 
@@ -1499,6 +1632,8 @@ def backfill_missing_labels() -> Dict[str, Any]:
 
             detail_value = detail_row['content_source_detail']
             existing_content_sources = parse_content_sources(detail_row['content_sources'])
+            item_id = detail_row['id']
+            item_title = detail_row['title']
 
             # Use determine_labels_for_item logic to generate label
             temp_item = {
@@ -1537,7 +1672,7 @@ def backfill_missing_labels() -> Dict[str, Any]:
                 SET plex_labels = ?, content_sources = ?
                 WHERE content_source = ?
                 AND tmdb_id = ?
-                AND state = 'Collected'
+                AND state IN ('Collected', 'Upgrading')
                 AND (plex_labels IS NULL OR plex_labels = '')
             ''', (new_labels_json, new_content_sources_json, content_source, tmdb_id))
 
@@ -1545,51 +1680,79 @@ def backfill_missing_labels() -> Dict[str, Any]:
             backfilled_count += rows_updated
             items_processed += 1
 
-            # Now sync to Plex for one representative item
-            cursor.execute('''
-                SELECT id, title
-                FROM media_items
-                WHERE content_source = ?
-                AND tmdb_id = ?
-                AND state = 'Collected'
-                ORDER BY id ASC
-                LIMIT 1
-            ''', (content_source, tmdb_id))
+            # Collect item for Plex syncing (we'll do this after closing DB connection)
+            items_to_sync.append({
+                'item_id': item_id,
+                'item_title': item_title,
+                'labels': labels,
+                'rows_updated': rows_updated
+            })
 
-            item_row = cursor.fetchone()
-            if item_row:
-                item_id = item_row['id']
-                item_title = item_row['title']
-
-                try:
-                    # Apply each label to Plex
-                    for label in labels:
-                        success = apply_label_to_plex(item_id, label)
-                        if success:
-                            logging.info(f"Backfilled and synced label '{label}' for {item_title} ({rows_updated} database rows)")
-                        else:
-                            logging.warning(f"Label '{label}' backfilled but Plex sync failed for {item_title}")
-                except Exception as e:
-                    logging.error(f"Error syncing labels to Plex for {item_title}: {e}")
-
-            # Commit every 20 items to release database lock
-            if items_processed % 20 == 0:
-                conn.commit()
-                logging.info(f"Processed {items_processed}/{len(unique_items)} unique items")
-
+        # Commit all database changes and close connection before Plex API calls
         conn.commit()
         cursor.close()
         conn.close()
+        conn = None
 
-        logging.info(f"Label backfill complete: {backfilled_count} database rows updated, {items_processed} items processed")
-        logging.info(f"Skipped {skipped_no_labels} items (Plex labels not enabled)")
+        logging.info(f"Database phase complete: {backfilled_count} rows updated for {items_processed} unique items")
+        logging.info(f"Starting Plex sync phase for {len(items_to_sync)} items...")
+
+        # Phase 2: Sync labels to Plex (slow, opens its own DB connections)
+        synced_count = 0
+        for idx, sync_item in enumerate(items_to_sync, 1):
+            item_id = sync_item['item_id']
+            item_title = sync_item['item_title']
+            labels = sync_item['labels']
+            rows_updated = sync_item['rows_updated']
+
+            try:
+                # Apply each label to Plex (this will open its own DB connection)
+                for label in labels:
+                    success = apply_label_to_plex(item_id, label)
+                    if success:
+                        logging.info(f"[{idx}/{len(items_to_sync)}] Synced label '{label}' for {item_title} ({rows_updated} database rows)")
+                    else:
+                        logging.warning(f"[{idx}/{len(items_to_sync)}] Label '{label}' in DB but Plex sync failed for {item_title}")
+                synced_count += 1
+            except Exception as e:
+                logging.error(f"Error syncing labels to Plex for {item_title}: {e}")
+
+            # Log progress every 20 items
+            if idx % 20 == 0:
+                logging.info(f"Plex sync progress: {idx}/{len(items_to_sync)} items")
+
+        logging.info(f"Backfill complete: {backfilled_count} DB rows updated, {synced_count} items synced to Plex")
+
+        # Log warnings about unconfigured sources
+        if skipped_no_config:
+            total_skipped_no_config = sum(skipped_no_config.values())
+            source_list = ', '.join(sorted(skipped_no_config.keys()))
+            logging.warning(f"⚠ Skipped {total_skipped_no_config} items from {len(skipped_no_config)} unconfigured source(s): {source_list}")
+            logging.warning(f"   → Action: Add these sources to config with Plex labels enabled, or remove items from these sources")
+            for source, count in sorted(skipped_no_config.items()):
+                logging.warning(f"   - {source}: {count} items")
+
+        # Log info about sources with labels disabled
+        if skipped_no_labels_by_source:
+            source_list = ', '.join(sorted(skipped_no_labels_by_source.keys()))
+            logging.info(f"Skipped {skipped_no_labels} items from {len(skipped_no_labels_by_source)} source(s) with Plex labels disabled: {source_list}")
+
+        # Build message with skip details
+        message_parts = [f'Backfilled {backfilled_count} DB rows, synced {synced_count} to Plex ({items_processed} unique TMDB IDs)']
+        if skipped_no_config:
+            message_parts.append(f'Skipped {sum(skipped_no_config.values())} items from {len(skipped_no_config)} unconfigured sources')
+        if skipped_no_labels:
+            message_parts.append(f'Skipped {skipped_no_labels} items (labels disabled)')
 
         return {
             'success': True,
             'total_backfilled': backfilled_count,
             'unique_items': items_processed,
+            'synced_to_plex': synced_count,
             'skipped_no_labels': skipped_no_labels,
-            'message': f'Backfilled labels for {backfilled_count} items ({items_processed} unique TMDB IDs)'
+            'skipped_no_config': skipped_no_config,
+            'skipped_no_config_count': sum(skipped_no_config.values()) if skipped_no_config else 0,
+            'message': '. '.join(message_parts)
         }
 
     except Exception as e:

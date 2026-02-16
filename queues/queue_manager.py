@@ -966,8 +966,13 @@ class QueueManager:
 
             # Apply Plex labels if configured
             try:
-                from utilities.plex_label_manager import apply_labels_for_item
-                apply_labels_for_item(updated_item)
+                from utilities.plex_label_manager import apply_labels_for_item, is_plex_labels_enabled_anywhere
+
+                # Only process labels if at least one content source has them enabled
+                if is_plex_labels_enabled_anywhere():
+                    apply_labels_for_item(updated_item)
+                else:
+                    logging.debug(f"Plex labels disabled globally, skipping label application for item {item_identifier}")
             except Exception as label_error:
                 logging.error(f"Error applying Plex labels to item {item_identifier}: {label_error}")
             

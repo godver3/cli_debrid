@@ -1169,7 +1169,18 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                             <div class="release-tags">${qualityBadgesHtml}</div>
                         </div>
                     </td>
-                    <td class="text-right">${(torrent.size || 0).toFixed(1)} GB</td>
+                    <td class="text-right">
+                        <div class="size-cell-wrapper">
+                            <div class="size-value">${(torrent.size || 0).toFixed(1)} GB</div>
+                            <button class="folder-icon-btn desktop-only"
+                                    data-magnet="${(torrent.magnet || '').replace(/"/g, '&quot;')}"
+                                    data-title="${(torrent.title || torrent.original_title || '').replace(/"/g, '&quot;')}"
+                                    aria-label="View file list"
+                                    title="View torrent files">
+                                ${createFolderIcon()}
+                            </button>
+                        </div>
+                    </td>
                     <td>
                         ${(torrent.source || 'N/A').split(' - ').map(p => `<span class="source-badge">${p.trim()}</span>`).join('')}
                     </td>
@@ -1228,6 +1239,22 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 assignButton.onclick = function() {
                     window.location.href = assignUrl;
                 };
+
+                // Folder icon click handler
+                const folderButton = row.querySelector('.folder-icon-btn');
+                if (folderButton) {
+                    folderButton.onclick = async function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+
+                        const magnet = folderButton.getAttribute('data-magnet');
+                        const torrentTitle = folderButton.getAttribute('data-title');
+
+                        if (magnet) {
+                            await showTorrentFileList(magnet, torrentTitle);
+                        }
+                    };
+                }
             });
             table.appendChild(tbody);
             overlayContent.appendChild(table);
@@ -4863,5 +4890,160 @@ async function handleAutoScrape(imdbId, season, episode, version) {
         hideLoadingState();
         if (window.DEBUG) console.error('Auto-scrape failed:', error);
         displayError(`Auto-scrape failed: ${error.message}`);
+    }
+}
+
+/**
+ * Show file list for a torrent magnet link
+ * @param {string} magnet - Magnet link
+ * @param {string} torrentTitle - Title of the torrent
+ */
+async function showTorrentFileList(magnet, torrentTitle) {
+    // Show loading state
+    Loading.show('Loading file list...', '', true, false);
+
+    try {
+        // Fetch file list from backend
+        const response = await fetch('/scraper/get_torrent_files', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                magnet: magnet,
+                torrent_title: torrentTitle
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to fetch file list');
+        }
+
+        // Close loading message
+        Loading.hide();
+
+        // Display file list modal
+        displayFileListModal(data.files, torrentTitle, data.total_files, data.metadata);
+
+    } catch (error) {
+        Loading.hide();
+        console.error('Error fetching torrent file list:', error);
+        showPopup({
+            type: POPUP_TYPES.ERROR,
+            title: 'File List Error',
+            message: `Could not load file list: ${error.message}`
+        });
+    }
+}
+
+/**
+ * Display file list modal
+ * @param {Array} files - Array of file objects
+ * @param {string} torrentTitle - Title of the torrent
+ * @param {number} totalFiles - Total number of files
+ * @param {Object} metadata - Torrent metadata (id, hash, filename, status)
+ */
+function displayFileListModal(files, torrentTitle, totalFiles, metadata = {}) {
+    // Create a separate modal for file list (don't reuse main overlay)
+    let fileListOverlay = document.getElementById('fileListOverlay');
+
+    if (!fileListOverlay) {
+        fileListOverlay = document.createElement('div');
+        fileListOverlay.id = 'fileListOverlay';
+        fileListOverlay.className = 'file-list-overlay';
+        document.body.appendChild(fileListOverlay);
+    }
+
+    // Map status to simplified display
+    const rawStatus = metadata.status || 'unknown';
+    let displayStatus = 'Unknown';
+    let statusColor = '#6b7280'; // Gray for unknown
+
+    if (rawStatus === 'downloaded') {
+        displayStatus = 'Cached';
+        statusColor = '#10b981'; // Green
+    } else if (rawStatus === 'downloading') {
+        displayStatus = 'Uncached';
+        statusColor = '#3b82f6'; // Blue
+    }
+
+    // Calculate total size from all files
+    const totalBytes = files.reduce((sum, file) => sum + (file.size || 0), 0);
+    const totalGB = (totalBytes / (1024 * 1024 * 1024)).toFixed(2);
+
+    fileListOverlay.innerHTML = `
+        <div class="file-list-modal">
+            <div class="file-list-header">
+                <h3>Torrent Files</h3>
+                <button class="file-list-close" aria-label="Close">&times;</button>
+            </div>
+            <div class="file-list-torrent-title">${metadata.filename || torrentTitle}</div>
+            <div class="file-list-metadata">
+                ${metadata.id ? `<div class="metadata-item"><span class="metadata-label">ID:</span> <span class="metadata-value">${metadata.id}</span></div>` : ''}
+                <div class="metadata-item"><span class="metadata-label">Hash:</span> <span class="metadata-value">${metadata.hash || ''}</span></div>
+                <div class="metadata-item"><span class="metadata-label">Status:</span> <span class="metadata-value" style="color: ${statusColor};">${displayStatus}</span></div>
+                <div class="metadata-item"><span class="metadata-label">Total:</span> <span class="metadata-value">${totalGB} GB</span></div>
+            </div>
+            <div class="file-list-count">Total Files: ${totalFiles}</div>
+            <div class="file-list-content">
+                <table class="file-list-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 70%;">File Name</th>
+                            <th style="width: 30%; text-align: right;">Size</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${files.map((file, index) => `
+                            <tr>
+                                <td class="file-name" title="${(file.path || file.name).replace(/"/g, '&quot;')}">${file.name}</td>
+                                <td class="file-size text-right">${file.size_formatted}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+
+    fileListOverlay.style.display = 'flex';
+    document.body.classList.add('modal-open');
+
+    // Close button handler
+    const closeBtn = fileListOverlay.querySelector('.file-list-close');
+    closeBtn.onclick = () => closeFileListModal();
+
+    // Click outside to close
+    fileListOverlay.onclick = (e) => {
+        if (e.target === fileListOverlay) {
+            closeFileListModal();
+        }
+    };
+
+    // ESC key to close
+    const escHandler = (e) => {
+        if (e.key === 'Escape') {
+            closeFileListModal();
+            document.removeEventListener('keydown', escHandler);
+        }
+    };
+    document.addEventListener('keydown', escHandler);
+}
+
+/**
+ * Close file list modal
+ */
+function closeFileListModal() {
+    const fileListOverlay = document.getElementById('fileListOverlay');
+    if (fileListOverlay) {
+        fileListOverlay.style.display = 'none';
+        document.body.classList.remove('modal-open');
     }
 }

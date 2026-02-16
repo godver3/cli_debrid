@@ -29,6 +29,18 @@ EPISODE_BATCH_DELAY = 0.5  # Moderate delay between episode batches
 CHUNK_SIZE = 10
 MAX_RETRIES = 3
 
+# Plex show GUID cache for fast ID-based lookups
+# Maps ID -> show data (e.g., 'tt0074050' -> show_object)
+_plex_show_cache: Dict[str, Any] = {}
+_plex_show_cache_timestamp: Optional[float] = None
+_SHOW_CACHE_TTL_HOURS = 6  # Refresh cache every 6 hours
+
+# Plex movie GUID cache for fast ID-based lookups
+# Maps ID -> movie data (e.g., 'tt0111161' -> movie_object)
+_plex_movie_cache: Dict[str, Any] = {}
+_plex_movie_cache_timestamp: Optional[float] = None
+_MOVIE_CACHE_TTL_HOURS = 6  # Refresh cache every 6 hours
+
 def normalize_plex_resolution(resolution: str) -> str:
     """
     Normalize Plex videoResolution to standard format.
@@ -347,8 +359,9 @@ async def process_episode(episode_meta: Dict[str, Any], show_details: Dict[str, 
             elif guid['id'].startswith('tmdb://'):
                 base_episode_data['episode_tmdb_id'] = guid['id'].split('://')[1]
     
-    if not base_episode_data['release_date']:
-        # logger.warning(f"Plex missing originallyAvailableAt for {show_title} S{season_number}E{base_episode_data['episode_number']}. Attempting fallback lookup.")
+    # Check Battery for air date if Plex doesn't have it or if it's "Unknown"
+    if not base_episode_data['release_date'] or str(base_episode_data['release_date']).lower() == 'unknown':
+        # logger.warning(f"Plex missing/invalid originallyAvailableAt for {show_title} S{season_number}E{base_episode_data['episode_number']}. Attempting Battery fallback lookup.")
         fallback_date_found = False
         retrieved_show_metadata = None
 
@@ -1266,6 +1279,16 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
                             except Exception as fs_error:
                                 logger.debug(f"Could not get filesystem size for {file_path}: {fs_error}")
 
+                        # Extract resolution from Plex media
+                        if 'videoResolution' in media:
+                            raw_resolution = media.get('videoResolution')
+                            normalized_resolution = normalize_plex_resolution(raw_resolution)
+                            movie_entry['resolution'] = normalized_resolution
+                            logger.debug(f"[ResolutionExtract-Recent] Movie {movie_data['title']}: raw={raw_resolution}, normalized={normalized_resolution}")
+                        else:
+                            movie_entry['resolution'] = None
+                            logger.debug(f"[ResolutionExtract-Recent] Movie {movie_data['title']}: No videoResolution available")
+
                         movie_entries.append(movie_entry)
 
     if not movie_entries:
@@ -1360,6 +1383,16 @@ async def process_recent_episode(episode: Dict[str, Any], show_title: str, seaso
                                     logger.debug(f"Got episode size from filesystem: {episode_entry['size_gb']}GB for {file_path}")
                             except Exception as fs_error:
                                 logger.debug(f"Could not get filesystem size for {file_path}: {fs_error}")
+
+                        # Extract resolution from Plex media
+                        if 'videoResolution' in media:
+                            raw_resolution = media.get('videoResolution')
+                            normalized_resolution = normalize_plex_resolution(raw_resolution)
+                            episode_entry['resolution'] = normalized_resolution
+                            logger.debug(f"[ResolutionExtract-Recent] Episode S{season_number}E{episode_number}: raw={raw_resolution}, normalized={normalized_resolution}")
+                        else:
+                            episode_entry['resolution'] = None
+                            logger.debug(f"[ResolutionExtract-Recent] Episode S{season_number}E{episode_number}: No videoResolution available")
 
                         episode_entries.append(episode_entry)
 
@@ -2361,6 +2394,200 @@ def generate_title_variations(title: str) -> list:
     return unique_variations
 
 
+def refresh_plex_show_cache():
+    """
+    Refresh the Plex show cache by fetching all shows with GUIDs from Plex.
+
+    This method fetches ALL shows from TV libraries in one API call with includeGuids=1,
+    which is much faster and more reliable than using guid__contains (which is broken).
+
+    Returns:
+        bool: True if cache was refreshed successfully, False otherwise
+    """
+    global _plex_show_cache, _plex_show_cache_timestamp
+
+    try:
+        # Get Plex connection details
+        plex_url = get_setting('Plex', 'url')
+        plex_token = get_setting('Plex', 'token')
+
+        if not plex_url or not plex_token:
+            logger.debug("Plex URL or token not configured")
+            return False
+
+        plex_url = plex_url.rstrip('/')
+
+        # Connect to Plex to get TV library sections
+        plex = PlexServer(plex_url, plex_token, timeout=10)
+
+        new_cache = {}
+        shows_fetched = 0
+
+        # Process all TV show libraries
+        for section in plex.library.sections():
+            if section.type == 'show':
+                try:
+                    # Fetch ALL shows with GUIDs in one API call (fast!)
+                    section_key = section.key
+                    url = f"{plex_url}/library/sections/{section_key}/all?includeGuids=1"
+                    headers = {'X-Plex-Token': plex_token, 'Accept': 'application/json'}
+
+                    logger.info(f"Fetching shows with GUIDs from library: {section.title}")
+                    start_time = time.time()
+
+                    response = requests.get(url, headers=headers, timeout=30)
+                    response.raise_for_status()
+                    data = response.json()
+
+                    shows = data.get('MediaContainer', {}).get('Metadata', [])
+                    elapsed = time.time() - start_time
+
+                    logger.info(f"Retrieved {len(shows)} shows with GUIDs from '{section.title}' in {elapsed:.2f}s")
+
+                    # Build cache: extract all GUIDs and map to show data
+                    for show in shows:
+                        if 'Guid' in show:
+                            for guid_obj in show['Guid']:
+                                guid_full = guid_obj.get('id', '')
+                                # Extract ID from formats like "imdb://tt123", "tmdb://456", "tvdb://789"
+                                if '://' in guid_full:
+                                    guid_id = guid_full.split('://')[-1]
+                                else:
+                                    guid_id = guid_full
+
+                                # Store show data by ID (e.g., 'tt0074050', '43966', '36133')
+                                if guid_id:
+                                    new_cache[guid_id] = {
+                                        'title': show.get('title'),
+                                        'year': show.get('year'),
+                                        'ratingKey': show.get('ratingKey'),
+                                        'key': show.get('key'),
+                                        'section_key': section_key
+                                    }
+                        shows_fetched += len(shows)
+
+                except Exception as e:
+                    logger.error(f"Error fetching shows from library '{section.title}': {e}", exc_info=True)
+                    continue
+
+        # Update global cache
+        _plex_show_cache = new_cache
+        _plex_show_cache_timestamp = time.time()
+
+        logger.info(f"Plex show cache refreshed: {len(new_cache)} ID mappings from {shows_fetched} shows")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error refreshing Plex show cache: {e}", exc_info=True)
+        return False
+
+
+def is_plex_show_cache_stale() -> bool:
+    """Check if the Plex show cache needs refreshing."""
+    if _plex_show_cache_timestamp is None:
+        return True
+
+    age_hours = (time.time() - _plex_show_cache_timestamp) / 3600
+    return age_hours >= _SHOW_CACHE_TTL_HOURS
+
+
+def refresh_plex_movie_cache():
+    """
+    Refresh the Plex movie cache by fetching all movies with GUIDs from Plex.
+
+    This method fetches ALL movies from movie libraries in one API call with includeGuids=1,
+    which is much faster and more reliable than using guid__contains (which is broken).
+
+    Returns:
+        bool: True if cache was refreshed successfully, False otherwise
+    """
+    global _plex_movie_cache, _plex_movie_cache_timestamp
+
+    try:
+        # Get Plex connection details
+        plex_url = get_setting('Plex', 'url')
+        plex_token = get_setting('Plex', 'token')
+
+        if not plex_url or not plex_token:
+            logger.debug("Plex URL or token not configured")
+            return False
+
+        plex_url = plex_url.rstrip('/')
+
+        # Connect to Plex to get movie library sections
+        plex = PlexServer(plex_url, plex_token, timeout=10)
+
+        new_cache = {}
+        movies_fetched = 0
+
+        # Process all movie libraries
+        for section in plex.library.sections():
+            if section.type == 'movie':
+                try:
+                    # Fetch ALL movies with GUIDs in one API call (fast!)
+                    section_key = section.key
+                    url = f"{plex_url}/library/sections/{section_key}/all?includeGuids=1"
+                    headers = {'X-Plex-Token': plex_token, 'Accept': 'application/json'}
+
+                    logger.info(f"Fetching movies with GUIDs from library: {section.title}")
+                    start_time = time.time()
+
+                    response = requests.get(url, headers=headers, timeout=30)
+                    response.raise_for_status()
+                    data = response.json()
+
+                    movies = data.get('MediaContainer', {}).get('Metadata', [])
+                    elapsed = time.time() - start_time
+
+                    logger.info(f"Retrieved {len(movies)} movies with GUIDs from '{section.title}' in {elapsed:.2f}s")
+
+                    # Build cache: extract all GUIDs and map to movie data
+                    for movie in movies:
+                        if 'Guid' in movie:
+                            for guid_obj in movie['Guid']:
+                                guid_full = guid_obj.get('id', '')
+                                # Extract ID from formats like "imdb://tt123", "tmdb://456"
+                                if '://' in guid_full:
+                                    guid_id = guid_full.split('://')[-1]
+                                else:
+                                    guid_id = guid_full
+
+                                # Store movie data by ID (e.g., 'tt0111161', '278')
+                                if guid_id:
+                                    new_cache[guid_id] = {
+                                        'title': movie.get('title'),
+                                        'year': movie.get('year'),
+                                        'ratingKey': movie.get('ratingKey'),
+                                        'key': movie.get('key'),
+                                        'section_key': section_key
+                                    }
+                        movies_fetched += len(movies)
+
+                except Exception as e:
+                    logger.error(f"Error fetching movies from library '{section.title}': {e}", exc_info=True)
+                    continue
+
+        # Update global cache
+        _plex_movie_cache = new_cache
+        _plex_movie_cache_timestamp = time.time()
+
+        logger.info(f"Plex movie cache refreshed: {len(new_cache)} ID mappings from {movies_fetched} movies")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error refreshing Plex movie cache: {e}", exc_info=True)
+        return False
+
+
+def is_plex_movie_cache_stale() -> bool:
+    """Check if the Plex movie cache needs refreshing."""
+    if _plex_movie_cache_timestamp is None:
+        return True
+
+    age_hours = (time.time() - _plex_movie_cache_timestamp) / 3600
+    return age_hours >= _MOVIE_CACHE_TTL_HOURS
+
+
 def get_plex_item(item_id: int):
     """
     Get a Plex item object by database ID
@@ -2394,6 +2621,16 @@ def get_plex_item(item_id: int):
         # Connect to Plex
         plex = PlexServer(plex_url, plex_token, timeout=10)
 
+        # Refresh show cache if stale (for episodes/shows only)
+        if item_data.get('type') == 'episode' and is_plex_show_cache_stale():
+            logger.debug("Plex show cache is stale, refreshing...")
+            refresh_plex_show_cache()
+
+        # Refresh movie cache if stale (for movies only)
+        if item_data.get('type') == 'movie' and is_plex_movie_cache_stale():
+            logger.debug("Plex movie cache is stale, refreshing...")
+            refresh_plex_movie_cache()
+
         # Determine item type
         item_type = item_data.get('type')
         imdb_id = item_data.get('imdb_id')
@@ -2403,209 +2640,146 @@ def get_plex_item(item_id: int):
 
         # Search for item
         if item_type == 'movie':
-            # Search in all movie libraries
-            for section in plex.library.sections():
-                if section.type == 'movie':
+            # Try cache lookup first (fast path using ID-based matching)
+            cache_hit = False
+            if imdb_id or tmdb_id:
+                logger.debug(f"Searching Plex cache for movie '{title}' - IMDb: {imdb_id}, TMDb: {tmdb_id}")
+
+                cached_movie = None
+
+                # Check IMDb match (cache is keyed by GUID IDs)
+                if imdb_id and imdb_id in _plex_movie_cache:
+                    cached_movie = _plex_movie_cache[imdb_id]
+                    logger.info(f"Found movie in cache by IMDb ID ({imdb_id}): {cached_movie.get('title')}")
+                    cache_hit = True
+
+                # Check TMDb match
+                elif tmdb_id and str(tmdb_id) in _plex_movie_cache:
+                    cached_movie = _plex_movie_cache[str(tmdb_id)]
+                    logger.info(f"Found movie in cache by TMDb ID ({tmdb_id}): {cached_movie.get('title')}")
+                    cache_hit = True
+
+                # If found in cache, fetch the actual Plex movie object
+                if cache_hit and cached_movie:
                     try:
-                        # Try searching by IMDb ID first
-                        if imdb_id:
-                            logger.debug(f"Searching Plex for '{title}' by IMDb ID: {imdb_id}")
-                            # Try different IMDb GUID formats
-                            imdb_formats = [
-                                f'imdb://{imdb_id}',      # Full protocol format
-                                imdb_id,                  # Just the ID (e.g., tt6878820)
-                                f'com.plexapp.agents.imdb://{imdb_id}'  # Legacy agent format
-                            ]
-                            found_via_guid = False
-                            for imdb_format in imdb_formats:
-                                try:
-                                    logger.debug(f"Trying IMDb format: {imdb_format}")
-                                    results = section.search(guid__contains=imdb_format)
-                                    if results:
-                                        logger.debug(f"Found by IMDb ID ({imdb_format}): {results[0].title}")
-                                        found_via_guid = True
-                                        return results[0]
-                                except Exception as e:
-                                    logger.debug(f"IMDb search failed for {imdb_format}: {e}")
-                                    continue
-
-                            # If not found via any GUID format, try searching by title and checking all GUIDs
-                            # This handles cases where IMDb ID is in secondary GUIDs, not primary
-                            if not found_via_guid and title:
-                                logger.debug(f"IMDb search failed via guid__contains, trying title search with GUID filtering")
-
-                                # Generate comprehensive title variations to handle Plex's inconsistent title handling
-                                # Handles apostrophes, hyphens, slashes, colons, pipes, and other special characters
-                                title_variations = generate_title_variations(title)
-
-                                for title_var in title_variations:
-                                    title_results = section.search(title=title_var)
-                                    if title_results:
-                                        for item in title_results:
-                                            # Check if any of the item's GUIDs contain the IMDb ID
-                                            if hasattr(item, 'guids'):
-                                                for guid in item.guids:
-                                                    if imdb_id in guid.id:
-                                                        logger.info(f"Found by IMDb ID in secondary GUIDs (title variation: '{title_var}'): {item.title}")
-                                                        return item
-
-                                logger.debug(f"No match found after trying {len(title_variations)} title variations")
-
-                        # Try searching by TMDb ID
-                        if tmdb_id:
-                            logger.debug(f"Searching Plex for '{title}' by TMDb ID: {tmdb_id}")
-                            # Try different TMDb GUID formats
-                            tmdb_formats = [
-                                f'tmdb://{tmdb_id}',
-                                f'themoviedb://{tmdb_id}',
-                                tmdb_id
-                            ]
-                            found_via_guid = False
-                            for tmdb_format in tmdb_formats:
-                                try:
-                                    logger.debug(f"Trying TMDb format: {tmdb_format}")
-                                    results = section.search(guid__contains=tmdb_format)
-                                    if results:
-                                        logger.debug(f"Found by TMDb ID ({tmdb_format}): {results[0].title}")
-                                        return results[0]
-                                except Exception as e:
-                                    logger.debug(f"TMDb search failed for {tmdb_format}: {e}")
-                                    continue
-
-                            # If not found via guid__contains, try title search with GUID filtering
-                            if title:
-                                logger.debug(f"TMDb search failed via guid__contains, trying title search with GUID filtering")
-
-                                # Generate comprehensive title variations (same comprehensive logic as IMDb search)
-                                title_variations = generate_title_variations(title)
-
-                                for title_var in title_variations:
-                                    title_results = section.search(title=title_var)
-                                    if title_results:
-                                        for item in title_results:
-                                            if hasattr(item, 'guids'):
-                                                for guid in item.guids:
-                                                    if str(tmdb_id) in guid.id or f'tmdb://{tmdb_id}' in guid.id:
-                                                        logger.info(f"Found by TMDb ID in secondary GUIDs (title variation: '{title_var}'): {item.title}")
-                                                        return item
-
-                                logger.debug(f"No TMDb match found after trying {len(title_variations)} title variations")
-
-                        # Fallback to title and year with fuzzy matching
-                        if title and year:
-                            # Try exact title first
-                            logger.debug(f"Searching Plex for '{title}' ({year}) by title+year")
-                            results = section.search(title=title, year=year)
-                            if results:
-                                logger.debug(f"Found by title+year: {results[0].title}")
-                                return results[0]
-
-                            # Try with normalized apostrophes (replace curly quotes with straight quotes)
-                            if "'" in title or "'" in title or "'" in title:
-                                title_normalized = title.replace("'", "'").replace("'", "'").replace("'", "'")
-                                logger.debug(f"Searching Plex with normalized apostrophes: '{title_normalized}' ({year})")
-                                results = section.search(title=title_normalized, year=year)
-                                if results:
-                                    logger.debug(f"Found by normalized title: {results[0].title}")
-                                    return results[0]
-
-                            # Try without year as last resort for title match
-                            logger.debug(f"Searching Plex for '{title}' without year (fallback)")
-                            results = section.search(title=title)
-                            if results:
-                                # Filter by year if multiple results
-                                for result in results:
-                                    if getattr(result, 'year', None) == year:
-                                        logger.debug(f"Found by title (year matched): {result.title}")
-                                        return result
-                                # Return first result if no year match
-                                if results:
-                                    logger.debug(f"Found by title (no year match, using first result): {results[0].title}")
-                                    return results[0]
-
-                        logger.debug(f"No Plex match found for '{title}' ({year}) in section {section.title}")
+                        rating_key = cached_movie.get('ratingKey')
+                        # Use ratingKey to construct reliable path instead of using 'key' directly
+                        # This prevents issues with Tag objects being returned
+                        movie_key = f"/library/metadata/{rating_key}"
+                        movie = plex.fetchItem(movie_key)
+                        logger.debug(f"Successfully fetched movie from cache using ratingKey: {rating_key}")
+                        return movie
                     except Exception as e:
-                        logger.debug(f"Error searching section {section.title}: {e}")
-                        continue
+                        logger.warning(f"Failed to fetch movie by ratingKey {rating_key}: {e}")
+                        # Fall through to title+year search
+                        cache_hit = False
+
+            # If not found in cache, fallback to title+year search
+            if not cache_hit:
+                logger.debug(f"Movie not found in cache, falling back to title+year search")
+                # Search in all movie libraries
+                for section in plex.library.sections():
+                    if section.type == 'movie':
+                        try:
+                            # Fallback to title and year
+                            if title and year:
+                                movies = section.search(title=title, year=year)
+                                if movies:
+                                    movie = movies[0]
+                                    logger.info(f"Found movie by title+year: {movie.title}")
+                                    return movie
+
+                            # Final fallback: Try title variations with GUID matching
+                            if title and (imdb_id or tmdb_id):
+                                logger.debug(f"Movie not found via title+year, trying title variations with GUID matching")
+                                title_variations = generate_title_variations(title)
+
+                                for title_var in title_variations:
+                                    movies = section.search(title=title_var)
+                                    if movies:
+                                        for movie in movies:
+                                            # Check if any of the movie's GUIDs match our IDs
+                                            if hasattr(movie, 'guids'):
+                                                for guid in movie.guids:
+                                                    if (imdb_id and imdb_id in guid.id) or (tmdb_id and str(tmdb_id) in guid.id):
+                                                        logger.info(f"Found movie by title variation ('{title_var}') with GUID match: {movie.title}")
+                                                        return movie
+                        except Exception as e:
+                            logger.debug(f"Error searching section {section.title}: {e}")
+                            continue
 
         elif item_type == 'episode':
             season_number = item_data.get('season_number')
             episode_number = item_data.get('episode_number')
 
-            # Search in all TV libraries
-            for section in plex.library.sections():
-                if section.type == 'show':
+            # Try cache lookup first (fast path using ID-based matching)
+            cache_hit = False
+            if imdb_id or tmdb_id:
+                logger.debug(f"Searching Plex cache for show '{title}' - IMDb: {imdb_id}, TMDb: {tmdb_id}")
+
+                cached_show = None
+
+                # Check IMDb match (cache is keyed by GUID IDs)
+                if imdb_id and imdb_id in _plex_show_cache:
+                    cached_show = _plex_show_cache[imdb_id]
+                    logger.info(f"Found show in cache by IMDb ID ({imdb_id}): {cached_show.get('title')}")
+                    cache_hit = True
+
+                # Check TMDb match
+                elif tmdb_id and str(tmdb_id) in _plex_show_cache:
+                    cached_show = _plex_show_cache[str(tmdb_id)]
+                    logger.info(f"Found show in cache by TMDb ID ({tmdb_id}): {cached_show.get('title')}")
+                    cache_hit = True
+
+                # If found in cache, fetch the actual Plex show object
+                if cache_hit and cached_show:
                     try:
-                        # Try searching show by IMDb ID first
-                        if imdb_id:
-                            logger.debug(f"Searching Plex for show '{title}' by IMDb ID: {imdb_id}")
-                            # Try different IMDb GUID formats
-                            imdb_formats = [
-                                f'imdb://{imdb_id}',      # Full protocol format
-                                imdb_id,                  # Just the ID (e.g., tt6878820)
-                                f'com.plexapp.agents.imdb://{imdb_id}'  # Legacy agent format
-                            ]
-                            for imdb_format in imdb_formats:
-                                try:
-                                    logger.debug(f"Trying IMDb format: {imdb_format}")
-                                    shows = section.search(guid__contains=imdb_format)
-                                    if shows:
-                                        show = shows[0]
-                                        logger.info(f"Found show by IMDb ID ({imdb_format}) for label application: {show.title}")
-                                        # For Plex labels, return the show itself (not specific episodes)
-                                        return show
-                                except Exception as e:
-                                    logger.debug(f"IMDb show search failed for {imdb_format}: {e}")
-                                    continue
-
-                        # Try searching by TMDb ID
-                        if tmdb_id:
-                            logger.debug(f"Searching Plex for show '{title}' by TMDb ID: {tmdb_id}")
-                            tmdb_formats = [
-                                f'tmdb://{tmdb_id}',
-                                f'themoviedb://{tmdb_id}',
-                                tmdb_id
-                            ]
-                            for tmdb_format in tmdb_formats:
-                                try:
-                                    logger.debug(f"Trying TMDb format: {tmdb_format}")
-                                    shows = section.search(guid__contains=tmdb_format)
-                                    if shows:
-                                        show = shows[0]
-                                        logger.info(f"Found show by TMDb ID ({tmdb_format}) for label application: {show.title}")
-                                        # For Plex labels, return the show itself (not specific episodes)
-                                        return show
-                                except Exception as e:
-                                    logger.debug(f"TMDb show search failed for {tmdb_format}: {e}")
-                                    continue
-
-                        # Fallback to title and year
-                        if title and year:
-                            shows = section.search(title=title, year=year)
-                            if shows:
-                                show = shows[0]
-                                logger.info(f"Found show by title+year for label application: {show.title}")
-                                # For Plex labels, return the show itself (not specific episodes)
-                                return show
-
-                        # Final fallback: Try title variations with GUID matching
-                        if title and (imdb_id or tmdb_id):
-                            logger.debug(f"Show not found via GUID or title+year, trying title variations with GUID matching")
-                            title_variations = generate_title_variations(title)
-
-                            for title_var in title_variations:
-                                shows = section.search(title=title_var)
-                                if shows:
-                                    for show in shows:
-                                        # Check if any of the show's GUIDs match our IDs
-                                        if hasattr(show, 'guids'):
-                                            for guid in show.guids:
-                                                if (imdb_id and imdb_id in guid.id) or (tmdb_id and str(tmdb_id) in guid.id):
-                                                    logger.info(f"Found show by title variation ('{title_var}') with GUID match for label application: {show.title}")
-                                                    return show
+                        rating_key = cached_show.get('ratingKey')
+                        # Use ratingKey to construct reliable path instead of using 'key' directly
+                        # This prevents issues with Tag objects being returned
+                        show_key = f"/library/metadata/{rating_key}"
+                        show = plex.fetchItem(show_key)
+                        logger.debug(f"Successfully fetched show from cache using ratingKey: {rating_key}")
+                        return show
                     except Exception as e:
-                        logger.debug(f"Error searching section {section.title}: {e}")
-                        continue
+                        logger.warning(f"Failed to fetch show by ratingKey {rating_key}: {e}")
+                        # Fall through to title+year search
+                        cache_hit = False
+
+            # If not found in cache, fallback to title+year search
+            if not cache_hit:
+                logger.debug(f"Show not found in cache, falling back to title+year search")
+                # Search in all TV libraries
+                for section in plex.library.sections():
+                    if section.type == 'show':
+                        try:
+                            # Fallback to title and year
+                            if title and year:
+                                shows = section.search(title=title, year=year)
+                                if shows:
+                                    show = shows[0]
+                                    logger.info(f"Found show by title+year for label application: {show.title}")
+                                    # For Plex labels, return the show itself (not specific episodes)
+                                    return show
+
+                            # Final fallback: Try title variations with GUID matching
+                            if title and (imdb_id or tmdb_id):
+                                logger.debug(f"Show not found via title+year, trying title variations with GUID matching")
+                                title_variations = generate_title_variations(title)
+
+                                for title_var in title_variations:
+                                    shows = section.search(title=title_var)
+                                    if shows:
+                                        for show in shows:
+                                            # Check if any of the show's GUIDs match our IDs
+                                            if hasattr(show, 'guids'):
+                                                for guid in show.guids:
+                                                    if (imdb_id and imdb_id in guid.id) or (tmdb_id and str(tmdb_id) in guid.id):
+                                                        logger.info(f"Found show by title variation ('{title_var}') with GUID match for label application: {show.title}")
+                                                        return show
+                        except Exception as e:
+                            logger.debug(f"Error searching section {section.title}: {e}")
+                            continue
 
         # Log detailed info about what we searched for when item not found
         logger.info(f"Plex item not found after exhaustive search - "

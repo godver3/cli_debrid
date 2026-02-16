@@ -1780,7 +1780,7 @@ def test_phalanx_hash():
         hash_value = request.form.get('hash', '').strip()
         if not hash_value:
             return jsonify({'error': 'No hash provided'}), 400
-            
+
         # Initialize cache manager
         phalanx_manager = PhalanxDBClassManager()
         

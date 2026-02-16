@@ -2381,3 +2381,10 @@ td#scraper-source .source-badge {
 .phantom-missing svg {
     stroke: rgba(239, 68, 68, 0.7);
 }
+
+/* Hide trailer text on mobile, show only play icon */
+@media (max-width: 768px) {
+    .trailer-text {
+        display: none !important;
+    }
+}

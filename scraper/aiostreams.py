@@ -594,7 +594,7 @@ def parse_api_results(results: List[Dict[str, Any]], instance: str) -> List[Dict
                 continue
 
             # Get size in bytes and convert to GB
-            size_bytes = result.get('size', 0)
+            size_bytes = result.get('size') or 0
             size_gb = size_bytes / (1024 * 1024 * 1024) if size_bytes > 0 else 0.0
 
             # Get seeders (optional - may be None if not provided by API)
