@@ -1298,7 +1298,7 @@ def move_to_wanted():
         if season_number is not None and episode_number is not None:
             # Episode
             query = """
-                UPDATE media_items 
+                UPDATE media_items
                 SET state = 'Wanted',
                     filled_by_file = NULL,
                     filled_by_title = NULL,
@@ -1316,13 +1316,13 @@ def move_to_wanted():
                 WHERE (imdb_id = ? OR tmdb_id = ?)
                 AND season_number = ?
                 AND episode_number = ?
-                AND state IN ('Collected', 'Upgrading', 'Blacklisted')
+                AND state NOT IN ('Wanted', 'Scraping', 'Adding')
             """
             params = (datetime.now(), imdb_id, tmdb_id, season_number, episode_number)
         else:
             # Movie
             query = """
-                UPDATE media_items 
+                UPDATE media_items
                 SET state = 'Wanted',
                     filled_by_file = NULL,
                     filled_by_title = NULL,
@@ -1339,7 +1339,7 @@ def move_to_wanted():
                     upgrading = NULL
                 WHERE (imdb_id = ? OR tmdb_id = ?)
                 AND type = 'movie'
-                AND state IN ('Collected', 'Upgrading', 'Blacklisted')
+                AND state NOT IN ('Wanted', 'Scraping', 'Adding')
             """
             params = (datetime.now(), imdb_id, tmdb_id)
             
@@ -1349,7 +1349,7 @@ def move_to_wanted():
         if cursor.rowcount > 0:
             return jsonify({'success': True}), 200
         else:
-            return jsonify({'success': False, 'error': 'No matching items found or items not in Collected/Upgrading state'}), 404
+            return jsonify({'success': False, 'error': 'No matching items found or items already in Wanted/Scraping/Adding state'}), 404
             
     except Exception as e:
         logging.error(f"Error moving item to Wanted state: {str(e)}")
