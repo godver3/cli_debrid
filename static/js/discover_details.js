@@ -710,8 +710,14 @@ function createEpisodeRow(episode, seasonNumber, showData) {
             }
         }
 
-        // Note: refresh and delete functionality would need to be implemented similar to library_show.js
-        // For now, just adding the buttons for visual parity
+        // Add event listener for refresh button (move to wanted)
+        const refreshBtn = row.querySelector('.refresh-btn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', handleRefreshClick);
+        }
+
+        // Note: delete functionality would need to be implemented similar to library_show.js
+        // For now, just adding the button for visual parity
 
     } else {
         // Episode not in database - show minimal info with search button
@@ -1138,4 +1144,39 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+function handleRefreshClick(event) {
+    const btn = event.currentTarget;
+    const data = {
+        imdb_id: btn.dataset.imdbId,
+        tmdb_id: btn.dataset.tmdbId,
+        season_number: parseInt(btn.dataset.season),
+        episode_number: parseInt(btn.dataset.episode)
+    };
+
+    // Disable button while processing
+    btn.disabled = true;
+
+    fetch('/statistics/move_to_wanted', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Reload the page to reflect the updated state
+            window.location.reload();
+        } else {
+            throw new Error(data.error || 'Failed to move item to Wanted state');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert(`Error moving item to Wanted state: ${error.message}`);
+        btn.disabled = false;
+    });
 }

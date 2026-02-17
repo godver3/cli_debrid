@@ -1145,7 +1145,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 const qualityBadgesHtml = qualityTags.map(tag => createQualityBadge(tag)).join('');
                 
                 // Use clean title from header, store filename for toggle
-                const ShowInfo = `${season ? `<span class="season-info">S${season.toString().padStart(2, '0')}` : ''}${(torrent.parsed_info.seasons).length > 1 ? ` - ${(torrent.parsed_info.seasons).length}</span>` : `</span>`} ${episode ? `<span class="ds-episode-info"> E${episode.toString().padStart(2, '0')}</span>`: ''}`;
+                const ShowInfo = `${season ? `<span class="season-info">S${season.toString().padStart(2, '0')}` : ''}${(torrent.parsed_info?.seasons?.length || 0) > 1 ? ` - ${torrent.parsed_info.seasons.length}</span>` : `</span>`} ${episode ? `<span class="ds-episode-info"> E${episode.toString().padStart(2, '0')}</span>`: ''}`;
                 const cleanTitle = `${title} (${year})${ShowInfo ? ` ${ShowInfo}` : ''}`;
                 const filename = torrent.title || torrent.original_title || 'N/A';
                 

@@ -1181,6 +1181,7 @@ def ensure_notification_defaults(notification_config):
         'scraping': False,
         'adding': False,
         'checking': False,
+        'downloading': False,
         'sleeping': False,
         'unreleased': False,
         'blacklisted': False,
