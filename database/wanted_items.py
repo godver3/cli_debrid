@@ -705,7 +705,99 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
 
         if movies_to_insert or episodes_to_insert or updated_any_title:
             conn.commit()
-        
+
+        # Send notifications for newly added items
+        if (movies_to_insert or episodes_to_insert) and items_added > 0:
+            try:
+                from routes.notifications import send_notifications
+                from routes.settings_routes import get_enabled_notifications_for_category
+                from routes.extensions import app
+                from database.database_reading import get_media_items_by_state
+
+                with app.app_context():
+                    response = get_enabled_notifications_for_category('wanted')
+                    if response.json['success']:
+                        enabled_notifications = response.json['enabled_notifications']
+                        if enabled_notifications:
+                            # Get the newly inserted items from the database
+                            notifications_to_send = []
+
+                            # Build a set of unique identifiers for the items we just inserted
+                            inserted_identifiers = set()
+                            for movie_data in movies_to_insert:
+                                # movie_data tuple: (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, ...)
+                                imdb_id, tmdb_id, title, year = movie_data[0], movie_data[1], movie_data[2], movie_data[3]
+                                version = movie_data[8]
+                                inserted_identifiers.add((imdb_id, tmdb_id, title, year, version, 'movie'))
+
+                            for episode_data in episodes_to_insert:
+                                # episode_data tuple: (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, ...)
+                                imdb_id, tmdb_id, title, year = episode_data[0], episode_data[1], episode_data[2], episode_data[3]
+                                season_num, episode_num = episode_data[7], episode_data[8]
+                                version = episode_data[11]
+                                inserted_identifiers.add((imdb_id, tmdb_id, title, year, version, 'episode', season_num, episode_num))
+
+                            # Query for items in Wanted state that match our inserted items
+                            wanted_items = get_media_items_by_state('Wanted')
+
+                            for db_item in wanted_items:
+                                # Check if this item matches one we just inserted
+                                item_type = db_item.get('type', 'unknown')
+                                if item_type == 'movie':
+                                    identifier = (
+                                        db_item.get('imdb_id'),
+                                        db_item.get('tmdb_id'),
+                                        db_item.get('title'),
+                                        db_item.get('year'),
+                                        db_item.get('version'),
+                                        'movie'
+                                    )
+                                    if identifier in inserted_identifiers and not db_item.get('upgrading'):
+                                        notification_data = {
+                                            'id': db_item.get('id'),
+                                            'title': db_item.get('title', 'Unknown Title'),
+                                            'type': item_type,
+                                            'year': db_item.get('year', ''),
+                                            'version': db_item.get('version', ''),
+                                            'season_number': None,
+                                            'episode_number': None,
+                                            'new_state': 'Wanted',
+                                            'is_upgrade': False,
+                                            'upgrading_from': None
+                                        }
+                                        notifications_to_send.append(notification_data)
+                                elif item_type == 'episode':
+                                    identifier = (
+                                        db_item.get('imdb_id'),
+                                        db_item.get('tmdb_id'),
+                                        db_item.get('title'),
+                                        db_item.get('year'),
+                                        db_item.get('version'),
+                                        'episode',
+                                        db_item.get('season_number'),
+                                        db_item.get('episode_number')
+                                    )
+                                    if identifier in inserted_identifiers and not db_item.get('upgrading'):
+                                        notification_data = {
+                                            'id': db_item.get('id'),
+                                            'title': db_item.get('title', 'Unknown Title'),
+                                            'type': item_type,
+                                            'year': db_item.get('year', ''),
+                                            'version': db_item.get('version', ''),
+                                            'season_number': str(db_item.get('season_number', '')) if db_item.get('season_number') is not None else None,
+                                            'episode_number': str(db_item.get('episode_number', '')) if db_item.get('episode_number') is not None else None,
+                                            'new_state': 'Wanted',
+                                            'is_upgrade': False,
+                                            'upgrading_from': None
+                                        }
+                                        notifications_to_send.append(notification_data)
+
+                            if notifications_to_send:
+                                send_notifications(notifications_to_send, enabled_notifications, notification_category='state_change')
+                                logging.info(f"Sent Wanted state notifications for {len(notifications_to_send)} items")
+            except Exception as e:
+                logging.error(f"Failed to send Wanted state change notifications: {str(e)}")
+
         # Immediately trigger a Wanted queue run if new items were added
         if items_added > 0:
             try:
