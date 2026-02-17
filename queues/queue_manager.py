@@ -557,6 +557,38 @@ class QueueManager:
         logging.debug(f"Moving item to Scraping: {item_identifier}")
         self._move_item_to_queue(item, from_queue, "Scraping", "Scraping")
 
+        # Send notification for the state change
+        from routes.notifications import send_notifications
+        from routes.settings_routes import get_enabled_notifications_for_category
+        from routes.extensions import app
+        from database.database_reading import get_media_item_by_id
+
+        try:
+            # Get fresh item data from DB
+            db_item = get_media_item_by_id(item['id'])
+            if db_item and not db_item.get('upgrading'):
+                with app.app_context():
+                    response = get_enabled_notifications_for_category('scraping')
+                    if response.json['success']:
+                        enabled_notifications = response.json['enabled_notifications']
+                        if enabled_notifications:
+                            notification_data = {
+                                'id': item['id'],
+                                'title': item.get('title', 'Unknown Title'),
+                                'type': item.get('type', 'unknown'),
+                                'year': item.get('year', ''),
+                                'version': item.get('version', ''),
+                                'season_number': str(item.get('season_number', '')) if item.get('season_number') is not None else None,
+                                'episode_number': str(item.get('episode_number', '')) if item.get('episode_number') is not None else None,
+                                'new_state': 'Scraping',
+                                'is_upgrade': False,
+                                'upgrading_from': None
+                            }
+                            send_notifications([notification_data], enabled_notifications, notification_category='state_change')
+                            logging.debug(f"Sent Scraping notification for item {item['id']}")
+        except Exception as e:
+            logging.error(f"Failed to send Scraping state change notification: {str(e)}")
+
     def move_to_adding(self, item: Dict[str, Any], from_queue: str, filled_by_title: str, scrape_results: List[Dict]):
         item_identifier = self.generate_identifier(item)
 
@@ -579,6 +611,38 @@ class QueueManager:
             filled_by_title=filled_by_title,
             scrape_results=scrape_results
         )
+
+        # Send notification for the state change
+        from routes.notifications import send_notifications
+        from routes.settings_routes import get_enabled_notifications_for_category
+        from routes.extensions import app
+        from database.database_reading import get_media_item_by_id
+
+        try:
+            # Get fresh item data from DB
+            db_item = get_media_item_by_id(item['id'])
+            if db_item and not db_item.get('upgrading'):
+                with app.app_context():
+                    response = get_enabled_notifications_for_category('adding')
+                    if response.json['success']:
+                        enabled_notifications = response.json['enabled_notifications']
+                        if enabled_notifications:
+                            notification_data = {
+                                'id': item['id'],
+                                'title': item.get('title', 'Unknown Title'),
+                                'type': item.get('type', 'unknown'),
+                                'year': item.get('year', ''),
+                                'version': item.get('version', ''),
+                                'season_number': str(item.get('season_number', '')) if item.get('season_number') is not None else None,
+                                'episode_number': str(item.get('episode_number', '')) if item.get('episode_number') is not None else None,
+                                'new_state': 'Adding',
+                                'is_upgrade': False,
+                                'upgrading_from': None
+                            }
+                            send_notifications([notification_data], enabled_notifications, notification_category='state_change')
+                            logging.debug(f"Sent Adding notification for item {item['id']}")
+        except Exception as e:
+            logging.error(f"Failed to send Adding state change notification: {str(e)}")
 
     def move_to_checking(self, item: Dict[str, Any], from_queue: str, title: str, link: str, filled_by_file: str, torrent_id: str = None):
         item_identifier = self.generate_identifier(item)
