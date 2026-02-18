@@ -147,10 +147,10 @@ class MediaMatcher:
             r'(?<![a-zA-Z0-9])opening(?=[._-]|$)', r'(?<![a-zA-Z0-9])ending(?=[._-]|$)',
             r'(?<![a-zA-Z0-9])ova(?=[._-]|$)',
             r'(?<![a-zA-Z0-9])blooper(?=[._-]|$)', r'(?<![a-zA-Z0-9])bloopers(?=[._-]|$)',  # Blooper content
-            r'(?<![a-zA-Z0-9])special(?=[._-]|$)', r'(?<![a-zA-Z0-9])specials(?=[._-]|$)',  # Special content
+            r'(?<=[._-])special(?=[._-]|$)', r'(?<=[._-])specials(?=[._-]|$)',  # Special content (require delimiter before)
             r'(?<![a-zA-Z0-9])omake(?=[._-]|$)', r'(?<![a-zA-Z0-9])omakes(?=[._-]|$)',  # Omake (bonus content)
-            r'(?<![a-zA-Z0-9])extra(?=[._-]|$)', r'(?<![a-zA-Z0-9])extras(?=[._-]|$)',  # Extra content
-            r'(?<![a-zA-Z0-9])bonus(?=[._-]|$)', r'(?<![a-zA-Z0-9])bonuses(?=[._-]|$)'  # Bonus content
+            r'(?<=[._-])extra(?=[._-]|$)', r'(?<=[._-])extras(?=[._-]|$)',  # Extra content (require delimiter before)
+            r'(?<=[._-])bonus(?=[._-]|$)', r'(?<=[._-])bonuses(?=[._-]|$)'  # Bonus content (require delimiter before)
         ]
         
         for i, pattern in enumerate(anime_special_patterns):
