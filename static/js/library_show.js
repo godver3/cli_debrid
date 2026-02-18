@@ -625,12 +625,16 @@ function createSeasonTab(season, isActive) {
     const progressPercent = totalEpisodes > 0 ? Math.round((collectedEpisodes / totalEpisodes) * 100) : 0;
 
     const tab = document.createElement('button');
-    tab.className = `season-tab ${isActive ? 'active' : ''}`;
+    const isPhantomSeason = season.is_phantom_season === true;
+    tab.className = `season-tab ${isActive ? 'active' : ''} ${isPhantomSeason ? 'phantom-season-tab' : ''}`;
     tab.dataset.season = season.season_number;
     tab.setAttribute('type', 'button');
 
+    // Add dashed warning icon for phantom seasons (like phantom episodes)
+    const phantomIcon = isPhantomSeason ? `<svg style="width: 14px; height: 14px; margin-right: 4px; vertical-align: middle; stroke-dasharray: 4 4; opacity: 0.7;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>` : '';
+
     tab.innerHTML = `
-        <div class="season-tab-title">Season ${season.season_number}</div>
+        <div class="season-tab-title">${phantomIcon}Season ${season.season_number}</div>
         <div class="season-tab-stats">${collectedEpisodes} / ${totalEpisodes}</div>
         <div class="season-tab-progress">
             <div class="season-tab-progress-bar">
@@ -649,10 +653,11 @@ function createSeasonPanel(season, isActive) {
 
     // Check permissions for delete button
     const hasAdminPermissions = document.getElementById('has_admin_permissions')?.value === 'True';
+    const isPhantomSeason = season.is_phantom_season === true;
 
-    // Season delete button - only for admins
+    // Season delete button - only for admins and non-phantom seasons
     let deleteButtonHtml = '';
-    if (hasAdminPermissions) {
+    if (hasAdminPermissions && !isPhantomSeason) {
         const deleteIconSvg = `
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M10 11v6"></path>
@@ -677,14 +682,15 @@ function createSeasonPanel(season, isActive) {
     // Add season header with optional delete button
     const seasonHeader = document.createElement('div');
     seasonHeader.className = 'season-panel-header';
+    const phantomIndicator = isPhantomSeason ? '<span style="color: rgba(239, 68, 68, 0.8); font-style: italic; font-size: 0.875rem; margin-left: 0.5rem;">(Missing Season)</span>' : '';
     seasonHeader.innerHTML = `
-        <h3>Season ${season.season_number}</h3>
+        <h3>Season ${season.season_number}${phantomIndicator}</h3>
         ${deleteButtonHtml}
     `;
     panel.appendChild(seasonHeader);
 
-    // Attach delete handler if button exists
-    if (hasAdminPermissions) {
+    // Attach delete handler if button exists (not for phantom seasons)
+    if (hasAdminPermissions && !isPhantomSeason) {
         const deleteBtn = seasonHeader.querySelector('.delete-season-btn');
         if (deleteBtn) {
             deleteBtn.addEventListener('click', handleDeleteSeason);

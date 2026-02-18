@@ -581,7 +581,7 @@ def add_torrent_to_debrid():
                             parsed_info = media_matcher._parse_file_info(file_dict)
                             if parsed_info:
                                 parsed_files.append(parsed_info)
-                        
+
                         if not parsed_files:
                             logging.warning(f"No valid video files found in torrent for season pack processing for {title} S{season_number}.")
                             # Decide if we should return an error or just continue
