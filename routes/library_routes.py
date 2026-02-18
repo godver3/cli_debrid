@@ -1203,6 +1203,7 @@ def show_detail_data(media_id):
         tmdb_id = show_data['tmdb_id']
         tvdb_id = None  # TODO: Extract from database if available
         tvdb_slug = None  # TVDB slug for correct URL format
+        number_of_seasons = 0  # Total seasons from TMDB for phantom season detection
 
         # If no TMDB ID but IMDB ID exists, try to look it up
         if not tmdb_id and show_data['imdb_id']:
@@ -1261,6 +1262,9 @@ def show_detail_data(media_id):
                     tmdb_poster_path = details_data.get('poster_path')
                     tmdb_backdrop_path = details_data.get('backdrop_path')
 
+                    # Get total number of seasons for phantom season detection
+                    number_of_seasons = details_data.get('number_of_seasons', 0)
+
                     # If Battery didn't provide data, use TMDB for everything
                     if not battery_metadata:
                         overview = details_data.get('overview', '')
@@ -1286,6 +1290,81 @@ def show_detail_data(media_id):
                 logging.warning(f"TMDB API key not configured, skipping ratings fetch for show {tmdb_id}")
         elif not battery_metadata:
             logging.warning(f"No TMDB ID or IMDb ID available for show {show_data['title']}, skipping metadata fetch")
+
+        # Add phantom seasons for missing seasons if TMDB data is available
+        if number_of_seasons > 0 and tmdb_id and tmdb_api_key:
+            try:
+                existing_season_numbers = set(s['season_number'] for s in seasons_list)
+                missing_seasons = []
+
+                # Find missing seasons (1 to number_of_seasons, excluding Season 0/Specials)
+                for season_num in range(1, number_of_seasons + 1):
+                    if season_num not in existing_season_numbers:
+                        missing_seasons.append(season_num)
+
+                if missing_seasons:
+                    logging.info(f"Found {len(missing_seasons)} missing season(s): {missing_seasons}")
+
+                    # Fetch episode counts for missing seasons from TMDB
+                    for season_num in missing_seasons:
+                        try:
+                            season_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_num}?api_key={tmdb_api_key}&language=en-US"
+                            logging.info(f"Fetching phantom season {season_num} details from TMDB")
+                            season_response = requests.get(season_url, timeout=10)
+                            season_response.raise_for_status()
+                            season_data = season_response.json()
+
+                            # Get episode count for this season
+                            episodes_in_season = season_data.get('episodes', [])
+                            episode_count = len(episodes_in_season)
+
+                            if episode_count > 0:
+                                # Create phantom season with phantom episodes
+                                phantom_episodes = []
+                                for ep_num in range(1, episode_count + 1):
+                                    phantom_episodes.append({
+                                        'id': None,
+                                        'episode_number': ep_num,
+                                        'episode_title': f'Episode {ep_num}',
+                                        'state': 'Missing',
+                                        'version': None,
+                                        'filled_by_file': None,
+                                        'collected_at': None,
+                                        'release_date': None,
+                                        'airtime': None,
+                                        'imdb_id': None,
+                                        'tmdb_id': None,
+                                        'location_basename': None,
+                                        'location_on_disk': None,
+                                        'ghostlisted': None,
+                                        'size': None,
+                                        'is_phantom': True
+                                    })
+
+                                phantom_season = {
+                                    'season_number': season_num,
+                                    'is_phantom_season': True,
+                                    'episodes': phantom_episodes
+                                }
+
+                                seasons_list.append(phantom_season)
+                                logging.info(f"Created phantom season {season_num} with {episode_count} episodes")
+                            else:
+                                logging.warning(f"Season {season_num} has no episodes according to TMDB, skipping")
+
+                        except requests.exceptions.RequestException as e:
+                            logging.error(f"Failed to fetch TMDB data for phantom season {season_num}: {e}")
+                            continue
+                        except Exception as e:
+                            logging.error(f"Error creating phantom season {season_num}: {e}")
+                            continue
+
+                    # Re-sort seasons list after adding phantom seasons
+                    seasons_list = sorted(seasons_list, key=lambda x: x['season_number'])
+
+            except Exception as e:
+                logging.error(f"Error in phantom season creation: {e}")
+                # Continue without phantom seasons if there's an error
 
         # Get poster and backdrop URLs from cache, with TMDB fallback
         from routes.poster_cache import get_cached_poster_url
@@ -2762,12 +2841,19 @@ def delete_show(imdb_id):
                 else:
                     layers_skipped.append({'layer': 'Media Server', 'reason': 'No items found on server'})
 
+        # Check file collection management mode for appropriate deletion messages
+        file_management = get_setting('File Management', 'file_collection_management', default='Plex')
+
         # Filesystem - only if files actually deleted
         if delete_files:
             if file_count > 0:
                 layers_executed.append('Filesystem')
             else:
-                layers_skipped.append({'layer': 'Filesystem', 'reason': 'No files found'})
+                # In Plex mode, filesystem layer is not applicable since Plex manages files
+                if file_management == 'Plex':
+                    layers_skipped.append({'layer': 'Filesystem', 'reason': 'Not applicable in Plex mode'})
+                else:
+                    layers_skipped.append({'layer': 'Filesystem', 'reason': 'No files found'})
 
         # Debrid - check for batch removal (debrid_removed flag) or per-item removal
         debrid_removed = result.get('debrid_removed', False) or any(r.get('debrid_removed', False) for r in result.get('results', []))
@@ -2788,7 +2874,6 @@ def delete_show(imdb_id):
                     layers_skipped.append({'layer': 'Debrid', 'reason': 'No torrents found'})
 
         # Symlinks - check if deleted or cleaned up (only show in Symlink mode)
-        file_management = get_setting('File Management', 'file_collection_management', default='Plex')
         symlink_count = sum(len(r.get('deleted_symlinks', [])) for r in result.get('results', []))
         if delete_symlinks and file_management != 'Plex':
             # If symlinks were found and deleted, or if operation succeeded (cleanup happened)
@@ -3061,12 +3146,19 @@ def delete_movie(imdb_id):
                 else:
                     layers_skipped.append({'layer': 'Media Server', 'reason': 'No items found on server'})
 
+        # Check file collection management mode for appropriate deletion messages
+        file_management = get_setting('File Management', 'file_collection_management', default='Plex')
+
         # Filesystem - only if files actually deleted
         if delete_files:
             if file_count > 0:
                 layers_executed.append('Filesystem')
             else:
-                layers_skipped.append({'layer': 'Filesystem', 'reason': 'No files found'})
+                # In Plex mode, filesystem layer is not applicable since Plex manages files
+                if file_management == 'Plex':
+                    layers_skipped.append({'layer': 'Filesystem', 'reason': 'Not applicable in Plex mode'})
+                else:
+                    layers_skipped.append({'layer': 'Filesystem', 'reason': 'No files found'})
 
         # Debrid - check for batch removal (debrid_removed flag) or per-item removal
         debrid_removed = result.get('debrid_removed', False) or any(r.get('debrid_removed', False) for r in result.get('results', []))
@@ -3086,7 +3178,6 @@ def delete_movie(imdb_id):
                     layers_skipped.append({'layer': 'Debrid', 'reason': 'No torrents found'})
 
         # Symlinks - check if deleted or cleaned up (only show in Symlink mode)
-        file_management = get_setting('File Management', 'file_collection_management', default='Plex')
         symlink_count = sum(len(r.get('deleted_symlinks', [])) for r in result.get('results', []))
         if delete_symlinks and file_management != 'Plex':
             # If symlinks were found and deleted, or if operation succeeded (cleanup happened)
@@ -3725,6 +3816,9 @@ def delete_episode(imdb_id, season_number, episode_number):
         auto_ghostlist = get_setting('Library Manager', 'ghostlist_mode', False)
         auto_ghostlisted = False
 
+        # Check file collection management mode for appropriate deletion messages
+        file_management_mode = get_setting('File Management', 'file_collection_management', default='Plex')
+
         #logging.info(f"[DELETE_EPISODE] Auto-ghostlist setting: {auto_ghostlist}")
 
         # Handle physical cleanup layers (Plex, files, debrid, symlinks, cache)
@@ -3858,7 +3952,11 @@ def delete_episode(imdb_id, season_number, episode_number):
             if file_count > 0:
                 layers_executed.append('Filesystem')
             else:
-                layers_skipped.append({'layer': 'Filesystem', 'reason': 'No files found'})
+                # In Plex mode, filesystem layer is not applicable since Plex manages files
+                if file_management_mode == 'Plex':
+                    layers_skipped.append({'layer': 'Filesystem', 'reason': 'Not applicable in Plex mode'})
+                else:
+                    layers_skipped.append({'layer': 'Filesystem', 'reason': 'No files found'})
 
         # Debrid - check for batch removal (debrid_removed flag) or per-item removal
         debrid_removed = result.get('debrid_removed', False) or any(r.get('debrid_removed', False) for r in result.get('results', []))
@@ -3877,14 +3975,15 @@ def delete_episode(imdb_id, season_number, episode_number):
                 else:
                     layers_skipped.append({'layer': 'Debrid', 'reason': 'No torrents found'})
 
-        # Symlinks - check if deleted or cleaned up
-        symlink_count = sum(r.get('symlinks_deleted', 0) for r in result.get('results', []))
-        if delete_symlinks:
-            # If symlinks were found and deleted, or if operation succeeded (cleanup happened)
-            if symlink_count > 0 or result['success']:
-                layers_executed.append('Symlinks')
-            else:
-                layers_skipped.append({'layer': 'Symlinks', 'reason': 'No symlinks found'})
+        # Symlinks - check if deleted or cleaned up (only relevant in Symlinked/Local mode)
+        if file_management_mode != 'Plex':
+            symlink_count = sum(r.get('symlinks_deleted', 0) for r in result.get('results', []))
+            if delete_symlinks:
+                # If symlinks were found and deleted, or if operation succeeded (cleanup happened)
+                if symlink_count > 0 or result['success']:
+                    layers_executed.append('Symlinks')
+                else:
+                    layers_skipped.append({'layer': 'Symlinks', 'reason': 'No symlinks found'})
 
         # Cache
         if clear_cache:

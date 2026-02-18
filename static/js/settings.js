@@ -150,7 +150,8 @@ export function updateSettings() {
 
         // Skip hidden inputs and inputs inside hidden containers
         // This prevents hidden duplicate fields from overwriting visible ones
-        if (input.offsetParent === null && input.type !== 'hidden') return;
+        // EXCEPTION: Always include inputs with data-section attribute (legitimate settings in collapsed sections)
+        if (input.offsetParent === null && input.type !== 'hidden' && !input.hasAttribute('data-section')) return;
         
         let value = input.value;
         
