@@ -504,13 +504,13 @@
 
         if (filterType.startsWith('preferred_')) {
             newItem.innerHTML = `
-                <input type="text" id="${uniqueId}-term" name="filter-term" class="filter-term" placeholder="Term">
-                <input type="number" id="${uniqueId}-weight" name="filter-weight" class="filter-weight" min="1" value="1" placeholder="Weight">
+                <input type="text" id="${uniqueId}-term" class="filter-term" placeholder="Term">
+                <input type="number" id="${uniqueId}-weight" class="filter-weight" min="1" value="1" placeholder="Weight">
                 <button type="button" class="remove-filter">Remove</button>
             `;
         } else {
             newItem.innerHTML = `
-                <input type="text" id="${uniqueId}" name="filter-term" class="filter-term" placeholder="Term">
+                <input type="text" id="${uniqueId}" class="filter-term" placeholder="Term">
                 <button type="button" class="remove-filter">Remove</button>
             `;
         }

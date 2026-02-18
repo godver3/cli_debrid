@@ -1274,14 +1274,14 @@ ease;
         display: block;
     }
 
-    .movie-title-row .status-badge.missing {
+    /* .movie-title-row .status-badge.missing {
         display: block;
         background: transparent;
         padding: 0;
         border: none;
         margin-bottom: 0.75rem;
         line-height: 1.5;
-    }
+    } */
 
     .movie-title-row .status-badge.missing * {
         display: inline;

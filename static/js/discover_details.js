@@ -284,16 +284,24 @@ function displayContent(data) {
     tmdbLinkDetail.textContent = data.tmdb_id;
 
     // Set TVDB link if available (TV shows only)
-    if (data.media_type === 'tv' && data.tvdb_id) {
+    if (data.media_type === 'tv' && data.title) {
         const tvdbLink = document.getElementById('link-tvdb');
-        tvdbLink.href = `https://thetvdb.com/series/${data.tvdb_id}`;
+        // TVDB uses slug-based URLs (e.g., /series/star-trek-starfleet-academy)
+        // Generate slug from title: lowercase, replace spaces with hyphens, remove special chars
+        const slug = data.title
+            .toLowerCase()
+            .replace(/[^\w\s-]/g, '') // Remove special characters except spaces and hyphens
+            .replace(/\s+/g, '-')      // Replace spaces with hyphens
+            .replace(/-+/g, '-')       // Replace multiple hyphens with single hyphen
+            .trim();
+        tvdbLink.href = `https://thetvdb.com/series/${slug}`;
         tvdbLink.style.display = 'inline-flex';
 
         const tvdbRow = document.getElementById('tvdb-row');
         tvdbRow.style.display = 'flex';
         const tvdbLinkDetail = document.getElementById('tvdb-link-detail');
-        tvdbLinkDetail.href = `https://thetvdb.com/series/${data.tvdb_id}`;
-        tvdbLinkDetail.textContent = data.tvdb_id;
+        tvdbLinkDetail.href = `https://thetvdb.com/series/${slug}`;
+        tvdbLinkDetail.textContent = data.tvdb_id || 'View on TVDB';
     }
 
     // Set IMDb link if available

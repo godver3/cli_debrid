@@ -717,6 +717,57 @@ button.btn.btn-sm.btn-danger.delete-season-btn {
     transition: width 0.3s ease;
 }
 
+/* Phantom Season Tab Styling */
+.season-tab.phantom-season-tab {
+    opacity: 0.7;
+    background: repeating-linear-gradient(
+        45deg,
+        rgba(50, 50, 50, 0.6),
+        rgba(50, 50, 50, 0.6) 10px,
+        rgba(30, 30, 30, 0.6) 10px,
+        rgba(30, 30, 30, 0.6) 20px
+    );
+    border-left: 3px dashed rgba(239, 68, 68, 0.5);
+}
+
+.season-tab.phantom-season-tab:hover {
+    opacity: 0.75;
+    background: repeating-linear-gradient(
+        45deg,
+        rgba(29, 35, 42, 0.5),
+        rgba(29, 35, 42, 0.5) 10px,
+        rgba(15, 19, 25, 0.5) 10px,
+        rgba(15, 19, 25, 0.5) 20px
+    );
+    border-left: 3px dashed rgba(239, 68, 68, 0.7);
+}
+
+.season-tab.phantom-season-tab.active {
+    opacity: 0.8;
+    background: repeating-linear-gradient(
+        45deg,
+        rgba(29, 35, 42, 0.6),
+        rgba(29, 35, 42, 0.6) 10px,
+        rgba(15, 19, 25, 0.6) 10px,
+        rgba(15, 19, 25, 0.6) 20px
+    );
+    border-left: 3px dashed rgba(239, 68, 68, 0.8);
+}
+
+.season-tab.phantom-season-tab .season-tab-title {
+    color: rgba(255, 255, 255, 0.4);
+    font-style: italic;
+}
+
+.season-tab.phantom-season-tab.active .season-tab-title {
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.season-tab.phantom-season-tab .season-tab-stats {
+    color: rgba(255, 255, 255, 0.3);
+    font-style: italic;
+}
+
 /* ==========================================================================
    Season Panels (Tab Content)
    ========================================================================== */
