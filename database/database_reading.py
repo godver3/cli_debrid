@@ -98,24 +98,28 @@ def search_tv_shows(search_term):
     return items
 
 @trace_memory_usage
-def get_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=None, limit: Optional[int] = None):
+def get_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=None, limit: Optional[int] = None, columns: Optional[List[str]] = None):
     """
     Retrieves all media items matching the criteria and returns them as a list.
     This function is a wrapper around stream_all_media_items for backward compatibility.
     It can be memory-intensive for large datasets.
     """
-    return list(stream_all_media_items(state, media_type, imdb_id, tmdb_id, limit))
+    return list(stream_all_media_items(state, media_type, imdb_id, tmdb_id, limit, columns))
 
 @trace_memory_usage
-def stream_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=None, limit: Optional[int] = None):
+def stream_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=None, limit: Optional[int] = None, columns: Optional[List[str]] = None):
     """
     A generator that streams media items from the database one by one.
     This is memory-efficient and suitable for large datasets.
+
+    Args:
+        columns: Optional list of column names to select. If None, selects all columns (*).
     """
     conn = None
     try:
         conn = get_db_connection()
-        query = 'SELECT * FROM media_items WHERE 1=1'
+        col_str = ', '.join(columns) if columns else '*'
+        query = f'SELECT {col_str} FROM media_items WHERE 1=1'
         params = []
         if state:
             if isinstance(state, (list, tuple)):
@@ -885,6 +889,43 @@ def get_item_count_by_state(state: str) -> int:
     finally:
         if conn:
             conn.close()
+
+def get_item_counts_by_states(states: list) -> dict:
+    """Get counts for multiple states in a single DB connection.
+
+    Args:
+        states: List of state strings to count.
+
+    Returns:
+        Dict mapping state -> count.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+
+        # Ensure the index exists (one-time, idempotent)
+        try:
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_state ON media_items(state);')
+        except Exception:
+            pass
+
+        counts = {}
+        for state in states:
+            if state == 'Blacklisted':
+                query = 'SELECT COUNT(*) as count FROM media_items WHERE state = ? AND (ghostlisted IS NULL OR ghostlisted = 0)'
+            else:
+                query = 'SELECT COUNT(*) as count FROM media_items WHERE state = ?'
+            cursor = conn.execute(query, (state,))
+            result = cursor.fetchone()
+            counts[state] = result['count'] if result else 0
+        return counts
+    except Exception as e:
+        logging.error(f"Error getting item counts for states {states}: {e}")
+        return {state: 0 for state in states}
+    finally:
+        if conn:
+            conn.close()
+
 
 def check_item_exists_by_directory_name(item_directory_name: str) -> bool:
     """
@@ -1715,6 +1756,7 @@ __all__ = [
     'get_show_episode_identifiers_from_db',
     'get_media_item_ids',
     'get_item_count_by_state',
+    'get_item_counts_by_states',
     'check_item_exists_by_directory_name',
     'check_item_exists_by_symlink_path',
     'check_item_exists_with_symlink_path_containing',
