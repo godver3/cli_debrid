@@ -915,6 +915,10 @@ def apply_labels_for_item(item: Dict[str, Any]) -> int:
 
     # Secondary sources: apply labels for any additional sources recorded in content_sources
     # These are sources that discovered this item before it was Collected (via pending_source_records path)
+    # Guard: only run if plex_labels is enabled somewhere — same requirement as the primary path above
+    if not is_plex_labels_enabled_anywhere():
+        return labels_applied
+
     try:
         sec_conn = get_db_connection()
         row = sec_conn.execute('SELECT content_sources FROM media_items WHERE id = ?', (item_id,)).fetchone()
