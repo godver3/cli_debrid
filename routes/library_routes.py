@@ -674,9 +674,9 @@ def get_library_data():
         else:
             query += " ORDER BY title COLLATE NOCASE ASC"
 
-        # Pagination
+        # Pagination — fetch one extra row to detect has_more without a separate COUNT query
         query += " LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
+        params.extend([limit + 1, offset])
 
         # Execute query
         query_exec_start = time.time()
@@ -684,14 +684,13 @@ def get_library_data():
         items = [dict(row) for row in cursor.fetchall()]
         query_exec_time = time.time() - query_exec_start
 
-        # Get total count
-        count_start = time.time()
-        count_cursor = conn.execute(count_query, count_params)
-        total_count = count_cursor.fetchone()[0]
-        count_time = time.time() - count_start
-
-        # Check if there are more items
-        has_more = (offset + len(items)) < total_count
+        # Determine has_more and total using the n+1 trick (no separate COUNT query)
+        has_more = len(items) > limit
+        if has_more:
+            items = items[:limit]  # Drop the sentinel row
+            total_count = None     # Total unknown while more pages exist
+        else:
+            total_count = offset + len(items)  # Exact total on the last page
 
         # Batch-fetch episode counts for all shows in one query (PERFORMANCE OPTIMIZATION)
         episode_start = time.time()
@@ -792,7 +791,7 @@ def get_library_data():
 
         total_time = time.time() - start_time
         logging.info(f"Returning {len(formatted_items)} items (has_more={has_more}, total={total_count})")
-        logging.info(f"Performance: total={total_time:.3f}s, db_connect={db_connect_time:.3f}s, query={query_exec_time:.3f}s, count={count_time:.3f}s, episodes={episode_time:.3f}s, upcoming_release={upcoming_release_time:.3f}s, poster_cache_load={poster_cache_load_time:.3f}s, format={format_time:.3f}s")
+        logging.info(f"Performance: total={total_time:.3f}s, db_connect={db_connect_time:.3f}s, query={query_exec_time:.3f}s, episodes={episode_time:.3f}s, upcoming_release={upcoming_release_time:.3f}s, poster_cache_load={poster_cache_load_time:.3f}s, format={format_time:.3f}s")
 
         return jsonify({
             'success': True,

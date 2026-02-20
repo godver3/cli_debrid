@@ -326,7 +326,7 @@ class CheckingQueue:
             status_result = self.debrid_provider.get_torrent_info_with_status(torrent_id)
 
             if status_result.status == TorrentFetchStatus.OK:
-                return status_result.data.get('progress', 0) if status_result.data else 0
+                return status_result.data.get('progress', 0) if isinstance(status_result.data, dict) else 0
             elif status_result.status == TorrentFetchStatus.NOT_FOUND:
                 logging.info(f"Torrent {torrent_id} confirmed NOT FOUND (404) by provider.")
                 return PROGRESS_RESULT_MISSING
@@ -348,7 +348,9 @@ class CheckingQueue:
             elif status_result.status in [
                 TorrentFetchStatus.RATE_LIMITED,
                 TorrentFetchStatus.PROVIDER_HANDLED_ERROR, # Error logged by provider, treat as temp
-                TorrentFetchStatus.SERVER_ERROR, # Often temporary
+                TorrentFetchStatus.SERVER_ERROR, # Often temporary (5xx)
+                TorrentFetchStatus.CLIENT_ERROR, # Other 4xx errors, treat as temp
+                TorrentFetchStatus.UNKNOWN_ERROR, # Non-HTTP or unparseable errors, treat as temp
                 TorrentFetchStatus.REQUEST_ERROR # Network issues, often temporary
             ]:
                 logging.warning(

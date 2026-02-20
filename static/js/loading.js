@@ -172,8 +172,8 @@ const Loading = {
 
     show: function(message, details, hideCloseButton, hideProgress) {
         this.init();
-        if (message && this.messageElement) {
-            this.messageElement.textContent = message;
+        if (this.messageElement) {
+            this.messageElement.textContent = message || 'Processing command in background...';
         }
         if (details && this.detailsElement) {
             this.detailsElement.textContent = details;

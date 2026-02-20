@@ -124,6 +124,7 @@ def get_cached_download_stats():
                 }
             
             # Get usage stats with timeout protection
+            usage = None
             try:
                 logging.debug("Fetching usage stats...")
                 usage = provider.get_user_traffic()

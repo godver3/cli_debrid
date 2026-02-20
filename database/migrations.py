@@ -199,4 +199,37 @@ def add_database_page_indexes():
         logging.error(f"Error adding database page indexes: {str(e)}")
         conn.rollback()
     finally:
-        conn.close() 
+        conn.close()
+
+
+def add_library_covering_index():
+    """Add covering index for the library page GROUP BY query.
+
+    The library query does:
+      WHERE (ghostlisted=0 OR NULL) AND state NOT IN (...) AND type IN (...)
+      GROUP BY COALESCE(NULLIF(tmdb_id,''), NULLIF(imdb_id,''), title||year)
+      ORDER BY MAX(collected_at) DESC / title / year
+
+    Including all columns referenced in the GROUP BY expression and aggregates
+    (tmdb_id, imdb_id, title, year, id, collected_at) allows SQLite to satisfy
+    the entire GROUP BY from the index without touching main table rows (index-only scan).
+    """
+    from database import get_db_connection
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_library_covering
+            ON media_items (
+                type, state, ghostlisted,
+                collected_at DESC,
+                tmdb_id, imdb_id, title, year, id
+            )
+        """)
+        conn.commit()
+        logging.info("Successfully added library covering index")
+    except Exception as e:
+        logging.error(f"Error adding library covering index: {str(e)}")
+        conn.rollback()
+    finally:
+        conn.close()

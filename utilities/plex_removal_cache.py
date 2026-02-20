@@ -131,9 +131,12 @@ def process_removal_cache(min_age_hours: int = 6) -> None:
     # min_age_seconds = 0 # For testing, set to 0 to process all items immediately
     
     # Build a new cache dictionary with only the entries that need to be kept for the next run.
-    next_run_cache = {} 
+    next_run_cache = {}
     # Define states that indicate an item is actively managed and should not be removed by cache
     active_db_states = ['Collected', 'Upgrading', 'Checking']
+
+    # Collect paths that need a Plex scan+trash after processing all items (batched for efficiency)
+    pending_scan_paths = set()
 
     for key, entries in cache.items():
         remaining_entries_for_key = []
@@ -185,17 +188,12 @@ def process_removal_cache(min_age_hours: int = 6) -> None:
                             logging.info(f"Successfully processed Plex removal for {item_title} ({item_path}).")
                             entry_should_be_kept_in_cache = False # Successfully processed, so don't keep this entry.
                         else:
-                            # Direct removal failed (possibly 400 error) - try scan & empty trash as fallback
-                            logging.warning(f"Direct Plex removal failed for {item_title}. Trying scan & empty trash...")
-                            try:
-                                # Determine section type: if episode_title exists, it's a show; otherwise, movie
-                                section_type = 'show' if episode_title else 'movie'
-                                scan_paths = [os.path.dirname(item_path)] if item_path else None
-                                scan_and_empty_plex_trash(paths=scan_paths, section_type=section_type)
-                                logging.info(f"Triggered library scan and trash empty for {item_title} (section_type={section_type}).")
-                                entry_should_be_kept_in_cache = False # Processed via fallback, don't keep.
-                            except Exception as scan_err:
-                                logging.warning(f"Scan & empty trash also failed for {item_title}: {scan_err}. Keeping in cache.")
+                            # Direct removal failed — queue the parent path for a batched scan+trash
+                            # at the end of this run (one Plex API call instead of one per item).
+                            logging.warning(f"Direct Plex removal failed for {item_title}. Queuing for batch scan & empty trash.")
+                            if item_path:
+                                pending_scan_paths.add(os.path.dirname(item_path))
+                            entry_should_be_kept_in_cache = False  # Processed via fallback, don't keep.
                     except Exception as e:
                         logging.error(f"Error during Plex removal for {item_title} ({item_path}): {str(e)}. Keeping in cache.")
                         # entry_should_be_kept_in_cache remains True if Plex removal fails.
@@ -210,6 +208,14 @@ def process_removal_cache(min_age_hours: int = 6) -> None:
         if remaining_entries_for_key:
             next_run_cache[key] = remaining_entries_for_key
             
+    # Perform one batched scan+trash for all paths that needed it this run
+    if pending_scan_paths:
+        try:
+            logging.info(f"Running batched Plex scan & empty trash for {len(pending_scan_paths)} path(s).")
+            scan_and_empty_plex_trash(paths=list(pending_scan_paths), section_type=None)
+        except Exception as scan_err:
+            logging.warning(f"Batched scan & empty trash failed: {scan_err}. Items still removed from cache.")
+
     _save_cache(next_run_cache)
     if not next_run_cache and cache: # Cache was not empty before, but is now
         logging.info("Finished processing Plex removal cache. All items processed.")

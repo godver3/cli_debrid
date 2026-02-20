@@ -492,7 +492,10 @@ async function fetchItems(isReset = false) {
         if (data.success) {
             // Update state
             libraryState.hasMore = data.has_more;
-            libraryState.totalCount = data.total;
+            // total is null when more pages exist (n+1 trick), exact on the last page
+            if (data.total !== null && data.total !== undefined) {
+                libraryState.totalCount = data.total;
+            }
 
             // Render items
             if (data.items && data.items.length > 0) {
@@ -689,8 +692,8 @@ function createGridCard(item) {
         const plexPath = item.poster_path.substring(5); // Remove 'plex:' prefix
         posterUrl = `/library/plex_image${plexPath}`;
     } else if (item.poster_path && item.poster_path.startsWith('/')) {
-        // TMDB image - use TMDB proxy endpoint
-        posterUrl = `/scraper/tmdb_image/w300${item.poster_path}`;
+        // TMDB image - use TMDB proxy endpoint (w185 matches 160px card width)
+        posterUrl = `/scraper/tmdb_image/w185${item.poster_path}`;
     } else if (item.poster_path) {
         // Full URL or other format - use as-is
         posterUrl = item.poster_path;
@@ -1033,50 +1036,75 @@ function formatFileSize(bytes) {
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + units[i];
 }
 
-// Fetch missing poster from TMDB on-demand using TMDB ID
-async function fetchMissingPoster(tmdbId, mediaType, card) {
-    try {
-        const response = await fetch(`/library/fetch_poster/${tmdbId}/${mediaType}`);
-        const data = await response.json();
-
-        if (data.success && data.poster_path) {
-            // Update the poster image - handle both grid view (.media-poster img) and list view (.list-col-poster img)
-            // Also handle case where 'card' is already the img element itself
-            const img = card.tagName === 'IMG' ? card :
-                        (card.querySelector('.media-poster img') ||
-                         card.querySelector('.list-col-poster img'));
-            if (img) {
-                img.src = `/scraper/tmdb_image/w300${data.poster_path}`;
-                img.classList.remove('placeholder');
-            }
+// Concurrency-limited queue for on-demand poster fetches (prevents flooding TMDB API)
+const _posterFetchQueue = {
+    queue: [],
+    running: 0,
+    maxConcurrent: 5,
+    add(fn) {
+        this.queue.push(fn);
+        this._run();
+    },
+    _run() {
+        while (this.running < this.maxConcurrent && this.queue.length > 0) {
+            const fn = this.queue.shift();
+            this.running++;
+            fn().finally(() => {
+                this.running--;
+                this._run();
+            });
         }
-    } catch (error) {
-        console.debug(`Could not fetch poster for ${tmdbId}:`, error);
-        // Silent fail - placeholder already shown
     }
+};
+
+// Fetch missing poster from TMDB on-demand using TMDB ID
+function fetchMissingPoster(tmdbId, mediaType, card) {
+    _posterFetchQueue.add(async () => {
+        try {
+            const response = await fetch(`/library/fetch_poster/${tmdbId}/${mediaType}`);
+            const data = await response.json();
+
+            if (data.success && data.poster_path) {
+                // Update the poster image - handle both grid view (.media-poster img) and list view (.list-col-poster img)
+                // Also handle case where 'card' is already the img element itself
+                const img = card.tagName === 'IMG' ? card :
+                            (card.querySelector('.media-poster img') ||
+                             card.querySelector('.list-col-poster img'));
+                if (img) {
+                    img.src = `/scraper/tmdb_image/w185${data.poster_path}`;
+                    img.classList.remove('placeholder');
+                }
+            }
+        } catch (error) {
+            console.debug(`Could not fetch poster for ${tmdbId}:`, error);
+            // Silent fail - placeholder already shown
+        }
+    });
 }
 
 // Fetch missing poster from TMDB on-demand using IMDB ID (fallback when no TMDB ID)
-async function fetchMissingPosterByImdb(imdbId, mediaType, card) {
-    try {
-        const response = await fetch(`/library/fetch_poster_imdb/${imdbId}/${mediaType}`);
-        const data = await response.json();
+function fetchMissingPosterByImdb(imdbId, mediaType, card) {
+    _posterFetchQueue.add(async () => {
+        try {
+            const response = await fetch(`/library/fetch_poster_imdb/${imdbId}/${mediaType}`);
+            const data = await response.json();
 
-        if (data.success && data.poster_path) {
-            // Update the poster image - handle both grid view (.media-poster img) and list view (.list-col-poster img)
-            // Also handle case where 'card' is already the img element itself
-            const img = card.tagName === 'IMG' ? card :
-                        (card.querySelector('.media-poster img') ||
-                         card.querySelector('.list-col-poster img'));
-            if (img) {
-                img.src = `/scraper/tmdb_image/w300${data.poster_path}`;
-                img.classList.remove('placeholder');
+            if (data.success && data.poster_path) {
+                // Update the poster image - handle both grid view (.media-poster img) and list view (.list-col-poster img)
+                // Also handle case where 'card' is already the img element itself
+                const img = card.tagName === 'IMG' ? card :
+                            (card.querySelector('.media-poster img') ||
+                             card.querySelector('.list-col-poster img'));
+                if (img) {
+                    img.src = `/scraper/tmdb_image/w185${data.poster_path}`;
+                    img.classList.remove('placeholder');
+                }
             }
+        } catch (error) {
+            console.debug(`Could not fetch poster for IMDB ${imdbId}:`, error);
+            // Silent fail - placeholder already shown
         }
-    } catch (error) {
-        console.debug(`Could not fetch poster for IMDB ${imdbId}:`, error);
-        // Silent fail - placeholder already shown
-    }
+    });
 }
 
 function handleCardClick(item) {
@@ -1176,10 +1204,16 @@ function showSuccess(message) {
 
 function updateResultsInfo() {
     const displayedCount = libraryState.offset;
-    const totalText = libraryState.totalCount > 0
-        ? `Showing ${displayedCount} of ${libraryState.totalCount} items`
-        : 'Loading...';
-
+    let totalText;
+    if (libraryState.totalCount > 0) {
+        // Exact total known (last page reached)
+        totalText = `Showing ${displayedCount} of ${libraryState.totalCount} items`;
+    } else if (displayedCount > 0) {
+        // Still loading more pages — total not yet known
+        totalText = `Showing ${displayedCount} items`;
+    } else {
+        totalText = 'Loading...';
+    }
     resultsInfo.textContent = totalText;
 }
 

@@ -17,7 +17,7 @@ window.discoverState = {
     hasMore: true,
     isLoading: false,
     autoLoadCount: 0, // Track consecutive auto-loads to prevent infinite loops
-    maxAutoLoads: 3,  // Maximum pages to auto-load before requiring user scroll
+    maxAutoLoads: 1,  // Maximum pages to auto-load before requiring user scroll
     liveFilterEnabled: true, // Enable live filtering when filter values change
     genres: {
         movie: [],
@@ -4053,7 +4053,7 @@ function createResultItemHTML(item) {
     const year = (item.release_date || item.first_air_date || '').substring(0, 4) || '';
     const releaseDate = item.release_date || item.first_air_date || '';
     const formattedDate = releaseDate ? formatReleaseDate(releaseDate) : '';
-    const posterUrl = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : '/static/images/placeholder.png';
+    const posterUrl = item.poster_path ? `https://image.tmdb.org/t/p/w342${item.poster_path}` : '/static/images/placeholder.png';
     const overview = item.overview || 'No overview available.';
     const rating = item.vote_average ? item.vote_average.toFixed(1) : '';
 

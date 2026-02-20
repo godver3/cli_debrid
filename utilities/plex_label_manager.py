@@ -258,7 +258,7 @@ def serialize_content_sources(sources_list: List[Dict[str, Any]]) -> str:
     return json.dumps(sources_list)
 
 
-@retry_on_db_lock(max_attempts=10, initial_wait=0.5, backoff_factor=2)
+@retry_on_db_lock(max_attempts=10, initial_wait=0.5, backoff_factor=2, long_execution_threshold_seconds=5.0)
 def add_label_to_item(item_id: int, label: str, source_name: str, apply_to_plex: bool = True) -> bool:
     """
     Add a label to an item with source tracking
@@ -281,11 +281,14 @@ def add_label_to_item(item_id: int, label: str, source_name: str, apply_to_plex:
         logging.warning(f"Cannot add empty label to item {item_id}")
         return False
 
+    # Phase 1: DB work — read, compute, write, close.
+    # The connection is released BEFORE the Plex API call to avoid holding it
+    # open during a potentially slow HTTP request (100ms–2s), which caused
+    # lock contention under concurrent load.
     conn = get_db_connection()
-    # Set a timeout for database locks (30 seconds)
-    # The retry decorator will handle retries if this timeout is still exceeded
     conn.execute("PRAGMA busy_timeout = 30000")
     cursor = conn.cursor()
+    item_title = 'unknown'
 
     try:
         # Get current item data
@@ -299,8 +302,6 @@ def add_label_to_item(item_id: int, label: str, source_name: str, apply_to_plex:
         item_title = row['title']
         plex_labels = parse_plex_labels(row['plex_labels'])
         content_sources = parse_content_sources(row['content_sources'])
-
-        added_to_plex = False
 
         if label not in plex_labels:
             # First source adding this label
@@ -318,35 +319,20 @@ def add_label_to_item(item_id: int, label: str, source_name: str, apply_to_plex:
             else:
                 logging.debug(f"Label '{label}' already tracked by {source_name} on '{item_title}'")
 
-        # Always attempt to sync to Plex when apply_to_plex=True
-        # This ensures labels are synced even if they were previously added to DB but failed to sync
-        if apply_to_plex:
-            success = apply_label_to_plex(item_id, label)
-            if success:
-                added_to_plex = True
-                logging.debug(f"Synced label '{label}' to Plex for '{item_title}'")
-            else:
-                logging.debug(f"Label '{label}' not synced to Plex for '{item_title}' (may already exist or item not in Plex)")
-        else:
-            logging.debug(f"Dry-run: Would sync label '{label}' to Plex for '{item_title}'")
-
         # Update content_sources list if source not already tracked
         if source_name not in [src['source'] for src in content_sources]:
             content_sources.append({'source': source_name, 'added_at': time.strftime('%Y-%m-%d %H:%M:%S')})
             logging.debug(f"Added source '{source_name}' to content_sources for item {item_id}")
 
-        # Serialize data for database
+        # Serialize and write to DB.
+        # plex_labels_last_synced reset to NULL so periodic sync catches any missed Plex apply.
         serialized_labels = serialize_plex_labels(plex_labels)
         serialized_sources = serialize_content_sources(content_sources)
-
-        # Update database with both plex_labels and content_sources
         cursor.execute(
-            'UPDATE media_items SET plex_labels = ?, content_sources = ? WHERE id = ?',
+            'UPDATE media_items SET plex_labels = ?, content_sources = ?, plex_labels_last_synced = NULL WHERE id = ?',
             (serialized_labels, serialized_sources, item_id)
         )
         conn.commit()
-
-        return added_to_plex
 
     except sqlite3.OperationalError as e:
         # Let database lock errors propagate to the retry decorator
@@ -366,7 +352,22 @@ def add_label_to_item(item_id: int, label: str, source_name: str, apply_to_plex:
         return False
     finally:
         cursor.close()
-        conn.close()
+        conn.close()  # Release DB connection before Plex API call
+
+    # Phase 2: Plex API call — no DB connection held during HTTP I/O.
+    # apply_label_to_plex manages its own connection for plex_labels_last_synced.
+    added_to_plex = False
+    if apply_to_plex:
+        success = apply_label_to_plex(item_id, label)
+        if success:
+            added_to_plex = True
+            logging.debug(f"Synced label '{label}' to Plex for '{item_title}'")
+        else:
+            logging.debug(f"Label '{label}' not synced to Plex for '{item_title}' (may already exist or item not in Plex)")
+    else:
+        logging.debug(f"Dry-run: Would sync label '{label}' to Plex for '{item_title}'")
+
+    return added_to_plex
 
 
 def remove_label_from_item(item_id: int, label: str, source_name: str, remove_from_plex: bool = True) -> bool:
@@ -912,6 +913,35 @@ def apply_labels_for_item(item: Dict[str, Any]) -> int:
     else:
         logging.warning(f"No labels were applied to '{item_title}' even though {len(labels)} were determined")
 
+    # Secondary sources: apply labels for any additional sources recorded in content_sources
+    # These are sources that discovered this item before it was Collected (via pending_source_records path)
+    try:
+        sec_conn = get_db_connection()
+        row = sec_conn.execute('SELECT content_sources FROM media_items WHERE id = ?', (item_id,)).fetchone()
+        sec_conn.close()
+        additional_sources = parse_content_sources(row['content_sources'] if row else None)
+
+        for src_entry in additional_sources:
+            src_name = src_entry.get('source')
+            src_detail = src_entry.get('detail')
+
+            # Skip: no detail (legacy entry), same as primary source (already handled), or unknown
+            if not src_detail or src_name == content_source or src_detail.lower() == 'unknown':
+                continue
+
+            temp_item = {'content_source': src_name, 'content_source_detail': src_detail}
+            secondary_labels = determine_labels_for_item(temp_item)
+            for label in secondary_labels:
+                try:
+                    success = add_label_to_item(item_id, label, src_name, apply_to_plex=True)
+                    if success:
+                        labels_applied += 1
+                        logging.info(f"Applied secondary source label '{label}' from {src_name} to '{item_title}'")
+                except Exception as e:
+                    logging.error(f"Error applying secondary label '{label}' from {src_name} to item {item_id}: {e}")
+    except Exception as e:
+        logging.warning(f"Error processing secondary sources for item {item_id}: {e}")
+
     return labels_applied
 
 
@@ -1001,7 +1031,7 @@ def get_collected_items_with_pending_labels(movie_limit: int = 50, show_limit: i
                 AND plex_labels IS NOT NULL
                 AND plex_labels != 'null'
                 AND plex_labels != '{}'
-                AND (plex_labels_last_synced IS NULL OR plex_labels_last_synced < last_updated)
+                AND plex_labels_last_synced IS NULL
                 ORDER BY last_updated DESC
                 LIMIT ?
             )
@@ -1016,7 +1046,7 @@ def get_collected_items_with_pending_labels(movie_limit: int = 50, show_limit: i
                 AND plex_labels IS NOT NULL
                 AND plex_labels != 'null'
                 AND plex_labels != '{}'
-                AND (plex_labels_last_synced IS NULL OR plex_labels_last_synced < last_updated)
+                AND plex_labels_last_synced IS NULL
                 GROUP BY title, tmdb_id
                 ORDER BY last_updated DESC
                 LIMIT ?
@@ -1213,9 +1243,15 @@ def backfill_content_source_detail() -> Dict[str, Any]:
             if idx % 100 == 0:
                 logging.info(f"Processing remaining item {idx}/{len(items)}")
 
-            # Special handling for internal CLI Debrid sources
+            # Special handling for internal CLI Debrid sources.
+            # If the item already has a non-null, non-unknown detail (e.g., a username set when
+            # user auth was enabled), preserve it — only fall back to 'CD-Discover' when blank.
             if content_source in ['content_requestor', 'content_requester']:
-                detail_value = 'CD-Discover'
+                existing_detail = item.get('content_source_detail')
+                if existing_detail and existing_detail.lower() != 'unknown':
+                    detail_value = existing_detail
+                else:
+                    detail_value = 'CD-Discover'
             elif content_source == 'Collected_1':
                 detail_value = 'CD-Library'
             # Check if this content source exists in config
