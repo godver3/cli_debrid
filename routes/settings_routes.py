@@ -3046,11 +3046,11 @@ def get_enabled_content_sources_route():
     try:
         enabled_sources = get_enabled_content_sources()
         
-        # Manually add content_requestor and overseerr_webhook to the list for UI purposes
+        # Manually add content_requester and overseerr_webhook to the list for UI purposes
         enabled_sources.append({
-            'id': 'content_requestor',
+            'id': 'content_requester',
             'type': 'Internal', # Assign a placeholder type
-            'display_name': 'Content Requestor'
+            'display_name': 'Content Requester'
         })
 
         enabled_sources.append({
@@ -3072,8 +3072,8 @@ def save_content_source_order():
         if not isinstance(source_order_from_request, list):
              return jsonify({'success': False, 'error': 'Invalid order format provided'}), 400
 
-        # Filter out 'content_requestor' as it's not a real content source to be saved
-        filtered_source_order = [source_id for source_id in source_order_from_request if source_id != 'content_requestor']
+        # Filter out 'content_requester' as it's not a real content source to be saved
+        filtered_source_order = [source_id for source_id in source_order_from_request if source_id not in ('content_requester', 'content_requestor')]
         
         if not filtered_source_order:
             logging.info("Content source priority order is empty after filtering.")

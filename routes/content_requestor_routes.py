@@ -1,5 +1,7 @@
 from flask import Blueprint, jsonify, request, render_template
+from flask_login import current_user
 from .models import user_required, onboarding_required
+from .utils import is_user_system_enabled
 from utilities.web_scraper import search_trakt, parse_search_term, get_available_versions
 from cli_battery.app.direct_api import DirectAPI
 from queues.config_manager import load_config
@@ -184,10 +186,16 @@ def request_content():
             # Return a more specific message indicating the item might already exist or was filtered
             return jsonify({'error': 'Content already requested or already exists in library.'}), 400
             
-        # Add content source to all items
+        # Add content source to all items.
+        # When user system is enabled, record the requesting user's username as the detail
+        # so each user's requests get their own Plex label. Falls back to 'CD-Discover'.
+        if is_user_system_enabled() and current_user.is_authenticated:
+            source_detail = current_user.username
+        else:
+            source_detail = 'CD-Discover'
         for item in all_items:
-            item['content_source'] = 'content_requestor'
-            item['content_source_detail'] = 'CD-Discover'
+            item['content_source'] = 'content_requester'
+            item['content_source_detail'] = source_detail
             
         # Pass versions dictionary to add_wanted_items
         add_wanted_items(all_items, versions)
