@@ -8,7 +8,7 @@ from queues.initialization import get_initialization_status
 from utilities.settings import get_setting
 import json
 import time
-from database.database_reading import get_all_media_items, get_item_count_by_state
+from database.database_reading import get_all_media_items, get_item_count_by_state, get_item_counts_by_states
 
 # Add rate limiting and caching improvements to prevent bombarding Real-Debrid API
 import time
@@ -258,6 +258,15 @@ def get_rate_limiting_stats() -> Dict:
 queues_bp = Blueprint('queues', __name__)
 queue_manager = QueueManager()
 
+# Columns needed for queue display - avoids SELECT * on 79-column table
+QUEUE_DISPLAY_COLUMNS = [
+    'id', 'imdb_id', 'tmdb_id', 'title', 'year', 'type', 'state', 'version',
+    'season_number', 'episode_number', 'release_date', 'physical_release_date',
+    'airtime', 'content_source', 'filled_by_file', 'filled_by_torrent_id',
+    'wake_count', 'collected_at', 'last_updated', 'final_check_add_timestamp',
+    'force_priority', 'ghostlisted'
+]
+
 # Cache settings to avoid repeated database/file reads
 _settings_cache = {}
 _cache_timestamp = 0
@@ -268,7 +277,7 @@ _items_per_hour_cache = {
     'value': None,
     'timestamp': 0
 }
-ITEMS_PER_HOUR_CACHE_DURATION = 30  # 5 minutes
+ITEMS_PER_HOUR_CACHE_DURATION = 300  # 5 minutes
 
 def consolidate_items(items, limit=None):
     # Add timing for performance monitoring
@@ -438,7 +447,9 @@ def index():
                 if not isinstance(item, dict):
                     logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
                     continue
-                item['wake_count'] = queue_manager.get_wake_count(item['id'])
+                # Only fetch wake_count if not already populated by SleepingQueue.update()
+                if 'wake_count' not in item or item['wake_count'] is None:
+                    item['wake_count'] = queue_manager.get_wake_count(item['id'])
         elif queue_name == 'Pending Uncached':
             for item in items:
                 # Skip if item is not a dictionary
@@ -842,13 +853,42 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
             'error': str(e)
         }
 
+_scrape_time_cache = {}
+_scrape_time_cache_ts = 0
+SCRAPE_TIME_CACHE_DURATION = 30  # Invalidate cache every 30 seconds
+
 def compute_scrape_time_cached(item):
-    """Optimized scrape time calculation with caching"""
+    """Optimized scrape time calculation with actual caching by item fields."""
+    global _scrape_time_cache, _scrape_time_cache_ts
+    now_ts = time.time()
+
+    # Periodically invalidate the entire cache (settings may change)
+    if now_ts - _scrape_time_cache_ts > SCRAPE_TIME_CACHE_DURATION:
+        _scrape_time_cache = {}
+        _scrape_time_cache_ts = now_ts
+
+    cache_key = (
+        item.get('release_date'),
+        item.get('airtime'),
+        item.get('version'),
+        item.get('type'),
+        item.get('physical_release_date'),
+    )
+    if cache_key in _scrape_time_cache:
+        return _scrape_time_cache[cache_key]
+
+    result = _compute_scrape_time(item)
+    _scrape_time_cache[cache_key] = result
+    return result
+
+
+def _compute_scrape_time(item):
+    """Core scrape time calculation logic."""
     try:
         # Use cached settings
         use_alt = get_cached_setting('Debug', 'use_alternate_scrape_time_strategy', False)
         anchor_str = get_cached_setting('Debug', 'alternate_scrape_time_24h', '00:00')
-        
+
         now = datetime.now()
         release_date_str = item.get('release_date')
         airtime_str = item.get('airtime')
@@ -871,38 +911,38 @@ def compute_scrape_time_cached(item):
                 anchor_time = datetime.strptime(anchor_str, '%H:%M').time()
             except Exception:
                 anchor_time = datetime.strptime('00:00', '%H:%M').time()
-            
+
             # Calculate the anchor datetime for today and tomorrow
             today_anchor = now.replace(hour=anchor_time.hour, minute=anchor_time.minute, second=0, microsecond=0)
             if now < today_anchor:
                 next_anchor = today_anchor
             else:
                 next_anchor = today_anchor + timedelta(days=1)
-            
+
             # Item's anchor datetime
             item_release_date = datetime.strptime(effective_release_date_str, '%Y-%m-%d').date()
             item_anchor_dt = datetime.combine(item_release_date, anchor_time)
-            
+
             # If item's anchor is in the future, show that
             if item_anchor_dt > now:
                 return item_anchor_dt.strftime('%Y-%m-%d %I:%M %p') + ' (Alt Scrape Time)'
             else:
                 return next_anchor.strftime('%Y-%m-%d %I:%M %p') + ' (Alt Scrape Time)'
-                
+
         elif effective_release_date_str:
             # Parse effective date
             release_date = datetime.strptime(effective_release_date_str, '%Y-%m-%d').date()
             if airtime_str:
-                try: 
+                try:
                     airtime = datetime.strptime(airtime_str, '%H:%M:%S').time()
                 except ValueError:
-                    try: 
+                    try:
                         airtime = datetime.strptime(airtime_str, '%H:%M').time()
-                    except ValueError: 
+                    except ValueError:
                         airtime = datetime.strptime("00:00", '%H:%M').time()
-            else: 
+            else:
                 airtime = datetime.strptime("00:00", '%H:%M').time()
-            
+
             release_datetime = datetime.combine(release_date, airtime)
 
             # If a movie has no specific airtime, shift the base release time to the start of the next day.
@@ -914,24 +954,24 @@ def compute_scrape_time_cached(item):
             offset_hours = 0.0
             if item_type == 'movie':
                 movie_offset_setting = get_cached_setting("Queue", "movie_airtime_offset", "0")
-                try: 
+                try:
                     offset_hours = float(movie_offset_setting)
-                except (ValueError, TypeError): 
+                except (ValueError, TypeError):
                     pass
             elif item_type == 'episode':
                 episode_offset_setting = get_cached_setting("Queue", "episode_airtime_offset", "0")
-                try: 
+                try:
                     offset_hours = float(episode_offset_setting)
-                except (ValueError, TypeError): 
+                except (ValueError, TypeError):
                     pass
-                    
+
             effective_scrape_time = release_datetime + timedelta(hours=offset_hours)
             return effective_scrape_time.strftime('%Y-%m-%d %I:%M %p')
-            
+
     except Exception as e:
         logging.warning(f"Could not calculate scrape time for Wanted item {item.get('id')}: {e}")
         return "Error Calculating"
-        
+
     return "Unknown"
 
 @queues_bp.route('/api/rate-limiting-stats')
@@ -1087,44 +1127,37 @@ def queue_stream():
                     in_memory_time = time.time() - in_memory_start
                     logging.debug(f"[QUEUE_STREAM] In-memory queue processing took {in_memory_time:.3f}s")
 
+                    # Batch all DB count queries into a single connection
+                    all_db_states = list(COUNT_ONLY_QUEUES) + list(DB_FETCH_QUEUES)
+                    count_batch_start = time.time()
+                    try:
+                        db_counts = get_item_counts_by_states(all_db_states)
+                    except Exception as db_err:
+                        logging.error(f"Error fetching batch counts: {db_err}")
+                        db_counts = {s: 0 for s in all_db_states}
+                    count_batch_time = time.time() - count_batch_start
+                    if count_batch_time > 0.1:
+                        logging.debug(f"[QUEUE_STREAM] Batch get_item_counts_by_states took {count_batch_time:.3f}s")
+
                     # Process count-only queues (Blacklisted and Unreleased)
-                    count_only_start = time.time()
                     for queue_name in COUNT_ONLY_QUEUES:
-                        try:
-                            count_start = time.time()
-                            total_count = get_item_count_by_state(queue_name)
-                            queue_counts[queue_name] = total_count
-                            # No items sent for count-only queues
-                            final_contents[queue_name] = []
-                            count_time = time.time() - count_start
-                            if count_time > 0.1:
-                                logging.debug(f"[QUEUE_STREAM] get_item_count_by_state for '{queue_name}' took {count_time:.3f}s")
-                        except Exception as db_err:
-                            logging.error(f"Error fetching count for queue '{queue_name}': {db_err}")
-                            final_contents[queue_name] = []
-                            queue_counts[queue_name] = 0
-                    
-                    count_only_time = time.time() - count_only_start
-                    logging.debug(f"[QUEUE_STREAM] Count-only queue processing took {count_only_time:.3f}s")
-                    
+                        queue_counts[queue_name] = db_counts.get(queue_name, 0)
+                        final_contents[queue_name] = []
+
                     # Process database-backed queues (only Wanted and Final_Check now)
                     db_start = time.time()
                     for queue_name in DB_FETCH_QUEUES:
                         qp_start = time.time()
                         try:
-                            count_query_start = time.time()
-                            total_count = get_item_count_by_state(queue_name)
+                            total_count = db_counts.get(queue_name, 0)
                             queue_counts[queue_name] = total_count
                             hidden_count = max(0, total_count - ITEMS_LIMIT)
                             if hidden_count > 0:
                                 hidden_counts[queue_name] = hidden_count
-                            count_query_time = time.time() - count_query_start
-                            if count_query_time > 0.1:
-                                logging.debug(f"[QUEUE_STREAM] get_item_count_by_state for '{queue_name}' took {count_query_time:.3f}s")
 
                             # We use page=1 because the stream always shows the top of the queue.
                             query_start = time.time()
-                            limited_items_raw = get_all_media_items(state=queue_name, limit=ITEMS_LIMIT)
+                            limited_items_raw = get_all_media_items(state=queue_name, limit=ITEMS_LIMIT, columns=QUEUE_DISPLAY_COLUMNS)
                             limited_items = [dict(item) for item in limited_items_raw]
                             query_time = time.time() - query_start
                             if query_time > 0.1:
@@ -1312,8 +1345,19 @@ def _format_remaining_time(hours_float: float) -> str:
 # ---------------------------------------------------------------------------
 # Helper: count Wanted items whose *computed* scrape time has passed
 # ---------------------------------------------------------------------------
+_ready_wanted_cache = {'value': 0, 'timestamp': 0}
+READY_WANTED_CACHE_DURATION = 60  # 60 seconds - this count changes slowly
+
 def get_ready_wanted_items_count() -> int:
     """Return number of Wanted-queue entries that are ready to be scraped."""
+    global _ready_wanted_cache
+    current_ts = time.time()
+
+    # Return cached value if still fresh
+    if (current_ts - _ready_wanted_cache['timestamp'] < READY_WANTED_CACHE_DURATION
+            and _ready_wanted_cache['timestamp'] > 0):
+        return _ready_wanted_cache['value']
+
     try:
         count_start = time.time()
         from database.database_reading import get_all_media_items  # Lazy import
@@ -1351,6 +1395,7 @@ def get_ready_wanted_items_count() -> int:
         if query_time > 0.1 or total_time > 0.2:
             logging.debug(f"[QUEUE_ROUTES] get_ready_wanted_items_count took {total_time:.3f}s (query: {query_time:.3f}s, found {ready_count} ready items)")
 
+        _ready_wanted_cache.update({'value': ready_count, 'timestamp': current_ts})
         return ready_count
     except Exception as e:
         logging.error(f"Error counting ready Wanted items: {e}")
