@@ -1183,6 +1183,39 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                      found_file = True
                      logging.info(f"Found file directly under original_files_path: {source_file}")
 
+            # 8. Check filename-as-folder pattern (single-file torrent on Real-Debrid).
+            # RD presents single-file torrents as: original_path/{file.mkv}/{file.mkv}
+            # None of the title-based attempts above catch this because the folder name
+            # includes the file extension, while stored titles typically do not.
+            if not found_file:
+                potential_folder = os.path.join(original_path, current_filename)
+                potential_path = os.path.join(potential_folder, current_filename)
+                logging.debug(f"Attempt 8: Checking filename-as-folder (RD single-file pattern): {potential_path}")
+                if os.path.exists(potential_path):
+                    source_file = potential_path
+                    source_folder = potential_folder
+                    found_file = True
+                    logging.info(f"Found file using filename-as-folder pattern: {source_file}")
+
+            # 9. Extended search: scan original_path subdirectories for the file.
+            # Only runs when extended_search=True (activated after 900s in checking queue)
+            # and all named-folder attempts have failed.
+            if not found_file and extended_search:
+                logging.info(f"Extended search: scanning '{original_path}' for '{current_filename}'")
+                try:
+                    for folder_name in os.listdir(original_path):
+                        candidate_folder = os.path.join(original_path, folder_name)
+                        if not os.path.isdir(candidate_folder):
+                            continue
+                        candidate_path = os.path.join(candidate_folder, current_filename)
+                        if os.path.exists(candidate_path):
+                            source_file = candidate_path
+                            source_folder = candidate_folder
+                            found_file = True
+                            logging.info(f"Extended search found file in folder '{folder_name}': {source_file}")
+                            break
+                except Exception as ext_err:
+                    logging.warning(f"Extended search failed: {ext_err}")
 
             # --- Handling not found after all checks ---
             if not found_file:

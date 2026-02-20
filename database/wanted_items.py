@@ -11,6 +11,56 @@ from utilities.settings import get_setting
 from content_checkers.trakt import fetch_items_from_trakt, load_imdb_trakt_cache, save_imdb_trakt_cache
 import re
 
+def _get_existing_item_id_collected(conn, imdb_id, tmdb_id, item_type, item):
+    """Get DB id of an existing Collected/Upgrading item matching the given identifiers."""
+    if item_type == 'movie':
+        for id_col, id_val in [('imdb_id', imdb_id), ('tmdb_id', tmdb_id)]:
+            if id_val:
+                row = conn.execute(
+                    f"SELECT id FROM media_items WHERE type='movie' AND {id_col}=? AND state IN ('Collected','Upgrading') LIMIT 1",
+                    (id_val,)
+                ).fetchone()
+                if row:
+                    return row['id']
+    else:
+        season = item.get('season_number')
+        episode = item.get('episode_number')
+        for id_col, id_val in [('imdb_id', imdb_id), ('tmdb_id', tmdb_id)]:
+            if id_val:
+                row = conn.execute(
+                    f"SELECT id FROM media_items WHERE type='episode' AND {id_col}=? AND season_number=? AND episode_number=? AND state IN ('Collected','Upgrading') LIMIT 1",
+                    (id_val, season, episode)
+                ).fetchone()
+                if row:
+                    return row['id']
+    return None
+
+
+def _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item):
+    """Get DB id of any existing item matching the given identifiers (any state)."""
+    if item_type == 'movie':
+        for id_col, id_val in [('imdb_id', imdb_id), ('tmdb_id', tmdb_id)]:
+            if id_val:
+                row = conn.execute(
+                    f"SELECT id FROM media_items WHERE type='movie' AND {id_col}=? LIMIT 1",
+                    (id_val,)
+                ).fetchone()
+                if row:
+                    return row['id']
+    else:
+        season = item.get('season_number')
+        episode = item.get('episode_number')
+        for id_col, id_val in [('imdb_id', imdb_id), ('tmdb_id', tmdb_id)]:
+            if id_val:
+                row = conn.execute(
+                    f"SELECT id FROM media_items WHERE type='episode' AND {id_col}=? AND season_number=? AND episode_number=? LIMIT 1",
+                    (id_val, season, episode)
+                ).fetchone()
+                if row:
+                    return row['id']
+    return None
+
+
 def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
     from metadata.metadata import get_show_airtime_by_imdb_id
     from utilities.settings import get_setting
@@ -266,6 +316,9 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         existing_episodes[key] = []
                     existing_episodes[key].append((strip_version(row['version']), row['state'], row['ghostlisted']))
 
+        pending_secondary_labels = []  # [(existing_id, source_name, source_detail)] — Collected items needing label from second source
+        pending_source_records = []   # [(existing_id, source_name, source_detail)] — not-yet-Collected items needing source recorded
+
         filtered_media_items_batch_after_existence_check = []
         for item in media_items_batch:
             imdb_id = item.get('imdb_id')
@@ -378,6 +431,12 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
 
             if is_collected_or_upgrading_in_db:
                 if not enable_granular_versions:
+                    new_source = item.get('content_source')
+                    new_detail = item.get('content_source_detail')
+                    if new_source and new_detail and new_detail.lower() != 'unknown':
+                        lookup_id = _get_existing_item_id_collected(conn, imdb_id, tmdb_id, item_type, item)
+                        if lookup_id:
+                            pending_secondary_labels.append((lookup_id, new_source, new_detail))
                     skip_stats['already_collected_or_upgrading'] += 1; items_skipped += 1; continue
 
             if item_type == 'movie':
@@ -409,7 +468,14 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         skip = True; skip_stats['existing_movie_imdb'] += 1
                         if media_id_vs not in version_summary['movies']:
                             version_summary['movies'][media_id_vs] = {'existing': existing_versions_set_vs, 'added': set(), 'title': normalized_title, 'states': existing_states_set_vs}
-                if skip: items_skipped += 1; continue
+                if skip:
+                    new_source = item.get('content_source')
+                    new_detail = item.get('content_source_detail')
+                    if new_source and new_detail and new_detail.lower() != 'unknown':
+                        lookup_id = _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item)
+                        if lookup_id:
+                            pending_source_records.append((lookup_id, new_source, new_detail))
+                    items_skipped += 1; continue
             else: # Episode
                 season_number_vs = item.get('season_number'); episode_number_vs = item.get('episode_number')
                 skip = False; media_id_vs = imdb_id or tmdb_id
@@ -446,8 +512,15 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         skip = True; skip_stats['existing_episode_imdb'] += 1
                         if episode_key_vs not in version_summary['episodes']:
                              version_summary['episodes'][episode_key_vs] = {'existing': existing_versions_set_vs, 'added': set(), 'title': normalized_title, 'states': existing_states_set_vs}
-                if skip: items_skipped += 1; continue
-            
+                if skip:
+                    new_source = item.get('content_source')
+                    new_detail = item.get('content_source_detail')
+                    if new_source and new_detail and new_detail.lower() != 'unknown':
+                        lookup_id = _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item)
+                        if lookup_id:
+                            pending_source_records.append((lookup_id, new_source, new_detail))
+                    items_skipped += 1; continue
+
             filtered_media_items_batch_after_existence_check.append(item)
 
         media_items_batch = filtered_media_items_batch_after_existence_check
@@ -706,13 +779,50 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
         if movies_to_insert or episodes_to_insert or updated_any_title:
             conn.commit()
 
+        # Apply labels for secondary sources on already-Collected items
+        if pending_secondary_labels:
+            try:
+                from utilities.plex_label_manager import (
+                    is_plex_labels_enabled_anywhere,
+                    determine_labels_for_item,
+                    add_label_to_item
+                )
+                if is_plex_labels_enabled_anywhere():
+                    for (existing_id, src, detail) in pending_secondary_labels:
+                        temp_item = {'content_source': src, 'content_source_detail': detail}
+                        labels = determine_labels_for_item(temp_item)
+                        for label in labels:
+                            try:
+                                add_label_to_item(existing_id, label, src, apply_to_plex=True)
+                                logging.info(f"Applied secondary source label '{label}' from {src} to item {existing_id}")
+                            except Exception as e:
+                                logging.warning(f"Failed to apply secondary source label '{label}' from {src} to item {existing_id}: {e}")
+            except Exception as e:
+                logging.warning(f"Failed to apply secondary source labels: {e}")
+
+        # Record secondary sources for not-yet-Collected items (for future label application when item reaches Collected)
+        if pending_source_records:
+            from utilities.plex_label_manager import parse_content_sources, serialize_content_sources
+            for (existing_id, src, detail) in pending_source_records:
+                try:
+                    row = conn.execute('SELECT content_sources FROM media_items WHERE id = ?', (existing_id,)).fetchone()
+                    sources = parse_content_sources(row['content_sources'] if row else None)
+                    if not any(s['source'] == src for s in sources):
+                        sources.append({'source': src, 'detail': detail, 'added_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
+                        conn.execute('UPDATE media_items SET content_sources = ? WHERE id = ?',
+                                     (serialize_content_sources(sources), existing_id))
+                        logging.debug(f"Recorded secondary source '{src}' on item {existing_id} for future label application")
+                except Exception as e:
+                    logging.warning(f"Failed to record secondary source for item {existing_id}: {e}")
+            conn.commit()
+
         # Send notifications for newly added items
         if (movies_to_insert or episodes_to_insert) and items_added > 0:
             try:
                 from routes.notifications import send_notifications
                 from routes.settings_routes import get_enabled_notifications_for_category
                 from routes.extensions import app
-                from database.database_reading import get_media_items_by_state
+                from database.database_reading import get_all_media_items
 
                 with app.app_context():
                     response = get_enabled_notifications_for_category('wanted')
@@ -738,7 +848,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                                 inserted_identifiers.add((imdb_id, tmdb_id, title, year, version, 'episode', season_num, episode_num))
 
                             # Query for items in Wanted state that match our inserted items
-                            wanted_items = get_media_items_by_state('Wanted')
+                            wanted_items = get_all_media_items(state='Wanted')
 
                             for db_item in wanted_items:
                                 # Check if this item matches one we just inserted

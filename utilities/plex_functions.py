@@ -1473,7 +1473,7 @@ def remove_show_from_plex(show_title: str, imdb_id: str = None, tmdb_id: str = N
             result['error'] = "Plex URL or token is empty"
             return result
 
-        plex = plexapi.server.PlexServer(plex_url, plex_token)
+        plex = plexapi.server.PlexServer(plex_url, plex_token, timeout=30)
         sections = plex.library.sections()
 
         logger.info(f"[PLEX_SHOW_DELETE] Searching for show: {show_title} (imdb={imdb_id}, tmdb={tmdb_id})")
@@ -1580,7 +1580,7 @@ def remove_season_from_plex(show_title: str, season_number: int, imdb_id: str = 
             result['error'] = "Plex URL or token is empty"
             return result
 
-        plex = plexapi.server.PlexServer(plex_url, plex_token)
+        plex = plexapi.server.PlexServer(plex_url, plex_token, timeout=30)
         sections = plex.library.sections()
 
         logger.info(f"[PLEX_SEASON_DELETE] Searching for show: {show_title} S{season_number:02d} (imdb={imdb_id}, tmdb={tmdb_id})")
@@ -1691,7 +1691,7 @@ def remove_movie_from_plex(movie_title: str, imdb_id: str = None, tmdb_id: str =
             result['error'] = "Plex URL or token is empty"
             return result
 
-        plex = plexapi.server.PlexServer(plex_url, plex_token)
+        plex = plexapi.server.PlexServer(plex_url, plex_token, timeout=30)
         sections = plex.library.sections()
 
         logger.info(f"[PLEX_MOVIE_DELETE] Searching for movie: {movie_title} (imdb={imdb_id}, tmdb={tmdb_id})")
@@ -1780,8 +1780,8 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
             logger.error("No Plex URL or token found in settings")
             return False
             
-        plex = plexapi.server.PlexServer(plex_url, plex_token)
-        
+        plex = plexapi.server.PlexServer(plex_url, plex_token, timeout=30)
+
         logger.info(f"Searching for item with title: {item_title}, episode title: {episode_title}, and file name: {item_path}")
         
         sections = plex.library.sections()
@@ -1799,10 +1799,22 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
                     try:
                         if section.type == 'show':
                             shows = section.search(title=item_title)
-                            
+
                             for show in shows:
-                                episodes = show.episodes()
-                                
+                                # If episode_title is known, filter to matching episodes only
+                                # (much faster for large shows — avoids fetching all episodes).
+                                # Falls back to all episodes if the filtered result is empty,
+                                # preserving backward compatibility.
+                                if episode_title:
+                                    try:
+                                        episodes = show.episodes(title=episode_title)
+                                        if not episodes:
+                                            episodes = show.episodes()
+                                    except Exception:
+                                        episodes = show.episodes()
+                                else:
+                                    episodes = show.episodes()
+
                                 for episode in episodes:
                                     if hasattr(episode, 'media'):
                                         for media in episode.media:
@@ -1917,7 +1929,7 @@ def scan_and_empty_plex_trash(paths: list = None, section_type: str = None) -> d
             result['success'] = False
             return result
 
-        plex = plexapi.server.PlexServer(plex_url, plex_token)
+        plex = plexapi.server.PlexServer(plex_url, plex_token, timeout=30)
         sections = plex.library.sections()
 
         # Track which sections were actually scanned

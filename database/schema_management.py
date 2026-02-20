@@ -602,13 +602,16 @@ def verify_database():
         logging.error(f"Error ensuring plex_removal_queue table: {e}")
     
     # Add statistics indexes
-    from .migrations import add_statistics_indexes, add_search_performance_indexes, add_statistics_composite_indexes, add_database_page_indexes
+    from .migrations import add_statistics_indexes, add_search_performance_indexes, add_statistics_composite_indexes, add_database_page_indexes, add_library_covering_index
     add_statistics_indexes()
     add_statistics_composite_indexes()
 
     # PHASE 1.3: Add search performance indexes
     add_search_performance_indexes()
     add_database_page_indexes()
+
+    # Library page covering index for GROUP BY query performance
+    add_library_covering_index()
 
     conn = get_db_connection()
     cursor = conn.cursor()
