@@ -125,7 +125,10 @@ class RealDebridProvider(DebridProvider):
             if get_setting("Debrid Provider", "api_key") == "demo_key":
                 return {'days_remaining': None, 'expiration': None, 'premium': False}
 
-            user_info = make_request('GET', '/user', self.api_key) or {}
+            user_info = make_request('GET', '/user', self.api_key)
+            if not isinstance(user_info, dict):
+                logging.error(f"Unexpected response type from /user: {type(user_info)}")
+                user_info = {}
             premium = bool(user_info.get('premium', False))
             expiration = user_info.get('expiration') or user_info.get('premium_until')
 
@@ -295,6 +298,8 @@ class RealDebridProvider(DebridProvider):
                         # Search for existing torrent with this hash
                         torrents = make_request('GET', '/torrents', self.api_key) or []
                         for torrent in torrents:
+                            if not isinstance(torrent, dict):
+                                continue
                             if torrent.get('hash', '').lower() == hash_value.lower():
                                 torrent_id = torrent['id']
                                 break
@@ -499,16 +504,6 @@ class RealDebridProvider(DebridProvider):
                 # Don't URL decode - requests library handles encoding for POST form data
                 # If we decode first, it can corrupt the magnet link
 
-                # Check if torrent already exists
-                if hash_value:
-                    torrents = make_request('GET', '/torrents', self.api_key) or []
-                    for torrent in torrents:
-                        if torrent.get('hash', '').lower() == hash_value.lower():
-                            logging.info(f"Torrent already exists with ID {torrent['id']}")
-                            # Cache the filename for existing torrent
-                            self._cached_torrent_titles[hash_value] = torrent.get('filename', '')
-                            return torrent['id']
-
                 # Add magnet link
                 logging.debug(f"Adding magnet with hash {hash_value[:16] if hash_value else 'unknown'}...")
                 data = {'magnet': magnet_link}
@@ -517,7 +512,12 @@ class RealDebridProvider(DebridProvider):
                 logging.error("Neither magnet_link nor temp_file_path provided")
                 raise ValueError("Either magnet_link or temp_file_path must be provided")
 
-            if not result or 'id' not in result:
+            if result is None:
+                # RD returns 404 -> None for duplicate magnets; let caller (is_cached) handle lookup
+                logging.debug(f"add_torrent got None response for hash {hash_value} - likely duplicate")
+                return None
+
+            if not isinstance(result, dict) or 'id' not in result:
                 logging.error(f"Failed to add torrent - response: {result}")
                 raise TorrentAdditionError(f"Failed to add torrent - response: {result}")
                 
@@ -682,7 +682,10 @@ class RealDebridProvider(DebridProvider):
                 return 0, 0
 
             active_data = make_request('GET', '/torrents/activeCount', self.api_key)
-            
+            if not isinstance(active_data, dict):
+                logging.error(f"Unexpected response type from /torrents/activeCount: {type(active_data)}")
+                raise ProviderUnavailableError("Failed to get active downloads: unexpected response type")
+
             active_count = active_data.get('nb', 0)
             raw_max_downloads = active_data.get('limit', self.MAX_DOWNLOADS)
 

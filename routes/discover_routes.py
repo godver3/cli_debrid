@@ -1508,7 +1508,7 @@ def save_adaptive_list():
             'list_length_limit': 0,
             'plex_labels': {
                 'enabled': False,
-                'label_mode': 'source',
+                'label_mode': 'list_name',
                 'fixed_label': ''
             }
         }

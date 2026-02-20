@@ -111,9 +111,6 @@ def stream_all_media_items(state=None, media_type=None, imdb_id=None, tmdb_id=No
     """
     A generator that streams media items from the database one by one.
     This is memory-efficient and suitable for large datasets.
-
-    Args:
-        columns: Optional list of column names to select. If None, selects all columns (*).
     """
     conn = None
     try:
@@ -890,43 +887,6 @@ def get_item_count_by_state(state: str) -> int:
         if conn:
             conn.close()
 
-def get_item_counts_by_states(states: list) -> dict:
-    """Get counts for multiple states in a single DB connection.
-
-    Args:
-        states: List of state strings to count.
-
-    Returns:
-        Dict mapping state -> count.
-    """
-    conn = None
-    try:
-        conn = get_db_connection()
-
-        # Ensure the index exists (one-time, idempotent)
-        try:
-            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_state ON media_items(state);')
-        except Exception:
-            pass
-
-        counts = {}
-        for state in states:
-            if state == 'Blacklisted':
-                query = 'SELECT COUNT(*) as count FROM media_items WHERE state = ? AND (ghostlisted IS NULL OR ghostlisted = 0)'
-            else:
-                query = 'SELECT COUNT(*) as count FROM media_items WHERE state = ?'
-            cursor = conn.execute(query, (state,))
-            result = cursor.fetchone()
-            counts[state] = result['count'] if result else 0
-        return counts
-    except Exception as e:
-        logging.error(f"Error getting item counts for states {states}: {e}")
-        return {state: 0 for state in states}
-    finally:
-        if conn:
-            conn.close()
-
-
 def check_item_exists_by_directory_name(item_directory_name: str) -> bool:
     """
     Check if any media item exists in the database where the item_directory_name
@@ -1573,6 +1533,45 @@ def get_items_with_all_blacklisted_versions() -> List[int]:
     finally:
         if conn:
             conn.close()
+
+def get_item_counts_by_states(states: list) -> dict:
+    """Fetch COUNT(*) for multiple states in a single DB connection.
+
+    Creates the state index if it doesn't already exist (idempotent), then
+    runs one COUNT query per state inside the same open connection, which
+    is much cheaper than opening/closing a connection for each state.
+
+    Args:
+        states: List of state strings to count (e.g. ['Wanted', 'Blacklisted']).
+
+    Returns:
+        Dict mapping each state string to its item count.
+    """
+    conn = None
+    try:
+        conn = get_db_connection()
+        try:
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_media_items_state ON media_items(state);')
+        except Exception as e:
+            logging.debug(f"Index creation attempt (may already exist): {e}")
+
+        counts = {}
+        for state in states:
+            if state == 'Blacklisted':
+                query = 'SELECT COUNT(*) as count FROM media_items WHERE state = ? AND (ghostlisted IS NULL OR ghostlisted = 0)'
+            else:
+                query = 'SELECT COUNT(*) as count FROM media_items WHERE state = ?'
+            cursor = conn.execute(query, (state,))
+            result = cursor.fetchone()
+            counts[state] = result['count'] if result else 0
+        return counts
+    except Exception as e:
+        logging.error(f"Error in get_item_counts_by_states: {e}")
+        return {state: 0 for state in states}
+    finally:
+        if conn:
+            conn.close()
+
 
 # =============================================================================
 # Deletion Helper Functions (for DeletionManager)

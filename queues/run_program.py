@@ -2459,20 +2459,6 @@ class ProgramRunner:
     def invalidate_content_sources_cache(self):
         self.content_sources = None
 
-    def sync_time(self):
-        try:
-            ntp_client = ntplib.NTPClient()
-            response = ntp_client.request('pool.ntp.org', version=3)
-            system_time = time.time()
-            ntp_time = response.tx_time
-            offset = ntp_time - system_time
-            
-            if abs(offset) > 1:  # If offset is more than 1 second
-                logging.warning(f"System time is off by {offset:.2f} seconds. Adjusting task timers.")
-                self.last_run_times = {task: ntp_time for task in self.task_intervals}
-        except:
-            logging.error("Failed to synchronize time with NTP server")
-
     def task_adjust_intervals_for_load(self): # Renamed
         """
         Task to dynamically adjust non-critical task intervals based on queue load.
@@ -2846,31 +2832,35 @@ class ProgramRunner:
                 logging.error(f"Error sending notifications: {str(e_send)}", exc_info=True)
 
     def task_sync_time(self):
-        # self.sync_time() # Call the original sync_time logic
-        try:
-            ntp_client = ntplib.NTPClient()
-            # Increased timeout for robustness
-            response = ntp_client.request('pool.ntp.org', version=3, timeout=10)
-            system_time = time.time()
-            ntp_time = response.tx_time
-            offset = ntp_time - system_time
+        """Check system clock against NTP and log any significant offset.
 
-            logging.info(f"Time sync check: System time offset from NTP = {offset:.3f} seconds.")
+        Tries multiple NTP servers in order so that a single unresponsive
+        server does not cause the task to always fail.
+        """
+        ntp_servers = [
+            'pool.ntp.org',
+            'time.cloudflare.com',
+            'time.google.com',
+        ]
+        ntp_client = ntplib.NTPClient()
+        last_error = None
 
-            # Adjusting task timers based on offset is complex with APScheduler.
-            # APScheduler uses the system clock. If the system clock is significantly off,
-            # tasks might run at the "wrong" wall-clock time but consistently relative
-            # to the system clock. Correcting the system clock itself is the best approach.
-            # This task now mainly serves to LOG the offset.
-            if abs(offset) > 60:  # Log a warning if offset is more than 1 minute
-                logging.warning(f"System time offset is significant ({offset:.2f} seconds). Consider synchronizing the system clock.")
-            # Removing the part that tried to adjust self.last_run_times
-            # self.last_run_times = {task: ntp_time for task in self.task_intervals}
-        except ntplib.NTPException as e:
-            logging.error(f"Failed to synchronize time with NTP server: {e}")
-        except Exception as e:
-             # Catch potential socket errors, etc.
-             logging.error(f"Unexpected error during time synchronization: {e}")
+        for server in ntp_servers:
+            try:
+                response = ntp_client.request(server, version=3, timeout=5)
+                offset = response.tx_time - time.time()
+                logging.info(f"Time sync check via {server}: offset = {offset:.3f}s")
+                if abs(offset) > 60:
+                    logging.warning(f"System time offset is significant ({offset:.2f}s). Consider synchronising the system clock.")
+                return  # success — no need to try further servers
+            except ntplib.NTPException as e:
+                last_error = e
+                logging.debug(f"NTP error from {server}: {e}")
+            except Exception as e:
+                last_error = e
+                logging.debug(f"Could not reach NTP server {server}: {e}")
+
+        logging.error(f"Failed to synchronize time: all NTP servers unreachable. Last error: {last_error}")
 
     def task_backup_database(self):
         """
@@ -3647,12 +3637,47 @@ class ProgramRunner:
                     self.plex_scan_tick_counts[cache_key] = current_tick
                     # Trigger scan only if library checks are ENABLED
                     if not get_setting('Plex', 'disable_plex_library_checks', default=False):
-                         if current_tick <= 5:
+                         if current_tick <= 3:
                              should_trigger_scan = True
                              updated_items += 1 # Count item here when scan is intended
                              logging.info(f"File '{current_filename}' found (tick {current_tick}). Identifying relevant Plex sections to scan.")
                          else:
-                             logging.debug(f"File '{current_filename}' found (tick {current_tick}). Skipping Plex scan trigger (only triggers for first 5 ticks).")
+                             logging.info(f"File '{current_filename}' found (tick {current_tick}). Plex scan ticks exhausted — marking item {item_id} as Collected directly (file confirmed on disk, recentlyAdded did not resolve it).")
+                             # Fallback: recentlyAdded scan failed to resolve this item (e.g. file was already
+                             # in Plex before it entered Checking). File is confirmed on disk, so mark Collected.
+                             _conn_fb = None
+                             try:
+                                 _conn_fb = get_db_connection()
+                                 _cur_fb = _conn_fb.cursor()
+                                 _now_fb = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                                 _cur_fb.execute(
+                                     'UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
+                                     (_now_fb, item_id)
+                                 )
+                                 if _cur_fb.rowcount > 0:
+                                     _conn_fb.commit()
+                                     logging.info(f"Fallback: marked item {item_id} ({item_dict['title'] if item_dict['title'] else 'N/A'}) as Collected after {current_tick} ticks with file on disk.")
+                                     _fb_details = get_media_item_by_id(item_id)
+                                     if _fb_details:
+                                         handle_state_change(dict(_fb_details))
+                                         from database.database_writing import add_to_collected_notifications
+                                         _notif = dict(_fb_details)
+                                         _notif['is_upgrade'] = False
+                                         _notif['new_state'] = "Collected"
+                                         add_to_collected_notifications(_notif)
+                                     # Reset tick count so it doesn't keep trying on the now-Collected item
+                                     if cache_key in self.plex_scan_tick_counts:
+                                         del self.plex_scan_tick_counts[cache_key]
+                                 else:
+                                     logging.debug(f"Fallback: item {item_id} state already changed, skipping Collected update.")
+                             except sqlite3.Error as _fb_db_err:
+                                 logging.error(f"Fallback: DB error marking item {item_id} as Collected: {_fb_db_err}")
+                                 if _conn_fb: _conn_fb.rollback()
+                             except Exception as _fb_err:
+                                 logging.error(f"Fallback: unexpected error for item {item_id}: {_fb_err}", exc_info=True)
+                                 if _conn_fb: _conn_fb.rollback()
+                             finally:
+                                 if _conn_fb: _conn_fb.close()
                     else:
                          # If library checks are disabled, we don't trigger scans based on ticks here
                          # We just mark as collected
@@ -3865,12 +3890,45 @@ class ProgramRunner:
                     self.file_location_cache[cache_key] = 'exists'
                     current_tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1
                     self.plex_scan_tick_counts[cache_key] = current_tick
-                    if current_tick <= 5:
+                    if current_tick <= 3:
                         should_trigger_scan = True
                         updated_items += 1 # Count item here when scan is intended
                         logging.info(f"File '{current_filename}' found (tick {current_tick}). Identifying relevant Plex sections to scan.")
                     else:
-                        logging.debug(f"File '{current_filename}' found (tick {current_tick}). Skipping Plex scan trigger (only triggers for first 5 ticks).")
+                        logging.info(f"File '{current_filename}' found (tick {current_tick}). Plex scan ticks exhausted — marking item {item_id} as Collected directly (file confirmed on disk, recentlyAdded did not resolve it).")
+                        _conn_fb = None
+                        try:
+                            _conn_fb = get_db_connection()
+                            _cur_fb = _conn_fb.cursor()
+                            _now_fb = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            _cur_fb.execute(
+                                'UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
+                                (_now_fb, item_id)
+                            )
+                            if _cur_fb.rowcount > 0:
+                                _conn_fb.commit()
+                                logging.info(f"Fallback: marked item {item_id} ({item_dict['title'] if item_dict['title'] else 'N/A'}) as Collected after {current_tick} ticks with file on disk.")
+                                _fb_details = get_media_item_by_id(item_id)
+                                if _fb_details:
+                                    handle_state_change(dict(_fb_details))
+                                    from database.database_writing import add_to_collected_notifications
+                                    _notif = dict(_fb_details)
+                                    _notif['is_upgrade'] = False
+                                    _notif['new_state'] = "Collected"
+                                    add_to_collected_notifications(_notif)
+                                if cache_key in self.plex_scan_tick_counts:
+                                    del self.plex_scan_tick_counts[cache_key]
+                            else:
+                                logging.debug(f"Fallback: item {item_id} state already changed, skipping Collected update.")
+                        except sqlite3.Error as _fb_db_err:
+                            logging.error(f"Fallback: DB error marking item {item_id} as Collected: {_fb_db_err}")
+                            if _conn_fb: _conn_fb.rollback()
+                        except Exception as _fb_err:
+                            logging.error(f"Fallback: unexpected error for item {item_id}: {_fb_err}", exc_info=True)
+                            if _conn_fb: _conn_fb.rollback()
+                        finally:
+                            if _conn_fb: _conn_fb.close()
+                        continue
                 else:
                     # File not found
                     not_found_items += 1

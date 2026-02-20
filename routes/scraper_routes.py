@@ -24,6 +24,7 @@ import hashlib
 from datetime import datetime, timezone, timedelta
 from database.torrent_tracking import record_torrent_addition, get_torrent_history, update_torrent_tracking
 from flask_login import current_user
+from .utils import is_user_system_enabled
 import asyncio
 from utilities.phalanx_db_cache_manager import PhalanxDBClassManager
 import re
@@ -545,8 +546,8 @@ def add_torrent_to_debrid():
                     'genres': json.dumps(genres),  # JSON encode the genres list
                     'current_score': current_score,
                     'real_debrid_original_title': torrent_info.get('original_filename'),
-                    'content_source': 'content_requestor',
-                    'content_source_detail': 'CD-Discover',
+                    'content_source': 'content_requester',
+                    'content_source_detail': current_user.username if (is_user_system_enabled() and current_user.is_authenticated) else 'CD-Discover',
                     'selected_folder': selected_folder,  # User-selected folder from dropdown
                     'selected_folder_is_custom': selected_folder_is_custom  # Flag for custom vs standard folders
                 }
@@ -602,7 +603,7 @@ def add_torrent_to_debrid():
                                 episode_item['episode_number'] = episode_num
                                 episode_item['current_score'] = current_score # Use the score passed for the pack
                                 episode_item['type'] = 'episode' # Ensure type is set for matching
-                                # Note: content_source inherited from item which already has 'content_requestor'
+                                # Note: content_source inherited from item which already has 'content_requester'
                                 
                                 # Get episode-specific release date and title
                                 first_aired = episode_data.get('first_aired')
@@ -1852,51 +1853,52 @@ def get_tv_details(tmdb_id):
 @scraper_bp.route('/tmdb_image/<path:image_path>')
 def tmdb_image_proxy(image_path):
     import requests
-    from flask import Response, make_response, request
-    from datetime import datetime, timedelta
+    from flask import Response, make_response
 
-    # Log if this is a fresh request or from browser cache
-    if_none_match = request.headers.get('If-None-Match')
-    if_modified_since = request.headers.get('If-Modified-Since')
-    
-    if if_none_match or if_modified_since:
-        logging.info(f"Browser requesting image with cache validation: {image_path}")
-    else:
-        logging.info(f"Fresh image request from browser: {image_path}")
+    # Sanitize path to prevent directory traversal
+    safe_path = image_path.replace('..', '').lstrip('/')
 
-    # Construct TMDB URL
-    tmdb_url = f'https://image.tmdb.org/t/p/{image_path}'
-    
+    # Check server-side disk cache first — serves any user/browser without re-fetching from TMDB
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    cache_file = os.path.join(db_content_dir, 'image_cache', safe_path)
+
+    if os.path.exists(cache_file):
+        try:
+            with open(cache_file, 'rb') as f:
+                image_data = f.read()
+            ext = os.path.splitext(cache_file)[1].lower()
+            content_type = 'image/png' if ext == '.png' else 'image/jpeg'
+            resp = Response(image_data, content_type=content_type)
+            resp.headers['Cache-Control'] = 'public, max-age=604800'
+            return resp
+        except Exception as e:
+            logging.warning(f"Image cache read error for {safe_path}: {e}")
+            # Fall through to TMDB fetch
+
+    # Cache miss — fetch from TMDB CDN
+    tmdb_url = f'https://image.tmdb.org/t/p/{safe_path}'
+
     try:
-        # Get the image from TMDB
-        response = requests.get(tmdb_url, stream=True)
+        response = requests.get(tmdb_url, timeout=10)
         response.raise_for_status()
-        
-        # Create Flask response with the image content
-        proxy_response = Response(
-            response.iter_content(chunk_size=8192),
-            content_type=response.headers['Content-Type']
-        )
 
-        # Set cache control headers - only cache if web caching is enabled in settings
-        config = load_config()
-        enable_caching = config.get('UI Settings', {}).get('enable_caching', False)
+        image_data = response.content
+        content_type = response.headers.get('Content-Type', 'image/jpeg')
 
-        if enable_caching:
-            proxy_response.headers['Cache-Control'] = 'public, max-age=604800'  # 7 days in seconds
-            proxy_response.headers['Expires'] = (datetime.utcnow() + timedelta(days=7)).strftime('%a, %d %b %Y %H:%M:%S GMT')
-            # Add ETag for cache validation
-            proxy_response.headers['ETag'] = response.headers.get('ETag', '')
-        else:
-            proxy_response.headers['Cache-Control'] = 'no-cache'
-        
-        # Log successful image fetch
-        logging.info(f"Successfully fetched and cached image from TMDB: {image_path}")
-        
+        # Save to disk cache for future requests
+        try:
+            os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+            with open(cache_file, 'wb') as f:
+                f.write(image_data)
+        except Exception as e:
+            logging.warning(f"Could not write image cache for {safe_path}: {e}")
+
+        proxy_response = Response(image_data, content_type=content_type)
+        proxy_response.headers['Cache-Control'] = 'public, max-age=604800'
         return proxy_response
-        
+
     except requests.RequestException as e:
-        logging.error(f"Error proxying TMDB image: {e}")
+        logging.error(f"Error proxying TMDB image {safe_path}: {e}")
         return make_response('Image not found', 404)
 
 @scraper_bp.route('/check_cache_status', methods=['POST'])

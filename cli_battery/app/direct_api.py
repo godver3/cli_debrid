@@ -586,17 +586,18 @@ class DirectAPI:
 
                 # Stale or missing
                 logging.debug(f"get_show_metadata {imdb_id}: cache MISS (stale={item is not None})")
+                # Capture fallback before _refresh_show may expire item via session commit
+                fallback_md = _build_show_metadata_dict(item) if item else None
                 data = _refresh_show(imdb_id, session)
                 if data:
                     if imdb_id == LEGO_MASTERS_US_IMDB_ID and 'seasons' in data:
                         data['seasons'] = _apply_lego_masters_us_season_fix(data['seasons'])
                     return data, _get_metadata_source_name()
 
-                if item:
-                    md = _build_show_metadata_dict(item)
-                    if imdb_id == LEGO_MASTERS_US_IMDB_ID and 'seasons' in md:
-                        md['seasons'] = _apply_lego_masters_us_season_fix(md['seasons'])
-                    return md, 'battery'
+                if fallback_md:
+                    if imdb_id == LEGO_MASTERS_US_IMDB_ID and 'seasons' in fallback_md:
+                        fallback_md['seasons'] = _apply_lego_masters_us_season_fix(fallback_md['seasons'])
+                    return fallback_md, 'battery'
                 return None, None
         except Exception as e:
             logging.error(f"DirectAPI.get_show_metadata {imdb_id}: {e}", exc_info=True)
@@ -665,13 +666,15 @@ class DirectAPI:
                         except (json.JSONDecodeError, TypeError):
                             pass
 
+                # Capture md.value as plain string before _refresh_show may expire/detach the ORM object
+                md_value = md.value if (item and md) else None
                 data = _refresh_show(imdb_id, session)
                 if data and 'aliases' in data:
                     return data['aliases'], _get_metadata_source_name()
 
-                if item and md:
+                if md_value:
                     try:
-                        return json.loads(md.value), 'battery'
+                        return json.loads(md_value), 'battery'
                     except (json.JSONDecodeError, TypeError):
                         pass
                 return None, None
