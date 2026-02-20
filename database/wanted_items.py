@@ -316,6 +316,13 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         existing_episodes[key] = []
                     existing_episodes[key].append((strip_version(row['version']), row['state'], row['ghostlisted']))
 
+        # Check plex_labels once before the loop — avoids repeated config lookups
+        try:
+            from utilities.plex_label_manager import is_plex_labels_enabled_anywhere as _plex_enabled_check
+            _plex_labels_active = _plex_enabled_check()
+        except Exception:
+            _plex_labels_active = False
+
         pending_secondary_labels = []  # [(existing_id, source_name, source_detail)] — Collected items needing label from second source
         pending_source_records = []   # [(existing_id, source_name, source_detail)] — not-yet-Collected items needing source recorded
 
@@ -431,12 +438,13 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
 
             if is_collected_or_upgrading_in_db:
                 if not enable_granular_versions:
-                    new_source = item.get('content_source')
-                    new_detail = item.get('content_source_detail')
-                    if new_source and new_detail and new_detail.lower() != 'unknown':
-                        lookup_id = _get_existing_item_id_collected(conn, imdb_id, tmdb_id, item_type, item)
-                        if lookup_id:
-                            pending_secondary_labels.append((lookup_id, new_source, new_detail))
+                    if _plex_labels_active:
+                        new_source = item.get('content_source')
+                        new_detail = item.get('content_source_detail')
+                        if new_source and new_detail and new_detail.lower() != 'unknown':
+                            lookup_id = _get_existing_item_id_collected(conn, imdb_id, tmdb_id, item_type, item)
+                            if lookup_id:
+                                pending_secondary_labels.append((lookup_id, new_source, new_detail))
                     skip_stats['already_collected_or_upgrading'] += 1; items_skipped += 1; continue
 
             if item_type == 'movie':
@@ -469,12 +477,13 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         if media_id_vs not in version_summary['movies']:
                             version_summary['movies'][media_id_vs] = {'existing': existing_versions_set_vs, 'added': set(), 'title': normalized_title, 'states': existing_states_set_vs}
                 if skip:
-                    new_source = item.get('content_source')
-                    new_detail = item.get('content_source_detail')
-                    if new_source and new_detail and new_detail.lower() != 'unknown':
-                        lookup_id = _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item)
-                        if lookup_id:
-                            pending_source_records.append((lookup_id, new_source, new_detail))
+                    if _plex_labels_active:
+                        new_source = item.get('content_source')
+                        new_detail = item.get('content_source_detail')
+                        if new_source and new_detail and new_detail.lower() != 'unknown':
+                            lookup_id = _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item)
+                            if lookup_id:
+                                pending_source_records.append((lookup_id, new_source, new_detail))
                     items_skipped += 1; continue
             else: # Episode
                 season_number_vs = item.get('season_number'); episode_number_vs = item.get('episode_number')
@@ -513,12 +522,13 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                         if episode_key_vs not in version_summary['episodes']:
                              version_summary['episodes'][episode_key_vs] = {'existing': existing_versions_set_vs, 'added': set(), 'title': normalized_title, 'states': existing_states_set_vs}
                 if skip:
-                    new_source = item.get('content_source')
-                    new_detail = item.get('content_source_detail')
-                    if new_source and new_detail and new_detail.lower() != 'unknown':
-                        lookup_id = _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item)
-                        if lookup_id:
-                            pending_source_records.append((lookup_id, new_source, new_detail))
+                    if _plex_labels_active:
+                        new_source = item.get('content_source')
+                        new_detail = item.get('content_source_detail')
+                        if new_source and new_detail and new_detail.lower() != 'unknown':
+                            lookup_id = _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item)
+                            if lookup_id:
+                                pending_source_records.append((lookup_id, new_source, new_detail))
                     items_skipped += 1; continue
 
             filtered_media_items_batch_after_existence_check.append(item)
@@ -801,7 +811,14 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 logging.warning(f"Failed to apply secondary source labels: {e}")
 
         # Record secondary sources for not-yet-Collected items (for future label application when item reaches Collected)
+        # Only runs when plex_labels is enabled for at least one content source
         if pending_source_records:
+            try:
+                from utilities.plex_label_manager import is_plex_labels_enabled_anywhere, parse_content_sources, serialize_content_sources
+                _labels_enabled = is_plex_labels_enabled_anywhere()
+            except Exception:
+                _labels_enabled = False
+        if pending_source_records and _labels_enabled:
             from utilities.plex_label_manager import parse_content_sources, serialize_content_sources
             for (existing_id, src, detail) in pending_source_records:
                 try:
