@@ -89,6 +89,24 @@ _NETWORK_TIMEZONE_MAP = {
     # Add more as needed
 }
 
+# Country code → default IANA timezone fallback
+# TVDB airsTime is in the show's local broadcast timezone
+_COUNTRY_TIMEZONE_MAP = {
+    'usa': 'America/New_York',
+    'can': 'America/New_York',
+    'gbr': 'Europe/London',
+    'aus': 'Australia/Sydney',
+    'jpn': 'Asia/Tokyo',
+    'kor': 'Asia/Seoul',
+    'deu': 'Europe/Berlin',
+    'fra': 'Europe/Paris',
+    'ita': 'Europe/Rome',
+    'esp': 'Europe/Madrid',
+    'bra': 'America/Sao_Paulo',
+    'ind': 'Asia/Kolkata',
+    'nzl': 'Pacific/Auckland',
+}
+
 
 def is_available() -> bool:
     """Check if TVDB API key is configured."""
@@ -432,20 +450,22 @@ def _map_status(tvdb_status: str | None) -> str | None:
     return _STATUS_MAP.get(tvdb_status, tvdb_status.lower())
 
 
-def _infer_timezone_from_network(network_name: str | None) -> str | None:
-    """Infer IANA timezone from network name when TVDB doesn't provide it."""
-    if not network_name:
-        return None
+def _infer_timezone_from_network(network_name: str | None, country: str | None = None) -> str | None:
+    """Infer IANA timezone from network name or country when TVDB doesn't provide it."""
+    if network_name:
+        # Direct match
+        if network_name in _NETWORK_TIMEZONE_MAP:
+            return _NETWORK_TIMEZONE_MAP[network_name]
 
-    # Direct match
-    if network_name in _NETWORK_TIMEZONE_MAP:
-        return _NETWORK_TIMEZONE_MAP[network_name]
+        # Partial match (case-insensitive)
+        network_lower = network_name.lower()
+        for net_key, tz in _NETWORK_TIMEZONE_MAP.items():
+            if net_key.lower() in network_lower:
+                return tz
 
-    # Partial match (case-insensitive)
-    network_lower = network_name.lower()
-    for net_key, tz in _NETWORK_TIMEZONE_MAP.items():
-        if net_key.lower() in network_lower:
-            return tz
+    # Fall back to country code
+    if country:
+        return _COUNTRY_TIMEZONE_MAP.get(country.lower())
 
     return None
 
@@ -490,13 +510,14 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
     network = raw.get('originalNetwork')
     airs_timezone = network.get('timezone') if isinstance(network, dict) else None
 
-    # If TVDB doesn't provide timezone, try to infer from network name
+    # If TVDB doesn't provide timezone, try to infer from network name or country
     if not airs_timezone and airs_time:
         network_name = network.get('name') if isinstance(network, dict) else None
-        inferred_tz = _infer_timezone_from_network(network_name)
+        network_country = network.get('country') if isinstance(network, dict) else None
+        inferred_tz = _infer_timezone_from_network(network_name, network_country)
         if inferred_tz:
             airs_timezone = inferred_tz
-            logger.info(f"TVDB: Inferred timezone '{inferred_tz}' for network '{network_name}' (show {imdb_id})")
+            logger.info(f"TVDB: Inferred timezone '{inferred_tz}' for network '{network_name}' country '{network_country}' (show {imdb_id})")
         else:
             logger.debug(f"TVDB: No timezone for show {imdb_id} (network: {network_name}), will use TMDB/Trakt batch fetch")
 
@@ -572,9 +593,10 @@ def _build_show_dict(raw: dict, imdb_id: str, tvdb_id: int) -> dict:
         if network_tz:
             airs['timezone'] = network_tz
         elif airs.get('time'):
-            # Try to infer timezone from network name
+            # Try to infer timezone from network name or country
             network_name = raw['originalNetwork'].get('name')
-            inferred_tz = _infer_timezone_from_network(network_name)
+            network_country = raw['originalNetwork'].get('country')
+            inferred_tz = _infer_timezone_from_network(network_name, network_country)
             if inferred_tz:
                 airs['timezone'] = inferred_tz
 
@@ -613,10 +635,11 @@ def _extract_seasons_from_extended(raw: dict) -> Optional[dict]:
     network = raw.get('originalNetwork')
     airs_timezone = network.get('timezone') if isinstance(network, dict) else None
 
-    # If TVDB doesn't provide timezone, try to infer from network name
+    # If TVDB doesn't provide timezone, try to infer from network name or country
     if not airs_timezone and airs_time:
         network_name = network.get('name') if isinstance(network, dict) else None
-        inferred_tz = _infer_timezone_from_network(network_name)
+        network_country = network.get('country') if isinstance(network, dict) else None
+        inferred_tz = _infer_timezone_from_network(network_name, network_country)
         if inferred_tz:
             airs_timezone = inferred_tz
 
@@ -694,10 +717,11 @@ def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) 
     network = raw.get('originalNetwork')
     airs_timezone = network.get('timezone') if isinstance(network, dict) else None
 
-    # If TVDB doesn't provide timezone, try to infer from network name
+    # If TVDB doesn't provide timezone, try to infer from network name or country
     if not airs_timezone and airs_time:
         network_name = network.get('name') if isinstance(network, dict) else None
-        inferred_tz = _infer_timezone_from_network(network_name)
+        network_country = network.get('country') if isinstance(network, dict) else None
+        inferred_tz = _infer_timezone_from_network(network_name, network_country)
         if inferred_tz:
             airs_timezone = inferred_tz
 
