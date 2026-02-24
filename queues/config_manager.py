@@ -533,17 +533,43 @@ def get_version_settings(version):
     scraping_config = config.get('Scraping', {})
     versions = scraping_config.get('versions', {})
     settings = versions.get(version, {})
-    
+
     # Convert infinity values back to empty string for both fields
     for field in ['max_size_gb', 'max_bitrate_mbps']:
         if field in settings and settings[field] == float('inf'):
             settings[field] = ''
-    
+
+    # Build the set of currently enabled scraper IDs, used for filtering below.
+    active_scrapers = {
+        k for k, v in config.get('Scrapers', {}).items()
+        if isinstance(v, dict) and v.get('enabled', False)
+    }
+
+    # Valid version config keys = schema keys + display_name + active scraper IDs.
+    # Anything else is a stale scraper key from a disabled or fully removed scraper.
+    valid_version_keys = (
+        set(SETTINGS_SCHEMA.get('Scraping', {}).get('versions', {}).get('schema', {}).keys())
+        | {'display_name'}
+        | active_scrapers
+    )
+
+    # Filter scraper_priorities nested dict to only include currently enabled scrapers.
+    if 'scraper_priorities' in settings and isinstance(settings['scraper_priorities'], dict):
+        settings['scraper_priorities'] = {
+            k: v for k, v in settings['scraper_priorities'].items()
+            if k in active_scrapers
+        }
+
+    # Strip any key not in the valid set (covers disabled AND fully removed scrapers).
+    stale_keys = [k for k in settings if k not in valid_version_keys]
+    for k in stale_keys:
+        del settings[k]
+
     logging.debug(f"Fetched settings for version '{version}': {settings}")
-    
+
     if not settings:
         logging.warning(f"No settings found for version: {version}")
-    
+
     return settings
 
 def get_content_source_settings():

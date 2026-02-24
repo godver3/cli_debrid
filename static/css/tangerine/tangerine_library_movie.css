@@ -2135,6 +2135,55 @@ td#scraper-source .source-badge {
     box-shadow: 0 4px 12px rgba(220, 53, 69, 0.4);
 }
 
+.files-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+button.btn.btn-sm.replace-movie-btn {
+    margin: 0px 0px 10px 0px;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(255, 165, 0, 0.15);
+    border: 1px solid rgba(255, 165, 0, 0.3);
+    color: rgba(255, 255, 255, 0.9);
+    border-radius: 0.375rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.875rem;
+}
+
+button.btn.btn-sm.replace-movie-btn:hover {
+    background: rgba(255, 165, 0, 0.25);
+    border-color: rgba(255, 165, 0, 0.5);
+    transform: translateY(-1px);
+}
+
+button.btn.btn-sm.replace-movie-btn.replace-movie-pending {
+    border-color: rgba(234, 179, 8, 0.4);
+    background: rgba(234, 179, 8, 0.15);
+}
+
+button.btn.btn-sm.replace-movie-btn.replace-movie-pending:hover {
+    background: rgba(234, 179, 8, 0.25);
+    border-color: rgba(234, 179, 8, 0.6);
+}
+
+.replace-pending-badge {
+    display: inline-block;
+    margin-left: 0.75rem;
+    padding: 0.125rem 0.5rem;
+    background: rgba(234, 179, 8, 0.2);
+    border: 1px solid rgba(234, 179, 8, 0.4);
+    border-radius: 9999px;
+    color: rgba(234, 179, 8, 0.9);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
 /* Hide trailer text on mobile, show only play icon */
 @media (max-width: 768px) {
     .trailer-text {

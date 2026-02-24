@@ -424,12 +424,14 @@ def agregarr_create_request():
         
         # Add season information for TV shows
         if media_type == 'tv' and seasons:
-            webhook_payload["extra"] = []
-            for season_num in seasons:
-                webhook_payload["extra"].append({
-                    "name": "Requested Seasons",
-                    "value": str(season_num)
-                })
+            # Set directly on media so process_overseerr_webhook() can read it
+            # (it reads media.get('requested_seasons') and never parses extra itself)
+            webhook_payload["media"]["requested_seasons"] = seasons
+            # Also populate extra with a single comma-separated entry for compatibility
+            webhook_payload["extra"] = [{
+                "name": "Requested Seasons",
+                "value": ",".join(str(s) for s in seasons)
+            }]
         
         # Process using existing webhook handler
         process_overseerr_webhook(webhook_payload)

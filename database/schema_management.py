@@ -266,6 +266,9 @@ def migrate_schema():
         if 'selected_folder_is_custom' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN selected_folder_is_custom BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added selected_folder_is_custom column to media_items table.")
+        if 'manual_replace' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN manual_replace BOOLEAN DEFAULT FALSE')
+            logging.info("Successfully added manual_replace column to media_items table.")
 
         # Add new indexes for version and content_source if they don't exist
         existing_indexes_cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index';")

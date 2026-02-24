@@ -1129,7 +1129,8 @@ def show_detail_data(media_id):
                 location_basename,
                 location_on_disk,
                 ghostlisted,
-                size
+                size,
+                manual_replace
             FROM media_items
             WHERE {id_field} = ? AND type = 'episode' AND (ghostlisted = 0 OR ghostlisted IS NULL)
             ORDER BY season_number ASC, episode_number ASC
@@ -1182,12 +1183,16 @@ def show_detail_data(media_id):
                 'location_basename': ep['location_basename'],
                 'location_on_disk': ep['location_on_disk'],
                 'ghostlisted': ep['ghostlisted'],
-                'size': ep['size']
+                'size': ep['size'],
+                'manual_replace': bool(ep['manual_replace'])
             }
 
             seasons[season_num]['episodes'].append(episode_data)
 
         # Convert seasons dict to list and sort
+        # Add has_pending_replace flag to each season
+        for season in seasons.values():
+            season['has_pending_replace'] = any(ep.get('manual_replace') for ep in season['episodes'])
         seasons_list = sorted(seasons.values(), key=lambda x: x['season_number'])
 
         # Initialize metadata variables
@@ -3757,6 +3762,111 @@ def delete_season(imdb_id, season_number):
             'error': str(e)
         }), 500
 
+@library_bp.route('/mark_season_replace/<imdb_id>/<int:season_number>', methods=['POST'])
+@admin_required
+def mark_season_replace(imdb_id, season_number):
+    """
+    Mark all collected episodes in a season for replacement.
+    Sets manual_replace=1 on each Collected episode so the collection hook
+    can clean them up after the new season pack is collected.
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.execute(
+            """UPDATE media_items SET manual_replace = 1, last_updated = ?
+               WHERE imdb_id = ? AND season_number = ? AND type = 'episode'
+               AND state IN ('Collected', 'Upgrading') AND (ghostlisted = 0 OR ghostlisted IS NULL)""",
+            (datetime.now(), imdb_id, season_number)
+        )
+        marked_count = cursor.rowcount
+        conn.commit()
+        conn.close()
+        logging.info(f"[REPLACE_SEASON] Marked {marked_count} episodes for replacement: {imdb_id} S{season_number:02d}")
+        return jsonify({'success': True, 'marked_count': marked_count})
+    except Exception as e:
+        logging.error(f"Error marking season {season_number} of {imdb_id} for replace: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@library_bp.route('/cancel_season_replace/<imdb_id>/<int:season_number>', methods=['POST'])
+@admin_required
+def cancel_season_replace(imdb_id, season_number):
+    """
+    Cancel a pending season replacement by clearing the manual_replace flag.
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.execute(
+            """UPDATE media_items SET manual_replace = 0, last_updated = ?
+               WHERE imdb_id = ? AND season_number = ? AND type = 'episode'
+               AND manual_replace = 1""",
+            (datetime.now(), imdb_id, season_number)
+        )
+        cleared_count = cursor.rowcount
+        conn.commit()
+        conn.close()
+        logging.info(f"[REPLACE_SEASON] Cancelled replacement for {cleared_count} episodes: {imdb_id} S{season_number:02d}")
+        return jsonify({'success': True, 'cleared_count': cleared_count})
+    except Exception as e:
+        logging.error(f"Error cancelling season replace for {imdb_id} S{season_number}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@library_bp.route('/mark_movie_replace', methods=['POST'])
+@admin_required
+def mark_movie_replace():
+    """
+    Mark specific movie file entries for replacement.
+    Sets manual_replace=1 on each provided file ID so the collection hook
+    can clean them up after a new version is collected.
+    """
+    try:
+        data = request.get_json()
+        file_ids = data.get('file_ids', [])
+        if not file_ids:
+            return jsonify({'success': False, 'error': 'No file IDs provided'}), 400
+        conn = get_db_connection()
+        placeholders = ','.join(['?'] * len(file_ids))
+        cursor = conn.execute(
+            f"UPDATE media_items SET manual_replace = 1, last_updated = ? WHERE id IN ({placeholders}) AND type = 'movie'",
+            [datetime.now()] + list(file_ids)
+        )
+        marked_count = cursor.rowcount
+        conn.commit()
+        conn.close()
+        logging.info(f"[REPLACE_MOVIE] Marked {marked_count} movie file(s) for replacement. IDs: {file_ids}")
+        return jsonify({'success': True, 'marked_count': marked_count})
+    except Exception as e:
+        logging.error(f"Error marking movie files for replace: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@library_bp.route('/cancel_movie_replace', methods=['POST'])
+@admin_required
+def cancel_movie_replace():
+    """
+    Cancel a pending movie replacement by clearing the manual_replace flag.
+    """
+    try:
+        data = request.get_json()
+        imdb_id = data.get('imdb_id')
+        if not imdb_id:
+            return jsonify({'success': False, 'error': 'No imdb_id provided'}), 400
+        conn = get_db_connection()
+        cursor = conn.execute(
+            "UPDATE media_items SET manual_replace = 0, last_updated = ? WHERE imdb_id = ? AND type = 'movie' AND manual_replace = 1",
+            (datetime.now(), imdb_id)
+        )
+        cleared_count = cursor.rowcount
+        conn.commit()
+        conn.close()
+        logging.info(f"[REPLACE_MOVIE] Cancelled replacement for {cleared_count} movie file(s): {imdb_id}")
+        return jsonify({'success': True, 'cleared_count': cleared_count})
+    except Exception as e:
+        logging.error(f"Error cancelling movie replace for {imdb_id}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @library_bp.route('/delete_episode/<imdb_id>/<int:season_number>/<int:episode_number>', methods=['POST'])
 @admin_required
 def delete_episode(imdb_id, season_number, episode_number):
@@ -4135,7 +4245,8 @@ def movie_detail_data(media_id):
                 release_date,
                 version,
                 ghostlisted,
-                size
+                size,
+                manual_replace
             FROM media_items
             WHERE {id_field} = ? AND type = 'movie'
             ORDER BY
@@ -4240,7 +4351,8 @@ def movie_detail_data(media_id):
                 'release_date': file_release_date,
                 'version': file_row['version'],
                 'ghostlisted': file_row['ghostlisted'],
-                'size': file_row['size']
+                'size': file_row['size'],
+                'manual_replace': bool(file_row['manual_replace'])
             })
 
         # Fetch poster and backdrop URLs from cache, fallback to TMDB if not cached
@@ -4310,7 +4422,8 @@ def movie_detail_data(media_id):
                 'size': largest_size,
                 'auto_ghostlist_enabled': auto_ghostlist_enabled
             },
-            'files': files
+            'files': files,
+            'has_pending_replace': any(f['manual_replace'] for f in files)
         }
 
         return jsonify(response_data)

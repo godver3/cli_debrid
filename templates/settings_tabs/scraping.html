@@ -693,7 +693,7 @@
         {# Get list of scraper IDs to exclude from automatic rendering #}
         {% set scraper_ids = settings.Scrapers.keys()|list %}
         {% for key in sorted_keys %}
-            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out', 'hybrid_mode', 'jackett_seeders_only', 'fallback_version', 'enable_scraper_priorities', 'scraper_priorities'] and key not in scraper_ids %}
+            {% if key in config and key not in ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out', 'hybrid_mode', 'jackett_seeders_only', 'fallback_version', 'enable_scraper_priorities', 'scraper_priorities', 'preferred-filter-out-term', 'preferred-filter-out-weight', 'preferred-filter-in-term', 'preferred-filter-in-weight'] and key not in scraper_ids %}
                 {% set value = config[key] %}
                 <div class="settings-form-group" {% if key == 'hybrid_mode' or key == 'jackett_seeders_only' %}style="display: none !important;"{% endif %}>
                     {% if value is boolean %}
