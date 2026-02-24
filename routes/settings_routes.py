@@ -2068,7 +2068,9 @@ def add_version():
         'filter_in': [],
         'filter_out': [],
         'require_physical_release': False,
-        'language_code': 'en'
+        'language_code': 'en',
+        'enable_spanish_episode_parsing': False,
+        'use_tmdb_translations': False
     }
 
     save_config(config)
@@ -2346,6 +2348,16 @@ def scraping_content():
     config = load_config()
     version_names = list(config.get('Scraping', {}).get('versions', {}).keys())
     logging.debug(f"[scraping_content] Extracted version names: {version_names}") # Log extracted names
+
+    # Fill in schema defaults for any missing keys in existing versions
+    # so new settings always appear in the UI even for pre-existing versions.
+    version_schema = SETTINGS_SCHEMA.get('Scraping', {}).get('versions', {}).get('schema', {})
+    for _ver_config in config.get('Scraping', {}).get('versions', {}).values():
+        if not isinstance(_ver_config, dict):
+            continue
+        for _field, _fschema in version_schema.items():
+            if _field not in _ver_config and 'default' in _fschema:
+                _ver_config[_field] = _fschema['default']
 
     # Determine which template to use based on theme
     theme = request.cookies.get('selectedTheme', 'tangerine')
