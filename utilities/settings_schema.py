@@ -597,6 +597,16 @@ SETTINGS_SCHEMA = {
                     "type": "dict",
                     "default": {},
                     "description": "Per-scraper priority scores for this version. Higher scores = higher priority."
+                },
+                "enable_spanish_episode_parsing": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Enable Spanish Cap.XXYY episode format parsing (e.g. Cap.701 → S07E01). Opt-in for Spanish content."
+                },
+                "use_tmdb_translations": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Include Spanish title translations/aliases when matching titles. Opt-in for Spanish content."
                 }
             }
         },

@@ -685,9 +685,11 @@
             'wake_count',
             'require_physical_release',
             'language_code',
-            'anime_filter_mode'
+            'anime_filter_mode',
+            'enable_spanish_episode_parsing',
+            'use_tmdb_translations'
         ] %}
-        
+
         {# Sort config items based on settings_order #}
         {% set sorted_keys = (settings_order + config.keys()|list)|unique|list %}
         {# Get list of scraper IDs to exclude from automatic rendering #}
@@ -713,6 +715,10 @@
                             <p class="settings-description">Enable cleanup of original items after successful upgrade (removes original item from Plex and Real-Debrid).</p>
                         {% elif key == 'require_physical_release' %}
                             <p class="settings-description">Only mark as Wanted after physical release date is available.</p>
+                        {% elif key == 'enable_spanish_episode_parsing' %}
+                            <p class="settings-description">Parse Spanish Cap.XXYY episode format (e.g. Cap.701 → S07E01). Enable for Spanish content.</p>
+                        {% elif key == 'use_tmdb_translations' %}
+                            <p class="settings-description">Include Spanish title aliases when checking title similarity. Enable for Spanish content.</p>
                         {% endif %}
                     {% elif key == 'max_resolution' %}
                         <label for="scraping-{{ version }}-{{ key }}" class="settings-title">Resolution Value:</label>
