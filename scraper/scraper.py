@@ -1060,9 +1060,18 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             # Extract titles and sizes for batch processing
             titles = [result.get('title', '') for result in all_results]
             sizes = [result.get('size', None) for result in all_results]
-            
+
+            # If Spanish episode parsing is enabled, pre-convert Cap.XXYY → SxxExx
+            # before passing to PTT so season/episode numbers are correctly detected.
+            # The original titles are preserved in all_results for display and similarity.
+            if version_settings.get('enable_spanish_episode_parsing', False):
+                from scraper.functions.ptt_parser import convert_spanish_cap_format
+                parse_titles = [convert_spanish_cap_format(t) for t in titles]
+            else:
+                parse_titles = titles
+
             # Batch process all titles
-            parsed_results = batch_parse_torrent_info(titles, sizes)
+            parsed_results = batch_parse_torrent_info(parse_titles, sizes)
             
             # Create normalized results and capture parsing failures
             normalized_results = []
@@ -1121,11 +1130,33 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
 
             # Filter results
             task_start = time.time()
+
+            # If use_tmdb_translations is enabled, include Spanish-language title aliases
+            # so Spanish release names match against English TMDB titles (and vice versa).
+            effective_matching_aliases = list(matching_aliases)
+            if version_settings.get('use_tmdb_translations', False) and imdb_id_for_fallback:
+                try:
+                    if content_type.lower() == 'movie':
+                        full_aliases, _ = direct_api_instance.get_movie_aliases(imdb_id_for_fallback)
+                    else:
+                        full_aliases, _ = direct_api_instance.get_show_aliases(imdb_id_for_fallback)
+                    if full_aliases:
+                        existing_lower = {a.lower() for a in effective_matching_aliases}
+                        for key, aliases in full_aliases.items():
+                            if key.lower().startswith('es'):
+                                for alias in (aliases or []):
+                                    if alias and alias.lower() != original_media_title.lower() and alias.lower() not in existing_lower:
+                                        effective_matching_aliases.append(alias)
+                                        existing_lower.add(alias.lower())
+                                        logging.info(f"Spanish alias added ({key}): '{alias}'")
+                except Exception as _spa_err:
+                    logging.warning(f"Failed to fetch Spanish aliases for {imdb_id_for_fallback}: {_spa_err}")
+
             # --- Pass imdb_id_for_fallback and direct_api_instance ---
             filtered_results, pre_size_filtered_results = filter_results(
                 normalized_results, tmdb_id, original_media_title, year, content_type,
                 season, episode, multi, version_settings, runtime, episode_count,
-                season_episode_counts, genres, matching_aliases,
+                season_episode_counts, genres, effective_matching_aliases,
                 imdb_id=imdb_id_for_fallback, 
                 direct_api=direct_api_instance, 
                 preferred_language=preferred_language,
