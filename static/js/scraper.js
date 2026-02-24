@@ -72,6 +72,9 @@ function addToRealDebrid(magnetLink, torrent) {
                     throw new Error(data.error);
                 } else {
                     // Check if the item is uncached
+                    // Signal to library replace handlers that a torrent was successfully queued
+                    window._scraperTorrentWasQueued = true;
+
                     if (data.cache_status && data.cache_status.is_cached === false) {
                         // Show prompt for uncached item
                         showPopup({

@@ -2998,6 +2998,202 @@ class ProgramRunner:
                     deleted_count_filepath = cursor.rowcount
                     reconciliation_logger.info(f"Deleted {deleted_count_filepath} duplicate items (file-based reconciliation). IDs: {delete_ids_filepath}")
 
+            # --- Step 1b: Replace Season/Movie cleanup ---
+            # When new items are promoted to Collected, remove old entries flagged with
+            # manual_replace=1 (from a different torrent), remove the old debrid torrent,
+            # and remove old items from Plex (with scan+empty trash fallback).
+            deleted_count_replace = 0
+            if items_to_update:
+                try:
+                    promoted_rows = cursor.execute(
+                        f"SELECT id, type, imdb_id, season_number, episode_number, filled_by_torrent_id "
+                        f"FROM media_items WHERE id IN ({','.join(['?']*len(items_to_update))})",
+                        items_to_update
+                    ).fetchall()
+                    from debrid import get_debrid_provider as _get_debrid_prov
+                    from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
+                    import os as _os_recon
+                    _debrid_prov = _get_debrid_prov()
+                    ids_to_delete_replace = set()
+                    _recon_plex_paths = set()
+                    _recon_section_types = set()
+                    _recon_select = 'id, filled_by_torrent_id, filled_by_file, location_on_disk, title, episode_title'
+
+                    # Per-episode/movie cleanup: find old entries with manual_replace=1 for each promoted item
+                    for promoted in promoted_rows:
+                        if not promoted['imdb_id']:
+                            continue
+                        if promoted['type'] == 'episode':
+                            if promoted['season_number'] is None or promoted['episode_number'] is None:
+                                continue
+                            old_replace_rows = cursor.execute(
+                                f'''SELECT {_recon_select} FROM media_items
+                                   WHERE imdb_id = ? AND season_number = ? AND episode_number = ?
+                                   AND type = 'episode' AND manual_replace = 1 AND id != ?''',
+                                (promoted['imdb_id'], promoted['season_number'],
+                                 promoted['episode_number'], promoted['id'])
+                            ).fetchall()
+                            log_tag = 'REPLACE_SEASON'
+                            removal_reason = 'Replaced by new season pack'
+                            entry_label = 'episode'
+                            _recon_section_types.add('show')
+                        elif promoted['type'] == 'movie':
+                            old_replace_rows = cursor.execute(
+                                f'''SELECT {_recon_select} FROM media_items
+                                   WHERE imdb_id = ? AND type = 'movie' AND manual_replace = 1 AND id != ?''',
+                                (promoted['imdb_id'], promoted['id'])
+                            ).fetchall()
+                            log_tag = 'REPLACE_MOVIE'
+                            removal_reason = 'Replaced by new movie torrent'
+                            entry_label = 'movie'
+                            _recon_section_types.add('movie')
+                        else:
+                            continue
+                        new_torrent_id = promoted['filled_by_torrent_id']
+                        for old_item in old_replace_rows:
+                            old_id = old_item['id']
+                            old_torrent_id = old_item['filled_by_torrent_id']
+                            if old_torrent_id and old_torrent_id != new_torrent_id and _debrid_prov:
+                                try:
+                                    _debrid_prov.remove_torrent(old_torrent_id, removal_reason=removal_reason)
+                                    logging.info(f"[{log_tag}] Removed debrid torrent {old_torrent_id} for replaced item {old_id}")
+                                except Exception as _debrid_err:
+                                    if '404' in str(_debrid_err):
+                                        logging.debug(f"[{log_tag}] Old torrent {old_torrent_id} already removed (404)")
+                                    else:
+                                        logging.error(f"[{log_tag}] Failed to remove torrent {old_torrent_id}: {_debrid_err}")
+                            if old_id not in items_to_delete_filepath and old_id not in items_to_update:
+                                # Plex removal
+                                _old_path = old_item['location_on_disk'] or old_item['filled_by_file']
+                                if _old_path:
+                                    _ep_title = old_item['episode_title'] if promoted['type'] == 'episode' else None
+                                    try:
+                                        if not remove_file_from_plex(old_item['title'] or '', _old_path, _ep_title):
+                                            logging.warning(f"[{log_tag}] Direct Plex removal failed for item {old_id}, will scan+empty trash")
+                                        else:
+                                            logging.info(f"[{log_tag}] Removed item {old_id} from Plex")
+                                    except Exception as _plex_err:
+                                        logging.warning(f"[{log_tag}] Plex removal error for item {old_id}: {_plex_err}")
+                                    _recon_plex_paths.add(_os_recon.path.dirname(_old_path))
+                                ids_to_delete_replace.add(old_id)
+                                logging.info(f"[{log_tag}] Queued old {entry_label} entry {old_id} for deletion after replacement")
+
+                    # Broader sweep: catch stale manual_replace=1 items in any state (e.g. Upgrading)
+                    # that already have a corresponding Collected replacement.
+                    # Also handles items in items_to_update that had manual_replace=1 (old Upgrading
+                    # items promoted to Collected by reconciliation) by clearing the flag.
+                    _imdb_sweep = {}
+                    for _p in promoted_rows:
+                        if _p['imdb_id'] and _p['type'] in ('episode', 'movie'):
+                            if _p['imdb_id'] not in _imdb_sweep:
+                                _imdb_sweep[_p['imdb_id']] = {'type': _p['type'], 'seasons': set()}
+                            if _p['type'] == 'episode' and _p['season_number'] is not None:
+                                _imdb_sweep[_p['imdb_id']]['seasons'].add(_p['season_number'])
+                    for _sw_imdb, _sw_info in _imdb_sweep.items():
+                        if _sw_info['type'] == 'episode':
+                            for _sw_season in _sw_info['seasons']:
+                                _sw_rows = cursor.execute(
+                                    f'''SELECT {_recon_select} FROM media_items m
+                                       WHERE m.imdb_id = ? AND m.season_number = ? AND m.type = 'episode'
+                                       AND m.manual_replace = 1
+                                       AND EXISTS (
+                                           SELECT 1 FROM media_items m2
+                                           WHERE m2.imdb_id = m.imdb_id AND m2.season_number = m.season_number
+                                           AND m2.episode_number = m.episode_number AND m2.type = 'episode'
+                                           AND m2.manual_replace = 0 AND m2.state = 'Collected'
+                                       )''',
+                                    (_sw_imdb, _sw_season)
+                                ).fetchall()
+                                for _sr in _sw_rows:
+                                    _sid = _sr['id']
+                                    if _sid in items_to_update:
+                                        cursor.execute('UPDATE media_items SET manual_replace = 0 WHERE id = ?', (_sid,))
+                                        logging.info(f"[REPLACE_SEASON] Cleared manual_replace for promoted stale item {_sid}")
+                                    elif _sid not in items_to_delete_filepath and _sid not in ids_to_delete_replace:
+                                        _st = _sr['filled_by_torrent_id']
+                                        if _st and _debrid_prov:
+                                            try:
+                                                _debrid_prov.remove_torrent(_st, removal_reason='Replaced by new season pack')
+                                                logging.info(f"[REPLACE_SEASON] Removed debrid torrent {_st} for stale item {_sid}")
+                                            except Exception as _de:
+                                                if '404' not in str(_de):
+                                                    logging.error(f"[REPLACE_SEASON] Failed to remove torrent {_st}: {_de}")
+                                        _sw_path = _sr['location_on_disk'] or _sr['filled_by_file']
+                                        if _sw_path:
+                                            try:
+                                                if not remove_file_from_plex(_sr['title'] or '', _sw_path, _sr['episode_title']):
+                                                    logging.warning(f"[REPLACE_SEASON] Direct Plex removal failed for stale item {_sid}")
+                                                else:
+                                                    logging.info(f"[REPLACE_SEASON] Removed stale item {_sid} from Plex")
+                                            except Exception as _pe:
+                                                logging.warning(f"[REPLACE_SEASON] Plex removal error for stale item {_sid}: {_pe}")
+                                            _recon_plex_paths.add(_os_recon.path.dirname(_sw_path))
+                                            _recon_section_types.add('show')
+                                        ids_to_delete_replace.add(_sid)
+                                        logging.info(f"[REPLACE_SEASON] Queued stale episode {_sid} for deletion (broader sweep)")
+                        elif _sw_info['type'] == 'movie':
+                            _sw_rows = cursor.execute(
+                                f'''SELECT {_recon_select} FROM media_items m
+                                   WHERE m.imdb_id = ? AND m.type = 'movie'
+                                   AND m.manual_replace = 1
+                                   AND EXISTS (
+                                       SELECT 1 FROM media_items m2
+                                       WHERE m2.imdb_id = m.imdb_id AND m2.type = 'movie'
+                                       AND m2.manual_replace = 0 AND m2.state = 'Collected'
+                                   )''',
+                                (_sw_imdb,)
+                            ).fetchall()
+                            for _sr in _sw_rows:
+                                _sid = _sr['id']
+                                if _sid in items_to_update:
+                                    cursor.execute('UPDATE media_items SET manual_replace = 0 WHERE id = ?', (_sid,))
+                                    logging.info(f"[REPLACE_MOVIE] Cleared manual_replace for promoted stale item {_sid}")
+                                elif _sid not in items_to_delete_filepath and _sid not in ids_to_delete_replace:
+                                    _st = _sr['filled_by_torrent_id']
+                                    if _st and _debrid_prov:
+                                        try:
+                                            _debrid_prov.remove_torrent(_st, removal_reason='Replaced by new movie torrent')
+                                            logging.info(f"[REPLACE_MOVIE] Removed debrid torrent {_st} for stale item {_sid}")
+                                        except Exception as _de:
+                                            if '404' not in str(_de):
+                                                logging.error(f"[REPLACE_MOVIE] Failed to remove torrent {_st}: {_de}")
+                                    _sw_path = _sr['location_on_disk'] or _sr['filled_by_file']
+                                    if _sw_path:
+                                        try:
+                                            if not remove_file_from_plex(_sr['title'] or '', _sw_path, None):
+                                                logging.warning(f"[REPLACE_MOVIE] Direct Plex removal failed for stale item {_sid}")
+                                            else:
+                                                logging.info(f"[REPLACE_MOVIE] Removed stale item {_sid} from Plex")
+                                        except Exception as _pe:
+                                            logging.warning(f"[REPLACE_MOVIE] Plex removal error for stale item {_sid}: {_pe}")
+                                        _recon_plex_paths.add(_os_recon.path.dirname(_sw_path))
+                                        _recon_section_types.add('movie')
+                                    ids_to_delete_replace.add(_sid)
+                                    logging.info(f"[REPLACE_MOVIE] Queued stale movie {_sid} for deletion (broader sweep)")
+
+                    if ids_to_delete_replace:
+                        _ids_list = list(ids_to_delete_replace)
+                        cursor.execute(
+                            f"DELETE FROM media_items WHERE id IN ({','.join(['?']*len(_ids_list))})",
+                            _ids_list
+                        )
+                        deleted_count_replace = cursor.rowcount
+                        logging.info(f"[REPLACE] Deleted {deleted_count_replace} replaced/stale entries. IDs: {_ids_list}")
+
+                    # Scan & empty Plex trash for all affected paths
+                    if _recon_plex_paths:
+                        try:
+                            _sec_type = 'show' if 'show' in _recon_section_types and 'movie' not in _recon_section_types else \
+                                        'movie' if 'movie' in _recon_section_types and 'show' not in _recon_section_types else None
+                            scan_and_empty_plex_trash(paths=list(_recon_plex_paths), section_type=_sec_type)
+                            logging.info(f"[REPLACE] Triggered Plex scan+empty trash for paths: {list(_recon_plex_paths)}")
+                        except Exception as _scan_err:
+                            logging.warning(f"[REPLACE] Plex scan+empty trash failed: {_scan_err}")
+
+                except Exception as _replace_err:
+                    logging.error(f"[REPLACE] Error in reconciliation replace hook: {_replace_err}")
+            # --- End Step 1b ---
+
             # --- Step 2: New deduplication for Wanted, Scraping, Unreleased states ---
             reconciliation_logger.info("Starting semantic deduplication for 'Wanted', 'Scraping', 'Unreleased' items (IMDB ID, S/E, Version - with '*' trimmed from version)...")
             
@@ -3070,6 +3266,8 @@ class ProgramRunner:
                 log_parts.append(f"{deleted_count_filepath} duplicates deleted (shared file paths)")
             if deleted_count_semantic > 0:
                 log_parts.append(f"{deleted_count_semantic} duplicates deleted (content/version with '*' trimmed)")
+            if deleted_count_replace > 0:
+                log_parts.append(f"{deleted_count_replace} replaced entries deleted")
 
             if log_parts:
                  logging.info(f"Queue reconciliation completed: {', '.join(log_parts)}.")
@@ -3428,6 +3626,150 @@ class ProgramRunner:
             else:
                 logging.debug(f"Plex token for user {username} is valid")
 
+    def _replace_cleanup_after_collect(self, promoted_dict):
+        """
+        After a new item is promoted to Collected (via Plex fallback or reconciliation),
+        clean up old entries with manual_replace=1 for the same media, and remove their
+        debrid torrents, Plex entries and scan/empty trash. Handles both episode
+        (Replace Season) and movie (Replace Movie).
+        """
+        imdb_id = promoted_dict.get('imdb_id')
+        item_type = promoted_dict.get('type')
+        item_id = promoted_dict.get('id')
+        new_torrent_id = promoted_dict.get('filled_by_torrent_id')
+
+        if not imdb_id or item_type not in ('episode', 'movie'):
+            return
+
+        conn = None
+        try:
+            from debrid import get_debrid_provider as _get_debrid_prov
+            from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
+            import os as _os
+            _debrid_prov = _get_debrid_prov()
+            conn = get_db_connection()
+            cur = conn.cursor()
+
+            _select_fields = 'id, filled_by_torrent_id, filled_by_file, location_on_disk, title, episode_title'
+
+            if item_type == 'episode':
+                season_number = promoted_dict.get('season_number')
+                episode_number = promoted_dict.get('episode_number')
+                if season_number is None or episode_number is None:
+                    return
+                old_rows = cur.execute(
+                    f'''SELECT {_select_fields} FROM media_items
+                       WHERE imdb_id = ? AND season_number = ? AND episode_number = ?
+                       AND type = 'episode' AND manual_replace = 1 AND id != ?''',
+                    (imdb_id, season_number, episode_number, item_id)
+                ).fetchall()
+                log_tag = 'REPLACE_SEASON'
+                removal_reason = 'Replaced by new season pack'
+                entry_label = 'episode'
+            else:  # movie
+                old_rows = cur.execute(
+                    f'''SELECT {_select_fields} FROM media_items
+                       WHERE imdb_id = ? AND type = 'movie' AND manual_replace = 1 AND id != ?''',
+                    (imdb_id, item_id)
+                ).fetchall()
+                log_tag = 'REPLACE_MOVIE'
+                removal_reason = 'Replaced by new movie torrent'
+                entry_label = 'movie'
+
+            ids_to_delete = set()
+            plex_scan_paths = set()
+
+            def _remove_old_item(row, reason_label):
+                """Remove debrid torrent and queue Plex removal for one old row."""
+                old_id = row['id']
+                old_torrent_id = row['filled_by_torrent_id']
+                if old_torrent_id and old_torrent_id != new_torrent_id and _debrid_prov:
+                    try:
+                        _debrid_prov.remove_torrent(old_torrent_id, removal_reason=removal_reason)
+                        logging.info(f"[{log_tag}] Removed debrid torrent {old_torrent_id} for {reason_label} {old_id}")
+                    except Exception as debrid_err:
+                        if '404' in str(debrid_err):
+                            logging.debug(f"[{log_tag}] Old torrent {old_torrent_id} already removed (404)")
+                        else:
+                            logging.error(f"[{log_tag}] Failed to remove torrent {old_torrent_id}: {debrid_err}")
+                # Plex removal
+                item_path = row['location_on_disk'] or row['filled_by_file']
+                if item_path:
+                    ep_title = row['episode_title'] if item_type == 'episode' else None
+                    title = row['title'] or ''
+                    try:
+                        if not remove_file_from_plex(title, item_path, ep_title):
+                            logging.warning(f"[{log_tag}] Direct Plex removal failed for '{title}' ({item_path}), will fallback to scan+empty trash")
+                        else:
+                            logging.info(f"[{log_tag}] Removed '{title}' from Plex")
+                    except Exception as plex_err:
+                        logging.warning(f"[{log_tag}] Plex removal error for '{title}': {plex_err}")
+                    plex_scan_paths.add(_os.path.dirname(item_path))
+                ids_to_delete.add(old_id)
+                logging.info(f"[{log_tag}] Queued old {entry_label} entry {old_id} for deletion ({reason_label})")
+
+            # Per-item cleanup: same imdb/season/episode with manual_replace=1
+            for old_row in old_rows:
+                _remove_old_item(old_row, 'replaced item')
+
+            # Broader sweep: catch stale manual_replace=1 items in any state (e.g. Upgrading)
+            # that already have a corresponding fresh Collected replacement for the same content.
+            if item_type == 'episode':
+                stale_rows = cur.execute(
+                    f'''SELECT {_select_fields} FROM media_items m
+                       WHERE m.imdb_id = ? AND m.season_number = ? AND m.type = 'episode'
+                       AND m.manual_replace = 1 AND m.id != ?
+                       AND EXISTS (
+                           SELECT 1 FROM media_items m2
+                           WHERE m2.imdb_id = m.imdb_id AND m2.season_number = m.season_number
+                           AND m2.episode_number = m.episode_number AND m2.type = 'episode'
+                           AND m2.manual_replace = 0 AND m2.state = 'Collected'
+                       )''',
+                    (imdb_id, season_number, item_id)
+                ).fetchall()
+            else:  # movie
+                stale_rows = cur.execute(
+                    f'''SELECT {_select_fields} FROM media_items m
+                       WHERE m.imdb_id = ? AND m.type = 'movie'
+                       AND m.manual_replace = 1 AND m.id != ?
+                       AND EXISTS (
+                           SELECT 1 FROM media_items m2
+                           WHERE m2.imdb_id = m.imdb_id AND m2.type = 'movie'
+                           AND m2.manual_replace = 0 AND m2.state = 'Collected'
+                       )''',
+                    (imdb_id, item_id)
+                ).fetchall()
+
+            for stale_row in stale_rows:
+                if stale_row['id'] not in ids_to_delete:
+                    _remove_old_item(stale_row, 'stale item (broader sweep)')
+
+            if ids_to_delete:
+                ids_list = list(ids_to_delete)
+                cur.execute(
+                    f"DELETE FROM media_items WHERE id IN ({','.join(['?']*len(ids_list))})",
+                    ids_list
+                )
+                conn.commit()
+                logging.info(f"[{log_tag}] Deleted {cur.rowcount} replaced/stale {entry_label} entries. IDs: {ids_list}")
+
+            # Scan & empty Plex trash for all affected paths (catches any missed direct removals)
+            if plex_scan_paths:
+                try:
+                    section_type = 'show' if item_type == 'episode' else 'movie'
+                    scan_and_empty_plex_trash(paths=list(plex_scan_paths), section_type=section_type)
+                    logging.info(f"[{log_tag}] Triggered Plex scan+empty trash for paths: {list(plex_scan_paths)}")
+                except Exception as scan_err:
+                    logging.warning(f"[{log_tag}] Plex scan+empty trash failed: {scan_err}")
+
+        except Exception as err:
+            logging.error(f"[REPLACE] Error in replace cleanup after collect: {err}")
+            if conn:
+                conn.rollback()
+        finally:
+            if conn:
+                conn.close()
+
     def task_check_plex_files(self):
         """Check for new files in Plex location and update libraries"""
         updated_sections = set()  # Initialize here to prevent UnboundLocalError
@@ -3659,7 +4001,7 @@ class ProgramRunner:
                                      logging.info(f"Fallback: marked item {item_id} ({item_dict['title'] if item_dict['title'] else 'N/A'}) as Collected after {current_tick} ticks with file on disk.")
                                      _fb_details = get_media_item_by_id(item_id)
                                      if _fb_details:
-                                         handle_state_change(dict(_fb_details))
+                                         handle_state_change(dict(_fb_details))  # triggers replace_cleanup_after_collect internally
                                          from database.database_writing import add_to_collected_notifications
                                          _notif = dict(_fb_details)
                                          _notif['is_upgrade'] = False
@@ -3910,7 +4252,7 @@ class ProgramRunner:
                                 logging.info(f"Fallback: marked item {item_id} ({item_dict['title'] if item_dict['title'] else 'N/A'}) as Collected after {current_tick} ticks with file on disk.")
                                 _fb_details = get_media_item_by_id(item_id)
                                 if _fb_details:
-                                    handle_state_change(dict(_fb_details))
+                                    handle_state_change(dict(_fb_details))  # triggers replace_cleanup_after_collect internally
                                     from database.database_writing import add_to_collected_notifications
                                     _notif = dict(_fb_details)
                                     _notif['is_upgrade'] = False

@@ -3,6 +3,12 @@
     margin: 0;
     padding: 0;
     box-sizing: border-box;
+    caret-color: transparent;
+}
+
+/* Restore caret for actual text input elements */
+input, textarea, [contenteditable="true"] {
+    caret-color: auto;
 }
 
 /* Smooth scrolling */
