@@ -396,6 +396,13 @@ function renderShowHeader(show) {
         sizeValue.textContent = '-';
     }
 
+    // Update discover button
+    const discoverBtn = document.getElementById('btn-discover');
+    if (discoverBtn && show.tmdb_id) {
+        discoverBtn.href = `/discover/details/${show.tmdb_id}/tv`;
+        discoverBtn.style.display = '';
+    }
+
     // Update external links in header
     const tmdbLink = document.getElementById('link-tmdb');
     if (tmdbLink && show.tmdb_id) {
@@ -657,6 +664,8 @@ function createSeasonPanel(season, isActive) {
 
     // Season delete button - only for admins and non-phantom seasons
     let deleteButtonHtml = '';
+    let replaceButtonHtml = '';
+    const hasPendingReplace = season.has_pending_replace === true;
     if (hasAdminPermissions && !isPhantomSeason) {
         const deleteIconSvg = `
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -667,6 +676,14 @@ function createSeasonPanel(season, isActive) {
                 <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
             </svg>
         `;
+        const replaceIconSvg = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                <path d="M3 3v5h5"/>
+                <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+                <path d="M16 16h5v5"/>
+            </svg>
+        `;
 
         deleteButtonHtml = `
             <button class="btn btn-sm btn-danger delete-season-btn"
@@ -674,26 +691,60 @@ function createSeasonPanel(season, isActive) {
                     data-imdb-id="${showData.imdb_id}"
                     title="Delete entire season">
                 ${deleteIconSvg}
-                Delete Season
+                <span class="action-text">Delete Season</span>
             </button>
         `;
+
+        if (hasPendingReplace) {
+            replaceButtonHtml = `
+                <button class="btn btn-sm replace-season-btn replace-season-pending"
+                        data-season-number="${season.season_number}"
+                        data-imdb-id="${showData.imdb_id}"
+                        title="Cancel season replacement">
+                    ${replaceIconSvg}
+                    <span class="action-text">Cancel Replace</span>
+                </button>
+            `;
+        } else {
+            replaceButtonHtml = `
+                <button class="btn btn-sm replace-season-btn"
+                        data-season-number="${season.season_number}"
+                        data-imdb-id="${showData.imdb_id}"
+                        title="Replace entire season with a new torrent">
+                    ${replaceIconSvg}
+                    <span class="action-text">Replace Season</span>
+                </button>
+            `;
+        }
     }
 
     // Add season header with optional delete button
     const seasonHeader = document.createElement('div');
     seasonHeader.className = 'season-panel-header';
     const phantomIndicator = isPhantomSeason ? '<span style="color: rgba(239, 68, 68, 0.8); font-style: italic; font-size: 0.875rem; margin-left: 0.5rem;">(Missing Season)</span>' : '';
+    const pendingBadge = hasPendingReplace ? '<span class="replace-pending-badge">Replacement Pending</span>' : '';
     seasonHeader.innerHTML = `
-        <h3>Season ${season.season_number}${phantomIndicator}</h3>
-        ${deleteButtonHtml}
+        <h3>Season ${season.season_number}${phantomIndicator}${pendingBadge}</h3>
+        <div class="season-action-buttons">
+            ${replaceButtonHtml}
+            ${deleteButtonHtml}
+        </div>
     `;
     panel.appendChild(seasonHeader);
 
-    // Attach delete handler if button exists (not for phantom seasons)
+    // Attach button handlers if buttons exist (not for phantom seasons)
     if (hasAdminPermissions && !isPhantomSeason) {
         const deleteBtn = seasonHeader.querySelector('.delete-season-btn');
         if (deleteBtn) {
             deleteBtn.addEventListener('click', handleDeleteSeason);
+        }
+        const replaceBtn = seasonHeader.querySelector('.replace-season-btn');
+        if (replaceBtn) {
+            if (hasPendingReplace) {
+                replaceBtn.addEventListener('click', handleCancelSeasonReplace);
+            } else {
+                replaceBtn.addEventListener('click', handleReplaceSeason);
+            }
         }
     }
 
@@ -1365,6 +1416,98 @@ async function handleSeasonPacks() {
         genres, // genre_ids - pass genres for auto-select
         version
     );
+}
+
+async function handleReplaceSeason(event) {
+    if (!showData) return;
+    const button = event.currentTarget;
+    const seasonNumber = parseInt(button.dataset.seasonNumber);
+    const imdbId = button.dataset.imdbId;
+
+    if (!imdbId || isNaN(seasonNumber)) return;
+
+    // Mark the season for replacement on the backend
+    try {
+        const resp = await fetch(`/library/mark_season_replace/${imdbId}/${seasonNumber}`, { method: 'POST' });
+        const data = await resp.json();
+        if (!data.success) {
+            showPopup({ type: POPUP_TYPES.ERROR, message: data.error || 'Failed to mark season for replacement', autoClose: 4000 });
+            return;
+        }
+    } catch (err) {
+        showPopup({ type: POPUP_TYPES.ERROR, message: 'Failed to mark season for replacement', autoClose: 4000 });
+        return;
+    }
+
+    // Open the same torrent picker as Season Pack for the target season
+    const version = showData.version || 'Default';
+    const genres = showData.genres ?
+        (typeof showData.genres === 'string' ? showData.genres.split(',').map(g => g.trim()) : showData.genres)
+        : [];
+
+    // Reload to show the "Replacement Pending" badge before opening torrent picker
+    await loadShowData();
+
+    // Watch the overlay: if it is closed without a torrent being queued, auto-cancel the replacement
+    const _overlay = document.getElementById('overlay');
+    if (_overlay) {
+        window._scraperTorrentWasQueued = false;
+        let _overlayWasOpened = false;
+        const _capturedImdbId = imdbId;
+        const _capturedSeason = seasonNumber;
+        const _observer = new MutationObserver(async () => {
+            const d = _overlay.style.display;
+            if (d !== 'none' && d !== '') {
+                _overlayWasOpened = true;
+            } else if (_overlayWasOpened && d === 'none') {
+                _observer.disconnect();
+                if (!window._scraperTorrentWasQueued) {
+                    // Scraper closed without selecting a torrent — silently cancel the pending replacement
+                    try {
+                        await fetch(`/library/cancel_season_replace/${_capturedImdbId}/${_capturedSeason}`, { method: 'POST' });
+                        await loadShowData();
+                    } catch (e) { /* ignore */ }
+                } else {
+                    window._scraperTorrentWasQueued = false;
+                }
+            }
+        });
+        _observer.observe(_overlay, { attributes: true, attributeFilter: ['style'] });
+    }
+
+    await selectMedia(
+        showData.tmdb_id || showData.imdb_id,
+        showData.title,
+        showData.year || '',
+        'tv',
+        seasonNumber,
+        null,
+        true,
+        genres,
+        version
+    );
+}
+
+async function handleCancelSeasonReplace(event) {
+    if (!showData) return;
+    const button = event.currentTarget;
+    const seasonNumber = parseInt(button.dataset.seasonNumber);
+    const imdbId = button.dataset.imdbId;
+
+    if (!imdbId || isNaN(seasonNumber)) return;
+
+    try {
+        const resp = await fetch(`/library/cancel_season_replace/${imdbId}/${seasonNumber}`, { method: 'POST' });
+        const data = await resp.json();
+        if (data.success) {
+            showPopup({ type: POPUP_TYPES.SUCCESS, message: 'Season replacement cancelled', autoClose: 3000 });
+            loadShowData();
+        } else {
+            showPopup({ type: POPUP_TYPES.ERROR, message: data.error || 'Failed to cancel replacement', autoClose: 4000 });
+        }
+    } catch (err) {
+        showPopup({ type: POPUP_TYPES.ERROR, message: 'Failed to cancel replacement', autoClose: 4000 });
+    }
 }
 
 function handleRefreshTMDB() {

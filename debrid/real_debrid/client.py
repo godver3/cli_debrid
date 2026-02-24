@@ -274,6 +274,7 @@ class RealDebridProvider(DebridProvider):
             
             # If not cached in PhalanxDB or PhalanxDB failed, check Real-Debrid
             torrent_id = None
+            torrent_was_preexisting = False
             try:
                 # Add the magnet/torrent to RD with retry for 429 errors
                 max_retries = 3
@@ -290,10 +291,10 @@ class RealDebridProvider(DebridProvider):
                         else:
                             # Re-raise if it's not a 429 error or we've exhausted retries
                             raise
-                
+
                 if not torrent_id:
-                    # If add_torrent returns None, the torrent might already be added
-                    # Try to get the hash and look up existing torrent
+                    # If add_torrent returns None, the torrent was already in the account (RD returns
+                    # 404/None for duplicate magnets). Find the existing entry but never remove it.
                     if hash_value:
                         # Search for existing torrent with this hash
                         torrents = make_request('GET', '/torrents', self.api_key) or []
@@ -302,8 +303,10 @@ class RealDebridProvider(DebridProvider):
                                 continue
                             if torrent.get('hash', '').lower() == hash_value.lower():
                                 torrent_id = torrent['id']
+                                torrent_was_preexisting = True
+                                logging.info(f"{log_prefix} Torrent already in account (pre-existing), will not remove after check")
                                 break
-                    
+
                     if not torrent_id:
                         results[hash_value] = False
                         # Update PhalanxDB with uncached status if enabled
@@ -409,21 +412,25 @@ class RealDebridProvider(DebridProvider):
                 
                 # Store all torrent IDs for tracking
                 self._all_torrent_ids[hash_value] = torrent_id
-                
+
                 # Store torrent ID if cached, remove if not cached
                 if is_cached:
                     self._cached_torrent_ids[hash_value] = torrent_id
                     self._cached_torrent_titles[hash_value] = info.get('filename', '')
-                    
-                    # Remove cached torrents if requested
-                    if local_remove_cached:
+
+                    # Remove cached torrents if requested — but never touch pre-existing ones
+                    if torrent_was_preexisting:
+                        logging.info(f"{log_prefix} Skipping removal of pre-existing cached torrent {torrent_id}")
+                    elif local_remove_cached:
                         try:
                             self.remove_torrent(torrent_id, "Torrent is cached - removed after cache check due to remove_cached=True")
                         except Exception as e:
                             logging.error(f"{log_prefix} Error removing cached torrent: {str(e)}")
                             self.update_status(torrent_id, TorrentStatus.CLEANUP_NEEDED)
                 else:
-                    if local_remove_uncached:
+                    if torrent_was_preexisting:
+                        logging.info(f"{log_prefix} Skipping removal of pre-existing uncached torrent {torrent_id}")
+                    elif local_remove_uncached:
                         try:
                             self.remove_torrent(torrent_id, "Torrent is not cached - removed after cache check")
                             from database.torrent_tracking import update_cache_check_removal
@@ -436,7 +443,7 @@ class RealDebridProvider(DebridProvider):
                 
             except Exception as e:
                 logging.error(f"{log_prefix} Error checking cache: {str(e)}")
-                if torrent_id:
+                if torrent_id and not torrent_was_preexisting:
                     self.update_status(torrent_id, TorrentStatus.ERROR)
                     try:
                         self.remove_torrent(torrent_id, f"Error during cache check: {str(e)}")

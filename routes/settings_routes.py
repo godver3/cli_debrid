@@ -74,6 +74,72 @@ def migrate_scraper_priorities():
     except Exception as e:
         logging.error(f"Error during scraper priority migration: {e}", exc_info=True)
 
+def migrate_clean_version_filter_keys():
+    """
+    Remove spurious scalar filter keys that were written to version configs by
+    older code. These keys are: 'preferred-filter-out-term',
+    'preferred-filter-out-weight', 'preferred-filter-in-term',
+    'preferred-filter-in-weight'. The correct data lives in the
+    'preferred_filter_out' / 'preferred_filter_in' list fields.
+    """
+    SPURIOUS_KEYS = {
+        'preferred-filter-out-term',
+        'preferred-filter-out-weight',
+        'preferred-filter-in-term',
+        'preferred-filter-in-weight',
+    }
+    try:
+        config = load_config()
+        versions = config.get('Scraping', {}).get('versions', {})
+        changed = False
+        for version_id, version_config in versions.items():
+            if not isinstance(version_config, dict):
+                continue
+            for k in SPURIOUS_KEYS & version_config.keys():
+                logging.info(f"Removing spurious key '{k}' from version '{version_id}'")
+                del version_config[k]
+                changed = True
+        if changed:
+            save_config(config)
+            logging.info("migrate_clean_version_filter_keys: cleaned and saved config")
+    except Exception as e:
+        logging.error(f"Error during version filter key cleanup migration: {e}", exc_info=True)
+
+def migrate_clean_stale_scraper_keys_from_versions():
+    """
+    Remove stale per-scraper score keys from version configs that belong to
+    scrapers that have been disabled or fully removed. These keys look like
+    'TorrentioScraper_1', 'Prowlarr_2', etc. and are written by the scraper
+    priority UI. Valid version config keys are those defined in the version
+    schema plus 'display_name' and currently active scraper IDs.
+    """
+    try:
+        config = load_config()
+        active_scraper_ids = {
+            k for k, v in config.get('Scrapers', {}).items()
+            if isinstance(v, dict) and v.get('enabled', False)
+        }
+        valid_keys = (
+            set(SETTINGS_SCHEMA.get('Scraping', {}).get('versions', {}).get('schema', {}).keys())
+            | {'display_name'}
+            | active_scraper_ids
+        )
+        versions = config.get('Scraping', {}).get('versions', {})
+        changed = False
+        for version_id, version_config in versions.items():
+            if not isinstance(version_config, dict):
+                continue
+            stale = [k for k in version_config if k not in valid_keys]
+            for k in stale:
+                logging.info(f"Removing stale key '{k}' from version '{version_id}'")
+                del version_config[k]
+                changed = True
+        if changed:
+            save_config(config)
+            logging.info("migrate_clean_stale_scraper_keys_from_versions: cleaned and saved config")
+    except Exception as e:
+        logging.error(f"Error during stale scraper key cleanup migration: {e}", exc_info=True)
+
 # Helper to reload components and restart if program was running
 def _reload_components_after_settings_change(change_type='full'):
     """
@@ -2270,6 +2336,8 @@ def duplicate_version():
 
 @settings_bp.route('/scraping/content')
 def scraping_content():
+    migrate_clean_version_filter_keys()
+    migrate_clean_stale_scraper_keys_from_versions()
     config = load_config() # Initial load
     # Add logging to see the config state within the route
     logging.debug(f"[scraping_content] Loaded config: {config}")

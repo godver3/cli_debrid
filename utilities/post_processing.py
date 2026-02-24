@@ -6,6 +6,141 @@ import subprocess
 from utilities.settings import get_setting
 from .downsub import main as downsub_main
 
+
+def replace_cleanup_after_collect(item_dict):
+    """
+    Called after a new item is promoted to Collected state.
+    Cleans up old entries with manual_replace=1 for the same media,
+    removes their debrid torrents and Plex entries. No-op when no
+    manual_replace items exist for the same imdb_id.
+    """
+    imdb_id = item_dict.get('imdb_id')
+    item_type = item_dict.get('type')
+    item_id = item_dict.get('id')
+    new_torrent_id = item_dict.get('filled_by_torrent_id')
+
+    if not imdb_id or item_type not in ('episode', 'movie'):
+        return
+
+    conn = None
+    try:
+        from database import get_db_connection
+        from debrid import get_debrid_provider as _get_debrid_prov
+        from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
+        import os as _os
+
+        _debrid_prov = _get_debrid_prov()
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        _fields = 'id, filled_by_torrent_id, filled_by_file, location_on_disk, title, episode_title'
+
+        if item_type == 'episode':
+            season_number = item_dict.get('season_number')
+            episode_number = item_dict.get('episode_number')
+            if season_number is None or episode_number is None:
+                return
+            old_rows = cur.execute(
+                f'''SELECT {_fields} FROM media_items
+                   WHERE imdb_id = ? AND season_number = ? AND episode_number = ?
+                   AND type = 'episode' AND manual_replace = 1 AND id != ?''',
+                (imdb_id, season_number, episode_number, item_id)
+            ).fetchall()
+            stale_rows = cur.execute(
+                f'''SELECT {_fields} FROM media_items m
+                   WHERE m.imdb_id = ? AND m.season_number = ? AND m.type = 'episode'
+                   AND m.manual_replace = 1 AND m.id != ?
+                   AND EXISTS (
+                       SELECT 1 FROM media_items m2
+                       WHERE m2.imdb_id = m.imdb_id AND m2.season_number = m.season_number
+                       AND m2.episode_number = m.episode_number AND m2.type = 'episode'
+                       AND m2.manual_replace = 0 AND m2.state = 'Collected'
+                   )''',
+                (imdb_id, season_number, item_id)
+            ).fetchall()
+            log_tag = 'REPLACE_SEASON'
+            removal_reason = 'Replaced by new season pack'
+            entry_label = 'episode'
+        else:  # movie
+            old_rows = cur.execute(
+                f'''SELECT {_fields} FROM media_items
+                   WHERE imdb_id = ? AND type = 'movie' AND manual_replace = 1 AND id != ?''',
+                (imdb_id, item_id)
+            ).fetchall()
+            stale_rows = cur.execute(
+                f'''SELECT {_fields} FROM media_items m
+                   WHERE m.imdb_id = ? AND m.type = 'movie'
+                   AND m.manual_replace = 1 AND m.id != ?
+                   AND EXISTS (
+                       SELECT 1 FROM media_items m2
+                       WHERE m2.imdb_id = m.imdb_id AND m2.type = 'movie'
+                       AND m2.manual_replace = 0 AND m2.state = 'Collected'
+                   )''',
+                (imdb_id, item_id)
+            ).fetchall()
+            log_tag = 'REPLACE_MOVIE'
+            removal_reason = 'Replaced by new movie torrent'
+            entry_label = 'movie'
+
+        # Merge, deduplicating by id
+        all_rows = {row['id']: row for row in list(old_rows) + list(stale_rows)}
+        if not all_rows:
+            return  # Nothing to clean up
+
+        ids_to_delete = set()
+        plex_scan_paths = set()
+
+        for old_row in all_rows.values():
+            old_id = old_row['id']
+            old_torrent_id = old_row['filled_by_torrent_id']
+            if old_torrent_id and old_torrent_id != new_torrent_id and _debrid_prov:
+                try:
+                    _debrid_prov.remove_torrent(old_torrent_id, removal_reason=removal_reason)
+                    logging.info(f"[{log_tag}] Removed debrid torrent {old_torrent_id} for old entry {old_id}")
+                except Exception as debrid_err:
+                    if '404' in str(debrid_err):
+                        logging.debug(f"[{log_tag}] Old torrent {old_torrent_id} already removed (404)")
+                    else:
+                        logging.error(f"[{log_tag}] Failed to remove torrent {old_torrent_id}: {debrid_err}")
+            item_path = old_row['location_on_disk'] or old_row['filled_by_file']
+            if item_path:
+                ep_title = old_row['episode_title'] if item_type == 'episode' else None
+                title = old_row['title'] or ''
+                try:
+                    if not remove_file_from_plex(title, item_path, ep_title):
+                        logging.warning(f"[{log_tag}] Direct Plex removal failed for '{title}' ({item_path}), will fallback to scan+empty trash")
+                    else:
+                        logging.info(f"[{log_tag}] Removed '{title}' from Plex")
+                except Exception as plex_err:
+                    logging.warning(f"[{log_tag}] Plex removal error for '{title}': {plex_err}")
+                plex_scan_paths.add(_os.path.dirname(item_path))
+            ids_to_delete.add(old_id)
+
+        if ids_to_delete:
+            ids_list = list(ids_to_delete)
+            cur.execute(
+                f"DELETE FROM media_items WHERE id IN ({','.join(['?']*len(ids_list))})",
+                ids_list
+            )
+            conn.commit()
+            logging.info(f"[{log_tag}] Deleted {cur.rowcount} replaced {entry_label} entries. IDs: {ids_list}")
+
+        if plex_scan_paths:
+            try:
+                section_type = 'show' if item_type == 'episode' else 'movie'
+                scan_and_empty_plex_trash(paths=list(plex_scan_paths), section_type=section_type)
+                logging.info(f"[{log_tag}] Triggered Plex scan+empty trash for paths: {list(plex_scan_paths)}")
+            except Exception as scan_err:
+                logging.warning(f"[{log_tag}] Plex scan+empty trash failed: {scan_err}")
+
+    except Exception as err:
+        logging.error(f"[REPLACE] Error in replace cleanup after collect: {err}", exc_info=True)
+        if conn:
+            conn.rollback()
+    finally:
+        if conn:
+            conn.close()
+
 def validate_cinesync_path(path: str) -> bool:
     """
     Validate that the CineSync path is properly configured.
@@ -197,6 +332,13 @@ def handle_state_change(item: Dict[str, Any]) -> None:
             except Exception as e:
                 logging.error(f"Failed to update item size/resolution info: {str(e)}")
                 logging.exception("Size/resolution update traceback:")
+
+            # Trigger replace cleanup if this item replaced a manual_replace=1 item
+            if state == 'Collected':
+                try:
+                    replace_cleanup_after_collect(dict(fresh_item))
+                except Exception as e:
+                    logging.error(f"Failed to run replace cleanup after collect: {str(e)}")
         else:
             logging.warning(f"Unhandled state {state} in post-processing")
 
