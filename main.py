@@ -1734,6 +1734,12 @@ def main():
             save_config(config)
             logging.info("Saved config after setting default monitor_mode for Collected content sources.")
 
+    # --- MIGRATION: Remove spurious hyphenated filter keys and stale scraper keys from version configs ---
+    from routes.settings_routes import migrate_clean_version_filter_keys, migrate_clean_stale_scraper_keys_from_versions
+    migrate_clean_version_filter_keys()
+    migrate_clean_stale_scraper_keys_from_versions()
+    # --- End migration ---
+
     # Batch set deprecated settings
     set_setting('Debug', 'skip_initial_plex_update', False)
     set_setting('Scraping', 'jackett_seeders_only', True)

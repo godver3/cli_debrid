@@ -58,6 +58,7 @@ window.discoverState = {
         watchRegion: 'US',
         selectedNetworks: [],
         excludedNetworks: [],
+        networkCache: {},  // Cache network names by ID for display
         selectedCompanies: [],
         excludedCompanies: [],
         companyCache: {},  // Cache company names by ID for display
@@ -139,9 +140,10 @@ function saveFiltersToStorage() {
             certificationMax: state.filters.certificationMax,
             includeVideo: state.filters.includeVideo,
 
-            // Cache keyword/company names (needed for chip display)
+            // Cache keyword/company/network names (needed for chip display)
             keywordCache: state.filters.keywordCache || {},
-            companyCache: state.filters.companyCache || {}
+            companyCache: state.filters.companyCache || {},
+            networkCache: state.filters.networkCache || {}
         };
         
         localStorage.setItem('discoverFilters', JSON.stringify(filtersToSave));
@@ -716,6 +718,7 @@ function initializeSemanticUI() {
         watchRegionSelect.addEventListener('change', (e) => {
             state.filters.watchRegion = e.target.value;
             loadCertifications(e.target.value);
+            loadProviders(e.target.value);
             updateActiveFilters();
         });
         // Load certifications for initial region on page load
@@ -727,7 +730,8 @@ function initializeSemanticUI() {
     initializeChipsInput('language', state.filters.selectedLanguages, state.filters.excludedLanguages, () => updateActiveFilters());
     initializeChipsInput('country', state.filters.selectedCountries, state.filters.excludedCountries, () => updateActiveFilters());
     initializeChipsInput('provider', state.filters.selectedProviders, state.filters.excludedProviders, () => updateActiveFilters());
-    initializeChipsInput('network', state.filters.selectedNetworks, state.filters.excludedNetworks, () => updateActiveFilters());
+    loadProviders(state.filters.watchRegion || 'US');
+    initializeNetworkFilter();
 
     // Initialize certification range selects
     const certMinSelect = document.getElementById('certification-min-select');
@@ -1401,9 +1405,10 @@ function setupDropdownItemButtons(dropdown) {
         // Skip if already has buttons
         if (item.querySelector('.chips-item-actions')) return;
 
-        const label = item.textContent.trim();
+        const existingLabel = item.querySelector('.chips-item-label');
+        const labelHtml = existingLabel ? existingLabel.outerHTML : `<span class="chips-item-label">${item.textContent.trim()}</span>`;
         item.innerHTML = `
-            <span class="chips-item-label">${label}</span>
+            ${labelHtml}
             <div class="chips-item-actions">
                 <button type="button" class="chips-include-btn" title="Include">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -2115,6 +2120,15 @@ function clearProductionCompanyFilter() {
 function clearAllFilters() {
     const state = window.discoverState;
 
+    // Clear active preset tracking — user is explicitly resetting filters
+    activePresetId = null;
+    activePresetName = null;
+    presetDirty = false;
+    updatePresetButtonState();
+    const presetSelect = document.getElementById('preset-select');
+    if (presetSelect) presetSelect.value = '';
+    saveActivePresetToStorage();
+
  // Set flag to prevent saving during clear
     state.isClearing = true;
     
@@ -2156,6 +2170,7 @@ function clearAllFilters() {
         watchRegion: 'US',
         selectedNetworks: [],
         excludedNetworks: [],
+        networkCache: {},
         selectedCompanies: [],
         excludedCompanies: [],
         companyCache: {},
@@ -2254,6 +2269,15 @@ function clearAllFilters() {
  * @param {boolean} closeDrawer - Whether to close the filter drawer (default: true)
  */
 function applyAdvancedFilters(closeDrawer = true) {
+    // If a preset is active and hasn't been modified yet, mark it dirty now.
+    // activePresetId is null during loadFilterPreset's own applyAdvancedFilters call
+    // (it's set to null at the top of loadFilterPreset), so this only triggers for
+    // subsequent user-initiated filter changes.
+    if (activePresetId && !presetDirty) {
+        presetDirty = true;
+        updatePresetButtonState();
+    }
+
     const state = window.discoverState;
     const listsState = window.sidebarListsState;
 
@@ -3068,28 +3092,22 @@ function updateActiveFilters() {
     // Networks (included) - TV only
     if (state.filters.selectedNetworks.length > 0) {
         const networkNames = state.filters.selectedNetworks
-            .map(networkId => {
-                const network = state.availableNetworks?.find(n => n.id.toString() === networkId.toString());
-                return network ? network.name : networkId;
-            });
+            .map(networkId => state.filters.networkCache?.[networkId] || networkId);
         activeFilters.push({
             key: 'networks',
             label: `Networks: ${networkNames.join(', ')}`,
-            removeFn: () => { state.filters.selectedNetworks = []; updateActiveFilters(); }
+            removeFn: () => { state.filters.selectedNetworks = []; renderNetworkChipsFromState(); updateActiveFilters(); }
         });
     }
 
     // Networks (excluded) - TV only
     if (state.filters.excludedNetworks.length > 0) {
         const networkNames = state.filters.excludedNetworks
-            .map(networkId => {
-                const network = state.availableNetworks?.find(n => n.id.toString() === networkId.toString());
-                return network ? network.name : networkId;
-            });
+            .map(networkId => state.filters.networkCache?.[networkId] || networkId);
         activeFilters.push({
             key: 'excluded_networks',
             label: `Excluded Networks: ${networkNames.join(', ')}`,
-            removeFn: () => { state.filters.excludedNetworks = []; updateActiveFilters(); }
+            removeFn: () => { state.filters.excludedNetworks = []; renderNetworkChipsFromState(); updateActiveFilters(); }
         });
     }
 
@@ -3489,6 +3507,14 @@ function toggleFilterSection(section) {
  * Clear all filters and reload trending content
  */
 function clearFiltersAndReload() {
+    // Clear active preset tracking
+    activePresetId = null;
+    activePresetName = null;
+    presetDirty = false;
+    updatePresetButtonState();
+    const presetSelectEl = document.getElementById('preset-select');
+    if (presetSelectEl) presetSelectEl.value = '';
+
     // Clear saved filters from localStorage FIRST
     clearSavedFilters();
     
@@ -3535,6 +3561,7 @@ function clearFiltersAndReload() {
         watchRegion: 'US',
         selectedNetworks: [],
         excludedNetworks: [],
+        networkCache: {},
         selectedCompanies: [],
         excludedCompanies: [],
         companyCache: {},
@@ -3771,7 +3798,7 @@ function restoreChipsFromState() {
             applyChipsFromSavedFilters('provider', f.selectedProviders || [], f.excludedProviders || []);
         }
         if (f.selectedNetworks || f.excludedNetworks) {
-            applyChipsFromSavedFilters('network', f.selectedNetworks || [], f.excludedNetworks || []);
+            renderNetworkChipsFromState();
         }
         if (f.selectedCertifications || f.excludedCertifications) {
             applyChipsFromSavedFilters('certification', f.selectedCertifications || [], f.excludedCertifications || []);
@@ -4959,7 +4986,7 @@ function applyFiltersToUI(filters) {
     if (filters.network) {
         const networkIds = filters.network.split(',').filter(v => v);
         state.filters.selectedNetworks = networkIds;
-        applyChipsFromSavedFilters('network', networkIds, []);
+        renderNetworkChipsFromState();
     }
 
     // Companies
@@ -5565,10 +5592,101 @@ document.addEventListener('DOMContentLoaded', function() {
 // Filter Presets Functionality
 // =============================================================================
 
+// --- Preset active state tracking ---
+let activePresetId = null;
+let activePresetName = null;
+let presetDirty = false;
+
+const PRESET_STORAGE_KEY = 'discoverActivePreset';
+
+// Get the last non-empty text node from the button (the visible label, not whitespace before SVG)
+function getPresetBtnTextNode(btn) {
+    const textNodes = [...btn.childNodes].filter(n => n.nodeType === Node.TEXT_NODE && n.textContent.trim() !== '');
+    return textNodes[textNodes.length - 1] || null;
+}
+
+function saveActivePresetToStorage() {
+    if (activePresetId) {
+        localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify({ id: activePresetId, name: activePresetName }));
+    } else {
+        localStorage.removeItem(PRESET_STORAGE_KEY);
+    }
+}
+
+function restoreActivePresetFromStorage() {
+    try {
+        const stored = localStorage.getItem(PRESET_STORAGE_KEY);
+        if (!stored) return;
+        const { id, name } = JSON.parse(stored);
+        if (!id) return;
+        // Verify the preset still exists in the dropdown (already populated at this point)
+        const presetSelect = document.getElementById('preset-select');
+        if (presetSelect && [...presetSelect.options].some(opt => opt.value === id)) {
+            activePresetId = id;
+            activePresetName = name;
+            presetDirty = false;
+            presetSelect.value = id;
+            const deleteBtn = document.getElementById('delete-preset-btn');
+            if (deleteBtn) deleteBtn.disabled = false;
+            updatePresetButtonState();
+        } else {
+            // Preset no longer exists — clear stale storage
+            localStorage.removeItem(PRESET_STORAGE_KEY);
+        }
+    } catch (e) {
+        localStorage.removeItem(PRESET_STORAGE_KEY);
+    }
+}
+
+function updatePresetButtonState() {
+    const btn = document.getElementById('save-preset-btn');
+    if (!btn) return;
+    const textNode = getPresetBtnTextNode(btn);
+    if (activePresetId && presetDirty) {
+        if (textNode) textNode.textContent = ' Update';
+        btn.title = 'Update loaded preset with current filters';
+    } else {
+        if (textNode) textNode.textContent = ' Preset';
+        btn.title = 'Save current filters as a preset';
+    }
+    saveActivePresetToStorage();
+}
+
+async function updateActivePreset() {
+    if (!activePresetId) return;
+    const filters = buildPresetFiltersObject();
+    const btn = document.getElementById('save-preset-btn');
+    const textNode = btn ? getPresetBtnTextNode(btn) : null;
+
+    if (btn) btn.disabled = true;
+    if (textNode) textNode.textContent = ' Saving...';
+
+    try {
+        const response = await fetch(`/discover/api/presets/${activePresetId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filters })
+        });
+        const data = await response.json();
+        if (data.success) {
+            presetDirty = false;
+            showNotification(`Preset "${activePresetName}" updated!`, 'success');
+        } else {
+            throw new Error(data.error || 'Failed to update preset');
+        }
+    } catch (error) {
+        showNotification(error.message || 'Failed to update preset', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+        updatePresetButtonState();
+    }
+}
+// --- End preset active state tracking ---
+
 /**
  * Initialize filter preset functionality
  */
-function initFilterPresets() {
+async function initFilterPresets() {
     const savePresetBtn = document.getElementById('save-preset-btn');
     const presetModal = document.getElementById('preset-modal');
     const presetCloseBtn = document.getElementById('preset-modal-close');
@@ -5577,9 +5695,15 @@ function initFilterPresets() {
     const presetSelect = document.getElementById('preset-select');
     const deletePresetBtn = document.getElementById('delete-preset-btn');
 
-    // Open preset save modal
+    // Open preset save modal, or update the active preset if one is loaded and dirty
     if (savePresetBtn) {
-        savePresetBtn.addEventListener('click', openPresetModal);
+        savePresetBtn.addEventListener('click', function() {
+            if (activePresetId && presetDirty) {
+                updateActivePreset();
+            } else {
+                openPresetModal();
+            }
+        });
     }
 
     // Close modal buttons
@@ -5624,8 +5748,9 @@ function initFilterPresets() {
         });
     }
 
-    // Load presets into dropdown
-    loadPresetsIntoDropdown();
+    // Load presets into dropdown, then restore active preset from localStorage
+    await loadPresetsIntoDropdown();
+    restoreActivePresetFromStorage();
 }
 
 /**
@@ -5894,6 +6019,22 @@ function buildPresetFiltersObject() {
     if (state.filters.excludedNetworks && state.filters.excludedNetworks.length > 0) {
         filters.network_exclude = state.filters.excludedNetworks.join(',');
     }
+    // Save network names for display on restore
+    if (state.filters.networkCache) {
+        const networkNames = {};
+        const allNetworkIds = [
+            ...(state.filters.selectedNetworks || []),
+            ...(state.filters.excludedNetworks || [])
+        ];
+        allNetworkIds.forEach(id => {
+            if (state.filters.networkCache[id]) {
+                networkNames[id] = state.filters.networkCache[id];
+            }
+        });
+        if (Object.keys(networkNames).length > 0) {
+            filters.network_names = networkNames;
+        }
+    }
 
     // Runtime
     if (state.filters.runtimeMin) {
@@ -5936,6 +6077,12 @@ function buildPresetFiltersObject() {
  * Load a filter preset by ID
  */
 async function loadFilterPreset(presetId) {
+    // Reset active preset state immediately so that the applyAdvancedFilters call
+    // during loading doesn't trigger dirty marking.
+    activePresetId = null;
+    presetDirty = false;
+    updatePresetButtonState();
+
     try {
         const response = await fetch(`/discover/api/presets/${presetId}`);
         if (!response.ok) {
@@ -5986,6 +6133,13 @@ async function loadFilterPreset(presetId) {
             // Auto-apply filters to refresh results (keep sidebar open)
             console.log('[Presets] Applying filters with sidebar open - v3');
             applyAdvancedFilters(false);
+
+            // Set active preset state AFTER applyAdvancedFilters so the above call
+            // doesn't trigger dirty marking.
+            activePresetId = presetId;
+            activePresetName = data.preset.name;
+            presetDirty = false;
+            updatePresetButtonState();
         }
     } catch (error) {
         console.error('[Presets] Error loading preset:', error);
@@ -6178,11 +6332,19 @@ function applyPresetFiltersToUI(filters) {
     // Networks
     if (filters.network) {
         state.filters.selectedNetworks = filters.network.split(',').filter(v => v);
-        applyChipsFromSavedFilters('network', state.filters.selectedNetworks, state.filters.excludedNetworks || []);
+        // Restore network names from saved data
+        if (filters.network_names) {
+            state.filters.networkCache = { ...state.filters.networkCache, ...filters.network_names };
+        }
+        renderNetworkChipsFromState();
     }
     if (filters.network_exclude) {
         state.filters.excludedNetworks = filters.network_exclude.split(',').filter(v => v);
-        applyChipsFromSavedFilters('network', state.filters.selectedNetworks || [], state.filters.excludedNetworks);
+        // Restore network names from saved data
+        if (filters.network_names) {
+            state.filters.networkCache = { ...state.filters.networkCache, ...filters.network_names };
+        }
+        renderNetworkChipsFromState();
     }
 
     // Production companies
@@ -6260,6 +6422,10 @@ function clearAllFiltersQuietly() {
     // Clear company chips display
     const companyChips = document.getElementById('company-chips');
     if (companyChips) companyChips.innerHTML = '';
+
+    // Clear network chips display
+    const networkChips = document.getElementById('network-chips');
+    if (networkChips) networkChips.innerHTML = '';
 
     // Clear list selections
     if (window.sidebarListsState) {
@@ -6396,6 +6562,292 @@ function renderCompanyChipsFromState() {
 }
 
 /**
+ * Load streaming providers from TMDB API and populate the provider dropdown
+ */
+async function loadProviders(region) {
+    const state = window.discoverState;
+    const dropdown = document.getElementById('provider-dropdown');
+    if (!dropdown) return;
+
+    region = region || state.filters.watchRegion || 'US';
+
+    dropdown.innerHTML = '<div class="chips-dropdown-empty">Loading providers...</div>';
+
+    try {
+        const response = await fetch(`/discover/api/providers?region=${encodeURIComponent(region)}`);
+        if (!response.ok) throw new Error('Failed to load providers');
+
+        const data = await response.json();
+        const providers = data.providers || [];
+
+        dropdown.innerHTML = '';
+        providers.forEach(provider => {
+            const item = document.createElement('div');
+            item.className = 'chips-dropdown-item';
+            item.setAttribute('data-value', provider.id.toString());
+
+            const logoHtml = provider.logo_path
+                ? `<img src="https://image.tmdb.org/t/p/w45${provider.logo_path}" alt="" style="width:28px;height:18px;object-fit:contain;margin-right:6px;flex-shrink:0;border-radius:3px;">`
+                : `<span style="width:28px;margin-right:6px;flex-shrink:0;"></span>`;
+            item.innerHTML = `<span class="chips-item-label" style="display:flex;align-items:center;">${logoHtml}${provider.name}</span>`;
+
+            if (state.filters.selectedProviders.includes(provider.id.toString())) {
+                item.classList.add('included');
+            } else if (state.filters.excludedProviders.includes(provider.id.toString())) {
+                item.classList.add('excluded');
+            }
+
+            dropdown.appendChild(item);
+        });
+
+        // Setup +/- buttons on the newly added items
+        setupDropdownItemButtons(dropdown);
+
+    } catch (error) {
+        console.error('[Discover] Failed to load providers:', error);
+        dropdown.innerHTML = '<div class="chips-dropdown-empty">Failed to load providers</div>';
+    }
+}
+
+/**
+ * Initialize network filter with dynamic API search
+ */
+function initializeNetworkFilter() {
+    const container = document.getElementById('network-container');
+    if (!container) return;
+
+    const chipsWrapper = container.querySelector('#network-chips');
+    const searchInput = container.querySelector('#network-search');
+    const dropdown = container.querySelector('#network-dropdown');
+    const dropdownToggle = container.querySelector('#network-dropdown-toggle');
+
+    if (!chipsWrapper || !searchInput || !dropdown) return;
+
+    let searchTimeout = null;
+
+    // Toggle dropdown on button click
+    if (dropdownToggle) {
+        dropdownToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isShowing = dropdown.classList.toggle('show');
+            if (isShowing && searchInput.value.trim().length >= 2) {
+                positionDropdown(dropdown, container);
+            }
+        });
+    }
+
+    // Search networks on input with debounce
+    searchInput.addEventListener('input', (e) => {
+        const query = e.target.value.trim();
+
+        if (searchTimeout) clearTimeout(searchTimeout);
+
+        if (query.length < 2) {
+            dropdown.innerHTML = '<div class="chips-dropdown-empty">Type to search networks...</div>';
+            return;
+        }
+
+        dropdown.innerHTML = '<div class="chips-dropdown-empty">Searching...</div>';
+        dropdown.classList.add('show');
+        positionDropdown(dropdown, container);
+
+        searchTimeout = setTimeout(async () => {
+            try {
+                const response = await fetch(`/discover/api/networks?query=${encodeURIComponent(query)}`);
+                if (!response.ok) throw new Error('Search failed');
+
+                const data = await response.json();
+                renderNetworkDropdown(data.networks || [], dropdown, chipsWrapper);
+                positionDropdown(dropdown, container);
+            } catch (error) {
+                console.error('[Discover] Network search error:', error);
+                dropdown.innerHTML = '<div class="chips-dropdown-empty">Search failed</div>';
+            }
+        }, 300);
+    });
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!container.contains(e.target)) {
+            dropdown.classList.remove('show');
+        }
+    });
+}
+
+/**
+ * Render network search results in dropdown
+ */
+function renderNetworkDropdown(networks, dropdown, chipsWrapper) {
+    const state = window.discoverState;
+
+    if (networks.length === 0) {
+        dropdown.innerHTML = '<div class="chips-dropdown-empty">No networks found</div>';
+        return;
+    }
+
+    dropdown.innerHTML = '';
+
+    networks.forEach(network => {
+        const item = document.createElement('div');
+        item.className = 'chips-dropdown-item';
+        item.setAttribute('data-value', network.id.toString());
+
+        // Check if already selected/excluded
+        if (state.filters.selectedNetworks.includes(network.id.toString())) {
+            item.classList.add('included');
+        } else if (state.filters.excludedNetworks.includes(network.id.toString())) {
+            item.classList.add('excluded');
+        }
+
+        const logoHtml = network.logo_path
+            ? `<img src="https://image.tmdb.org/t/p/w45${network.logo_path}" alt="" class="network-logo" style="width:28px;height:18px;object-fit:contain;margin-right:6px;flex-shrink:0;">`
+            : `<span style="width:28px;margin-right:6px;flex-shrink:0;"></span>`;
+
+        item.innerHTML = `
+            <span class="chips-item-label" style="display:flex;align-items:center;">${logoHtml}${network.name}</span>
+            <div class="chips-item-actions">
+                <button type="button" class="chips-include-btn" title="Include">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+                    </svg>
+                </button>
+                <button type="button" class="chips-exclude-btn" title="Exclude">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4" />
+                    </svg>
+                </button>
+            </div>
+        `;
+
+        // Include button
+        item.querySelector('.chips-include-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleNetwork(network.id.toString(), network.name, 'include', item, chipsWrapper);
+        });
+
+        // Exclude button
+        item.querySelector('.chips-exclude-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleNetwork(network.id.toString(), network.name, 'exclude', item, chipsWrapper);
+        });
+
+        dropdown.appendChild(item);
+    });
+}
+
+/**
+ * Toggle network selection (include/exclude)
+ */
+function toggleNetwork(networkId, networkName, action, dropdownItem, chipsWrapper) {
+    const state = window.discoverState;
+    const selectedArray = state.filters.selectedNetworks;
+    const excludedArray = state.filters.excludedNetworks;
+
+    // Cache the network name for display
+    state.filters.networkCache[networkId] = networkName;
+
+    // Remove from both arrays first
+    const selectedIdx = selectedArray.indexOf(networkId);
+    const excludedIdx = excludedArray.indexOf(networkId);
+    if (selectedIdx > -1) selectedArray.splice(selectedIdx, 1);
+    if (excludedIdx > -1) excludedArray.splice(excludedIdx, 1);
+
+    // Update dropdown item state
+    dropdownItem.classList.remove('included', 'excluded');
+
+    if (action === 'include' && selectedIdx === -1) {
+        selectedArray.push(networkId);
+        dropdownItem.classList.add('included');
+    } else if (action === 'exclude' && excludedIdx === -1) {
+        excludedArray.push(networkId);
+        dropdownItem.classList.add('excluded');
+    }
+
+    // Re-render chips
+    renderNetworkChips(chipsWrapper);
+    updateActiveFilters();
+}
+
+/**
+ * Render network chips
+ */
+function renderNetworkChips(chipsWrapper) {
+    const state = window.discoverState;
+    chipsWrapper.innerHTML = '';
+
+    // Render included networks
+    state.filters.selectedNetworks.forEach(networkId => {
+        const name = state.filters.networkCache[networkId] || networkId;
+        const chip = document.createElement('span');
+        chip.className = 'chip included';
+        chip.setAttribute('data-value', networkId);
+        chip.innerHTML = `${name} <button type="button" class="chip-remove">&times;</button>`;
+        chip.querySelector('.chip-remove').addEventListener('click', () => {
+            const idx = state.filters.selectedNetworks.indexOf(networkId);
+            if (idx > -1) state.filters.selectedNetworks.splice(idx, 1);
+            renderNetworkChips(chipsWrapper);
+            updateActiveFilters();
+        });
+        chipsWrapper.appendChild(chip);
+    });
+
+    // Render excluded networks
+    state.filters.excludedNetworks.forEach(networkId => {
+        const name = state.filters.networkCache[networkId] || networkId;
+        const chip = document.createElement('span');
+        chip.className = 'chip excluded';
+        chip.setAttribute('data-value', networkId);
+        chip.innerHTML = `${name} <button type="button" class="chip-remove">&times;</button>`;
+        chip.querySelector('.chip-remove').addEventListener('click', () => {
+            const idx = state.filters.excludedNetworks.indexOf(networkId);
+            if (idx > -1) state.filters.excludedNetworks.splice(idx, 1);
+            renderNetworkChips(chipsWrapper);
+            updateActiveFilters();
+        });
+        chipsWrapper.appendChild(chip);
+    });
+}
+
+/**
+ * Render network chips from state after loading preset/filters
+ */
+function renderNetworkChipsFromState() {
+    const state = window.discoverState;
+    const chipsWrapper = document.getElementById('network-chips');
+    if (!chipsWrapper || !state || !state.filters) return;
+
+    chipsWrapper.innerHTML = '';
+
+    state.filters.selectedNetworks.forEach(networkId => {
+        const networkName = state.filters.networkCache?.[networkId] || `Network ${networkId}`;
+        const chip = document.createElement('span');
+        chip.className = 'chip chip-include';
+        chip.innerHTML = `<span class="chip-icon">+</span>${networkName} <button type="button" class="chip-remove">&times;</button>`;
+        chip.querySelector('.chip-remove').addEventListener('click', () => {
+            const idx = state.filters.selectedNetworks.indexOf(networkId);
+            if (idx > -1) state.filters.selectedNetworks.splice(idx, 1);
+            renderNetworkChipsFromState();
+            updateActiveFilters();
+        });
+        chipsWrapper.appendChild(chip);
+    });
+
+    state.filters.excludedNetworks.forEach(networkId => {
+        const networkName = state.filters.networkCache?.[networkId] || `Network ${networkId}`;
+        const chip = document.createElement('span');
+        chip.className = 'chip chip-exclude';
+        chip.innerHTML = `<span class="chip-icon">-</span>${networkName} <button type="button" class="chip-remove">&times;</button>`;
+        chip.querySelector('.chip-remove').addEventListener('click', () => {
+            const idx = state.filters.excludedNetworks.indexOf(networkId);
+            if (idx > -1) state.filters.excludedNetworks.splice(idx, 1);
+            renderNetworkChipsFromState();
+            updateActiveFilters();
+        });
+        chipsWrapper.appendChild(chip);
+    });
+}
+
+/**
  * Delete the currently selected preset
  */
 async function deleteSelectedPreset() {
@@ -6422,6 +6874,14 @@ async function deleteSelectedPreset() {
 
         if (data.success) {
             showNotification(`Preset "${presetName}" deleted!`, 'success');
+
+            // If the deleted preset was the active one, clear active preset state
+            if (presetId === activePresetId) {
+                activePresetId = null;
+                activePresetName = null;
+                presetDirty = false;
+                updatePresetButtonState();
+            }
 
             // Refresh the dropdown
             await loadPresetsIntoDropdown();

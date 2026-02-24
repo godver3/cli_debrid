@@ -155,6 +155,7 @@ async function loadMovieData() {
 
         if (data.success) {
             movieData = data.movie;
+            movieData.has_pending_replace = data.has_pending_replace || false;
             filesData = data.files;
 
             renderMovieHeader(movieData);
@@ -320,6 +321,13 @@ function renderMovieHeader(movie) {
         sizeValue.textContent = `${movie.size.toFixed(2)} GB`;
     } else if (sizeValue) {
         sizeValue.textContent = '-';
+    }
+
+    // Update discover button
+    const discoverBtn = document.getElementById('btn-discover');
+    if (discoverBtn && movie.tmdb_id) {
+        discoverBtn.href = `/discover/details/${movie.tmdb_id}/movie`;
+        discoverBtn.style.display = '';
     }
 
     // Update external links in header
@@ -1062,6 +1070,30 @@ function initializeDeletionHandlers() {
                 deleteFilesBtn.style.display = 'none';
             }
         }
+
+        // Replace movie button
+        const replaceMovieBtn = document.querySelector('.replace-movie-btn');
+        if (replaceMovieBtn) {
+            const hasPendingReplace = movieData && movieData.has_pending_replace;
+            if (hasPendingReplace) {
+                replaceMovieBtn.classList.add('replace-movie-pending');
+                replaceMovieBtn.title = 'Cancel movie replacement';
+                replaceMovieBtn.querySelector('span.action-text').textContent = 'Cancel Replace';
+                replaceMovieBtn.addEventListener('click', handleCancelMovieReplace);
+                // Show pending badge next to h2
+                const filesH2 = document.querySelector('.files-header h2');
+                if (filesH2 && !filesH2.querySelector('.replace-pending-badge')) {
+                    filesH2.insertAdjacentHTML('beforeend', '<span class="replace-pending-badge">Replacement Pending</span>');
+                }
+            } else {
+                replaceMovieBtn.addEventListener('click', handleReplaceMovie);
+            }
+            if (filesData && filesData.length > 0) {
+                replaceMovieBtn.style.display = 'inline-flex';
+            } else {
+                replaceMovieBtn.style.display = 'none';
+            }
+        }
     }
 
     // Individual file delete buttons
@@ -1291,15 +1323,15 @@ async function handleDeleteSingleFile(event) {
 }
 
 /**
- * Show file selection popup for bulk deletion
+ * Show file selection popup for bulk deletion or replacement
  */
-function showMovieFileSelectionPopup(files, movieTitle) {
+function showMovieFileSelectionPopup(files, movieTitle, actionLabel = 'Delete') {
     return new Promise((resolve) => {
         // Create popup HTML
         const popupHtml = `
             <div class="file-selection-popup-overlay" id="movieFileSelectionPopup">
                 <div class="file-selection-popup">
-                    <h3>Select Files to Delete</h3>
+                    <h3>Select Files to ${actionLabel}</h3>
                     <p class="file-selection-subtitle">${escapeHtml(movieTitle)}</p>
                     <div class="file-selection-list">
                         ${files.map((file, index) => `
@@ -1318,7 +1350,7 @@ function showMovieFileSelectionPopup(files, movieTitle) {
                     </div>
                     <div class="file-selection-actions">
                         <button class="file-selection-btn file-selection-cancel">Cancel</button>
-                        <button class="file-selection-btn file-selection-delete">Delete Selected</button>
+                        <button class="file-selection-btn file-selection-delete">${actionLabel} Selected</button>
                     </div>
                 </div>
             </div>
@@ -1661,4 +1693,119 @@ function displayCast(cast) {
     }
 
     castSection.style.display = 'block';
+}
+
+/**
+ * Handle Replace Movie button click
+ */
+async function handleReplaceMovie() {
+    if (!movieData) return;
+
+    if (!filesData || filesData.length === 0) {
+        moviePopup({
+            type: window.POPUP_TYPES.ERROR,
+            message: 'No files available to replace',
+            autoClose: 3000
+        });
+        return;
+    }
+
+    // Show file selection popup only when there is more than one file to choose from
+    let selectedFileIds;
+    if (filesData.length === 1) {
+        selectedFileIds = [filesData[0].id];
+    } else {
+        selectedFileIds = await showMovieFileSelectionPopup(filesData, movieData.title, 'Replace');
+        if (!selectedFileIds || selectedFileIds.length === 0) return;
+    }
+
+    // Mark selected files for replacement
+    try {
+        const resp = await fetch('/library/mark_movie_replace', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ file_ids: selectedFileIds })
+        });
+        const data = await resp.json();
+        if (!data.success) {
+            moviePopup({ type: window.POPUP_TYPES.ERROR, message: data.error || 'Failed to mark movie for replacement', autoClose: 4000 });
+            return;
+        }
+    } catch (err) {
+        moviePopup({ type: window.POPUP_TYPES.ERROR, message: 'Failed to mark movie for replacement', autoClose: 4000 });
+        return;
+    }
+
+    // Reload to show the pending badge, then open torrent picker
+    await loadMovieData();
+
+    const version = movieData.version || 'Default';
+    const genres = movieData.genres ?
+        (typeof movieData.genres === 'string' ? movieData.genres.split(',').map(g => g.trim()) : movieData.genres)
+        : [];
+
+    // Watch the overlay: if it is closed without a torrent being queued, auto-cancel the replacement
+    const _overlay = document.getElementById('overlay');
+    if (_overlay) {
+        window._scraperTorrentWasQueued = false;
+        let _overlayWasOpened = false;
+        const _observer = new MutationObserver(async () => {
+            const d = _overlay.style.display;
+            if (d !== 'none' && d !== '') {
+                _overlayWasOpened = true;
+            } else if (_overlayWasOpened && d === 'none') {
+                _observer.disconnect();
+                if (!window._scraperTorrentWasQueued) {
+                    // Scraper closed without selecting a torrent — silently cancel the pending replacement
+                    try {
+                        await fetch('/library/cancel_movie_replace', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ imdb_id: movieData.imdb_id })
+                        });
+                        await loadMovieData();
+                    } catch (e) { /* ignore */ }
+                } else {
+                    window._scraperTorrentWasQueued = false;
+                }
+            }
+        });
+        _observer.observe(_overlay, { attributes: true, attributeFilter: ['style'] });
+    }
+
+    await selectMedia(
+        movieData.tmdb_id || movieData.id,
+        movieData.title,
+        movieData.year || '',
+        'movie',
+        null,
+        null,
+        false,
+        genres,
+        version
+    );
+}
+
+/**
+ * Handle Cancel Movie Replace button click
+ */
+async function handleCancelMovieReplace() {
+    if (!movieData) return;
+
+    try {
+        const resp = await fetch('/library/cancel_movie_replace', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ imdb_id: movieData.imdb_id })
+        });
+        const data = await resp.json();
+        if (data.success) {
+            moviePopup({ type: window.POPUP_TYPES.SUCCESS, message: 'Movie replacement cancelled', autoClose: 3000 });
+            loadMovieData();
+        } else {
+            moviePopup({ type: window.POPUP_TYPES.ERROR, message: data.error || 'Failed to cancel replacement', autoClose: 4000 });
+        }
+    } catch (err) {
+        moviePopup({ type: window.POPUP_TYPES.ERROR, message: 'Failed to cancel replacement', autoClose: 4000 });
+    }
 }

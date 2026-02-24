@@ -1999,7 +1999,9 @@ def check_cache_status():
             is_cached = None
             if magnet_link:
                 logging.debug(f"Checking cache status for magnet link at index {index}")
-                is_cached = torrent_processor.check_cache(magnet_link, remove_cached=True, item=item_for_check)
+                # Pass item=None so the is_in_db protection does not block removal of freshly-added
+                # check torrents. Pre-existing torrents are protected by was_preexisting in is_cached().
+                is_cached = torrent_processor.check_cache(magnet_link, remove_cached=True, item=None)
                 
                 # Update PhalanxDB with new cache status if enabled
                 if cache_manager and torrent_hash: # Check cache_manager is not None
@@ -2016,7 +2018,7 @@ def check_cache_status():
                     
             elif torrent_url:
                 logging.info(f"Checking cache status for torrent URL at index {index}")
-                is_cached = torrent_processor.check_cache_for_url(torrent_url, remove_cached=True, item=item_for_check)
+                is_cached = torrent_processor.check_cache_for_url(torrent_url, remove_cached=True, item=None)
                 
                 # Update PhalanxDB with new cache status if enabled
                 if cache_manager and torrent_hash: # Check cache_manager is not None
