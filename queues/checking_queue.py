@@ -326,7 +326,16 @@ class CheckingQueue:
             status_result = self.debrid_provider.get_torrent_info_with_status(torrent_id)
 
             if status_result.status == TorrentFetchStatus.OK:
-                return status_result.data.get('progress', 0) if isinstance(status_result.data, dict) else 0
+                if isinstance(status_result.data, dict):
+                    progress = status_result.data.get('progress', 0)
+                    rd_status = status_result.data.get('status', '')
+                    # If RD says it's actively downloading but progress hasn't ticked up yet,
+                    # return a small non-zero value so get_torrent_state treats it as 'downloading'
+                    # rather than 'unknown' (which accumulates strikes and prematurely stalls it).
+                    if progress == 0 and rd_status == 'downloading':
+                        return 0.1
+                    return progress
+                return 0
             elif status_result.status == TorrentFetchStatus.NOT_FOUND:
                 logging.info(f"Torrent {torrent_id} confirmed NOT FOUND (404) by provider.")
                 return PROGRESS_RESULT_MISSING
