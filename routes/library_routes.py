@@ -1490,6 +1490,7 @@ def show_detail_data(media_id):
                 'tmdb_id': show_data['tmdb_id'],
                 'imdb_id': show_data['imdb_id'],
                 'tvdb_id': tvdb_id,
+                'tvdb_slug': tvdb_slug,
                 'version': show_data['version'],
                 'poster_url': poster_url,
                 'backdrop_url': backdrop_url,
@@ -1824,6 +1825,53 @@ def refresh_show_metadata(media_id):
             media_id
         ))
 
+        # Add any episodes that are in the refreshed metadata but not yet in the DB.
+        # This handles the case where new episodes have been announced/released since the
+        # show was first requested (e.g. "3 of 8 episodes" becoming "8 of 8").
+        new_episodes_added = 0
+        try:
+            from metadata.metadata import process_metadata
+            from database.wanted_items import add_wanted_items
+
+            # Get the versions used by existing episodes of this show
+            cursor.execute(
+                "SELECT versions FROM media_items WHERE imdb_id = ? AND type = 'episode' AND versions IS NOT NULL LIMIT 1",
+                (imdb_id,)
+            )
+            versions_row = cursor.fetchone()
+            import json as _json
+            existing_versions = {}
+            if versions_row and versions_row[0]:
+                try:
+                    existing_versions = _json.loads(versions_row[0])
+                except Exception:
+                    pass
+
+            wanted_item = {
+                'imdb_id': imdb_id,
+                'tmdb_id': tmdb_id,
+                'media_type': 'tv',
+                'title': title,
+                'versions': existing_versions,
+                'content_source': 'content_requester',
+                'content_source_detail': 'Metadata-Refresh',
+            }
+            db_content.commit()  # Commit current updates before process_metadata reads the DB
+
+            processed = process_metadata([wanted_item])
+            if processed:
+                new_items = processed.get('episodes', [])
+                if new_items:
+                    for ep in new_items:
+                        ep['content_source'] = 'content_requester'
+                        ep['content_source_detail'] = 'Metadata-Refresh'
+                    added = add_wanted_items(new_items, existing_versions)
+                    new_episodes_added = added or 0
+                    if new_episodes_added:
+                        logging.info(f"Metadata refresh for {title}: added {new_episodes_added} previously-missing episode(s) to the queue.")
+        except Exception as e_add:
+            logging.warning(f"Could not add missing episodes during metadata refresh for {imdb_id}: {e_add}")
+
         db_content.commit()
         cursor.close()
         db_content.close()
@@ -1841,12 +1889,17 @@ def refresh_show_metadata(media_id):
             except Exception as e:
                 logging.warning(f"Failed to clear poster cache: {e}")
 
-        logging.info(f"Refreshed metadata for {title} (IMDb: {imdb_id}): Updated {updated_count} episode titles from {source}{', TMDB data updated' if tmdb_updated else ''}")
+        logging.info(f"Refreshed metadata for {title} (IMDb: {imdb_id}): Updated {updated_count} episode titles from {source}, added {new_episodes_added} missing episode(s){', TMDB data updated' if tmdb_updated else ''}")
+
+        msg = f'Metadata refreshed for {title}'
+        if new_episodes_added:
+            msg += f' — added {new_episodes_added} previously-missing episode(s) to the queue'
 
         return jsonify({
             'success': True,
-            'message': f'Metadata refreshed for {title}',
+            'message': msg,
             'updated_episodes': updated_count,
+            'new_episodes_added': new_episodes_added,
             'tmdb_updated': tmdb_updated,
             'source': source,
             'cache_cleared': tmdb_id is not None

@@ -2094,6 +2094,7 @@ def details_data(tmdb_id, media_type):
 
         # For TV shows: Use TVDB for seasons/episodes if TVDB API key is configured
         # This ensures proper season splits (not TMDB absolute numbering for anime)
+        tvdb_slug = None
         if media_type == 'tv':
             tvdb_api_key = get_setting('TVDB', 'api_key', '')
             if tvdb_api_key:
@@ -2107,6 +2108,9 @@ def details_data(tmdb_id, media_type):
 
                         # Fetch show data from TVDB (returns full show metadata including seasons)
                         tvdb_show_data = tvdb_client.get_show_data(imdb_id_from_tmdb)
+
+                        if tvdb_show_data:
+                            tvdb_slug = tvdb_show_data.get('ids', {}).get('slug')
 
                         if tvdb_show_data and 'seasons' in tvdb_show_data:
                             # TVDB seasons format: {season_number: {'episode_count': N, 'episodes': {...}}}
@@ -2189,6 +2193,7 @@ def details_data(tmdb_id, media_type):
                 'tmdb_id': data.get('id'),
                 'imdb_id': data.get('external_ids', {}).get('imdb_id') if isinstance(data.get('external_ids'), dict) else None,
                 'tvdb_id': data.get('external_ids', {}).get('tvdb_id') if isinstance(data.get('external_ids'), dict) else None,
+                'tvdb_slug': tvdb_slug,
                 'seasons': data.get('seasons', []) if isinstance(data.get('seasons'), list) else []
             }
         else:
@@ -2283,64 +2288,47 @@ def season_episodes(tmdb_id, season_number):
         logging.info(f"Season episodes request for TMDB {tmdb_id}, season {season_number}")
         logging.info(f"TVDB API key configured: {bool(tvdb_api_key)}")
 
-        if tvdb_api_key:
+        # Always fetch episode list from TMDB live API — TMDB is authoritative for episode counts
+        # and always returns all episodes (including TBA ones). The battery cache may be stale.
+        logging.info(f"Fetching TMDB episodes for season {season_number} of TMDB ID {tmdb_id}")
+        url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_number}?api_key={tmdb_api_key}&language=en-US"
+        response = requests.get(url, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+
+        # If TVDB is configured, supplement episode titles from TVDB (may have better English titles)
+        # but only for episodes where TMDB has no title — never use TVDB to limit the episode list.
+        if tvdb_api_key and data.get('episodes'):
             try:
                 from cli_battery.app import tvdb_client
                 from cli_battery.app.direct_api import DirectAPI
 
-                # Get IMDb ID from TMDB
-                logging.info(f"Converting TMDB ID {tmdb_id} to IMDb ID...")
                 imdb_id, source = DirectAPI.tmdb_to_imdb(str(tmdb_id), media_type='tv')
-                logging.info(f"IMDb ID resolution: {imdb_id} from {source}")
-
                 if imdb_id:
-                    logging.info(f"Fetching TVDB episodes for season {season_number} of TMDB ID {tmdb_id} (IMDb: {imdb_id})")
                     tvdb_show_data = tvdb_client.get_show_data(imdb_id)
-                    logging.info(f"TVDB show data received: {bool(tvdb_show_data)}")
-
                     if tvdb_show_data and 'seasons' in tvdb_show_data:
-                        # TVDB seasons format: {season_number: {'episode_count': N, 'episodes': {...}}}
                         tvdb_seasons = tvdb_show_data['seasons']
-
-                        # Get the requested season
                         season_data = tvdb_seasons.get(season_number) or tvdb_seasons.get(str(season_number))
-
                         if season_data and 'episodes' in season_data:
-                            # Convert TVDB episode format to TMDB-like format
-                            # TVDB: {ep_num: {'title': ..., 'overview': ..., 'first_aired': ..., 'runtime': ...}}
-                            # TMDB: [{'episode_number': N, 'name': ..., 'overview': ..., 'air_date': ..., 'runtime': ...}]
                             tvdb_episodes = season_data['episodes']
-                            episodes_list = []
-
+                            # Build lookup: ep_num -> tvdb title/overview/air_date
+                            tvdb_ep_map = {}
                             for ep_num, ep_data in tvdb_episodes.items():
                                 if isinstance(ep_data, dict):
-                                    episodes_list.append({
-                                        'episode_number': int(ep_num) if str(ep_num).isdigit() else ep_num,
-                                        'name': ep_data.get('title', f"Episode {ep_num}"),
-                                        'overview': ep_data.get('overview', ''),
-                                        'air_date': ep_data.get('first_aired', '').split('T')[0] if ep_data.get('first_aired') else None,
-                                        'runtime': ep_data.get('runtime', 0),
-                                        'still_path': None  # TVDB doesn't provide episode stills
-                                    })
-
-                            # Create TMDB-compatible response
-                            data = {
-                                'season_number': season_number,
-                                'episodes': sorted(episodes_list, key=lambda x: x['episode_number'])
-                            }
-                            logging.info(f"✅ Using TVDB episodes for season {season_number} ({len(episodes_list)} episodes)")
+                                    key = int(ep_num) if str(ep_num).isdigit() else ep_num
+                                    tvdb_ep_map[key] = ep_data
+                            # Supplement TMDB episodes with TVDB titles where TMDB has none
+                            for ep in data['episodes']:
+                                ep_num = ep.get('episode_number')
+                                if ep_num in tvdb_ep_map:
+                                    tvdb_ep = tvdb_ep_map[ep_num]
+                                    if not ep.get('name') and tvdb_ep.get('title'):
+                                        ep['name'] = tvdb_ep['title']
+                                    if not ep.get('air_date') and tvdb_ep.get('first_aired'):
+                                        ep['air_date'] = tvdb_ep['first_aired'].split('T')[0]
+                            logging.info(f"Supplemented TMDB episodes with TVDB titles for season {season_number}")
             except Exception as e:
-                logging.warning(f"Failed to fetch TVDB episodes for season {season_number}: {e}")
-                import traceback
-                logging.debug(f"TVDB error traceback: {traceback.format_exc()}")
-
-        # Fallback to TMDB if TVDB didn't work
-        if not data:
-            logging.info(f"Fetching TMDB episodes for season {season_number} of TMDB ID {tmdb_id}")
-            url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season_number}?api_key={tmdb_api_key}&language=en-US"
-            response = requests.get(url, timeout=15)
-            response.raise_for_status()
-            data = response.json()
+                logging.debug(f"TVDB supplement failed for season {season_number}: {e}")
 
         # Query database for episodes in this show/season
         conn = get_db_connection()

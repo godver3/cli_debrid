@@ -796,7 +796,7 @@
         if (isMobile) {
             // MOBILE VIEW - Simple cards
             const header = document.createElement('h3');
-            header.textContent = `Torrent Results for ${title} (${year})`;
+            header.textContent = `Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}`;
             overlayContent.appendChild(header);
 
             if (allDisplayItems.length === 0) {
@@ -876,7 +876,7 @@
             }
             // Fallback to simple display if scraper.js function not available
             const header = document.createElement('h3');
-            header.textContent = `Torrent Results for ${title} (${year})`;
+            header.textContent = `Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}`;
             overlayContent.appendChild(header);
 
             const gridContainer = document.createElement('div');
@@ -940,7 +940,7 @@
         } else {
             // CLASSIC THEME - Simple grid
             const header = document.createElement('h3');
-            header.textContent = `Torrent Results for ${title} (${year})`;
+            header.textContent = `Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}`;
             overlayContent.appendChild(header);
 
             if (allDisplayItems.length === 0) {

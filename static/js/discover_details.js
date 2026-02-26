@@ -166,7 +166,8 @@ function displayContent(data) {
     }
 
     // Set title
-    document.getElementById('movie-title').textContent = data.title + (data.year ? ` (${data.year})` : '');
+    const titleAlreadyHasYear = data.year && data.title.trim().endsWith(`(${data.year})`);
+    document.getElementById('movie-title').textContent = data.title + (data.year && !titleAlreadyHasYear ? ` (${data.year})` : '');
     document.title = `${data.title} - Discover`;
 
     // Update library status badge based on db_status
@@ -284,11 +285,10 @@ function displayContent(data) {
     tmdbLinkDetail.textContent = data.tmdb_id;
 
     // Set TVDB link if available (TV shows only)
-    if (data.media_type === 'tv' && data.title) {
+    if (data.media_type === 'tv' && (data.tvdb_slug || data.title)) {
         const tvdbLink = document.getElementById('link-tvdb');
-        // TVDB uses slug-based URLs (e.g., /series/star-trek-starfleet-academy)
-        // Generate slug from title: lowercase, replace spaces with hyphens, remove special chars
-        const slug = data.title
+        // Use real TVDB slug from battery metadata when available, otherwise generate from title
+        const slug = data.tvdb_slug || data.title
             .toLowerCase()
             .replace(/[^\w\s-]/g, '') // Remove special characters except spaces and hyphens
             .replace(/\s+/g, '-')      // Replace spaces with hyphens
