@@ -191,8 +191,8 @@ def request_content():
             except Exception as e_refresh:
                 logging.warning(f"Auto-refresh failed for {imdb_id}: {e_refresh}")
         if not all_items:
-            logging.warning(f"No processable items found after metadata processing for TMDB ID {tmdb_id}. All items may already be in the database.")
-            return jsonify({'error': 'All episodes/items for this title are already in the database. If episodes are missing, try forcing a metadata refresh from the library page to update episode counts.'}), 400
+            logging.warning(f"No processable items found after metadata processing for TMDB ID {tmdb_id}. Battery may be missing season/episode data.")
+            return jsonify({'error': 'Could not find any episodes to add for this title. The battery may be missing season data — try forcing a metadata refresh from the library page, then request again.'}), 400
             
         # Add content source to all items.
         # When user system is enabled, record the requesting user's username as the detail

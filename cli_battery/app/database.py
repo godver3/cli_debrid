@@ -194,7 +194,7 @@ def run_migrations(eng):
         with eng.connect() as conn:
             inspector = sa_inspect(eng)
 
-            # --- tmdb_to_imdb_mapping: add timestamp columns ---
+            # --- tmdb_to_imdb_mapping: add timestamp + media_type columns ---
             if 'tmdb_to_imdb_mapping' in inspector.get_table_names():
                 columns = [col['name'] for col in inspector.get_columns('tmdb_to_imdb_mapping')]
                 if 'created_at' not in columns:
@@ -205,6 +205,11 @@ def run_migrations(eng):
                     logger.info("Adding updated_at column to tmdb_to_imdb_mapping table...")
                     conn.execute(text("ALTER TABLE tmdb_to_imdb_mapping ADD COLUMN updated_at DATETIME"))
                     conn.execute(text("UPDATE tmdb_to_imdb_mapping SET updated_at = CURRENT_TIMESTAMP WHERE updated_at IS NULL"))
+                if 'media_type' not in columns:
+                    logger.info("Adding media_type column to tmdb_to_imdb_mapping table...")
+                    conn.execute(text("ALTER TABLE tmdb_to_imdb_mapping ADD COLUMN media_type VARCHAR"))
+                    # Existing rows without media_type will have NULL — they'll be ignored on typed lookups
+                    # and overwritten when next looked up with a media_type
 
             # --- episodes: add absolute_episode ---
             if 'episodes' in inspector.get_table_names():
@@ -315,8 +320,9 @@ class TMDBToIMDBMapping(Base):
     __tablename__ = 'tmdb_to_imdb_mapping'
 
     id = Column(Integer, primary_key=True)
-    tmdb_id = Column(String, unique=True, index=True)
-    imdb_id = Column(String, unique=True, index=True)
+    tmdb_id = Column(String, index=True)
+    media_type = Column(String)  # 'movie' or 'show' — prevents cross-type cache collisions
+    imdb_id = Column(String, index=True)
     created_at = Column(DateTime, default=get_timezone_aware_now)
     updated_at = Column(DateTime, default=get_timezone_aware_now, onupdate=get_timezone_aware_now)
 

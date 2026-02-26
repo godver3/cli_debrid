@@ -1131,26 +1131,26 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             # Filter results
             task_start = time.time()
 
-            # If use_tmdb_translations is enabled, include Spanish-language title aliases
-            # so Spanish release names match against English TMDB titles (and vice versa).
+            # If use_alternative_titles is enabled, include title aliases for the version's language code.
             effective_matching_aliases = list(matching_aliases)
-            if version_settings.get('use_tmdb_translations', False) and imdb_id_for_fallback:
+            if version_settings.get('use_alternative_titles', False) and imdb_id_for_fallback:
                 try:
                     if content_type.lower() == 'movie':
                         full_aliases, _ = direct_api_instance.get_movie_aliases(imdb_id_for_fallback)
                     else:
                         full_aliases, _ = direct_api_instance.get_show_aliases(imdb_id_for_fallback)
                     if full_aliases:
+                        lang_code = version_settings.get('language_code', 'en').lower()
                         existing_lower = {a.lower() for a in effective_matching_aliases}
                         for key, aliases in full_aliases.items():
-                            if key.lower().startswith('es'):
+                            if key.lower().startswith(lang_code):
                                 for alias in (aliases or []):
                                     if alias and alias.lower() != original_media_title.lower() and alias.lower() not in existing_lower:
                                         effective_matching_aliases.append(alias)
                                         existing_lower.add(alias.lower())
-                                        logging.info(f"Spanish alias added ({key}): '{alias}'")
-                except Exception as _spa_err:
-                    logging.warning(f"Failed to fetch Spanish aliases for {imdb_id_for_fallback}: {_spa_err}")
+                                        logging.info(f"Alternative title alias added ({key}): '{alias}'")
+                except Exception as _alt_err:
+                    logging.warning(f"Failed to fetch alternative title aliases for {imdb_id_for_fallback}: {_alt_err}")
 
             # --- Pass imdb_id_for_fallback and direct_api_instance ---
             filtered_results, pre_size_filtered_results = filter_results(

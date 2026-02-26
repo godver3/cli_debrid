@@ -809,7 +809,22 @@ def process_metadata(media_items: List[Dict[str, Any]]) -> Dict[str, List[Dict[s
                     if requested_specific_seasons:
                         valid_requested = {s_num for s_num in requested_specific_seasons if s_num in all_season_numbers_in_metadata}
                         if len(valid_requested) != len(requested_specific_seasons):
-                            logging.warning(f"Item for {imdb_id} requested seasons {requested_specific_seasons}, but metadata only contains {all_season_numbers_in_metadata}. Processing valid: {valid_requested}")
+                            missing_seasons = set(requested_specific_seasons) - all_season_numbers_in_metadata
+                            logging.warning(f"Item for {imdb_id} requested seasons {requested_specific_seasons}, but metadata only contains {all_season_numbers_in_metadata}. Missing: {missing_seasons}. Forcing battery refresh to pick up new seasons.")
+                            try:
+                                refreshed_metadata, _ = direct_api.force_refresh_metadata(imdb_id)
+                                if refreshed_metadata and isinstance(refreshed_metadata.get('seasons'), dict):
+                                    seasons_data_from_metadata = refreshed_metadata['seasons']
+                                    all_season_numbers_in_metadata = set()
+                                    for s_key in seasons_data_from_metadata.keys():
+                                        try: all_season_numbers_in_metadata.add(int(s_key))
+                                        except ValueError: pass
+                                    valid_requested = {s_num for s_num in requested_specific_seasons if s_num in all_season_numbers_in_metadata}
+                                    logging.info(f"After refresh, metadata seasons for {imdb_id}: {all_season_numbers_in_metadata}. Valid requested: {valid_requested}")
+                                    # Update the bulk cache for this show
+                                    bulk_show_metadata[imdb_id] = refreshed_metadata
+                            except Exception as e_refresh:
+                                logging.warning(f"Force-refresh failed for {imdb_id} during season validation: {e_refresh}")
                         seasons_to_process_for_this_item_instance = valid_requested
                     else:
                         content_source_id = item_from_input_list.get('content_source')

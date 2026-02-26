@@ -1571,7 +1571,7 @@ def update_settings():
 
         # Detect if ONLY UI settings are being changed (no restart/reload needed)
         # Compare new settings with current config to find what actually changed
-        ui_only_categories = {'Library Manager', 'Discover Settings'}
+        ui_only_categories = {'Library Manager', 'Discover Settings', 'Overlay Settings'}
         actually_changed_categories = set()
 
         for category, values in new_settings.items():
@@ -2070,7 +2070,7 @@ def add_version():
         'require_physical_release': False,
         'language_code': 'en',
         'enable_spanish_episode_parsing': False,
-        'use_tmdb_translations': False
+        'use_alternative_titles': False
     }
 
     save_config(config)
@@ -2352,12 +2352,16 @@ def scraping_content():
     # Fill in schema defaults for any missing keys in existing versions
     # so new settings always appear in the UI even for pre-existing versions.
     version_schema = SETTINGS_SCHEMA.get('Scraping', {}).get('versions', {}).get('schema', {})
+    _backfill_changed = False
     for _ver_config in config.get('Scraping', {}).get('versions', {}).values():
         if not isinstance(_ver_config, dict):
             continue
         for _field, _fschema in version_schema.items():
             if _field not in _ver_config and 'default' in _fschema:
                 _ver_config[_field] = _fschema['default']
+                _backfill_changed = True
+    if _backfill_changed:
+        save_config(config)
 
     # Determine which template to use based on theme
     theme = request.cookies.get('selectedTheme', 'tangerine')
