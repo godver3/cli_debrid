@@ -565,6 +565,12 @@ def get_version_settings(version):
     for k in stale_keys:
         del settings[k]
 
+    # Backfill any schema keys that are missing from this version config (new settings added after version was created).
+    version_schema = SETTINGS_SCHEMA.get('Scraping', {}).get('versions', {}).get('schema', {})
+    for k, v in version_schema.items():
+        if k not in settings and 'default' in v:
+            settings[k] = v['default']
+
     logging.debug(f"Fetched settings for version '{version}': {settings}")
 
     if not settings:

@@ -601,12 +601,12 @@ SETTINGS_SCHEMA = {
                 "enable_spanish_episode_parsing": {
                     "type": "boolean",
                     "default": False,
-                    "description": "Enable Spanish Cap.XXYY episode format parsing (e.g. Cap.701 → S07E01). Opt-in for Spanish content."
+                    "description": "Enable Spanish content parsing: Cap.XXYY episode format (e.g. Cap.701 → S07E01) and parenthesized alternative title matching (e.g. 'El renacido (The Revenant)' → matches 'The Revenant')."
                 },
-                "use_tmdb_translations": {
+                "use_alternative_titles": {
                     "type": "boolean",
                     "default": False,
-                    "description": "Include Spanish title translations/aliases when matching titles. Opt-in for Spanish content."
+                    "description": "Include alternative title translations/aliases when matching titles. Uses the version's Language Code to filter aliases."
                 }
             }
         },
@@ -2120,6 +2120,19 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Version number to report to Bazarr. Change only if Bazarr requires a specific version.",
             "default": "5.14.0.9383"
+        }
+    },
+    "Overlay Settings": {
+        "tab": "Additional Settings",
+        "overlays_enabled": {
+            "type": "boolean",
+            "description": "Enable the poster overlay system. When enabled, overlay sync tasks will automatically run and apply media info badges to Plex posters. Requires Plex URL and token to be configured.",
+            "default": False
+        },
+        "plex_data_path": {
+            "type": "string",
+            "description": "Path to the Plex Media Server data directory (e.g. /config/Library/Application Support/Plex Media Server). Required for the poster cleanup task to delete old uploaded overlay versions directly from the filesystem.",
+            "default": ""
         }
     }
 }
