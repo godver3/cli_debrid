@@ -879,8 +879,13 @@ class DirectAPI:
             api_key = get_mdblist_api_key()
 
             # MDBList API endpoint for TMDB lookup
-            # Format: https://mdblist.com/api/?apikey=XXX&tm={tmdb_id}
-            url = f"{MDBLIST_API_BASE}/?apikey={api_key}&tm={tmdb_id}"
+            # Include media type to avoid collisions when the same TMDB ID exists for both a movie and a show
+            type_param = ''
+            if media_type in ('movie',):
+                type_param = '&type=movie'
+            elif media_type in ('show', 'tv'):
+                type_param = '&type=show'
+            url = f"{MDBLIST_API_BASE}/?apikey={api_key}&tm={tmdb_id}{type_param}"
 
             logger.debug(f"MDBList API call: {url.replace(api_key, 'REDACTED')}")
             resp = requests.get(url, timeout=10)
@@ -926,10 +931,15 @@ class DirectAPI:
     @staticmethod
     def tmdb_to_imdb(tmdb_id: str, media_type: str = None) -> Tuple[Optional[str], Optional[str]]:
         logger.info(f"DirectAPI.tmdb_to_imdb for TMDB {tmdb_id} type={media_type}")
+        # Normalise media_type for cache key: movies='movie', everything else='show'
+        _cache_type = 'movie' if media_type == 'movie' else ('show' if media_type else None)
         try:
-            # Check DB cache first
+            # Check DB cache first — filter by media_type to prevent cross-type collisions
             with managed_session() as session:
-                mapping = session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
+                q = session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id)
+                if _cache_type:
+                    q = q.filter_by(media_type=_cache_type)
+                mapping = q.first()
                 if mapping and not is_tmdb_mapping_stale(mapping.updated_at):
                     return mapping.imdb_id, 'battery'
 
@@ -972,12 +982,13 @@ class DirectAPI:
                         except Exception:
                             pass
 
-                    # Cache
+                    # Cache (include media_type to prevent cross-type collisions)
                     if mapping:
                         mapping.imdb_id = imdb_id
+                        mapping.media_type = _cache_type
                         mapping.updated_at = datetime.now(_get_local_tz())
                     else:
-                        session.add(TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=imdb_id))
+                        session.add(TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=imdb_id, media_type=_cache_type))
                     return imdb_id, source
 
             # Fallback: TMDB External IDs
@@ -999,7 +1010,13 @@ class DirectAPI:
                         if tmdb_imdb:
                             logger.info(f"✓ TMDB External IDs fallback SUCCESS: Found IMDb ID {tmdb_imdb} for TMDB {tmdb_id}")
                             with managed_session() as session:
-                                session.add(TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=tmdb_imdb))
+                                existing = session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
+                                if existing:
+                                    existing.imdb_id = tmdb_imdb
+                                    existing.media_type = _cache_type
+                                    existing.updated_at = datetime.now(_get_local_tz())
+                                else:
+                                    session.add(TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=tmdb_imdb, media_type=_cache_type))
                             return tmdb_imdb, 'tmdb_external_ids'
                         else:
                             logger.warning(f"✗ TMDB External IDs fallback: No IMDb ID in response for TMDB {tmdb_id}")
@@ -1021,12 +1038,16 @@ class DirectAPI:
                     if mdblist_imdb:
                         logger.info(f"✓ MDBList API fallback SUCCESS: Found IMDb ID {mdblist_imdb} for TMDB {tmdb_id}")
                         with managed_session() as session:
-                            mapping = session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
+                            q = session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id)
+                            if _cache_type:
+                                q = q.filter_by(media_type=_cache_type)
+                            mapping = q.first()
                             if mapping:
                                 mapping.imdb_id = mdblist_imdb
+                                mapping.media_type = _cache_type
                                 mapping.updated_at = datetime.now(_get_local_tz())
                             else:
-                                session.add(TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=mdblist_imdb))
+                                session.add(TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=mdblist_imdb, media_type=_cache_type))
                         return mdblist_imdb, 'mdblist'
                     else:
                         logger.warning(f"✗ MDBList API fallback: No IMDb ID found for TMDB {tmdb_id}")
@@ -1085,14 +1106,15 @@ class DirectAPI:
             # Use NULL to indicate "no mapping exists"
             try:
                 with managed_session() as session:
-                    mapping = session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
+                    q = session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id)
+                    if _cache_type:
+                        q = q.filter_by(media_type=_cache_type)
+                    mapping = q.first()
                     if mapping:
-                        # Update existing mapping to mark as "no mapping found"
                         mapping.imdb_id = None
                         mapping.updated_at = datetime.now(_get_local_tz())
                     else:
-                        # Create new entry with NULL imdb_id
-                        session.add(TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=None))
+                        session.add(TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=None, media_type=_cache_type))
                     logger.info(f"Cached failed TMDB→IMDb lookup for {tmdb_id} (will retry after staleness period)")
             except Exception as e:
                 logger.debug(f"Could not cache failed lookup: {e}")
@@ -1130,16 +1152,16 @@ class DirectAPI:
 
     @staticmethod
     def force_refresh_tmdb_mapping(tmdb_id: str, media_type: str = None) -> Tuple[Optional[str], Optional[str]]:
+        _cache_type = 'movie' if media_type == 'movie' else ('show' if media_type else None)
         try:
             with managed_session() as session:
-                existing = session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).first()
-                if existing:
-                    session.delete(existing)
-                    session.flush()
+                # Delete all mappings for this tmdb_id (clear both movie and show entries if any)
+                session.query(TMDBToIMDBMapping).filter_by(tmdb_id=tmdb_id).delete()
+                session.flush()
 
                 imdb_id, source = _get_metadata_client().convert_tmdb_to_imdb(tmdb_id, media_type=media_type)
                 if imdb_id:
-                    session.add(TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=imdb_id))
+                    session.add(TMDBToIMDBMapping(tmdb_id=tmdb_id, imdb_id=imdb_id, media_type=_cache_type))
                 return imdb_id, source
         except Exception as e:
             logging.error(f"DirectAPI.force_refresh_tmdb_mapping {tmdb_id}: {e}", exc_info=True)
