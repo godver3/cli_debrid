@@ -1709,6 +1709,18 @@ def refresh_show_metadata(media_id):
                 'error': f'Could not fetch metadata from {source or "API"}'
             }), 500
 
+        # Extract show-level metadata from DirectAPI results (Source of Truth)
+        show_title = metadata.get('title', title)
+        show_year = str(metadata.get('year', '')) if metadata.get('year') else None
+        show_status = metadata.get('status', '')
+        
+        # Format genres from list to comma-separated string
+        genres_list = metadata.get('genres', [])
+        if isinstance(genres_list, list):
+            show_genres = ', '.join(genres_list) if genres_list else None
+        else:
+            show_genres = str(genres_list) if genres_list else None
+
         # Update episode titles and air dates from fresh metadata
         updated_count = 0
         if 'seasons' in metadata:
@@ -1760,7 +1772,7 @@ def refresh_show_metadata(media_id):
                             if cursor.rowcount > 0:
                                 updated_count += cursor.rowcount
 
-        # Fetch fresh show-level metadata from TMDB
+        # Fetch fresh show-level metadata from TMDB (Optional fallback/supplement)
         tmdb_updated = False
         if tmdb_id:
             try:
@@ -1773,44 +1785,52 @@ def refresh_show_metadata(media_id):
                     response.raise_for_status()
                     tmdb_data = response.json()
 
-                    # Extract show-level metadata (only fields that exist in database)
-                    show_title = tmdb_data.get('name', title)
-                    show_year = tmdb_data.get('first_air_date', '')[:4] if tmdb_data.get('first_air_date') else None
-                    genres = ', '.join([g['name'] for g in tmdb_data.get('genres', [])])
-                    status = tmdb_data.get('status', '')
-
-                    # Update show-level metadata in media_items (title and genres for episodes)
-                    cursor.execute("""
-                        UPDATE media_items
-                        SET title = ?,
-                            genres = ?
-                        WHERE imdb_id = ? AND type = 'episode'
-                    """, (
-                        show_title,
-                        genres,
-                        imdb_id
-                    ))
-
-                    # Update show-level metadata in tv_shows table (title, year, status)
-                    cursor.execute("""
-                        UPDATE tv_shows
-                        SET title = ?,
-                            year = ?,
-                            status = ?,
-                            last_updated = ?
-                        WHERE imdb_id = ?
-                    """, (
-                        show_title,
-                        show_year,
-                        status,
-                        datetime.now(),
-                        imdb_id
-                    ))
+                    # Only update fields from TMDB if they are missing from DirectAPI/Battery
+                    if not show_year:
+                        show_year = tmdb_data.get('first_air_date', '')[:4] if tmdb_data.get('first_air_date') else None
+                    if not show_genres:
+                        show_genres = ', '.join([g['name'] for g in tmdb_data.get('genres', [])])
+                    if not show_status:
+                        show_status = tmdb_data.get('status', '')
 
                     tmdb_updated = True
-                    logging.info(f"Updated TMDB metadata for {show_title} in both media_items and tv_shows tables")
+                    logging.info(f"Updated supplementary TMDB metadata for {show_title}")
             except Exception as e:
-                logging.warning(f"Failed to update TMDB metadata: {e}")
+                logging.warning(f"Failed to fetch supplementary TMDB metadata: {e}")
+
+        # Update show-level metadata in media_items (title and genres for episodes)
+        cursor.execute("""
+            UPDATE media_items
+            SET title = ?,
+                genres = ?
+            WHERE imdb_id = ? AND type = 'episode'
+        """, (
+            show_title,
+            show_genres,
+            imdb_id
+        ))
+        try:
+    
+            # Update show-level metadata in tv_shows table (title, year, status)
+            cursor.execute("""
+                UPDATE tv_shows
+                SET title = ?,
+                    year = ?,
+                    status = ?,
+                    last_updated = ?
+                WHERE imdb_id = ?
+            """, (
+                show_title,
+                show_year,
+                show_status,
+                datetime.now(),
+                imdb_id
+            ))
+    
+            tmdb_updated = True
+            logging.info(f"Updated TMDB metadata for {show_title} in both media_items and tv_shows tables")
+        except Exception as e:
+            logging.warning(f"Failed to update TMDB metadata: {e}")
 
         # Also update timestamps for all episodes (even if title didn't change)
         cursor.execute(f"""
