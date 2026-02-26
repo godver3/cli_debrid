@@ -9,7 +9,7 @@ import trakt.core
 import time
 import pickle
 import os
-from database.database_reading import get_all_media_items, get_media_item_presence
+from database.database_reading import get_all_media_items, get_media_item_presence, get_media_item_presence_overall
 from database.database_writing import update_media_item
 from datetime import datetime, date, timedelta, timezone
 from utilities.settings import get_setting
@@ -928,6 +928,12 @@ def fetch_items_from_trakt(
                 logging.error(f"This API method requires Trakt VIP. Upgrade at {upgrade_url}")
                 return []
 
+            elif status_code == 404:  # Not Found — resource no longer exists, no point retrying
+                logging.warning(
+                    f"Trakt API returned 404 for {url} — resource may no longer exist. Skipping."
+                )
+                return []
+
             elif status_code in (502, 504):  # Temporary gateway issues
                 delay = initial_delay * (2 ** attempt) + random.uniform(0, 1)
                 logging.warning(
@@ -1346,8 +1352,8 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[Lis
                 movies_to_remove = []
                 shows_to_remove = []
                 for item in processed_items[:]:  # Create a copy to iterate while modifying
-                    item_state = get_media_item_presence(imdb_id=item['imdb_id'])
-                    if item_state == "Collected":
+                    item_state = get_media_item_presence_overall(imdb_id=item['imdb_id'])
+                    if item_state in ("Collected", "Partial"):
                         # If it's a TV show and we want to keep series, skip removal
                         if item['media_type'] == 'tv':
                             if keep_series:

@@ -496,6 +496,33 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
         from . import trakt_client
         return trakt_client.get_show_data(imdb_id)
 
+    # Validate that the TVDB show's IMDb ID matches what we requested.
+    # A stale cache entry could map the wrong TVDB ID to this IMDb ID.
+    remote_ids_raw = raw.get('remoteIds', [])
+    tvdb_imdb_id = None
+    if isinstance(remote_ids_raw, list):
+        for rid in remote_ids_raw:
+            if isinstance(rid, dict):
+                source_name = (rid.get('sourceName', '') or '').lower()
+                rid_val = rid.get('id', '')
+                if 'imdb' in source_name and rid_val and rid_val.startswith('tt'):
+                    tvdb_imdb_id = rid_val
+                    break
+    if tvdb_imdb_id and tvdb_imdb_id != imdb_id:
+        logger.warning(
+            f"TVDB IMDb mismatch for show: requested {imdb_id}, TVDB series {tvdb_id} has {tvdb_imdb_id}. "
+            f"Invalidating stale cache entry and falling back to Trakt."
+        )
+        try:
+            with managed_session() as session:
+                stale = session.query(TVDBToIMDBMapping).filter_by(imdb_id=imdb_id, tvdb_id=str(tvdb_id)).first()
+                if stale:
+                    session.delete(stale)
+        except Exception as e:
+            logger.debug(f"Could not remove stale TVDB mapping for {imdb_id}: {e}")
+        from . import trakt_client
+        return trakt_client.get_show_data(imdb_id)
+
     # Build Trakt-compatible show dict
     show_data = _build_show_dict(raw, imdb_id, tvdb_id)
 
@@ -846,6 +873,33 @@ def get_movie_data(imdb_id: str) -> Optional[dict]:
     raw = resp.json().get('data', {})
     if not raw:
         logger.warning(f"TVDB returned empty data for movie {imdb_id} (TVDB ID: {tvdb_id}), trying Trakt fallback")
+        from . import trakt_client
+        return trakt_client.get_movie_data(imdb_id)
+
+    # Validate that the TVDB movie's IMDb ID matches what we requested.
+    # A stale cache entry could map the wrong TVDB ID to this IMDb ID.
+    remote_ids_raw = raw.get('remoteIds', [])
+    tvdb_imdb_id = None
+    if isinstance(remote_ids_raw, list):
+        for rid in remote_ids_raw:
+            if isinstance(rid, dict):
+                source_name = (rid.get('sourceName', '') or '').lower()
+                rid_val = rid.get('id', '')
+                if 'imdb' in source_name and rid_val and rid_val.startswith('tt'):
+                    tvdb_imdb_id = rid_val
+                    break
+    if tvdb_imdb_id and tvdb_imdb_id != imdb_id:
+        logger.warning(
+            f"TVDB IMDb mismatch for movie: requested {imdb_id}, TVDB movie {tvdb_id} has {tvdb_imdb_id}. "
+            f"Invalidating stale cache entry and falling back to Trakt."
+        )
+        try:
+            with managed_session() as session:
+                stale = session.query(TVDBToIMDBMapping).filter_by(imdb_id=imdb_id, tvdb_id=str(tvdb_id)).first()
+                if stale:
+                    session.delete(stale)
+        except Exception as e:
+            logger.debug(f"Could not remove stale TVDB mapping for {imdb_id}: {e}")
         from . import trakt_client
         return trakt_client.get_movie_data(imdb_id)
 
