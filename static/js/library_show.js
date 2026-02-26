@@ -200,7 +200,8 @@ function renderShowHeader(show) {
     console.log('[Show Detail] Metadata values - overview:', show.overview, 'genres:', show.genres, 'network:', show.network, 'status:', show.status);
 
     // Set title with year in parentheses
-    const titleText = show.title + (show.year ? ` (${show.year})` : '');
+    const titleAlreadyHasYear = show.year && show.title.trim().endsWith(`(${show.year})`);
+    const titleText = show.title + (show.year && !titleAlreadyHasYear ? ` (${show.year})` : '');
     const titleEl = document.getElementById('show-title');
     if (titleEl) {
         titleEl.textContent = titleText;
@@ -410,14 +411,13 @@ function renderShowHeader(show) {
     }
 
     const tvdbLink = document.getElementById('link-tvdb');
-    if (tvdbLink && show.title) {
-        // TVDB uses slug-based URLs (e.g., /series/star-trek-starfleet-academy)
-        // Generate slug from title: lowercase, replace spaces with hyphens, remove special chars
-        const slug = show.title
+    if (tvdbLink && (show.tvdb_slug || show.title)) {
+        // Use real slug from battery if available, otherwise generate from title as fallback
+        const slug = show.tvdb_slug || show.title
             .toLowerCase()
-            .replace(/[^\w\s-]/g, '') // Remove special characters except spaces and hyphens
-            .replace(/\s+/g, '-')      // Replace spaces with hyphens
-            .replace(/-+/g, '-')       // Replace multiple hyphens with single hyphen
+            .replace(/[^\w\s-]/g, '')
+            .replace(/\s+/g, '-')
+            .replace(/-+/g, '-')
             .trim();
         tvdbLink.href = `https://thetvdb.com/series/${slug}`;
     }
@@ -483,13 +483,12 @@ function renderShowHeader(show) {
     }
 
     const tvdbLinkDetail = document.getElementById('tvdb-link-detail');
-    if (tvdbLinkDetail && show.title) {
-        // TVDB uses slug-based URLs, generate slug from title
-        const slug = show.title
+    if (tvdbLinkDetail && (show.tvdb_slug || show.title)) {
+        const slug = show.tvdb_slug || show.title
             .toLowerCase()
-            .replace(/[^\w\s-]/g, '') // Remove special characters except spaces and hyphens
-            .replace(/\s+/g, '-')      // Replace spaces with hyphens
-            .replace(/-+/g, '-')       // Replace multiple hyphens with single hyphen
+            .replace(/[^\w\s-]/g, '')
+            .replace(/\s+/g, '-')
+            .replace(/-+/g, '-')
             .trim();
         tvdbLinkDetail.href = `https://thetvdb.com/series/${slug}`;
         tvdbLinkDetail.textContent = show.tvdb_id || 'View on TVDB';

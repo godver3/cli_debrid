@@ -64,7 +64,7 @@ patch_logger.info(f"{LOG_FLAG_PATCH} Imported MyPlexAccount from plexapi.myplex.
 
 from typing import List, Dict, Any, Tuple
 from utilities.settings import get_setting
-from database.database_reading import get_media_item_presence
+from database.database_reading import get_media_item_presence, get_media_item_presence_overall
 from queues.config_manager import load_config
 from cli_battery.app import trakt_client
 from cli_battery.app.direct_api import DirectAPI
@@ -315,10 +315,10 @@ def get_wanted_from_plex_watchlist(versions: Dict[str, bool]) -> List[Tuple[List
             # Ensure media_type is 'tv' or 'movie' for consistency downstream
             if media_type == 'show': media_type = 'tv' 
             
-            item_state = get_media_item_presence(imdb_id=imdb_id)
+            item_state = get_media_item_presence_overall(imdb_id=imdb_id)
             logging.debug(f"Item '{title}' (IMDB: {imdb_id}) - Presence: {item_state}")
 
-            if item_state == "Collected" and should_remove:
+            if item_state in ("Collected", "Partial") and should_remove:
                 if media_type == 'tv':
                     if keep_series:
                         logging.debug(f"Keeping collected TV series: '{title}' (IMDB: {imdb_id}) - keep_series is enabled.")

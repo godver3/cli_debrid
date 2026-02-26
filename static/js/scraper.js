@@ -1149,7 +1149,8 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 
                 // Use clean title from header, store filename for toggle
                 const ShowInfo = `${season ? `<span class="season-info">S${season.toString().padStart(2, '0')}` : ''}${(torrent.parsed_info?.seasons?.length || 0) > 1 ? ` - ${torrent.parsed_info.seasons.length}</span>` : `</span>`} ${episode ? `<span class="ds-episode-info"> E${episode.toString().padStart(2, '0')}</span>`: ''}`;
-                const cleanTitle = `${title} (${year})${ShowInfo ? ` ${ShowInfo}` : ''}`;
+                const titleHasYear = year && title.trim().endsWith(`(${year})`);
+                const cleanTitle = `${title}${year && !titleHasYear ? ` (${year})` : ''}${ShowInfo ? ` ${ShowInfo}` : ''}`;
                 const filename = torrent.title || torrent.original_title || 'N/A';
                 
                 // Get score and color class
@@ -1335,7 +1336,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 // CLASSIC THEME - Original Desktop Table
                 overlayContent.innerHTML = '';
                 const header = document.createElement('h3');
-                header.textContent = `Torrent Results for ${title} (${year})`;
+                header.textContent = `Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}`;
                 overlayContent.appendChild(header);
                 
                 const table = document.createElement('table');
