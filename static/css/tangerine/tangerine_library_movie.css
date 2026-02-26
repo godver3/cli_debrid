@@ -1169,7 +1169,7 @@ ease;
     .release-tags {
         display: block;
         align-self: center;
-        line-height: 3;
+        padding-bottom: 5px;
     }
     .release-title-wrapper {
         display: contents;
@@ -1233,7 +1233,7 @@ ease;
     .release-tags {
         display: block;
         align-self: center;
-        line-height: 3;
+        padding-bottom: 0px;
     }
     .release-title-wrapper {
         display: contents;

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import feedparser
 from typing import List, Dict, Any, Tuple, Union
 from utilities.settings import get_setting
-from database.database_reading import get_media_item_presence
+from database.database_reading import get_media_item_presence, get_media_item_presence_overall
 from cli_battery.app import trakt_client
 from cli_battery.app.database import DatabaseManager
 
@@ -144,8 +144,8 @@ def get_wanted_from_plex_rss(rss_url: str, versions: Dict[str, bool]) -> List[Tu
                     media_type = 'tv'
 
                 # Check if the item is already collected
-                item_state = get_media_item_presence(imdb_id=imdb_id)
-                if item_state == "Collected" and should_remove:
+                item_state = get_media_item_presence_overall(imdb_id=imdb_id)
+                if item_state in ("Collected", "Partial") and should_remove:
                     if media_type == 'tv':
                         if keep_series:
                             logging.debug(f"Keeping collected TV series from RSS: {imdb_id} ('{entry_title}') - keep_series is enabled")

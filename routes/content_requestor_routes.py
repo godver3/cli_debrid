@@ -4,7 +4,6 @@ from .models import user_required, onboarding_required
 from .utils import is_user_system_enabled
 from utilities.web_scraper import search_trakt, parse_search_term, get_available_versions
 from cli_battery.app.direct_api import DirectAPI
-from queues.config_manager import load_config
 from database.wanted_items import add_wanted_items
 import logging
 import re
@@ -176,15 +175,24 @@ def request_content():
         processed_items = process_metadata([wanted_item])
         if not processed_items:
             # Handle cases where process_metadata returns None or an empty dict
-            logging.warning(f"process_metadata returned empty or None for TMDB ID {tmdb_id}. Content might already exist or is invalid.")
-            return jsonify({'error': 'Content already requested or already exists in library.'}), 400
-            
+            logging.warning(f"process_metadata returned empty or None for TMDB ID {tmdb_id}. Metadata fetch may have failed.")
+            return jsonify({'error': 'Could not retrieve metadata for this title. The battery may have stale or incorrect data — try forcing a metadata refresh from the library page.'}), 400
+
         # Combine movies and episodes from processed items
         all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+        if not all_items and media_type == 'tv' and imdb_id:
+            # For TV shows: battery may have stale/incomplete episode data. Auto-refresh and retry once.
+            logging.info(f"No new items for TV show {imdb_id} — forcing battery metadata refresh and retrying.")
+            try:
+                DirectAPI.force_refresh_metadata(imdb_id)
+                processed_items = process_metadata([wanted_item])
+                if processed_items:
+                    all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+            except Exception as e_refresh:
+                logging.warning(f"Auto-refresh failed for {imdb_id}: {e_refresh}")
         if not all_items:
-            logging.warning(f"No processable items found after metadata processing for TMDB ID {tmdb_id}. Content might already exist.")
-            # Return a more specific message indicating the item might already exist or was filtered
-            return jsonify({'error': 'Content already requested or already exists in library.'}), 400
+            logging.warning(f"No processable items found after metadata processing for TMDB ID {tmdb_id}. All items may already be in the database.")
+            return jsonify({'error': 'All episodes/items for this title are already in the database. If episodes are missing, try forcing a metadata refresh from the library page to update episode counts.'}), 400
             
         # Add content source to all items.
         # When user system is enabled, record the requesting user's username as the detail
@@ -196,11 +204,28 @@ def request_content():
         for item in all_items:
             item['content_source'] = 'content_requester'
             item['content_source_detail'] = source_detail
-            
+
         # Pass versions dictionary to add_wanted_items
-        add_wanted_items(all_items, versions)
-        
-        logging.info(f"Content request processed: TMDB ID {tmdb_id} -> IMDB ID {imdb_id} ({media_type}) with versions {versions}")
+        items_added = add_wanted_items(all_items, versions)
+
+        # If nothing was added for a TV show, the battery may have stale/incomplete episode data.
+        # Force-refresh and retry once to pick up any missing episodes.
+        if items_added == 0 and media_type == 'tv' and imdb_id:
+            logging.info(f"No new items added for TV show {imdb_id} (battery may be stale) — forcing refresh and retrying.")
+            try:
+                DirectAPI.force_refresh_metadata(imdb_id)
+                processed_items = process_metadata([wanted_item])
+                if processed_items:
+                    all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
+                    for item in all_items:
+                        item['content_source'] = 'content_requester'
+                        item['content_source_detail'] = source_detail
+                    items_added = add_wanted_items(all_items, versions)
+                    logging.info(f"After refresh, added {items_added} items for {imdb_id}")
+            except Exception as e_refresh:
+                logging.warning(f"Post-add refresh failed for {imdb_id}: {e_refresh}")
+
+        logging.info(f"Content request processed: TMDB ID {tmdb_id} -> IMDB ID {imdb_id} ({media_type}) with versions {versions}, items added: {items_added}")
         return jsonify({'success': True, 'item': wanted_item})
         
     except Exception as e:

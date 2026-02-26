@@ -197,7 +197,8 @@ function renderMovieHeader(movie) {
     if (window.DEBUG) console.log('[Movie Detail] Metadata values - overview:', movie.overview, 'genres:', movie.genres, 'network:', movie.network, 'status:', movie.status);
 
     // Set title with year in parentheses
-    const titleText = movie.title + (movie.year ? ` (${movie.year})` : '');
+    const titleAlreadyHasYear = movie.year && movie.title.trim().endsWith(`(${movie.year})`);
+    const titleText = movie.title + (movie.year && !titleAlreadyHasYear ? ` (${movie.year})` : '');
     const titleEl = document.getElementById('movie-title');
     if (titleEl) {
         titleEl.textContent = titleText;
@@ -526,7 +527,8 @@ function createFileRow(file, rowNumber, movie) {
     info.className = 'movie-file-info-section';
 
     const fileName = file.basename || file.filename || 'Unknown file';
-    const titleText = movie.title + (movie.year ? ` (${movie.year})` : '');
+    const titleAlreadyHasYearFile = movie.year && movie.title.trim().endsWith(`(${movie.year})`);
+    const titleText = movie.title + (movie.year && !titleAlreadyHasYearFile ? ` (${movie.year})` : '');
     const qualityTags = extractQualityTags(file.basename || file.filename || '');
     const tags = qualityTags.map(tag => createQualityBadge(tag)).join('');
     const version = file.version || 'Default';
@@ -645,6 +647,15 @@ function createFileRow(file, rowNumber, movie) {
         actions.appendChild(deleteBtn);
     }
 
+    // Mobile touch: tap the title to show filename as a popup (title= attr doesn't work on touch)
+    const titleEl = info.querySelector('.movie-file-title');
+    if (titleEl) {
+        titleEl.addEventListener('touchstart', function(e) {
+            e.preventDefault();
+            showFilenameTouchTooltip(titleEl, fileName);
+        }, { passive: false });
+    }
+
     row.appendChild(number);
     row.appendChild(statusIconElement);
     row.appendChild(info);
@@ -689,6 +700,60 @@ function handleMoveFileToWanted(fileId) {
 
 function movieError(message) {
     if (window.DEBUG) console.error('[Movie Detail] Error:', message);
+}
+
+let _filenameTouchTooltip = null;
+let _filenameTouchTimer = null;
+
+function showFilenameTouchTooltip(anchorEl, filename) {
+    // Remove any existing tooltip
+    if (_filenameTouchTooltip) {
+        _filenameTouchTooltip.remove();
+        _filenameTouchTooltip = null;
+    }
+    clearTimeout(_filenameTouchTimer);
+
+    const tooltip = document.createElement('div');
+    tooltip.textContent = filename;
+    tooltip.style.cssText = `
+        position: fixed;
+        bottom: 1.5rem;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(15, 15, 20, 0.95);
+        color: rgba(255,255,255,0.92);
+        font-size: 0.78rem;
+        padding: 0.5rem 0.85rem;
+        border-radius: 0.375rem;
+        border: 1px solid rgba(255,255,255,0.15);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+        max-width: 90vw;
+        word-break: break-all;
+        z-index: 9999;
+        pointer-events: none;
+        text-align: center;
+    `;
+    document.body.appendChild(tooltip);
+    _filenameTouchTooltip = tooltip;
+
+    // Auto-dismiss after 3 seconds
+    _filenameTouchTimer = setTimeout(() => {
+        if (_filenameTouchTooltip) {
+            _filenameTouchTooltip.remove();
+            _filenameTouchTooltip = null;
+        }
+    }, 3000);
+
+    // Dismiss on next touch anywhere
+    const dismiss = () => {
+        clearTimeout(_filenameTouchTimer);
+        if (_filenameTouchTooltip) {
+            _filenameTouchTooltip.remove();
+            _filenameTouchTooltip = null;
+        }
+        document.removeEventListener('touchstart', dismiss);
+    };
+    setTimeout(() => document.addEventListener('touchstart', dismiss, { once: true }), 50);
 }
 
 function alignSidebarWithFiles() {
@@ -935,7 +1000,8 @@ function showVersionModal(versions) {
     // Add heading
     const header = document.createElement('div');
     header.className = 'version-section-header';
-    header.innerHTML = `<h4>Requesting: ${movieData.title}${movieData.year ? ` (${movieData.year})` : ''}</h4>`;
+    const requestTitleHasYear = movieData.year && movieData.title.trim().endsWith(`(${movieData.year})`);
+    header.innerHTML = `<h4>Requesting: ${movieData.title}${movieData.year && !requestTitleHasYear ? ` (${movieData.year})` : ''}</h4>`;
     versionCheckboxes.appendChild(header);
 
     const separator = document.createElement('hr');
