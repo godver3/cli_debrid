@@ -256,6 +256,13 @@ def filter_results(
             # logging.debug(f"  - Parsed info title: '{parsed_title_str}', parsed_info keys: {list(parsed_info.keys()) if parsed_info else 'None'}")
             normalized_parsed_title = normalize_title(parsed_title_str).lower() if parsed_title_str else None
 
+            # Parenthesized alternative title extracted from torrent filename
+            # e.g. "El renacido (The Revenant) 2015 SPANISH" → "The Revenant"
+            # Only used when Spanish/alternative content parsing is enabled
+            _spanish_parsing = version_settings.get('enable_spanish_episode_parsing', False)
+            paren_title_str = parsed_info.get('parenthesized_title', '') if _spanish_parsing else ''
+            normalized_paren_title = normalize_title(paren_title_str).lower() if paren_title_str else None
+
             # Create simplified versions by removing all punctuation and spaces (used by all similarity checks)
             simple_query = re.sub(r'[^a-z0-9]', '', normalized_query_title)
             simple_result = re.sub(r'[^a-z0-9]', '', normalized_result_title)
@@ -438,8 +445,19 @@ def filter_results(
                     trans_original_sim = translated_title_sim
                     translated_title_sim *= trans_penalty_factor
 
+            # --- Parenthesized Alternative Title Similarity ---
+            # Handles Spanish-style releases: "El renacido (The Revenant) 2015 SPANISH"
+            # PTT parses "El renacido" as the title but the real match is "(The Revenant)"
+            paren_title_sim = 0.0
+            if normalized_paren_title:
+                paren_sim_set = fuzz.token_set_ratio(normalized_query_title, normalized_paren_title) / 100.0
+                paren_sim_sort = fuzz.token_sort_ratio(normalized_query_title, normalized_paren_title) / 100.0
+                paren_title_sim = (paren_sim_set + paren_sim_sort) / 2.0
+                if paren_title_sim >= 0.85:
+                    logging.info(f"Parenthesized title match: '{paren_title_str}' sim={paren_title_sim:.2f} for query '{title}'")
+
             # Compute initial best similarity score (without API aliases)
-            best_sim = max(main_title_sim, best_alias_sim, translated_title_sim)
+            best_sim = max(main_title_sim, best_alias_sim, translated_title_sim, paren_title_sim)
 
             # --- Fetch additional aliases via DirectAPI ---
             item_aliases = {}
@@ -636,9 +654,9 @@ def filter_results(
             if item_alias_similarities:
                 alias_similarities.extend(item_alias_similarities)
                 best_alias_sim = max(alias_similarities)
-                best_sim = max(main_title_sim, best_alias_sim, translated_title_sim)
+                best_sim = max(main_title_sim, best_alias_sim, translated_title_sim, paren_title_sim)
             else:
-                best_sim = max(main_title_sim, best_alias_sim, translated_title_sim)
+                best_sim = max(main_title_sim, best_alias_sim, translated_title_sim, paren_title_sim)
 
 
             # -------------------------------------------------------------
