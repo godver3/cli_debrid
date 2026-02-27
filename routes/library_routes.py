@@ -1714,7 +1714,7 @@ def refresh_show_metadata(media_id):
         show_title = metadata.get('title', title)
         show_year = str(metadata.get('year', '')) if metadata.get('year') else None
         show_status = metadata.get('status', '')
-
+        
         # Format genres from list to comma-separated string
         genres_list = metadata.get('genres', [])
         if isinstance(genres_list, list):
@@ -1811,6 +1811,7 @@ def refresh_show_metadata(media_id):
             imdb_id
         ))
         try:
+    
             # Update show-level metadata in tv_shows table (title, year, status)
             cursor.execute("""
                 UPDATE tv_shows
@@ -1826,11 +1827,11 @@ def refresh_show_metadata(media_id):
                 datetime.now(),
                 imdb_id
             ))
-
+    
             tmdb_updated = True
-            logging.info(f"Updated metadata for {show_title} in both media_items and tv_shows tables")
+            logging.info(f"Updated TMDB metadata for {show_title} in both media_items and tv_shows tables")
         except Exception as e:
-            logging.warning(f"Failed to update show metadata: {e}")
+            logging.warning(f"Failed to update TMDB metadata: {e}")
 
         # Also update timestamps for all episodes (even if title didn't change)
         cursor.execute(f"""
