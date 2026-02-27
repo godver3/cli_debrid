@@ -105,6 +105,11 @@ async function loadShowData() {
 
         if (data.success) {
             showData = data.show;
+            // Strip year from title if already embedded (e.g. "Scrubs (2026)" → "Scrubs")
+            // so the scraper doesn't receive a double year in the payload
+            if (showData.year && showData.title) {
+                showData.title = showData.title.replace(new RegExp(`\\s*\\(${showData.year}\\)$`), '').trim();
+            }
             seasonsData = data.seasons;
 
             // Add phantom rows for missing episodes before stats calculation

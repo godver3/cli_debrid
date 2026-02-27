@@ -155,6 +155,11 @@ async function loadMovieData() {
 
         if (data.success) {
             movieData = data.movie;
+            // Strip year from title if already embedded (e.g. "Alien (2025)" → "Alien")
+            // so the scraper doesn't receive a double year in the payload
+            if (movieData.year && movieData.title) {
+                movieData.title = movieData.title.replace(new RegExp(`\\s*\\(${movieData.year}\\)$`), '').trim();
+            }
             movieData.has_pending_replace = data.has_pending_replace || false;
             filesData = data.files;
 

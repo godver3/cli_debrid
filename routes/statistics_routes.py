@@ -254,7 +254,7 @@ def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1,
         
         # Use a single optimized query with GROUP BY instead of temporary tables and joins
         optimized_query = """
-        SELECT 
+        SELECT
             title,
             season_number,
             episode_number,
@@ -268,9 +268,10 @@ def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1,
                 WHEN SUM(CASE WHEN state = 'Collected' THEN 1 ELSE 0 END) > 0 THEN 'Collected'
                 ELSE MAX(state)
             END as state,
-            MAX(upgrading_from) as upgrading_from -- Get upgrading_from if present
+            MAX(upgrading_from) as upgrading_from, -- Get upgrading_from if present
+            MAX(year) as year
         FROM media_items
-        WHERE type = 'episode' 
+        WHERE type = 'episode'
           AND release_date BETWEEN ? AND ?
           AND state != 'Blacklisted'  -- Exclude blacklisted items
         GROUP BY title, season_number, episode_number
@@ -308,7 +309,7 @@ def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1,
         now_timestamp = now.timestamp()
         
         for result in results:
-            title, season, episode, release_date, airtime, imdb_id, tmdb_id, state, upgrading_from = result
+            title, season, episode, release_date, airtime, imdb_id, tmdb_id, state, upgrading_from, year = result
             try:
                 release_date = datetime.fromisoformat(release_date) if isinstance(release_date, str) else release_date
                 
@@ -354,7 +355,8 @@ def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1,
                         'release_date': release_date.date(),
                         'display_status': display_status, # Store first status found for the group
                         'imdb_id': imdb_id,
-                        'tmdb_id': tmdb_id
+                        'tmdb_id': tmdb_id,
+                        'year': year
                     }
                 
                 # If any episode in the group is collected or checking_upgrade, prioritize that status
@@ -403,8 +405,18 @@ def get_recently_aired_and_airing_soon(days_past: int = 2, days_future: int = 1,
                 
                 episode_range = ", ".join(episode_parts)
                 
+                # Strip embedded year from display title (e.g. "Matlock (2024)" → "Matlock")
+                raw_title = show['title']
+                show_year = show.get('year')
+                if show_year and raw_title.endswith(f" ({show_year})"):
+                    display_title = raw_title[:-(len(f" ({show_year})"))]
+                else:
+                    display_title = raw_title
+
                 formatted_item = {
-                    'title': f"{show['title']} S{show['season']:02d}{episode_range}",
+                    'title': f"{display_title} S{show['season']:02d}{episode_range}",
+                    'show_title': display_title,
+                    'year': show_year,
                     'air_datetime': show['air_datetime'],
                     'sort_key': show['air_datetime'].isoformat(),
                     'display_status': show['display_status'], # Use the determined status
@@ -615,8 +627,12 @@ def root():
                 )
                 movie['formatted_collected_at'] = movie['formatted_date']
                 movie['formatted_size'] = format_file_size(movie.get('size'))
+                # Strip embedded year from title to avoid double year in display
+                yr = movie.get('year')
+                if yr and movie['title'].endswith(f" ({yr})"):
+                    movie['title'] = movie['title'][:-(len(f" ({yr})"))]
                 recently_added['movies'].append(movie)
-        
+
         # Process shows
         if 'shows' in recently_added_data:
             for show in recently_added_data['shows']:
@@ -626,6 +642,10 @@ def root():
                 )
                 show['formatted_collected_at'] = show['formatted_date']
                 show['formatted_size'] = format_file_size(show.get('size'))
+                # Strip embedded year from title to avoid double year in display
+                yr = show.get('year')
+                if yr and show['title'].endswith(f" ({yr})"):
+                    show['title'] = show['title'][:-(len(f" ({yr})"))]
                 recently_added['shows'].append(show)
         
         # Get recently upgraded items
@@ -646,6 +666,11 @@ def root():
 
                 # Format file size
                 item['formatted_size'] = format_file_size(item.get('size'))
+
+                # Strip embedded year from title to avoid double year in display
+                yr = item.get('year')
+                if yr and item['title'].endswith(f" ({yr})"):
+                    item['title'] = item['title'][:-(len(f" ({yr})"))]
 
                 # For original_collected_at, use the existing value if available
                 if item.get('original_collected_at'):
@@ -725,6 +750,10 @@ def set_time_preference():
             recently_added = loop.run_until_complete(get_recently_added_items(movie_limit=recently_added_limit, show_limit=recently_added_limit))
             # Format recently added items
             for item in recently_added.get('movies', []) + recently_added.get('shows', []):
+                # Strip embedded year from title to avoid double year in display
+                yr = item.get('year')
+                if yr and item.get('title', '').endswith(f" ({yr})"):
+                    item['title'] = item['title'][:-(len(f" ({yr})"))]
                 if 'collected_at' in item and item['collected_at'] is not None:
                     try:
                         # Try parsing with microseconds
@@ -768,10 +797,15 @@ def set_time_preference():
                 for item in recently_upgraded:
                     # Format the upgrade date using collected_at for better differentiation
                     item['formatted_date'] = format_datetime_preference(
-                        item['collected_at'], 
+                        item['collected_at'],
                         use_24hour_format
                     )
-                    
+
+                    # Strip embedded year from title to avoid double year in display
+                    yr = item.get('year')
+                    if yr and item['title'].endswith(f" ({yr})"):
+                        item['title'] = item['title'][:-(len(f" ({yr})"))]
+
                     # For original_collected_at, use the existing value if available
                     if item.get('original_collected_at'):
                         item['original_collected_at'] = format_datetime_preference(
@@ -862,6 +896,10 @@ def recently_added():
 
     # Format times for recently added items
     for item in recently_added['movies'] + recently_added['shows']:
+        # Strip embedded year from title to avoid double year in display
+        yr = item.get('year')
+        if yr and item.get('title', '').endswith(f" ({yr})"):
+            item['title'] = item['title'][:-(len(f" ({yr})"))]
         if 'collected_at' in item and item['collected_at'] is not None:
             try:
                 # Try parsing with microseconds
@@ -1182,8 +1220,12 @@ def index_api():
                     movie['collected_at'],
                     use_24hour_format
                 )
+                # Strip embedded year from title to avoid double year in display
+                yr = movie.get('year')
+                if yr and movie['title'].endswith(f" ({yr})"):
+                    movie['title'] = movie['title'][:-(len(f" ({yr})"))]
                 recently_added['movies'].append(movie)
-        
+
         # Process shows
         if 'shows' in recently_added_data:
             for show in recently_added_data['shows']:
@@ -1191,8 +1233,12 @@ def index_api():
                     show['collected_at'],
                     use_24hour_format
                 )
+                # Strip embedded year from title to avoid double year in display
+                yr = show.get('year')
+                if yr and show['title'].endswith(f" ({yr})"):
+                    show['title'] = show['title'][:-(len(f" ({yr})"))]
                 recently_added['shows'].append(show)
-        
+
         # Get recently upgraded items
         upgrade_enabled = get_setting('Scraping', 'enable_upgrading', False)
         if upgrade_enabled:
@@ -1209,6 +1255,11 @@ def index_api():
                 # Format file size
                 item['formatted_size'] = format_file_size(item.get('size'))
 
+                # Strip embedded year from title to avoid double year in display
+                yr = item.get('year')
+                if yr and item['title'].endswith(f" ({yr})"):
+                    item['title'] = item['title'][:-(len(f" ({yr})"))]
+
                 # For original_collected_at, use the existing value if available
                 if item.get('original_collected_at'):
                     item['original_collected_at'] = format_datetime_preference(
@@ -1221,10 +1272,10 @@ def index_api():
                     item['original_collected_at'] = 'Unknown'
         else:
             recently_upgraded = []
-    
+
     finally:
         loop.close()
-    
+
     # Check if TMDB API key is set
     tmdb_api_key = get_setting('TMDB', 'api_key', '')
     stats['tmdb_api_key_set'] = bool(tmdb_api_key)
