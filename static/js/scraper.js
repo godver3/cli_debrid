@@ -657,7 +657,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
         if (e.matches) { // Mobile view
             overlayContent.innerHTML = `
                 <h3>
-                    Torrent Results for ${title} (${year})
+                    Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}
                 </h3>`;
 
             // Get versions from page dropdown
@@ -900,7 +900,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
             
             modalHeader.innerHTML = `
                 <div class="torrent-modal-title-section">
-                    <h3>Torrent Results for ${title} (${year})</h3>
+                    <h3>Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}</h3>
                     <div class="torrent-stats">
                         <span>${allDisplayItems.length} results</span>
                         <span>Search: ${searchDuration}ms</span>
