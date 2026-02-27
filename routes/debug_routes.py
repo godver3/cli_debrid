@@ -1797,7 +1797,9 @@ def get_available_tasks():
         {'id': 'task_update_tv_show_status', 'display_name': 'Update TV Show Status'},
         {'id': 'task_heartbeat', 'display_name': 'Heartbeat'},
         {'id': 'final_check_queue', 'display_name': 'Final Check Queue'},
-        {'id': 'task_analyze_library', 'display_name': 'Analyze Library'}
+        {'id': 'task_analyze_library', 'display_name': 'Analyze Library'},
+        {'id': 'task_overlay_sync', 'display_name': 'Overlay Sync'},
+        {'id': 'task_overlay_cleanup', 'display_name': 'Overlay State Maintenance (cleanup orphaned DB records)'},
     ]
     
     # Get content sources from program runner for content source tasks
@@ -3694,7 +3696,6 @@ def _run_rclone_to_symlink_task(rclone_mount_path_str, symlink_base_path_str, dr
                 
                 best_match_from_search = None
                 if final_search_results:
-                    from cli_battery.app.direct_api import DirectAPI
                     best_match_from_search = DirectAPI.find_best_match_from_results(
                         original_query_title=title_for_best_match_selection, 
                         query_year=parsed_year,
