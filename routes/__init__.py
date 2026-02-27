@@ -166,9 +166,7 @@ def register_blueprints(app):
         (metadata_bp, '/metadata'),
         (plex_labels_debug_bp, ''),
         (discover_bp, '/discover'),
-        (bazarr_bp, ''),  # Mounted at root for /api/v3/* and /signalr/* paths
-        (overlay_page_bp, ''),  # Mounted at root for /overlays page
-        (overlay_bp, '')  # Mounted at root for /api/overlays/* paths (includes prefix in blueprint)
+        (bazarr_bp, '')
     ]
     
     for blueprint, url_prefix in blueprints:
