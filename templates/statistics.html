@@ -348,6 +348,8 @@
                     <li>
                         <div class="show-info clickable"
                              data-title="${item.title}"
+                             data-show-title="${item.show_title || item.title}"
+                             data-year="${item.year || ''}"
                              data-imdb-id="${item.imdb_id}"
                              data-tmdb-id="${item.tmdb_id}"
                              data-season="${item.season_number}"
@@ -699,20 +701,14 @@
             const btn = event.currentTarget;
             const showInfo = btn.closest('li').querySelector('.show-info');
 
-            const title = showInfo.dataset.title;
             const imdbId = btn.dataset.imdbId;
             const tmdbId = btn.dataset.tmdbId;
             const season = parseInt(btn.dataset.season);
             const episode = parseInt(btn.dataset.episode);
 
-            // Call selectMedia from scraper.js to search for this specific episode
-            // Note: We need to extract year from title if present (format: "Show Title (2020)")
-            const yearMatch = title.match(/\((\d{4})\)$/);
-            // Use current year as fallback if no year in title (required by endpoint)
-            const year = yearMatch ? yearMatch[1] : new Date().getFullYear().toString();
-            // Remove year if present, and also remove S##E## pattern
-            let cleanTitle = yearMatch ? title.replace(/\s*\(\d{4}\)$/, '') : title;
-            cleanTitle = cleanTitle.replace(/\s+S\d+E\d+$/i, ''); // Remove season/episode from end
+            // Use pre-parsed show_title and year from data attributes (avoids regex parsing issues)
+            const cleanTitle = showInfo.dataset.showTitle || showInfo.dataset.title.replace(/\s+S\d+E\d+.*$/i, '').replace(/\s*\(\d{4}\)\s*$/, '').trim();
+            const year = showInfo.dataset.year || new Date().getFullYear().toString();
 
             // Get version from show data if available (default to 'Default')
             const version = 'Default';
@@ -1010,6 +1006,8 @@
                     <li>
                         <div class="show-info clickable"
                              data-title="{{ item.title }}"
+                             data-show-title="{{ item.show_title | default(item.title) }}"
+                             data-year="{{ item.year or '' }}"
                              data-imdb-id="{{ item.imdb_id }}"
                              data-tmdb-id="{{ item.tmdb_id }}"
                              data-season="{{ item.season_number }}"

@@ -44,6 +44,12 @@
             </form>
         </div>
         <div class="debug_item">
+            <h3>Reset Battery Show Status Cache</h3>
+            <p class="description">Forces all shows in the battery DB to be re-fetched from TVDB/Trakt on the next run. Use this to fix incorrect show statuses (e.g. "Ended" instead of "Canceled"). After running this, trigger "Update TV Show Status" from the Task Manager.</p>
+            <button type="button" class="btn" id="reset-battery-show-cache-btn">Reset Show Cache</button>
+            <p id="reset-battery-show-cache-result" style="margin-top:8px;"></p>
+        </div>
+        <div class="debug_item">
             <h3>Delete Database</h3>
             <p class="description">This will delete the database and all cache files (*.cache*.pkl) from the db_content directory.</p>
             <form action="{{ url_for('debug.delete_database') }}" method="POST" id="delete-database-form">
@@ -1607,6 +1613,29 @@ if (document.readyState === 'loading') {
                     });
                 }
             });
+        });
+
+        // Reset battery show cache button
+        document.getElementById('reset-battery-show-cache-btn').addEventListener('click', function() {
+            const btn = this;
+            const result = document.getElementById('reset-battery-show-cache-result');
+            btn.disabled = true;
+            btn.textContent = 'Resetting...';
+            result.textContent = '';
+            fetch('/debug/reset_battery_show_cache', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    btn.disabled = false;
+                    btn.textContent = 'Reset Show Cache';
+                    result.style.color = data.success ? 'green' : 'red';
+                    result.textContent = data.success ? data.message : ('Error: ' + data.error);
+                })
+                .catch(err => {
+                    btn.disabled = false;
+                    btn.textContent = 'Reset Show Cache';
+                    result.style.color = 'red';
+                    result.textContent = 'Error: ' + err.message;
+                });
         });
 
         // Load versions for the version propagator dropdowns
