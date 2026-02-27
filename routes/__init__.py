@@ -41,7 +41,6 @@ from .metadata_routes import metadata_bp
 from .plex_labels_debug_routes import plex_labels_debug_bp
 from .discover_routes import discover_bp
 from .bazarr_spoofing_routes import bazarr_bp
-from .overlay_routes import overlay_bp, overlay_page_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
