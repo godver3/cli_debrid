@@ -173,26 +173,37 @@ def request_content():
             
         # Process metadata
         processed_items = process_metadata([wanted_item])
-        if not processed_items:
-            # Handle cases where process_metadata returns None or an empty dict
-            logging.warning(f"process_metadata returned empty or None for TMDB ID {tmdb_id}. Metadata fetch may have failed.")
-            return jsonify({'error': 'Could not retrieve metadata for this title. The battery may have stale or incorrect data — try forcing a metadata refresh from the library page.'}), 400
 
-        # Combine movies and episodes from processed items
-        all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
-        if not all_items and media_type == 'tv' and imdb_id:
-            # For TV shows: battery may have stale/incomplete episode data. Auto-refresh and retry once.
-            logging.info(f"No new items for TV show {imdb_id} — forcing battery metadata refresh and retrying.")
+        # If metadata is missing or empty, auto-refresh battery and retry once — for both movies and TV shows.
+        # This handles the case where the item has never been in the library (no library page to refresh from).
+        all_items = processed_items.get('movies', []) + processed_items.get('episodes', []) if processed_items else []
+        if not all_items and imdb_id:
+            logging.info(f"No items from process_metadata for {imdb_id} — forcing TMDB mapping refresh and battery refresh, then retrying.")
             try:
+                # Step 1: Force-refresh the TMDB→IMDB mapping in case it was stale/wrong.
+                # This clears the cached entry and re-fetches from Trakt API.
+                refresh_media_type = 'movie' if media_type == 'movie' else 'show'
+                refreshed_imdb_id, refresh_source = DirectAPI.force_refresh_tmdb_mapping(tmdb_id, media_type=refresh_media_type)
+                if refreshed_imdb_id and refreshed_imdb_id != imdb_id:
+                    logging.info(f"TMDB mapping refreshed: {imdb_id} → {refreshed_imdb_id} (source: {refresh_source}). Updating wanted item.")
+                    imdb_id = refreshed_imdb_id
+                    wanted_item['imdb_id'] = imdb_id
+                elif refreshed_imdb_id:
+                    logging.info(f"TMDB mapping refresh confirmed same IMDB ID: {imdb_id}")
+                else:
+                    logging.warning(f"TMDB mapping refresh returned no IMDB ID for TMDB {tmdb_id}, keeping {imdb_id}")
+
+                # Step 2: Force-refresh battery metadata for the (possibly corrected) IMDB ID.
                 DirectAPI.force_refresh_metadata(imdb_id)
                 processed_items = process_metadata([wanted_item])
                 if processed_items:
                     all_items = processed_items.get('movies', []) + processed_items.get('episodes', [])
             except Exception as e_refresh:
                 logging.warning(f"Auto-refresh failed for {imdb_id}: {e_refresh}")
+
         if not all_items:
-            logging.warning(f"No processable items found after metadata processing for TMDB ID {tmdb_id}. Battery may be missing season/episode data.")
-            return jsonify({'error': 'Could not find any episodes to add for this title. The battery may be missing season data — try forcing a metadata refresh from the library page, then request again.'}), 400
+            logging.warning(f"No processable items found after metadata processing for TMDB ID {tmdb_id}.")
+            return jsonify({'error': 'Could not retrieve metadata for this title. Please try again in a moment.'}), 400
             
         # Add content source to all items.
         # When user system is enabled, record the requesting user's username as the detail
