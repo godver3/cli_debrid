@@ -473,15 +473,61 @@ def _infer_timezone_from_network(network_name: str | None, country: str | None =
 # ─── Public API (matches trakt_client signatures) ────────────────────────────
 
 
+def _resolve_tvdb_id_via_tmdb(imdb_id: str, tmdb_api_key: str) -> Optional[int]:
+    """Try to resolve a TVDB series ID by looking up via TMDB ID.
+
+    Used when /search/remoteid/{imdb_id} returns null (TVDB hasn't linked the
+    IMDb ID yet) but the show exists on TVDB and can be found via its TMDB ID.
+    Returns the TVDB series ID if found, else None.
+    """
+    tmdb_id = _resolve_tmdb_id_from_imdb(imdb_id, tmdb_api_key, media_type='show')
+    if not tmdb_id:
+        return None
+
+    url = f"{TVDB_BASE_URL}/search/remoteid/{tmdb_id}"
+    resp = _make_request(url)
+    if not resp or resp.status_code != 200:
+        return None
+
+    data = resp.json().get('data') or []
+    for item in data:
+        series = item.get('series') if isinstance(item, dict) else None
+        if isinstance(series, dict) and series.get('id'):
+            tvdb_id = int(series['id'])
+            # Cache the mapping so future lookups don't need the TMDB roundtrip
+            _cache_tvdb_mapping(str(tvdb_id), imdb_id, 'show')
+            logger.info(f"TVDB: resolved {imdb_id} via TMDB ID {tmdb_id} → TVDB ID {tvdb_id}")
+            return tvdb_id
+
+    return None
+
+
+def _get_trakt_status(imdb_id: str) -> Optional[str]:
+    """Lightweight Trakt status check — fetches only show summary, returns status string or None."""
+    try:
+        from . import trakt_client
+        from .trakt_client import TRAKT_BASE_URL, _make_request as trakt_request
+        resp = trakt_request(f"{TRAKT_BASE_URL}/shows/{imdb_id}?extended=full")
+        if resp and resp.status_code == 200:
+            return resp.json().get('status')
+    except Exception as e:
+        logger.debug(f"TVDB: Trakt status cross-check failed for {imdb_id}: {e}")
+    return None
+
+
 def get_show_data(imdb_id: str) -> Optional[dict]:
     """Get full show metadata + aliases + seasons/episodes."""
     tvdb_id = _resolve_tvdb_id(imdb_id, media_type='show')
     if not tvdb_id:
-        logger.warning(f"TVDB: could not resolve IMDb {imdb_id} to TVDB ID, trying TMDB fallback")
+        # TVDB hasn't linked this IMDb ID yet — try resolving via TMDB ID
         tmdb_api_key = _get_tmdb_api_key()
         if tmdb_api_key:
-            return _fetch_tmdb_show_data(imdb_id, tmdb_api_key)
-        return None
+            tvdb_id = _resolve_tvdb_id_via_tmdb(imdb_id, tmdb_api_key)
+        if not tvdb_id:
+            logger.warning(f"TVDB: could not resolve IMDb {imdb_id} to TVDB ID, trying TMDB fallback")
+            if tmdb_api_key:
+                return _fetch_tmdb_show_data(imdb_id, tmdb_api_key)
+            return None
 
     url = f"{TVDB_BASE_URL}/series/{tvdb_id}/extended?meta=translations,episodes"
     resp = _make_request(url)
@@ -557,6 +603,14 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
         # Fallback to extended response (may have non-English titles)
         seasons = _extract_seasons_from_extended(raw)
     show_data['seasons'] = seasons
+
+    # TVDB marks many canceled shows as 'Ended' — cross-check with Trakt
+    # which reliably distinguishes 'canceled' from 'ended'.
+    if show_data.get('status') == 'ended':
+        trakt_status = _get_trakt_status(imdb_id)
+        if trakt_status == 'canceled':
+            logger.info(f"TVDB: correcting status for {imdb_id} from 'ended' to 'canceled' (Trakt)")
+            show_data['status'] = 'canceled'
 
     return show_data
 

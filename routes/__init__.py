@@ -1,4 +1,3 @@
-from .trakt_friends_routes import trakt_friends_bp
 from flask import Blueprint, jsonify, redirect, url_for, render_template, g, request, abort, flash
 from functools import wraps
 import json
@@ -35,7 +34,6 @@ from .magnet_routes import magnet_bp
 from .performance_routes import performance_bp
 from .torrent_status_routes import torrent_status_bp
 from .settings_validation_routes import settings_validation_bp
-from .content_requestor_routes import content_requestor_bp
 from .connections_routes import connections_bp
 from .user_token_routes import user_token_bp
 from .symlink_tools_routes import symlink_tools_bp
@@ -43,6 +41,7 @@ from .metadata_routes import metadata_bp
 from .plex_labels_debug_routes import plex_labels_debug_bp
 from .discover_routes import discover_bp
 from .bazarr_spoofing_routes import bazarr_bp
+from .overlay_routes import overlay_bp, overlay_page_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
@@ -168,7 +167,9 @@ def register_blueprints(app):
         (metadata_bp, '/metadata'),
         (plex_labels_debug_bp, ''),
         (discover_bp, '/discover'),
-        (bazarr_bp, '')  # Mounted at root for /api/v3/* and /signalr/* paths
+        (bazarr_bp, ''),  # Mounted at root for /api/v3/* and /signalr/* paths
+        (overlay_page_bp, ''),  # Mounted at root for /overlays page
+        (overlay_bp, '')  # Mounted at root for /api/overlays/* paths (includes prefix in blueprint)
     ]
     
     for blueprint, url_prefix in blueprints:

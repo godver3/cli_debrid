@@ -266,6 +266,29 @@ def refresh_release_dates_route():
     refresh_release_dates()
     return jsonify({'success': True, 'message': 'Release dates refreshed successfully'})
 
+@debug_bp.route('/reset_battery_show_cache', methods=['POST'])
+@admin_required
+def reset_battery_show_cache():
+    """Reset battery show cache by nulling last_trakt_fetch for all shows.
+    This forces a fresh re-fetch from TVDB/Trakt on the next TV status update,
+    which will correctly apply the canceled vs ended cross-check fix.
+    """
+    try:
+        from cli_battery.app.database import managed_session, Item
+        with managed_session() as session:
+            updated = session.query(Item).filter(Item.type == 'show').update(
+                {'last_trakt_fetch': None},
+                synchronize_session=False
+            )
+        logging.info(f"[Reset Battery Cache] Nulled last_trakt_fetch for {updated} shows in battery DB")
+        return jsonify({
+            'success': True,
+            'message': f'Reset cache for {updated} shows. Run "Update TV Show Status" task to re-fetch status from TVDB/Trakt.'
+        })
+    except Exception as e:
+        logging.error(f"reset_battery_show_cache error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @debug_bp.route('/delete_database', methods=['POST'])
 @admin_required
 def delete_database():
