@@ -298,7 +298,7 @@ def fetch_poster(tmdb_id, media_type):
         return jsonify({
             'success': False,
             'error': 'No poster found in TMDB'
-        }), 404
+        })
 
     except Exception as e:
         logging.error(f"Error fetching poster for {tmdb_id} ({media_type}): {e}")
@@ -327,7 +327,7 @@ def fetch_poster_imdb(imdb_id, media_type):
             return jsonify({
                 'success': False,
                 'error': f'Could not find TMDB ID for IMDB ID {imdb_id}'
-            }), 404
+            })
 
         # Fetch metadata from TMDB
         media_meta = get_media_meta(tmdb_id, tmdb_media_type)
@@ -358,7 +358,7 @@ def fetch_poster_imdb(imdb_id, media_type):
         return jsonify({
             'success': False,
             'error': 'No poster found in TMDB'
-        }), 404
+        })
 
     except Exception as e:
         logging.error(f"Error fetching poster for IMDB {imdb_id} ({media_type}): {e}")
@@ -1714,7 +1714,7 @@ def refresh_show_metadata(media_id):
         show_title = metadata.get('title', title)
         show_year = str(metadata.get('year', '')) if metadata.get('year') else None
         show_status = metadata.get('status', '')
-        
+
         # Format genres from list to comma-separated string
         genres_list = metadata.get('genres', [])
         if isinstance(genres_list, list):
@@ -1811,27 +1811,38 @@ def refresh_show_metadata(media_id):
             imdb_id
         ))
         try:
-    
-            # Update show-level metadata in tv_shows table (title, year, status)
+            # Calculate total_seasons from fresh metadata
+            total_seasons_refresh = None
+            if 'seasons' in metadata:
+                total_seasons_refresh = 0
+                for k in metadata['seasons'].keys():
+                    try:
+                        if int(k) != 0:
+                            total_seasons_refresh += 1
+                    except (ValueError, TypeError):
+                        pass
+            # Update show-level metadata in tv_shows table (title, year, status, total_seasons)
             cursor.execute("""
                 UPDATE tv_shows
                 SET title = ?,
                     year = ?,
                     status = ?,
+                    total_seasons = COALESCE(?, total_seasons),
                     last_updated = ?
                 WHERE imdb_id = ?
             """, (
                 show_title,
                 show_year,
                 show_status,
+                total_seasons_refresh,
                 datetime.now(),
                 imdb_id
             ))
-    
+
             tmdb_updated = True
-            logging.info(f"Updated TMDB metadata for {show_title} in both media_items and tv_shows tables")
+            logging.info(f"Updated metadata for {show_title} in both media_items and tv_shows tables")
         except Exception as e:
-            logging.warning(f"Failed to update TMDB metadata: {e}")
+            logging.warning(f"Failed to update show metadata: {e}")
 
         # Also update timestamps for all episodes (even if title didn't change)
         cursor.execute(f"""

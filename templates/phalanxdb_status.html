@@ -122,7 +122,8 @@
 </div>
 
 <script>
-document.getElementById('hashTesterForm').addEventListener('submit', async function(e) {
+const hashTesterForm = document.getElementById('hashTesterForm');
+if (hashTesterForm) hashTesterForm.addEventListener('submit', async function(e) {
     e.preventDefault();
     
     const hashInput = document.getElementById('hashInput');

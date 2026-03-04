@@ -885,7 +885,8 @@ def get_task_timings():
         # If not running, return empty or maybe load saved toggles/intervals?
         # Let's return empty for now, UI can handle loading saved states.
         return jsonify(success=False, error="Program is not running", tasks={
-            'queues': {}, 'content_sources': {}, 'system_tasks': {}
+            'queues': {}, 'content_sources': {}, 'system_tasks': {},
+            'library_tasks': {}, 'metadata_tasks': {}, 'feature_tasks': {}
         })
 
     # Load custom intervals (now expects seconds)
@@ -898,10 +899,42 @@ def get_task_timings():
         except Exception as e:
             logging.error(f"Error loading saved task intervals (seconds) from {intervals_file_path}: {e}")
 
+    # Tasks explicitly assigned to Library, Metadata, or Feature tabs
+    _LIBRARY_TASKS = {
+        'task_verify_plex_removals',
+        'task_check_trakt_early_releases',
+        'task_refresh_library_size_cache',
+        'task_check_plex_files',
+        'task_plex_full_scan',
+        'task_verify_symlinked_files',
+        'task_get_plex_watch_history',
+        'task_run_library_maintenance',
+        'task_analyze_media_files',
+        'task_manual_plex_full_scan',
+    }
+    _METADATA_TASKS = {
+        'task_refresh_release_dates',
+        'task_sync_episode_metadata',
+        'task_update_show_ids',
+        'task_update_show_titles',
+        'task_update_movie_ids',
+        'task_update_movie_titles',
+        'task_update_tv_show_status',
+    }
+    _FEATURE_TASKS = {
+        'task_overlay_sync',
+        'task_overlay_cleanup',
+        'task_sync_plex_labels',
+        'task_process_bulk_subtitles',
+    }
+
     tasks_data = {
         'queues': {},
         'content_sources': {},
-        'system_tasks': {}
+        'system_tasks': {},
+        'library_tasks': {},
+        'metadata_tasks': {},
+        'feature_tasks': {},
     }
     job_infos = {}
 
@@ -991,19 +1024,21 @@ def get_task_timings():
              source_key = normalized_name[5:-7] # Extract potential source key
              is_content_source = False
              if content_sources_map:
-                 # Check against actual content source keys
-                 # Need to handle potential spaces vs underscores if display name was complex
                  simple_key_match = source_key in content_sources_map
-                 # More robust check might involve comparing display names if simple key fails
                  if simple_key_match:
                       is_content_source = True
 
              if is_content_source:
                  tasks_data['content_sources'][normalized_name] = task_info
              else:
-                  # If it looks like a source but isn't in the map, treat as system? Or log warning?
                  logging.warning(f"Task '{normalized_name}' looks like a content source but key '{source_key}' not found in content_sources map. Categorizing as system.")
                  tasks_data['system_tasks'][normalized_name] = task_info
+        elif normalized_name in _LIBRARY_TASKS:
+            tasks_data['library_tasks'][normalized_name] = task_info
+        elif normalized_name in _METADATA_TASKS:
+            tasks_data['metadata_tasks'][normalized_name] = task_info
+        elif normalized_name in _FEATURE_TASKS:
+            tasks_data['feature_tasks'][normalized_name] = task_info
         else:
             tasks_data['system_tasks'][normalized_name] = task_info
 

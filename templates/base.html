@@ -69,6 +69,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/library_management.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/library_settings_modal.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/discover_settings_modal.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/overlay_settings_modal.css') }}">
 
     <!-- Load theme switcher early to prevent FOUC -->
     <script src="{{ url_for('static', filename='js/theme_switcher.js') }}"></script>
@@ -851,7 +852,8 @@
                         ('trakt_friends.manage_friends', 'Trakt Friends'),
                         ('user_token.collect_tokens_page', 'Plex User Token M.'),
                         ('symlink_tools.index', 'Symlink Tools'),
-                        ('metadata.metadata_debug', 'Metadata Debug')
+                        ('metadata.metadata_debug', 'Metadata Debug'),
+                        ('overlay_page.overlays_page', 'Overlays')
                     ]
                 } %}
 
@@ -882,6 +884,7 @@
                     'Plex User Token M.': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>',
                     'Symlink Tools': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>',
                     'Metadata Debug': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>',
+                    'Overlays': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>',
                     'Manage Users': '<svg class="settings-nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>'
                 } %}
                 
@@ -1149,6 +1152,7 @@
     <script type="module" src="{{ url_for('static', filename='js/base.js') }}"></script>
     <script src="{{ url_for('static', filename='js/library_settings_modal.js') }}"></script>
     <script src="{{ url_for('static', filename='js/discover_settings_modal.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/overlay_settings_modal.js') }}"></script>
 
     <!-- Support Modal -->
     <div id="supportModal" class="modal" style="display: none;">
@@ -1283,6 +1287,66 @@
             <div class="discover-settings-modal-footer">
                 <button class="discover-settings-btn-cancel">Cancel</button>
                 <button class="discover-settings-btn-save">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Overlay Settings Modal -->
+    <div id="overlaySettingsModal" class="overlay-settings-modal" style="display: none;">
+        <div class="overlay-settings-modal-overlay"></div>
+        <div class="overlay-settings-modal-content">
+            <div class="overlay-settings-modal-header">
+                <h2>Overlay Settings</h2>
+                <button class="overlay-settings-modal-close" aria-label="Close">&times;</button>
+            </div>
+            <div class="overlay-settings-modal-body">
+                <div class="overlay-setting-group">
+                    <label for="overlaySettingsEnabled">
+                        <input type="checkbox" id="overlaySettingsEnabled" class="overlay-setting-checkbox">
+                        Enable Overlay System
+                    </label>
+                    <p class="overlay-setting-description">Enable the poster overlay system. When enabled, overlay sync tasks will automatically run and apply media info badges to Plex posters. Requires Plex URL and token to be configured.</p>
+                </div>
+
+                <div class="overlay-setting-group">
+                    <label for="overlaySettingsMediaDataPath">Media Server Data Path</label>
+                    <input type="text" id="overlaySettingsMediaDataPath" class="overlay-setting-input" placeholder="/config/Library/Application Support/Plex Media Server">
+                    <p class="overlay-setting-description">Path to the Plex Media Server data directory. Required for the poster cleanup task to delete old uploaded overlay versions directly from the filesystem.</p>
+                </div>
+
+                <div class="overlay-setting-group">
+                    <label for="overlaySettingsContentCheckDays">Ratings Check Interval (days)</label>
+                    <input type="number" id="overlaySettingsContentCheckDays" class="overlay-setting-input" min="0" step="1" placeholder="7">
+                    <p class="overlay-setting-description">How often to re-fetch ratings (IMDb/TMDB/Trakt/RT) and show status to detect changes. Set to 0 to check every sync. Version count changes are always checked every sync. Default: 7.</p>
+                </div>
+
+                <div class="overlay-setting-group overlay-setting-group--danger">
+                    <label class="overlay-setting-label--danger">Poster Reset</label>
+                    <p class="overlay-setting-description">Reset posters to clean originals from TMDB. Use this when migrating from another overlay app (Kometa, PMM, etc.) or to clear any foreign overlays. Overlays will <strong>not</strong> be re-applied automatically — use Generate All when ready.</p>
+                    <div class="overlay-reset-actions">
+                        <button type="button" class="overlay-reset-btn overlay-reset-btn--all" onclick="openPosterResetConfirm()">
+                            Reset All Posters
+                        </button>
+                        <button type="button" class="overlay-reset-btn overlay-reset-btn--review" onclick="openPosterReviewGrid()">
+                            Review &amp; Reset Selected
+                        </button>
+                    </div>
+                    <!-- Progress bar (hidden until job runs) -->
+                    <div id="posterResetProgress" style="display:none;margin-top:12px;">
+                        <div class="overlay-reset-progress-label">
+                            <span id="posterResetProgressText">Starting…</span>
+                            <span id="posterResetProgressPct">0%</span>
+                        </div>
+                        <div class="overlay-reset-progress-bar-wrap">
+                            <div id="posterResetProgressBar" class="overlay-reset-progress-bar" style="width:0%"></div>
+                        </div>
+                        <button type="button" class="overlay-reset-cancel-btn" onclick="cancelPosterReset()">Cancel</button>
+                    </div>
+                </div>
+            </div>
+            <div class="overlay-settings-modal-footer">
+                <button class="overlay-settings-btn-cancel">Cancel</button>
+                <button class="overlay-settings-btn-save">Save Settings</button>
             </div>
         </div>
     </div>

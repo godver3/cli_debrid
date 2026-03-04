@@ -26,10 +26,12 @@
             <div class="scraping-settings-actions action-buttons settings-expand-collapse-buttons">
                 <button type="button" class="scraping-settings-btn btn-secondary settings-collapse-all">Collapse All</button>
                 <button type="button" class="scraping-settings-btn btn-secondary settings-expand-all">Expand All</button>
+                <button id="import-versions-btn" class="scraping-settings-btn-primary btn-primary add-version-link">Import</button>
                 <button id="add-version-btn" class="scraping-settings-btn-primary btn-primary add-version-link">Add New Version</button>
                 <button id="add-default-version-btn" class="scraping-settings-btn-primary btn-primary add-version-link">Add Default Version</button>
                 <button id="add-separate-versions-btn" class="scraping-settings-btn-primary btn-primary add-version-link">Add Separate 1080p/4K Versions</button>
             </div>
+            <input type="file" id="import-versions-file" accept=".json" style="display:none">
         </div>
 
         <div class="version-list">
@@ -170,6 +172,83 @@
         });
     }
 
+    function exportVersion(versionId) {
+        const url = '/settings/versions/export?version=' + encodeURIComponent(versionId);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'version_' + versionId.replace(/\s+/g, '_') + '.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    }
+
+    function showImportVersionsDialog() {
+        window.showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: 'Import Versions',
+            message: 'Select a JSON file exported from cli_debrid. If a version name already exists you can choose to: <b>Rename</b> (import as a copy), <b>Overwrite</b>, or <b>Skip</b>.',
+            confirmText: 'Choose File',
+            cancelText: 'Cancel',
+            onConfirm: () => {
+                document.getElementById('import-versions-file').click();
+            }
+        });
+    }
+
+    function doImportVersions(file, conflictAction) {
+        window.Loading.show('Importing versions...', 'Please wait.', true);
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('conflict_action', conflictAction);
+        fetch('/settings/versions/import', { method: 'POST', body: fd })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    window.reloadTabContent('scraping', () => {
+                        window.Loading.hide();
+                        window.initializeExpandCollapse();
+                        initializeScrapingFunctionality();
+                        window.showPopup({
+                            type: POPUP_TYPES.SUCCESS,
+                            message: data.message || 'Import complete.'
+                        });
+                    });
+                } else {
+                    window.Loading.hide();
+                    window.showPopup({ type: POPUP_TYPES.ERROR, message: 'Import failed: ' + (data.error || 'Unknown error') });
+                }
+            })
+            .catch(err => {
+                window.Loading.hide();
+                window.showPopup({ type: POPUP_TYPES.ERROR, message: 'Import error: ' + err.message });
+            });
+    }
+
+    // Wire up Import button and hidden file input
+    (function() {
+        const importBtn = document.getElementById('import-versions-btn');
+        const fileInput = document.getElementById('import-versions-file');
+        if (importBtn) {
+            importBtn.addEventListener('click', showImportVersionsDialog);
+        }
+        if (fileInput) {
+            fileInput.addEventListener('change', function() {
+                const file = this.files[0];
+                if (!file) return;
+                this.value = '';
+                window.showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    title: 'Conflict Resolution',
+                    message: 'If a version with the same name already exists, what should happen?\n\n• <b>Rename</b> — import with "(imported)" suffix\n• <b>Overwrite</b> — replace the existing version\n\nClick Cancel to skip duplicates.',
+                    confirmText: 'Rename',
+                    cancelText: 'Overwrite',
+                    onConfirm: () => doImportVersions(file, 'rename'),
+                    onCancel: () => doImportVersions(file, 'overwrite')
+                });
+            });
+        }
+    })();
+
     function showAddVersionPopup() {
         window.showPopup({
             type: POPUP_TYPES.PROMPT,
@@ -228,6 +307,7 @@
 
     function initializeVersionButtons() {
         const buttons = {
+            '.export-version-btn': exportVersion,
             '.rename-version-btn': renameVersion,
             '.duplicate-version-btn': duplicateVersion,
             '.delete-version-btn': deleteVersion
@@ -784,6 +864,9 @@ document.addEventListener('scrapingContentLoaded', function() {
             <h4>{{ version }}</h4>
         </div>
         <div class="version-buttons version-actions">
+            <button type="button" class="export-version-btn btn-secondary" data-version-id="{{ version }}">
+                <span class="btn-text">Export</span>
+            </button>
             <button type="button" class="rename-version-btn btn-secondary" data-version-id="{{ version }}">
                 <span class="btn-text">Rename</span>
             </button>

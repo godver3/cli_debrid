@@ -270,6 +270,115 @@ def migrate_schema():
             conn.execute('ALTER TABLE media_items ADD COLUMN manual_replace BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added manual_replace column to media_items table.")
 
+        # ============================================
+        # Overlay System Tables
+        # ============================================
+        # Overlay tables are initialized via overlays/db_init.py (called in verify_database below)
+        # Legacy plex_* overlay columns (kept for backward compatibility, no longer written to)
+        if 'plex_rating_key' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_rating_key TEXT')
+            logging.info("Successfully added plex_rating_key column to media_items table.")
+        if 'plex_resolution' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_resolution TEXT')
+        if 'plex_hdr' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_hdr INTEGER DEFAULT 0')
+        if 'plex_dolby_vision' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_dolby_vision INTEGER DEFAULT 0')
+        if 'plex_hdr_format' not in columns:
+            conn.execute("ALTER TABLE media_items ADD COLUMN plex_hdr_format TEXT DEFAULT NULL")
+        if 'plex_audio_codec' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_audio_codec TEXT')
+        if 'plex_audio_channels' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_audio_channels TEXT')
+        if 'plex_video_codec' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_video_codec TEXT')
+        if 'plex_media_container' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_media_container TEXT')
+        if 'plex_media_bitrate' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_media_bitrate INTEGER')
+        if 'plex_last_scanned' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_last_scanned TIMESTAMP')
+        if 'plex_network' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_network TEXT')
+        if 'plex_studio' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_studio TEXT')
+        if 'plex_content_rating' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN plex_content_rating TEXT')
+
+        # Media-server-agnostic overlay columns (ms_* = media server, works for Plex and Jellyfin/Emby)
+        if 'ms_item_id' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ms_item_id TEXT')
+            logging.info("Added ms_item_id column (media-server-agnostic overlay key).")
+        if 'ms_resolution' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ms_resolution TEXT')
+            logging.info("Added ms_resolution column.")
+        if 'ms_hdr' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ms_hdr INTEGER DEFAULT 0')
+            logging.info("Added ms_hdr column.")
+        if 'ms_dolby_vision' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ms_dolby_vision INTEGER DEFAULT 0')
+            logging.info("Added ms_dolby_vision column.")
+        if 'ms_hdr_format' not in columns:
+            conn.execute("ALTER TABLE media_items ADD COLUMN ms_hdr_format TEXT DEFAULT NULL")
+            logging.info("Added ms_hdr_format column.")
+        if 'ms_audio_codec' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ms_audio_codec TEXT')
+            logging.info("Added ms_audio_codec column.")
+        if 'ms_audio_channels' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ms_audio_channels TEXT')
+            logging.info("Added ms_audio_channels column.")
+        if 'ms_video_codec' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ms_video_codec TEXT')
+            logging.info("Added ms_video_codec column.")
+        if 'ms_media_container' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ms_media_container TEXT')
+            logging.info("Added ms_media_container column.")
+        if 'ms_media_bitrate' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ms_media_bitrate INTEGER')
+            logging.info("Added ms_media_bitrate column.")
+        if 'ms_last_scanned' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ms_last_scanned TIMESTAMP')
+            logging.info("Added ms_last_scanned column.")
+        if 'ms_network' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ms_network TEXT')
+            logging.info("Added ms_network column.")
+        if 'ms_studio' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ms_studio TEXT')
+            logging.info("Added ms_studio column.")
+        if 'ms_content_rating' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ms_content_rating TEXT')
+            logging.info("Added ms_content_rating column.")
+
+        # Migrate data from legacy plex_* columns to ms_* columns (one-time migration)
+        # Only runs when plex_rating_key data exists AND ms_item_id is completely unpopulated
+        # (i.e. no rows have any ms_item_id at all yet). This prevents re-stamping Plex integer
+        # IDs over NULLs that were intentionally cleared by the overlay system (e.g. stale key
+        # resets in Jellyfin mode, or manual sync that hasn't run yet).
+        ms_count_row = conn.execute('SELECT COUNT(*) FROM media_items WHERE ms_item_id IS NOT NULL AND ms_item_id != ""').fetchone()
+        ms_populated = ms_count_row[0] if ms_count_row else 0
+        if ms_populated == 0:
+            conn.execute('''
+                UPDATE media_items
+                SET ms_item_id = plex_rating_key,
+                    ms_resolution = plex_resolution,
+                    ms_hdr = plex_hdr,
+                    ms_dolby_vision = plex_dolby_vision,
+                    ms_hdr_format = plex_hdr_format,
+                    ms_audio_codec = plex_audio_codec,
+                    ms_audio_channels = plex_audio_channels,
+                    ms_video_codec = plex_video_codec,
+                    ms_media_container = plex_media_container,
+                    ms_media_bitrate = plex_media_bitrate,
+                    ms_last_scanned = plex_last_scanned,
+                    ms_network = plex_network,
+                    ms_studio = plex_studio,
+                    ms_content_rating = plex_content_rating
+                WHERE plex_rating_key IS NOT NULL
+                  AND (ms_item_id IS NULL OR ms_item_id = '')
+            ''')
+
+        logging.info("Overlay system migration complete (ms_* columns ready).")
+
         # Add new indexes for version and content_source if they don't exist
         existing_indexes_cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index';")
         existing_indexes = [row[0] for row in existing_indexes_cursor.fetchall()]
@@ -579,6 +688,51 @@ def migrate_schema():
                 logging.info("Successfully added is_up_to_date column to tv_show_version_status table.")
             # Add checks for other columns here if needed in the future
 
+        # Add total_seasons to tv_shows if missing
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tv_shows'")
+        if cursor.fetchone():
+            cursor.execute("PRAGMA table_info(tv_shows)")
+            columns = [column[1] for column in cursor.fetchall()]
+            if 'total_seasons' not in columns:
+                cursor.execute('ALTER TABLE tv_shows ADD COLUMN total_seasons INTEGER')
+                logging.info("Successfully added total_seasons column to tv_shows table.")
+
+        # Rename plex_overlay_state → media_overlay_state (media-server-agnostic naming)
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='plex_overlay_state'")
+        if cursor.fetchone():
+            cursor.execute('ALTER TABLE plex_overlay_state RENAME TO media_overlay_state')
+            logging.info("Renamed table plex_overlay_state → media_overlay_state.")
+
+        # Add UNIQUE constraint on media_overlay_state.media_item_id (required for ON CONFLICT upsert)
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='uq_media_overlay_state_media_item_id'")
+        if not cursor.fetchone():
+            cursor.execute('''
+                CREATE UNIQUE INDEX uq_media_overlay_state_media_item_id
+                ON media_overlay_state(media_item_id)
+            ''')
+            logging.info("Added UNIQUE index on media_overlay_state(media_item_id).")
+
+        # Add index on media_overlay_state(status) for fast status-based aggregation
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_media_overlay_state_status'")
+        if not cursor.fetchone():
+            cursor.execute('''
+                CREATE INDEX idx_media_overlay_state_status
+                ON media_overlay_state(status)
+            ''')
+            logging.info("Added index on media_overlay_state(status).")
+
+        # Rename plex_removal_queue → overlay_removal_queue
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='plex_removal_queue'")
+        if cursor.fetchone():
+            # Only rename if the target name doesn't already exist
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='overlay_removal_queue'")
+            if not cursor.fetchone():
+                cursor.execute('ALTER TABLE plex_removal_queue RENAME TO overlay_removal_queue')
+                logging.info("Renamed table plex_removal_queue → overlay_removal_queue.")
+            else:
+                cursor.execute('DROP TABLE plex_removal_queue')
+                logging.info("Dropped stale plex_removal_queue (overlay_removal_queue already exists).")
+
         logging.info("Attempting to commit schema migrations...")
         conn.commit()
         logging.info("Schema migrations committed successfully.")
@@ -593,16 +747,16 @@ def verify_database():
     migrate_schema()
     create_torrent_tracking_table()
 
-    # Ensure plex_removal_queue table exists (handles post-delete without restart)
+    # Ensure overlay_removal_queue table exists (handles post-delete without restart)
     try:
         from .symlink_verification import (
-            create_plex_removal_queue_table,
+            create_overlay_removal_queue_table,
             migrate_plex_removal_database,
         )
-        create_plex_removal_queue_table()
+        create_overlay_removal_queue_table()
         migrate_plex_removal_database()
     except Exception as e:
-        logging.error(f"Error ensuring plex_removal_queue table: {e}")
+        logging.error(f"Error ensuring overlay_removal_queue table: {e}")
     
     # Add statistics indexes
     from .migrations import add_statistics_indexes, add_search_performance_indexes, add_statistics_composite_indexes, add_database_page_indexes, add_library_covering_index
@@ -615,6 +769,13 @@ def verify_database():
 
     # Library page covering index for GROUP BY query performance
     add_library_covering_index()
+
+    # Initialize overlay system tables
+    try:
+        from overlays.db_init import init_overlay_tables
+        init_overlay_tables()
+    except Exception as e:
+        logging.error(f"Error initializing overlay tables: {e}")
 
     conn = get_db_connection()
     cursor = conn.cursor()
