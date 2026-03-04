@@ -740,7 +740,7 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                     airtime_cache[imdb_id] = '19:00'
                             
                             airtime = airtime_cache[imdb_id]
-                            conn.execute('''
+                            cursor = conn.execute('''
                                 INSERT OR REPLACE INTO media_items
                                 (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution, size)
                                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -755,7 +755,7 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
 
                         # Queue newly-inserted items for post-processing (e.g. custom script, overlays)
                         # The UPDATE path does this at line ~541; INSERT path was previously missing it.
-                        new_item_id = conn.lastrowid
+                        new_item_id = cursor.lastrowid
                         if new_item_id:
                             new_item_row = conn.execute('SELECT * FROM media_items WHERE id = ?', (new_item_id,)).fetchone()
                             if new_item_row:

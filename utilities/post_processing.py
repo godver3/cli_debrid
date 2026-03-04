@@ -4,7 +4,6 @@ from datetime import datetime
 import os
 import subprocess
 from utilities.settings import get_setting
-from .downsub import main as downsub_main
 
 
 def replace_cleanup_after_collect(item_dict):
@@ -290,6 +289,7 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                     # Always use location_on_disk for subtitle downloads
                     file_path = fresh_item.get('location_on_disk')
                     if file_path:
+                        from .downsub import main as downsub_main
                         downsub_main(file_path)
                     else:
                         logging.warning("No location_on_disk found for item, skipping subtitle download")
