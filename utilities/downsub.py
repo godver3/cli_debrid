@@ -15,15 +15,16 @@ except ImportError:
     from config.downsub_config import config
 
 # Import subliminal components
+SUBLIMINAL_AVAILABLE = False
 try:
     from subliminal import download_best_subtitles, save_subtitles, region
     from subliminal.video import Video
     from babelfish import Language
     import xml.parsers.expat
-except ImportError as e:
-    logging.error(f"Required subliminal packages not installed: {e}")
-    logging.error("Please install: pip install subliminal babelfish")
-    sys.exit(1)
+    SUBLIMINAL_AVAILABLE = True
+except Exception as e:
+    logging.warning(f"Subliminal packages not available: {e}")
+    logging.warning("Subtitle downloading will be disabled. Install with: pip install subliminal babelfish")
 
 # Logging configuration
 logging.basicConfig(
@@ -36,25 +37,28 @@ logging.basicConfig(
 )
 
 # Language mapping from config codes to babelfish Language objects
-LANGUAGE_MAP = {
-    'ara': Language('ara'),
-    'eng': Language('eng'), 
-    'fre': Language('fra'),
-    'fra': Language('fra'),  # Add fra mapping for consistency
-    'ger': Language('deu'),
-    'spa': Language('spa'),
-    'ita': Language('ita'),
-    'por': Language('por'),         # generic (keep if you want EU-PT too)
-    'pt-BR': Language.fromietf('pt-BR'),
-    'pob': Language('por', 'BR'),   # OpenSubtitles legacy code
-    'pb': Language('por', 'BR'),    # common alias
-    'dut': Language('nld'),
-    'rus': Language('rus'),
-    'chi': Language('zho'),
-    'zho': Language('zho'),  # Alternative code for Chinese
-    'jpn': Language('jpn'),
-    'kor': Language('kor'),
-}
+# Only populated when babelfish is available
+LANGUAGE_MAP = {}
+if SUBLIMINAL_AVAILABLE:
+    LANGUAGE_MAP = {
+        'ara': Language('ara'),
+        'eng': Language('eng'),
+        'fre': Language('fra'),
+        'fra': Language('fra'),  # Add fra mapping for consistency
+        'ger': Language('deu'),
+        'spa': Language('spa'),
+        'ita': Language('ita'),
+        'por': Language('por'),         # generic (keep if you want EU-PT too)
+        'pt-BR': Language.fromietf('pt-BR'),
+        'pob': Language('por', 'BR'),   # OpenSubtitles legacy code
+        'pb': Language('por', 'BR'),    # common alias
+        'dut': Language('nld'),
+        'rus': Language('rus'),
+        'chi': Language('zho'),
+        'zho': Language('zho'),  # Alternative code for Chinese
+        'jpn': Language('jpn'),
+        'kor': Language('kor'),
+    }
 
 def expand_languages(codes):
     """Turn config codes into babelfish Languages, expanding 'por' to BR/PT."""
@@ -327,10 +331,14 @@ def download_subtitles_for_video(video_path):
 def main(specific_file=None):
     """
     Main function that processes a single video file using simplified name-only parsing.
-    
+
     Args:
         specific_file (str, optional): Path to a specific file to process. Required.
     """
+    if not SUBLIMINAL_AVAILABLE:
+        logging.warning("Subliminal not available, skipping subtitle download.")
+        return
+
     # Reload configuration to pick up any changes
     config.reload()
     

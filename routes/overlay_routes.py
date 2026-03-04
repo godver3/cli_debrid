@@ -1908,12 +1908,23 @@ def get_cleanup_stats():
         cursor = conn.cursor()
         cursor.execute('SELECT DISTINCT ms_item_id FROM media_items WHERE ms_item_id IS NOT NULL')
         valid_keys = set(row[0] for row in cursor.fetchall())
+        cursor.execute('''
+            SELECT DISTINCT season_ms_item_id FROM season_overlay_state
+            WHERE season_ms_item_id IS NOT NULL
+              AND status NOT IN ('removed', 'user_removed')
+        ''')
+        valid_season_keys = set(row[0] for row in cursor.fetchall())
         conn.close()
 
-        orphaned_count = sum(
-            1 for f in manager.backup_dir.glob('*_original.jpg')
-            if f.stem.replace('_original', '').replace('season_', '') not in valid_keys
-        )
+        orphaned_count = 0
+        for f in manager.backup_dir.glob('*_original.jpg'):
+            stem = f.stem.replace('_original', '')
+            if stem.startswith('season_'):
+                if stem[len('season_'):] not in valid_season_keys:
+                    orphaned_count += 1
+            else:
+                if stem not in valid_keys:
+                    orphaned_count += 1
 
         return jsonify({
             'success': True,
