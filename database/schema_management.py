@@ -703,23 +703,26 @@ def migrate_schema():
             cursor.execute('ALTER TABLE plex_overlay_state RENAME TO media_overlay_state')
             logging.info("Renamed table plex_overlay_state → media_overlay_state.")
 
-        # Add UNIQUE constraint on media_overlay_state.media_item_id (required for ON CONFLICT upsert)
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='uq_media_overlay_state_media_item_id'")
-        if not cursor.fetchone():
-            cursor.execute('''
-                CREATE UNIQUE INDEX uq_media_overlay_state_media_item_id
-                ON media_overlay_state(media_item_id)
-            ''')
-            logging.info("Added UNIQUE index on media_overlay_state(media_item_id).")
+        # Add indexes on media_overlay_state (only if the table exists — it may not yet on fresh installs)
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='media_overlay_state'")
+        if cursor.fetchone():
+            # Add UNIQUE constraint on media_overlay_state.media_item_id (required for ON CONFLICT upsert)
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='uq_media_overlay_state_media_item_id'")
+            if not cursor.fetchone():
+                cursor.execute('''
+                    CREATE UNIQUE INDEX uq_media_overlay_state_media_item_id
+                    ON media_overlay_state(media_item_id)
+                ''')
+                logging.info("Added UNIQUE index on media_overlay_state(media_item_id).")
 
-        # Add index on media_overlay_state(status) for fast status-based aggregation
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_media_overlay_state_status'")
-        if not cursor.fetchone():
-            cursor.execute('''
-                CREATE INDEX idx_media_overlay_state_status
-                ON media_overlay_state(status)
-            ''')
-            logging.info("Added index on media_overlay_state(status).")
+            # Add index on media_overlay_state(status) for fast status-based aggregation
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_media_overlay_state_status'")
+            if not cursor.fetchone():
+                cursor.execute('''
+                    CREATE INDEX idx_media_overlay_state_status
+                    ON media_overlay_state(status)
+                ''')
+                logging.info("Added index on media_overlay_state(status).")
 
         # Rename plex_removal_queue → overlay_removal_queue
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='plex_removal_queue'")
