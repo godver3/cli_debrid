@@ -753,6 +753,14 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                         # logging.debug(f"Inserting new item {item_identifier} (from Plex file: {filename}, location: {current_plex_location}) took {time.time() - start_insert_time:.4f} seconds.")
                         logging.info(f"Added new item {item_identifier} (file: {filename}) to collection.")
 
+                        # Queue newly-inserted items for post-processing (e.g. custom script, overlays)
+                        # The UPDATE path does this at line ~541; INSERT path was previously missing it.
+                        new_item_id = conn.lastrowid
+                        if new_item_id:
+                            new_item_row = conn.execute('SELECT * FROM media_items WHERE id = ?', (new_item_id,)).fetchone()
+                            if new_item_row:
+                                items_for_post_processing.append(dict(new_item_row))
+
 
             except Exception as e:
                 logging.error(f"Error processing item {item_identifier}: {str(e)}", exc_info=True)

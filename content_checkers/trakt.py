@@ -1548,7 +1548,7 @@ def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versio
         endpoint = f"/users/{clean_username}/watchlist"
         logging.debug(f"Making watchlist request to endpoint: {endpoint}")
         logging.debug(f"Using headers: {headers}")
-        items = fetch_paginated_trakt_list(endpoint, headers)
+        items = fetch_items_from_trakt(endpoint, headers)
         
         # Process the items
         processed_items = process_trakt_items(items)

@@ -73,7 +73,7 @@ from content_checkers.content_cache_management import (
 )
 from collections import deque # Import deque for efficient queue operations
 from database.symlink_verification import (
-    create_plex_removal_queue_table,
+    create_overlay_removal_queue_table,
     get_pending_removal_paths,
     update_removal_status, # Renamed from update_removal_verification_status
     cleanup_old_verified_removals, # Renamed from remove_verified_paths
@@ -303,7 +303,11 @@ class ProgramRunner:
             'task_manual_plex_full_scan': 3600, # Run every 60 minutes, disabled by default
             # --- END EDIT ---
             # --- START EDIT: Add bulk subtitle processing task ---
-            'task_process_bulk_subtitles': 3600, # Run every hour, disabled by default  
+            'task_process_bulk_subtitles': 3600, # Run every hour, disabled by default
+            # --- END EDIT ---
+            # --- START EDIT: Add Plex overlay tasks ---
+            'task_overlay_sync': 3600, # Run every 1 hour (if overlays enabled)
+            'task_overlay_cleanup': 86400, # Run every 24 hours (if overlays enabled)
             # --- END EDIT ---
             # 'task_artificial_long_run': 1*60*60, # Run every 2 minutes
             'task_regulate_system_load': 30 # Check system load every 30 seconds
@@ -671,6 +675,23 @@ class ProgramRunner:
                 if task_name in self.enabled_tasks and not is_toggled_on:
                      self.enabled_tasks.remove(task_name)
                      logging.info(f"Disabled '{task_name}' as Debug setting is off.")
+
+        # Enable overlay tasks if overlays are enabled
+        if get_setting('Overlay Settings', 'overlays_enabled', False):
+            overlay_tasks = ['task_overlay_sync', 'task_overlay_cleanup']
+            for task_name in overlay_tasks:
+                is_toggled_off = saved_states.get(self._normalize_task_name(task_name), True) is False
+                if not is_toggled_off and task_name not in self.enabled_tasks:
+                    self.enabled_tasks.add(task_name)
+                    logging.info(f"Enabled '{task_name}' as overlays are enabled.")
+        else:
+            # Disable overlay tasks if overlays are disabled and not manually toggled on
+            overlay_tasks = ['task_overlay_sync', 'task_overlay_cleanup']
+            for task_name in overlay_tasks:
+                is_toggled_on = saved_states.get(self._normalize_task_name(task_name), False) is True
+                if task_name in self.enabled_tasks and not is_toggled_on:
+                    self.enabled_tasks.remove(task_name)
+                    logging.info(f"Disabled '{task_name}' as overlays are disabled.")
 
         # 5. Ensure legacy individual Scraping/Adding tasks are removed *after* all logic
         # --- START REVERT: Comment out or remove this block ---
@@ -4758,7 +4779,7 @@ class ProgramRunner:
             plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
 
         if not plex_url or not plex_token:
-            logging.error("[VERIFY] No Plex URL or token found in relevant settings. Skipping removal verification.")
+            logging.debug("[VERIFY] No Plex URL or token found in relevant settings. Skipping removal verification.")
             return
 
         # Initialize Plex connection
@@ -5039,6 +5060,7 @@ class ProgramRunner:
                 source = "Unknown"
                 show_status = 'unknown' # Default status
                 total_episodes_from_source = 0
+                total_seasons_from_source = 0
                 is_show_ended = False
                 tmdb_id = None
                 title = None
@@ -5051,11 +5073,12 @@ class ProgramRunner:
                     if not show_metadata:
                         logging.warning(f"[TV Status] No metadata found for show {imdb_id} from source '{source}'. Will proceed with version check using existing DB status if available.")
                         # Try to get existing status from DB to determine if ended
-                        cursor.execute("SELECT status, total_episodes FROM tv_shows WHERE imdb_id = ?", (imdb_id,))
+                        cursor.execute("SELECT status, total_episodes, total_seasons FROM tv_shows WHERE imdb_id = ?", (imdb_id,))
                         existing_show = cursor.fetchone()
                         if existing_show:
                             show_status = existing_show['status'].lower() if existing_show['status'] else 'unknown'
                             total_episodes_from_source = existing_show['total_episodes'] or 0
+                            total_seasons_from_source = existing_show['total_seasons'] or 0
                         else:
                              # No metadata and no existing record, cannot determine version completeness accurately
                              logging.warning(f"[TV Status] No existing record for {imdb_id} either. Skipping version status calculation.")
@@ -5069,24 +5092,27 @@ class ProgramRunner:
                         title = show_metadata.get('title')
                         year = show_metadata.get('year')
 
-                        # Calculate total episodes from source metadata
+                        # Calculate total episodes and seasons from source metadata
                         if 'seasons' in show_metadata:
                              # Reset count before summing seasons
                             total_episodes_from_source = 0
+                            total_seasons_from_source = 0
                             for season_num_str, season_data in show_metadata.get('seasons', {}).items():
                                 try:
                                      season_num = int(season_num_str)
                                      if season_num == 0: continue # Skip specials season
                                      total_episodes_from_source += len(season_data.get('episodes', {}))
+                                     total_seasons_from_source += 1
                                 except ValueError:
                                      logging.warning(f"[TV Status] Invalid season number '{season_num_str}' in metadata for {imdb_id}. Skipping.")
                                      continue
                         else:
                             logging.warning(f"[TV Status] Metadata for {imdb_id} ('{title}') lacks 'seasons' key. Total episode count may be inaccurate.")
                             # Fallback to DB value if exists? Or treat as 0? Let's fetch existing.
-                            cursor.execute("SELECT total_episodes FROM tv_shows WHERE imdb_id = ?", (imdb_id,))
+                            cursor.execute("SELECT total_episodes, total_seasons FROM tv_shows WHERE imdb_id = ?", (imdb_id,))
                             existing_show_fallback = cursor.fetchone()
                             total_episodes_from_source = existing_show_fallback['total_episodes'] if existing_show_fallback else 0
+                            total_seasons_from_source = existing_show_fallback['total_seasons'] if existing_show_fallback else 0
                             if total_episodes_from_source == 0:
                                 logging.warning(f"[TV Status] No episode count from metadata or DB for {imdb_id}. Skipping version status calculation.")
                                 # We can still update show status, but version logic is impossible
@@ -5109,8 +5135,8 @@ class ProgramRunner:
                     cursor.execute("""
                         INSERT INTO tv_shows (
                             imdb_id, tmdb_id, title, year, status, is_complete,
-                            total_episodes, last_status_check, added_at, last_updated
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT added_at FROM tv_shows WHERE imdb_id = ?), ?), ?)
+                            total_episodes, total_seasons, last_status_check, added_at, last_updated
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT added_at FROM tv_shows WHERE imdb_id = ?), ?), ?)
                         ON CONFLICT(imdb_id) DO UPDATE SET
                             tmdb_id = COALESCE(NULLIF(excluded.tmdb_id, ''), tv_shows.tmdb_id),
                             title = COALESCE(NULLIF(excluded.title, ''), tv_shows.title),
@@ -5118,12 +5144,13 @@ class ProgramRunner:
                             status = COALESCE(NULLIF(excluded.status, ''), tv_shows.status),
                             is_complete = excluded.is_complete, -- Set based on show_status=='ended'/'canceled'
                             total_episodes = excluded.total_episodes,
+                            total_seasons = excluded.total_seasons,
                             last_status_check = excluded.last_status_check,
                             last_updated = excluded.last_updated
                         WHERE tv_shows.imdb_id = excluded.imdb_id;
                     """, (
                         imdb_id, tmdb_id, title, year, show_status, int(is_show_ended),
-                        total_episodes_from_source, now_str, # last_status_check
+                        total_episodes_from_source, total_seasons_from_source, now_str, # last_status_check
                         # Values for INSERT part (added_at logic)
                         imdb_id, now_str, # imdb_id for subquery, now_str for COALESCE fallback
                         # Value for INSERT part (last_updated)
@@ -5799,6 +5826,66 @@ class ProgramRunner:
         
         logging.info(f"'{task_name}' has finished sleeping and is now complete.")
     # *** END EDIT ***
+
+    def task_overlay_sync(self):
+        """Scheduled task to sync overlay data and regenerate changed posters."""
+        try:
+            from overlays.scheduled_tasks import task_overlay_sync as sync_func
+            result = sync_func()
+            if result.get('success'):
+                logging.info(f"Overlay sync completed: {result.get('message', 'Success')}")
+            else:
+                logging.warning(f"Overlay sync had issues: {result.get('message', 'Unknown error')}")
+        except ImportError as e:
+            logging.warning(f"Overlay module not available: {e}")
+        except Exception as e:
+            logging.error(f"Error in overlay sync task: {e}", exc_info=True)
+
+    def task_overlay_cleanup(self):
+        """Scheduled task to clean up unused posters and overlay cache."""
+        try:
+            logging.info("Overlay cleanup task starting")
+            db_path = os.environ.get('DATABASE_PATH', '/user/db_content/media_items.db')
+
+            # 1. Clean up orphaned poster backup files
+            try:
+                from overlays.cache_cleanup import PosterCacheManager
+                manager = PosterCacheManager(db_path)
+                backup_result = manager.cleanup_orphaned_backups()
+                removed = backup_result.get('orphaned_removed', 0)
+                logging.info(f"Overlay cleanup: removed {removed} orphaned backup file(s)")
+            except Exception as e:
+                logging.warning(f"Overlay cleanup: backup cleanup failed: {e}")
+
+            # 2. Reset stuck 'analyzing' states (older than 30 minutes) to 'pending'
+            try:
+                import sqlite3 as _sqlite3
+                conn = _sqlite3.connect(db_path)
+                conn.execute("""
+                    UPDATE media_overlay_state SET status = 'pending'
+                    WHERE status = 'analyzing'
+                      AND updated_at < datetime('now', '-30 minutes')
+                """)
+                stuck_reset = conn.total_changes
+                conn.commit()
+                conn.close()
+                if stuck_reset:
+                    logging.info(f"Overlay cleanup: reset {stuck_reset} stuck analyzing state(s) to pending")
+            except Exception as e:
+                logging.warning(f"Overlay cleanup: stuck state reset failed: {e}")
+
+            # 3. DB housekeeping + Plex poster pruning (unified in task_overlay_cleanup)
+            from overlays.scheduled_tasks import task_overlay_cleanup as cleanup_func
+            result = cleanup_func()
+            if result.get('success'):
+                logging.info(f"Overlay cleanup completed: {result.get('message', 'Success')}")
+            else:
+                logging.warning(f"Overlay cleanup had issues: {result.get('message', 'Unknown error')}")
+
+        except ImportError as e:
+            logging.warning(f"Overlay module not available: {e}")
+        except Exception as e:
+            logging.error(f"Error in overlay cleanup task: {e}", exc_info=True)
 
     def _fail_safe_resume_if_stuck(self):
         """Force-resume the queue if it has been paused due to connectivity issues for too long.

@@ -209,11 +209,15 @@ def run_custom_script(item: Dict[str, Any]) -> None:
         item (Dict[str, Any]): The media item that triggered the state change
     """
     if not get_setting('Custom Post-Processing', 'enable_custom_script', False):
+        logging.debug("Custom script disabled or not configured — skipping")
         return
-        
+
     script_path = get_setting('Custom Post-Processing', 'custom_script_path', '')
-    if not script_path or not os.path.isfile(script_path):
-        logging.warning(f"Custom script not found at: {script_path}")
+    if not script_path:
+        logging.warning("Custom script enabled but no script path configured")
+        return
+    if not os.path.isfile(script_path):
+        logging.warning(f"Custom script not found or not accessible inside container at: {script_path} — check volume mounts")
         return
         
     try:
@@ -339,6 +343,24 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                     replace_cleanup_after_collect(dict(fresh_item))
                 except Exception as e:
                     logging.error(f"Failed to run replace cleanup after collect: {str(e)}")
+
+            # Apply poster overlay in a background thread (non-blocking).
+            # Duplicate-run protection is handled inside apply_overlay_for_new_item
+            # via the _overlay_in_flight set (atomic, lock-protected).
+            try:
+                if get_setting('Overlay Settings', 'overlays_enabled', False):
+                    import threading
+                    from overlays.scheduled_tasks import apply_overlay_for_new_item
+                    t = threading.Thread(
+                        target=apply_overlay_for_new_item,
+                        args=(item_id,),
+                        daemon=True,
+                        name=f'overlay-new-{item_id}'
+                    )
+                    t.start()
+                    logging.debug(f"POST-PROCESSING: Overlay thread started for item {item_id}")
+            except Exception as e:
+                logging.error(f"POST-PROCESSING: Failed to start overlay thread for item {item_id}: {e}")
         else:
             logging.warning(f"Unhandled state {state} in post-processing")
 

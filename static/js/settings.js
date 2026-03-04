@@ -456,7 +456,7 @@ export function updateSettings() {
     }
     
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
@@ -1003,6 +1003,24 @@ export function updateSettings() {
         settingsData['Plex']['mounted_file_location'] = mountedFileLocation.value;
 
     } else {
+    }
+
+    const plexDataPath = document.getElementById('additional-plex_data_path');
+
+    if (plexDataPath) {
+        if (!settingsData['Overlay Settings']) {
+            settingsData['Overlay Settings'] = {};
+        }
+        settingsData['Overlay Settings']['plex_data_path'] = plexDataPath.value;
+    }
+
+    const overlayContentCheckDays = document.getElementById('additional-overlay_content_check_interval_days');
+
+    if (overlayContentCheckDays) {
+        if (!settingsData['Overlay Settings']) {
+            settingsData['Overlay Settings'] = {};
+        }
+        settingsData['Overlay Settings']['overlay_content_check_interval_days'] = parseInt(overlayContentCheckDays.value) || 7;
     }
 
     const doNotAddPlexWatchHistoryItemsToQueue = document.getElementById('scraping-do_not_add_plex_watch_history_items_to_queue');

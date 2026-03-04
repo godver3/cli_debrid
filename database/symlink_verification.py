@@ -698,7 +698,7 @@ def add_path_for_removal_verification(item_path: str, item_title: str, episode_t
         cursor = conn.cursor()
         # Check if this path is already in the queue
         cursor.execute(
-            """SELECT id FROM plex_removal_queue 
+            """SELECT id FROM overlay_removal_queue 
                WHERE item_path = ?""",
             (item_path,)
         )
@@ -708,7 +708,7 @@ def add_path_for_removal_verification(item_path: str, item_title: str, episode_t
             existing_id = existing[0]
             # Path exists, update titles and reset status/attempts
             cursor.execute(
-                """UPDATE plex_removal_queue 
+                """UPDATE overlay_removal_queue 
                    SET item_title = ?,
                        episode_title = ?,
                        status = 'Pending', 
@@ -726,7 +726,7 @@ def add_path_for_removal_verification(item_path: str, item_title: str, episode_t
         # Add new path to verification queue
         cursor.execute(
             """
-            INSERT INTO plex_removal_queue 
+            INSERT INTO overlay_removal_queue 
             (item_path, item_title, episode_title, status, attempts, added_at) 
             VALUES (?, ?, ?, 'Pending', 0, ?)
             """,
@@ -785,7 +785,7 @@ def get_pending_removal_paths(limit: int = 50) -> List[Dict[str, Any]]:
                 attempts,
                 added_at,
                 last_checked_at
-            FROM plex_removal_queue
+            FROM overlay_removal_queue
             WHERE status = 'Pending'
             ORDER BY attempts ASC, added_at ASC
             LIMIT ?
@@ -818,7 +818,7 @@ def update_removal_status(queue_id: int, status: str, failure_reason: Optional[s
     Update the status of a path in the removal queue.
 
     Args:
-        queue_id: The ID of the record in the plex_removal_queue table.
+        queue_id: The ID of the record in the overlay_removal_queue table.
         status: The new status ('Verified', 'Failed').
         failure_reason: Optional reason if status is 'Failed'.
 
@@ -834,7 +834,7 @@ def update_removal_status(queue_id: int, status: str, failure_reason: Optional[s
         cursor = conn.cursor()
         cursor.execute(
             """
-            UPDATE plex_removal_queue 
+            UPDATE overlay_removal_queue 
             SET status = ?, 
                 failure_reason = ?,
                 last_checked_at = ?
@@ -883,7 +883,7 @@ def increment_removal_attempt(queue_id: int) -> bool:
     Increment the attempt count for a pending removal path.
 
     Args:
-        queue_id: The ID of the record in the plex_removal_queue table.
+        queue_id: The ID of the record in the overlay_removal_queue table.
 
     Returns:
         bool: True if successfully updated, False otherwise.
@@ -893,7 +893,7 @@ def increment_removal_attempt(queue_id: int) -> bool:
         cursor = conn.cursor()
         cursor.execute(
             """
-            UPDATE plex_removal_queue 
+            UPDATE overlay_removal_queue 
             SET attempts = attempts + 1,
                 last_checked_at = ?
             WHERE id = ? AND status = 'Pending'
@@ -953,7 +953,7 @@ def cleanup_old_verified_removals(days: int = 7) -> int:
         cutoff_date = datetime.now() - timedelta(days=days)
         cursor.execute(
             """
-            DELETE FROM plex_removal_queue
+            DELETE FROM overlay_removal_queue
             WHERE status IN ('Verified', 'Failed')
             AND last_checked_at < ?
             """,
@@ -1003,16 +1003,16 @@ def get_removal_stats() -> Dict[str, int]:
         cursor = conn.cursor()
         
         stats = {}
-        cursor.execute("SELECT COUNT(*) FROM plex_removal_queue")
+        cursor.execute("SELECT COUNT(*) FROM overlay_removal_queue")
         stats['total'] = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(*) FROM plex_removal_queue WHERE status = 'Pending'")
+        cursor.execute("SELECT COUNT(*) FROM overlay_removal_queue WHERE status = 'Pending'")
         stats['pending'] = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(*) FROM plex_removal_queue WHERE status = 'Verified'")
+        cursor.execute("SELECT COUNT(*) FROM overlay_removal_queue WHERE status = 'Verified'")
         stats['verified'] = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(*) FROM plex_removal_queue WHERE status = 'Failed'")
+        cursor.execute("SELECT COUNT(*) FROM overlay_removal_queue WHERE status = 'Failed'")
         stats['failed'] = cursor.fetchone()[0]
         
         return stats
@@ -1033,13 +1033,13 @@ def get_removal_stats() -> Dict[str, int]:
         if conn:
             conn.close()
 
-def create_plex_removal_queue_table():
-    """Create the plex_removal_queue table if it doesn't exist, including title columns."""
+def create_overlay_removal_queue_table():
+    """Create the overlay_removal_queue table if it doesn't exist, including title columns."""
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("""
-        CREATE TABLE IF NOT EXISTS plex_removal_queue (
+        CREATE TABLE IF NOT EXISTS overlay_removal_queue (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             item_path TEXT NOT NULL UNIQUE,
             item_title TEXT NOT NULL,
@@ -1052,23 +1052,23 @@ def create_plex_removal_queue_table():
         )
         """)
         # Add indexes for faster querying
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_plex_removal_status ON plex_removal_queue (status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_plex_removal_path ON plex_removal_queue (item_path)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_plex_removal_attempts ON plex_removal_queue (attempts)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_overlay_removal_status ON overlay_removal_queue (status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_overlay_removal_path ON overlay_removal_queue (item_path)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_overlay_removal_attempts ON overlay_removal_queue (attempts)")
         conn.commit()
-        logger.info("Ensured plex_removal_queue table exists with title columns.")
+        logger.info("Ensured overlay_removal_queue table exists with title columns.")
     except sqlite3.Error as e:
         conn.rollback()
-        logger.error(f"Database error creating plex_removal_queue table: {str(e)}")
+        logger.error(f"Database error creating overlay_removal_queue table: {str(e)}")
     except Exception as e:
         conn.rollback()
-        logger.error(f"Unexpected error creating plex_removal_queue table: {str(e)}")
+        logger.error(f"Unexpected error creating overlay_removal_queue table: {str(e)}")
     finally:
         conn.close()
 
 def migrate_plex_removal_database() -> bool:
     """
-    Add new columns or make changes to the plex_removal_queue table if needed.
+    Add new columns or make changes to the overlay_removal_queue table if needed.
     Ensures UNIQUE constraint on item_path and adds title columns.
     
     Returns:
@@ -1079,17 +1079,17 @@ def migrate_plex_removal_database() -> bool:
         cursor = conn.cursor()
         
         # Check for title columns first
-        cursor.execute("PRAGMA table_info(plex_removal_queue)")
+        cursor.execute("PRAGMA table_info(overlay_removal_queue)")
         existing_columns = [column[1].lower() for column in cursor.fetchall()]
         
         needs_alter = False
         if 'item_title' not in existing_columns:
-            cursor.execute("ALTER TABLE plex_removal_queue ADD COLUMN item_title TEXT NOT NULL DEFAULT 'Unknown'")
-            logger.info("Added item_title column to plex_removal_queue")
+            cursor.execute("ALTER TABLE overlay_removal_queue ADD COLUMN item_title TEXT NOT NULL DEFAULT 'Unknown'")
+            logger.info("Added item_title column to overlay_removal_queue")
             needs_alter = True
         if 'episode_title' not in existing_columns:
-            cursor.execute("ALTER TABLE plex_removal_queue ADD COLUMN episode_title TEXT")
-            logger.info("Added episode_title column to plex_removal_queue")
+            cursor.execute("ALTER TABLE overlay_removal_queue ADD COLUMN episode_title TEXT")
+            logger.info("Added episode_title column to overlay_removal_queue")
             needs_alter = True
             
         if needs_alter:
@@ -1101,7 +1101,7 @@ def migrate_plex_removal_database() -> bool:
              logger.info("Committed ALTER TABLE statements for title columns.")
         
         # Now check for UNIQUE constraint (requires table recreation if missing)
-        cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='plex_removal_queue'")
+        cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='overlay_removal_queue'")
         result = cursor.fetchone()
         
         needs_recreation = False
@@ -1109,9 +1109,9 @@ def migrate_plex_removal_database() -> bool:
             table_sql = result['sql'].upper() # Use uppercase for case-insensitive check
             if 'ITEM_PATH TEXT NOT NULL UNIQUE' not in table_sql and 'UNIQUE (ITEM_PATH)' not in table_sql:
                  needs_recreation = True
-                 logger.info("Found plex_removal_queue table missing UNIQUE constraint on item_path. Recreating table.")
+                 logger.info("Found overlay_removal_queue table missing UNIQUE constraint on item_path. Recreating table.")
         else:
-             # Table doesn't exist, create_plex_removal_queue_table will handle it
+             # Table doesn't exist, create_overlay_removal_queue_table will handle it
              return True # No migration needed if table doesn't exist yet
 
         if needs_recreation:
@@ -1120,50 +1120,51 @@ def migrate_plex_removal_database() -> bool:
             
             try:
                 # 1. Rename old table
-                cursor.execute("DROP INDEX IF EXISTS idx_plex_removal_path") # Drop index before rename
-                cursor.execute("DROP INDEX IF EXISTS idx_plex_removal_status") 
-                cursor.execute("DROP INDEX IF EXISTS idx_plex_removal_attempts") 
-                cursor.execute("ALTER TABLE plex_removal_queue RENAME TO plex_removal_queue_old")
-                logger.info("Renamed old plex_removal_queue table.")
+                cursor.execute("DROP INDEX IF EXISTS idx_overlay_removal_path") # Drop index before rename
+                cursor.execute("DROP INDEX IF EXISTS idx_overlay_removal_status") 
+                cursor.execute("DROP INDEX IF EXISTS idx_overlay_removal_attempts") 
+                cursor.execute("ALTER TABLE overlay_removal_queue RENAME TO overlay_removal_queue_old")
+                logger.info("Renamed old overlay_removal_queue table.")
                 
                 # 2. Create new table with the correct schema (using the function)
-                create_plex_removal_queue_table() # This creates the new table correctly
+                create_overlay_removal_queue_table() # This creates the new table correctly
                 
                 # 3. Copy data from old table to new table, handling potential duplicates and adding default titles if needed
                 cursor.execute("""
-                    INSERT INTO plex_removal_queue (item_path, item_title, episode_title, status, attempts, added_at, last_checked_at, failure_reason)
+                    INSERT INTO overlay_removal_queue (item_path, item_title, episode_title, status, attempts, added_at, last_checked_at, failure_reason)
                     SELECT item_path, 
                            COALESCE(item_title, 'Unknown') as item_title,
                            episode_title, 
                            status, attempts, added_at, last_checked_at, failure_reason
                     FROM (
-                        SELECT *,\n                               ROW_NUMBER() OVER(PARTITION BY item_path ORDER BY added_at DESC) as rn
-                        FROM plex_removal_queue_old
+                        SELECT *,
+                               ROW_NUMBER() OVER(PARTITION BY item_path ORDER BY added_at DESC) as rn
+                        FROM overlay_removal_queue_old
                     )
                     WHERE rn = 1
                 """)
                 copied_count = cursor.rowcount
-                logger.info(f"Copied {copied_count} unique records to new plex_removal_queue table.")
+                logger.info(f"Copied {copied_count} unique records to new overlay_removal_queue table.")
                 
                 # 4. Drop the old table
-                cursor.execute("DROP TABLE plex_removal_queue_old")
-                logger.info("Dropped old plex_removal_queue table.")
+                cursor.execute("DROP TABLE overlay_removal_queue_old")
+                logger.info("Dropped old overlay_removal_queue table.")
                 
                 conn.commit() # Commit the transaction
-                logger.info("Successfully recreated plex_removal_queue table with title columns and UNIQUE constraint.")
+                logger.info("Successfully recreated overlay_removal_queue table with title columns and UNIQUE constraint.")
                 
             except Exception as migration_err:
                 conn.rollback() # Rollback on error during migration steps
-                logger.error(f"Error during plex_removal_queue table recreation: {migration_err}")
+                logger.error(f"Error during overlay_removal_queue table recreation: {migration_err}")
                 # Attempt to rename back if possible
                 try:
                     # Attempt to drop the potentially partially created new table first
-                    cursor.execute("DROP TABLE IF EXISTS plex_removal_queue")
-                    cursor.execute("ALTER TABLE plex_removal_queue_old RENAME TO plex_removal_queue")
+                    cursor.execute("DROP TABLE IF EXISTS overlay_removal_queue")
+                    cursor.execute("ALTER TABLE overlay_removal_queue_old RENAME TO overlay_removal_queue")
                     # Recreate indexes on the restored table
-                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_plex_removal_status ON plex_removal_queue (status)")
-                    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_plex_removal_path ON plex_removal_queue (item_path)")
-                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_plex_removal_attempts ON plex_removal_queue (attempts)")
+                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_overlay_removal_status ON overlay_removal_queue (status)")
+                    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_overlay_removal_path ON overlay_removal_queue (item_path)")
+                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_overlay_removal_attempts ON overlay_removal_queue (attempts)")
                     conn.commit()
                     logger.info("Rolled back table rename and attempted to restore indexes.")
                 except Exception as rollback_err:
@@ -1192,7 +1193,7 @@ def migrate_plex_removal_database() -> bool:
             conn.close()
 
 # Run creation and migration for Plex removal queue on import
-create_plex_removal_queue_table()
+create_overlay_removal_queue_table()
 migrate_plex_removal_database()
 
 @retry_on_db_lock()
