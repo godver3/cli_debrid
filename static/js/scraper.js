@@ -876,7 +876,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     closeOverlay();
 
                     // Trigger new search with new version
-                    const multi = mediaType === 'tv' ? true : false;
+                    const multi = mediaType === 'tv' && !episode ? true : false;
                     await selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, newVersion);
                 });
             }
@@ -1096,7 +1096,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
 
                     // Trigger new search with new version
                     // Note: multi value defaults to true for TV shows
-                    const multi = mediaType === 'tv' ? true : false;
+                    const multi = mediaType === 'tv' && !episode ? true : false;
                     await selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, newVersion);
                 });
             }
@@ -1333,26 +1333,123 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
             });
             
             } else {
-                // CLASSIC THEME - Original Desktop Table
+                // CLASSIC THEME - Modern Desktop Table
                 overlayContent.innerHTML = '';
-                const header = document.createElement('h3');
-                header.textContent = `Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}`;
-                overlayContent.appendChild(header);
-                
-                const table = document.createElement('table');
-                table.style.width = '100%';
-                table.style.borderCollapse = 'collapse';
 
+                // Modal header with stats
+                const modalHeader = document.createElement('div');
+                modalHeader.className = 'torrent-modal-header';
+                const scrapers = new Set(allDisplayItems.map(t => t.source?.split(' - ')[0]).filter(Boolean));
+                const scraperCount = scrapers.size;
+                modalHeader.innerHTML = `
+                    <div class="torrent-modal-title-section">
+                        <h3>Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}</h3>
+                        <div class="torrent-stats">
+                            <span>${allDisplayItems.length} results</span>
+                            <span>Search: ${searchDuration}ms</span>
+                            <span>${scraperCount} scraper${scraperCount !== 1 ? 's' : ''}</span>
+                        </div>
+                    </div>
+                `;
+                overlayContent.appendChild(modalHeader);
+
+                // Filter section
+                const filterSection = document.createElement('div');
+                filterSection.className = 'torrent-filter-section';
+
+                let versionsToUse = [];
+                const pageVersionSelect = document.getElementById('version-select');
+                if (pageVersionSelect) {
+                    versionsToUse = Array.from(pageVersionSelect.options).map(opt => opt.value);
+                } else if (availableVersions.length > 0) {
+                    versionsToUse = availableVersions;
+                } else {
+                    versionsToUse = [version];
+                }
+                const cleanVersion = version.replace(/\*/g, '');
+                const versionOptionsHTML = versionsToUse.map(v =>
+                    `<option value="${v}" ${v === cleanVersion ? 'selected' : ''}>${v}</option>`
+                ).join('');
+
+                let folderDropdownHTML = '';
+                try {
+                    const folderResponse = await fetch('/scraper/get_symlink_folders');
+                    if (folderResponse.ok) {
+                        const folderData = await folderResponse.json();
+                        const folders = folderData.folders || [];
+                        if (folders.length > 0) {
+                            let selectedFolder = folders[0];
+                            const isAnimation = genre_ids && (genre_ids.includes(16) || genre_ids.includes('16'));
+                            const isAnime = isAnimation && mediaType === 'tv';
+                            if (isAnime && folders.find(f => /anime/i.test(f))) {
+                                selectedFolder = folders.find(f => /anime/i.test(f));
+                            } else if (isAnimation && folders.find(f => /anim/i.test(f))) {
+                                selectedFolder = folders.find(f => /anim/i.test(f));
+                            } else if (mediaType === 'tv' && folders.find(f => /tv|show|series/i.test(f))) {
+                                selectedFolder = folders.find(f => /tv|show|series/i.test(f));
+                            } else if (mediaType === 'movie' && folders.find(f => /movie|film/i.test(f))) {
+                                selectedFolder = folders.find(f => /movie|film/i.test(f));
+                            }
+                            const folderOptionsHTML = folders.map(f =>
+                                `<option value="${f}" ${f === selectedFolder ? 'selected' : ''}>${f}</option>`
+                            ).join('');
+                            folderDropdownHTML = `
+                                <div class="torrent-folder-dropdown-wrapper">
+                                    <label for="torrent-folder-select">Folder:</label>
+                                    <select id="torrent-folder-select" class="torrent-folder-select">
+                                        ${folderOptionsHTML}
+                                    </select>
+                                </div>
+                            `;
+                        }
+                    }
+                } catch(e) { /* folder dropdown optional */ }
+
+                filterSection.innerHTML = `
+                    <div class="torrent-filter-input-wrapper">
+                        ${createSearchIcon()}
+                        <input type="text" class="torrent-filter-input" id="torrent-filter-input" placeholder="Filter results...">
+                    </div>
+                    <div class="torrent-version-dropdown-wrapper">
+                        <label for="torrent-version-select">Version:</label>
+                        <select id="torrent-version-select" class="torrent-version-select">
+                            ${versionOptionsHTML}
+                        </select>
+                    </div>
+                    ${folderDropdownHTML}
+                    <div class="torrent-filter-toggles">
+                        <label class="torrent-filter-checkbox">
+                            <input type="checkbox" id="show-filtered-checkbox">
+                            <span>Show filtered</span>
+                        </label>
+                        <label class="torrent-filter-checkbox">
+                            <input type="checkbox" id="show-filename-checkbox">
+                            <span>Filename</span>
+                        </label>
+                    </div>
+                `;
+                overlayContent.appendChild(filterSection);
+
+                const versionSelectEl = overlayContent.querySelector('#torrent-version-select');
+                if (versionSelectEl) {
+                    versionSelectEl.addEventListener('change', async function(e) {
+                        closeOverlay();
+                        const multi = mediaType === 'tv' && !episode ? true : false;
+                        await selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, e.target.value);
+                    });
+                }
+
+                const table = document.createElement('table');
                 const thead = document.createElement('thead');
                 thead.innerHTML = `
                     <tr>
-                        <th style="color: rgb(191 191 190); width: 38%;">Name</th>
-                        <th style="color: rgb(191 191 190); width: 12%; text-align: right;">Size Per File</th>
-                        <th style="color: rgb(191 191 190); width: 10%;">Source</th>
-                        <th style="color: rgb(191 191 190); width: 10%; text-align: right;">Score</th>
-                        <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Cache</th>
-                        <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Add</th>
-                        <th style="color: rgb(191 191 190); width: 10%; text-align: center;">Assign</th>
+                        <th class="sortable" style="width: 40%;">Release</th>
+                        <th class="sortable text-right" style="width: 10%;">Size</th>
+                        <th style="width: 12%;">Scraper</th>
+                        <th class="sortable text-right" style="width: 10%;">Score</th>
+                        <th class="text-center" style="width: 8%;">Cache</th>
+                        <th class="text-center" style="width: 10%;">Add</th>
+                        <th class="text-center" style="width: 10%;">Assign</th>
                     </tr>
                 `;
                 table.appendChild(thead);
@@ -1361,11 +1458,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 allDisplayItems.forEach((torrent, index) => {
                     const isFilteredOut = torrent.__isActuallyFilteredOut;
                     const cacheStatus = torrent.cached || 'Unknown';
-                    const cacheStatusClass = cacheStatus === 'Yes' ? 'cached' :
-                                          cacheStatus === 'No' ? 'not-cached' :
-                                          cacheStatus === 'Not Checked' ? 'not-checked' :
-                                          cacheStatus === 'N/A' ? 'check-unavailable' : 'unknown';
-                    
+
                     if (torrent.magnet) {
                         torrent.magnet_link = torrent.magnet;
                     }
@@ -1385,34 +1478,53 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     }
                     const assignUrl = `/magnet/assign_magnet?${assignUrlParams.toString()}`;
 
-                    const bitrateTooltip = formatBitrate(torrent.bitrate);
+                    const qualityTags = extractQualityTags(torrent.title || torrent.original_title || '');
+                    const qualityBadgesHtml = qualityTags.map(tag => createQualityBadge(tag)).join('');
+
+                    const ShowInfo = `${season ? `<span class="season-info">S${season.toString().padStart(2, '0')}` : ''}${(torrent.parsed_info?.seasons?.length || 0) > 1 ? ` - ${torrent.parsed_info.seasons.length}</span>` : `</span>`} ${episode ? `<span class="ds-episode-info"> E${episode.toString().padStart(2, '0')}</span>` : ''}`;
+                    const titleHasYear = year && title.trim().endsWith(`(${year})`);
+                    const cleanTitle = `${title}${year && !titleHasYear ? ` (${year})` : ''}${ShowInfo ? ` ${ShowInfo}` : ''}`;
+                    const filename = torrent.title || torrent.original_title || 'N/A';
+
+                    const score = torrent.score_breakdown?.total_score || 0;
+                    const scoreClass = getScoreColorClass(score);
+                    const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (score || 'N/A');
+
+                    const cacheIconHtml = createCacheIcon(cacheStatus);
 
                     const row = document.createElement('tr');
                     if (isFilteredOut) {
-                        row.classList.add('filtered-out-item'); 
+                        row.classList.add('filtered-row');
                     }
 
                     row.innerHTML = `
-                        <td style="font-weight: 600; text-transform: uppercase; color: rgb(191 191 190); word-wrap: break-word; white-space: normal; padding: 10px;">
-                            <div style="display: block; line-height: 1.4; min-height: fit-content;">
-                                ${torrent.title || torrent.original_title || 'N/A'}
+                        <td>
+                            <div class="release-title-wrapper">
+                                <div class="release-title" data-clean-title="${cleanTitle.replace(/"/g, '&quot;')}" data-filename="${filename.replace(/"/g, '&quot;')}">${cleanTitle}</div>
+                                <div class="release-tags">${qualityBadgesHtml}</div>
                             </div>
                         </td>
-                        <td style="color: rgb(191 191 190); text-align: right;" data-bitrate="${bitrateTooltip}">${(torrent.size || 0).toFixed(1)} GB</td>
-                        <td id="scraper-source" style="color: rgb(191 191 190);">
-                            <div class="source-container">
-                                ${(torrent.source || 'N/A').split(' - ').map(part => `<span class="source-badge">${part.trim()}</span>`).join('')}
-                            </div>
+                        <td class="text-right">${(torrent.size || 0).toFixed(1)} GB</td>
+                        <td>
+                            ${(torrent.source || 'N/A').split(' - ').map(p => `<span class="source-badge">${p.trim()}</span>`).join('')}
                         </td>
-                        <td style="color: rgb(191 191 190); text-align: right;" ${isFilteredOut ? `data-tooltip="${torrent.filter_reason || 'Filtered'}"` : ''}>${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</td>
-                        <td style="color: rgb(191 191 190); text-align: center;">
-                            <span class="cache-status ${cacheStatusClass}" data-index="${index}">${cacheStatus}</span>
+                        <td class="text-right">
+                            <span class="score-value ${scoreClass}" ${isFilteredOut ? `title="${torrent.filter_reason || 'Filtered'}"` : ''}>${scoreDisplay}</span>
                         </td>
-                        <td style="color: rgb(191 191 190); text-align: center;">
-                            <button class="action-button add-button">Add</button>
+                        <td class="text-center cache-cell" data-torrent-index="${index}">
+                            <span class="cache-icon-wrapper">${cacheIconHtml}</span>
                         </td>
-                        <td style="color: rgb(191 191 190); text-align: center;">
-                             <button class="action-button assign-button" onclick="window.location.href='${assignUrl}'">Assign</button>
+                        <td class="text-center">
+                            <button class="action-button add-button">
+                                ${createDownloadIcon()}
+                                ADD
+                            </button>
+                        </td>
+                        <td class="text-center">
+                            <button class="action-button assign-button">
+                                ${createExternalLinkIcon()}
+                                ASSIGN
+                            </button>
                         </td>
                     `;
                     tbody.appendChild(row);
@@ -1445,7 +1557,6 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                                 tmdb_id: torrent.tmdb_id || mediaId, genres: genre_ids, original_title: torrent.original_title
                             });
                         };
-
                         assignButton.onclick = function() {
                             window.location.href = assignUrl;
                         };
@@ -1453,6 +1564,46 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 });
                 table.appendChild(tbody);
                 overlayContent.appendChild(table);
+
+                // Filter / filename toggle functionality
+                const filterInput = overlayContent.querySelector('#torrent-filter-input');
+                const showFilteredCheckbox = overlayContent.querySelector('#show-filtered-checkbox');
+                const showFilenameCheckbox = overlayContent.querySelector('#show-filename-checkbox');
+
+                if (showFilenameCheckbox) {
+                    const savedFilenameState = localStorage.getItem('torrentShowFilename') === 'true';
+                    showFilenameCheckbox.checked = savedFilenameState;
+                    if (savedFilenameState) {
+                        tbody.querySelectorAll('tr').forEach(row => {
+                            const titleDiv = row.querySelector('.release-title');
+                            if (titleDiv) titleDiv.textContent = titleDiv.getAttribute('data-filename');
+                        });
+                    }
+                    showFilenameCheckbox.addEventListener('change', function() {
+                        localStorage.setItem('torrentShowFilename', this.checked);
+                        tbody.querySelectorAll('tr').forEach(row => {
+                            const titleDiv = row.querySelector('.release-title');
+                            if (titleDiv) {
+                                titleDiv.textContent = this.checked
+                                    ? titleDiv.getAttribute('data-filename')
+                                    : titleDiv.getAttribute('data-clean-title');
+                            }
+                        });
+                    });
+                }
+
+                function applyFiltersClassic() {
+                    const filterText = filterInput ? filterInput.value.toLowerCase() : '';
+                    const showFiltered = showFilteredCheckbox ? showFilteredCheckbox.checked : true;
+                    tbody.querySelectorAll('tr').forEach(row => {
+                        const isFiltered = row.classList.contains('filtered-row');
+                        const matchesSearch = !filterText || row.textContent.toLowerCase().includes(filterText);
+                        row.style.display = (matchesSearch && (showFiltered || !isFiltered)) ? '' : 'none';
+                    });
+                }
+                if (filterInput) filterInput.addEventListener('input', applyFiltersClassic);
+                if (showFilteredCheckbox) showFilteredCheckbox.addEventListener('change', applyFiltersClassic);
+                applyFiltersClassic();
             }
         }
     }

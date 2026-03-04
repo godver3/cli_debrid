@@ -2226,6 +2226,157 @@ def import_default_versions():
         logging.error(f"Unexpected error importing default versions: {str(e)}", exc_info=True)
         return jsonify({'success': False, 'error': f'Unexpected error: {str(e)}'}), 500
 
+@settings_bp.route('/versions/export', methods=['GET'])
+@admin_required
+def export_versions():
+    """Export one or all versions as a downloadable JSON file."""
+    try:
+        version_name = request.args.get('version')  # None = export all
+        config = load_config()
+        all_versions = config.get('Scraping', {}).get('versions', {})
+
+        if version_name:
+            if version_name not in all_versions:
+                return jsonify({'success': False, 'error': f"Version '{version_name}' not found"}), 404
+            export_data = {'versions': {version_name: all_versions[version_name]}}
+            filename = f"version_{version_name.replace(' ', '_')}.json"
+        else:
+            export_data = {'versions': all_versions}
+            filename = 'all_versions.json'
+
+        # json.dumps handles all native Python types; convert float inf to null for JSON compatibility
+        def _sanitize(obj):
+            if isinstance(obj, float):
+                import math
+                return None if math.isinf(obj) or math.isnan(obj) else obj
+            if isinstance(obj, dict):
+                return {k: _sanitize(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_sanitize(v) for v in obj]
+            return obj
+
+        safe_data = _sanitize(export_data)
+        json_str = json.dumps(safe_data, indent=2, ensure_ascii=False)
+
+        response = make_response(json_str)
+        response.headers['Content-Type'] = 'application/json'
+        response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+    except Exception as e:
+        logging.error(f"Error exporting versions: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/versions/import', methods=['POST'])
+@admin_required
+def import_versions():
+    """Import versions from an uploaded JSON file.
+
+    conflict_action (form field): 'skip' | 'rename' | 'overwrite'  (default: 'rename')
+    """
+    try:
+        if 'file' not in request.files:
+            return jsonify({'success': False, 'error': 'No file uploaded'}), 400
+
+        f = request.files['file']
+        if not f.filename.endswith('.json'):
+            return jsonify({'success': False, 'error': 'File must be a .json file'}), 400
+
+        conflict_action = request.form.get('conflict_action', 'rename')
+        if conflict_action not in ('skip', 'rename', 'overwrite'):
+            conflict_action = 'rename'
+
+        try:
+            raw = json.loads(f.read().decode('utf-8'))
+        except (json.JSONDecodeError, UnicodeDecodeError) as je:
+            return jsonify({'success': False, 'error': f'Invalid JSON: {je}'}), 400
+
+        if not isinstance(raw, dict) or 'versions' not in raw:
+            return jsonify({'success': False, 'error': 'Invalid format — expected {"versions": {...}}'}), 400
+
+        incoming = raw['versions']
+        if not isinstance(incoming, dict) or not incoming:
+            return jsonify({'success': False, 'error': 'No versions found in file'}), 400
+
+        config = load_config()
+        if 'Scraping' not in config:
+            config['Scraping'] = {}
+        if 'versions' not in config['Scraping']:
+            config['Scraping']['versions'] = {}
+
+        existing = config['Scraping']['versions']
+
+        # Backfill missing fields using schema defaults
+        from utilities.settings_schema import SETTINGS_SCHEMA
+        version_schema = SETTINGS_SCHEMA.get('Scraping', {}).get('versions', {}).get('schema', {})
+
+        def _apply_defaults(version_cfg):
+            result = {}
+            for field, meta in version_schema.items():
+                if field in version_cfg:
+                    result[field] = version_cfg[field]
+                else:
+                    result[field] = meta.get('default')
+            # Keep any extra fields not in schema
+            for k, v in version_cfg.items():
+                if k not in result:
+                    result[k] = v
+            return result
+
+        imported, skipped, renamed, overwritten = [], [], [], []
+
+        for name, vcfg in incoming.items():
+            if not isinstance(vcfg, dict):
+                skipped.append(name)
+                continue
+
+            filled = _apply_defaults(vcfg)
+
+            if name not in existing:
+                existing[name] = filled
+                imported.append(name)
+            elif conflict_action == 'skip':
+                skipped.append(name)
+            elif conflict_action == 'overwrite':
+                existing[name] = filled
+                overwritten.append(name)
+            else:  # rename
+                base = name
+                counter = 1
+                new_name = f"{base} (imported)"
+                while new_name in existing:
+                    new_name = f"{base} (imported {counter})"
+                    counter += 1
+                existing[new_name] = filled
+                renamed.append((name, new_name))
+                imported.append(new_name)
+
+        if imported or overwritten:
+            save_config(config)
+
+        parts = []
+        if imported:
+            parts.append(f"Imported: {', '.join(imported)}")
+        if overwritten:
+            parts.append(f"Overwritten: {', '.join(overwritten)}")
+        if renamed:
+            parts.append(f"Renamed: {'; '.join(f'{o} → {n}' for o, n in renamed)}")
+        if skipped:
+            parts.append(f"Skipped: {', '.join(skipped)}")
+
+        message = ' | '.join(parts) if parts else 'Nothing to import.'
+        logging.info(f"Version import: {message}")
+        return jsonify({'success': True, 'message': message,
+                        'imported': imported, 'skipped': skipped,
+                        'overwritten': overwritten,
+                        'renamed': [{'from': o, 'to': n} for o, n in renamed]})
+
+    except Exception as e:
+        logging.error(f"Error importing versions: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @settings_bp.route('/versions/rename', methods=['POST'])
 @admin_required
 def rename_version():

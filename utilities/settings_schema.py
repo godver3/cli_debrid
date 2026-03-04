@@ -2133,6 +2133,11 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Path to the Plex Media Server data directory (e.g. /config/Library/Application Support/Plex Media Server). Required for the poster cleanup task to delete old uploaded overlay versions directly from the filesystem.",
             "default": ""
+        },
+        "overlay_content_check_interval_days": {
+            "type": "number",
+            "description": "How often (in days) to re-fetch ratings (IMDb/TMDB/Trakt/RT) and show status from the MDBList API to detect changes that should trigger an overlay refresh. Set to 0 to check every sync run. Default is 7 days. Version count changes are always checked every sync regardless of this setting.",
+            "default": 7
         }
     }
 }

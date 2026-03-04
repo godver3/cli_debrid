@@ -1,0 +1,2670 @@
+{% extends "base.html" %}
+
+{% block title %}Overlays{% endblock %}
+
+{% block head %}
+<script>
+    // Load theme-specific CSS using theme_switcher API
+    function loadOverlayCss() {
+        const theme = window.themeSwitcher?.getTheme() || 'classic';
+        if (theme === 'tangerine') {
+            const themeId = 'theme-tangerine-overlays';
+            if (!document.getElementById(themeId)) {
+                const link = document.createElement('link');
+                link.id = themeId;
+                link.rel = 'stylesheet';
+                link.href = "{{ url_for('static', filename='css/tangerine/tangerine_overlays.css') }}";
+                link.setAttribute('data-theme-css', 'tangerine');
+                document.head.appendChild(link);
+            }
+        }
+    }
+
+    // Load on DOMContentLoaded or immediately if already loaded
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', loadOverlayCss);
+    } else {
+        loadOverlayCss();
+    }
+
+    // Reload CSS when theme changes
+    document.addEventListener('themeChanged', loadOverlayCss);
+</script>
+<style>
+/* Inline styles for overlay management - Theme-aware */
+.overlays-container {
+    padding: 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+    color: var(--text-primary, #333);
+}
+
+.overlay-tabs {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid var(--border-color, #ddd);
+}
+
+.overlay-tab {
+    padding: 12px 24px;
+    cursor: pointer;
+    background: var(--card-background, #f5f5f5);
+    border: none;
+    border-radius: 5px 5px 0 0;
+    font-size: 16px;
+    transition: all 0.3s;
+    color: var(--text-primary, #333);
+}
+
+.overlay-tab:hover {
+    background: var(--hover-background, #e0e0e0);
+}
+
+.overlay-tab.active {
+    background: var(--primary-color, #007bff);
+    color: white;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.overlay-controls {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.layout-selector {
+    padding: 8px 12px;
+    border: 1px solid var(--border-color, #ddd);
+    border-radius: 4px;
+    font-size: 14px;
+    min-width: 200px;
+    background: var(--input-background, white);
+    color: var(--text-primary, #333);
+}
+
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.3s;
+}
+
+.btn-primary {
+    background: #007bff;
+    color: white;
+}
+
+.btn-primary:hover {
+    background: #0056b3;
+}
+
+.btn-success {
+    background: #28a745;
+    color: white;
+}
+
+.btn-success:hover {
+    background: #218838;
+}
+
+.btn-warning {
+    background: #ffc107;
+    color: black;
+}
+
+.btn-warning:hover {
+    background: #e0a800;
+}
+
+.btn-danger {
+    background: #dc3545;
+    color: white;
+}
+
+.btn-danger:hover {
+    background: #c82333;
+}
+
+.media-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.media-card {
+    border: 1px solid var(--border-color, #ddd);
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.3s;
+    position: relative;
+    background: var(--card-background, white);
+}
+
+.media-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.card-regen-btn {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    background: rgba(0,0,0,0.65);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
+    font-size: 17px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s, background 0.15s;
+    z-index: 10;
+}
+.media-card:hover .card-regen-btn {
+    opacity: 1;
+}
+.card-regen-btn:hover {
+    background: rgba(230, 100, 0, 0.85);
+}
+
+.card-version-badge {
+    position: absolute;
+    bottom: 6px;
+    left: 6px;
+    background: rgba(0, 0, 0, 0.72);
+    color: #fff;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    pointer-events: none;
+    z-index: 10;
+}
+
+/* Season button on show cards */
+.card-seasons-btn {
+    position: absolute;
+    bottom: 48px;
+    right: 6px;
+    background: rgba(0,0,0,0.70);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 3px 7px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s, background 0.15s;
+    z-index: 10;
+    white-space: nowrap;
+    letter-spacing: 0.3px;
+}
+.media-card:hover .card-seasons-btn {
+    opacity: 1;
+}
+.card-seasons-btn:hover {
+    background: rgba(0, 123, 255, 0.85);
+}
+
+/* Season overlay modal */
+#seasons-modal-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+}
+#seasons-modal-backdrop.open {
+    display: flex;
+}
+#seasons-modal {
+    background: var(--card-background, #fff);
+    color: var(--text-primary, #333);
+    border-radius: 10px;
+    width: 560px;
+    max-width: 95vw;
+    max-height: 82vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+    overflow: hidden;
+}
+#seasons-modal-header {
+    padding: 16px 20px 12px;
+    border-bottom: 1px solid var(--border-color, #ddd);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-shrink: 0;
+}
+#seasons-modal-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+}
+#seasons-modal-close {
+    background: none;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+    color: var(--text-secondary, #666);
+    line-height: 1;
+    padding: 0 4px;
+}
+#seasons-modal-controls {
+    padding: 10px 20px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color, #ddd);
+    flex-shrink: 0;
+}
+#seasons-layout-selector {
+    padding: 6px 10px;
+    border: 1px solid var(--border-color, #ddd);
+    border-radius: 4px;
+    font-size: 13px;
+    background: var(--input-background, white);
+    color: var(--text-primary, #333);
+    min-width: 170px;
+}
+#seasons-modal-body {
+    overflow-y: auto;
+    padding: 10px 20px 16px;
+    flex: 1;
+}
+.season-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-color, #eee);
+}
+.season-row:last-child {
+    border-bottom: none;
+}
+.season-thumb {
+    width: 50px;
+    height: 75px;
+    object-fit: cover;
+    border-radius: 4px;
+    background: #333;
+    flex-shrink: 0;
+}
+.season-info {
+    flex: 1;
+    min-width: 0;
+}
+.season-title {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 3px;
+}
+.season-status-badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+}
+.season-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+.season-actions .btn {
+    padding: 5px 10px;
+    font-size: 12px;
+}
+
+.media-card.selected {
+    border-color: var(--primary-color, #007bff);
+    box-shadow: 0 0 0 2px var(--primary-color, #007bff);
+}
+
+.media-poster {
+    width: 100%;
+    height: 300px;
+    object-fit: cover;
+    background: #f0f0f0;
+}
+
+.media-info {
+    padding: 12px;
+    background: var(--card-background, white);
+}
+
+.media-title {
+    font-weight: bold;
+    margin-bottom: 5px;
+    font-size: 14px;
+    color: var(--text-primary, #333);
+}
+
+.media-year {
+    color: var(--text-secondary, #666);
+    font-size: 12px;
+}
+
+.overlay-status {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+.status-applied {
+    background: #28a745;
+    color: white;
+}
+
+.status-pending {
+    background: #ffc107;
+    color: black;
+}
+
+.status-analyzing {
+    background: #17a2b8;
+    color: white;
+}
+
+.status-failed {
+    background: #dc3545;
+    color: white;
+}
+
+.status-not-started {
+    background: #6c757d;
+    color: white;
+}
+
+.stats-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+    margin-bottom: 30px;
+}
+
+.stat-card {
+    background: var(--card-background, #f8f9fa);
+    padding: 20px;
+    border-radius: 8px;
+    text-align: center;
+    border: 1px solid var(--border-color, transparent);
+}
+
+.stat-applied-breakdown {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+}
+
+.stat-breakdown-item {
+    font-size: 11px;
+    color: var(--text-secondary, #666);
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    white-space: nowrap;
+}
+
+.stat-breakdown-item i {
+    font-size: 10px;
+    opacity: 0.7;
+}
+
+.stat-breakdown-sep {
+    color: var(--text-secondary, #aaa);
+    font-size: 11px;
+    opacity: 0.5;
+}
+
+.stat-reset-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    background: none;
+    border: none;
+    color: #555;
+    font-size: 11px;
+    padding: 3px 5px;
+    cursor: pointer;
+    border-radius: 4px;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s;
+    line-height: 1;
+}
+.stat-card:hover .stat-reset-btn {
+    opacity: 1;
+}
+.stat-reset-btn:hover {
+    color: #e5a00d;
+}
+
+.stat-card-clickable {
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.stat-card-clickable:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.backup-action-btn {
+    background: none;
+    border: 1px solid #444;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 3px 6px;
+    color: #888;
+    font-size: 0.8em;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    transition: color 0.15s, border-color 0.15s, background 0.15s, transform 0.1s;
+}
+
+.backup-action-btn:hover {
+    color: #ccc;
+    border-color: #888;
+    background: rgba(255,255,255,0.06);
+    transform: translateY(-1px);
+}
+
+.backup-action-btn:active {
+    transform: scale(0.92);
+    background: rgba(255,255,255,0.12);
+}
+
+.stat-filter-active {
+    border-color: var(--primary-color, #007bff) !important;
+    box-shadow: 0 0 0 2px var(--primary-color, #007bff) !important;
+}
+
+.stat-value {
+    font-size: 32px;
+    font-weight: bold;
+    color: var(--primary-color, #007bff);
+}
+
+.stat-label {
+    color: var(--text-secondary, #666);
+    margin-top: 5px;
+}
+
+.loading {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-secondary, #666);
+}
+
+.search-box {
+    padding: 8px 12px;
+    border: 1px solid var(--border-color, #ddd);
+    border-radius: 4px;
+    font-size: 14px;
+    min-width: 250px;
+    background: var(--input-background, white);
+    color: var(--text-primary, #333);
+}
+
+.checkbox-container {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+/* Overlays page header */
+.overlays-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 25px;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.overlays-title-section {}
+
+.overlays-title {
+    margin: 0 0 4px 0;
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text-primary, #333);
+}
+
+.overlays-subtitle {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--text-secondary, #666);
+}
+
+.overlays-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+/* action-btn base styles (mirrors library page) */
+.action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px;
+    background: rgba(255,255,255,0.07);
+    color: var(--text-primary, #e0e0e0);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+.action-btn:hover {
+    background: rgba(255,255,255,0.12);
+    border-color: rgba(255,255,255,0.2);
+}
+
+.action-btn.action-btn-danger {
+    border-color: rgba(220,53,69,0.4);
+    color: #f87171;
+}
+
+.action-btn.action-btn-danger:hover {
+    background: rgba(220,53,69,0.15);
+    border-color: rgba(220,53,69,0.6);
+}
+
+.action-btn .w-4 {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="overlays-container">
+    <!-- Page Header -->
+    <div class="overlays-header">
+        <div class="overlays-title-section">
+            <h1 class="overlays-title">Overlay Management</h1>
+            <p class="overlays-subtitle">Manage poster overlays for your media library</p>
+        </div>
+        <div class="overlays-actions">
+            <button type="button" class="action-btn action-btn-sm gap-2" id="overlay-settings-btn" title="Overlay Settings" onclick="openOverlaySettingsModal()">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span class="hidden sm:inline">Settings</span>
+            </button>
+            <button type="button" class="action-btn action-btn-sm gap-2" id="regenerate-all-btn" title="Force re-render all overlays (movies, shows and seasons), overwriting existing ones" onclick="regenerateLibrary()">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                </svg>
+                <span class="hidden sm:inline">Regenerate All</span>
+            </button>
+            <button type="button" class="action-btn action-btn-danger action-btn-sm gap-2" id="remove-all-overlays-btn" title="Remove All Overlays" onclick="removeAllOverlays()">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                </svg>
+                <span class="hidden sm:inline">Remove All</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Statistics Dashboard -->
+    <div class="stats-container" id="stats-container">
+        <div class="stat-card">
+            <div class="stat-value" id="stat-total">-</div>
+            <div class="stat-label">Total Layouts</div>
+            <div class="stat-applied-breakdown">
+                <span class="stat-breakdown-item" title="Movie layouts"><i class="fas fa-film"></i> <span id="stat-layouts-movies">-</span></span>
+                <span class="stat-breakdown-sep">·</span>
+                <span class="stat-breakdown-item" title="Show layouts"><i class="fas fa-tv"></i> <span id="stat-layouts-shows">-</span></span>
+                <span class="stat-breakdown-sep">·</span>
+                <span class="stat-breakdown-item" title="Season layouts"><i class="fas fa-layer-group"></i> <span id="stat-layouts-seasons">-</span></span>
+            </div>
+        </div>
+        <div class="stat-card stat-card-applied">
+            <div class="stat-value" id="stat-applied">-</div>
+            <div class="stat-label">Overlays Applied</div>
+            <div class="stat-applied-breakdown">
+                <span class="stat-breakdown-item" title="Movies"><i class="fas fa-film"></i> <span id="stat-applied-movies">-</span></span>
+                <span class="stat-breakdown-sep">·</span>
+                <span class="stat-breakdown-item" title="Shows"><i class="fas fa-tv"></i> <span id="stat-applied-shows">-</span></span>
+                <span class="stat-breakdown-sep">·</span>
+                <span class="stat-breakdown-item" title="Seasons"><i class="fas fa-layer-group"></i> <span id="stat-applied-seasons">-</span></span>
+            </div>
+        </div>
+        <div class="stat-card" title="Items matched to your media server that have never been processed by the overlay system">
+            <div class="stat-value" id="stat-unprocessed">-</div>
+            <div class="stat-label">Unprocessed</div>
+            <div class="stat-applied-breakdown">
+                <span class="stat-breakdown-item" title="Unprocessed movies"><i class="fas fa-film"></i> <span id="stat-unprocessed-movies">-</span></span>
+                <span class="stat-breakdown-sep">·</span>
+                <span class="stat-breakdown-item" title="Unprocessed shows"><i class="fas fa-tv"></i> <span id="stat-unprocessed-shows">-</span></span>
+                <span class="stat-breakdown-sep">·</span>
+                <span class="stat-breakdown-item" title="Unprocessed seasons"><i class="fas fa-layer-group"></i> <span id="stat-unprocessed-seasons">-</span></span>
+            </div>
+        </div>
+        <div class="stat-card" style="position:relative;" title="Total posters cleaned up across all runs">
+            <button class="stat-reset-btn" onclick="resetCleanupStats(event)" title="Reset cleanup counter"><i class="fas fa-undo"></i></button>
+            <div class="stat-value" id="stat-cleaned">-</div>
+            <div class="stat-label">Cleaned Up</div>
+            <div class="stat-breakdown" id="stat-cleaned-breakdown" style="font-size:11px;color:#888;margin-top:2px;">-</div>
+        </div>
+        <div class="stat-card stat-card-clickable" onclick="filterByStatus('failed')" style="position:relative;" title="Show failed items">
+            <button class="stat-reset-btn" onclick="resetFailedStats(event)" title="Retry all failed items"><i class="fas fa-undo"></i></button>
+            <div class="stat-value" id="stat-failed">-</div>
+            <div class="stat-label">Failed</div>
+            <div class="stat-applied-breakdown">
+                <span class="stat-breakdown-item" title="Failed movies"><i class="fas fa-film"></i> <span id="stat-failed-movies">-</span></span>
+                <span class="stat-breakdown-sep">·</span>
+                <span class="stat-breakdown-item" title="Failed shows"><i class="fas fa-tv"></i> <span id="stat-failed-shows">-</span></span>
+                <span class="stat-breakdown-sep">·</span>
+                <span class="stat-breakdown-item" title="Failed seasons"><i class="fas fa-layer-group"></i> <span id="stat-failed-seasons">-</span></span>
+            </div>
+        </div>
+        <div class="stat-card" style="position:relative;">
+            <div class="stat-value" id="stat-backup-size">-</div>
+            <div class="stat-label">Backup Size</div>
+            <div class="stat-applied-breakdown">
+                <span class="stat-breakdown-item" title="Backed up posters"><i class="fas fa-images"></i> <span id="stat-backup-count">-</span></span>
+                <span class="stat-breakdown-sep">·</span>
+                <span class="stat-breakdown-item" title="Orphaned backups (no longer in library)"><i class="fas fa-unlink"></i> <span id="stat-backup-orphaned">-</span></span>
+            </div>
+            <div style="position:absolute;top:6px;right:6px;display:flex;gap:4px;align-items:center;">
+                <button onclick="cleanupOrphanedBackups(event)" title="Clean up orphaned backups"
+                    class="backup-action-btn" id="cleanup-backup-btn">
+                    <i class="fas fa-trash-alt"></i>
+                </button>
+                <button onclick="deleteAllBackups(event)" title="Delete all backups and reset overlays to pending (start from scratch)"
+                    class="backup-action-btn" id="delete-all-backups-btn">
+                    <i class="fas fa-broom"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Task Progress Overlay -->
+    <div id="task-progress-overlay" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.65);backdrop-filter:blur(3px);align-items:center;justify-content:center;">
+        <div style="background:#141414;border:1px solid rgba(255,255,255,0.08);border-radius:10px;min-width:480px;max-width:520px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,0.6);">
+            <!-- Orange progress bar strip at top -->
+            <div style="height:3px;background:rgba(255,255,255,0.06);">
+                <div id="task-progress-bar" style="height:100%;width:40%;background:linear-gradient(90deg,#ff6b35,#ff8c5a);border-radius:0 2px 2px 0;animation:progress-pulse 1.8s ease-in-out infinite;"></div>
+            </div>
+            <div style="padding:1.5rem 1.75rem 1.25rem;">
+                <div style="display:flex;align-items:center;gap:0.85rem;margin-bottom:0.9rem;">
+                    <i class="fas fa-circle-notch fa-spin" style="color:#888;font-size:1.1rem;flex-shrink:0;"></i>
+                    <div id="task-progress-title" style="font-size:0.95rem;font-weight:600;color:#e8e8e8;"></div>
+                </div>
+                <div id="task-progress-msg" style="font-size:0.82rem;color:#888;margin-left:1.95rem;line-height:1.4;"></div>
+                <div id="task-progress-counter" style="font-size:0.82rem;color:#ff8c5a;font-weight:600;margin-left:1.95rem;margin-bottom:1.1rem;margin-top:0.3rem;letter-spacing:0.01em;"></div>
+                <div style="display:flex;justify-content:flex-end;">
+                    <button onclick="_hideProgress()" style="padding:0.4rem 1rem;font-size:0.82rem;background:rgba(255,107,53,0.12);border:1px solid rgba(255,107,53,0.35);color:#ff8c5a;border-radius:6px;cursor:pointer;transition:all 0.2s;" onmouseover="this.style.background='rgba(255,107,53,0.22)';this.style.borderColor='rgba(255,107,53,0.6)';this.style.color='#fff'" onmouseout="this.style.background='rgba(255,107,53,0.12)';this.style.borderColor='rgba(255,107,53,0.35)';this.style.color='#ff8c5a'">
+                        Continue in background
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <style>
+    @keyframes progress-pulse {
+        0%   { width: 20%; opacity: 1; }
+        50%  { width: 70%; opacity: 0.85; }
+        100% { width: 20%; opacity: 1; }
+    }
+    </style>
+
+    <!-- Library Sync Bar -->
+    <div id="library-sync-bar" style="display:flex; align-items:center; gap:12px; padding:10px 16px; background:var(--card-bg,#1a1a2e); border-radius:8px; margin-bottom:12px; border:1px solid #333;">
+        <button class="btn btn-secondary" id="sync-library-btn" onclick="syncLibrary()" style="white-space:nowrap;">
+            <i class="fas fa-sync-alt"></i> Sync Library
+        </button>
+        <span id="sync-library-status" style="font-size:13px; color:#aaa;">
+            Click to match library items to your media server (required before generating overlays).
+        </span>
+    </div>
+
+    <!-- Tabs -->
+    <div class="overlay-tabs">
+        <button class="overlay-tab active" data-tab="movies">Movies</button>
+        <button class="overlay-tab" data-tab="shows">TV Shows</button>
+        <button class="overlay-tab" data-tab="templates">Layouts</button>
+        <button class="overlay-tab" data-tab="badges">Badges</button>
+        <button class="overlay-tab" data-tab="activity">Activity</button>
+    </div>
+
+    <!-- Movies Tab -->
+    <div class="tab-content active" id="movies-tab">
+        <div class="overlay-controls">
+            <select class="layout-selector" id="movies-layout-selector">
+                <option value="">Select Layout...</option>
+            </select>
+            <input type="text" class="search-box" id="movies-search" placeholder="Search movies...">
+            <button class="btn btn-primary" onclick="generateSelected('movie')" title="Generate overlays for checked items only">Generate Selected</button>
+            <button class="btn btn-success" onclick="generateAll('movie')" title="Generate overlays for all movies in the database, regardless of what's shown in the grid">Generate Library</button>
+            <button class="btn btn-danger" onclick="removeSelectedOverlays('movie')" title="Remove overlays from checked items and restore original posters">Remove Selected</button>
+            <div class="checkbox-container">
+                <input type="checkbox" id="movies-select-all" onchange="selectAll(this, 'movies-grid')">
+                <label for="movies-select-all">Select All</label>
+            </div>
+        </div>
+        <div class="media-grid" id="movies-grid">
+            <div class="loading">Loading movies...</div>
+        </div>
+    </div>
+
+    <!-- TV Shows Tab -->
+    <div class="tab-content" id="shows-tab">
+        <div class="overlay-controls">
+            <select class="layout-selector" id="shows-layout-selector">
+                <option value="">Select Layout...</option>
+            </select>
+            <input type="text" class="search-box" id="shows-search" placeholder="Search TV shows...">
+            <button class="btn btn-primary" onclick="generateSelected('tv')" title="Generate overlays for checked items only">Generate Selected</button>
+            <button class="btn btn-success" onclick="generateAll('tv')" title="Generate overlays for all TV shows in the database, regardless of what's shown in the grid">Generate Library</button>
+            <button class="btn btn-danger" onclick="removeSelectedOverlays('tv')" title="Remove overlays from checked items and restore original posters">Remove Selected</button>
+            <div class="checkbox-container">
+                <input type="checkbox" id="shows-select-all" onchange="selectAll(this, 'shows-grid')">
+                <label for="shows-select-all">Select All</label>
+            </div>
+        </div>
+        <div class="media-grid" id="shows-grid">
+            <div class="loading">Loading TV shows...</div>
+        </div>
+    </div>
+
+    <!-- Layouts Tab -->
+    <div class="tab-content" id="templates-tab">
+        <div class="overlay-controls">
+            <button class="btn btn-success" onclick="createTemplate()">Create Layout</button>
+            <button class="btn btn-primary" onclick="importTemplate()">Import Layout</button>
+            <button class="btn btn-secondary" onclick="loadDefaultLayouts()" title="Import any missing built-in default layouts (Movies, Shows, Seasons)">Load Default Layouts</button>
+        </div>
+        <div id="templates-list">
+            <div class="loading">Loading layouts...</div>
+        </div>
+    </div>
+
+    <!-- Badges Tab -->
+    <div class="tab-content" id="badges-tab">
+        <h3>Badge Library</h3>
+        <p style="color: var(--text-secondary, #666); margin-bottom: 20px;">
+            Manage badge PNG assets for each badge type and variation. Badges are auto-selected at poster render time based on the media item's metadata (codec, resolution, HDR format, etc.).
+        </p>
+        <div style="display: flex; gap: 12px; margin-bottom: 20px;">
+            <a href="/overlays/badges" class="btn btn-primary" style="text-decoration: none;">
+                Open Badge Library
+            </a>
+        </div>
+        <div id="badge-stats-preview" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px;">
+            <div class="stat-card">
+                <div class="stat-value" id="badge-stat-types">-</div>
+                <div class="stat-label">Badge Types</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="badge-stat-variations">-</div>
+                <div class="stat-label">Total Variations</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="badge-stat-assets">-</div>
+                <div class="stat-label">Assets Uploaded</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Activity Tab -->
+    <div class="tab-content" id="activity-tab">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
+            <h3 style="margin: 0;">Overlay Activity Log</h3>
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                <select id="activity-type-filter" class="layout-selector" style="min-width:160px;padding:0.4rem 0.75rem;font-size:0.85rem;">
+                    <option value="">All actions</option>
+                    <option value="overlay_sync">Overlay Sync</option>
+                    <option value="cleanup">Cleanup</option>
+                    <option value="generate">Generate</option>
+                    <option value="regenerate">Regenerate</option>
+                    <option value="generate_all">Generate All</option>
+                    <option value="regenerate_all">Regenerate All</option>
+                    <option value="remove">Remove</option>
+                    <option value="remove_all">Remove All</option>
+                    <option value="layout_create">Layout Created</option>
+                    <option value="layout_update">Layout Updated</option>
+                    <option value="layout_delete">Layout Deleted</option>
+                    <option value="sync_library">Sync Library</option>
+                    <option value="season_generate">Season Generate</option>
+                    <option value="season_regenerate">Season Regenerate</option>
+                    <option value="season_remove">Season Remove</option>
+                    <option value="poster_reset">Poster Reset</option>
+                </select>
+                <button class="btn btn-primary" onclick="loadActivity(true)" style="padding: 6px 14px; font-size: 13px;">Refresh</button>
+            </div>
+        </div>
+        <div id="activity-log-container">
+            <div class="loading">Loading activity…</div>
+        </div>
+        <div id="activity-pagination" style="display: none; margin-top: 16px; text-align: center; gap: 8px;">
+            <button class="btn" id="activity-prev-btn" onclick="activityPage(-1)" style="padding: 6px 14px; font-size: 13px;">← Previous</button>
+            <span id="activity-page-info" style="font-size: 13px; color: var(--text-secondary, #666); padding: 0 10px;"></span>
+            <button class="btn" id="activity-next-btn" onclick="activityPage(1)" style="padding: 6px 14px; font-size: 13px;">Next →</button>
+        </div>
+    </div>
+
+</div>
+
+<!-- Overlay Settings Modal -->
+
+<!-- ═══════════════════════════════════════════════════════════════
+     Poster Review Grid Modal (Phase 2 reset)
+     ══════════════════════════════════════════════════════════════ -->
+<div id="posterReviewModal" class="poster-review-modal" style="display:none;">
+    <div class="poster-review-backdrop" onclick="closePosterReviewGrid()"></div>
+    <div class="poster-review-content">
+        <div class="poster-review-header">
+            <div>
+                <h2 class="poster-review-title">Review &amp; Reset Posters</h2>
+                <p class="poster-review-subtitle">Select items with foreign overlays to reset to clean TMDB originals. Overlays will not be re-applied automatically.</p>
+            </div>
+            <button class="poster-review-close" onclick="closePosterReviewGrid()">&times;</button>
+        </div>
+
+        <div class="poster-review-toolbar">
+            <div class="poster-review-search-wrap">
+                <input type="text" id="posterReviewSearch" class="poster-review-search" placeholder="Search titles…" oninput="filterReviewGrid()">
+            </div>
+            <div class="poster-review-sel-btns">
+                <button class="poster-review-sel-btn" onclick="selectAllReview()">Select All</button>
+                <button class="poster-review-sel-btn" onclick="deselectAllReview()">Deselect All</button>
+                <button class="poster-review-sel-btn" onclick="selectNonAppliedReview()">Select Non-Applied</button>
+            </div>
+            <span id="posterReviewSelCount" class="poster-review-sel-count">0 selected</span>
+        </div>
+
+        <div id="posterReviewGrid" class="poster-review-grid">
+            <div class="poster-review-loading">Loading library…</div>
+        </div>
+
+        <div class="poster-review-footer">
+            <span id="posterReviewTotalCount" style="font-size:13px;color:var(--text-secondary,#888);"></span>
+            <div style="display:flex;gap:10px;align-items:center;">
+                <button class="poster-review-cancel-btn" onclick="closePosterReviewGrid()">Cancel</button>
+                <button class="poster-review-reset-btn" id="posterReviewResetBtn" onclick="submitReviewReset()" disabled>
+                    Reset Selected
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Season Overlays Modal -->
+<div id="seasons-modal-backdrop">
+    <div id="seasons-modal">
+        <div id="seasons-modal-header">
+            <h3 id="seasons-modal-title">Season Posters</h3>
+            <button id="seasons-modal-close" onclick="closeSeasonsModal()" title="Close">&times;</button>
+        </div>
+        <div id="seasons-modal-controls">
+            <select id="seasons-layout-selector">
+                <option value="">Auto (use best available layout)</option>
+            </select>
+            <button class="btn btn-success" onclick="generateAllSeasons()" title="Generate season overlays for all shows in the database">Generate Library</button>
+        </div>
+        <div id="seasons-modal-body">
+            <div class="loading">Loading seasons...</div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Tab switching
+document.querySelectorAll('.overlay-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        // Remove active class from all tabs and contents
+        document.querySelectorAll('.overlay-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+        // Add active class to clicked tab and corresponding content
+        tab.classList.add('active');
+        const tabName = tab.dataset.tab;
+        document.getElementById(`${tabName}-tab`).classList.add('active');
+        sessionStorage.setItem('overlays_active_tab', tabName);
+
+        // Load content for tab if needed
+        if (tabName === 'movies' && !window.moviesLoaded) {
+            loadMovies();
+        } else if (tabName === 'shows' && !window.showsLoaded) {
+            loadShows();
+        } else if (tabName === 'templates' && !window.templatesLoaded) {
+            loadTemplates();
+        } else if (tabName === 'badges' && !window.badgeStatsLoaded) {
+            loadBadgeStats();
+        } else if (tabName === 'activity') {
+            loadActivity();
+        }
+    });
+});
+
+// Library Sync
+let _syncPollTimer = null;
+
+async function syncLibrary() {
+    const btn = document.getElementById('sync-library-btn');
+    const status = document.getElementById('sync-library-status');
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing…';
+    status.textContent = 'Starting sync…';
+
+    try {
+        const resp = await fetch('/api/overlays/sync_library', {method: 'POST'});
+        const data = await resp.json();
+        if (!data.success) {
+            status.textContent = `Error: ${data.error}`;
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-sync-alt"></i> Sync Library';
+            return;
+        }
+        // Poll for completion
+        _syncPollTimer = setInterval(_pollSyncStatus, 2000);
+    } catch (e) {
+        status.textContent = `Request failed: ${e}`;
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-sync-alt"></i> Sync Library';
+    }
+}
+
+async function _pollSyncStatus() {
+    try {
+        const resp = await fetch('/api/overlays/sync_library/status');
+        const data = await resp.json();
+        const status = document.getElementById('sync-library-status');
+        const btn = document.getElementById('sync-library-btn');
+
+        status.textContent = data.progress || '…';
+
+        if (!data.running && data.done) {
+            clearInterval(_syncPollTimer);
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-sync-alt"></i> Sync Library';
+            // Refresh grids so new plex_rating_key counts are reflected
+            if (window.moviesLoaded) { _selectedMovieIds.clear(); window.moviesLoaded = false; loadMovies(); }
+            if (window.showsLoaded)  { _selectedShowIds.clear();  window.showsLoaded = false;  loadShows(); }
+            loadStats();
+        }
+    } catch (e) {
+        console.warn('Sync poll error:', e);
+    }
+}
+
+// Load statistics
+async function _safeJsonFetch(url) {
+    try {
+        const resp = await fetch(url);
+        if (!resp.ok) return null;
+        const ct = resp.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) return null;
+        return await resp.json();
+    } catch (e) {
+        return null;
+    }
+}
+
+async function loadStats() {
+    const [data, cd] = await Promise.all([
+        _safeJsonFetch('/api/overlays/status'),
+        _safeJsonFetch('/api/overlays/cleanup/stats')
+    ]);
+
+    if (data?.success) {
+        document.getElementById('stat-total').textContent = data.layouts.total;
+        document.getElementById('stat-layouts-movies').textContent = data.layouts.layouts_movies ?? '-';
+        document.getElementById('stat-layouts-shows').textContent = data.layouts.layouts_shows ?? '-';
+        document.getElementById('stat-layouts-seasons').textContent = data.layouts.layouts_seasons ?? '-';
+        document.getElementById('stat-applied').textContent = data.overlays.applied;
+        document.getElementById('stat-applied-movies').textContent = data.overlays.applied_movies ?? '-';
+        document.getElementById('stat-applied-shows').textContent = data.overlays.applied_shows ?? '-';
+        document.getElementById('stat-applied-seasons').textContent = data.overlays.applied_seasons ?? '-';
+        document.getElementById('stat-unprocessed').textContent = data.overlays.unprocessed ?? 0;
+        document.getElementById('stat-unprocessed-movies').textContent = data.overlays.unprocessed_movies ?? '-';
+        document.getElementById('stat-unprocessed-shows').textContent = data.overlays.unprocessed_shows ?? '-';
+        document.getElementById('stat-unprocessed-seasons').textContent = data.overlays.unprocessed_seasons ?? '-';
+        document.getElementById('stat-failed').textContent = data.overlays.failed;
+        document.getElementById('stat-failed-movies').textContent = data.overlays.failed_movies ?? '-';
+        document.getElementById('stat-failed-shows').textContent = data.overlays.failed_shows ?? '-';
+        document.getElementById('stat-failed-seasons').textContent = data.overlays.failed_seasons ?? '-';
+    }
+
+    if (cd?.success) {
+        const mb = cd.backup_size_mb || 0;
+        document.getElementById('stat-backup-size').textContent =
+            mb >= 1024 ? (mb / 1024).toFixed(1) + ' GB' : mb.toFixed(1) + ' MB';
+        document.getElementById('stat-backup-count').textContent = cd.backup_count ?? '-';
+        document.getElementById('stat-backup-orphaned').textContent = cd.backup_orphaned ?? '-';
+
+        const totalPosters = cd.cleaned_total_posters || 0;
+        const totalMb = cd.cleaned_total_mb || 0;
+        document.getElementById('stat-cleaned').textContent = totalPosters;
+        const reclaimedStr = totalMb >= 1024
+            ? (totalMb / 1024).toFixed(1) + ' GB reclaimed'
+            : totalMb.toFixed(1) + ' MB reclaimed';
+        document.getElementById('stat-cleaned-breakdown').textContent =
+            totalPosters > 0 ? reclaimedStr : 'No cleanups yet';
+    }
+}
+
+async function resetCleanupStats(e) {
+    e.stopPropagation();
+    try {
+        const r = await fetch('/api/overlays/stats/reset-cleanup', {method: 'POST'});
+        const d = await r.json();
+        if (d.success) {
+            document.getElementById('stat-cleaned').textContent = '0';
+            document.getElementById('stat-cleaned-breakdown').textContent = 'No cleanups yet';
+        }
+    } catch (_) {}
+}
+
+async function resetFailedStats(e) {
+    e.stopPropagation();
+    try {
+        const r = await fetch('/api/overlays/stats/reset-failed', {method: 'POST'});
+        const d = await r.json();
+        if (d.success) {
+            document.getElementById('stat-failed').textContent = '0';
+            document.getElementById('stat-failed-movies').textContent = '0';
+            document.getElementById('stat-failed-shows').textContent = '0';
+            document.getElementById('stat-failed-seasons').textContent = '0';
+        }
+    } catch (_) {}
+}
+
+// Load movies
+function _posterSrc(item) {
+    return item.poster_path ? `/scraper/tmdb_image/w185${item.poster_path}` : '/static/images/placeholder.png';
+}
+
+function _posterAttrs(item, mediaType) {
+    const src = _posterSrc(item);
+    const lazy = !item.poster_path && item.imdb_id
+        ? ` data-lazy-imdb="${item.imdb_id}" data-lazy-type="${mediaType}"` : '';
+    return `src="${src}"${lazy}`;
+}
+
+// Persists across grid reloads for the lifetime of the page session
+const _posterFailCache = new Set();
+
+// In-memory item stores — used for JS-side filtering without DOM traversal
+let _moviesData = [];
+let _showsData  = [];
+
+// How many cards to render at once (prevents massive DOM from freezing the page)
+const _GRID_PAGE = 300;
+
+function lazyLoadPosters(grid) {
+    // Only load posters for visible (non-hidden) cards in the current render
+    const imgs = Array.from(grid.querySelectorAll('img[data-lazy-imdb]:not([data-lazy-started])'))
+        .filter(img => !_posterFailCache.has(img.dataset.lazyImdb));
+    if (!imgs.length) return;
+    imgs.forEach(img => img.setAttribute('data-lazy-started', '1'));
+    // Process in batches of 5 with 300ms delay — larger delay reduces fetch pile-up
+    const BATCH = 5, DELAY = 300;
+    let i = 0;
+    let _lazyAborted = false;
+    // Attach abort handle to grid so re-renders can cancel in-flight batches
+    if (grid._lazyAbort) grid._lazyAbort();
+    grid._lazyAbort = () => { _lazyAborted = true; };
+
+    function nextBatch() {
+        if (_lazyAborted) return;
+        const batch = imgs.slice(i, i + BATCH);
+        if (!batch.length) return;
+        i += BATCH;
+        batch.forEach(img => {
+            if (_lazyAborted) return;
+            const imdbId = img.dataset.lazyImdb;
+            fetch(`/library/fetch_poster_imdb/${imdbId}/${img.dataset.lazyType}`)
+                .then(r => {
+                    if (!r.ok) { _posterFailCache.add(imdbId); return null; }
+                    return r.json();
+                })
+                .then(d => {
+                    if (!d) return;
+                    if (d.success && d.poster_path) {
+                        img.src = `/scraper/tmdb_image/w185${d.poster_path}`;
+                    } else {
+                        _posterFailCache.add(imdbId);
+                    }
+                })
+                .catch(() => { _posterFailCache.add(imdbId); });
+        });
+        if (i < imgs.length) setTimeout(nextBatch, DELAY);
+    }
+    nextBatch();
+}
+
+function _renderMovieCard(item) {
+    return `<div class="media-card" data-item-id="${item.id}" data-status="${item.overlay_status}" onclick="toggleSelect(this)">
+        <img class="media-poster" ${_posterAttrs(item, 'movie')} alt="${item.title}">
+        <div class="overlay-status status-${item.overlay_status}">${item.overlay_status.replace('_', ' ')}</div>
+        <button class="card-regen-btn" title="Regenerate overlay using current library poster" onclick="event.stopPropagation(); regenerateSingleOverlay(${item.id}, this)">↻</button>
+        ${item.version_count > 1 ? `<div class="card-version-badge" title="${item.version_count} versions in library">${item.version_count} versions</div>` : ''}
+        <div class="media-info">
+            <div class="media-title">${item.title}</div>
+            <div class="media-year">${item.year || 'Unknown'}</div>
+        </div>
+    </div>`;
+}
+
+function _renderShowCard(item) {
+    return `<div class="media-card" data-item-id="${item.id}" data-status="${item.overlay_status}" onclick="toggleSelect(this)">
+        <img class="media-poster" ${_posterAttrs(item, 'show')} alt="${item.title}">
+        <div class="overlay-status status-${item.overlay_status}">${item.overlay_status.replace('_', ' ')}</div>
+        <button class="card-regen-btn" title="Regenerate overlay using current library poster" onclick="event.stopPropagation(); regenerateSingleOverlay(${item.id}, this)">↻</button>
+        ${item.ms_item_id ? `<button class="card-seasons-btn" title="Manage season poster overlays" onclick="event.stopPropagation(); openSeasonsModal('${item.ms_item_id}', '${(item.title||'').replace(/'/g,"\\'")}')">Seasons</button>` : ''}
+        <div class="media-info">
+            <div class="media-title">${item.title}</div>
+            <div class="media-year">${item.year || 'Unknown'}${item.collected_episodes != null ? ` · ${item.collected_episodes}/${item.total_episodes} eps` : ''}</div>
+        </div>
+    </div>`;
+}
+
+function _renderGrid(gridId, items, renderFn, searchQuery, statusFilter) {
+    const grid = document.getElementById(gridId);
+    if (!grid) return;
+
+    // Abort any in-flight lazy loading before re-rendering
+    if (grid._lazyAbort) { grid._lazyAbort(); grid._lazyAbort = null; }
+
+    const q = (searchQuery || '').trim().toLowerCase();
+    const filtered = items.filter(item => {
+        const titleMatch = !q || (item.title || '').toLowerCase().includes(q);
+        const statusMatch = !statusFilter || item.overlay_status === statusFilter;
+        return titleMatch && statusMatch;
+    });
+
+    const shown = filtered.slice(0, _GRID_PAGE);
+    const total = filtered.length;
+
+    if (shown.length === 0) {
+        grid.innerHTML = `<p class="loading">${items.length === 0 ? 'No items found' : 'No matches for current filter'}</p>`;
+        return;
+    }
+
+    let html = shown.map(renderFn).join('');
+    if (total > _GRID_PAGE) {
+        html += `<p class="loading" style="grid-column:1/-1;text-align:center;padding:12px;opacity:.6;">
+            Showing ${_GRID_PAGE} of ${total} — refine your search to see more</p>`;
+    }
+    grid.innerHTML = html;
+
+    // Restore selection state for re-rendered cards
+    const selStore = gridId === 'movies-grid' ? _selectedMovieIds : _selectedShowIds;
+    if (selStore.size > 0) {
+        grid.querySelectorAll('.media-card').forEach(card => {
+            if (selStore.has(parseInt(card.dataset.itemId))) card.classList.add('selected');
+        });
+    }
+
+    lazyLoadPosters(grid);
+}
+
+async function loadMovies() {
+    try {
+        const response = await fetch('/api/overlays/media/movies');
+        const data = await response.json();
+        if (data.success) {
+            _moviesData = data.items || [];
+            window.moviesLoaded = true;
+            const q = document.getElementById('movies-search')?.value || '';
+            _renderGrid('movies-grid', _moviesData, _renderMovieCard, q, _activeStatusFilter);
+        } else {
+            document.getElementById('movies-grid').innerHTML = '<p class="loading">No movies found</p>';
+        }
+    } catch (error) {
+        console.error('Failed to load movies:', error);
+        document.getElementById('movies-grid').innerHTML = '<p class="loading">Error loading movies</p>';
+    }
+}
+
+// Load TV shows
+async function loadShows() {
+    try {
+        const response = await fetch('/api/overlays/media/shows');
+        const data = await response.json();
+        if (data.success) {
+            _showsData = data.items || [];
+            window.showsLoaded = true;
+            const q = document.getElementById('shows-search')?.value || '';
+            _renderGrid('shows-grid', _showsData, _renderShowCard, q, _activeStatusFilter);
+        } else {
+            document.getElementById('shows-grid').innerHTML = '<p class="loading">No TV shows found</p>';
+        }
+    } catch (error) {
+        console.error('Failed to load shows:', error);
+        document.getElementById('shows-grid').innerHTML = '<p class="loading">Error loading shows</p>';
+    }
+}
+
+// Load templates
+async function loadTemplates() {
+    try {
+        const response = await fetch('/api/overlays/layouts');
+        const data = await response.json();
+
+        // Populate layout selectors
+        const movieSelector = document.getElementById('movies-layout-selector');
+        const showSelector = document.getElementById('shows-layout-selector');
+
+        if (data.success) {
+            const options = data.layouts.map(t =>
+                `<option value="${t.id}">${t.name} (${t.media_type})</option>`
+            ).join('');
+
+            movieSelector.innerHTML = '<option value="">Select Layout...</option>' + options;
+            showSelector.innerHTML = '<option value="">Select Layout...</option>' + options;
+
+            // Display templates list
+            const list = document.getElementById('templates-list');
+            list.innerHTML = data.layouts.map(t => `
+                <div class="layout-card" style="border: 1px solid ${t.is_default ? 'rgba(255,107,53,0.5)' : 'rgba(255,255,255,0.1)'}; padding: 15px; margin-bottom: 10px; border-radius: 8px; background: rgba(255,255,255,0.03);">
+                    <h4 style="display:flex;align-items:center;gap:8px;margin:0 0 6px;">
+                        ${t.name}
+                        ${t.is_system ? '<span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:rgba(0,162,199,0.15);border:1px solid rgba(0,162,199,0.4);color:#00a2c7;letter-spacing:0.03em;">Default</span>' : ''}
+                    </h4>
+                    <p>${t.description}</p>
+                    <p><strong>Type:</strong> ${t.media_type} | <strong>Active:</strong> ${t.is_default ? '<span style="color:#ff6b35">Yes</span>' : '<span style="color:#888">No</span>'}</p>
+                    <button class="btn btn-secondary" onclick="editTemplate(${t.id})">Edit</button>
+                    <button class="btn btn-secondary" onclick="toggleActive(${t.id}, ${t.is_default})">${t.is_default ? 'Deactivate' : 'Set Active'}</button>
+                    <button class="btn btn-secondary" onclick="duplicateTemplate(${t.id})">Duplicate</button>
+                    <button class="btn btn-secondary" onclick="exportTemplate(${t.id})">Export</button>
+                    <button class="btn btn-danger" onclick="deleteTemplate(${t.id})">Delete</button>
+                </div>
+            `).join('');
+
+            window.templatesLoaded = true;
+        }
+    } catch (error) {
+        console.error('Failed to load templates:', error);
+    }
+}
+
+// Toggle item selection
+// Persistent selection sets — survive grid re-renders caused by filtering
+const _selectedMovieIds = new Set();
+const _selectedShowIds  = new Set();
+
+function toggleSelect(card) {
+    const id = parseInt(card.dataset.itemId);
+    const inMovies = !!document.getElementById('movies-grid')?.contains(card);
+    const store = inMovies ? _selectedMovieIds : _selectedShowIds;
+    if (store.has(id)) { store.delete(id); card.classList.remove('selected'); }
+    else               { store.add(id);    card.classList.add('selected'); }
+}
+
+// Generate overlays for selected items
+// ── Progress overlay helpers ──────────────────────────────────────────────
+let _progressPollTimer = null;
+
+function _showProgress(title, msg) {
+    document.getElementById('task-progress-title').textContent = title;
+    document.getElementById('task-progress-msg').textContent = msg || '';
+    const counter = document.getElementById('task-progress-counter');
+    if (counter) counter.textContent = '';
+    // Reset bar to animated pulse
+    const bar = document.getElementById('task-progress-bar');
+    if (bar) { bar.style.width = ''; bar.style.animation = ''; }
+    const el = document.getElementById('task-progress-overlay');
+    el.style.display = 'flex';
+}
+function _updateProgressCounter(done, total, extra) {
+    const counter = document.getElementById('task-progress-counter');
+    if (!counter) return;
+    if (total > 0) {
+        const pct = Math.round(done / total * 100);
+        counter.textContent = `${done} / ${total}  (${pct}%)${extra ? '  · ' + extra : ''}`;
+        const bar = document.getElementById('task-progress-bar');
+        if (bar) {
+            bar.style.animation = 'none';
+            bar.style.width = pct + '%';
+        }
+    } else {
+        counter.textContent = extra || '';
+    }
+}
+function _hideProgress() {
+    document.getElementById('task-progress-overlay').style.display = 'none';
+    if (_progressPollTimer) { clearInterval(_progressPollTimer); _progressPollTimer = null; }
+}
+
+async function _pollUntilDone(statusUrl, onUpdate, onDone, intervalMs) {
+    if (_progressPollTimer) clearInterval(_progressPollTimer);
+    _progressPollTimer = setInterval(async () => {
+        try {
+            const resp = await fetch(statusUrl);
+            const s = await resp.json();
+            if (!s.success) return;
+            // Keep the progress title and subtitle in sync when the backend changes phase
+            // (e.g. switches from "Regenerating TV shows…" to "Applying season overlays…")
+            if (s.label) {
+                const titleEl = document.getElementById('task-progress-title');
+                if (titleEl && titleEl.textContent !== s.label) {
+                    titleEl.textContent = s.label;
+                    // Clear the stale subtitle so it doesn't say "Starting shows…" during seasons
+                    const msgEl = document.getElementById('task-progress-msg');
+                    if (msgEl) msgEl.textContent = '';
+                }
+            }
+            onUpdate(s);
+            if (!s.running && s.finished_at) {
+                clearInterval(_progressPollTimer);
+                _progressPollTimer = null;
+                onDone(s);
+            }
+        } catch (_e) { /* ignore transient fetch errors */ }
+    }, intervalMs || 1500);
+}
+function _refreshGrids(mediaType) {
+    if (!mediaType || mediaType === 'movie') { _selectedMovieIds.clear(); window.moviesLoaded = false; loadMovies(); }
+    if (!mediaType || mediaType === 'tv')    { _selectedShowIds.clear();  window.showsLoaded = false;  loadShows();  }
+    loadStats();
+}
+
+async function generateSelected(mediaType) {
+    const store = mediaType === 'movie' ? _selectedMovieIds : _selectedShowIds;
+    if (store.size === 0) { alert('Please select at least one item'); return; }
+    const itemIds = Array.from(store);
+    const templateSelector = document.getElementById(`${mediaType === 'movie' ? 'movies' : 'shows'}-layout-selector`);
+    const layoutId = templateSelector.value ? parseInt(templateSelector.value) : null;
+
+    _showProgress('Generating overlays…', `Starting — ${itemIds.length} item${itemIds.length !== 1 ? 's' : ''}…`);
+    try {
+        const response = await fetch('/api/overlays/generate/batch', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({item_ids: itemIds, layout_id: layoutId})
+        });
+        const data = await response.json();
+        if (!data.success) {
+            _hideProgress();
+            alert('Failed to start: ' + (data.error || 'Unknown error'));
+            return;
+        }
+        _pollUntilDone(
+            '/api/overlays/generate/status',
+            s => {
+                _updateProgressCounter(s.done, s.total,
+                    [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · '));
+            },
+            s => {
+                _hideProgress();
+                const msg = `Generated ${s.applied} overlay${s.applied !== 1 ? 's' : ''}${s.failed > 0 ? `, ${s.failed} failed` : ''}`;
+                alert(msg);
+                _refreshGrids(mediaType);
+            }
+        );
+    } catch (error) {
+        _hideProgress();
+        console.error('Generation failed:', error);
+        alert('Failed to generate overlays');
+    }
+}
+
+// Select all cards in a grid
+function selectAll(checkbox, gridId) {
+    const store = gridId === 'movies-grid' ? _selectedMovieIds : _selectedShowIds;
+    const data  = gridId === 'movies-grid' ? _moviesData : _showsData;
+    if (checkbox.checked) {
+        // Select all items in the current filter (not just visible rendered ones)
+        const q = (document.getElementById(gridId === 'movies-grid' ? 'movies-search' : 'shows-search')?.value || '').trim().toLowerCase();
+        data.filter(i => !q || (i.title||'').toLowerCase().includes(q))
+            .forEach(i => store.add(i.id));
+    } else {
+        store.clear();
+    }
+    // Update DOM for currently rendered cards
+    const grid = document.getElementById(gridId);
+    grid.querySelectorAll('.media-card').forEach(card => {
+        card.classList.toggle('selected', store.has(parseInt(card.dataset.itemId)));
+    });
+}
+
+async function removeSelectedOverlays(mediaType) {
+    const store = mediaType === 'movie' ? _selectedMovieIds : _selectedShowIds;
+    if (store.size === 0) {
+        alert('Please select items to remove overlays from');
+        return;
+    }
+    if (!confirm(`Remove overlays for ${store.size} item${store.size !== 1 ? 's' : ''}? Original posters will be restored.`)) return;
+    const itemIds = Array.from(store);
+
+    _showProgress('Removing overlays…', `Restoring ${itemIds.length} original poster${itemIds.length !== 1 ? 's' : ''}…`);
+    try {
+        const response = await fetch('/api/overlays/cleanup/remove-batch', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({item_ids: itemIds})
+        });
+        const data = await response.json();
+        _hideProgress();
+        alert(`Removed ${data.restored} overlays${data.failed > 0 ? `, ${data.failed} failed` : ''}`);
+        _refreshGrids(mediaType);
+    } catch (error) {
+        _hideProgress();
+        console.error('Removal failed:', error);
+        alert('Failed to remove overlays');
+    }
+}
+
+async function removeAllOverlays() {
+    if (!confirm('Remove ALL overlays for both movies and TV shows? This will restore original posters.')) return;
+    if (!confirm('Are you SURE? This cannot be undone.')) return;
+
+    _showProgress('Removing all overlays…', 'Starting — fetching applied items…');
+    try {
+        const response = await fetch('/api/overlays/cleanup/remove-all', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        });
+        const data = await response.json();
+        if (!data.success) {
+            _hideProgress();
+            alert('Failed: ' + (data.error || 'Unknown error'));
+            return;
+        }
+        if (!data.started) {
+            _hideProgress();
+            alert('No applied overlays found');
+            return;
+        }
+        _pollUntilDone(
+            '/api/overlays/cleanup/remove-all/status',
+            s => {
+                _updateProgressCounter(s.done, s.total,
+                    [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · '));
+            },
+            s => {
+                _hideProgress();
+                alert(`Removed ${s.restored} overlay${s.restored !== 1 ? 's' : ''}${s.failed > 0 ? `, ${s.failed} failed` : ''}`);
+                _refreshGrids(null);
+            }
+        );
+    } catch (error) {
+        _hideProgress();
+        console.error('Remove all failed:', error);
+        alert('Failed to remove overlays');
+    }
+}
+
+async function cleanupOrphanedBackups(event) {
+    event.stopPropagation();
+    const btn = document.getElementById('cleanup-backup-btn');
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    btn.disabled = true;
+    try {
+        const resp = await fetch('/api/overlays/cleanup/orphaned-backups', {method: 'POST'});
+        const data = await resp.json();
+        if (data.success) {
+            const removed = data.orphaned_removed || 0;
+            alert(removed > 0 ? `Removed ${removed} orphaned backup(s)` : 'No orphaned backups found');
+            loadStats();
+        } else {
+            alert('Cleanup failed: ' + (data.message || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Cleanup failed');
+    } finally {
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
+    }
+}
+
+async function deleteAllBackups(event) {
+    event.stopPropagation();
+    if (!confirm('Delete ALL backup posters and reset every overlay to pending?\n\nThis cannot be undone. The next sync will re-download fresh posters from your media server and re-apply all overlays from scratch.')) return;
+    const btn = document.getElementById('delete-all-backups-btn');
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    btn.disabled = true;
+    try {
+        const resp = await fetch('/api/overlays/cleanup/delete-all-backups', {method: 'POST'});
+        const data = await resp.json();
+        if (data.success) {
+            alert(`Deleted ${data.deleted} backup(s). All overlays reset to pending — next sync will start fresh.`);
+            loadStats();
+        } else {
+            alert('Failed: ' + (data.message || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Failed to delete backups');
+    } finally {
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
+    }
+}
+
+async function regenerateSingleOverlay(itemId, btn) {
+    if (!confirm('Regenerate overlay using the currently-selected library poster?')) return;
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = '…';
+    btn.disabled = true;
+    try {
+        const response = await fetch(`/api/overlays/generate/regenerate/${itemId}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        });
+        const data = await response.json();
+        if (data.success) {
+            btn.innerHTML = '✓';
+            setTimeout(() => { btn.innerHTML = originalHTML; btn.disabled = false; }, 2000);
+            window.moviesLoaded = false; loadMovies();
+            window.showsLoaded = false; loadShows();
+            loadStats();
+        } else {
+            btn.innerHTML = originalHTML;
+            btn.disabled = false;
+            alert('Regenerate failed: ' + (data.message || data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        btn.innerHTML = originalHTML;
+        btn.disabled = false;
+        alert('Failed to regenerate overlay');
+    }
+}
+
+// Layout management functions
+function createTemplate() {
+    // Navigate to the layout builder page
+    window.location.href = '/overlays/builder';
+}
+
+async function loadDefaultLayouts() {
+    try {
+        const response = await fetch('/api/overlays/layouts/load_defaults', {method: 'POST'});
+        const data = await response.json();
+        if (data.success) {
+            if (data.loaded > 0) {
+                alert(`Loaded ${data.loaded} default layout${data.loaded !== 1 ? 's' : ''}.`);
+                window.templatesLoaded = false;
+                loadTemplates();
+            } else {
+                alert('All default layouts are already present — nothing to import.');
+            }
+        } else {
+            alert('Failed to load defaults: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        alert('Failed to load default layouts: ' + error.message);
+    }
+}
+
+function importTemplate() {
+    // Create a file input element dynamically
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json';
+
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        try {
+            const text = await file.text();
+            const templateData = JSON.parse(text);
+
+            // Send to API
+            const response = await fetch('/api/overlays/layouts/import', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(templateData)
+            });
+
+            const data = await response.json();
+            if (data.success) {
+                alert('Layout imported successfully!');
+                loadTemplates(); // Reload templates list
+            } else {
+                alert('Failed to import layout: ' + (data.error || 'Unknown error'));
+            }
+        } catch (error) {
+            console.error('Import failed:', error);
+            alert('Failed to import layout. Please check the file format.');
+        }
+    };
+
+    input.click();
+}
+
+async function editTemplate(templateId) {
+    // Navigate to layout editor with the layout ID
+    window.location.href = `/overlays/builder?layout_id=${templateId}`;
+}
+
+async function toggleActive(layoutId, currentlyActive) {
+    try {
+        const response = await fetch(`/api/overlays/layouts/${layoutId}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({is_default: !currentlyActive})
+        });
+        const data = await response.json();
+        if (data.success) {
+            loadTemplates();
+        } else {
+            alert('Failed to update: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Failed to update layout');
+    }
+}
+
+async function duplicateTemplate(templateId) {
+    try {
+        const response = await fetch(`/api/overlays/layouts/${templateId}/duplicate`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+        });
+        const data = await response.json();
+        if (data.success) {
+            loadTemplates();
+        } else {
+            alert('Failed to duplicate: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Failed to duplicate layout');
+    }
+}
+
+async function exportTemplate(templateId) {
+    try {
+        const response = await fetch(`/api/overlays/layouts/${templateId}/export`);
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            alert('Failed to export layout: ' + (data.error || response.statusText));
+            return;
+        }
+        const blob = await response.blob();
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="?([^"]+)"?/);
+        const filename = match ? match[1] : `layout_${templateId}.json`;
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (error) {
+        console.error('Export failed:', error);
+        alert('Failed to export layout');
+    }
+}
+
+async function deleteTemplate(templateId) {
+    if (!confirm('Are you sure you want to delete this layout?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/overlays/layouts/${templateId}`, {
+            method: 'DELETE'
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            alert('Layout deleted successfully');
+            loadTemplates(); // Reload templates list
+        } else {
+            alert('Failed to delete layout: ' + (data.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Delete failed:', error);
+        alert('Failed to delete layout');
+    }
+}
+
+async function generateAll(mediaType) {
+    const templateSelector = document.getElementById(`${mediaType === 'movie' ? 'movies' : 'shows'}-layout-selector`);
+    const layoutId = templateSelector.value ? parseInt(templateSelector.value) : null;
+
+    if (!layoutId) { alert('Please select a layout first'); return; }
+    if (!confirm(`Generate overlays for all ${mediaType === 'movie' ? 'movies' : 'TV shows'}?`)) return;
+
+    const label = mediaType === 'movie' ? 'movies' : 'TV shows';
+    _showProgress(`Generating ${label}…`, 'Starting job…');
+    try {
+        const response = await fetch('/api/overlays/generate/all', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({media_type: mediaType, layout_id: layoutId})
+        });
+        const data = await response.json();
+        if (!data.success) {
+            _hideProgress();
+            alert('Failed to start: ' + (data.error || 'Unknown error'));
+            return;
+        }
+        document.getElementById('task-progress-title').textContent = data.label || `Generating ${label}…`;
+        _pollUntilDone(
+            '/api/overlays/generate/status',
+            s => {
+                _updateProgressCounter(s.done, s.total,
+                    [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · '));
+            },
+            s => {
+                _hideProgress();
+                alert(`Generated ${s.applied} overlay${s.applied !== 1 ? 's' : ''}${s.failed > 0 ? `, ${s.failed} failed` : ''}`);
+                _refreshGrids(mediaType);
+            }
+        );
+    } catch (error) {
+        _hideProgress();
+        console.error('Generate all failed:', error);
+        alert('Failed to start generation');
+    }
+}
+
+async function regenerateLibrary() {
+    if (!confirm('Regenerate ALL overlays for the entire library (movies, shows and seasons)? This will overwrite all existing overlays.')) return;
+
+    // Run movies first, then TV sequentially (can't run in parallel since they share the same job state)
+    const btn = document.getElementById('regenerate-all-btn');
+    btn.disabled = true;
+
+    _showProgress('Regenerating entire library…', 'Starting movies…');
+    try {
+        // Phase 1: movies
+        const movieResp = await fetch('/api/overlays/generate/regenerate-all', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({media_type: 'movie', force: true})
+        });
+        const movieData = await movieResp.json();
+        if (!movieData.success) {
+            _hideProgress();
+            alert('Failed to start regeneration: ' + (movieData.error || 'Unknown error'));
+            btn.disabled = false;
+            return;
+        }
+        document.getElementById('task-progress-title').textContent = movieData.label || 'Regenerating movies…';
+
+        await new Promise(resolve => {
+            _pollUntilDone('/api/overlays/generate/status',
+                s => _updateProgressCounter(s.done, s.total, [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · ')),
+                resolve
+            );
+        });
+
+        // Phase 2: TV shows
+        _showProgress('Regenerating TV shows…', 'Starting shows…');
+        const tvResp = await fetch('/api/overlays/generate/regenerate-all', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({media_type: 'tv', force: true})
+        });
+        const tvData = await tvResp.json();
+        if (!tvData.success) {
+            _hideProgress();
+            alert('Movie regeneration done. Failed to start TV: ' + (tvData.error || 'Unknown error'));
+            _refreshGrids(null);
+            btn.disabled = false;
+            return;
+        }
+        document.getElementById('task-progress-title').textContent = tvData.label || 'Regenerating TV shows…';
+
+        await new Promise(resolve => {
+            _pollUntilDone('/api/overlays/generate/status',
+                s => _updateProgressCounter(s.done, s.total, [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · ')),
+                resolve
+            );
+        });
+
+        _hideProgress();
+        alert('Regeneration complete for entire library');
+        _refreshGrids(null);
+    } catch (error) {
+        _hideProgress();
+        console.error('Regenerate library failed:', error);
+        alert('Regeneration encountered an error — check logs');
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function regenerateAll(mediaType) {
+    const templateSelector = document.getElementById(`${mediaType === 'movie' ? 'movies' : 'shows'}-layout-selector`);
+    const layoutId = templateSelector.value ? parseInt(templateSelector.value) : null;
+
+    if (!confirm(`Regenerate ALL overlays for ${mediaType === 'movie' ? 'movies' : 'TV shows'}? This will overwrite existing overlays.`)) return;
+
+    _showProgress(`Regenerating ${mediaType === 'movie' ? 'movies' : 'TV shows'}…`, 'Starting job…');
+    try {
+        const response = await fetch('/api/overlays/generate/regenerate-all', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({media_type: mediaType, layout_id: layoutId, force: true})
+        });
+        const data = await response.json();
+        if (!data.success) {
+            _hideProgress();
+            alert('Failed to start: ' + (data.error || 'Unknown error'));
+            return;
+        }
+        document.getElementById('task-progress-title').textContent = data.label || `Regenerating ${mediaType === 'movie' ? 'movies' : 'TV shows'}…`;
+        _pollUntilDone(
+            '/api/overlays/generate/status',
+            s => _updateProgressCounter(s.done, s.total, [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · ')),
+            s => {
+                _hideProgress();
+                alert(`Regenerated ${s.applied} overlay${s.applied !== 1 ? 's' : ''}${s.failed > 0 ? `, ${s.failed} failed` : ''}`);
+                _refreshGrids(mediaType);
+            }
+        );
+    } catch (error) {
+        _hideProgress();
+        console.error('Regenerate all failed:', error);
+        alert('Failed to start regeneration');
+    }
+}
+
+// Load badge stats for the Badges tab preview
+async function loadBadgeStats() {
+    try {
+        const response = await fetch('/api/overlays/badges/stats');
+        const data = await response.json();
+        if (data.success) {
+            document.getElementById('badge-stat-types').textContent = data.stats.total_types;
+            document.getElementById('badge-stat-variations').textContent = data.stats.total_variations;
+            document.getElementById('badge-stat-assets').textContent = data.stats.filled_variations;
+            window.badgeStatsLoaded = true;
+        }
+    } catch (error) {
+        console.error('Failed to load badge stats:', error);
+    }
+}
+
+// ── Activity Tab ─────────────────────────────────────────────────────────────
+
+const _ACTIVITY_PAGE_SIZE = 50;
+let _activityOffset = 0;
+let _activityTotal  = 0;
+
+const _ACTION_LABELS = {
+    overlay_sync:       'Overlay Sync',
+    cleanup:            'Cleanup',
+    generate:           'Generate',
+    regenerate:         'Regenerate',
+    generate_all:       'Generate All',
+    regenerate_all:     'Regenerate All',
+    batch_generate:     'Batch Generate',
+    remove:             'Remove',
+    remove_all:         'Remove All',
+    layout_create:      'Layout Created',
+    layout_update:      'Layout Updated',
+    layout_delete:      'Layout Deleted',
+    layout_duplicate:   'Layout Duplicated',
+    sync_library:       'Sync Library',
+    season_generate:    'Season Generate',
+    season_regenerate:  'Season Regenerate',
+    season_remove:      'Season Remove',
+    poster_reset:       'Poster Reset',
+    full_sync:          'Full Sync',
+};
+
+const _RESULT_COLORS = {
+    success: '#28a745',
+    failed:  '#dc3545',
+    partial: '#fd7e14',
+};
+
+function _formatActivityStats(stats) {
+    if (!stats || typeof stats !== 'object') return '';
+    const parts = [];
+    const order = ['applied','generated','regenerated','removed','restored','reset',
+                   'seasons_applied','skipped','seasons_skipped',
+                   'failed','seasons_failed','errors','total_deleted','total_mb',
+                   'movies','shows','seasons'];
+    const labels = {
+        applied: 'applied', generated: 'generated', regenerated: 'regenerated',
+        removed: 'removed', restored: 'restored', reset: 'reset', skipped: 'skipped',
+        seasons_applied: 'seasons applied', seasons_skipped: 'seasons skipped',
+        failed: 'failed', seasons_failed: 'seasons failed', errors: 'errors',
+        total_deleted: 'cleaned', total_mb: 'MB freed',
+        movies: 'movies', shows: 'shows', seasons: 'seasons',
+    };
+    for (const k of order) {
+        if (stats[k] !== undefined && stats[k] !== null && stats[k] !== 0) {
+            parts.push(`${stats[k]} ${labels[k] || k}`);
+        }
+    }
+    // Any extra keys not in the ordered list (skip internal-only keys)
+    const _skip = new Set(['total','media_item_id','layout_id','name','media_type','type',
+                           'status','show_key','season_plex_key','duplicated_from',
+                           'movies_updated','episodes_updated','failures']);
+    for (const k of Object.keys(stats)) {
+        if (!order.includes(k) && !_skip.has(k) && stats[k] !== undefined && stats[k] !== null && stats[k] !== 0) {
+            parts.push(`${stats[k]} ${k}`);
+        }
+    }
+    return parts.join(' · ');
+}
+
+function _formatActivityFailures(stats) {
+    if (!stats || !Array.isArray(stats.failures) || stats.failures.length === 0) return '';
+    const items = stats.failures.map(f => `<span style="display:block;margin-top:1px;">${_escHtml(String(f))}</span>`).join('');
+    return `<span style="display:block;margin-top:3px;font-size:11px;color:#dc3545;">`
+         + `<strong>Failures:</strong>${items}</span>`;
+}
+
+function _escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function _formatActivityDate(ts) {
+    if (!ts) return '';
+    const d = new Date(ts.endsWith('Z') ? ts : ts + 'Z');
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} `
+         + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+async function loadActivity(reset) {
+    if (reset) _activityOffset = 0;
+    const container = document.getElementById('activity-log-container');
+    const pagination = document.getElementById('activity-pagination');
+    const typeFilter = document.getElementById('activity-type-filter').value;
+
+    container.innerHTML = '<div class="loading">Loading activity…</div>';
+
+    try {
+        const params = new URLSearchParams({
+            limit:  _ACTIVITY_PAGE_SIZE,
+            offset: _activityOffset,
+        });
+        if (typeFilter) params.set('type', typeFilter);
+
+        const resp = await fetch('/api/overlays/activity?' + params);
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.error || 'Request failed');
+
+        _activityTotal = data.total;
+        const rows = data.activities;
+
+        if (!rows.length) {
+            container.innerHTML = '<p style="color:var(--text-secondary,#666);padding:20px 0;">No activity recorded yet.</p>';
+            pagination.style.display = 'none';
+            return;
+        }
+
+        let html = `<table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+                <tr style="border-bottom:2px solid var(--border-color,#ddd);text-align:left;">
+                    <th style="padding:8px 12px;white-space:nowrap;color:var(--text-secondary,#888);font-weight:600;width:155px;">Date / Time</th>
+                    <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:140px;">Action</th>
+                    <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:80px;">By</th>
+                    <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:70px;">Result</th>
+                    <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;">Details</th>
+                </tr>
+            </thead>
+            <tbody>`;
+
+        rows.forEach((row, idx) => {
+            const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
+            const label  = _ACTION_LABELS[row.action_type] || row.action_type;
+            const rColor = _RESULT_COLORS[row.result] || '#888';
+            const statsStr    = _formatActivityStats(row.stats);
+            const failuresStr = _formatActivityFailures(row.stats);
+            const detail = row.title || statsStr || '—';
+            const sub    = row.title && statsStr ? `<br><span style="font-size:11px;color:var(--text-secondary,#888);">${statsStr}</span>` : '';
+            const failSub = failuresStr ? failuresStr : '';
+            const triggeredLabel = row.triggered_by === 'scheduled' ? '⏱ auto' : '✋ manual';
+            html += `<tr style="border-bottom:1px solid var(--border-color,#eee);background:${bg};">
+                <td style="padding:8px 12px;white-space:nowrap;font-family:monospace;font-size:12px;color:var(--text-secondary,#888);">${_formatActivityDate(row.created_at)}</td>
+                <td style="padding:8px 12px;font-weight:500;">${label}</td>
+                <td style="padding:8px 12px;font-size:12px;color:var(--text-secondary,#888);">${triggeredLabel}</td>
+                <td style="padding:8px 12px;"><span style="color:${rColor};font-weight:600;font-size:12px;">${row.result}</span></td>
+                <td style="padding:8px 12px;">${detail}${sub}${failSub}</td>
+            </tr>`;
+        });
+
+        html += '</tbody></table>';
+        container.innerHTML = html;
+
+        // Pagination
+        const totalPages = Math.ceil(_activityTotal / _ACTIVITY_PAGE_SIZE);
+        const currentPage = Math.floor(_activityOffset / _ACTIVITY_PAGE_SIZE) + 1;
+        if (totalPages > 1) {
+            pagination.style.display = 'flex';
+            pagination.style.justifyContent = 'center';
+            pagination.style.alignItems = 'center';
+            document.getElementById('activity-page-info').textContent =
+                `Page ${currentPage} of ${totalPages} (${_activityTotal} events)`;
+            document.getElementById('activity-prev-btn').disabled = _activityOffset === 0;
+            document.getElementById('activity-next-btn').disabled = _activityOffset + _ACTIVITY_PAGE_SIZE >= _activityTotal;
+        } else {
+            pagination.style.display = 'none';
+        }
+    } catch (err) {
+        container.innerHTML = `<p style="color:#dc3545;">Failed to load activity: ${err.message}</p>`;
+        console.error('Activity load error:', err);
+    }
+}
+
+function activityPage(dir) {
+    _activityOffset = Math.max(0, _activityOffset + dir * _ACTIVITY_PAGE_SIZE);
+    loadActivity(false);
+}
+
+// Re-load when the filter changes
+document.getElementById('activity-type-filter')?.addEventListener('change', () => loadActivity(true));
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Check if a sync is already running when page loads
+async function checkInitialSyncStatus() {
+    try {
+        const resp = await fetch('/api/overlays/sync_library/status');
+        const data = await resp.json();
+        if (data.running) {
+            const btn = document.getElementById('sync-library-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing…';
+            document.getElementById('sync-library-status').textContent = data.progress || '…';
+            _syncPollTimer = setInterval(_pollSyncStatus, 2000);
+        } else if (data.done && data.progress) {
+            document.getElementById('sync-library-status').textContent = data.progress;
+        }
+    } catch (e) { /* ignore */ }
+}
+
+// Active status filter state
+let _activeStatusFilter = null;
+
+// Debounce helper
+function _debounce(fn, ms) {
+    let t;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+function filterGrid(gridId, query) {
+    // Re-render from in-memory data — no DOM traversal over thousands of cards
+    if (gridId === 'movies-grid') {
+        _renderGrid('movies-grid', _moviesData, _renderMovieCard, query, _activeStatusFilter);
+    } else if (gridId === 'shows-grid') {
+        _renderGrid('shows-grid', _showsData, _renderShowCard, query, _activeStatusFilter);
+    }
+}
+
+function filterByStatus(status) {
+    // Toggle off if already active
+    if (_activeStatusFilter === status) {
+        _activeStatusFilter = null;
+        document.querySelectorAll('.stat-card-clickable').forEach(c => c.classList.remove('stat-filter-active'));
+        const mq = document.getElementById('movies-search')?.value || '';
+        const sq = document.getElementById('shows-search')?.value || '';
+        if (window.moviesLoaded) _renderGrid('movies-grid', _moviesData, _renderMovieCard, mq, null);
+        if (window.showsLoaded)  _renderGrid('shows-grid',  _showsData,  _renderShowCard,  sq, null);
+        return;
+    }
+
+    _activeStatusFilter = status;
+
+    // Highlight the active stat card
+    document.querySelectorAll('.stat-card-clickable').forEach(c => c.classList.remove('stat-filter-active'));
+    document.getElementById('stat-failed')?.closest('.stat-card-clickable')?.classList.add('stat-filter-active');
+
+    // Re-render both grids with new status filter (uses in-memory data, fast)
+    const mq = document.getElementById('movies-search')?.value || '';
+    const sq = document.getElementById('shows-search')?.value || '';
+    if (window.moviesLoaded) _renderGrid('movies-grid', _moviesData, _renderMovieCard, mq, status);
+    if (window.showsLoaded)  _renderGrid('shows-grid',  _showsData,  _renderShowCard,  sq, status);
+
+    // Decide which tab to show based on match counts (in-memory, no DOM query)
+    const movieMatches = _moviesData.filter(i => i.overlay_status === status).length;
+    const showMatches  = _showsData.filter(i => i.overlay_status === status).length;
+    const targetTab = (showMatches > 0 && movieMatches === 0) ? 'shows' : 'movies';
+
+    document.querySelectorAll('.overlay-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.querySelector(`.overlay-tab[data-tab="${targetTab}"]`)?.classList.add('active');
+    document.getElementById(`${targetTab}-tab`)?.classList.add('active');
+
+    // Load data if not yet loaded
+    if (targetTab === 'movies' && !window.moviesLoaded) loadMovies();
+    if (targetTab === 'shows'  && !window.showsLoaded)  loadShows();
+}
+
+// ─── Season overlay modal ────────────────────────────────────────────────────
+
+let _seasonsShowKey   = null;
+let _seasonsShowTitle = null;
+let _seasonsData      = [];
+
+function _seasonStatusClass(status) {
+    const map = {
+        applied: 'status-applied',
+        pending: 'status-pending',
+        analyzing: 'status-analyzing',
+        failed: 'status-failed',
+        removed: 'status-not-started',
+        not_started: 'status-not-started',
+    };
+    return map[status] || 'status-not-started';
+}
+
+async function openSeasonsModal(showRatingKey, showTitle) {
+    _seasonsShowKey   = showRatingKey;
+    _seasonsShowTitle = showTitle;
+    _seasonsData      = [];
+
+    document.getElementById('seasons-modal-title').textContent =
+        `Season Posters — ${showTitle}`;
+    document.getElementById('seasons-modal-body').innerHTML =
+        '<div class="loading">Loading seasons…</div>';
+    document.getElementById('seasons-modal-backdrop').classList.add('open');
+
+    // Populate layout selector with season/tv layouts
+    const sel = document.getElementById('seasons-layout-selector');
+    sel.innerHTML = '<option value="">Auto (use best available layout)</option>';
+    try {
+        const lr = await fetch('/api/overlays/layouts');
+        const ld = await lr.json();
+        if (ld.success) {
+            ld.layouts
+                .filter(l => l.media_type === 'season' || l.media_type === 'tv')
+                .forEach(l => {
+                    const opt = document.createElement('option');
+                    opt.value = l.id;
+                    opt.textContent = `${l.name} (${l.media_type})`;
+                    sel.appendChild(opt);
+                });
+        }
+    } catch (_e) {}
+
+    await _loadSeasonsIntoModal();
+}
+
+async function _loadSeasonsIntoModal() {
+    const body = document.getElementById('seasons-modal-body');
+    try {
+        const resp = await fetch(`/api/overlays/seasons/${_seasonsShowKey}`);
+        const data = await resp.json();
+
+        if (!data.success) {
+            body.innerHTML = `<p style="color:#dc3545">Error: ${data.error || 'Unknown error'}</p>`;
+            return;
+        }
+        if (!data.seasons || data.seasons.length === 0) {
+            body.innerHTML = '<p class="loading">No seasons found for this show.</p>';
+            return;
+        }
+
+        _seasonsData = data.seasons;
+        _renderSeasonsModal();
+
+    } catch (e) {
+        body.innerHTML = `<p style="color:#dc3545">Failed to load seasons: ${e}</p>`;
+    }
+}
+
+function _renderSeasonsModal() {
+    const body = document.getElementById('seasons-modal-body');
+    body.innerHTML = _seasonsData.map(s => {
+        const statusClass = _seasonStatusClass(s.overlay_status);
+        const thumbUrl = `/api/overlays/seasons/${s.season_ms_item_id}/thumb`;
+        const displayStatus = (s.overlay_status || 'not started').replace('_', ' ');
+        const isApplied  = s.overlay_status === 'applied';
+        const isRemoved  = s.overlay_status === 'removed' || s.overlay_status === 'not_started';
+
+        return `
+        <div class="season-row" id="season-row-${s.season_ms_item_id}">
+            <img class="season-thumb"
+                 src="${thumbUrl}"
+                 onerror="this.src='/static/images/placeholder.png'"
+                 alt="${s.title}">
+            <div class="season-info">
+                <div class="season-title">${s.title}</div>
+                <span class="season-status-badge overlay-status ${statusClass}">${displayStatus}</span>
+            </div>
+            <div class="season-actions">
+                ${isApplied ? `
+                <button class="btn btn-warning"
+                    onclick="regenSingleSeason('${s.season_ms_item_id}', ${s.season_number}, this)"
+                    title="Regenerate with current library poster">↻</button>
+                <button class="btn btn-danger"
+                    onclick="removeSingleSeason('${s.season_ms_item_id}', ${s.season_number}, this)"
+                    title="Remove overlay">✕</button>
+                ` : `
+                <button class="btn btn-success"
+                    onclick="generateSingleSeason('${s.season_ms_item_id}', ${s.season_number}, this)"
+                    title="Apply overlay">Apply</button>
+                `}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function closeSeasonsModal() {
+    document.getElementById('seasons-modal-backdrop').classList.remove('open');
+    _seasonsShowKey = null;
+}
+
+async function generateSingleSeason(seasonKey, seasonNumber, btn) {
+    const layoutId = _getSeasonsLayoutId();
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '…';
+    try {
+        const resp = await fetch(
+            `/api/overlays/seasons/${_seasonsShowKey}/${seasonKey}/regenerate`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({season_number: seasonNumber, layout_id: layoutId})
+        });
+        const data = await resp.json();
+        if (data.success) {
+            await _loadSeasonsIntoModal();
+        } else {
+            btn.textContent = orig; btn.disabled = false;
+            alert('Failed: ' + (data.message || data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        btn.textContent = orig; btn.disabled = false;
+        alert('Request failed: ' + e);
+    }
+}
+
+async function regenSingleSeason(seasonKey, seasonNumber, btn) {
+    if (!confirm('Regenerate season overlay using current library poster?')) return;
+    const layoutId = _getSeasonsLayoutId();
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '…';
+    try {
+        const resp = await fetch(
+            `/api/overlays/seasons/${_seasonsShowKey}/${seasonKey}/regenerate`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({season_number: seasonNumber, layout_id: layoutId})
+        });
+        const data = await resp.json();
+        if (data.success) {
+            await _loadSeasonsIntoModal();
+        } else {
+            btn.textContent = orig; btn.disabled = false;
+            alert('Failed: ' + (data.message || data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        btn.textContent = orig; btn.disabled = false;
+        alert('Request failed: ' + e);
+    }
+}
+
+async function removeSingleSeason(seasonKey, seasonNumber, btn) {
+    if (!confirm('Remove overlay and restore original season poster?')) return;
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '…';
+    try {
+        const resp = await fetch(
+            `/api/overlays/seasons/${_seasonsShowKey}/${seasonKey}/remove`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({season_number: seasonNumber})
+        });
+        const data = await resp.json();
+        if (data.success) {
+            await _loadSeasonsIntoModal();
+        } else {
+            btn.textContent = orig; btn.disabled = false;
+            alert('Failed: ' + (data.message || data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        btn.textContent = orig; btn.disabled = false;
+        alert('Request failed: ' + e);
+    }
+}
+
+async function generateAllSeasons() {
+    if (!_seasonsShowKey) return;
+    if (!confirm(`Generate season poster overlays for all seasons of "${_seasonsShowTitle}"?`)) return;
+    const layoutId = _getSeasonsLayoutId();
+
+    const btn = document.querySelector('#seasons-modal-controls .btn-success');
+    const orig = btn.textContent; btn.disabled = true; btn.textContent = '…';
+
+    try {
+        const resp = await fetch(`/api/overlays/seasons/${_seasonsShowKey}/generate`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({layout_id: layoutId, force: false})
+        });
+        const data = await resp.json();
+        if (data.success) {
+            alert(`Applied: ${data.applied}, Skipped: ${data.skipped}, Failed: ${data.failed}`);
+            await _loadSeasonsIntoModal();
+        } else {
+            alert('Failed: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Request failed: ' + e);
+    } finally {
+        btn.textContent = orig; btn.disabled = false;
+    }
+}
+
+async function regenerateAllSeasons() {
+    if (!_seasonsShowKey) return;
+    if (!confirm(`Regenerate ALL season poster overlays for "${_seasonsShowTitle}"? This will overwrite existing season overlays.`)) return;
+    const layoutId = _getSeasonsLayoutId();
+
+    const btn = document.querySelector('#seasons-modal-controls .btn-warning');
+    const orig = btn.textContent; btn.disabled = true; btn.textContent = '…';
+
+    try {
+        const resp = await fetch(`/api/overlays/seasons/${_seasonsShowKey}/generate`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({layout_id: layoutId, force: true})
+        });
+        const data = await resp.json();
+        if (data.success) {
+            alert(`Applied: ${data.applied}, Skipped: ${data.skipped}, Failed: ${data.failed}`);
+            await _loadSeasonsIntoModal();
+        } else {
+            alert('Failed: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Request failed: ' + e);
+    } finally {
+        btn.textContent = orig; btn.disabled = false;
+    }
+}
+
+function _getSeasonsLayoutId() {
+    const val = document.getElementById('seasons-layout-selector').value;
+    return val ? parseInt(val) : null;
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', () => {
+    // Restore last-visited tab
+    const _savedTab = sessionStorage.getItem('overlays_active_tab');
+    if (_savedTab && document.querySelector(`.overlay-tab[data-tab="${_savedTab}"]`)) {
+        document.querySelectorAll('.overlay-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        document.querySelector(`.overlay-tab[data-tab="${_savedTab}"]`).classList.add('active');
+        document.getElementById(`${_savedTab}-tab`)?.classList.add('active');
+    }
+
+    loadStats();
+    loadTemplates(); // Always populate layout dropdowns on page load
+    // Load the content for the active tab
+    if (!_savedTab || _savedTab === 'movies') loadMovies();
+    else if (_savedTab === 'shows')     loadShows();
+    else if (_savedTab === 'badges')    loadBadgeStats();
+    else if (_savedTab === 'activity')  loadActivity();
+    checkInitialSyncStatus();
+
+    // Close seasons modal when clicking the backdrop
+    document.getElementById('seasons-modal-backdrop').addEventListener('click', function(e) {
+        if (e.target === this) closeSeasonsModal();
+    });
+
+    // Wire up search boxes — debounced so typing fast doesn't re-render on every keystroke
+    const _debouncedMovieFilter = _debounce(q => filterGrid('movies-grid', q), 250);
+    const _debouncedShowFilter  = _debounce(q => filterGrid('shows-grid',  q), 250);
+    document.getElementById('movies-search').addEventListener('input', e => _debouncedMovieFilter(e.target.value));
+    document.getElementById('shows-search').addEventListener('input',  e => _debouncedShowFilter(e.target.value));
+
+    // Refresh stats every 30 seconds — paused while tab is hidden
+    let _statsTimer = setInterval(loadStats, 30000);
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            clearInterval(_statsTimer);
+            _statsTimer = null;
+        } else {
+            if (!_statsTimer) {
+                loadStats();  // immediate refresh when tab becomes visible again
+                _statsTimer = setInterval(loadStats, 30000);
+            }
+        }
+    });
+});
+</script>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// Phase 2 — Poster Review Grid
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Move posterReviewModal to <body> so position:fixed works correctly
+// (fixed positioning breaks when any ancestor has transform/filter/will-change)
+(function() {
+    const m = document.getElementById('posterReviewModal');
+    if (m && m.parentElement !== document.body) document.body.appendChild(m);
+})();
+
+let _reviewItems    = [];        // full list from API
+let _reviewFiltered = [];        // after search filter
+let _reviewSelected = new Set(); // selected ms_item_ids
+const _REVIEW_PAGE  = 300;       // max cards rendered at once
+
+// Expose as both names so overlay_settings_modal.js delegates here when on this page
+window._openPosterReviewGridLocal = window.openPosterReviewGrid = async function() {
+    const modal = document.getElementById('posterReviewModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+    _reviewSelected.clear();
+    _updateReviewSelCount();
+    document.getElementById('posterReviewSearch').value = '';
+
+    const grid = document.getElementById('posterReviewGrid');
+    grid.innerHTML = '<div class="poster-review-loading">Loading library…</div>';
+
+    try {
+        const r = await fetch('/api/overlays/reset/preview');
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Failed to load');
+        _reviewItems = d.items || [];
+        _reviewFiltered = _reviewItems.slice();
+        document.getElementById('posterReviewTotalCount').textContent =
+            `${_reviewItems.length} item${_reviewItems.length !== 1 ? 's' : ''} in library`;
+        _renderReviewGrid();
+    } catch (e) {
+        grid.innerHTML = `<div class="poster-review-loading" style="color:#dc3545;">Error: ${e.message}</div>`;
+    }
+};
+
+window.closePosterReviewGrid = function() {
+    const modal = document.getElementById('posterReviewModal');
+    if (modal) modal.style.display = 'none';
+    document.body.style.overflow = '';
+};
+
+// Debounced search — avoids re-rendering on every keystroke
+const _filterReviewGridDebounced = _debounce(function() {
+    const q = document.getElementById('posterReviewSearch').value.toLowerCase().trim();
+    _reviewFiltered = q
+        ? _reviewItems.filter(i => (i.title || '').toLowerCase().includes(q))
+        : _reviewItems.slice();
+    _renderReviewGrid();
+}, 250);
+window.filterReviewGrid = _filterReviewGridDebounced;
+
+window.selectAllReview = function() {
+    // Add all filtered items to selection without re-rendering the whole grid
+    _reviewFiltered.forEach(i => _reviewSelected.add(i.ms_item_id || ''));
+    // Just toggle CSS on already-rendered cards
+    document.querySelectorAll('#posterReviewGrid .poster-review-card').forEach(card => {
+        if (_reviewSelected.has(card.dataset.key)) {
+            card.classList.add('poster-review-card--selected');
+        }
+    });
+    _updateReviewSelCount();
+};
+
+window.deselectAllReview = function() {
+    _reviewSelected.clear();
+    document.querySelectorAll('#posterReviewGrid .poster-review-card').forEach(card => {
+        card.classList.remove('poster-review-card--selected');
+    });
+    _updateReviewSelCount();
+};
+
+window.selectNonAppliedReview = function() {
+    _reviewFiltered.forEach(i => {
+        if (i.overlay_status !== 'applied') _reviewSelected.add(i.ms_item_id || '');
+    });
+    document.querySelectorAll('#posterReviewGrid .poster-review-card').forEach(card => {
+        if (_reviewSelected.has(card.dataset.key)) {
+            card.classList.add('poster-review-card--selected');
+        }
+    });
+    _updateReviewSelCount();
+};
+
+window.submitReviewReset = function() {
+    if (_reviewSelected.size === 0) return;
+    const keys = Array.from(_reviewSelected);
+    const msg = `Reset ${keys.length} selected poster(s) to clean TMDB originals?\n\nThis cannot be undone. Overlays will NOT be re-applied automatically.`;
+    if (!confirm(msg)) return;
+    closePosterReviewGrid();
+    // Delegate to overlay_settings_modal.js which owns the progress UI
+    if (typeof window._startSelectiveResetJob === 'function') {
+        // Ensure settings modal is open so progress is visible
+        if (typeof window.openOverlaySettingsModal === 'function') {
+            window.openOverlaySettingsModal().then
+                ? window.openOverlaySettingsModal().then(() => window._startSelectiveResetJob(keys))
+                : (window.openOverlaySettingsModal(), window._startSelectiveResetJob(keys));
+        } else {
+            window._startSelectiveResetJob(keys);
+        }
+    }
+};
+
+function _toggleReviewItem(key) {
+    if (_reviewSelected.has(key)) {
+        _reviewSelected.delete(key);
+    } else {
+        _reviewSelected.add(key);
+    }
+    // Target the card directly via dataset — no full-DOM scan needed
+    const card = document.querySelector(`#posterReviewGrid .poster-review-card[data-key="${CSS.escape(key)}"]`);
+    if (card) {
+        card.classList.toggle('poster-review-card--selected', _reviewSelected.has(key));
+    }
+    _updateReviewSelCount();
+}
+
+function _updateReviewSelCount() {
+    const el = document.getElementById('posterReviewSelCount');
+    if (el) el.textContent = `${_reviewSelected.size} selected`;
+    const btn = document.getElementById('posterReviewResetBtn');
+    if (btn) btn.disabled = _reviewSelected.size === 0;
+}
+
+function _statusBadge(status) {
+    const map = {
+        applied:     { label: 'Applied',     color: '#28a745' },
+        pending:     { label: 'Pending',      color: '#fd7e14' },
+        failed:      { label: 'Failed',       color: '#dc3545' },
+        analyzing:   { label: 'Analyzing',    color: '#17a2b8' },
+        not_started: { label: 'Not started',  color: '#6c757d' },
+    };
+    const s = map[status] || { label: status || 'Unknown', color: '#6c757d' };
+    return `<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:${s.color}22;color:${s.color};border:1px solid ${s.color}44;">${s.label}</span>`;
+}
+
+function _renderReviewGrid() {
+    const grid = document.getElementById('posterReviewGrid');
+    if (!grid) return;
+
+    if (_reviewFiltered.length === 0) {
+        grid.innerHTML = '<div class="poster-review-loading">No items match.</div>';
+        return;
+    }
+
+    const visible = _reviewFiltered.slice(0, _REVIEW_PAGE);
+    const overflow = _reviewFiltered.length > _REVIEW_PAGE;
+
+    const html = visible.map(item => {
+        const key     = item.ms_item_id || '';
+        const sel     = _reviewSelected.has(key);
+        const poster  = item.tmdb_poster_url || '';
+        const title   = _escHtml(item.title || '?');
+        const year    = item.year ? ` (${item.year})` : '';
+        const badge   = _statusBadge(item.overlay_status);
+        return `
+        <div class="poster-review-card${sel ? ' poster-review-card--selected' : ''}"
+             data-key="${_escHtml(key)}"
+             onclick="_toggleReviewItem('${_escHtml(key)}')">
+            <div class="poster-review-img-wrap">
+                ${poster
+                    ? `<img src="${_escHtml(poster)}" alt="${title}" loading="lazy" class="poster-review-img">`
+                    : `<div class="poster-review-img poster-review-img--placeholder">No image</div>`
+                }
+            </div>
+            <div class="poster-review-info">
+                <div class="poster-review-item-title" title="${title}${year}">${title}${year}</div>
+                ${badge}
+            </div>
+        </div>`;
+    }).join('');
+
+    const overflowMsg = overflow
+        ? `<div class="poster-review-loading" style="grid-column:1/-1;font-size:12px;color:#888;padding:8px 0;">
+               Showing ${_REVIEW_PAGE} of ${_reviewFiltered.length} — use the search to narrow results
+           </div>`
+        : '';
+
+    grid.innerHTML = html + overflowMsg;
+    _updateReviewSelCount();
+}
+
+// Auto-open review grid if navigated here via hash from settings modal
+if (window.location.hash === '#open-review-grid') {
+    history.replaceState(null, '', window.location.pathname);
+    window.addEventListener('load', () => window.openPosterReviewGrid(), { once: true });
+}
+</script>
+{% endblock %}

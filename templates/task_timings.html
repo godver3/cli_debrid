@@ -79,6 +79,15 @@
             <button class="tab" data-tab="system">
                 System Tasks <span class="badge system-count">0</span>
             </button>
+            <button class="tab" data-tab="library">
+                Library <span class="badge library-count">0</span>
+            </button>
+            <button class="tab" data-tab="metadata">
+                Metadata <span class="badge metadata-count">0</span>
+            </button>
+            <button class="tab" data-tab="features">
+                Features <span class="badge features-count">0</span>
+            </button>
         </div>
     </div>
 
@@ -90,6 +99,15 @@
             <div class="task-grid"></div>
         </div>
         <div id="system">
+            <div class="task-grid"></div>
+        </div>
+        <div id="library">
+            <div class="task-grid"></div>
+        </div>
+        <div id="metadata">
+            <div class="task-grid"></div>
+        </div>
+        <div id="features">
             <div class="task-grid"></div>
         </div>
     </div>
@@ -516,13 +534,19 @@ function updateTimers() {
 }
 
 function updateBadgeCounts(data) {
-    const queueCount = Object.keys(data.queues || {}).length;
-    const sourceCount = Object.keys(data.content_sources || {}).length;
-    const systemCount = Object.keys(data.system_tasks || {}).length;
-    console.log(`[TaskTimings] Updating badge counts: Queues=${queueCount}, Sources=${sourceCount}, System=${systemCount}`);
-    document.querySelector('.queue-count').textContent = queueCount;
-    document.querySelector('.source-count').textContent = sourceCount;
-    document.querySelector('.system-count').textContent = systemCount;
+    const queueCount    = Object.keys(data.queues         || {}).length;
+    const sourceCount   = Object.keys(data.content_sources || {}).length;
+    const systemCount   = Object.keys(data.system_tasks   || {}).length;
+    const libraryCount  = Object.keys(data.library_tasks  || {}).length;
+    const metadataCount = Object.keys(data.metadata_tasks || {}).length;
+    const featuresCount = Object.keys(data.feature_tasks  || {}).length;
+    console.log(`[TaskTimings] Updating badge counts: Queues=${queueCount}, Sources=${sourceCount}, System=${systemCount}, Library=${libraryCount}, Metadata=${metadataCount}, Features=${featuresCount}`);
+    document.querySelector('.queue-count').textContent    = queueCount;
+    document.querySelector('.source-count').textContent   = sourceCount;
+    document.querySelector('.system-count').textContent   = systemCount;
+    document.querySelector('.library-count').textContent  = libraryCount;
+    document.querySelector('.metadata-count').textContent = metadataCount;
+    document.querySelector('.features-count').textContent = featuresCount;
 }
 
 function fetchAndUpdateTasks() {
@@ -550,9 +574,12 @@ function fetchAndUpdateTasks() {
 
                 // Check if we need to do a full refresh (first load or major changes)
                 const existingTiles = document.querySelectorAll('.task-tile');
-                const newTaskCount = Object.keys(tasks.queues || {}).length + 
-                                   Object.keys(tasks.content_sources || {}).length + 
-                                   Object.keys(tasks.system_tasks || {}).length;
+                const newTaskCount = Object.keys(tasks.queues          || {}).length +
+                                   Object.keys(tasks.content_sources  || {}).length +
+                                   Object.keys(tasks.system_tasks     || {}).length +
+                                   Object.keys(tasks.library_tasks    || {}).length +
+                                   Object.keys(tasks.metadata_tasks   || {}).length +
+                                   Object.keys(tasks.feature_tasks    || {}).length;
                 
                 const needsFullRefresh = existingTiles.length === 0 || existingTiles.length !== newTaskCount;
                 
@@ -577,7 +604,7 @@ function fetchAndUpdateTasks() {
                      console.log("[TaskTimings] Program not running, started fast polling for status.");
                  }
                  document.querySelectorAll('.task-grid').forEach(grid => grid.innerHTML = '');
-                 updateBadgeCounts({queues: {}, content_sources: {}, system_tasks: {}});
+                 updateBadgeCounts({queues: {}, content_sources: {}, system_tasks: {}, library_tasks: {}, metadata_tasks: {}, feature_tasks: {}});
                  console.log("[TaskTimings] Cleared task content, attempting to load saved states as program is down.");
                  loadSavedToggleStates();
                  loadSavedIntervalStates();
@@ -594,7 +621,7 @@ function fetchAndUpdateTasks() {
                 console.log("[TaskTimings] Error fetching tasks, started fast polling for status.");
             }
             document.querySelectorAll('.task-grid').forEach(grid => grid.innerHTML = '');
-            updateBadgeCounts({queues: {}, content_sources: {}, system_tasks: {}});
+            updateBadgeCounts({queues: {}, content_sources: {}, system_tasks: {}, library_tasks: {}, metadata_tasks: {}, feature_tasks: {}});
             console.log("[TaskTimings] Cleared task content due to fetch error, attempting to load saved states.");
             loadSavedToggleStates();
             loadSavedIntervalStates();
@@ -614,9 +641,12 @@ function performFullRefresh(tasks) {
     console.log("[TaskTimings] Preserved current interval input values:", currentIntervalValues);
 
     // Clear and recreate tiles
-    document.querySelector('#queues .task-grid').innerHTML = '';
-    document.querySelector('#sources .task-grid').innerHTML = '';
-    document.querySelector('#system .task-grid').innerHTML = '';
+    document.querySelector('#queues .task-grid').innerHTML   = '';
+    document.querySelector('#sources .task-grid').innerHTML  = '';
+    document.querySelector('#system .task-grid').innerHTML   = '';
+    document.querySelector('#library .task-grid').innerHTML  = '';
+    document.querySelector('#metadata .task-grid').innerHTML = '';
+    document.querySelector('#features .task-grid').innerHTML = '';
     console.log("[TaskTimings] Cleared existing task tiles.");
 
     Object.entries(tasks.queues || {}).forEach(([name, info]) => {
@@ -638,6 +668,19 @@ function performFullRefresh(tasks) {
     Object.entries(tasks.system_tasks || {}).forEach(([name, info]) => {
         document.querySelector('#system .task-grid').appendChild(createTaskTile(name, info));
     });
+
+    Object.entries(tasks.library_tasks || {}).forEach(([name, info]) => {
+        document.querySelector('#library .task-grid').appendChild(createTaskTile(name, info));
+    });
+
+    Object.entries(tasks.metadata_tasks || {}).forEach(([name, info]) => {
+        document.querySelector('#metadata .task-grid').appendChild(createTaskTile(name, info));
+    });
+
+    Object.entries(tasks.feature_tasks || {}).forEach(([name, info]) => {
+        document.querySelector('#features .task-grid').appendChild(createTaskTile(name, info));
+    });
+
     console.log("[TaskTimings] Populated task tiles.");
 
     // Restore interval values and focus
@@ -668,7 +711,7 @@ function performTargetedUpdate(tasks) {
     const focusedTaskName = focusedInput ? focusedInput.closest('.task-tile').dataset.taskName : null;
     
     // Update countdown timers and interval badges
-    ['queues', 'content_sources', 'system_tasks'].forEach(category => {
+    ['queues', 'content_sources', 'system_tasks', 'library_tasks', 'metadata_tasks', 'feature_tasks'].forEach(category => {
         Object.entries(tasks[category] || {}).forEach(([taskName, info]) => {
             const tile = document.querySelector(`.task-tile[data-task-name="${taskName}"]`);
             if (tile) {
@@ -746,7 +789,7 @@ function performTargetedUpdate(tasks) {
 
 function updateTimersFromData(tasks) {
     timers = {};
-    ['queues', 'content_sources', 'system_tasks'].forEach(category => {
+    ['queues', 'content_sources', 'system_tasks', 'library_tasks', 'metadata_tasks', 'feature_tasks'].forEach(category => {
         Object.entries(tasks[category] || {}).forEach(([taskName, info]) => {
             if(info.enabled) {
                  timers[taskName] = Math.max(0, Math.floor(info.next_run_in.total_seconds));

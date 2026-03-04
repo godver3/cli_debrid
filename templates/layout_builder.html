@@ -1,0 +1,2349 @@
+{% extends "base.html" %}
+
+{% block title %}Layout Builder{% endblock %}
+
+{% block head %}
+<script>
+    function loadBuilderCss() {
+        const theme = window.themeSwitcher?.getTheme() || 'classic';
+        if (theme === 'tangerine') {
+            const themeId = 'theme-tangerine-layout-builder';
+            if (!document.getElementById(themeId)) {
+                const link = document.createElement('link');
+                link.id = themeId;
+                link.rel = 'stylesheet';
+                link.href = "{{ url_for('static', filename='css/tangerine/tangerine_layout_builder.css') }}";
+                link.setAttribute('data-theme-css', 'tangerine');
+                document.head.appendChild(link);
+            }
+        }
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', loadBuilderCss);
+    } else {
+        loadBuilderCss();
+    }
+    document.addEventListener('themeChanged', loadBuilderCss);
+</script>
+<style>
+.builder-container {
+    display: grid;
+    grid-template-columns: 240px 1fr 340px;
+    gap: 16px;
+    height: calc(100vh - 100px);
+    padding: 16px;
+    max-width: 1800px;
+    margin: 0 auto;
+}
+
+/* ── Left Panel ── */
+.palette-panel {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 12px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.palette-panel h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 10px;
+    color: #e0e0e0;
+}
+
+.palette-section {
+    margin-bottom: 12px;
+}
+
+.palette-section h3 {
+    font-size: 11px;
+    font-weight: 600;
+    margin: 0 0 6px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding-left: 2px;
+}
+
+.palette-item {
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 9px 12px;
+    margin-bottom: 5px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 13px;
+    color: #333;
+    user-select: none;
+}
+
+.palette-item:hover {
+    border-color: #007bff;
+    background: #f0f7ff;
+    box-shadow: 0 2px 6px rgba(0,123,255,0.1);
+}
+
+.palette-item i {
+    margin-right: 8px;
+    width: 14px;
+    text-align: center;
+}
+
+/* ── Badges List ── */
+.badges-list-section {
+    flex: 1;
+    min-height: 0;
+}
+
+.badges-list-section h3 {
+    font-size: 11px;
+    font-weight: 600;
+    margin: 0 0 6px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.element-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.element-list-item {
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    padding: 8px 10px;
+    margin-bottom: 5px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    transition: all 0.15s;
+}
+
+.element-list-item:hover { border-color: #007bff; }
+.element-list-item.selected {
+    border-color: #007bff;
+    background: #e7f3ff;
+}
+
+.element-list-item-actions button {
+    padding: 3px 7px;
+    font-size: 11px;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    background: #dc3545;
+    color: white;
+}
+
+.badge-list-label {
+    font-weight: 500;
+    color: #444;
+}
+
+.badge-list-type {
+    font-size: 10px;
+    color: #999;
+    margin-top: 1px;
+}
+
+.empty-list-msg {
+    text-align: center;
+    color: #aaa;
+    padding: 15px 10px;
+    font-size: 12px;
+    border: 1px dashed #ddd;
+    border-radius: 5px;
+}
+
+/* ── Center Panel ── */
+.canvas-panel {
+    background: #e8e8e8;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.canvas-toolbar {
+    background: white;
+    border-bottom: 1px solid #ddd;
+    padding: 10px 14px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.canvas-toolbar input[type="text"] {
+    flex: 1;
+    min-width: 120px;
+    padding: 7px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.canvas-toolbar select {
+    padding: 7px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.canvas-container {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 20px;
+    overflow: auto;
+}
+
+.canvas-wrapper {
+    position: relative;
+    background: white;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    flex-shrink: 0;
+}
+
+#preview-canvas {
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: none;
+    cursor: default;
+}
+
+.toolbar-separator {
+    width: 1px;
+    height: 22px;
+    background: #ddd;
+}
+
+/* ── Right Panel ── */
+.properties-panel {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 12px;
+    overflow-y: auto;
+}
+
+.properties-section {
+    background: white;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 10px;
+    border: 1px solid #eee;
+}
+
+.properties-section h3 {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0 0 12px;
+    color: #333;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.section-header-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.section-header-row h4 {
+    font-size: 13px;
+    font-weight: 600;
+    color: #333;
+    margin: 0;
+    flex: 1;
+}
+
+.section-enable-cb {
+    margin: 0;
+    width: 15px;
+    height: 15px;
+    cursor: pointer;
+    accent-color: #007bff;
+}
+
+.section-body-disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+.sb-sub-section {
+    border-bottom: 1px solid #2a2a3a;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+}
+.sb-sub-section:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+}
+.sb-sub-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: #777;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+}
+
+.form-group {
+    margin-bottom: 10px;
+}
+
+.form-group:last-child { margin-bottom: 0; }
+
+.form-group label {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    margin-bottom: 4px;
+    color: #555;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 12px;
+    box-sizing: border-box;
+}
+
+.form-group textarea {
+    resize: vertical;
+    min-height: 55px;
+    font-family: monospace;
+}
+
+.form-row {
+    display: flex;
+    gap: 8px;
+}
+
+.form-group.half { flex: 1; }
+
+.color-input-group {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.color-input-group input[type="color"],
+#designed-badge-properties input[type="color"],
+#smart-badge-properties input[type="color"] {
+    width: 40px;
+    height: 30px;
+    padding: 2px;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.color-input-group input[type="text"] {
+    flex: 1;
+    font-family: monospace;
+    font-size: 12px;
+}
+
+.badge-type-chip {
+    display: inline-block;
+    background: #007bff;
+    color: white;
+    padding: 2px 9px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-bottom: 10px;
+    letter-spacing: 0.3px;
+}
+
+.no-selection {
+    text-align: center;
+    color: #aaa;
+    padding: 30px 15px;
+}
+
+.no-selection i { font-size: 36px; color: #ddd; margin-bottom: 10px; display: block; }
+.no-selection p { margin: 4px 0; font-size: 13px; }
+
+/* Buttons */
+.btn {
+    padding: 7px 14px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+.btn-primary { background: #007bff; color: white; }
+.btn-primary:hover { background: #0056b3; }
+.btn-success { background: #28a745; color: white; }
+.btn-success:hover { background: #218838; }
+.btn-danger { background: #dc3545; color: white; }
+.btn-danger:hover { background: #c82333; }
+.btn-secondary { background: #6c757d; color: white; }
+.btn-secondary:hover { background: #5a6268; }
+
+.var-help {
+    font-size: 11px;
+    color: #777;
+    margin-top: 4px;
+    line-height: 1.4;
+}
+
+/* ── Text Line 1/2 separator labels ── */
+.db-text-line-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #555;
+    margin: 10px 0 4px;
+    padding-top: 6px;
+    border-top: 1px solid #f0f0f0;
+}
+
+/* ── Inline checkbox + help-text rows ── */
+.db-inline-check-group {
+    margin-bottom: 10px;
+}
+.db-inline-check-label {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    color: #444;
+    line-height: 1;
+    user-select: none;
+}
+.db-inline-check-label input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    flex-shrink: 0;
+    cursor: pointer;
+    accent-color: #007bff;
+}
+.db-inline-check-label span {
+    line-height: 1.2;
+}
+.db-inline-check-group .var-help {
+    margin-top: 5px;
+    padding-left: 21px; /* indent under checkbox */
+}
+
+/* ── Auto / px width toggle ── */
+/* Structure: form-group > label (normal block) + .db-auto-input-row (flex: input + toggle) */
+.db-auto-input-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+/* Override the blanket form-group input rule for these specific inputs */
+.db-auto-input-row input[type="number"] {
+    flex: 1;
+    min-width: 0;
+    /* width: auto !important; */
+}
+.db-auto-input-row input[type="number"].is-auto {
+    opacity: 0.3;
+    pointer-events: none;
+}
+.db-auto-toggle {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 11px;
+    color: #888;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+/* Override the blanket form-group input rule for the toggle checkbox */
+.db-auto-toggle input[type="checkbox"] {
+    width: 12px !important;
+    height: 12px;
+    padding: 0 !important;
+    margin: 0;
+    cursor: pointer;
+    accent-color: #007bff;
+    flex-shrink: 0;
+}
+
+/* ── Bold — inline label + checkbox, vertically centred ── */
+.db-bold-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 18px; /* push down to align with the input next to it */
+}
+.db-bold-row > label {
+    font-size: 12px;
+    color: #555;
+    font-weight: 500;
+    margin: 0;
+}
+/* Override the blanket form-group input rule */
+.db-bold-row input[type="checkbox"] {
+    width: 14px !important;
+    height: 14px;
+    padding: 0 !important;
+    margin: 0;
+    cursor: pointer;
+    accent-color: #007bff;
+    flex-shrink: 0;
+}
+
+/* ── Logo Picker Modal ─────────────────────────── */
+#logo-picker-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(0,0,0,0.78);
+    align-items: center;
+    justify-content: center;
+}
+#logo-picker-modal.open { display: flex; }
+.logo-picker-dialog {
+    background: #141414;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    width: 82vw;
+    max-width: 920px;
+    height: 80vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+}
+.logo-picker-header {
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    background: rgba(255,255,255,0.02);
+}
+.logo-picker-title {
+    color: #ff8c5a;
+    font-size: 13px;
+    font-weight: 600;
+    margin-right: 4px;
+    white-space: nowrap;
+}
+#logo-picker-tabs {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    flex: 1;
+}
+.logo-tab {
+    padding: 3px 10px;
+    font-size: 11px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #888;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.logo-tab:hover { color: #ccc; border-color: rgba(255,255,255,0.25); background: rgba(255,255,255,0.08); }
+.logo-tab.active {
+    background: rgba(255,107,53,0.15);
+    border-color: rgba(255,107,53,0.45);
+    color: #ff8c5a;
+}
+.logo-tab-count { font-size: 9px; opacity: 0.65; margin-left: 3px; }
+.logo-picker-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+}
+#logo-search {
+    padding: 4px 8px;
+    font-size: 12px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #ccc;
+    border-radius: 4px;
+    width: 150px;
+}
+.logo-upload-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    font-size: 11px;
+    background: rgba(255, 107, 53, 0.08);
+    border: 1px solid rgba(255, 107, 53, 0.35);
+    color: #ff8c5a;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s ease;
+}
+.logo-upload-btn:hover {
+    background: rgba(255, 107, 53, 0.18);
+    border-color: rgba(255, 107, 53, 0.65);
+    color: #fff;
+}
+.logo-close-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    font-size: 11px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #e0e0e0;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.logo-close-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+#logo-picker-grid {
+    overflow-y: auto;
+    padding: 12px;
+    flex: 1;
+    background: #0e0e0e;
+}
+.logo-group { margin-bottom: 18px; }
+.logo-group-label {
+    color: #666;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    padding-bottom: 4px;
+}
+.logo-thumbnail-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+.logo-thumb {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 6px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    cursor: pointer;
+    width: 82px;
+    transition: border-color 0.15s, background 0.15s;
+}
+.logo-thumb:hover { border-color: rgba(255,107,53,0.5); background: rgba(255,107,53,0.07); }
+.logo-thumb img {
+    width: 64px;
+    height: 40px;
+    object-fit: contain;
+    background: rgba(255,255,255,0.04);
+    border-radius: 3px;
+}
+.logo-thumb span {
+    font-size: 9px;
+    color: #666;
+    text-align: center;
+    max-width: 76px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.logo-thumb .user-mark { color: #4a8a5a; font-size: 8px; }
+
+/* ── Template Variable Legend Modal ──────────── */
+#var-legend-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(0,0,0,0.65);
+    backdrop-filter: blur(3px);
+    align-items: center;
+    justify-content: center;
+}
+#var-legend-modal.open { display: flex; }
+.var-legend-dialog {
+    background: #141414;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px;
+    width: 580px;
+    max-width: 92vw;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+}
+.var-legend-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: #ff8c5a;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+    background: rgba(255,255,255,0.02);
+}
+.var-legend-header button {
+    padding: 4px 10px;
+    font-size: 11px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.15);
+    color: #e0e0e0;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.var-legend-header button:hover {
+    background: rgba(255,255,255,0.1);
+    border-color: rgba(255,255,255,0.3);
+}
+.var-legend-body {
+    overflow-y: auto;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    background: #0e0e0e;
+}
+.var-group { }
+.var-group-label {
+    color: #666;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 6px;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    padding-bottom: 4px;
+}
+.var-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 12px;
+}
+.var-row code {
+    background: rgba(255,107,53,0.08);
+    border: 1px solid rgba(255,107,53,0.25);
+    border-radius: 4px;
+    padding: 2px 7px;
+    color: #ff9e6e;
+    font-size: 11.5px;
+    white-space: nowrap;
+    min-width: 175px;
+    display: inline-block;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+.var-row code:hover {
+    background: rgba(255,107,53,0.16);
+    border-color: rgba(255,107,53,0.45);
+}
+.var-row span {
+    color: #888;
+    flex: 1;
+}
+.var-copy-btn {
+    flex-shrink: 0;
+    padding: 2px 7px;
+    font-size: 10px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #666;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+.var-copy-btn:hover {
+    background: rgba(255,107,53,0.12);
+    border-color: rgba(255,107,53,0.35);
+    color: #ff8c5a;
+}
+.var-copy-btn.copied {
+    background: rgba(74,210,149,0.12);
+    border-color: rgba(74,210,149,0.35);
+    color: #4ad295;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="builder-container">
+
+    <!-- ══════════════════════════════════════
+         Left Panel: Badge Palette + Badges List
+         ══════════════════════════════════════ -->
+    <div class="palette-panel" id="element-palette">
+        <a href="/overlays" style="display:inline-flex; align-items:center; gap:5px; font-size:12px; color:#aaa; text-decoration:none; margin-bottom:10px;">
+            <i class="fas fa-arrow-left"></i> Back to Overlays
+        </a>
+        <h2>Badges</h2>
+
+        <div class="palette-section">
+            <h3>Tray</h3>
+            <div class="palette-item" data-badge-type="background_panel" draggable="true"
+                 onclick="addBadgeFromPalette('background_panel')"
+                 style="border-left:3px solid #e07b39;">
+                <i class="fas fa-square" style="color:#e07b39"></i> Tray
+            </div>
+        </div>
+
+        <div class="palette-section">
+            <h3>Text Badges</h3>
+            <div class="palette-item" data-badge-type="imdb_rating" draggable="true"
+                 onclick="addBadgeFromPalette('imdb_rating')"
+                 style="border-left:3px solid #888;">
+                <i class="fas fa-font" style="color:#888"></i> Text Badges
+            </div>
+        </div>
+
+        <div class="palette-section">
+            <h3>Smart Badges <span style="font-size:10px;color:#00a2c7;font-weight:400;text-transform:none;letter-spacing:0;">— PNG</span></h3>
+            <div class="palette-item" data-badge-type="sb_audio_codec" draggable="true"
+                 onclick="addBadgeFromPalette('sb_audio_codec')"
+                 style="border-left:3px solid #00a2c7;">
+                <i class="fas fa-images" style="color:#00a2c7"></i> Library Badges
+            </div>
+        </div>
+
+        <div class="palette-section">
+            <h3>Designed Badges <span style="font-size:10px;color:#7838ff;font-weight:400;text-transform:none;letter-spacing:0;">— Vector</span></h3>
+            <div class="palette-item" data-badge-type="designed_badge" draggable="true"
+                 onclick="addBadgeFromPalette('designed_badge')"
+                 style="border-left:3px solid #7838ff;">
+                <span style="color:#7838ff; margin-right:7px;">✦</span> Designed Badge
+            </div>
+        </div>
+
+        <!-- Added Badges List -->
+        <div class="badges-list-section">
+            <h3>Layout Badges</h3>
+            <ul class="element-list" id="badges-list">
+                <li class="empty-list-msg">
+                    No badges yet.<br>Click or drag from above.
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         Center Panel: Canvas
+         ══════════════════════════════════════ -->
+    <div class="canvas-panel">
+        <div class="canvas-toolbar">
+            <input type="text" id="layout-name" placeholder="Layout Name">
+            <select id="layout-media-type">
+                <option value="movie">Movies</option>
+                <option value="tv">TV Shows</option>
+                <option value="season">Season Posters</option>
+                <option value="both">Both (Movies &amp; TV Shows)</option>
+            </select>
+            <div class="toolbar-separator"></div>
+            <input type="file" id="poster-file-input" accept="image/*" style="display:none;" onchange="loadPosterFile(event)">
+            <button class="btn btn-secondary" onclick="document.getElementById('poster-file-input').click()">
+                <i class="fas fa-image"></i> Load Poster
+            </button>
+            <button class="btn btn-secondary" onclick="cyclePoolPoster(-1)" title="Previous library poster">
+                <i class="fas fa-chevron-left"></i>
+            </button>
+            <button class="btn btn-secondary" onclick="cyclePoolPoster(1)" title="Next library poster">
+                <i class="fas fa-sync-alt"></i> Next Poster
+            </button>
+            <span id="poster-counter" style="font-size:11px; color:#888; min-width:46px; display:inline-block; text-align:center;"></span>
+            <button class="btn btn-secondary" onclick="resetToGradient()">
+                <i class="fas fa-times"></i> Reset
+            </button>
+            <div class="toolbar-separator"></div>
+            <button class="btn btn-success" onclick="saveLayout()">
+                <i class="fas fa-save"></i> Save
+            </button>
+            <button class="btn btn-danger" onclick="clearCanvas()">
+                <i class="fas fa-trash"></i> Clear
+            </button>
+            <div class="toolbar-separator"></div>
+            <div style="display:flex;align-items:center;gap:10px;">
+                <button class="btn btn-secondary" onclick="adjustZoom(-0.1)" title="Zoom out" style="padding:6px 9px;">
+                    <i class="fas fa-search-minus"></i>
+                </button>
+                <span id="zoom-label" style="font-size:11px; color:#888; min-width:38px; text-align:center; display:inline-block; cursor:pointer;" onclick="fitZoom()" title="Click to fit">100%</span>
+                <button class="btn btn-secondary" onclick="adjustZoom(0.1)" title="Zoom in" style="padding:6px 9px;">
+                    <i class="fas fa-search-plus"></i>
+                </button>
+                <div class="toolbar-separator"></div>
+                <button class="btn btn-secondary" id="grid-toggle-btn" onclick="toggleGrid()" title="Toggle alignment grid">
+                    <i class="fas fa-border-all"></i> Grid
+                </button>
+                <button class="btn btn-secondary" onclick="openVarLegend()" title="Template variable reference" style="padding:6px 9px;">
+                    <i class="fas fa-question-circle"></i>
+                </button>
+            </div>
+        </div>
+
+        <div class="canvas-container">
+            <div class="canvas-wrapper" id="canvas-wrapper">
+                <canvas id="preview-canvas" width="600" height="900"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════
+         Right Panel: Layout Info + Badge Properties
+         ══════════════════════════════════════ -->
+    <div class="properties-panel">
+
+        <!-- Layout Info — always visible -->
+        <div class="properties-section">
+            <h3>Layout Info</h3>
+            <div class="form-group">
+                <label>Description</label>
+                <textarea id="layout-description" placeholder="Describe this layout..."></textarea>
+            </div>
+        </div>
+
+        <!-- Preview Data — always visible, controls SAMPLE_MEDIA for canvas preview -->
+        <div class="properties-section" id="preview-data-section">
+            <h3 style="cursor:pointer;user-select:none;" onclick="togglePreviewData()">
+                Preview Data
+                <span id="preview-data-chevron" style="float:right;font-size:10px;color:#888;transition:transform 0.2s;">▲</span>
+            </h3>
+            <div id="preview-data-body">
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Resolution</label>
+                        <select id="pd-resolution">
+                            <option value="2160p">2160p (4K)</option>
+                            <option value="1080p">1080p</option>
+                            <option value="720p">720p</option>
+                            <option value="480p">480p</option>
+                        </select>
+                    </div>
+                    <div class="form-group half">
+                        <label>HDR</label>
+                        <select id="pd-hdr">
+                            <option value="DV">Dolby Vision</option>
+                            <option value="DV HDR">DV + HDR</option>
+                            <option value="DV HDR10">DV + HDR10</option>
+                            <option value="DV HDR10+">DV + HDR10+</option>
+                            <option value="HDR10+">HDR10+</option>
+                            <option value="HDR10">HDR10</option>
+                            <option value="HDR">HDR</option>
+                            <option value="">None</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Audio Codec</label>
+                    <select id="pd-audio-codec">
+                        <optgroup label="Dolby">
+                            <option value="TrueHD Atmos">TrueHD Atmos</option>
+                            <option value="TrueHD">TrueHD</option>
+                            <option value="EAC3 Atmos">Dolby Digital+ Atmos (DD+)</option>
+                            <option value="EAC3">Dolby Digital+ (DD+)</option>
+                            <option value="Dolby Atmos">Dolby Atmos</option>
+                            <option value="AC3">Dolby Digital (AC3)</option>
+                        </optgroup>
+                        <optgroup label="DTS">
+                            <option value="DTS-X">DTS-X</option>
+                            <option value="DTS-HD MA">DTS-HD Master Audio</option>
+                            <option value="DTS-HD HRA">DTS-HD HRA</option>
+                            <option value="DTS-HD">DTS-HD</option>
+                            <option value="DTS-ES">DTS-ES</option>
+                            <option value="DTS">DTS</option>
+                        </optgroup>
+                        <optgroup label="Other">
+                            <option value="AAC">AAC</option>
+                            <option value="FLAC">FLAC</option>
+                            <option value="PCM">PCM</option>
+                            <option value="MP3">MP3</option>
+                            <option value="Opus">Opus</option>
+                        </optgroup>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Channels</label>
+                        <select id="pd-audio-channels">
+                            <option value="7.1">7.1</option>
+                            <option value="5.1">5.1</option>
+                            <option value="2.0">2.0</option>
+                            <option value="1.0">Mono</option>
+                        </select>
+                    </div>
+                    <div class="form-group half">
+                        <label>Video Codec</label>
+                        <select id="pd-video-codec">
+                            <option value="HEVC">HEVC (H.265)</option>
+                            <option value="AVC">AVC (H.264)</option>
+                            <option value="AV1">AV1</option>
+                            <option value="VP9">VP9</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Format</label>
+                        <select id="pd-format">
+                            <option value="BluRay">Blu-ray</option>
+                            <option value="WEB-DL">WEB-DL</option>
+                            <option value="WEBRip">WEBRip</option>
+                            <option value="HDTV">HDTV</option>
+                            <option value="DVD">DVD</option>
+                        </select>
+                    </div>
+                    <div class="form-group half">
+                        <label>Content Rating</label>
+                        <select id="pd-content-rating">
+                            <option value="R">R</option>
+                            <option value="PG-13">PG-13</option>
+                            <option value="PG">PG</option>
+                            <option value="G">G</option>
+                            <option value="TV-MA">TV-MA</option>
+                            <option value="TV-14">TV-14</option>
+                            <option value="TV-PG">TV-PG</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Network</label>
+                        <input type="text" id="pd-network" value="HBO">
+                    </div>
+                    <div class="form-group half">
+                        <label>Studio</label>
+                        <input type="text" id="pd-studio" value="A24">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Show Status (TV only)</label>
+                    <select id="pd-status">
+                        <option value="Returning">Returning</option>
+                        <option value="Airing">Airing</option>
+                        <option value="Ended">Ended</option>
+                        <option value="Canceled">Canceled</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Placeholder when nothing selected -->
+        <div id="no-selection-message" class="no-selection">
+            <i class="fas fa-mouse-pointer"></i>
+            <p>Click a badge to edit properties</p>
+            <p style="font-size:11px; color:#bbb;">or drag one from the palette onto the canvas</p>
+        </div>
+
+        <!-- Panel Properties — visible when a background_panel is selected -->
+        <div id="panel-properties" style="display:none;">
+
+            <!-- Position & Size -->
+            <div class="properties-section">
+                <h3>Position &amp; Size</h3>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>X (px)</label>
+                        <input type="number" id="pan-x" value="9" min="0" max="600">
+                    </div>
+                    <div class="form-group half">
+                        <label>Y (px)</label>
+                        <input type="number" id="pan-y" value="754" min="0" max="900">
+                    </div>
+                </div>
+                <div class="form-row" id="pan-wh-row">
+                    <div class="form-group half">
+                        <label>Width</label>
+                        <input type="number" id="pan-width" value="180" min="10" max="600">
+                    </div>
+                    <div class="form-group half">
+                        <label>Height</label>
+                        <input type="number" id="pan-height" value="58" min="10" max="900">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Overall Opacity: <span id="pan-opacity-val">100%</span></label>
+                    <input type="range" id="pan-opacity" min="0" max="100" value="100" style="width:100%; margin-top:4px;">
+                </div>
+            </div>
+
+            <!-- Border -->
+            <div class="properties-section">
+                <h3>
+                    <label class="db-inline-check-label" style="font-size:inherit;font-weight:inherit;text-transform:inherit;letter-spacing:inherit;color:inherit;">
+                        <input type="checkbox" id="pan-border-enabled" checked>
+                        <span>Border</span>
+                    </label>
+                </h3>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Color</label>
+                        <input type="color" id="pan-border-color" value="#ffffff">
+                    </div>
+                    <div class="form-group half">
+                        <label>Width (px)</label>
+                        <input type="number" id="pan-border-width" value="1" min="1" max="10">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Opacity: <span id="pan-border-opacity-val">8%</span></label>
+                    <input type="range" id="pan-border-opacity" min="0" max="100" value="8" style="width:100%; margin-top:4px;">
+                </div>
+                <div class="form-group">
+                    <label>Border Radius (px)</label>
+                    <input type="number" id="pan-border-radius" value="8" min="0" max="80">
+                </div>
+            </div>
+
+            <!-- Base Background -->
+            <div class="properties-section">
+                <h3 style="color:#e07b39; border-left:3px solid #e07b39; padding-left:8px;">Base Background</h3>
+                <div class="form-group">
+                    <label>Type</label>
+                    <select id="pan-bg-type">
+                        <option value="solid">Solid</option>
+                        <option value="gradient">Gradient</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Color 1</label>
+                        <input type="color" id="pan-bg-color" value="#000000">
+                    </div>
+                    <div id="pan-bg-color2-wrap" class="form-group half" style="display:none;">
+                        <label>Color 2</label>
+                        <input type="color" id="pan-bg-color2" value="#000000">
+                    </div>
+                </div>
+                <div id="pan-bg-angle-wrap" style="display:none;">
+                    <div class="form-group">
+                        <label>Angle (deg)</label>
+                        <input type="number" id="pan-bg-angle" value="135" min="0" max="360">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Opacity: <span id="pan-bg-opacity-val">80%</span></label>
+                    <input type="range" id="pan-bg-opacity" min="0" max="100" value="80" style="width:100%; margin-top:4px;">
+                </div>
+                <div class="form-group">
+                    <label>Padding (px)</label>
+                    <input type="number" id="pan-bg-padding" value="0" min="0" max="40">
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Badge Properties — visible when a badge is selected -->
+        <div id="badge-properties" style="display:none;">
+
+            <!-- Position + Type -->
+            <div class="properties-section">
+                <span id="badge-type-chip" class="badge-type-chip">Badge</span>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>X (px)</label>
+                        <input type="number" id="badge-x" value="20" min="0">
+                    </div>
+                    <div class="form-group half">
+                        <label>Y (px)</label>
+                        <input type="number" id="badge-y" value="20" min="0">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Badge Type -->
+            <div class="properties-section">
+                <h3>Badge Type</h3>
+                <div class="form-group">
+                    <label>Type</label>
+                    <select id="badge-type-select">
+                        <optgroup label="Rating">
+                            <option value="imdb_rating">IMDb Rating</option>
+                            <option value="tmdb_rating">TMDb Rating</option>
+                            <option value="rt_critics">RT Critics</option>
+                            <option value="rt_audience">RT Audience</option>
+                            <option value="trakt_rating">Trakt Rating</option>
+                        </optgroup>
+                        <optgroup label="Media Info">
+                            <option value="resolution">Resolution</option>
+                            <option value="hdr">HDR Format</option>
+                            <option value="audio">Audio Codec</option>
+                            <option value="audio_channels">Audio Channels</option>
+                            <option value="video_codec">Video Codec</option>
+                            <option value="format">Format / Source</option>
+                        </optgroup>
+                        <optgroup label="Library">
+                            <option value="network">Network</option>
+                            <option value="studio">Studio</option>
+                            <option value="content_rating">Content Rating</option>
+                            <option value="status">Show Status</option>
+                            <option value="versions">Versions / Duplicates</option>
+                        </optgroup>
+                        <optgroup label="Custom">
+                            <option value="custom">Custom Badge</option>
+                        </optgroup>
+                    </select>
+                </div>
+                <p class="var-help">Changing type applies the default preset for that badge — position and style overrides are preserved.</p>
+            </div>
+
+            <!-- Background -->
+            <div class="properties-section">
+                <div class="section-header-row">
+                    <input type="checkbox" id="bg-enabled" class="section-enable-cb" checked>
+                    <h4>Background</h4>
+                </div>
+                <div id="bg-body">
+                    <div class="form-group">
+                        <label>Opacity: <span id="bg-opacity-value">80%</span></label>
+                        <input type="range" id="bg-opacity" min="0" max="100" value="80" style="width:100%; margin-top:4px;">
+                    </div>
+                    <div class="form-group">
+                        <label>Color</label>
+                        <div class="color-input-group">
+                            <input type="color" id="bg-color" value="#000000">
+                            <input type="text" id="bg-color-hex" value="#000000CC" placeholder="#000000CC" maxlength="9">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Width (px, 0=auto)</label>
+                            <input type="number" id="bg-width" value="0" min="0">
+                        </div>
+                        <div class="form-group half">
+                            <label>Height (px, 0=auto)</label>
+                            <input type="number" id="bg-height" value="0" min="0">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Border Radius (px)</label>
+                        <input type="number" id="bg-radius" value="8" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Padding (px)</label>
+                        <input type="number" id="bg-padding" value="8" min="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Border Width (px)</label>
+                        <input type="number" id="bg-border-width" value="0" min="0" max="20">
+                    </div>
+                    <div class="form-group">
+                        <label>Border Color</label>
+                        <div class="color-input-group">
+                            <input type="color" id="bg-border-color" value="#ffffff">
+                            <input type="text" id="bg-border-color-hex" value="#ffffff" placeholder="#ffffff" maxlength="7">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Icon / Logo -->
+            <div class="properties-section">
+                <div class="section-header-row">
+                    <input type="checkbox" id="icon-enabled" class="section-enable-cb">
+                    <h4>Icon / Logo</h4>
+                </div>
+                <div id="icon-body" class="section-body-disabled">
+                    <div class="form-group">
+                        <label>Type</label>
+                        <select id="icon-type">
+                            <option value="image">Image (PNG / JPG)</option>
+                            <option value="svg">SVG Vector</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Path</label>
+                        <div style="display:flex; gap:5px;">
+                            <input type="text" id="icon-path" placeholder="Browse or paste a /logos/… path" style="flex:1; min-width:0;">
+                            <button type="button" onclick="openLogoPicker()" title="Browse logo library"
+                                    class="logo-upload-btn" style="flex-shrink:0;">
+                                <i class="fas fa-images"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Width (px, 0=auto)</label>
+                            <input type="number" id="icon-width" value="0" min="0">
+                        </div>
+                        <div class="form-group half">
+                            <label>Height (px, 0=auto)</label>
+                            <input type="number" id="icon-height" value="0" min="0">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Side</label>
+                        <select id="icon-side">
+                            <option value="left">Left of text</option>
+                            <option value="right">Right of text</option>
+                            <option value="none">None (use X/Y offset)</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Text / Value -->
+            <div class="properties-section">
+                <div class="section-header-row">
+                    <input type="checkbox" id="text-enabled" class="section-enable-cb" checked>
+                    <h4>Text / Value</h4>
+                </div>
+                <div id="text-body">
+                    <!-- Vertical Stack toggle + gap -->
+                    <div class="form-row" style="align-items:center; margin-bottom:10px;">
+                        <div class="form-group" style="display:flex; align-items:center; gap:8px; margin:0; flex:1;">
+                            <input type="checkbox" id="text-stack-enabled" style="width:auto; margin:0;">
+                            <label for="text-stack-enabled" style="margin:0; cursor:pointer; font-weight:600;">Vertical Stack</label>
+                        </div>
+                        <div class="form-group half" id="text-stack-gap-row" style="display:none;">
+                            <label>Gap (px)</label>
+                            <input type="number" id="text-stack-gap" value="4" min="0" max="60">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Variable</label>
+                        {% raw %}
+                        <select id="text-value-select">
+                            <optgroup label="Ratings">
+                                <option value="{{imdbRating}}">IMDb Rating</option>
+                                <option value="{{tmdbRating}}">TMDb Rating</option>
+                                <option value="{{traktRating}}">Trakt Rating</option>
+                                <option value="{{rtCriticsScore}}">RT Critics Score</option>
+                                <option value="{{rtUserScore}}">RT Audience Score</option>
+                            </optgroup>
+                            <optgroup label="Video">
+                                <option value="{{resolution}}">Resolution</option>
+                                <option value="{{hdr}}">HDR Format</option>
+                                <option value="{{videoCodec}}">Video Codec</option>
+                            </optgroup>
+                            <optgroup label="Audio">
+                                <option value="{{audioCodec}}">Audio Codec</option>
+                                <option value="{{audioChannels}}">Audio Channels</option>
+                            </optgroup>
+                            <optgroup label="Format">
+                                <option value="{{format}}">Format / Source</option>
+                            </optgroup>
+                            <optgroup label="Library">
+                                <option value="{{network}}">Network</option>
+                                <option value="{{studio}}">Studio</option>
+                                <option value="{{contentRating}}">Content Rating</option>
+                                <option value="{{status}}">Show Status</option>
+                                <option value="{{year}}">Year</option>
+                                <option value="{{versionCount}}">Versions</option>
+                            </optgroup>
+                            <option value="__custom__">— Custom expression —</option>
+                        </select>
+                        {% endraw %}
+                        <input type="text" id="text-value-custom"
+                               placeholder="e.g. Score: 8.5 or mix text+vars"
+                               style="display:none; margin-top:6px;">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Font</label>
+                        <select id="text-font"></select>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Font Weight</label>
+                            <select id="text-font-weight">
+                                <option value="normal">Normal</option>
+                                <option value="bold">Bold</option>
+                            </select>
+                        </div>
+                        <div class="form-group half">
+                            <label>Font Style</label>
+                            <select id="text-font-style">
+                                <option value="normal">Normal</option>
+                                <option value="italic">Italic</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Size (px)</label>
+                            <input type="number" id="text-size" value="26" min="8" max="200">
+                        </div>
+                        <div class="form-group half">
+                            <label>Color</label>
+                            <div class="color-input-group">
+                                <input type="color" id="text-color" value="#ffffff">
+                                <input type="text" id="text-color-hex" value="#FFFFFF" maxlength="9">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Text Align</label>
+                        <select id="text-align">
+                            <option value="left">Left</option>
+                            <option value="center">Center</option>
+                            <option value="right">Right</option>
+                            <option value="none">None (use X/Y offset)</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>X Offset (px)</label>
+                            <input type="number" id="text-x-offset" value="0" min="-500" max="500" placeholder="0">
+                        </div>
+                        <div class="form-group half">
+                            <label>Y Offset (px)</label>
+                            <input type="number" id="text-y-offset" value="0" min="-500" max="500" placeholder="0">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Fallback (if variable is empty)</label>
+                        <input type="text" id="text-fallback" placeholder="N/A">
+                    </div>
+                    <div class="form-group" id="text-rating-format-row" style="display:none;">
+                        <label>Rating Format</label>
+                        <select id="text-rating-format">
+                            <option value="auto">Auto (pass-through)</option>
+                            <option value="decimal">Decimal (e.g. 8.5)</option>
+                            <option value="percentage">Percentage (e.g. 85)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="text-percent-unit-row" style="display:none; align-items:center; gap:8px; flex-direction:row;">
+                        <input type="checkbox" id="text-percent-unit" style="width:auto; margin:0;">
+                        <label for="text-percent-unit" style="margin:0; cursor:pointer; font-weight:600;">Add % unit</label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="properties-section">
+                <button class="btn btn-secondary" style="width:100%; margin-bottom:8px;"
+                        onclick="duplicateSelectedBadge()">
+                    <i class="fas fa-copy"></i> Duplicate Badge
+                </button>
+                <button class="btn btn-danger" style="width:100%;"
+                        onclick="deleteSelectedBadge()">
+                    <i class="fas fa-trash"></i> Delete Badge
+                </button>
+            </div>
+        </div>
+
+        <!-- Smart Badge Properties — visible when a smart badge is selected -->
+        <div id="smart-badge-properties" style="display:none;">
+
+            <!-- Position + type chip -->
+            <div class="properties-section">
+                <span id="sb-type-chip" class="badge-type-chip" style="background:#00a2c7;">Smart Badge</span>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>X (px)</label>
+                        <input type="number" id="sb-x" value="20" min="0">
+                    </div>
+                    <div class="form-group half">
+                        <label>Y (px)</label>
+                        <input type="number" id="sb-y" value="20" min="0">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Badge type selector -->
+            <div class="properties-section">
+                <h3>Badge Type</h3>
+                <div class="form-group">
+                    <label>Type</label>
+                    <select id="sb-badge-type">
+                        <option value="audio_codec">Audio Codec</option>
+                        <option value="audio_channels">Audio Channels</option>
+                        <option value="audio_combo">Audio Codec + Channels</option>
+                        <option value="hdr">HDR Format</option>
+                        <option value="resolution">Resolution</option>
+                        <option value="resolution_hdr">Resolution + HDR</option>
+                    </select>
+                </div>
+                <p class="var-help">The correct badge PNG is auto-selected at render time from your badge library based on the media item's metadata.</p>
+            </div>
+
+            <!-- Size and opacity -->
+            <div class="properties-section">
+                <h3>Size &amp; Opacity</h3>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Height (px)</label>
+                        <input type="number" id="sb-height" min="10" placeholder="auto">
+                    </div>
+                    <div class="form-group half">
+                        <label>Opacity (%)</label>
+                        <input type="number" id="sb-opacity" value="100" min="0" max="100">
+                    </div>
+                </div>
+                <p class="var-help">Leave Height blank to use the PNG's native size. Width scales proportionally.</p>
+            </div>
+
+            <!-- Style Overlay — one combined box, disabled by default -->
+            <div class="properties-section">
+                <div class="section-header-row">
+                    <input type="checkbox" id="sb-style-enabled" class="section-enable-cb">
+                    <h4>Style Overlay</h4>
+                </div>
+                <div id="sb-style-body" class="section-body-disabled">
+
+                    <!-- Base Background -->
+                    <div class="sb-sub-section">
+                        <div class="sb-sub-label">Base Background</div>
+                        <div class="form-group">
+                            <label>Type</label>
+                            <select id="sb-bg-type">
+                                <option value="solid">Solid</option>
+                                <option value="gradient">Gradient</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Color 1</label>
+                            <input type="color" id="sb-bg-color" value="#000000">
+                        </div>
+                        <div id="sb-bg-grad-row" style="display:none;">
+                            <div class="form-group">
+                                <label>Color 2</label>
+                                <input type="color" id="sb-bg-color2" value="#000000">
+                            </div>
+                            <div class="form-group">
+                                <label>Angle (°)</label>
+                                <input type="number" id="sb-bg-angle" value="135" min="0" max="360">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Opacity: <span id="sb-bg-opacity-val">80%</span></label>
+                            <input type="range" id="sb-bg-opacity" min="0" max="100" value="80" style="width:100%; margin-top:4px;">
+                        </div>
+                        <div class="form-group">
+                            <label>Padding (px)</label>
+                            <input type="number" id="sb-bg-padding" value="8" min="0">
+                        </div>
+                    </div>
+
+                    <!-- Border + Border Radius -->
+                    <div class="sb-sub-section">
+                        <div class="sb-sub-label">Border</div>
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label>Color</label>
+                                <input type="color" id="sb-border-color" value="#ffffff">
+                            </div>
+                            <div class="form-group half">
+                                <label>Width (px)</label>
+                                <input type="number" id="sb-border-width" value="1" min="0" max="10">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Opacity: <span id="sb-border-opacity-val">8%</span></label>
+                            <input type="range" id="sb-border-opacity" min="0" max="100" value="8" style="width:100%; margin-top:4px;">
+                        </div>
+                        <div class="form-group">
+                            <label>Border Radius (px)</label>
+                            <input type="number" id="sb-border-radius" value="8" min="0" max="100">
+                        </div>
+                    </div>
+
+                    <!-- Top Highlight -->
+                    <div class="sb-sub-section">
+                        <div class="sb-sub-label">Top Highlight</div>
+                        <div class="form-group">
+                            <label>Opacity: <span id="sb-highlight-opacity-val">9%</span></label>
+                            <input type="range" id="sb-highlight-opacity" min="0" max="100" value="9" style="width:100%; margin-top:4px;">
+                        </div>
+                        <p class="var-help">Subtle white gradient line along the top edge for depth.</p>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="properties-section">
+                <button class="btn btn-secondary" style="width:100%; margin-bottom:8px;"
+                        onclick="duplicateSelectedBadge()">
+                    <i class="fas fa-copy"></i> Duplicate
+                </button>
+                <button class="btn btn-danger" style="width:100%;"
+                        onclick="deleteSelectedBadge()">
+                    <i class="fas fa-trash"></i> Delete
+                </button>
+            </div>
+        </div>
+
+        <!-- Font selects are populated dynamically by populateFontSelects() in layout_builder.js -->
+
+        <!-- Designed Badge Properties — visible when a designed badge is selected -->
+        <div id="designed-badge-properties" style="display:none;">
+
+            <!-- ── Badge Type Preset ── -->
+            <div class="properties-section">
+                <span class="badge-type-chip" style="background:#7838ff; margin-bottom:12px; display:inline-block;">✦ Designed Badge</span>
+                <h3 style="margin-top:4px;">Badge Type</h3>
+                <div class="form-group">
+                    <label>Type</label>
+                    <select id="db-preset">
+                        <option value="custom">Custom (manual text)</option>
+                        <option value="resolution_hdr">Resolution + HDR</option>
+                        <option value="resolution">Resolution</option>
+                        <option value="hdr">HDR Format</option>
+                        <option value="audio_codec">Audio Codec</option>
+                        <option value="audio_channels">Audio Channels</option>
+                        <option value="audio_combo">Audio Codec + Channels</option>
+                        <option value="audio_stacked">Audio Stacked (codec / channels)</option>
+                        <option value="video_codec">Video Codec</option>
+                        <option value="format">Format / Source</option>
+                        <option value="imdb">IMDb Rating</option>
+                        <option value="tmdb">TMDb Rating</option>
+                        <option value="trakt">Trakt Rating</option>
+                        <option value="rt_critics">RT Critics</option>
+                        <option value="rt_audience">RT Audience</option>
+                        <option value="network">Network</option>
+                        <option value="studio">Studio</option>
+                        <option value="content_rating">Content Rating</option>
+                        <option value="status">Show Status</option>
+                        <option value="versions">Versions / Duplicates</option>
+                    </select>
+                </div>
+                <p class="var-help">Selecting a type auto-fills the text fields with live metadata variables. Use Custom to type text manually (supports <code style="font-size:10px;">{{resolution}}</code> etc.).</p>
+                <!-- Logo Only — shown only for network / studio presets -->
+                <div id="db-logo-only-row" class="db-inline-check-group" style="display:none;">
+                    <label class="db-inline-check-label">
+                        <input type="checkbox" id="db-logo-only">
+                        <span>Show Logo Only</span>
+                    </label>
+                    <p class="var-help">Renders just the matching network or studio logo, sized to fill the badge height. Left/right text is hidden.</p>
+                </div>
+                <div id="db-logo-variant-row" class="form-group" style="display:none;">
+                    <label>Logo Style</label>
+                    <select id="db-logo-variant">
+                        <option value="mono">Mono (white)</option>
+                        <option value="color">Color</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- ── Container ── -->
+            <div class="properties-section">
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>X (px)</label>
+                        <input type="number" id="db-x" value="20" min="0">
+                    </div>
+                    <div class="form-group half">
+                        <label>Y (px)</label>
+                        <input type="number" id="db-y" value="20" min="0">
+                    </div>
+                </div>
+                <div class="form-row" id="db-wh-row">
+                    <div class="form-group half">
+                        <label>Width</label>
+                        <div class="db-auto-input-row">
+                            <input type="number" id="db-width" value="180" min="1" placeholder="px" class="is-auto">
+                            <label class="db-auto-toggle"><input type="checkbox" id="db-width-auto" checked> Auto</label>
+                        </div>
+                    </div>
+                    <div class="form-group half">
+                        <label>Height</label>
+                        <div class="db-auto-input-row">
+                            <input type="number" id="db-height" value="58" min="1" placeholder="px" class="is-auto">
+                            <label class="db-auto-toggle"><input type="checkbox" id="db-height-auto" checked> Auto</label>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Overall Opacity: <span id="db-opacity-val">100%</span></label>
+                    <input type="range" id="db-opacity" min="0" max="100" value="100" style="width:100%; margin-top:4px;">
+                </div>
+            </div>
+
+            <!-- ══ Audio codec dedicated properties (shown only for audio presets) ══ -->
+            <div id="db-audio-properties" style="display:none;">
+
+                <!-- Audio: Layout -->
+                <div class="properties-section">
+                    <h3>Layout</h3>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Width</label>
+                            <div class="db-auto-input-row">
+                                <input type="number" id="db-audio-width" value="120" min="1" placeholder="px" class="is-auto">
+                                <label class="db-auto-toggle"><input type="checkbox" id="db-audio-width-auto" checked> Auto</label>
+                            </div>
+                        </div>
+                        <div class="form-group half">
+                            <label>Height (px)</label>
+                            <input type="number" id="db-audio-height" value="36" min="16" max="200">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Border Radius</label>
+                            <input type="number" id="db-audio-radius" value="8" min="0" max="60">
+                        </div>
+                        <div class="form-group half">
+                            <label>Text Align</label>
+                            <select id="db-audio-align">
+                                <option value="center" selected>Center</option>
+                                <option value="left">Left</option>
+                                <option value="right">Right</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Bg Opacity: <span id="db-audio-bg-opacity-val">73%</span></label>
+                        <input type="range" id="db-audio-bg-opacity" min="0" max="100" value="73" style="width:100%; margin-top:4px;">
+                    </div>
+                    <div class="form-group db-inline-check-group">
+                        <label class="db-inline-check-label">
+                            <input type="checkbox" id="db-audio-vertical-stack">
+                            <span>Vertical Stack</span>
+                        </label>
+                        <p class="var-help">Brand on top, variant below. Channels corner still shown.</p>
+                    </div>
+                </div>
+
+                <!-- Audio: Typography -->
+                <div class="properties-section">
+                    <h3>Typography</h3>
+                    <div class="form-group db-inline-check-group">
+                        <label class="db-inline-check-label">
+                            <input type="checkbox" id="db-audio-fluid" checked>
+                            <span>Auto-size fonts</span>
+                        </label>
+                        <p class="var-help">Scales text to fill badge dimensions automatically.</p>
+                    </div>
+                    <!-- Fluid controls (shown when auto-size ON) -->
+                    <div id="db-audio-fluid-controls">
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label>Padding (px)</label>
+                                <input type="number" id="db-audio-padding" value="8" min="2" max="40">
+                            </div>
+                            <div class="form-group half">
+                                <label>Left Seg %</label>
+                                <input type="number" id="db-audio-left-pct" value="45" min="10" max="90">
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Manual controls (shown when auto-size OFF) -->
+                    <div id="db-audio-manual-controls" style="display:none;">
+                        <div class="form-row">
+                            <div class="form-group half">
+                                <label>Brand Size (px)</label>
+                                <input type="number" id="db-audio-brand-size" value="14" min="6" max="72">
+                            </div>
+                            <div class="form-group half">
+                                <label>Variant Size (px)</label>
+                                <input type="number" id="db-audio-variant-size" value="15" min="6" max="72">
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Font family / weight / style -->
+                    <div class="form-group">
+                        <label>Font</label>
+                        <select id="db-audio-font"></select>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Font Weight</label>
+                            <select id="db-audio-font-weight">
+                                <option value="normal">Normal</option>
+                                <option value="bold" selected>Bold</option>
+                            </select>
+                        </div>
+                        <div class="form-group half">
+                            <label>Font Style</label>
+                            <select id="db-audio-font-style">
+                                <option value="normal" selected>Normal</option>
+                                <option value="italic">Italic</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Audio: Channels Corner (audio_combo only) -->
+                <div class="properties-section" id="db-audio-channels-section" style="display:none;">
+                    <h3>Channels Corner</h3>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Font</label>
+                            <select id="db-ch-font"></select>
+                        </div>
+                        <div class="form-group half">
+                            <label>Size (px)</label>
+                            <input type="number" id="db-ch-font-size" value="9" min="6" max="72">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Font Weight</label>
+                            <select id="db-ch-font-weight">
+                                <option value="normal">Normal</option>
+                                <option value="bold">Bold</option>
+                            </select>
+                        </div>
+                        <div class="form-group half">
+                            <label>Font Style</label>
+                            <select id="db-ch-font-style">
+                                <option value="normal">Normal</option>
+                                <option value="italic">Italic</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Color</label>
+                            <input type="color" id="db-ch-color" value="#ffffff">
+                        </div>
+                        <div class="form-group half">
+                            <label>Position</label>
+                            <select id="db-ch-position">
+                                <option value="top-right">Top Right</option>
+                                <option value="bottom-right">Bottom Right</option>
+                                <option value="top-left">Top Left</option>
+                                <option value="bottom-left">Bottom Left</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Opacity: <span id="db-ch-opacity-val">28%</span></label>
+                        <input type="range" id="db-ch-opacity" min="0" max="100" value="28" style="width:100%; margin-top:4px;">
+                    </div>
+                </div>
+
+                <!-- Audio: Border -->
+                <div class="properties-section">
+                    <div class="section-header-row">
+                        <input type="checkbox" id="db-audio-border-enabled" class="section-enable-cb" checked>
+                        <h4>Border</h4>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Color</label>
+                            <input type="color" id="db-audio-border-color" value="#ffffff">
+                        </div>
+                        <div class="form-group half">
+                            <label>Width (px)</label>
+                            <input type="number" id="db-audio-border-width" value="1" min="1" max="10">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Opacity: <span id="db-audio-border-opacity-val">8%</span></label>
+                        <input type="range" id="db-audio-border-opacity" min="0" max="100" value="8" style="width:100%; margin-top:4px;">
+                    </div>
+                </div>
+
+                <!-- Audio: Top Highlight -->
+                <div class="properties-section">
+                    <div class="section-header-row">
+                        <input type="checkbox" id="db-audio-highlight-enabled" class="section-enable-cb" checked>
+                        <h4>Top Highlight</h4>
+                    </div>
+                    <div class="form-group">
+                        <label>Opacity: <span id="db-audio-highlight-opacity-val">9%</span></label>
+                        <input type="range" id="db-audio-highlight-opacity" min="0" max="100" value="9" style="width:100%; margin-top:4px;">
+                    </div>
+                </div>
+
+            </div><!-- end #db-audio-properties -->
+
+            <!-- ══ Standard (non-audio) properties ══ -->
+            <div id="db-standard-properties">
+
+            <!-- ── Border ── -->
+            <div class="properties-section">
+                <div class="section-header-row">
+                    <input type="checkbox" id="db-border-enabled" class="section-enable-cb" checked>
+                    <h4>Border</h4>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Color</label>
+                        <input type="color" id="db-border-color" value="#ffffff">
+                    </div>
+                    <div class="form-group half">
+                        <label>Width (px)</label>
+                        <input type="number" id="db-border-width" value="1" min="1" max="10">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Opacity: <span id="db-border-opacity-val">8%</span></label>
+                    <input type="range" id="db-border-opacity" min="0" max="100" value="8" style="width:100%; margin-top:4px;">
+                </div>
+                <div class="form-group">
+                    <label>Border Radius (px)</label>
+                    <input type="number" id="db-border-radius" value="8" min="0" max="100">
+                </div>
+            </div>
+
+            <!-- ── Top Highlight ── -->
+            <div class="properties-section">
+                <div class="section-header-row">
+                    <input type="checkbox" id="db-highlight-enabled" class="section-enable-cb" checked>
+                    <h4>Top Highlight</h4>
+                </div>
+                <div class="form-group">
+                    <label>Opacity: <span id="db-highlight-opacity-val">9%</span></label>
+                    <input type="range" id="db-highlight-opacity" min="0" max="100" value="9" style="width:100%; margin-top:4px;">
+                </div>
+                <p class="var-help">Subtle white gradient line along the top edge for depth.</p>
+            </div>
+
+            <!-- ── Base Background ── -->
+            <div class="properties-section">
+                <h3>Base Background</h3>
+                <div class="form-group">
+                    <label>Type</label>
+                    <select id="db-bg-type">
+                        <option value="solid">Solid</option>
+                        <option value="gradient">Gradient</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Color 1</label>
+                    <input type="color" id="db-bg-color" value="#000000">
+                </div>
+                <div id="db-bg-grad-row" style="display:none;">
+                    <div class="form-group">
+                        <label>Color 2</label>
+                        <input type="color" id="db-bg-color2" value="#000000">
+                    </div>
+                    <div class="form-group">
+                        <label>Angle (°)</label>
+                        <input type="number" id="db-bg-angle" value="135" min="0" max="360">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Opacity: <span id="db-bg-opacity-val">80%</span></label>
+                    <input type="range" id="db-bg-opacity" min="0" max="100" value="80" style="width:100%; margin-top:4px;">
+                </div>
+                <div class="form-group">
+                    <label>Padding (px)</label>
+                    <input type="number" id="db-bg-padding" value="8" min="0">
+                </div>
+            </div>
+
+            <!-- ── Left Segment ── -->
+            <div class="properties-section">
+                <div class="section-header-row">
+                    <input type="checkbox" id="db-left-enabled" class="section-enable-cb" checked>
+                    <h4>Left Segment</h4>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Width</label>
+                        <div class="db-auto-input-row">
+                            <input type="number" id="db-left-width" value="60" min="1" max="400" placeholder="px" class="is-auto">
+                            <label class="db-auto-toggle"><input type="checkbox" id="db-left-width-auto" checked> Auto</label>
+                        </div>
+                    </div>
+                    <div class="form-group half">
+                        <label>Padding R (px)</label>
+                        <input type="number" id="db-left-padding" value="10" min="0" max="80">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Bg Color</label>
+                        <input type="color" id="db-left-bg-color" value="#000000">
+                    </div>
+                    <div class="form-group half"></div>
+                </div>
+                <div class="form-group">
+                    <label>Bg Opacity: <span id="db-left-bg-opacity-val">0%</span></label>
+                    <input type="range" id="db-left-bg-opacity" min="0" max="100" value="0" style="width:100%; margin-top:4px;">
+                </div>
+                <div class="form-group">
+                    <label>Text</label>
+                    <input type="text" id="db-left-text" value="4K" placeholder="e.g. 4K">
+                </div>
+                <div class="form-group db-inline-check-group" id="db-friendly-res-row">
+                    <label class="db-inline-check-label">
+                        <input type="checkbox" id="db-friendly-res">
+                        <span>Use 4K / 2K names</span>
+                    </label>
+                    <p class="var-help">Converts 2160p → 4K and 1440p → 2K in the left text.</p>
+                </div>
+                <div class="form-group db-inline-check-group" id="db-res-fluid-row">
+                    <label class="db-inline-check-label">
+                        <input type="checkbox" id="db-res-fluid">
+                        <span>Fluid Font Size</span>
+                    </label>
+                    <p class="var-help">Auto-shrinks font for longer values (e.g. 1080p, 720p) so they always fit. Short values (4K, 2K) use the size below as-is.</p>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Font</label>
+                        <select id="db-left-font"></select>
+                    </div>
+                    <div class="form-group half">
+                        <label>Size (px)</label>
+                        <input type="number" id="db-left-font-size" value="18" min="6" max="120">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Font Weight</label>
+                        <select id="db-left-font-weight">
+                            <option value="normal">Normal</option>
+                            <option value="bold">Bold</option>
+                        </select>
+                    </div>
+                    <div class="form-group half">
+                        <label>Font Style</label>
+                        <select id="db-left-font-style">
+                            <option value="normal">Normal</option>
+                            <option value="italic">Italic</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Color</label>
+                        <input type="color" id="db-left-color" value="#ffffff">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Text Opacity: <span id="db-left-opacity-val">90%</span></label>
+                    <input type="range" id="db-left-opacity" min="0" max="100" value="90" style="width:100%; margin-top:4px;">
+                </div>
+            </div>
+
+            <!-- ── Divider ── -->
+            <div class="properties-section">
+                <div class="section-header-row">
+                    <input type="checkbox" id="db-div-enabled" class="section-enable-cb" checked>
+                    <h4>Divider</h4>
+                </div>
+                <div class="form-group">
+                    <label>Color</label>
+                    <input type="color" id="db-div-color" value="#ffffff">
+                </div>
+                <div class="form-group">
+                    <label>Opacity: <span id="db-div-opacity-val">7%</span></label>
+                    <input type="range" id="db-div-opacity" min="0" max="100" value="7" style="width:100%; margin-top:4px;">
+                </div>
+            </div>
+
+            <!-- ── Right Segment ── -->
+            <div class="properties-section">
+                <div class="section-header-row">
+                    <input type="checkbox" id="db-right-enabled" class="section-enable-cb" checked>
+                    <h4>Right Segment</h4>
+                </div>
+                <div class="form-group">
+                    <label>Bg Type</label>
+                    <select id="db-right-bg-type">
+                        <option value="solid">Solid</option>
+                        <option value="gradient" selected>Gradient</option>
+                    </select>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Bg Color 1</label>
+                        <input type="color" id="db-right-bg-color" value="#7838ff">
+                    </div>
+                    <div class="form-group half">
+                        <label>Bg Color 2</label>
+                        <input type="color" id="db-right-bg-color2" value="#ff6e14">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Bg Opacity: <span id="db-right-bg-opacity-val">15%</span></label>
+                        <input type="range" id="db-right-bg-opacity" min="0" max="100" value="15" style="width:100%;">
+                    </div>
+                    <div class="form-group half">
+                        <label>Angle (°)</label>
+                        <input type="number" id="db-right-bg-angle" value="135" min="0" max="360">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Padding L (px)</label>
+                        <input type="number" id="db-right-padding" value="8" min="0" max="80">
+                    </div>
+                    <div class="form-group half"></div>
+                </div>
+
+                <div class="form-group" id="db-rating-format-row">
+                    <label>Rating Format</label>
+                    <select id="db-rating-format">
+                        <option value="auto">Auto (pass-through)</option>
+                        <option value="decimal">Decimal (e.g. 8.5)</option>
+                        <option value="percentage">Percentage (e.g. 85)</option>
+                    </select>
+                </div>
+
+                <!-- Status Color Coding -->
+                <div class="form-group db-inline-check-group" id="db-status-color-row">
+                    <label class="db-inline-check-label">
+                        <input type="checkbox" id="db-use-status-colors">
+                        <span>Status Color Coding</span>
+                    </label>
+                    <p class="var-help">Override right-segment color based on resolved show status (Returning / Airing / Ended / Canceled).</p>
+                </div>
+                <div id="db-status-color-map" style="display:none;">
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Returning</label>
+                            <input type="color" id="db-sc-returning" value="#1a7f37">
+                        </div>
+                        <div class="form-group half">
+                            <label>Airing</label>
+                            <input type="color" id="db-sc-airing" value="#0969da">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Ended</label>
+                            <input type="color" id="db-sc-ended" value="#57606a">
+                        </div>
+                        <div class="form-group half">
+                            <label>Canceled</label>
+                            <input type="color" id="db-sc-canceled" value="#cf222e">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Layout</label>
+                    <select id="db-right-layout">
+                        <option value="single">Single line</option>
+                        <option value="stacked" selected>Stacked (2 lines)</option>
+                    </select>
+                </div>
+                <div class="form-group db-inline-check-group">
+                    <label class="db-inline-check-label">
+                        <input type="checkbox" id="db-auto-layout" checked>
+                        <span>Auto Layout</span>
+                    </label>
+                    <p class="var-help">When on: hides right side if text is empty; uses single line if only one value, stacked if two. Width/height 0 = auto-size to content.</p>
+                </div>
+                <div class="form-group db-inline-check-group" id="db-vertical-stack-row">
+                    <label class="db-inline-check-label">
+                        <input type="checkbox" id="db-vertical-stack">
+                        <span>Vertical Stack</span>
+                    </label>
+                    <p class="var-help">Top / bottom layout: Left segment on top, Right segment below.</p>
+                </div>
+
+                <!-- Text Line 1 -->
+                <p class="db-text-line-label">Text Line 1</p>
+                <div class="form-group">
+                    <label>Text</label>
+                    <input type="text" id="db-right-text1" value="DV" placeholder="e.g. DV">
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Font</label>
+                        <select id="db-right-font1"></select>
+                    </div>
+                    <div class="form-group half">
+                        <label>Size (px)</label>
+                        <input type="number" id="db-right-font-size1" value="12" min="6" max="120">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Font Weight</label>
+                        <select id="db-right-font-weight1">
+                            <option value="normal">Normal</option>
+                            <option value="bold" selected>Bold</option>
+                        </select>
+                    </div>
+                    <div class="form-group half">
+                        <label>Font Style</label>
+                        <select id="db-right-font-style1">
+                            <option value="normal">Normal</option>
+                            <option value="italic">Italic</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Color</label>
+                        <input type="color" id="db-right-color1" value="#e0e0e0">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Opacity: <span id="db-right-opacity1-val">92%</span></label>
+                    <input type="range" id="db-right-opacity1" min="0" max="100" value="92" style="width:100%; margin-top:4px;">
+                </div>
+
+                <!-- Text Line 2 (stacked layout only) -->
+                <div id="db-right-text2-row">
+                    <p class="db-text-line-label">Text Line 2</p>
+                    <div class="form-group">
+                        <label>Text</label>
+                        <input type="text" id="db-right-text2" value="HDR10+" placeholder="e.g. HDR10+">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Font</label>
+                            <select id="db-right-font2"></select>
+                        </div>
+                        <div class="form-group half">
+                            <label>Size (px)</label>
+                            <input type="number" id="db-right-font-size2" value="10" min="6" max="120">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Font Weight</label>
+                            <select id="db-right-font-weight2">
+                                <option value="normal">Normal</option>
+                                <option value="bold" selected>Bold</option>
+                            </select>
+                        </div>
+                        <div class="form-group half">
+                            <label>Font Style</label>
+                            <select id="db-right-font-style2">
+                                <option value="normal">Normal</option>
+                                <option value="italic">Italic</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Color</label>
+                            <input type="color" id="db-right-color2" value="#e0e0e0">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Opacity: <span id="db-right-opacity2-val">92%</span></label>
+                        <input type="range" id="db-right-opacity2" min="0" max="100" value="92" style="width:100%; margin-top:4px;">
+                    </div>
+                </div>
+            </div>
+
+            </div><!-- end #db-standard-properties -->
+
+            <!-- ── Actions ── -->
+            <div class="properties-section">
+                <button class="btn btn-secondary" style="width:100%; margin-bottom:8px;"
+                        onclick="duplicateSelectedBadge()">
+                    <i class="fas fa-copy"></i> Duplicate
+                </button>
+                <button class="btn btn-danger" style="width:100%;"
+                        onclick="deleteSelectedBadge()">
+                    <i class="fas fa-trash"></i> Delete
+                </button>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<!-- Logo Picker Modal -->
+<div id="logo-picker-modal">
+    <div class="logo-picker-dialog">
+        <div class="logo-picker-header">
+            <span class="logo-picker-title"><i class="fas fa-images"></i> Logo Library</span>
+            <div id="logo-picker-tabs"></div>
+            <div class="logo-picker-actions">
+                <input type="text" id="logo-search" placeholder="Search logos..." oninput="filterLogos()">
+                <label class="logo-upload-btn" title="Upload a logo to your custom library">
+                    <i class="fas fa-upload"></i> Upload
+                    <input type="file" accept=".png,.jpg,.jpeg,.webp" style="display:none" onchange="handleLogoUpload(this)">
+                </label>
+                <button class="logo-close-btn" onclick="closeLogoPicker()">✕ Close</button>
+            </div>
+        </div>
+        <div id="logo-picker-grid"></div>
+    </div>
+</div>
+
+<!-- Template Variable Legend Modal -->
+<div id="var-legend-modal">
+    <div class="var-legend-dialog">
+        <div class="var-legend-header">
+            <span><i class="fas fa-code"></i> Template Variables</span>
+            <button onclick="closeVarLegend()">✕ Close</button>
+        </div>
+        <div class="var-legend-body">
+            {% raw %}
+            <div class="var-group">
+                <div class="var-group-label">Ratings</div>
+                <div class="var-row"><code onclick="copyVar(this)">{{imdbRating}}</code><span>IMDb rating (e.g. 8.5)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+                <div class="var-row"><code onclick="copyVar(this)">{{tmdbRating}}</code><span>TMDb rating (e.g. 8.2)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+                <div class="var-row"><code onclick="copyVar(this)">{{traktRating}}</code><span>Trakt rating (e.g. 82)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+                <div class="var-row"><code onclick="copyVar(this)">{{rtCriticsScore}}</code><span>Rotten Tomatoes critics score (e.g. 95)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+                <div class="var-row"><code onclick="copyVar(this)">{{rtUserScore}}</code><span>Rotten Tomatoes audience score (e.g. 88)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+            </div>
+            <div class="var-group">
+                <div class="var-group-label">Video</div>
+                <div class="var-row"><code onclick="copyVar(this)">{{resolution}}</code><span>Resolution (e.g. 2160p, 1080p)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+                <div class="var-row"><code onclick="copyVar(this)">{{definition}}</code><span>Definition label from resolution (UHD, QHD, FHD, HD, SD)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+                <div class="var-row"><code onclick="copyVar(this)">{{hdr}}</code><span>HDR format (e.g. DV, HDR10+, HDR10)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+                <div class="var-row"><code onclick="copyVar(this)">{{hdrLine1}}</code><span>Primary HDR label line</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+                <div class="var-row"><code onclick="copyVar(this)">{{hdrLine2}}</code><span>Secondary HDR label line</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+                <div class="var-row"><code onclick="copyVar(this)">{{videoCodec}}</code><span>Video codec (e.g. HEVC, AVC, AV1)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+                <div class="var-row"><code onclick="copyVar(this)">{{format}}</code><span>Source format (e.g. BluRay, WEB-DL, WEBRip)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+            </div>
+            <div class="var-group">
+                <div class="var-group-label">Audio</div>
+                <div class="var-row"><code onclick="copyVar(this)">{{audioCodec}}</code><span>Audio codec (e.g. TrueHD Atmos, DTS-X, EAC3)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+                <div class="var-row"><code onclick="copyVar(this)">{{audioChannels}}</code><span>Audio channels (e.g. 7.1, 5.1, 2.0)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+            </div>
+            <div class="var-group">
+                <div class="var-group-label">Metadata</div>
+                <div class="var-row"><code onclick="copyVar(this)">{{network}}</code><span>Broadcast network (e.g. HBO, Netflix, Disney+)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+                <div class="var-row"><code onclick="copyVar(this)">{{studio}}</code><span>Production studio (e.g. A24, Warner Bros.)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+                <div class="var-row"><code onclick="copyVar(this)">{{contentRating}}</code><span>Content rating (e.g. R, PG-13, TV-MA)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+                <div class="var-row"><code onclick="copyVar(this)">{{status}}</code><span>Show status — TV only (Returning, Airing, Ended, Canceled)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+                <div class="var-row"><code onclick="copyVar(this)">{{year}}</code><span>Release year (e.g. 2023)</span><button class="var-copy-btn" onclick="copyVar(this.previousElementSibling.previousElementSibling)">Copy</button></div>
+            </div>
+            {% endraw %}
+        </div>
+    </div>
+</div>
+
+<script>
+function copyVar(codeEl) {
+    const text = codeEl.textContent.trim();
+    navigator.clipboard.writeText(text).then(() => {
+        // Find the copy button in the same row
+        const btn = codeEl.parentElement.querySelector('.var-copy-btn');
+        if (btn) {
+            const orig = btn.textContent;
+            btn.textContent = '✓ Copied';
+            btn.classList.add('copied');
+            setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1500);
+        }
+    });
+}
+</script>
+<script src="{{ url_for('static', filename='js/layout_builder.js') }}?v=30"></script>
+{% endblock %}
