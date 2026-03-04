@@ -1,0 +1,989 @@
+/* Overlays - Tangerine Theme */
+
+body[data-theme="tangerine"] .overlays-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2rem;
+    color: #e0e0e0;
+}
+
+/* Page Header */
+body[data-theme="tangerine"] .overlays-header {
+    margin-bottom: 1.5rem;
+}
+
+body[data-theme="tangerine"] .overlays-title {
+    color: #fff !important;
+    margin-bottom: 0.25rem !important;
+}
+
+body[data-theme="tangerine"] .overlays-subtitle {
+    color: #aaa !important;
+}
+
+/* Header Action Buttons */
+body[data-theme="tangerine"] .action-btn {
+    background: rgba(255, 255, 255, 0.07) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    color: #e0e0e0 !important;
+    border-radius: 8px !important;
+}
+
+body[data-theme="tangerine"] .action-btn:hover {
+    background: rgba(255, 107, 53, 0.15) !important;
+    border-color: rgba(255, 107, 53, 0.5) !important;
+    color: #fff !important;
+}
+
+body[data-theme="tangerine"] .action-btn.action-btn-danger {
+    border-color: rgba(239, 68, 68, 0.4) !important;
+    color: #f87171 !important;
+}
+
+body[data-theme="tangerine"] .action-btn.action-btn-danger:hover {
+    background: rgba(239, 68, 68, 0.15) !important;
+    border-color: rgba(239, 68, 68, 0.6) !important;
+}
+
+/* Statistics Cards */
+body[data-theme="tangerine"] .stats-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+body[data-theme="tangerine"] .stat-card {
+    background: rgba(30, 30, 30, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 1.25rem;
+    text-align: center;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+body[data-theme="tangerine"] .stat-card:hover {
+    background: rgba(40, 40, 40, 0.9);
+    border-color: rgba(255, 107, 53, 0.3);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+}
+
+body[data-theme="tangerine"] .stat-breakdown-item {
+    color: #888;
+    font-size: 11px;
+}
+
+body[data-theme="tangerine"] .stat-breakdown-sep {
+    color: #555;
+}
+
+body[data-theme="tangerine"] .stat-card-clickable {
+    cursor: pointer;
+}
+
+body[data-theme="tangerine"] .stat-reset-btn {
+    color: rgba(255, 255, 255, 0.3);
+}
+body[data-theme="tangerine"] .stat-reset-btn:hover {
+    color: #ff6b35;
+}
+
+body[data-theme="tangerine"] .stat-filter-active {
+    border-color: #ff6b35 !important;
+    box-shadow: 0 0 0 2px rgba(255, 107, 53, 0.5) !important;
+    background: rgba(255, 107, 53, 0.08) !important;
+}
+
+body[data-theme="tangerine"] .stat-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: #ff6b35;
+    margin-bottom: 0.5rem;
+}
+
+body[data-theme="tangerine"] .stat-label {
+    color: #aaa;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 500;
+}
+
+/* Tabs */
+body[data-theme="tangerine"] .overlay-tabs {
+    display: flex;
+    gap: 4rem;
+    margin-bottom: 2rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 0;
+}
+
+body[data-theme="tangerine"] .overlay-tab {
+    padding: 1rem 0;
+    background: none !important;
+    border: none !important;
+    color: #666 !important;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border-radius: 0 !important;
+    border-bottom: 3px solid transparent !important;
+    margin-bottom: -1px;
+    box-shadow: none !important;
+}
+
+body[data-theme="tangerine"] .overlay-tab:hover {
+    color: #999 !important;
+    background: none !important;
+    transform: none !important;
+}
+
+body[data-theme="tangerine"] .overlay-tab.active {
+    color: #ff6b35 !important;
+    background: none !important;
+    border-bottom: 3px solid #ff6b35 !important;
+    box-shadow: none !important;
+}
+
+/* Controls */
+body[data-theme="tangerine"] .overlay-controls {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+body[data-theme="tangerine"] .template-selector,
+body[data-theme="tangerine"] .search-box {
+    padding: 0.75rem 1rem;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    color: #fff;
+    font-size: 0.9rem;
+    transition: all 0.3s ease;
+}
+
+body[data-theme="tangerine"] .template-selector:focus,
+body[data-theme="tangerine"] .search-box:focus {
+    outline: none;
+    border-color: #ff6b35;
+    background: rgba(0, 0, 0, 0.5);
+    box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+}
+
+body[data-theme="tangerine"] .search-box::placeholder {
+    color: #555;
+}
+
+/* Buttons */
+body[data-theme="tangerine"] .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.5rem 0.875rem;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #e0e0e0;
+}
+
+body[data-theme="tangerine"] .btn:active:not(:disabled) {
+    transform: scale(0.94) translateY(1px) !important;
+    transition: transform 0.08s ease !important;
+}
+
+body[data-theme="tangerine"] .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+body[data-theme="tangerine"] .btn-primary {
+    background: rgba(255, 107, 53, 0.1);
+    border-color: rgba(255, 107, 53, 0.4);
+    color: #ff6b35;
+}
+
+body[data-theme="tangerine"] .btn-primary:hover {
+    background: rgba(255, 107, 53, 0.2);
+    border-color: rgba(255, 107, 53, 0.7);
+    color: #fff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(255, 107, 53, 0.25);
+}
+
+body[data-theme="tangerine"] .btn-success {
+    background: rgba(255, 107, 53, 0.08);
+    border-color: rgba(255, 107, 53, 0.35);
+    color: #ff8c5a;
+}
+
+body[data-theme="tangerine"] .btn-success:hover {
+    background: rgba(255, 107, 53, 0.18);
+    border-color: rgba(255, 107, 53, 0.65);
+    color: #fff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(255, 107, 53, 0.2);
+}
+
+body[data-theme="tangerine"] .btn-warning {
+    background: rgba(255, 107, 53, 0.08);
+    border-color: rgba(255, 107, 53, 0.35);
+    color: #ffaa7a;
+}
+
+body[data-theme="tangerine"] .btn-warning:hover {
+    background: rgba(255, 107, 53, 0.18);
+    border-color: rgba(255, 107, 53, 0.65);
+    color: #fff;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(255, 107, 53, 0.2);
+}
+
+body[data-theme="tangerine"] .btn-danger {
+    background: rgba(220, 38, 38, 0.15);
+    border-color: rgba(220, 38, 38, 0.3);
+    color: #ff6b6b;
+}
+
+body[data-theme="tangerine"] .btn-danger:hover {
+    background: rgba(220, 38, 38, 0.25);
+    border-color: rgba(220, 38, 38, 0.5);
+    color: #fff;
+    transform: translateY(-1px);
+}
+
+/* Media Grid */
+body[data-theme="tangerine"] .media-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+body[data-theme="tangerine"] .media-card {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+}
+
+body[data-theme="tangerine"] .media-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.15);
+    transform: translateY(-5px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+body[data-theme="tangerine"] .media-card.selected {
+    border-color: #ff6b35;
+    box-shadow: 0 0 0 2px #ff6b35;
+}
+
+body[data-theme="tangerine"] .media-poster {
+    width: 100%;
+    height: 300px;
+    object-fit: cover;
+    background: rgba(0, 0, 0, 0.4);
+}
+
+body[data-theme="tangerine"] .media-info {
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    height: 100%;
+}
+
+body[data-theme="tangerine"] .media-title {
+    font-weight: 600;
+    margin-bottom: 5px;
+    font-size: 0.9rem;
+    color: #e0e0e0;
+}
+
+body[data-theme="tangerine"] .media-year {
+    color: #888;
+    font-size: 0.8rem;
+}
+
+/* Overlay Status Badges */
+body[data-theme="tangerine"] .overlay-status {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+body[data-theme="tangerine"] .status-applied {
+    background: rgba(16, 185, 129, 0.9);
+    color: #fff;
+}
+
+body[data-theme="tangerine"] .status-pending {
+    background: rgba(251, 146, 60, 0.9);
+    color: #fff;
+}
+
+body[data-theme="tangerine"] .status-analyzing {
+    background: rgba(59, 130, 246, 0.9);
+    color: #fff;
+}
+
+body[data-theme="tangerine"] .status-failed {
+    background: rgba(239, 68, 68, 0.9);
+    color: #fff;
+}
+
+body[data-theme="tangerine"] .status-not-started {
+    background: rgba(100, 116, 139, 0.9);
+    color: #fff;
+}
+
+/* Templates List */
+body[data-theme="tangerine"] #templates-list .template-card {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+    transition: all 0.3s ease;
+}
+
+body[data-theme="tangerine"] #templates-list .template-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 107, 53, 0.3);
+    transform: translateY(-2px);
+}
+
+body[data-theme="tangerine"] #templates-list .template-card h4 {
+    color: #ff6b35;
+    margin-bottom: 0.75rem;
+    font-size: 1.125rem;
+    font-weight: 600;
+}
+
+body[data-theme="tangerine"] #templates-list .template-card p {
+    color: #888;
+    font-size: 0.875rem;
+    margin-bottom: 0.5rem;
+}
+
+/* Checkbox Container */
+body[data-theme="tangerine"] .checkbox-container {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+body[data-theme="tangerine"] .checkbox-container input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: #ff6b35;
+}
+
+body[data-theme="tangerine"] .checkbox-container label {
+    color: #e0e0e0;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+/* Loading State */
+body[data-theme="tangerine"] .loading {
+    text-align: center;
+    padding: 3rem;
+    color: #888;
+    font-size: 0.95rem;
+}
+
+/* Cleanup Tab */
+body[data-theme="tangerine"] #cleanup-tab h3 {
+    color: #fff;
+    margin-bottom: 1rem;
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+body[data-theme="tangerine"] #cleanup-tab p {
+    color: #888;
+    margin-bottom: 1.5rem;
+}
+
+/* ── Multi-version badge on movie cards ────────────────────────────────────── */
+body[data-theme="tangerine"] .card-version-badge {
+    position: absolute;
+    bottom: 6px;
+    left: 130px;
+    background: rgba(255, 107, 53, 0.85);
+    color: #fff;
+    border-radius: 5px;
+    padding: 2px 7px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    pointer-events: none;
+    z-index: 10;
+}
+
+/* ── Season overlay button on show cards ───────────────────────────────────── */
+body[data-theme="tangerine"] .card-seasons-btn {
+    position: absolute;
+    bottom: 44px;
+    right: 6px;
+    background: rgba(255, 107, 53, 0.85);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s, background 0.15s, transform 0.15s;
+    z-index: 10;
+    white-space: nowrap;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+}
+body[data-theme="tangerine"] .media-card:hover .card-seasons-btn {
+    opacity: 1;
+}
+body[data-theme="tangerine"] .card-seasons-btn:hover {
+    background: rgba(255, 107, 53, 1);
+    transform: translateY(-1px);
+}
+
+/* ── Season overlay modal ───────────────────────────────────────────────────── */
+body[data-theme="tangerine"] #seasons-modal {
+    background: #1a1a2e;
+    color: #e0e0e0;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 14px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+body[data-theme="tangerine"] #seasons-modal-header {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+body[data-theme="tangerine"] #seasons-modal-title {
+    color: #fff;
+    font-size: 1rem;
+}
+body[data-theme="tangerine"] #seasons-modal-close {
+    color: #888;
+}
+body[data-theme="tangerine"] #seasons-modal-close:hover {
+    color: #ff6b35;
+}
+body[data-theme="tangerine"] #seasons-modal-controls {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    gap: 10px;
+}
+body[data-theme="tangerine"] #seasons-layout-selector {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #e0e0e0;
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 13px;
+}
+body[data-theme="tangerine"] #seasons-modal-body {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 107, 53, 0.4) transparent;
+}
+body[data-theme="tangerine"] .season-row {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    transition: background 0.15s;
+}
+body[data-theme="tangerine"] .season-row:hover {
+    background: rgba(255, 255, 255, 0.03);
+}
+body[data-theme="tangerine"] .season-title {
+    color: #e0e0e0;
+}
+/* Reset overlay-status absolute positioning when used inside season modal rows */
+body[data-theme="tangerine"] .season-status-badge.overlay-status {
+    position: static;
+    display: inline-block;
+}
+body[data-theme="tangerine"] .season-status-badge.status-applied {
+    background: rgba(16, 185, 129, 0.9);
+    color: #fff;
+}
+body[data-theme="tangerine"] .season-status-badge.status-pending {
+    background: rgba(251, 146, 60, 0.9);
+    color: #fff;
+}
+body[data-theme="tangerine"] .season-status-badge.status-failed {
+    background: rgba(239, 68, 68, 0.9);
+    color: #fff;
+}
+body[data-theme="tangerine"] .season-status-badge.status-removed {
+    background: rgba(100, 116, 139, 0.9);
+    color: #fff;
+}
+
+/* ── Plex Sync Bar ── */
+body[data-theme="tangerine"] #library-sync-bar {
+    background: rgba(255, 255, 255, 0.03) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 12px !important;
+}
+
+body[data-theme="tangerine"] #sync-library-status {
+    color: #aaa !important;
+}
+
+/* Badges page — override all hardcoded blue buttons */
+body[data-theme="tangerine"] .badges-container .btn-primary,
+body[data-theme="tangerine"] .badges-container a.btn-primary {
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%) !important;
+    color: #fff !important;
+    border: none !important;
+}
+
+body[data-theme="tangerine"] .badges-container .btn-primary:hover,
+body[data-theme="tangerine"] .badges-container a.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(255, 107, 53, 0.4) !important;
+}
+
+/* badge-type-chip composite pill */
+body[data-theme="tangerine"] .badge-type-chip {
+    background: rgba(255, 107, 53, 0.85) !important;
+    color: #fff !important;
+}
+
+/* checkbox accent colour */
+body[data-theme="tangerine"] .section-enable-cb {
+    accent-color: #ff6b35 !important;
+}
+
+/* variation-slot hover was blue in inline CSS */
+body[data-theme="tangerine"] .variation-slot:hover {
+    border-color: rgba(255, 107, 53, 0.5) !important;
+    box-shadow: 0 2px 8px rgba(255, 107, 53, 0.15) !important;
+}
+
+body[data-theme="tangerine"] .btn-secondary {
+    background: rgba(255, 255, 255, 0.05);
+    color: #e0e0e0;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+body[data-theme="tangerine"] .btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.08);
+    transform: translateY(-1px);
+}
+
+/* ── layout-selector ── */
+body[data-theme="tangerine"] .layout-selector {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    color: #e0e0e0;
+    padding: 0.75rem 1rem;
+    font-size: 0.9rem;
+    transition: all 0.3s ease;
+    min-width: 200px;
+}
+
+body[data-theme="tangerine"] .layout-selector:focus {
+    outline: none;
+    border-color: #ff6b35;
+    box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+}
+
+body[data-theme="tangerine"] .layout-selector option {
+    background: #1a1a1a;
+    color: #e0e0e0;
+}
+
+/* ── Card regen button ── */
+body[data-theme="tangerine"] .card-regen-btn {
+    background: rgba(0, 0, 0, 0.65);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
+    font-size: 17px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    opacity: 0;
+    transition: opacity 0.2s, background 0.15s;
+    z-index: 10;
+}
+
+body[data-theme="tangerine"] .media-card:hover .card-regen-btn {
+    opacity: 1;
+}
+
+body[data-theme="tangerine"] .card-regen-btn:hover {
+    background: rgba(255, 107, 53, 0.85);
+}
+
+/* ── Layouts tab ── */
+body[data-theme="tangerine"] #templates-tab h3,
+body[data-theme="tangerine"] #badges-tab h3 {
+    color: #fff;
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+}
+
+body[data-theme="tangerine"] #badges-tab p {
+    color: #888;
+    font-size: 0.875rem;
+    margin-bottom: 1.25rem;
+}
+
+/* ── Badge Library page ── */
+body[data-theme="tangerine"] .badges-container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2rem;
+    color: #e0e0e0;
+}
+
+body[data-theme="tangerine"] .badges-header h1 {
+    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-size: 1.75rem;
+    font-weight: 700;
+}
+
+body[data-theme="tangerine"] .back-link {
+    color: #ff6b35 !important;
+    text-decoration: none;
+    font-size: 0.875rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.2s;
+}
+
+body[data-theme="tangerine"] .back-link:hover {
+    color: #f7931e !important;
+    text-decoration: none;
+}
+
+body[data-theme="tangerine"] .category-tabs {
+    display: flex;
+    gap: 4rem;
+    margin-bottom: 2rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    padding-bottom: 0;
+}
+
+body[data-theme="tangerine"] .category-tab {
+    padding: 1rem 0;
+    background: none !important;
+    border: none !important;
+    color: #666 !important;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border-radius: 0 !important;
+    border-bottom: 3px solid transparent !important;
+    margin-bottom: -1px;
+    box-shadow: none !important;
+}
+
+body[data-theme="tangerine"] .category-tab:hover {
+    color: #999 !important;
+    background: none !important;
+}
+
+body[data-theme="tangerine"] .category-tab.active {
+    color: #ff6b35 !important;
+    background: none !important;
+    border-bottom: 3px solid #ff6b35 !important;
+    box-shadow: none !important;
+}
+
+body[data-theme="tangerine"] .stats-bar {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    gap: 2rem;
+    flex-wrap: wrap;
+}
+
+body[data-theme="tangerine"] .stat-num {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #ff6b35 !important;
+}
+
+body[data-theme="tangerine"] .stat-lbl {
+    font-size: 0.75rem;
+    color: #aaa !important;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 500;
+}
+
+body[data-theme="tangerine"] .badge-type-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    margin-bottom: 1.75rem;
+    overflow: hidden;
+    transition: border-color 0.2s;
+}
+
+body[data-theme="tangerine"] .badge-type-card:hover {
+    border-color: rgba(255, 107, 53, 0.25);
+}
+
+body[data-theme="tangerine"] .badge-type-header {
+    background: rgba(255, 255, 255, 0.04);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    padding: 1rem 1.25rem;
+}
+
+body[data-theme="tangerine"] .badge-type-title {
+    color: #ff6b35;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+body[data-theme="tangerine"] .badge-type-meta {
+    color: #888;
+    font-size: 0.8125rem;
+}
+
+body[data-theme="tangerine"] .fill-indicator {
+    color: #aaa;
+    font-size: 0.8125rem;
+}
+
+body[data-theme="tangerine"] .composite-badge {
+    background: rgba(111, 66, 193, 0.8);
+    color: #fff;
+    font-size: 0.625rem;
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+body[data-theme="tangerine"] .variation-slot {
+    border: 2px dashed rgba(255, 255, 255, 0.15);
+    border-radius: 8px;
+    padding: 12px;
+    padding-top: 22px;
+    text-align: center;
+    background: rgba(255, 255, 255, 0.02);
+    cursor: pointer;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    min-height: 120px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    position: relative;
+}
+
+body[data-theme="tangerine"] .variation-slot:hover {
+    border-color: rgba(255, 107, 53, 0.5);
+    box-shadow: 0 2px 8px rgba(255, 107, 53, 0.15);
+}
+
+body[data-theme="tangerine"] .variation-slot.has-asset {
+    border-style: solid;
+    border-color: rgba(16, 185, 129, 0.6);
+    background: rgba(16, 185, 129, 0.05);
+}
+
+body[data-theme="tangerine"] .variation-slot.has-system-asset {
+    border-style: solid;
+    border-color: rgba(255, 107, 53, 0.45) !important;
+    background: rgba(255, 107, 53, 0.05) !important;
+}
+
+body[data-theme="tangerine"] .variation-slot.custom-slot {
+    border-color: rgba(111, 66, 193, 0.5);
+}
+
+body[data-theme="tangerine"] .user-tag {
+    background: rgba(16, 185, 129, 0.85);
+    color: #fff;
+}
+
+body[data-theme="tangerine"] .system-tag {
+    background: rgba(255, 107, 53, 0.75) !important;
+    color: #fff !important;
+}
+
+body[data-theme="tangerine"] .variation-placeholder {
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #555;
+    font-size: 1.5rem;
+    width: 100%;
+    height: 60px;
+}
+
+body[data-theme="tangerine"] .variation-name {
+    color: #e0e0e0;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+body[data-theme="tangerine"] .variation-key {
+    color: #666;
+    font-size: 0.625rem;
+    font-family: monospace;
+}
+
+body[data-theme="tangerine"] .loading-msg {
+    color: #666;
+    padding: 2.5rem;
+    text-align: center;
+    font-size: 0.9rem;
+}
+
+/* Add variation modal */
+body[data-theme="tangerine"] .modal-overlay {
+    background: rgba(0, 0, 0, 0.7);
+}
+
+body[data-theme="tangerine"] .modal-box {
+    background: #1a1a2e;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 14px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+}
+
+body[data-theme="tangerine"] .modal-box h3 {
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+body[data-theme="tangerine"] .form-group label {
+    color: #aaa;
+    font-size: 0.8125rem;
+    font-weight: 500;
+}
+
+body[data-theme="tangerine"] .form-group input {
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: #e0e0e0;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    width: 100%;
+    box-sizing: border-box;
+    transition: all 0.3s ease;
+}
+
+body[data-theme="tangerine"] .form-group input:focus {
+    outline: none;
+    border-color: #ff6b35;
+    box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+}
+
+body[data-theme="tangerine"] .form-group input::placeholder {
+    color: #555;
+}
+
+body[data-theme="tangerine"] .btn-add-variation {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px dashed rgba(255, 255, 255, 0.2);
+    color: #aaa;
+    border-radius: 8px;
+    padding: 0.5rem 1rem;
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 1.25rem 1.25rem;
+}
+
+body[data-theme="tangerine"] .btn-add-variation:hover {
+    border-color: rgba(255, 107, 53, 0.5);
+    color: #ff6b35;
+    background: rgba(255, 107, 53, 0.05);
+}
+
+body[data-theme="tangerine"] .btn-secondary {
+    background: rgba(255, 255, 255, 0.05);
+    color: #e0e0e0;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+body[data-theme="tangerine"] .btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.08);
+    transform: translateY(-1px);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    body[data-theme="tangerine"] .overlays-container {
+        padding: 1rem;
+    }
+
+    body[data-theme="tangerine"] .stats-container {
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 0.75rem;
+    }
+
+    body[data-theme="tangerine"] .overlay-tabs {
+        gap: 2rem;
+        overflow-x: auto;
+    }
+
+    body[data-theme="tangerine"] .overlay-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    body[data-theme="tangerine"] .template-selector,
+    body[data-theme="tangerine"] .search-box {
+        width: 100%;
+    }
+
+    body[data-theme="tangerine"] .media-grid {
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 15px;
+    }
+}
