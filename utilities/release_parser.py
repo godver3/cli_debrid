@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 try:
     from guessit import guessit
     HAS_GUESSIT = True
-except ImportError:
+except Exception:
     HAS_GUESSIT = False
-    logger.warning("GuessIt library not installed. Using basic regex fallback for quality tag extraction.")
+    logger.warning("GuessIt library not available. Using basic regex fallback for quality tag extraction.")
 
 
 class ReleaseParser:
