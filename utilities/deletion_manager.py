@@ -1133,7 +1133,14 @@ class DeletionManager:
                 import json
                 sources_list = json.loads(item['content_sources']) if isinstance(item['content_sources'], str) else item['content_sources']
                 if sources_list:
-                    item_content_sources.extend(sources_list)
+                    for s in sources_list:
+                        if isinstance(s, dict):
+                            # content_sources stores dicts like {"source": "Overseerr_1", ...}
+                            source_name = s.get('source', '')
+                            if source_name:
+                                item_content_sources.append(source_name)
+                        elif isinstance(s, str):
+                            item_content_sources.append(s)
             except Exception as e:
                 logging.warning(f"[CONTENT_SOURCE_REMOVAL] Could not parse content_sources: {e}")
 
