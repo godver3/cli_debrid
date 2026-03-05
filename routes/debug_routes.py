@@ -5714,7 +5714,6 @@ def cleanup_failed_upgrades():
                     continue
 
                 # Load user's configured version settings and helper function for quality scoring
-                from utilities.settings import get_setting
                 from scraper.functions.rank_results import check_preferred
 
                 scraping_versions = get_setting('Scraping', 'versions', {})
@@ -6431,7 +6430,6 @@ def cleanup_failed_upgrades():
                 )
 
                 if needs_pause:
-                    from routes.program_operation_routes import get_program_runner
                     program_runner = get_program_runner()
                     if program_runner and hasattr(program_runner, 'is_running') and program_runner.is_running():
                         if hasattr(program_runner, 'pause_queue') and callable(program_runner.pause_queue):
@@ -6448,11 +6446,6 @@ def cleanup_failed_upgrades():
 
             # Perform actual deletion if not dry run
             if not dry_run and (items_to_delete_with_cleanup or items_to_delete_database_only):
-                from utilities.deletion_manager import DeletionManager
-                from utilities.plex_functions import remove_file_from_plex
-                from utilities.settings import get_setting
-                from debrid import get_debrid_provider
-
                 # Delete Collected/Upgrading items (full cleanup)
                 if items_to_delete_with_cleanup:
                     # PHASE 1: Delete from Plex first

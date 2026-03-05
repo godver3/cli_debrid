@@ -1073,6 +1073,12 @@ def _run_library_sync():
                         f"UPDATE media_items SET ms_item_id=? WHERE type='movie' AND tmdb_id=? AND {_needs_id}",
                         (rk, tmdb_id))
                     updated = cursor.rowcount
+                # Fallback: match by title + year, only for Plex items with no external IDs at all
+                if not updated and not imdb_id and not tmdb_id and item.get('title') and item.get('year'):
+                    cursor.execute(
+                        f"UPDATE media_items SET ms_item_id=? WHERE type='movie' AND LOWER(title)=LOWER(?) AND year=? AND {_needs_id}",
+                        (rk, item['title'], item['year']))
+                    updated = cursor.rowcount
                 _library_sync_state['updated_movies'] += updated
 
         except Exception as e:
@@ -1110,6 +1116,12 @@ def _run_library_sync():
                     cursor.execute(
                         f"UPDATE media_items SET ms_item_id=? WHERE type='episode' AND tmdb_id=? AND {_needs_id}",
                         (rk, tmdb_id))
+                    updated = cursor.rowcount
+                # Fallback: match by title + year, only for Plex items with no external IDs at all
+                if not updated and not imdb_id and not tmdb_id and item.get('title') and item.get('year'):
+                    cursor.execute(
+                        f"UPDATE media_items SET ms_item_id=? WHERE type='episode' AND LOWER(title)=LOWER(?) AND year=? AND {_needs_id}",
+                        (rk, item['title'], item['year']))
                     updated = cursor.rowcount
                 _library_sync_state['updated_episodes'] += updated
 
@@ -1391,7 +1403,8 @@ def list_movies():
                     WHEN MAX(CASE WHEN o.status = 'failed'          THEN 1 ELSE 0 END) = 1 THEN 'failed'
                     WHEN MAX(CASE WHEN o.status = 'removal_failed'  THEN 1 ELSE 0 END) = 1 THEN 'failed'
                     ELSE 'not_started'
-                END AS overlay_status
+                END AS overlay_status,
+                MAX(CASE WHEN o.status IN ('failed', 'removal_failed') THEN o.reason ELSE NULL END) AS overlay_reason
             FROM media_items m
             LEFT JOIN media_overlay_state o ON m.id = o.media_item_id
             WHERE m.type = 'movie'
@@ -1410,6 +1423,7 @@ def list_movies():
                 'tmdb_id': row['tmdb_id'],
                 'ms_item_id': row['ms_item_id'],
                 'overlay_status': row['overlay_status'],
+                'overlay_reason': row['overlay_reason'],
                 'version_count': row['version_count'],
                 'poster_path': _cached_poster_path(row['imdb_id'], row['tmdb_id'], 'movie'),
             })
@@ -1448,7 +1462,8 @@ def list_shows():
                 ep.total_episodes,
                 ep.rep_id,
                 CASE WHEN o.status = 'removal_failed' THEN 'failed'
-                     ELSE COALESCE(o.status, 'not_started') END AS overlay_status
+                     ELSE COALESCE(o.status, 'not_started') END AS overlay_status,
+                CASE WHEN o.status IN ('failed', 'removal_failed') THEN o.reason ELSE NULL END AS overlay_reason
             FROM (
                 SELECT
                     COALESCE(NULLIF(imdb_id, ''), NULLIF(tmdb_id, ''), title || CAST(year AS TEXT)) AS show_key,
@@ -1483,6 +1498,7 @@ def list_shows():
                 'tmdb_id': row['tmdb_id'],
                 'ms_item_id': row['ms_item_id'],
                 'overlay_status': row['overlay_status'],
+                'overlay_reason': row['overlay_reason'],
                 'collected_episodes': row['collected_episodes'] or 0,
                 'total_episodes': row['total_episodes'] or 0,
                 'poster_path': _cached_poster_path(row['imdb_id'], row['tmdb_id'], 'show'),

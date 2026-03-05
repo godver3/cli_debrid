@@ -42,6 +42,7 @@ from .plex_labels_debug_routes import plex_labels_debug_bp
 from .discover_routes import discover_bp
 from .bazarr_spoofing_routes import bazarr_bp
 from .overlay_routes import overlay_bp, overlay_page_bp
+from .debrid_manager_routes import debrid_manager_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
@@ -169,7 +170,8 @@ def register_blueprints(app):
         (discover_bp, '/discover'),
         (bazarr_bp, ''),  # Mounted at root for /api/v3/* and /signalr/* paths
         (overlay_page_bp, ''),  # Mounted at root for /overlays page
-        (overlay_bp, '')  # Mounted at root for /api/overlays/* paths (includes prefix in blueprint)
+        (overlay_bp, ''),  # Mounted at root for /api/overlays/* paths (includes prefix in blueprint)
+        (debrid_manager_bp, '/debrid_manager'),
     ]
     
     for blueprint, url_prefix in blueprints:

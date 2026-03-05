@@ -220,30 +220,33 @@ def remove_torrent(api_key: str, torrent_id: str) -> None:
             raise
 
 def list_active_torrents(api_key: str) -> List[Dict]:
-    """List all active torrents"""
-    # Add retry mechanism for rate limit errors
-    max_retries = 3
-    retry_delay = 5  # Start with 5 seconds delay
-    
-    for retry_attempt in range(max_retries):
+    """List all active torrents, paginating through all results.
+
+    RD API /torrents uses page-based pagination (page=1,2,... with limit per page).
+    """
+    page_size = 500
+    all_torrents = []
+    current_page = 1
+
+    while True:
         try:
-            availability = make_request('GET', '/torrents', api_key)
-            if not availability:
-                return []
-                
-            return availability
-        except ProviderUnavailableError as e:
-            if "429" in str(e) and retry_attempt < max_retries - 1:
-                wait_time = retry_delay * (2 ** retry_attempt)  # Exponential backoff
-                logging.warning(f"Rate limit (429) hit when listing active torrents. Waiting {wait_time}s before retry {retry_attempt + 1}/{max_retries}.")
-                time.sleep(wait_time)
-            else:
-                # Not a 429 error or we've exhausted retries
-                logging.error(f"Error listing active torrents: {str(e)}")
-                return []
+            page = make_request('GET', '/torrents', api_key, params={'limit': page_size, 'page': current_page})
         except Exception as e:
-            logging.error(f"Error listing active torrents: {str(e)}")
-            return []
+            logging.error(f"Error listing active torrents at page {current_page}: {str(e)}")
+            break
+
+        if not isinstance(page, list):
+            logging.error(f"Unexpected response from /torrents (page={current_page}): {type(page)} — {str(page)[:200]}")
+            break
+
+        all_torrents.extend(page)
+
+        if len(page) < page_size:
+            break
+
+        current_page += 1
+
+    return all_torrents
 
 def cleanup_stale_torrents(api_key: str) -> None:
     """Remove stale torrents that are older than 24 hours"""
