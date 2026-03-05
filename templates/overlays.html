@@ -401,6 +401,22 @@
     color: white;
 }
 
+.overlay-fail-reason {
+    position: absolute;
+    top: 34px;
+    left: 4px;
+    right: 4px;
+    background: rgba(220, 53, 69, 0.92);
+    color: #fff;
+    font-size: 10px;
+    line-height: 1.3;
+    padding: 3px 5px;
+    border-radius: 3px;
+    pointer-events: none;
+    word-break: break-word;
+    z-index: 4;
+}
+
 .status-not-started {
     background: #6c757d;
     color: white;
@@ -675,7 +691,7 @@
                 <span class="stat-breakdown-item" title="Seasons"><i class="fas fa-layer-group"></i> <span id="stat-applied-seasons">-</span></span>
             </div>
         </div>
-        <div class="stat-card" title="Items matched to your media server that have never been processed by the overlay system">
+        <div class="stat-card stat-card-clickable" onclick="filterByStatus('not_started')" title="Show unprocessed items">
             <div class="stat-value" id="stat-unprocessed">-</div>
             <div class="stat-label">Unprocessed</div>
             <div class="stat-applied-breakdown">
@@ -1183,9 +1199,12 @@ function lazyLoadPosters(grid) {
 }
 
 function _renderMovieCard(item) {
+    const failReason = item.overlay_status === 'failed' && item.overlay_reason
+        ? `<div class="overlay-fail-reason">${item.overlay_reason}</div>` : '';
     return `<div class="media-card" data-item-id="${item.id}" data-status="${item.overlay_status}" onclick="toggleSelect(this)">
         <img class="media-poster" ${_posterAttrs(item, 'movie')} alt="${item.title}">
         <div class="overlay-status status-${item.overlay_status}">${item.overlay_status.replace('_', ' ')}</div>
+        ${failReason}
         <button class="card-regen-btn" title="Regenerate overlay using current library poster" onclick="event.stopPropagation(); regenerateSingleOverlay(${item.id}, this)">↻</button>
         ${item.version_count > 1 ? `<div class="card-version-badge" title="${item.version_count} versions in library">${item.version_count} versions</div>` : ''}
         <div class="media-info">
@@ -1196,9 +1215,12 @@ function _renderMovieCard(item) {
 }
 
 function _renderShowCard(item) {
+    const failReason = item.overlay_status === 'failed' && item.overlay_reason
+        ? `<div class="overlay-fail-reason">${item.overlay_reason}</div>` : '';
     return `<div class="media-card" data-item-id="${item.id}" data-status="${item.overlay_status}" onclick="toggleSelect(this)">
         <img class="media-poster" ${_posterAttrs(item, 'show')} alt="${item.title}">
         <div class="overlay-status status-${item.overlay_status}">${item.overlay_status.replace('_', ' ')}</div>
+        ${failReason}
         <button class="card-regen-btn" title="Regenerate overlay using current library poster" onclick="event.stopPropagation(); regenerateSingleOverlay(${item.id}, this)">↻</button>
         ${item.ms_item_id ? `<button class="card-seasons-btn" title="Manage season poster overlays" onclick="event.stopPropagation(); openSeasonsModal('${item.ms_item_id}', '${(item.title||'').replace(/'/g,"\\'")}')">Seasons</button>` : ''}
         <div class="media-info">
@@ -2150,7 +2172,8 @@ function filterByStatus(status) {
 
     // Highlight the active stat card
     document.querySelectorAll('.stat-card-clickable').forEach(c => c.classList.remove('stat-filter-active'));
-    document.getElementById('stat-failed')?.closest('.stat-card-clickable')?.classList.add('stat-filter-active');
+    const _statusElId = status === 'not_started' ? 'stat-unprocessed' : 'stat-failed';
+    document.getElementById(_statusElId)?.closest('.stat-card-clickable')?.classList.add('stat-filter-active');
 
     // Re-render both grids with new status filter (uses in-memory data, fast)
     const mq = document.getElementById('movies-search')?.value || '';
