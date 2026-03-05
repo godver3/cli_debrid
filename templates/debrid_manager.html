@@ -1,0 +1,2179 @@
+{% extends "base.html" %}
+
+{% block title %}Debrid Manager{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/debrid_manager.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="dm-container">
+    <div class="dm-header">
+        <h2>Debrid Manager</h2>
+        <div class="dm-tabs">
+            <button class="dm-tab active" data-tab="active">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+                Active
+                <span class="dm-tab-badge" id="active-tab-count"></span>
+            </button>
+            <button class="dm-tab" data-tab="library">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4"/></svg>
+                Torrents
+                <span class="dm-tab-badge" id="library-tab-count"></span>
+            </button>
+            <button class="dm-tab" data-tab="history">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/></svg>
+                Tracker
+                <span class="dm-tab-badge" id="history-tab-count"></span>
+            </button>
+            <button class="dm-tab" data-tab="maintenance">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                Maintenance
+            </button>
+            <button class="dm-tab" data-tab="usage">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                Usage
+            </button>
+        </div>
+    </div>
+
+    <!-- ── ACTIVE TAB ── -->
+    <div id="active-tab" class="dm-panel active">
+        <div class="dm-toolbar">
+            <div class="dm-toolbar-left">
+                <input type="text" id="active-filter" class="dm-filter-input" placeholder="Filter by name, hash… (regex ok)">
+                <select id="active-status-filter" class="dm-select">
+                    <option value="" selected>All Status</option>
+                    <option value="downloading">Downloading</option>
+                    <option value="error">Error</option>
+                    <option value="no_files">No Files Selected</option>
+                </select>
+                <span class="dm-slot-badge" id="slot-badge"></span>
+            </div>
+            <div class="dm-toolbar-right">
+                <span class="dm-poll-indicator" id="poll-indicator" title="Auto-refresh active"></span>
+                <button id="batch-delete-btn" class="dm-btn dm-btn-danger" disabled>
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    Delete Selected (<span id="selected-count">0</span>)
+                </button>
+            </div>
+        </div>
+
+        <div class="dm-table-wrap">
+            <table class="dm-table" id="active-table">
+                <thead>
+                    <tr>
+                        <th class="dm-col-check"><input type="checkbox" id="select-all" title="Select all visible"></th>
+                        <th class="dm-col-name dm-sortable" data-col="filename">Filename <span class="sort-icon">↕</span></th>
+                        <th class="dm-col-progress dm-sortable" data-col="progress">Progress <span class="sort-icon">↕</span></th>
+                        <th class="dm-col-status dm-sortable" data-col="status">Status <span class="sort-icon">↕</span></th>
+                        <th class="dm-col-size dm-sortable" data-col="bytes">Size <span class="sort-icon">↕</span></th>
+                        <th class="dm-col-actions">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="active-tbody">
+                    <tr class="dm-empty-row"><td colspan="6">Loading…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ── LIBRARY TAB ── -->
+    <div id="library-tab" class="dm-panel">
+
+        <div class="dm-lib-toolbar">
+            <!-- Row 1: filter + type pills + status + dupe toggle -->
+            <div class="dm-lib-toolbar-row">
+                <input type="text" id="library-filter" class="dm-filter-input dm-filter-input-lib" placeholder="Filter by filename, hash… (regex ok)">
+                <div class="dm-type-filters">
+                    <button class="dm-type-btn active" data-type="all">All</button>
+                    <button class="dm-type-btn" data-type="movie">Movies</button>
+                    <button class="dm-type-btn" data-type="tv">TV Shows</button>
+                    <button class="dm-type-btn" data-type="other">Others</button>
+                    <button class="dm-type-btn dm-dupe-filter-btn" data-dupe="hash" id="lib-dupe-hash-btn">Dupes</button>
+                    <button class="dm-type-btn dm-dupe-filter-btn" data-dupe="title" id="lib-dupe-title-btn">Title Match</button>
+                    {% if show_plex_trash %}
+                    <button class="dm-type-btn dm-plex-trash-btn" id="lib-plex-trash-btn">Plex Trash</button>
+                    <button class="dm-type-btn" id="lib-plex-trash-rescan-btn" title="Re-scan Plex Trash" style="display:none;padding:0 6px">↺</button>
+                    {% endif %}
+                </div>
+            </div>
+            <!-- Row 2: info + actions -->
+            <div class="dm-lib-toolbar-row">
+                <span class="dm-lib-filter-info" id="lib-filter-info"></span>
+                <div class="dm-lib-actions">
+                    <button id="lib-delete-dupes-btn" class="dm-btn dm-btn-secondary" style="display:none" title="Keep newest copy of each hash, delete the rest">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        Delete All Dupes
+                    </button>
+                    <button id="lib-batch-delete-btn" class="dm-btn dm-btn-danger" disabled>
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        Delete Selected (<span id="lib-selected-count">0</span>)
+                    </button>
+                    <button id="lib-reload-btn" class="dm-btn dm-btn-secondary" title="Force reload from Debrid API">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        <span id="lib-reload-label">Refresh Library</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cross-page selection banner -->
+        <div class="dm-lib-select-bar" id="lib-select-bar" style="display:none">
+            <span id="lib-select-bar-msg"></span>
+            <button id="lib-select-all-pages" class="dm-btn dm-btn-secondary dm-btn-sm">Select all <span id="lib-select-all-count"></span> matching</button>
+            <button id="lib-batch-reinsert-btn" class="dm-btn dm-btn-secondary dm-btn-sm">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                Reinsert All
+            </button>
+            <button id="lib-clear-selection" class="dm-btn dm-btn-secondary dm-btn-sm">Clear selection</button>
+        </div>
+
+        <!-- Pagination top -->
+        <div class="dm-lib-pagination" id="lib-pagination">
+            <button id="lib-prev" class="dm-btn dm-btn-secondary dm-btn-sm">&#8249; Prev</button>
+            <span id="lib-page-info" class="dm-lib-page-info"></span>
+            <button id="lib-next" class="dm-btn dm-btn-secondary dm-btn-sm">Next &#8250;</button>
+            <span class="dm-lib-range" id="lib-total-info"></span>
+        </div>
+
+        <div class="dm-table-wrap">
+            <table class="dm-table" id="library-table">
+                <thead>
+                    <tr>
+                        <th class="dm-col-check"><input type="checkbox" id="lib-select-all" title="Select / deselect this page"></th>
+                        <th class="dm-col-lib-title dm-sortable" data-col="filename">Filename <span class="sort-icon">↕</span></th>
+                        <th class="dm-col-size dm-sortable" data-col="bytes">Size <span class="sort-icon">↕</span></th>
+                        <th class="dm-col-status dm-sortable" data-col="status">Status <span class="sort-icon">↕</span></th>
+                        <th class="dm-col-ts dm-sortable" data-col="added">Added <span class="sort-icon">↓</span></th>
+                        <th class="dm-col-actions">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="library-tbody">
+                    <tr class="dm-empty-row"><td colspan="6">Click Torrents to load</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination bottom -->
+        <div class="dm-lib-pagination dm-lib-pagination-bottom" id="lib-pagination-bottom">
+            <button id="lib-prev-bot" class="dm-btn dm-btn-secondary dm-btn-sm">&#8249; Prev</button>
+            <span id="lib-page-info-bot" class="dm-lib-page-info"></span>
+            <button id="lib-next-bot" class="dm-btn dm-btn-secondary dm-btn-sm">Next &#8250;</button>
+            <span class="dm-lib-range" id="lib-total-info-bot"></span>
+        </div>
+    </div>
+
+    <!-- ── HISTORY TAB ── -->
+    <div id="history-tab" class="dm-panel">
+        <div class="dm-toolbar">
+            <div class="dm-toolbar-left">
+                <input type="text" id="history-filter" class="dm-filter-input" placeholder="Filter by title, hash, trigger… (regex ok)">
+            </div>
+            <div class="dm-toolbar-right">
+                <button id="history-reload-btn" class="dm-btn dm-btn-secondary">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    Reload
+                </button>
+            </div>
+        </div>
+
+        <div class="dm-table-wrap">
+            <table class="dm-table" id="history-table">
+                <thead>
+                    <tr>
+                        <th class="dm-col-ts">Added</th>
+                        <th class="dm-col-name">Title</th>
+                        <th class="dm-col-trigger">Trigger</th>
+                        <th class="dm-col-rationale">Rationale</th>
+                        <th class="dm-col-status">Status</th>
+                        <th class="dm-col-actions">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="history-tbody">
+                    <tr class="dm-empty-row"><td colspan="6">Loading…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ── MAINTENANCE TAB ── -->
+    <div id="maintenance-tab" class="dm-panel">
+        <div id="maint-scheduler-notice" class="dm-maint-notice" style="display:none">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <span><strong>Note:</strong> Scheduled tasks are enabled here, but also need to be active in
+            <a href="{{ url_for('program_operation.task_timings') }}" class="dm-maint-notice-link">Task Manager</a>
+            under the Features tab to run on schedule.</span>
+        </div>
+        <div class="dm-backup-layout">
+
+            <!-- LEFT COLUMN: Backup settings + Cleanup settings -->
+            <div class="dm-backup-left">
+
+                <!-- ── BACKUP SECTION ── -->
+                <div class="dm-maint-section">
+                    <div class="dm-backup-card">
+                        <div class="dm-backup-card-header">
+                            <span>Debrid Backup</span>
+                            <label class="dm-toggle">
+                                <input type="checkbox" id="bk-enabled">
+                                <span class="dm-toggle-slider"></span>
+                            </label>
+                        </div>
+                        <p class="dm-backup-desc">Automatically backs up your debrid torrent library on a daily schedule. Three rotating slots keep snapshots at different ages.</p>
+                    </div>
+
+                    <div class="dm-backup-card">
+                        <div class="dm-backup-card-title">Backup Retention</div>
+                        <div class="dm-backup-retention">
+                            <div class="dm-backup-ret-row">
+                                <span class="dm-backup-ret-label">Daily slot</span>
+                                <span class="dm-backup-ret-hint">Most recent backup</span>
+                                <div class="dm-backup-ret-input">
+                                    <input type="number" id="bk-slot-1d" min="1" max="168" value="24" class="dm-input-small"> h
+                                </div>
+                            </div>
+                            <div class="dm-backup-ret-row">
+                                <span class="dm-backup-ret-label">3-day slot</span>
+                                <span class="dm-backup-ret-hint">Promoted from daily when due</span>
+                                <div class="dm-backup-ret-input">
+                                    <input type="number" id="bk-slot-3d" min="1" max="720" value="72" class="dm-input-small"> h
+                                </div>
+                            </div>
+                            <div class="dm-backup-ret-row">
+                                <span class="dm-backup-ret-label">7-day slot</span>
+                                <span class="dm-backup-ret-hint">Promoted from 3-day when due</span>
+                                <div class="dm-backup-ret-input">
+                                    <input type="number" id="bk-slot-7d" min="1" max="8760" value="168" class="dm-input-small"> h
+                                </div>
+                            </div>
+                        </div>
+                        <div class="dm-backup-actions">
+                            <button id="bk-save-btn" class="dm-btn dm-btn-primary dm-btn-sm">
+                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                                Save
+                            </button>
+                            <button id="bk-run-btn" class="dm-btn dm-btn-secondary dm-btn-sm">
+                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                                Run Now
+                            </button>
+                        </div>
+                        <div id="bk-save-msg" class="dm-backup-msg" style="display:none"></div>
+                    </div>
+                </div>
+
+                <!-- ── CLEANUP SECTION ── -->
+                <div class="dm-maint-section">
+                    <div class="dm-backup-card">
+                        <div class="dm-backup-card-header">
+                            <span>Debrid Cleanup</span>
+                            <label class="dm-toggle">
+                                <input type="checkbox" id="cl-enabled">
+                                <span class="dm-toggle-slider"></span>
+                            </label>
+                        </div>
+                        <p class="dm-backup-desc">Automatically removes errored and duplicate torrents from your debrid account on a schedule.</p>
+                    </div>
+
+                    <div class="dm-backup-card">
+                        <div class="dm-backup-card-title">Cleanup Rules</div>
+                        <div class="dm-cleanup-rules">
+                            <label class="dm-cleanup-rule">
+                                <input type="checkbox" id="cl-delete-errors" checked>
+                                <div class="dm-cleanup-rule-info">
+                                    <span class="dm-cleanup-rule-name">Delete errored torrents</span>
+                                    <span class="dm-cleanup-rule-hint">Remove torrents with error / magnet_error / virus / dead status</span>
+                                </div>
+                            </label>
+                            <label class="dm-cleanup-rule">
+                                <input type="checkbox" id="cl-delete-dupes" checked>
+                                <div class="dm-cleanup-rule-info">
+                                    <span class="dm-cleanup-rule-name">Remove duplicates</span>
+                                    <span class="dm-cleanup-rule-hint">Keep best copy per hash (most links → oldest; else highest progress)</span>
+                                </div>
+                            </label>
+                            <label class="dm-cleanup-rule">
+                                <input type="checkbox" id="cl-delete-stalled">
+                                <div class="dm-cleanup-rule-info">
+                                    <span class="dm-cleanup-rule-name">Delete stalled torrents</span>
+                                    <span class="dm-cleanup-rule-hint">Remove torrents stuck at 0% progress for longer than:</span>
+                                </div>
+                                <div class="dm-backup-ret-input" style="margin-left:auto">
+                                    <input type="number" id="cl-stalled-days" min="1" max="30" value="3" class="dm-input-small"> days
+                                </div>
+                            </label>
+                        </div>
+                        <div class="dm-backup-actions" style="margin-top:12px">
+                            <button id="cl-save-btn" class="dm-btn dm-btn-primary dm-btn-sm">
+                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                                Save
+                            </button>
+                            <button id="cl-run-btn" class="dm-btn dm-btn-secondary dm-btn-sm">
+                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                                Run Now
+                            </button>
+                        </div>
+                        <div id="cl-save-msg" class="dm-backup-msg" style="display:none"></div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- RIGHT COLUMN: Activity + Backup Slots -->
+            <div class="dm-backup-right">
+
+                <!-- Activity window -->
+                <div class="dm-backup-card">
+                    <div class="dm-backup-card-title">Activity</div>
+                    <div id="bk-activity" class="dm-backup-activity">
+                        <div class="dm-backup-activity-loading">Loading…</div>
+                    </div>
+                </div>
+
+                <!-- Backup slots -->
+                <div class="dm-backup-card">
+                    <div class="dm-backup-card-title">Backup Slots</div>
+                    <div id="bk-slots" class="dm-backup-slots">
+                        <div class="dm-backup-activity-loading">Loading…</div>
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ── USAGE TAB ── -->
+    <div id="usage-tab" class="dm-panel">
+        <div id="usage-loading" class="dm-backup-activity-loading" style="padding:40px;text-align:center">Loading…</div>
+        <div id="usage-content" style="display:none">
+            <div class="dm-usage-layout">
+
+                <!-- LEFT COLUMN: All stats in one container -->
+                <div class="dm-usage-left">
+                    <div class="dm-maint-section">
+                        <div class="dm-backup-card">
+                            <div class="dm-backup-card-title">Account</div>
+                            <div class="dm-usage-stat-row">
+                                <span class="dm-usage-stat-label">Username</span>
+                                <span class="dm-usage-stat-val" id="usage-username">—</span>
+                            </div>
+                            <div class="dm-usage-stat-row">
+                                <span class="dm-usage-stat-label">Premium</span>
+                                <span class="dm-usage-stat-val" id="usage-premium">—</span>
+                            </div>
+                            <div class="dm-usage-stat-row">
+                                <span class="dm-usage-stat-label">Fidelity Points</span>
+                                <span class="dm-usage-stat-val" id="usage-points">—</span>
+                            </div>
+                        </div>
+                        <div class="dm-backup-card">
+                            <div class="dm-backup-card-title">Downloads</div>
+                            <div class="dm-usage-stat-row">
+                                <span class="dm-usage-stat-label">Active Slots</span>
+                                <span class="dm-usage-stat-val" id="usage-slots">—</span>
+                            </div>
+                            <div class="dm-usage-stat-row">
+                                <span class="dm-usage-stat-label">All-Time Downloaded</span>
+                                <span class="dm-usage-stat-val" id="usage-alltime">—</span>
+                            </div>
+                            <div class="dm-usage-stat-row">
+                                <span class="dm-usage-stat-label">Daily Reset In</span>
+                                <span class="dm-usage-stat-val" id="usage-reset-timer">—</span>
+                            </div>
+                        </div>
+                        <div class="dm-backup-card">
+                            <div class="dm-backup-card-title">Today's Usage</div>
+                            <div class="dm-usage-bar-header">
+                                <span class="dm-usage-bar-text" id="usage-today-text">—</span>
+                                <span class="dm-usage-bar-date" id="usage-today-date"></span>
+                            </div>
+                            <div class="dm-usage-bar-wrap">
+                                <div class="dm-usage-bar" id="usage-bar"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- RIGHT COLUMN: Traffic history -->
+                <div class="dm-usage-right">
+                    <div class="dm-backup-card">
+                        <div class="dm-backup-card-title">Traffic Details</div>
+                        <div id="usage-history-list"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="usage-error" class="dm-error" style="display:none"></div>
+    </div>
+
+</div>
+
+<!-- ── HISTORY DETAIL MODAL ── -->
+<div class="dm-modal-overlay" id="detail-overlay"></div>
+<div class="dm-modal" id="detail-modal">
+    <div class="dm-modal-header">
+        <h3 id="detail-title">Details</h3>
+        <button class="dm-modal-close" id="detail-close">&times;</button>
+    </div>
+    <div class="dm-modal-body" id="detail-body"></div>
+</div>
+
+<!-- ── LIBRARY DUPES MODAL ── -->
+<div class="dm-modal-overlay" id="lib-dupes-overlay"></div>
+<div class="dm-modal dm-modal-wide" id="lib-dupes-modal">
+    <div class="dm-modal-header">
+        <h3 id="lib-dupes-title">Duplicates</h3>
+        <button class="dm-modal-close" id="lib-dupes-close">&times;</button>
+    </div>
+    <div class="dm-modal-body" id="lib-dupes-body"></div>
+</div>
+
+<!-- ── LIBRARY TORRENT DETAIL MODAL ── -->
+<div class="dm-modal-overlay" id="lib-detail-overlay"></div>
+<div class="dm-modal dm-modal-wide" id="lib-detail-modal">
+    <div class="dm-modal-header">
+        <h3 id="lib-detail-title">Torrent Details</h3>
+        <button class="dm-modal-close" id="lib-detail-close">&times;</button>
+    </div>
+    <div class="dm-modal-body" id="lib-detail-body">
+        <div class="dm-spinner-wrap"><span class="dm-spinner"></span> Loading…</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ── helpers ────────────────────────────────────────────────────────────────
+function fmt_bytes(b) {
+    if (!b) return '—';
+    const units = ['B','KB','MB','GB','TB'];
+    let i = 0;
+    let v = b;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return v.toFixed(1) + ' ' + units[i];
+}
+
+function make_re(raw) {
+    if (!raw.trim()) return null;
+    try { return new RegExp(raw, 'i'); }
+    catch { return new RegExp(raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); }
+}
+
+function status_class(s) {
+    const m = {
+        downloading: 'dm-status-downloading',
+        downloaded:  'dm-status-downloaded',
+        queued:      'dm-status-queued',
+        error:       'dm-status-error',
+        magnet_error:'dm-status-error',
+        virus:       'dm-status-error',
+        dead:        'dm-status-error',
+    };
+    return m[(s||'').toLowerCase()] || 'dm-status-other';
+}
+
+// ── shared state (declared early — tab handler runs before section declarations) ──
+let _libPollTimer  = null;
+let _dmActiveTab   = 'active';
+let _pollTimer     = null;
+let _pollInterval  = 5000;
+let _noChangeCount = 0;
+let _bkLoaded      = false;
+
+// ── tabs ───────────────────────────────────────────────────────────────────
+document.querySelectorAll('.dm-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const prevTab = _dmActiveTab;
+        _dmActiveTab = btn.dataset.tab;
+        document.querySelectorAll('.dm-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.dm-panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(btn.dataset.tab + '-tab').classList.add('active');
+        sessionStorage.setItem('dm_tab', btn.dataset.tab);
+        // Pause active polling when leaving active tab, resume when returning
+        if (prevTab === 'active' && btn.dataset.tab !== 'active') {
+            clearTimeout(_pollTimer);
+            document.getElementById('poll-indicator').classList.remove('dm-poll-active');
+        } else if (btn.dataset.tab === 'active' && prevTab !== 'active') {
+            _noChangeCount = 0;
+            _pollInterval = 5000;
+            fetchActive();
+        }
+        if (btn.dataset.tab === 'history' && !window._historyLoaded) loadHistory();
+        if (btn.dataset.tab === 'library' && !window._libLoaded) loadLibrary(false);
+        if (btn.dataset.tab === 'maintenance' && !_bkLoaded) loadMaintenance();
+    });
+});
+const _urlTab = new URLSearchParams(window.location.search).get('tab');
+const _savedTab = _urlTab || sessionStorage.getItem('dm_tab');
+if (_savedTab) {
+    const btn = document.querySelector(`.dm-tab[data-tab="${_savedTab}"]`);
+    if (btn) btn.click();
+}
+
+// ── ACTIVE TAB ─────────────────────────────────────────────────────────────
+let _activeTorrents = [];
+let _activeErrors = [];
+let _activeNoFiles = [];
+let _activeSort = { col: null, dir: 1 };
+let _lastActiveJSON = '';
+// _pollTimer, _pollInterval, _noChangeCount declared at top
+
+function getActiveDisplayTorrents() {
+    const statusVal = document.getElementById('active-status-filter').value;
+    if (statusVal === 'error') return _activeErrors;
+    if (statusVal === 'no_files') return _activeNoFiles;
+    return _activeTorrents;
+}
+
+function renderActive(torrents) {
+    const tbody = document.getElementById('active-tbody');
+    const display = getActiveDisplayTorrents();
+    const re = make_re(document.getElementById('active-filter').value);
+    const checkboxStates = {};
+    tbody.querySelectorAll('input[type=checkbox]').forEach(cb => {
+        checkboxStates[cb.dataset.id] = cb.checked;
+    });
+
+    const statusVal = document.getElementById('active-status-filter').value;
+    const emptyMsg = statusVal === 'error' ? 'No errors' :
+                     statusVal === 'no_files' ? 'No torrents awaiting file selection' :
+                     'No active downloads';
+
+    if (!display.length) {
+        tbody.innerHTML = `<tr class="dm-empty-row"><td colspan="6">${emptyMsg}</td></tr>`;
+        document.getElementById('active-tab-count').textContent = '';
+        return;
+    }
+
+    let sorted = [...display];
+    if (_activeSort.col) {
+        sorted.sort((a, b) => {
+            let av = a[_activeSort.col], bv = b[_activeSort.col];
+            if (typeof av === 'string') av = av.toLowerCase();
+            if (typeof bv === 'string') bv = bv.toLowerCase();
+            return av < bv ? -_activeSort.dir : av > bv ? _activeSort.dir : 0;
+        });
+    }
+
+    let visible = 0;
+    const rows = sorted.map(t => {
+        const searchText = `${t.filename || ''} ${t.hash || ''} ${t.status || ''}`;
+        const hidden = re && !re.test(searchText);
+        if (!hidden) visible++;
+        const progress = typeof t.progress === 'number' ? t.progress.toFixed(1) : '—';
+        const checked = checkboxStates[t.id] ? 'checked' : '';
+        return `<tr data-id="${t.id}" data-search="${searchText.replace(/"/g,'&quot;')}" ${hidden ? 'style="display:none"' : ''}>
+            <td class="dm-col-check"><input type="checkbox" class="row-check" data-id="${t.id}" ${checked}></td>
+            <td class="dm-col-name" title="${(t.filename||'').replace(/"/g,'&quot;')}">${t.filename || '—'}</td>
+            <td class="dm-col-progress">
+                <div class="dm-progress-wrap">
+                    <div class="dm-progress-bar" style="width:${Math.min(t.progress||0,100)}%"></div>
+                    <span class="dm-progress-label">${progress}%</span>
+                </div>
+            </td>
+            <td class="dm-col-status"><span class="dm-status-badge ${status_class(t.status)}">${t.status || '—'}</span></td>
+            <td class="dm-col-size">${fmt_bytes(t.bytes)}</td>
+            <td class="dm-col-actions">
+                <button class="dm-btn dm-btn-danger dm-btn-sm" onclick="deleteTorrent('${t.id}', this)" title="Delete">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                </button>
+            </td>
+        </tr>`;
+    });
+
+    tbody.innerHTML = rows.join('');
+    document.getElementById('active-tab-count').textContent = visible || '';
+    bindCheckboxes();
+    updateBatchBtn();
+}
+
+function updateSlotBadge(active, max) {
+    const el = document.getElementById('slot-badge');
+    if (active != null && max != null) {
+        el.textContent = `${active} / ${max} slots`;
+        el.className = 'dm-slot-badge' + (active >= max ? ' dm-slot-full' : '');
+    } else {
+        el.textContent = '';
+    }
+}
+
+async function fetchActive() {
+    try {
+        const r = await fetch('/debrid_manager/api/active');
+        const data = await r.json();
+        if (!data.success) return;
+
+        const newJSON = JSON.stringify(data.torrents);
+        const changed = newJSON !== _lastActiveJSON;
+        _activeErrors = data.errors || [];
+        _activeNoFiles = data.no_files || [];
+        if (changed) {
+            _noChangeCount = 0;
+            _lastActiveJSON = newJSON;
+            _activeTorrents = data.torrents;
+        } else {
+            _noChangeCount++;
+        }
+        renderActive(_activeTorrents);
+        updateSlotBadge(data.active_count, data.max_downloads);
+        adjustPollInterval();
+    } catch(e) {
+        console.error('Active fetch error:', e);
+    }
+}
+
+function adjustPollInterval() {
+    if (_noChangeCount >= 4) {
+        _pollInterval = 30000;
+    } else if (_noChangeCount >= 2) {
+        _pollInterval = 10000;
+    } else {
+        _pollInterval = 5000;
+    }
+    schedulePoll();
+}
+
+function schedulePoll() {
+    clearTimeout(_pollTimer);
+    if (!document.hidden && _dmActiveTab === 'active') {
+        _pollTimer = setTimeout(fetchActive, _pollInterval);
+        document.getElementById('poll-indicator').classList.add('dm-poll-active');
+    } else {
+        document.getElementById('poll-indicator').classList.remove('dm-poll-active');
+    }
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && _dmActiveTab === 'active') {
+        _noChangeCount = 0;
+        _pollInterval = 5000;
+        fetchActive();
+    } else {
+        clearTimeout(_pollTimer);
+    }
+});
+
+// sorting
+document.querySelectorAll('#active-table .dm-sortable').forEach(th => {
+    th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (_activeSort.col === col) {
+            _activeSort.dir *= -1;
+        } else {
+            _activeSort.col = col;
+            _activeSort.dir = 1;
+        }
+        document.querySelectorAll('#active-table .dm-sortable .sort-icon').forEach(ic => ic.textContent = '↕');
+        th.querySelector('.sort-icon').textContent = _activeSort.dir === 1 ? '↑' : '↓';
+        renderActive(_activeTorrents);
+    });
+});
+
+// filter + status
+document.getElementById('active-filter').addEventListener('input', () => renderActive(_activeTorrents));
+document.getElementById('active-status-filter').addEventListener('change', () => renderActive(_activeTorrents));
+
+// checkboxes
+function bindCheckboxes() {
+    document.querySelectorAll('#active-tbody .row-check').forEach(cb => {
+        cb.addEventListener('change', updateBatchBtn);
+    });
+}
+
+function updateBatchBtn() {
+    const checked = document.querySelectorAll('#active-tbody .row-check:checked').length;
+    const btn = document.getElementById('batch-delete-btn');
+    btn.disabled = checked === 0;
+    document.getElementById('selected-count').textContent = checked;
+}
+
+document.getElementById('select-all').addEventListener('change', function() {
+    document.querySelectorAll('#active-tbody .row-check').forEach(cb => {
+        const row = cb.closest('tr');
+        if (row.style.display !== 'none') cb.checked = this.checked;
+    });
+    updateBatchBtn();
+});
+
+// single delete
+async function deleteTorrent(id, btn) {
+    if (!confirm('Delete this torrent from your debrid account?')) return;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="dm-spinner"></span>';
+    try {
+        const r = await fetch(`/debrid_manager/api/torrent/${id}`, { method: 'DELETE' });
+        const data = await r.json();
+        if (data.success) {
+            btn.closest('tr').remove();
+            _activeTorrents = _activeTorrents.filter(t => t.id !== id);
+            updateBatchBtn();
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>';
+            alert('Delete failed: ' + (data.error || 'unknown error'));
+        }
+    } catch(e) {
+        btn.disabled = false;
+        alert('Delete failed: ' + e.message);
+    }
+}
+
+// batch delete
+document.getElementById('batch-delete-btn').addEventListener('click', async function() {
+    const ids = [...document.querySelectorAll('#active-tbody .row-check:checked')].map(cb => cb.dataset.id);
+    if (!ids.length) return;
+    if (!confirm(`Delete ${ids.length} torrent(s) from your debrid account?`)) return;
+
+    this.disabled = true;
+    this.innerHTML = '<span class="dm-spinner"></span> Deleting…';
+
+    try {
+        const r = await fetch('/debrid_manager/api/torrent/batch-delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids }),
+        });
+        const data = await r.json();
+        if (data.success) {
+            data.deleted.forEach(id => {
+                const row = document.querySelector(`#active-tbody tr[data-id="${id}"]`);
+                if (row) row.remove();
+            });
+            _activeTorrents = _activeTorrents.filter(t => !data.deleted.includes(t.id));
+            if (data.failed.length) {
+                alert(`${data.deleted.length} deleted. ${data.failed.length} failed.`);
+            }
+        } else {
+            alert('Batch delete failed: ' + (data.error || 'unknown'));
+        }
+    } catch(e) {
+        alert('Batch delete failed: ' + e.message);
+    }
+
+    this.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg> Delete Selected (<span id="selected-count">0</span>)';
+    updateBatchBtn();
+});
+
+// ── HISTORY TAB ────────────────────────────────────────────────────────────
+let _historyEntries = [];
+window._historyLoaded = false;
+
+async function loadHistory() {
+    const tbody = document.getElementById('history-tbody');
+    tbody.innerHTML = '<tr class="dm-empty-row"><td colspan="6">Loading…</td></tr>';
+    try {
+        const r = await fetch('/debrid_manager/api/history');
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error);
+        _historyEntries = data.entries;
+        window._historyLoaded = true;
+        renderHistory();
+    } catch(e) {
+        tbody.innerHTML = `<tr class="dm-empty-row"><td colspan="6">Error loading history: ${e.message}</td></tr>`;
+    }
+}
+
+function renderHistory() {
+    const tbody = document.getElementById('history-tbody');
+    const re = make_re(document.getElementById('history-filter').value);
+    let visible = 0;
+
+    if (!_historyEntries.length) {
+        tbody.innerHTML = '<tr class="dm-empty-row"><td colspan="6">No history yet</td></tr>';
+        document.getElementById('history-tab-count').textContent = '';
+        return;
+    }
+
+    const rows = _historyEntries.map(e => {
+        const searchText = `${e.label} ${e.torrent_hash} ${e.trigger_source} ${e.rationale}`;
+        const hidden = re && !re.test(searchText);
+        if (!hidden) visible++;
+        const present = e.is_still_present
+            ? '<span class="dm-status-badge dm-status-downloaded">Downloaded</span>'
+            : '<span class="dm-status-badge dm-status-removed">Removed</span>';
+        const trigger_cls = `dm-trigger-${(e.trigger_source||'').replace(/_/g,'-')}`;
+        return `<tr data-id="${e.id}" ${hidden ? 'style="display:none"' : ''}>
+            <td class="dm-col-ts">${e.timestamp}</td>
+            <td class="dm-col-name" title="${(e.label||'').replace(/"/g,'&quot;')}">${e.label || '—'}</td>
+            <td class="dm-col-trigger"><span class="dm-trigger-badge ${trigger_cls}">${e.trigger_source||'—'}</span></td>
+            <td class="dm-col-rationale">${e.rationale||'—'}</td>
+            <td class="dm-col-status">${present}</td>
+            <td class="dm-col-actions">
+                <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="showDetail(${e.id})">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                </button>
+            </td>
+        </tr>`;
+    });
+
+    tbody.innerHTML = rows.join('');
+    document.getElementById('history-tab-count').textContent = visible || '';
+}
+
+document.getElementById('history-filter').addEventListener('input', renderHistory);
+document.getElementById('history-reload-btn').addEventListener('click', () => {
+    window._historyLoaded = false;
+    loadHistory();
+});
+
+// ── DETAIL MODAL ───────────────────────────────────────────────────────────
+function showDetail(id) {
+    const e = _historyEntries.find(x => x.id === id);
+    if (!e) return;
+
+    document.getElementById('detail-title').textContent = e.label || 'Torrent Details';
+
+    let item = {};
+    try { item = JSON.parse(e.item_data || '{}'); } catch {}
+    let trigger = {};
+    try { trigger = JSON.parse(e.trigger_details || '{}'); } catch {}
+    let meta = {};
+    try { meta = JSON.parse(e.additional_metadata || '{}'); } catch {}
+
+    const section = (title, html) => `<div class="dm-detail-section"><h4>${title}</h4>${html}</div>`;
+    const dl = (pairs) => '<dl class="dm-detail-dl">' + pairs.filter(([,v])=>v!=null&&v!=='').map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('') + '</dl>';
+    const pre = (obj) => `<pre class="dm-detail-pre">${JSON.stringify(obj, null, 2)}</pre>`;
+
+    let html = section('Basic Information', dl([
+        ['Hash', `<code>${e.torrent_hash}</code>`],
+        ['Added', e.timestamp],
+        ['Status', e.is_still_present ? '<span class="dm-status-badge dm-status-downloaded">Present</span>' : `<span class="dm-status-badge dm-status-error">Removed</span>`],
+        ['Removed At', e.removal_timestamp || ''],
+        ['Removal Reason', e.removal_reason || ''],
+    ]));
+
+    html += section('Trigger', dl([
+        ['Source', `<span class="dm-trigger-badge dm-trigger-${(e.trigger_source||'').replace(/_/g,'-')}">${e.trigger_source}</span>`],
+        ['Rationale', e.rationale],
+        ['Details', e.trigger_details ? pre(trigger) : ''],
+    ]));
+
+    if (e.item_data) {
+        html += section('Media Information', dl([
+            ['Title', item.title||''],
+            ['Year', item.year||''],
+            ['Type', item.type||item.media_type||''],
+            ['Season', item.season_number!=null ? item.season_number : ''],
+            ['Episode', item.episode_number!=null ? item.episode_number : ''],
+            ['Version', item.version||''],
+            ['Selected File', item.filled_by_file ? `<code>${item.filled_by_file}</code>` : ''],
+            ['Torrent Title', item.filled_by_title ? `<code>${item.filled_by_title}</code>` : ''],
+            ['TMDB ID', item.tmdb_id||''],
+        ]));
+    }
+
+    if (trigger.selected_files && trigger.selected_files.length) {
+        const rows = trigger.selected_files.map(f =>
+            `<tr><td><code>${f.path||f.name||''}</code></td><td>${((f.bytes||0)/1024/1024).toFixed(2)} MB</td><td>${f.selected ? '✓' : '✗'}</td></tr>`
+        ).join('');
+        html += section('Selected Files', `<table class="dm-table dm-table-compact"><thead><tr><th>Path</th><th>Size</th><th>Selected</th></tr></thead><tbody>${rows}</tbody></table>`);
+    }
+
+    if (meta.debrid_info) {
+        const di = meta.debrid_info;
+        html += section('Debrid Information', dl([
+            ['Provider', (di.provider||'').toUpperCase()],
+            ['Torrent ID', di.torrent_id ? `<code>${di.torrent_id}</code>` : ''],
+            ['Status', di.status||''],
+            ['Filename', di.filename ? `<code>${di.filename}</code>` : ''],
+        ]));
+    }
+
+    if (e.additional_metadata) {
+        html += section('Raw Metadata', pre(meta));
+    }
+
+    document.getElementById('detail-body').innerHTML = html;
+    document.getElementById('detail-modal').classList.add('open');
+    document.getElementById('detail-overlay').classList.add('open');
+}
+
+document.getElementById('detail-close').addEventListener('click', closeDetail);
+document.getElementById('detail-overlay').addEventListener('click', closeDetail);
+function closeDetail() {
+    document.getElementById('detail-modal').classList.remove('open');
+    document.getElementById('detail-overlay').classList.remove('open');
+}
+
+// ── LIBRARY TAB ────────────────────────────────────────────────────────────
+let LIB_PAGE_SIZE = 100;
+let _libAll = [];
+let _libFiltered = [];
+let _libPage = 1;
+let _libSort = { col: 'added', dir: -1 };
+let _libTypeFilter = 'all';
+let _libStatusFilter = 'downloaded';
+let _libDupeFilter = 'none'; // 'none' | 'hash' | 'title'
+let _libPlexTrash = false;
+let _plexTrashFilenames = new Set(); // torrent folder names in plex trash
+let _hashCounts = {};
+let _titleCounts = {};
+let _libSelected = new Set();
+window._libLoaded = false;
+
+function detectType(filename, dbMeta) {
+    // DB-enriched type takes priority
+    if (dbMeta && dbMeta.type) {
+        const t = dbMeta.type.toLowerCase();
+        if (t === 'episode' || t === 'tv' || t === 'show') return 'tv';
+        if (t === 'movie') return 'movie';
+    }
+    const f = (filename || '').toLowerCase();
+    // Standalone Sxx also qualifies as TV (e.g. "Bridgerton S02")
+    if (/\bs\d{2}e\d{2}\b|\.s\d{2}\.|\bs\d{2}\b|\bseason[\s. _-]\d|\bepisode[\s. _-]\d/i.test(f)) return 'tv';
+    if (/\b(19|20)\d{2}\b/.test(f)) return 'movie';
+    return 'other';
+}
+
+// Build a clean display title from DB metadata or filename fallback
+function buildCleanTitle(t) {
+    // Prefer DB-enriched metadata when available
+    if (t._db) {
+        const d = t._db;
+        const title = d.title || '';  // filled_by_title is the torrent filename, not the media title
+        if (!title) return parseCleanTitle(t.filename);
+        const year = d.year ? ` (${d.year})` : '';
+        const sn = d.season_number != null ? ` S${String(d.season_number).padStart(2,'0')}` : '';
+        const ep = d.episode_number != null ? `E${String(d.episode_number).padStart(2,'0')}` : '';
+        return `${title}${year}${sn}${ep}`;
+    }
+    return parseCleanTitle(t.filename);
+}
+
+function parseCleanTitle(filename) {
+    if (!filename) return '';
+    let s = filename.replace(/[._]/g, ' ').replace(/\s+/g, ' ').trim();
+    s = s.replace(/\.(mkv|mp4|avi|mov|wmv|flac|zip|rar)$/i, '');
+
+    // SxxExx
+    const seMatch = s.match(/^(.*?)\s*[Ss](\d{1,2})[Ee](\d{1,2})\b/);
+    if (seMatch) {
+        const raw  = seMatch[1].trim();
+        const se   = `S${String(seMatch[2]).padStart(2,'0')}E${String(seMatch[3]).padStart(2,'0')}`;
+        const year = raw.match(/\b((?:19|20)\d{2})\b/);
+        const title = raw.replace(/\s*[\[(]?\d{4}[\])]?\s*$/, '').trim();
+        return year ? `${title} (${year[1]}) ${se}` : `${title} ${se}`;
+    }
+
+    // Season XX (word form, e.g. "1923 - Season 02 [2025]")
+    const snMatch = s.match(/^(.*?)\s*[Ss]eason\s+(\d{1,2})\b/i);
+    if (snMatch) {
+        const raw  = snMatch[1].replace(/\s*[-–]\s*$/, '').trim();
+        const se   = `S${String(snMatch[2]).padStart(2,'0')}`;
+        // Look for year AFTER the season word (avoids show names like "1923" being treated as year)
+        const afterSeason = s.slice(snMatch[0].length);
+        const year = afterSeason.match(/\b((?:19|20)\d{2})\b/);
+        return year ? `${raw} (${year[1]}) ${se}` : `${raw} ${se}`;
+    }
+
+    // Standalone Sxx (e.g. "Bridgerton (2020) S02 ...")
+    const sMatch = s.match(/^(.*?)\s*[Ss](\d{1,2})\b(?!\s*[Ee]\d)/);
+    if (sMatch) {
+        const raw  = sMatch[1].trim();
+        const se   = `S${String(sMatch[2]).padStart(2,'0')}`;
+        const year = raw.match(/\b((?:19|20)\d{2})\b/);
+        const title = raw.replace(/\s*[\[(]?\d{4}[\])]?\s*$/, '').trim();
+        return year ? `${title} (${year[1]}) ${se}` : `${title} ${se}`;
+    }
+
+    // Movie: everything up to the year
+    const yMatch = s.match(/^(.*?)\s*\b((?:19|20)\d{2})\b/);
+    if (yMatch) {
+        return `${yMatch[1].trim()} (${yMatch[2]})`;
+    }
+
+    return s.slice(0, 60);
+}
+
+function timeAgo(v) {
+    if (!v) return '—';
+    const d = typeof v === 'number' ? new Date(v * 1000) : new Date(v);
+    if (isNaN(d)) return String(v);
+    const diff = Date.now() - d.getTime();
+    const mins = Math.floor(diff / 60000);
+    const hours = Math.floor(mins / 60);
+    const days = Math.floor(hours / 24);
+    const weeks = Math.floor(days / 7);
+    const months = Math.floor(days / 30);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    if (hours < 24) return hours + 'h ago';
+    if (days < 7) return days + 'd ago';
+    if (weeks < 5) return weeks + 'w ago';
+    if (months < 12) return months + 'mo ago';
+    return Math.floor(months / 12) + 'y ago';
+}
+
+function fmt_added_abs(v) {
+    if (!v) return '';
+    const d = typeof v === 'number' ? new Date(v * 1000) : new Date(v);
+    if (isNaN(d)) return '';
+    return d.toLocaleString();
+}
+
+const CHECK_SVG = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>';
+
+function _flashCheck(el, origHtml, ms = 1500) {
+    el.innerHTML = CHECK_SVG;
+    el.style.color = '#4CAF50';
+    setTimeout(() => { el.innerHTML = origHtml; el.style.color = ''; }, ms);
+}
+
+function copyHash(hash, btn) {
+    if (!hash) return;
+    navigator.clipboard.writeText(hash).catch(() => {
+        const ta = document.createElement('textarea');
+        ta.value = hash; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
+    });
+    if (btn) _flashCheck(btn, btn.innerHTML);
+}
+
+function buildHashCounts() {
+    _hashCounts = {};
+    _libAll.forEach(t => { if (t.hash) _hashCounts[t.hash] = (_hashCounts[t.hash] || 0) + 1; });
+
+    // Title-based dupe detection: normalize to core title (strip season/episode/year)
+    // so "Fallout (2024) S01" and "Fallout (2024) S01" from different torrents are caught
+    _titleCounts = {};
+    _libAll.forEach(t => {
+        const key = _titleKey(t);
+        if (key) _titleCounts[key] = (_titleCounts[key] || 0) + 1;
+    });
+}
+
+function _extractSeasonEp(filename) {
+    // Returns "sXXeXX" for specific episodes, "sXX" for season packs, null for movies/unknown
+    if (!filename) return null;
+    const epMatch = filename.match(/\bS(\d{2})E(\d{2,3})\b/i);
+    if (epMatch) return `s${epMatch[1].padStart(2,'0')}e${epMatch[2].padStart(2,'0')}`;
+    const seasonMatch = filename.match(/\bS(\d{2})\b/i) || filename.match(/\bSeason\s+(\d{1,2})\b/i);
+    if (seasonMatch) return `s${seasonMatch[1].padStart(2,'0')}`;
+    return null;
+}
+
+function _titleKey(t) {
+    // Movies:        "title (year)"              — match on title+year
+    // TV episode:    "title (year) s03e06"       — match exact episode
+    // TV season pack:"title (year) s03"          — match season pack
+    let base = '';
+    let seep = null; // season+episode suffix
+
+    if (t._db && t._db.title) {
+        base = t._db.title.toLowerCase().trim();
+        if (t._db.year) base += ` (${t._db.year})`;
+        if (t._type === 'tv') {
+            if (t._db.season_number && t._db.episode_number) {
+                seep = `s${String(t._db.season_number).padStart(2,'0')}e${String(t._db.episode_number).padStart(2,'0')}`;
+            } else if (t._db.season_number) {
+                seep = `s${String(t._db.season_number).padStart(2,'0')}`;
+            } else {
+                seep = _extractSeasonEp(t.filename);
+            }
+        }
+    } else {
+        const clean = parseCleanTitle(t.filename);
+        base = clean.toLowerCase()
+            .replace(/\s+s\d{2}(e\d{2,3})?\b.*/i, '')
+            .replace(/\s+season\s+\d+.*/i, '')
+            .trim();
+        if (t._type === 'tv') {
+            seep = _extractSeasonEp(t.filename);
+        }
+    }
+
+    if (!base) return null;
+    return (t._type === 'tv' && seep) ? `${base} ${seep}` : base;
+}
+
+function updateDupesBtn() {
+    const dupeHashes = new Set(Object.keys(_hashCounts).filter(h => _hashCounts[h] > 1));
+    const extraCopies = [...dupeHashes].reduce((s, h) => s + _hashCounts[h] - 1, 0);
+    const delDupesBtn = document.getElementById('lib-delete-dupes-btn');
+    delDupesBtn.style.display = extraCopies > 0 ? '' : 'none';
+    delDupesBtn.innerHTML = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:15px;height:15px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg> Delete ${extraCopies} Dup${extraCopies === 1 ? 'e' : 'es'}`;
+}
+
+function _fmtCacheAge(seconds) {
+    if (!seconds || seconds < 60) return 'just now';
+    if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+    if (seconds < 86400) return `${Math.round(seconds / 3600)}h ago`;
+    if (seconds > 30 * 86400) return '--'; // guard against epoch-magnitude values
+    return `${Math.round(seconds / 86400)}d ago`;
+}
+
+function _updateCacheBadge(status, ageSeconds, total, loading) {
+    const label = document.getElementById('lib-reload-label');
+    if (!label) return;
+    if (status === 'partial') {
+        label.textContent = `Loading… ${(total||0).toLocaleString()} so far`;
+    } else if (loading) {
+        label.textContent = `Refreshing… (${_fmtCacheAge(ageSeconds)})`;
+    } else if (status === 'live') {
+        label.textContent = 'Refresh Library';
+    } else {
+        label.textContent = `Refresh Library · ${_fmtCacheAge(ageSeconds)}`;
+    }
+}
+
+function _applyLibraryData(data) {
+    _libAll = data.torrents.map(t => ({ ...t, _type: detectType(t.filename, t._db) }));
+    window._libLoaded = true;
+    buildHashCounts();
+    updateDupesBtn();
+    document.getElementById('library-tab-count').textContent = data.total || '';
+    applyLibFilters();
+    _updateCacheBadge(data.cache_status, data.cache_age || 0, data.total, data.loading);
+}
+
+async function _pollLibraryUpdate() {
+    _libPollTimer = null;
+    try {
+        const r = await fetch('/debrid_manager/api/library');
+        const data = await r.json();
+        if (!data.success) { _libPollTimer = setTimeout(_pollLibraryUpdate, 10000); return; }
+        const prevCount = _libAll.length;
+        _applyLibraryData(data);
+        if (data.loading) {
+            // Poll faster while data is actively growing
+            const interval = (data.cache_status === 'partial' && data.total > prevCount) ? 5000 : 8000;
+            _libPollTimer = setTimeout(_pollLibraryUpdate, interval);
+        }
+    } catch(e) {
+        _libPollTimer = setTimeout(_pollLibraryUpdate, 12000);
+    }
+}
+
+async function loadLibrary(force) {
+    const tbody = document.getElementById('library-tbody');
+    if (!window._libLoaded) {
+        tbody.innerHTML = '<tr class="dm-empty-row"><td colspan="6">Loading library…</td></tr>';
+    }
+    if (_libPollTimer) { clearTimeout(_libPollTimer); _libPollTimer = null; }
+    try {
+        const url = force ? '/debrid_manager/api/library?force=1' : '/debrid_manager/api/library';
+        const r = await fetch(url);
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error);
+        _libSelected.clear();
+        _applyLibraryData(data);
+        if (data.loading) {
+            _libPollTimer = setTimeout(_pollLibraryUpdate, data.cache_status === 'partial' ? 5000 : 8000);
+        }
+    } catch(e) {
+        tbody.innerHTML = `<tr class="dm-empty-row"><td colspan="6">Error: ${e.message}</td></tr>`;
+    }
+}
+
+function applyLibFilters() {
+    const re = make_re(document.getElementById('library-filter').value);
+    _libFiltered = _libAll.filter(t => {
+        if (_libTypeFilter !== 'all' && t._type !== _libTypeFilter) return false;
+        if (_libStatusFilter !== 'all') {
+            const s = (t.status || '').toLowerCase();
+            if (_libStatusFilter === 'error' && !['error','magnet_error','virus','dead'].includes(s)) return false;
+            if (_libStatusFilter === 'downloaded' && s !== 'downloaded') return false;
+            if (_libStatusFilter === 'downloading' && !['downloading','queued'].includes(s)) return false;
+            if (_libStatusFilter === 'no_files' && !['waiting_files_selection','magnet_conversion','compressing','uploading'].includes(s)) return false;
+        }
+        if (_libDupeFilter === 'hash' && (!t.hash || (_hashCounts[t.hash] || 0) < 2)) return false;
+        if (_libDupeFilter === 'title' && (_titleCounts[_titleKey(t)] || 0) < 2) return false;
+        if (_libPlexTrash && !_plexTrashFilenames.has((t.filename || '').split('/')[0])) return false;
+        if (re && !re.test(`${t.filename||''} ${t.hash||''} ${t.status||''}`)) return false;
+        return true;
+    });
+    _libFiltered.sort((a, b) => {
+        let av = a[_libSort.col], bv = b[_libSort.col];
+        if (_libSort.col === 'filename') { av = (av||'').toLowerCase(); bv = (bv||'').toLowerCase(); }
+        if (av == null) av = 0; if (bv == null) bv = 0;
+        return av < bv ? -_libSort.dir : av > bv ? _libSort.dir : 0;
+    });
+    _libPage = 1;
+    updateLibFilterInfo();
+    renderLibPage();
+}
+
+function updateLibFilterInfo() {
+    const el = document.getElementById('lib-filter-info');
+    if (_libFiltered.length !== _libAll.length) {
+        el.textContent = `${_libFiltered.length.toLocaleString()} of ${_libAll.length.toLocaleString()} shown`;
+    } else {
+        el.textContent = `${_libAll.length.toLocaleString()} torrents · ${fmt_bytes(_libAll.reduce((s,t) => s+(t.bytes||0), 0))}`;
+    }
+}
+
+function renderLibPage() {
+    const tbody = document.getElementById('library-tbody');
+    const total = _libFiltered.length;
+    const totalPages = Math.max(1, Math.ceil(total / LIB_PAGE_SIZE));
+    if (_libPage > totalPages) _libPage = totalPages;
+    const start = (_libPage - 1) * LIB_PAGE_SIZE;
+    const end = Math.min(start + LIB_PAGE_SIZE, total);
+    const slice = _libFiltered.slice(start, end);
+
+    const pageInfo = total ? `Page ${_libPage} / ${totalPages}` : '';
+    const rangeInfo = total ? `${total.toLocaleString()}${total !== _libAll.length ? ` (filtered from ${_libAll.length.toLocaleString()})` : ''}` : 'No results';
+    ['lib-page-info','lib-page-info-bot'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = pageInfo; });
+    ['lib-total-info','lib-total-info-bot'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = rangeInfo; });
+    ['lib-prev','lib-prev-bot'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = _libPage <= 1; });
+    ['lib-next','lib-next-bot'].forEach(id => { const el = document.getElementById(id); if (el) el.disabled = _libPage >= totalPages; });
+
+    if (!slice.length) {
+        tbody.innerHTML = '<tr class="dm-empty-row"><td colspan="6">No results</td></tr>';
+        updateSelectBar(); updateLibBatchBtn(); return;
+    }
+
+    const rows = slice.map(t => {
+        const dupeCount = _hashCounts[t.hash] || 0;
+        const titleDupeCount = _titleCounts[_titleKey(t)] || 0;
+        const dupeBadge = dupeCount > 1
+            ? `<span class="dm-dupe-badge dm-dupe-badge-click" title="Click to see all ${dupeCount} copies" onclick="event.stopPropagation();libOpenDupes('hash','${t.hash}','${t.id}')">${dupeCount}× dupe</span>`
+            : titleDupeCount > 1
+                ? `<span class="dm-dupe-badge dm-title-dupe-badge dm-dupe-badge-click" title="Click to see all ${titleDupeCount} title matches" onclick="event.stopPropagation();libOpenDupes('title','${_titleKey(t).replace(/'/g,"\\'")}','${t.id}')">${titleDupeCount}× title</span>`
+                : '';
+        const typeBadge = `<span class="dm-type-badge dm-type-${t._type}">${t._type === 'tv' ? 'Show' : t._type === 'movie' ? 'Movie' : 'Other'}</span>`;
+        const cleanTitle = buildCleanTitle(t);
+        const ago = timeAgo(t.added);
+        const abs = fmt_added_abs(t.added);
+        const checked = _libSelected.has(t.id) ? 'checked' : '';
+        const safeFile = (t.filename||'').replace(/"/g,'&quot;');
+        const magnetHref = t.hash ? `magnet:?xt=urn:btih:${t.hash}&dn=${encodeURIComponent(t.filename||'')}` : '#';
+        return `<tr data-id="${t.id}" data-hash="${t.hash||''}" style="cursor:pointer" onclick="libOpenDetail(event,'${t.id}')">
+            <td class="dm-col-check" onclick="event.stopPropagation()"><input type="checkbox" class="lib-row-check" data-id="${t.id}" ${checked}></td>
+            <td class="dm-col-lib-title">
+                <div class="dm-lib-title-row">${cleanTitle ? `<span class="dm-clean-title">${cleanTitle}</span>` : ''}${typeBadge}${dupeBadge}</div>
+                <div class="dm-lib-filename" title="${safeFile}">${t.filename||'—'}</div>
+            </td>
+            <td class="dm-col-size">${fmt_bytes(t.bytes)}</td>
+            <td class="dm-col-status"><span class="dm-status-badge ${status_class(t.status)}">${t.status||'—'}</span></td>
+            <td class="dm-col-ts" title="${abs}">${ago}</td>
+            <td class="dm-col-actions dm-actions-row" onclick="event.stopPropagation()">
+                <a class="dm-btn dm-btn-secondary dm-btn-sm" href="${magnetHref}" title="Open magnet" onclick="_flashCheck(this, this.innerHTML)" ${t.hash ? '' : 'style="pointer-events:none;opacity:.4"'}>
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+                </a>
+                <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="copyHash('${t.hash||''}', this)" title="Copy hash">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                </button>
+                <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="libReinsertTorrent('${t.id}','${t.hash||''}','${(t.filename||'').replace(/'/g,"\\'")}')" title="Reinsert (re-add magnet to debrid)">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                </button>
+                <button class="dm-btn dm-btn-danger dm-btn-sm" onclick="libDeleteTorrent('${t.id}', this)" title="Delete">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                </button>
+            </td>
+        </tr>`;
+    });
+
+    tbody.innerHTML = rows.join('');
+    const pageIds = slice.map(t => t.id);
+    const allChecked = pageIds.length && pageIds.every(id => _libSelected.has(id));
+    const someChecked = pageIds.some(id => _libSelected.has(id));
+    const sa = document.getElementById('lib-select-all');
+    sa.checked = allChecked; sa.indeterminate = !allChecked && someChecked;
+    bindLibCheckboxes(); updateSelectBar(); updateLibBatchBtn();
+}
+
+function updateSelectBar() {
+    const bar = document.getElementById('lib-select-bar');
+    const n = _libSelected.size;
+    if (!n) { bar.style.display = 'none'; return; }
+    bar.style.display = '';
+    document.getElementById('lib-select-bar-msg').textContent = `${n.toLocaleString()} torrent${n===1?'':'s'} selected`;
+    document.getElementById('lib-select-all-count').textContent = _libFiltered.length.toLocaleString();
+    document.getElementById('lib-select-all-pages').style.display = n >= _libFiltered.length ? 'none' : '';
+}
+
+function updateLibBatchBtn() {
+    const n = _libSelected.size;
+    document.getElementById('lib-batch-delete-btn').disabled = n === 0;
+    document.getElementById('lib-selected-count').textContent = n;
+}
+
+function bindLibCheckboxes() {
+    document.querySelectorAll('#library-tbody .lib-row-check').forEach(cb => {
+        cb.addEventListener('change', () => {
+            cb.checked ? _libSelected.add(cb.dataset.id) : _libSelected.delete(cb.dataset.id);
+            const pageIds = [...document.querySelectorAll('#library-tbody .lib-row-check')].map(c => c.dataset.id);
+            const all = pageIds.every(id => _libSelected.has(id));
+            const some = pageIds.some(id => _libSelected.has(id));
+            const sa = document.getElementById('lib-select-all');
+            sa.checked = all; sa.indeterminate = !all && some;
+            updateSelectBar(); updateLibBatchBtn();
+        });
+    });
+}
+
+document.getElementById('lib-select-all').addEventListener('change', function() {
+    document.querySelectorAll('#library-tbody .lib-row-check').forEach(cb => {
+        this.checked ? _libSelected.add(cb.dataset.id) : _libSelected.delete(cb.dataset.id);
+        cb.checked = this.checked;
+    });
+    updateSelectBar(); updateLibBatchBtn();
+});
+document.getElementById('lib-select-all-pages').addEventListener('click', () => {
+    _libFiltered.forEach(t => _libSelected.add(t.id)); renderLibPage();
+});
+document.getElementById('lib-clear-selection').addEventListener('click', () => {
+    _libSelected.clear(); renderLibPage();
+});
+document.querySelectorAll('.dm-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (!btn.dataset.type) return; // dupe filter buttons have no data-type — handled separately
+        document.querySelectorAll('.dm-type-btn[data-type]').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active'); _libTypeFilter = btn.dataset.type; applyLibFilters();
+    });
+});
+document.getElementById('library-filter').addEventListener('input', applyLibFilters);
+
+function _setDupeFilter(val) {
+    _libDupeFilter = val;
+    document.querySelectorAll('.dm-dupe-filter-btn').forEach(b => b.classList.toggle('active', b.dataset.dupe === val));
+}
+document.querySelectorAll('.dm-dupe-filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const next = _libDupeFilter === btn.dataset.dupe ? 'none' : btn.dataset.dupe;
+        _setDupeFilter(next);
+        applyLibFilters();
+    });
+});
+
+const _plexTrashBtn = document.getElementById('lib-plex-trash-btn');
+const _plexTrashRescanBtn = document.getElementById('lib-plex-trash-rescan-btn');
+
+async function _loadPlexTrash(force) {
+    if (!_plexTrashBtn) return;
+    const prev = _plexTrashBtn.textContent;
+    _plexTrashBtn.textContent = 'Loading…';
+    _plexTrashBtn.disabled = true;
+    if (_plexTrashRescanBtn) _plexTrashRescanBtn.disabled = true;
+    try {
+        const url = force ? '/debrid_manager/api/plex_trash?force=1' : '/debrid_manager/api/plex_trash';
+        const r = await fetch(url);
+        const data = await r.json();
+        if (data.success) {
+            _plexTrashFilenames = new Set(data.filenames);
+            _plexTrashBtn.textContent = `Plex Trash (${data.filenames.length})`;
+        } else {
+            _libPlexTrash = false;
+            _plexTrashBtn.classList.remove('active');
+            _plexTrashBtn.textContent = 'Plex Trash';
+            if (_plexTrashRescanBtn) _plexTrashRescanBtn.style.display = 'none';
+            alert('Failed to load Plex trash: ' + (data.error || 'unknown'));
+        }
+    } catch(e) {
+        _libPlexTrash = false;
+        _plexTrashBtn.classList.remove('active');
+        _plexTrashBtn.textContent = 'Plex Trash';
+        if (_plexTrashRescanBtn) _plexTrashRescanBtn.style.display = 'none';
+        alert('Failed: ' + e.message);
+    }
+    _plexTrashBtn.disabled = false;
+    if (_plexTrashRescanBtn) _plexTrashRescanBtn.disabled = false;
+    applyLibFilters();
+}
+
+if (_plexTrashBtn) {
+    _plexTrashBtn.addEventListener('click', async () => {
+        _libPlexTrash = !_libPlexTrash;
+        _plexTrashBtn.classList.toggle('active', _libPlexTrash);
+        if (_plexTrashRescanBtn) _plexTrashRescanBtn.style.display = _libPlexTrash ? '' : 'none';
+        if (_libPlexTrash && _plexTrashFilenames.size === 0) {
+            await _loadPlexTrash(false);
+        } else if (!_libPlexTrash) {
+            _plexTrashBtn.textContent = _plexTrashFilenames.size
+                ? `Plex Trash (${_plexTrashFilenames.size})`
+                : 'Plex Trash';
+            applyLibFilters();
+        } else {
+            applyLibFilters();
+        }
+    });
+}
+
+if (_plexTrashRescanBtn) {
+    _plexTrashRescanBtn.addEventListener('click', () => _loadPlexTrash(true));
+}
+
+document.querySelectorAll('.dm-lib-stat-card-click').forEach(card => {
+    card.addEventListener('click', () => {
+        const type = card.dataset.type, filter = card.dataset.filter;
+        if (type) {
+            document.querySelectorAll('.dm-type-btn').forEach(b => b.classList.remove('active'));
+            const btn = document.querySelector(`.dm-type-btn[data-type="${type}"]`);
+            if (btn) btn.classList.add('active');
+            _libTypeFilter = type; _setDupeFilter('none');
+        } else if (filter === 'dupes') {
+            _setDupeFilter('hash');
+        }
+        applyLibFilters();
+    });
+});
+['lib-prev','lib-prev-bot'].forEach(id => document.getElementById(id).addEventListener('click', () => {
+    if (_libPage > 1) { _libPage--; renderLibPage(); document.getElementById('library-tab').scrollIntoView({behavior:'smooth',block:'start'}); }
+}));
+['lib-next','lib-next-bot'].forEach(id => document.getElementById(id).addEventListener('click', () => {
+    if (_libPage < Math.ceil(_libFiltered.length / LIB_PAGE_SIZE)) { _libPage++; renderLibPage(); document.getElementById('library-tab').scrollIntoView({behavior:'smooth',block:'start'}); }
+}));
+document.querySelectorAll('#library-table .dm-sortable').forEach(th => {
+    th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (_libSort.col === col) _libSort.dir *= -1; else { _libSort.col = col; _libSort.dir = col === 'added' ? -1 : 1; }
+        document.querySelectorAll('#library-table .dm-sortable .sort-icon').forEach(ic => ic.textContent = '↕');
+        th.querySelector('.sort-icon').textContent = _libSort.dir === 1 ? '↑' : '↓';
+        applyLibFilters();
+    });
+});
+document.getElementById('lib-reload-btn').addEventListener('click', () => { window._libLoaded = false; _libSelected.clear(); loadLibrary(true); });
+
+document.getElementById('lib-delete-dupes-btn').addEventListener('click', async function() {
+    const dupeHashes = Object.keys(_hashCounts).filter(h => _hashCounts[h] > 1);
+    const toDelete = [];
+    dupeHashes.forEach(hash => {
+        const copies = _libAll.filter(t => t.hash === hash).sort((a, b) => {
+            const da = typeof a.added === 'number' ? a.added : new Date(a.added||0).getTime()/1000;
+            const db = typeof b.added === 'number' ? b.added : new Date(b.added||0).getTime()/1000;
+            return db - da;
+        });
+        copies.slice(1).forEach(t => toDelete.push(t.id));
+    });
+    if (!toDelete.length) return;
+    if (!confirm(`Delete ${toDelete.length} duplicate torrent(s)? The newest copy of each hash will be kept.`)) return;
+    this.disabled = true; this.innerHTML = '<span class="dm-spinner"></span> Deleting…';
+    try {
+        const r = await fetch('/debrid_manager/api/torrent/batch-delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:toDelete}) });
+        const data = await r.json();
+        if (data.success) {
+            _libAll = _libAll.filter(t => !data.deleted.includes(t.id));
+            data.deleted.forEach(id => _libSelected.delete(id));
+            buildHashCounts(); updateDupesBtn(); applyLibFilters();
+            if (data.failed.length) alert(`${data.deleted.length} deleted. ${data.failed.length} failed.`);
+        } else { alert('Failed: ' + (data.error || 'unknown')); }
+    } catch(e) { alert('Failed: ' + e.message); }
+    this.disabled = false;
+});
+
+async function libDeleteTorrent(id, btn) {
+    if (!confirm('Delete this torrent from your debrid account?')) return;
+    btn.disabled = true; btn.innerHTML = '<span class="dm-spinner"></span>';
+    try {
+        const r = await fetch(`/debrid_manager/api/torrent/${id}`, { method: 'DELETE' });
+        const data = await r.json();
+        if (data.success) {
+            btn.closest('tr').remove();
+            _libAll = _libAll.filter(t => t.id !== id);
+            _libFiltered = _libFiltered.filter(t => t.id !== id);
+            _libSelected.delete(id);
+            buildHashCounts(); updateDupesBtn(); updateLibFilterInfo(); updateLibBatchBtn(); updateSelectBar();
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>';
+            alert('Delete failed: ' + (data.error || 'unknown'));
+        }
+    } catch(e) { btn.disabled = false; alert('Delete failed: ' + e.message); }
+}
+
+async function libReinsertTorrent(id, hash, filename) {
+    if (!hash) { alert('No hash available for this torrent.'); return; }
+    const btn = event.currentTarget;
+    const origHtml = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = '<span class="dm-spinner"></span>';
+    try {
+        const r = await fetch(`/debrid_manager/api/torrent/${id}/reinsert`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hash, filename }),
+        });
+        const data = await r.json();
+        if (data.success) {
+            btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>';
+            setTimeout(() => { btn.disabled = false; btn.innerHTML = origHtml; }, 2000);
+        } else {
+            btn.disabled = false; btn.innerHTML = origHtml;
+            alert('Reinsert failed: ' + (data.error || 'unknown'));
+        }
+    } catch(e) { btn.disabled = false; btn.innerHTML = origHtml; alert('Reinsert failed: ' + e.message); }
+}
+
+// ── Library torrent detail modal ─────────────────────────────────────────────
+function libOpenDetail(e, id) {
+    // Don't open if user clicked a checkbox, button, or link
+    if (e.target.closest('button,a,input')) return;
+    const overlay = document.getElementById('lib-detail-overlay');
+    const modal   = document.getElementById('lib-detail-modal');
+    const body    = document.getElementById('lib-detail-body');
+    const title   = document.getElementById('lib-detail-title');
+    // Find torrent in local data for immediate title
+    const t = _libAll.find(x => x.id === id);
+    title.textContent = t ? (parseCleanTitle(t.filename) || t.filename || id) : id;
+    body.innerHTML = '<div class="dm-spinner-wrap"><span class="dm-spinner"></span> Loading…</div>';
+    overlay.classList.add('open');
+    modal.classList.add('open');
+    fetch(`/debrid_manager/api/torrent/${id}`)
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) { body.innerHTML = `<p class="dm-error">Error: ${data.error}</p>`; return; }
+            const d = data.torrent;
+            const files = Array.isArray(d.files) ? d.files : [];
+            const links = Array.isArray(d.links) ? d.links : [];
+            const progress = d.progress != null ? `${d.progress}%` : '—';
+            const size = fmt_bytes(d.bytes || d.original_filesize || 0);
+            const origSize = d.original_filesize ? fmt_bytes(d.original_filesize) : size;
+            const added = d.added ? fmt_added_abs(d.added) : '—';
+            const statusCls = status_class(d.status);
+
+            // Quick-action bar
+            const magnetHref = d.hash ? `magnet:?xt=urn:btih:${d.hash}&dn=${encodeURIComponent(d.filename||'')}` : '#';
+            const safeFilename = (d.filename||'').replace(/"/g,'&quot;');
+
+            let html = `
+<div class="dm-detail-actions">
+    <a class="dm-btn dm-btn-secondary dm-btn-sm" href="${magnetHref}" title="Open magnet" ${d.hash?'':'style="opacity:.4;pointer-events:none"'}>
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+        Magnet
+    </a>
+    <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="copyHash('${d.hash||''}', this)">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+        Copy Hash
+    </button>
+    <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="libCloseDetail();libReinsertTorrent('${id}','${d.hash||''}','${(d.filename||'').replace(/'/g,"\\'")}')">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        Reinsert
+    </button>
+    <button class="dm-btn dm-btn-danger dm-btn-sm" onclick="libCloseDetail();document.querySelector('#library-tbody [data-id=\\'${id}\\'] .dm-btn-danger')?.click()">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+        Delete
+    </button>
+</div>
+<table class="dm-detail-table">
+    <tr><th>Size</th><td>${size}</td></tr>
+    <tr><th>ID</th><td><code>${d.id||id}</code></td></tr>
+    <tr><th>Hash</th><td><code>${d.hash||'—'}</code></td></tr>
+    <tr><th>Original filename</th><td>${safeFilename}</td></tr>
+    <tr><th>Original size</th><td>${origSize}</td></tr>
+    <tr><th>Status</th><td><span class="dm-status-badge ${statusCls}">${d.status||'—'}</span></td></tr>
+    <tr><th>Added</th><td>${added}</td></tr>
+    <tr><th>Progress</th><td>${progress}</td></tr>
+    ${d.seeders != null ? `<tr><th>Seeders</th><td>${d.seeders}</td></tr>` : ''}
+    ${d.speed != null ? `<tr><th>Speed</th><td>${fmt_bytes(d.speed)}/s</td></tr>` : ''}
+</table>`;
+
+            if (files.length) {
+                const videoExts = /\.(mkv|mp4|avi|mov|wmv|m4v|ts|m2ts|flv|webm)$/i;
+                html += `<div class="dm-detail-files-header">
+    <span>${files.length} file${files.length !== 1 ? 's' : ''}</span>
+</div>
+<div class="dm-detail-files">`;
+                files.forEach(f => {
+                    const isVideo = videoExts.test(f.path||'');
+                    const fsize = fmt_bytes(f.bytes||0);
+                    const selected = f.selected === 1;
+                    html += `<div class="dm-detail-file ${selected ? 'dm-file-selected' : 'dm-file-unselected'}">
+    <span class="dm-file-sel-dot" title="${selected ? 'Selected' : 'Not selected'}"></span>
+    <span class="dm-file-path">${f.path||f.id}</span>
+    <span class="dm-file-size">${fsize}</span>
+    ${isVideo ? `<span class="dm-file-badge dm-file-badge-video">video</span>` : ''}
+</div>`;
+                });
+                html += '</div>';
+            }
+
+            body.innerHTML = html;
+        })
+        .catch(e => { body.innerHTML = `<p class="dm-error">Failed to load: ${e.message}</p>`; });
+}
+
+function libCloseDetail() {
+    document.getElementById('lib-detail-overlay').classList.remove('open');
+    document.getElementById('lib-detail-modal').classList.remove('open');
+}
+document.getElementById('lib-detail-close').addEventListener('click', libCloseDetail);
+document.getElementById('lib-detail-overlay').addEventListener('click', libCloseDetail);
+
+// ── Dupes modal ───────────────────────────────────────────────────────────────
+function libOpenDupes(type, key, currentId) {
+    const matches = type === 'hash'
+        ? _libAll.filter(t => t.hash === key)
+        : _libAll.filter(t => _titleKey(t) === key);
+
+    const overlay = document.getElementById('lib-dupes-overlay');
+    const modal   = document.getElementById('lib-dupes-modal');
+    const body    = document.getElementById('lib-dupes-body');
+    const title   = document.getElementById('lib-dupes-title');
+
+    title.textContent = type === 'hash'
+        ? `${matches.length} copies · same hash`
+        : `${matches.length} matches · "${key}"`;
+
+    // Sort: current first, then by added desc (newest first)
+    const sorted = [...matches].sort((a, b) => {
+        if (a.id === currentId) return -1;
+        if (b.id === currentId) return 1;
+        return (b.added || 0) > (a.added || 0) ? 1 : -1;
+    });
+
+    const rows = sorted.map(t => {
+        const isCurrent = t.id === currentId;
+        const cleanTitle = buildCleanTitle(t);
+        return `<div class="dm-dupe-entry${isCurrent ? ' dm-dupe-entry-current' : ''}">
+            <div class="dm-dupe-entry-head">
+                <span class="dm-dupe-entry-title">${cleanTitle || t.filename || '—'}</span>
+                ${isCurrent ? '<span class="dm-dupe-entry-tag">current</span>' : ''}
+                <div class="dm-dupe-entry-head-right">
+                    <span class="dm-status-badge ${status_class(t.status)}">${t.status||'—'}</span>
+                    <button class="dm-btn dm-btn-danger dm-dupe-delete-btn" onclick="libDupeDelete('${t.id}', this, '${type}', '${key.replace(/'/g,"\\'")}')"><svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:13px;height:13px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg> Delete</button>
+                </div>
+            </div>
+            <div class="dm-dupe-entry-meta">
+                <span><span class="dm-dupe-label">Size:</span> ${fmt_bytes(t.bytes)}</span>
+                <span><span class="dm-dupe-label">Added:</span> ${timeAgo(t.added)}</span>
+            </div>
+            <div class="dm-dupe-entry-meta"><span class="dm-dupe-label">Hash:</span> <span class="dm-dupe-hash">${t.hash||'—'}</span></div>
+            ${t.filename ? `<div class="dm-dupe-entry-meta"><span class="dm-dupe-label">File:</span> <span class="dm-dupe-entry-filename">${t.filename}</span></div>` : ''}
+        </div>`;
+    });
+
+    body.innerHTML = rows.join('');
+    overlay.classList.add('open');
+    modal.classList.add('open');
+}
+
+async function libDupeDelete(id, btn, type, key) {
+    if (!confirm('Delete this torrent from your debrid account?')) return;
+    const origHtml = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = '<span class="dm-spinner"></span>';
+    try {
+        const r = await fetch(`/debrid_manager/api/torrent/${id}`, { method: 'DELETE' });
+        const data = await r.json();
+        if (data.success) {
+            _libAll = _libAll.filter(t => t.id !== id);
+            _libFiltered = _libFiltered.filter(t => t.id !== id);
+            _libSelected.delete(id);
+            buildHashCounts(); updateDupesBtn(); updateLibFilterInfo(); updateLibBatchBtn(); updateSelectBar();
+            // Refresh the dupes modal with updated data — close if no more dupes
+            const remaining = type === 'hash'
+                ? _libAll.filter(t => t.hash === key)
+                : _libAll.filter(t => _titleKey(t) === key);
+            if (remaining.length < 2) { libCloseDupes(); applyLibFilters(); }
+            else { libOpenDupes(type, key, null); applyLibFilters(); }
+        } else {
+            btn.disabled = false; btn.innerHTML = origHtml;
+            alert('Delete failed: ' + (data.error || 'unknown'));
+        }
+    } catch(e) { btn.disabled = false; btn.innerHTML = origHtml; alert('Delete failed: ' + e.message); }
+}
+
+function libCloseDupes() {
+    document.getElementById('lib-dupes-overlay').classList.remove('open');
+    document.getElementById('lib-dupes-modal').classList.remove('open');
+}
+document.getElementById('lib-dupes-close').addEventListener('click', libCloseDupes);
+document.getElementById('lib-dupes-overlay').addEventListener('click', libCloseDupes);
+
+document.getElementById('lib-batch-delete-btn').addEventListener('click', async function() {
+    const ids = [..._libSelected];
+    if (!ids.length) return;
+    if (!confirm(`Delete ${ids.length} torrent(s)?`)) return;
+    this.disabled = true;
+    this.innerHTML = '<span class="dm-spinner"></span> Deleting…';
+    try {
+        const r = await fetch('/debrid_manager/api/torrent/batch-delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids }),
+        });
+        const data = await r.json();
+        if (data.success) {
+            const deleted = new Set(data.deleted);
+            _libAll = _libAll.filter(t => !deleted.has(t.id));
+            _libFiltered = _libFiltered.filter(t => !deleted.has(t.id));
+            deleted.forEach(id => _libSelected.delete(id));
+            buildHashCounts(); updateDupesBtn(); updateLibFilterInfo(); renderLibPage();
+            if (data.failed.length) alert(`${data.deleted.length} deleted. ${data.failed.length} failed.`);
+        } else { alert('Batch delete failed: ' + (data.error || 'unknown')); }
+    } catch(e) { alert('Batch delete failed: ' + e.message); }
+    this.innerHTML = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg> Delete Selected (<span id="lib-selected-count">${_libSelected.size}</span>)`;
+    this.disabled = _libSelected.size === 0;
+});
+
+document.getElementById('lib-batch-reinsert-btn').addEventListener('click', async function() {
+    const torrents = [..._libSelected].map(id => {
+        const t = _libAll.find(x => x.id === id);
+        return t ? { id: t.id, hash: t.hash || '', filename: t.filename || '' } : null;
+    }).filter(Boolean);
+    if (!torrents.length) return;
+    if (!confirm(`Reinsert ${torrents.length} torrent(s)? They will be re-added to your debrid account.`)) return;
+    const origHtml = this.innerHTML;
+    this.disabled = true;
+    this.innerHTML = '<span class="dm-spinner"></span> Reinserting…';
+    try {
+        const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ torrents }),
+        });
+        const data = await r.json();
+        if (data.success) {
+            const msg = `${data.reinserted.length} reinserted${data.failed.length ? ', ' + data.failed.length + ' failed' : ''}.`;
+            alert(msg);
+            _libSelected.clear();
+            window._libLoaded = false;
+            loadLibrary(true);
+        } else {
+            alert('Batch reinsert failed: ' + (data.error || 'unknown'));
+        }
+    } catch(e) {
+        alert('Batch reinsert failed: ' + e.message);
+    }
+    this.innerHTML = origHtml;
+    this.disabled = false;
+});
+
+// ── MAINTENANCE TAB (Backup + Cleanup) ──────────────────────────────────────
+function _bkFmtTs(ts) {
+    if (!ts) return '—';
+    const d = new Date(ts * 1000);
+    const now = Date.now();
+    const diff = Math.round((now - ts * 1000) / 1000);
+    let ago;
+    if (diff < 60)       ago = `${diff}s ago`;
+    else if (diff < 3600) ago = `${Math.round(diff/60)}m ago`;
+    else if (diff < 86400) ago = `${Math.round(diff/3600)}h ago`;
+    else                   ago = `${Math.round(diff/86400)}d ago`;
+    const abs = d.toLocaleString();
+    return `${abs} (${ago})`;
+}
+
+function _bkFmtSize(bytes) {
+    if (!bytes) return '—';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
+    return (bytes/1048576).toFixed(1) + ' MB';
+}
+
+function _bkRenderActivity(status) {
+    const el = document.getElementById('bk-activity');
+    if (!el) return;
+
+    const lastRun     = status.last_run     ? _bkFmtTs(status.last_run)     : 'Never';
+    const lastCleanup = status.last_cleanup ? _bkFmtTs(status.last_cleanup) : 'Never';
+    const providers   = status.providers || {};
+    const cs          = (status.cleanup_stats || {}).last || null;
+
+    // ── Backup section ──
+    let backupSection = '';
+    if (Object.keys(providers).length) {
+        for (const [pfx, slots] of Object.entries(providers)) {
+            const label = pfx === 'rd' ? 'Real-Debrid' : 'AllDebrid';
+            backupSection += `<div class="dm-bk-activity-provider">${label} Backup</div>`;
+            for (const [slot, info] of Object.entries(slots)) {
+                const ts    = info.timestamp ? _bkFmtTs(info.timestamp) : '—';
+                const count = info.count != null ? info.count.toLocaleString() + ' torrents' : '—';
+                backupSection += `
+<div class="dm-bk-activity-row">
+    <span class="dm-bk-activity-label"><span class="dm-bk-slot-badge">${slot}</span></span>
+    <span class="dm-bk-activity-val">${count} &middot; ${ts}</span>
+</div>`;
+            }
+        }
+    } else {
+        backupSection = `
+<div class="dm-bk-activity-row">
+    <span class="dm-bk-activity-label">Last backup run</span>
+    <span class="dm-bk-activity-val">${lastRun}</span>
+</div>`;
+    }
+
+    // ── Cleanup section ──
+    let cleanupSection = `<div class="dm-backup-activity-divider"></div>`;
+    if (cs) {
+        const pfxLabel = cs.provider === 'rd' ? 'Real-Debrid' : 'AllDebrid';
+        const total    = cs.total ?? 0;
+        const errs     = cs.deleted_errors  ?? 0;
+        const dupes    = cs.deleted_dupes   ?? 0;
+        const stalled  = cs.deleted_stalled ?? 0;
+        cleanupSection += `
+<div class="dm-bk-activity-provider">${pfxLabel} Cleanup &middot; ${_bkFmtTs(cs.timestamp)}</div>
+<div class="dm-bk-activity-row">
+    <span class="dm-bk-activity-label">Total removed</span>
+    <span class="dm-bk-activity-val">${total.toLocaleString()}</span>
+</div>
+<div class="dm-bk-activity-row">
+    <span class="dm-bk-activity-label">Errored</span>
+    <span class="dm-bk-activity-val">${errs.toLocaleString()}</span>
+</div>
+<div class="dm-bk-activity-row">
+    <span class="dm-bk-activity-label">Duplicates</span>
+    <span class="dm-bk-activity-val">${dupes.toLocaleString()}</span>
+</div>
+<div class="dm-bk-activity-row">
+    <span class="dm-bk-activity-label">Stalled (0%)</span>
+    <span class="dm-bk-activity-val">${stalled.toLocaleString()}</span>
+</div>`;
+    } else {
+        cleanupSection += `
+<div class="dm-bk-activity-row">
+    <span class="dm-bk-activity-label">Last cleanup run</span>
+    <span class="dm-bk-activity-val">${lastCleanup}</span>
+</div>`;
+    }
+
+    el.innerHTML = backupSection + cleanupSection;
+}
+
+function _bkRenderSlots(status) {
+    const el = document.getElementById('bk-slots');
+    if (!el) return;
+
+    const providers = status.providers || {};
+    if (!Object.keys(providers).length) {
+        el.innerHTML = '<div class="dm-bk-activity-empty">No backup files yet. Run a backup to create them.</div>';
+        return;
+    }
+
+    let html = '';
+    for (const [pfx, slots] of Object.entries(providers)) {
+        const label = pfx === 'rd' ? 'Real-Debrid' : 'AllDebrid';
+        html += `<div class="dm-bk-provider-label">${label}</div>`;
+        for (const [slot, info] of Object.entries(slots)) {
+            if (!info.exists) continue;
+            const ts = info.timestamp ? _bkFmtTs(info.timestamp) : '—';
+            const count = info.count != null ? info.count.toLocaleString() + ' torrents' : '';
+            const size = _bkFmtSize(info.size);
+            const filename = `${pfx}_backup_${slot}.json`;
+            html += `
+<div class="dm-bk-slot-row">
+    <div class="dm-bk-slot-row-info">
+        <span class="dm-bk-slot-badge">${slot}</span>
+        <div class="dm-bk-slot-meta">
+            <span class="dm-bk-slot-time">${ts}</span>
+            <span class="dm-bk-slot-stats">${count}${count && size !== '—' ? ' · ' : ''}${size !== '—' ? size : ''}</span>
+        </div>
+    </div>
+    <button class="dm-btn dm-btn-secondary dm-btn-sm dm-bk-restore-btn"
+            onclick="bkRestore('${filename}', this)"
+            title="Restore from this backup">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        Restore
+    </button>
+</div>`;
+        }
+    }
+    el.innerHTML = html || '<div class="dm-bk-activity-empty">No backup files exist yet.</div>';
+}
+
+async function loadMaintenance() {
+    _bkLoaded = true;
+    try {
+        const r = await fetch('/debrid_manager/api/backup/status');
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error);
+
+        // Populate backup settings
+        const s = data.settings || {};
+        document.getElementById('bk-enabled').checked = !!data.enabled;
+        if (s.slot_1d_hours) document.getElementById('bk-slot-1d').value = s.slot_1d_hours;
+        if (s.slot_3d_hours) document.getElementById('bk-slot-3d').value = s.slot_3d_hours;
+        if (s.slot_7d_hours) document.getElementById('bk-slot-7d').value = s.slot_7d_hours;
+
+        // Populate cleanup settings
+        document.getElementById('cl-enabled').checked          = !!s.cleanup_enabled;
+        document.getElementById('cl-delete-errors').checked    = s.cleanup_delete_errors !== false;
+        document.getElementById('cl-delete-dupes').checked     = s.cleanup_delete_dupes !== false;
+        document.getElementById('cl-delete-stalled').checked   = !!s.cleanup_delete_stalled;
+        if (s.cleanup_stalled_days) document.getElementById('cl-stalled-days').value = s.cleanup_stalled_days;
+
+        _bkRenderActivity(data);
+        _bkRenderSlots(data);
+        _updateMaintNotice();
+    } catch(e) {
+        document.getElementById('bk-activity').innerHTML = `<div class="dm-error">Failed to load: ${e.message}</div>`;
+    }
+}
+
+function _updateMaintNotice() {
+    const notice = document.getElementById('maint-scheduler-notice');
+    if (!notice) return;
+    const backupOn  = document.getElementById('bk-enabled')?.checked;
+    const cleanupOn = document.getElementById('cl-enabled')?.checked;
+    notice.style.display = (backupOn || cleanupOn) ? '' : 'none';
+}
+
+document.getElementById('bk-enabled').addEventListener('change', _updateMaintNotice);
+document.getElementById('cl-enabled').addEventListener('change', _updateMaintNotice);
+
+document.getElementById('bk-save-btn').addEventListener('click', async function() {
+    const btn = this;
+    const msg = document.getElementById('bk-save-msg');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="dm-spinner"></span>';
+    try {
+        const payload = {
+            enabled:       document.getElementById('bk-enabled').checked,
+            slot_1d_hours: parseInt(document.getElementById('bk-slot-1d').value) || 24,
+            slot_3d_hours: parseInt(document.getElementById('bk-slot-3d').value) || 72,
+            slot_7d_hours: parseInt(document.getElementById('bk-slot-7d').value) || 168,
+        };
+        const r = await fetch('/debrid_manager/api/backup/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload),
+        });
+        const data = await r.json();
+        msg.style.display = '';
+        if (data.success) {
+            msg.className = 'dm-backup-msg dm-backup-msg-ok';
+            msg.textContent = 'Settings saved.';
+        } else {
+            msg.className = 'dm-backup-msg dm-backup-msg-err';
+            msg.textContent = 'Error: ' + (data.error || 'unknown');
+        }
+        setTimeout(() => { msg.style.display = 'none'; }, 3000);
+    } catch(e) {
+        msg.style.display = '';
+        msg.className = 'dm-backup-msg dm-backup-msg-err';
+        msg.textContent = 'Error: ' + e.message;
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save Settings';
+});
+
+document.getElementById('bk-run-btn').addEventListener('click', async function() {
+    const btn = this;
+    const msg = document.getElementById('bk-save-msg');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="dm-spinner"></span> Running…';
+    try {
+        const r = await fetch('/debrid_manager/api/backup/run', {method: 'POST'});
+        const data = await r.json();
+        msg.style.display = '';
+        if (data.success) {
+            msg.className = 'dm-backup-msg dm-backup-msg-ok';
+            msg.textContent = `Backup complete: ${data.count?.toLocaleString() || '?'} torrents backed up.`;
+            // Refresh the status
+            setTimeout(loadMaintenance, 500);
+        } else {
+            msg.className = 'dm-backup-msg dm-backup-msg-err';
+            msg.textContent = 'Backup failed: ' + (data.message || data.error || 'unknown');
+        }
+        setTimeout(() => { msg.style.display = 'none'; }, 5000);
+    } catch(e) {
+        msg.style.display = '';
+        msg.className = 'dm-backup-msg dm-backup-msg-err';
+        msg.textContent = 'Error: ' + e.message;
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg> Run Now';
+});
+
+document.getElementById('cl-save-btn').addEventListener('click', async function() {
+    const btn = this;
+    const msg = document.getElementById('cl-save-msg');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="dm-spinner"></span>';
+    try {
+        const payload = {
+            enabled:        document.getElementById('cl-enabled').checked,
+            delete_errors:  document.getElementById('cl-delete-errors').checked,
+            delete_dupes:   document.getElementById('cl-delete-dupes').checked,
+            delete_stalled: document.getElementById('cl-delete-stalled').checked,
+            stalled_days:   parseInt(document.getElementById('cl-stalled-days').value) || 3,
+        };
+        const r = await fetch('/debrid_manager/api/cleanup/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload),
+        });
+        const data = await r.json();
+        msg.style.display = '';
+        msg.className = data.success ? 'dm-backup-msg dm-backup-msg-ok' : 'dm-backup-msg dm-backup-msg-err';
+        msg.textContent = data.success ? 'Settings saved.' : ('Error: ' + (data.error || 'unknown'));
+        setTimeout(() => { msg.style.display = 'none'; }, 3000);
+    } catch(e) {
+        msg.style.display = '';
+        msg.className = 'dm-backup-msg dm-backup-msg-err';
+        msg.textContent = 'Error: ' + e.message;
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save';
+});
+
+document.getElementById('cl-run-btn').addEventListener('click', async function() {
+    const btn = this;
+    const msg = document.getElementById('cl-save-msg');
+    if (!confirm('Run cleanup now?\n\nThis will delete errored/duplicate/stalled torrents based on your current rules. This cannot be undone.')) return;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="dm-spinner"></span> Running…';
+    try {
+        const r = await fetch('/debrid_manager/api/cleanup/run', {method: 'POST'});
+        const data = await r.json();
+        msg.style.display = '';
+        if (data.success) {
+            msg.className = 'dm-backup-msg dm-backup-msg-ok';
+            msg.textContent = `Cleanup complete: ${data.total_deleted} removed (errors: ${data.deleted_errors}, dupes: ${data.deleted_dupes}, stalled: ${data.deleted_stalled}).`;
+            setTimeout(loadMaintenance, 500);
+        } else {
+            msg.className = 'dm-backup-msg dm-backup-msg-err';
+            msg.textContent = 'Cleanup failed: ' + (data.message || data.error || 'unknown');
+        }
+        setTimeout(() => { msg.style.display = 'none'; }, 8000);
+    } catch(e) {
+        msg.style.display = '';
+        msg.className = 'dm-backup-msg dm-backup-msg-err';
+        msg.textContent = 'Error: ' + e.message;
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0f01-15.357-2m15.357 2H15"/></svg> Run Now';
+});
+
+async function bkRestore(filename, btn) {
+    if (!confirm(`Restore from "${filename}"?\n\nThis will re-add any torrents missing from your current debrid library. Existing torrents are not affected.`)) return;
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="dm-spinner"></span>';
+    const msg = document.getElementById('bk-save-msg');
+    try {
+        const r = await fetch('/debrid_manager/api/backup/restore', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({filename}),
+        });
+        const data = await r.json();
+        msg.style.display = '';
+        if (data.success) {
+            msg.className = 'dm-backup-msg dm-backup-msg-ok';
+            msg.textContent = `Restore complete: ${data.added} added, ${data.skipped} already present${data.failed ? ', ' + data.failed + ' failed' : ''}.`;
+        } else {
+            msg.className = 'dm-backup-msg dm-backup-msg-err';
+            msg.textContent = 'Restore failed: ' + (data.message || data.error || 'unknown');
+        }
+        setTimeout(() => { msg.style.display = 'none'; }, 8000);
+    } catch(e) {
+        msg.style.display = '';
+        msg.className = 'dm-backup-msg dm-backup-msg-err';
+        msg.textContent = 'Error: ' + e.message;
+    }
+    btn.disabled = false;
+    btn.innerHTML = origHtml;
+}
+
+// ── USAGE TAB ──────────────────────────────────────────────────────────────
+let _usageLoaded = false;
+let _usageResetTimer = null;
+
+function _startResetCountdown() {
+    if (_usageResetTimer) clearInterval(_usageResetTimer);
+    function tick() {
+        const now = new Date();
+        const utcMidnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+        const diff = Math.max(0, utcMidnight - now);
+        const h = Math.floor(diff / 3600000);
+        const m = Math.floor((diff % 3600000) / 60000);
+        const s = Math.floor((diff % 60000) / 1000);
+        const el = document.getElementById('usage-reset-timer');
+        if (el) el.textContent = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    }
+    tick();
+    _usageResetTimer = setInterval(tick, 1000);
+}
+
+function _fmtBytes(gb) {
+    if (gb >= 1000) return (gb / 1000).toFixed(2) + ' TB';
+    return gb.toFixed(2) + ' GB';
+}
+
+async function loadUsage() {
+    if (_usageLoaded) return;
+    document.getElementById('usage-loading').style.display = '';
+    document.getElementById('usage-content').style.display = 'none';
+    document.getElementById('usage-error').style.display = 'none';
+    try {
+        const r = await fetch('/debrid_manager/api/usage');
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error || 'Failed to load');
+
+        const u = data.user;
+        const tot = data.totals || {};
+
+        // Account stats
+        document.getElementById('usage-username').textContent = u.username || '—';
+
+        const premEl = document.getElementById('usage-premium');
+        if (u.expiration) {
+            const expDate = u.expiration.substring(0, 10);
+            const days = u.days_remaining != null ? ` (${u.days_remaining} D)` : '';
+            premEl.innerHTML = `<span class="dm-usage-badge dm-usage-badge-green">${expDate}${days}</span>`;
+        } else {
+            premEl.innerHTML = `<span class="dm-usage-badge dm-usage-badge-red">Inactive</span>`;
+        }
+
+        document.getElementById('usage-points').innerHTML =
+            `<span class="dm-usage-badge dm-usage-badge-blue">${(u.points || 0).toLocaleString()}</span>`;
+
+        document.getElementById('usage-slots').textContent =
+            tot.max_slots ? `${tot.active_slots} / ${tot.max_slots}` : '—';
+
+        document.getElementById('usage-alltime').textContent =
+            _fmtBytes(tot.all_time_gb || 0);
+
+        // Today's usage bar
+        const t = data.today;
+        const pct = Math.min(100, (t.downloaded_gb / t.limit_gb) * 100);
+        const bar = document.getElementById('usage-bar');
+        bar.style.width = pct + '%';
+        bar.className = 'dm-usage-bar' + (pct > 90 ? ' dm-usage-bar-warn' : '');
+        document.getElementById('usage-today-text').textContent =
+            `${_fmtBytes(t.downloaded_gb)} / ${_fmtBytes(t.limit_gb)}`;
+        document.getElementById('usage-today-date').textContent = `UTC date: ${t.date}`;
+
+        // Traffic history — one row per hoster per day
+        const list = document.getElementById('usage-history-list');
+        let tableRows = '';
+        for (const day of data.history) {
+            const hosters = day.hosters || [];
+            if (hosters.length > 0) {
+                hosters.forEach((h, i) => {
+                    tableRows += `<tr>
+                        <td class="dm-usage-th-date">${i === 0 ? day.date : ''}</td>
+                        <td class="dm-usage-th-hoster">${h.name}</td>
+                        <td class="dm-usage-th-total">${_fmtBytes(h.gb)}</td>
+                    </tr>`;
+                });
+            } else {
+                tableRows += `<tr>
+                    <td class="dm-usage-th-date">${day.date}</td>
+                    <td class="dm-usage-th-hoster">—</td>
+                    <td class="dm-usage-th-total">${_fmtBytes(day.gb)}</td>
+                </tr>`;
+            }
+        }
+        list.innerHTML = `<table class="dm-usage-compact-table">
+            <thead><tr><th>Date</th><th>Hoster</th><th>Used</th></tr></thead>
+            <tbody>${tableRows}</tbody>
+        </table>`;
+
+        document.getElementById('usage-loading').style.display = 'none';
+        document.getElementById('usage-content').style.display = '';
+        _usageLoaded = true;
+        _startResetCountdown();
+    } catch(e) {
+        document.getElementById('usage-loading').style.display = 'none';
+        const err = document.getElementById('usage-error');
+        err.textContent = 'Failed to load usage: ' + e.message;
+        err.style.display = '';
+    }
+}
+
+// Load usage when tab is clicked (lazy)
+document.querySelectorAll('.dm-tab[data-tab="usage"]').forEach(btn => {
+    btn.addEventListener('click', loadUsage);
+});
+// If usage tab is the active tab on load, load immediately
+if (_dmActiveTab === 'usage') loadUsage();
+
+// ── INIT ───────────────────────────────────────────────────────────────────
+// Only start active polling if active tab is shown on load
+if (_dmActiveTab === 'active') fetchActive();
+</script>
+{% endblock %}

@@ -294,6 +294,8 @@ class ProgramRunner:
             # --- START EDIT: Add new task for library size refresh ---
             'task_refresh_library_size_cache': 12 * 60 * 60, # Run every 12 hours
             'task_backup_database': 24 * 60 * 60, # Run every 24 hours (daily backup)
+            'task_backup_debrid': 24 * 60 * 60, # Run every 24 hours (disabled by default)
+            'task_cleanup_debrid': 24 * 60 * 60, # Run every 24 hours (disabled by default)
             # --- END EDIT ---
             'task_process_standalone_plex_removals': 60 * 60, # Run every hour
             # --- START EDIT: Add media analysis task interval ---
@@ -2910,6 +2912,45 @@ class ProgramRunner:
 
         except Exception as e:
             logging.error(f"[DATABASE_BACKUP] Error in scheduled backup task: {e}", exc_info=True)
+
+    def task_backup_debrid(self):
+        """Scheduled task to backup the debrid torrent library (1d/3d/7d rotating slots)."""
+        try:
+            from utilities.debrid_backup import run_backup, _get_settings
+            settings = _get_settings()
+            if not settings.get('enabled'):
+                logging.debug('[DEBRID_BACKUP] Task ran but backup is disabled — skipping')
+                return
+            result = run_backup(force=False)
+            if result.get('success'):
+                logging.info(f"[DEBRID_BACKUP] Backup complete: {result.get('count', 0)} torrents ({result.get('provider', '?')})")
+            elif result.get('skipped'):
+                logging.debug('[DEBRID_BACKUP] Backup skipped (disabled)')
+            else:
+                logging.warning(f"[DEBRID_BACKUP] Backup failed: {result.get('message', 'unknown')}")
+        except Exception as e:
+            logging.error(f'[DEBRID_BACKUP] Scheduled task error: {e}', exc_info=True)
+
+    def task_cleanup_debrid(self):
+        """Scheduled task to clean up errored and duplicate debrid torrents."""
+        try:
+            from utilities.debrid_backup import run_cleanup, get_cleanup_settings
+            settings = get_cleanup_settings()
+            if not settings.get('enabled'):
+                logging.debug('[DEBRID_CLEANUP] Task ran but cleanup is disabled — skipping')
+                return
+            result = run_cleanup(force=False)
+            if result.get('success'):
+                logging.info(f"[DEBRID_CLEANUP] Complete: {result.get('total_deleted', 0)} removed "
+                             f"(errors={result.get('deleted_errors',0)}, "
+                             f"dupes={result.get('deleted_dupes',0)}, "
+                             f"stalled={result.get('deleted_stalled',0)})")
+            elif result.get('skipped'):
+                logging.debug('[DEBRID_CLEANUP] Skipped (disabled)')
+            else:
+                logging.warning(f"[DEBRID_CLEANUP] Failed: {result.get('message', 'unknown')}")
+        except Exception as e:
+            logging.error(f'[DEBRID_CLEANUP] Scheduled task error: {e}', exc_info=True)
 
     def _is_system_idle_for_backup(self):
         """

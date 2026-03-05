@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 _overlay_in_flight: set = set()
 _overlay_in_flight_lock = threading.Lock()
 
+# Concurrency cap: at most 3 overlay threads run image operations simultaneously.
+# Without this, large batch downloads spawn 30+ threads, each loading/rendering
+# poster images → memory spikes to 2+ GB → OOM container kill.
+_overlay_semaphore = threading.Semaphore(3)
+
 
 def _get_db_connection():
     """Get a database connection using the production DB access pattern."""
@@ -105,6 +110,21 @@ def _sync_library_keys_for_new_items(plex_url: str, plex_token: str) -> Dict[str
                               AND (ms_item_id IS NULL OR ms_item_id = ''
                                    OR LENGTH(ms_item_id) >= 20)
                         ''', (rk, db_type, tmdb_id))
+                        if cursor.rowcount:
+                            counts[count_key] += cursor.rowcount
+                            updated = True
+                    # Fallback: match by title + year, only for Plex items with no external IDs at all
+                    if not updated and not imdb_id and not tmdb_id and pi.get('title') and pi.get('year'):
+                        cursor.execute('''
+                            UPDATE media_items
+                            SET ms_item_id = ?
+                            WHERE type = ?
+                              AND LOWER(title) = LOWER(?)
+                              AND year = ?
+                              AND state IN ('Collected', 'Upgrading')
+                              AND (ms_item_id IS NULL OR ms_item_id = ''
+                                   OR LENGTH(ms_item_id) >= 20)
+                        ''', (rk, db_type, pi['title'], pi['year']))
                         if cursor.rowcount:
                             counts[count_key] += cursor.rowcount
                 conn.commit()
@@ -244,8 +264,6 @@ def apply_overlay_for_new_item(item_id: int):
     up to 3 times with increasing delays before giving up. The scheduled
     task_overlay_sync will catch any items missed here on the next run.
     """
-    import time
-
     # Atomically claim this item_id; bail out if another thread already has it.
     with _overlay_in_flight_lock:
         if item_id in _overlay_in_flight:
@@ -271,106 +289,119 @@ def apply_overlay_for_new_item(item_id: int):
             if not plex_token:
                 return
 
-        # Fetch base item info
-        conn = _get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            'SELECT id, ms_item_id, type, title, year, season_number, episode_number FROM media_items '
-            "WHERE id = ? AND state IN ('Collected', 'Upgrading')",
-            (item_id,)
-        )
-        item_row = cursor.fetchone()
-        conn.close()
-
-        if not item_row:
-            logger.debug(f"apply_overlay_for_new_item: item {item_id} not found or not Collected/Upgrading, skipping")
-            return
-
-        item_type = item_row['type']
-        ms_item_id = item_row['ms_item_id']
-
-        def _needs_jellyfin_sync(mid):
-            """True if ms_item_id is absent or a legacy Plex integer key."""
-            if not mid:
-                return True
-            if is_jellyfin_mode() and '-' not in str(mid) and str(mid).isdigit():
-                return True  # Old Plex rating key copied from migration
-            return False
-
-        # If ms_item_id not populated yet (or still a stale Plex integer ID in Jellyfin
-        # mode), give media server time to index then retry
-        if _needs_jellyfin_sync(ms_item_id):
-            delays = [15, 30, 60]
-            for attempt, wait in enumerate(delays, 1):
-                logger.debug(
-                    f"apply_overlay_for_new_item: item {item_id} missing/stale ms_item_id, "
-                    f"waiting {wait}s before retry {attempt}/{len(delays)}"
-                )
-                time.sleep(wait)
-                _sync_ms_keys_auto()
-
-                conn = _get_db_connection()
-                cursor = conn.cursor()
-                cursor.execute('SELECT ms_item_id FROM media_items WHERE id = ?', (item_id,))
-                row2 = cursor.fetchone()
-                conn.close()
-
-                ms_item_id = row2['ms_item_id'] if row2 else None
-                if not _needs_jellyfin_sync(ms_item_id):
-                    break
-
-        if _needs_jellyfin_sync(ms_item_id):
-            logger.info(
-                f"apply_overlay_for_new_item: item {item_id} ms_item_id still not found/stale "
-                f"after retries — scheduled sync will handle it"
-            )
-            return
-
-        manager = OverlayManager(None, plex_url, plex_token)
-        result = manager.generate_overlay_for_item(item_id, force=False)
-        status = result.get('status', 'failed')
-
-        if status == 'applied' and item_type == 'episode':
-            _mark_all_episodes_applied(ms_item_id, result.get('content_hash'))
-            # Immediately re-render all season posters so their version count badges
-            # update without waiting for the next task_overlay_sync cycle.
-            # force=True bypasses the quality-hash skip check on already-applied seasons.
-            seasons = _get_seasons_for_immediate_render(manager, ms_item_id)
-            for s in seasons:
-                try:
-                    manager.generate_season_overlay(
-                        show_plex_rating_key=ms_item_id,
-                        season_plex_rating_key=s['ratingKey'],
-                        season_number=s.get('index', 0),
-                        force=True,
-                    )
-                except Exception as _se:
-                    logger.warning(f"apply_overlay_for_new_item: season overlay failed for {s}: {_se}")
-
-        logger.info(f"apply_overlay_for_new_item: item {item_id} → {status}")
-        if status in ('applied', 'failed'):
-            _title    = item_row['title'] or ''
-            _year     = item_row['year']
-            _type     = item_row['type']
-            _season   = item_row['season_number']
-            _episode  = item_row['episode_number']
-            if _type == 'episode':
-                _display = f"{_title} S{str(_season).zfill(2)}E{str(_episode).zfill(2)}"
-            elif _year:
-                _display = f"{_title} ({_year})"
-            else:
-                _display = _title
-            log_activity('generate',
-                         triggered_by='scheduled',
-                         result='success' if status == 'applied' else 'failed',
-                         title=f"Auto overlay on collect: {_display}",
-                         stats={'media_item_id': item_id, 'type': _type})
+        # Throttle: at most 3 threads do heavy work (DB lookups, ms-key sync, image
+        # download/render/upload) concurrently.  When a large batch is collected,
+        # additional threads block here and are served as slots free up.  Without
+        # this cap, 30+ concurrent poster operations drove RSS from ~330 MB to
+        # 2+ GB, triggering an OOM container kill.
+        with _overlay_semaphore:
+            _apply_overlay_work(item_id, plex_url, plex_token)
 
     except Exception as e:
         logger.error(f"apply_overlay_for_new_item: failed for item {item_id}: {e}", exc_info=True)
     finally:
         with _overlay_in_flight_lock:
             _overlay_in_flight.discard(item_id)
+
+
+def _apply_overlay_work(item_id: int, plex_url: str, plex_token: str):
+    """Inner worker called once the concurrency semaphore is held."""
+    import time
+
+    # Fetch base item info
+    conn = _get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        'SELECT id, ms_item_id, type, title, year, season_number, episode_number FROM media_items '
+        "WHERE id = ? AND state IN ('Collected', 'Upgrading')",
+        (item_id,)
+    )
+    item_row = cursor.fetchone()
+    conn.close()
+
+    if not item_row:
+        logger.debug(f"apply_overlay_for_new_item: item {item_id} not found or not Collected/Upgrading, skipping")
+        return
+
+    item_type = item_row['type']
+    ms_item_id = item_row['ms_item_id']
+
+    def _needs_jellyfin_sync(mid):
+        """True if ms_item_id is absent or a legacy Plex integer key."""
+        if not mid:
+            return True
+        if is_jellyfin_mode() and '-' not in str(mid) and str(mid).isdigit():
+            return True  # Old Plex rating key copied from migration
+        return False
+
+    # If ms_item_id not populated yet (or still a stale Plex integer ID in Jellyfin
+    # mode), give media server time to index then retry
+    if _needs_jellyfin_sync(ms_item_id):
+        delays = [15, 30, 60]
+        for attempt, wait in enumerate(delays, 1):
+            logger.debug(
+                f"apply_overlay_for_new_item: item {item_id} missing/stale ms_item_id, "
+                f"waiting {wait}s before retry {attempt}/{len(delays)}"
+            )
+            time.sleep(wait)
+            _sync_ms_keys_auto()
+
+            conn = _get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT ms_item_id FROM media_items WHERE id = ?', (item_id,))
+            row2 = cursor.fetchone()
+            conn.close()
+
+            ms_item_id = row2['ms_item_id'] if row2 else None
+            if not _needs_jellyfin_sync(ms_item_id):
+                break
+
+    if _needs_jellyfin_sync(ms_item_id):
+        logger.info(
+            f"apply_overlay_for_new_item: item {item_id} ms_item_id still not found/stale "
+            f"after retries — scheduled sync will handle it"
+        )
+        return
+
+    manager = OverlayManager(None, plex_url, plex_token)
+    result = manager.generate_overlay_for_item(item_id, force=False)
+    status = result.get('status', 'failed')
+
+    if status == 'applied' and item_type == 'episode':
+        _mark_all_episodes_applied(ms_item_id, result.get('content_hash'))
+        # Immediately re-render all season posters so their version count badges
+        # update without waiting for the next task_overlay_sync cycle.
+        # force=True bypasses the quality-hash skip check on already-applied seasons.
+        seasons = _get_seasons_for_immediate_render(manager, ms_item_id)
+        for s in seasons:
+            try:
+                manager.generate_season_overlay(
+                    show_plex_rating_key=ms_item_id,
+                    season_plex_rating_key=s['ratingKey'],
+                    season_number=s.get('index', 0),
+                    force=True,
+                )
+            except Exception as _se:
+                logger.warning(f"apply_overlay_for_new_item: season overlay failed for {s}: {_se}")
+
+    logger.info(f"apply_overlay_for_new_item: item {item_id} → {status}")
+    if status in ('applied', 'failed'):
+        _title    = item_row['title'] or ''
+        _year     = item_row['year']
+        _type     = item_row['type']
+        _season   = item_row['season_number']
+        _episode  = item_row['episode_number']
+        if _type == 'episode':
+            _display = f"{_title} S{str(_season).zfill(2)}E{str(_episode).zfill(2)}"
+        elif _year:
+            _display = f"{_title} ({_year})"
+        else:
+            _display = _title
+        log_activity('generate',
+                     triggered_by='scheduled',
+                     result='success' if status == 'applied' else 'failed',
+                     title=f"Auto overlay on collect: {_display}",
+                     stats={'media_item_id': item_id, 'type': _type})
 
 
 def _reset_quality_changed_items() -> int:
