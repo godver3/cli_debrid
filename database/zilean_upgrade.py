@@ -119,6 +119,12 @@ _last_scan_results: Optional[Dict[str, Any]] = None
 _last_scan_time: Optional[datetime] = None
 _scan_progress: Dict[str, Any] = {}
 
+# Per-scan version settings cache.  Reset at the start of every scan so
+# changes to version config are always picked up.  Pre-populated before
+# any workers start so all threads share a single read-only dict — no
+# locks required for concurrent reads.
+_vs_cache: Dict[str, Dict] = {}
+
 # Keyed by item_id — populated by queue_upgrade_candidates so the UpgradingQueue
 # can skip re-scraping and use the already-known candidate magnet directly.
 _queued_magnets: Dict[int, Dict] = {}
@@ -431,18 +437,23 @@ def _item_size_gb(item: Dict) -> float:
 
 def _get_version_settings(version: str) -> Dict:
     version = (version or '').rstrip('*').strip() or version
+    if version in _vs_cache:
+        return _vs_cache[version]
     try:
         from queues.config_manager import get_version_settings as _gvs
         vs = _gvs(version)
         if vs:
+            _vs_cache[version] = vs
             return vs
         default = get_default_version()
         if default and default != version:
             vs = _gvs(default)
             if vs:
+                _vs_cache[version] = vs
                 return vs
     except Exception as e:
         logger.debug(f"[UPGRADE_HUB] Could not load version settings for '{version}': {e}")
+    _vs_cache[version] = {}
     return {}
 
 
@@ -456,6 +467,82 @@ def _ensure_parsed_info(results: List[Dict]) -> None:
     for r in results:
         if 'resolution_rank' not in (r.get('parsed_info') or {}):
             r['parsed_info'] = parse_torrent_info(r.get('title', ''), size=r.get('size'))
+
+
+def _apply_version_hard_filters(candidates: List[Dict], version_settings: Dict) -> List[Dict]:
+    """
+    Apply hard gates from version settings to upgrade candidates.
+
+    Mirrors the hard-reject logic in scraper/functions/filter_results.py:
+      - max_resolution / resolution_wanted: reject candidates that exceed the
+        version's resolution ceiling (e.g. drop 4K candidates for a 1080p version).
+      - filter_out: reject candidates whose title/filename matches any excluded term.
+      - filter_in: reject candidates whose title/filename matches none of the
+        required terms.
+
+    preferred_filter_in / preferred_filter_out are *scoring* adjustments, not hard
+    gates — they are already handled by rank_result_key() and are not applied here.
+
+    The current file (source == '__current__') is never filtered.
+    Requires parsed_info to be populated on candidates before calling.
+    """
+    from scraper.functions.filter_results import resolution_filter
+    from scraper.functions.other_functions import smart_search
+    from scraper.functions.similarity_checks import normalize_title
+
+    max_resolution = version_settings.get('max_resolution', '2160p') or '2160p'
+    resolution_wanted = version_settings.get('resolution_wanted', '<=') or '<='
+    filter_in_patterns  = version_settings.get('filter_in',  []) or []
+    filter_out_patterns = version_settings.get('filter_out', []) or []
+
+    # Nothing to filter — skip the loop entirely
+    if not filter_in_patterns and not filter_out_patterns and max_resolution == '2160p' and resolution_wanted == '<=':
+        return candidates
+
+    kept = []
+    for r in candidates:
+        title_str    = r.get('title', '') or ''
+        filename_str = (r.get('additional_metadata') or {}).get('filename') or title_str
+
+        # 1. Resolution ceiling
+        detected_res = (r.get('parsed_info') or {}).get('resolution', 'Unknown')
+        if not resolution_filter(detected_res, max_resolution, resolution_wanted):
+            logger.debug(
+                f"[UPGRADE_HUB] Hard filter: resolution '{detected_res}' rejected "
+                f"(want {resolution_wanted} {max_resolution}) for '{title_str}'"
+            )
+            continue
+
+        # 2. filter_out — hard reject on raw title/filename (pre-normalization)
+        if filter_out_patterns:
+            rejected = False
+            for pattern in filter_out_patterns:
+                if smart_search(pattern, title_str) or smart_search(pattern, filename_str):
+                    logger.debug(
+                        f"[UPGRADE_HUB] Hard filter: filter_out '{pattern}' matched '{title_str}'"
+                    )
+                    rejected = True
+                    break
+            if rejected:
+                continue
+
+        # 3. filter_in — hard reject if no required term matches (post-normalization)
+        if filter_in_patterns:
+            norm_title    = normalize_title(title_str).lower()
+            norm_filename = normalize_title(filename_str).lower() if filename_str else norm_title
+            matched = any(
+                smart_search(p, norm_title) or smart_search(p, norm_filename)
+                for p in filter_in_patterns
+            )
+            if not matched:
+                logger.debug(
+                    f"[UPGRADE_HUB] Hard filter: no filter_in pattern matched '{title_str}'"
+                )
+                continue
+
+        kept.append(r)
+
+    return kept
 
 
 def _score_results(
@@ -556,11 +643,20 @@ def _score_results_with_current(
     if not candidates:
         return 0.0, []
 
+    # Parse candidates first so resolution is available for hard filters.
+    _ensure_parsed_info(list(candidates))
+
+    # Apply hard version filters before scoring: max_resolution, filter_in, filter_out.
+    # The current file is not a candidate so it is never filtered out.
+    # preferred_filter_in / preferred_filter_out are scoring adjustments handled by
+    # rank_result_key() and are intentionally not hard gates.
+    candidates = _apply_version_hard_filters(list(candidates), version_settings)
+
     current_result = _make_current_result(filename, title, size_bytes=size_bytes,
                                           genres_raw=genres_raw) if filename else None
     pool = ([current_result] if current_result else []) + list(candidates)
 
-    _ensure_parsed_info(pool)
+    _ensure_parsed_info(pool)  # no-op for candidates already parsed above
 
     # Scraper priorities (both global scraper_priority and per-version version_scraper_priority)
     # exist to prefer certain sources when picking NEW downloads.  They must not influence
@@ -1183,7 +1279,11 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
     Args:
       scan_limit: If set, caps total Collected items processed (applied before type split).
     """
-    global _scan_in_progress, _last_scan_results, _last_scan_time, _scan_progress
+    global _scan_in_progress, _last_scan_results, _last_scan_time, _scan_progress, _vs_cache
+
+    # Reset version settings cache at the start of every scan so any config
+    # changes since the last run are always picked up.
+    _vs_cache = {}
 
     _ensure_cache_tables()
 
@@ -1252,6 +1352,17 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
 
         movies   = [i for i in all_collected if i['type'] == 'movie']
         episodes = [i for i in all_collected if i['type'] == 'episode']
+
+        # Pre-populate version settings cache for every unique version in this
+        # scan batch.  Workers only read the dict — no locking needed.
+        # Typically 1–6 unique versions so this is a handful of config reads total.
+        unique_versions = {
+            (item.get('version') or default_version).rstrip('*').strip()
+            for item in all_collected
+        }
+        for _v in unique_versions:
+            _get_version_settings(_v)
+        logger.info(f"[UPGRADE_HUB] Version settings cached for: {sorted(unique_versions)}")
 
         # Build season groups now — needed for pack workers and pre-fetch
         season_groups: Dict = defaultdict(list)
