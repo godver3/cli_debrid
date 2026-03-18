@@ -567,7 +567,19 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
         except Exception as e:
             logger.debug(f"Could not remove stale TVDB mapping for {imdb_id}: {e}")
         from . import trakt_client
-        return trakt_client.get_show_data(imdb_id)
+        trakt_result = trakt_client.get_show_data(imdb_id)
+        if trakt_result:
+            return trakt_result
+        # Trakt also couldn't resolve this IMDB ID — try TMDB as final fallback.
+        # This covers shows where TVDB has an incorrect IMDb mapping (e.g. same title,
+        # different era) and Trakt's DB is also missing/stale for the ID.
+        tmdb_api_key = _get_tmdb_api_key()
+        if tmdb_api_key:
+            logger.info(
+                f"TVDB mismatch + Trakt failed for {imdb_id} — trying TMDB as final fallback"
+            )
+            return _fetch_tmdb_show_data(imdb_id, tmdb_api_key)
+        return None
 
     # Build Trakt-compatible show dict
     show_data = _build_show_dict(raw, imdb_id, tvdb_id)
@@ -1207,9 +1219,68 @@ def _get_tmdb_api_key() -> str:
         return ''
 
 
+def _lookup_title_year_from_media_db(imdb_id: str) -> Tuple[Optional[str], Optional[int]]:
+    """Look up title and year from media_items.db for a given IMDb ID."""
+    import os
+    import sqlite3 as _sqlite3
+    db_path = os.path.join(os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'media_items.db')
+    try:
+        conn = _sqlite3.connect(db_path)
+        row = conn.execute(
+            'SELECT title, year FROM media_items WHERE imdb_id = ? LIMIT 1',
+            (imdb_id,)
+        ).fetchone()
+        conn.close()
+        if row:
+            return row[0], row[1]
+    except Exception as e:
+        logger.debug(f"Could not look up title/year for {imdb_id} from media_items.db: {e}")
+    return None, None
+
+
+def _search_tmdb_by_title(title: str, year: Optional[int], api_key: str, media_type: str) -> Optional[int]:
+    """Search TMDB by title+year and return TMDB ID if a confident match is found.
+
+    Requires exact title match (case-insensitive) and year within 1 year.
+    Returns None if no confident match found.
+    """
+    try:
+        endpoint = 'tv' if media_type == 'show' else 'movie'
+        title_field = 'name' if media_type == 'show' else 'title'
+        date_field = 'first_air_date' if media_type == 'show' else 'release_date'
+        resp = requests.get(
+            f"https://api.themoviedb.org/3/search/{endpoint}",
+            params={'api_key': api_key, 'query': title},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return None
+        for result in resp.json().get('results', []):
+            result_title = result.get(title_field, '')
+            if result_title.lower() != title.lower():
+                continue
+            result_year = None
+            date_str = result.get(date_field, '')
+            if date_str and len(date_str) >= 4:
+                try:
+                    result_year = int(date_str[:4])
+                except ValueError:
+                    pass
+            if year and result_year and abs(result_year - year) <= 1:
+                logger.info(f"TMDB title search: matched '{title}' ({year}) → TMDB ID {result['id']}")
+                return result['id']
+    except Exception as e:
+        logger.debug(f"TMDB title search error for '{title}': {e}")
+    return None
+
+
 def _fetch_tmdb_movie_data(imdb_id: str, api_key: str) -> Optional[dict]:
     """Fetch movie metadata from TMDB as fallback when TVDB cannot resolve the ID."""
     tmdb_id = _resolve_tmdb_id_from_imdb(imdb_id, api_key, media_type='movie')
+    if not tmdb_id:
+        title, year = _lookup_title_year_from_media_db(imdb_id)
+        if title:
+            tmdb_id = _search_tmdb_by_title(title, year, api_key, media_type='movie')
     if not tmdb_id:
         return None
 
@@ -1257,6 +1328,10 @@ def _fetch_tmdb_movie_data(imdb_id: str, api_key: str) -> Optional[dict]:
 def _fetch_tmdb_show_data(imdb_id: str, api_key: str) -> Optional[dict]:
     """Fetch show metadata from TMDB as fallback when TVDB cannot resolve the ID."""
     tmdb_id = _resolve_tmdb_id_from_imdb(imdb_id, api_key, media_type='show')
+    if not tmdb_id:
+        title, year = _lookup_title_year_from_media_db(imdb_id)
+        if title:
+            tmdb_id = _search_tmdb_by_title(title, year, api_key, media_type='show')
     if not tmdb_id:
         return None
 

@@ -9,6 +9,8 @@ Backup strategy (rd.py-inspired):
       2. If 7d slot is due (slot age >= slot_7d_hours), copy 3d -> 7d
       3. Do fresh fetch and write to 1d
   - Backup log (backup_log.json) tracks timestamps + counts for each slot
+      timestamp  = when the data was originally captured (used for UI display)
+      rotated_at = when the slot was last written (used for rotation timing)
 """
 import json
 import logging
@@ -194,29 +196,42 @@ def run_backup(force: bool = False) -> dict:
     slot_log = log.get(prefix, {})
 
     # --- Rotation: promote slots before writing fresh 1d ---
-    slot_1d_ts  = slot_log.get('1d', {}).get('timestamp', 0)
-    slot_3d_ts  = slot_log.get('3d', {}).get('timestamp', 0)
+    slot_1d_ts = slot_log.get('1d', {}).get('timestamp', 0)
+    slot_3d_ts = slot_log.get('3d', {}).get('timestamp', 0)
+
+    # rotated_at = when the slot was last written (used for timing).
+    # Falls back to timestamp for backwards-compat with old log files that lack rotated_at.
+    slot_3d_rotated = slot_log.get('3d', {}).get('rotated_at') or slot_log.get('3d', {}).get('timestamp', 0)
+    slot_7d_rotated = slot_log.get('7d', {}).get('rotated_at') or slot_log.get('7d', {}).get('timestamp', 0)
 
     slot_3d_hours = settings['slot_3d_hours']
     slot_7d_hours = settings['slot_7d_hours']
 
-    # Promote 3d -> 7d if due
-    if slot_3d_ts and (now - slot_3d_ts) >= slot_7d_hours * 3600:
+    # Promote 3d -> 7d if due.
+    # Timer uses rotated_at so the interval is measured from when 7d was last written,
+    # not from the age of the data it contains.
+    if slot_3d_ts and (not slot_7d_rotated or (now - slot_7d_rotated) >= slot_7d_hours * 3600):
         _copy_slot(prefix, '3d', '7d')
-        slot_log.setdefault('7d', {})['timestamp'] = slot_3d_ts
-        slot_log['7d']['count'] = slot_log.get('3d', {}).get('count', 0)
+        slot_log['7d'] = {
+            'timestamp':  slot_3d_ts,                         # data capture time (for UI display)
+            'rotated_at': now,                                 # rotation time (for timer)
+            'count':      slot_log.get('3d', {}).get('count', 0),
+        }
         logging.info(f'{_LOG_TAG} Promoted 3d -> 7d slot for {prefix}')
 
-    # Promote 1d -> 3d if due
-    if slot_1d_ts and (now - slot_1d_ts) >= slot_3d_hours * 3600:
+    # Promote 1d -> 3d if due.
+    if slot_1d_ts and (not slot_3d_rotated or (now - slot_3d_rotated) >= slot_3d_hours * 3600):
         _copy_slot(prefix, '1d', '3d')
-        slot_log.setdefault('3d', {})['timestamp'] = slot_1d_ts
-        slot_log['3d']['count'] = slot_log.get('1d', {}).get('count', 0)
+        slot_log['3d'] = {
+            'timestamp':  slot_1d_ts,                         # data capture time (for UI display)
+            'rotated_at': now,                                 # rotation time (for timer)
+            'count':      slot_log.get('1d', {}).get('count', 0),
+        }
         logging.info(f'{_LOG_TAG} Promoted 1d -> 3d slot for {prefix}')
 
     # Write fresh 1d
     count = _write_slot(prefix, '1d', torrents)
-    slot_log['1d'] = {'timestamp': now, 'count': count}
+    slot_log['1d'] = {'timestamp': now, 'rotated_at': now, 'count': count}
     logging.info(f'{_LOG_TAG} Wrote {count} torrents to 1d slot for {prefix}')
 
     log[prefix] = slot_log

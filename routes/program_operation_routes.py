@@ -920,6 +920,7 @@ def get_task_timings():
         'task_update_movie_ids',
         'task_update_movie_titles',
         'task_update_tv_show_status',
+        'task_cleanup_title_year_suffixes',
     }
     _FEATURE_TASKS = {
         'task_overlay_sync',
@@ -928,6 +929,8 @@ def get_task_timings():
         'task_process_bulk_subtitles',
         'task_backup_debrid',
         'task_cleanup_debrid',
+        'task_upgrade_hub_scan',
+        'task_upgrade_hub_auto_queue',
     }
 
     tasks_data = {
@@ -1144,25 +1147,19 @@ def save_task_toggles():
         else:
             return jsonify({'success': False, 'error': 'ProgramRunner instance is missing necessary attributes (task_intervals or enabled_tasks).'}), 500
 
-        # Prefer the default-enabled snapshot captured before user overrides were applied
-        baseline_enabled_set = set()
-        if hasattr(runner, 'default_enabled_tasks_snapshot'):
-            baseline_enabled_set = runner.default_enabled_tasks_snapshot
-        else:
-            baseline_enabled_set = getattr(runner, 'initial_enabled_tasks_snapshot', set())
-
-        diff_task_states = {}
-        for task_name, is_enabled_live in live_task_states.items():
-            was_enabled_initially = task_name in baseline_enabled_set
-            if was_enabled_initially != is_enabled_live:
-                diff_task_states[task_name] = is_enabled_live
-        # --- END EDIT ---
+        # Save the full live state for all known tasks.
+        # Diff-based saving caused a bug: after one correct restart with a disabled task,
+        # the snapshot no longer contained that task (since it was already excluded by the
+        # toggle-aware init logic), so subsequent saves dropped the 'false' entry, causing
+        # the task to re-enable on the next restart.
+        # Saving the full state is safe: stale tasks are excluded because we only iterate
+        # runner.task_intervals.keys() above, and the file format is unchanged.
+        data_to_save = live_task_states.copy()
 
         # Get the file path
         db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
         toggles_file_path = os.path.join(db_content_dir, 'task_toggles.json')
-        
-        current_data_from_file = {}
+
         migration_version = None
 
         # Read existing file to preserve metadata (like _migration_version)
@@ -1174,16 +1171,10 @@ def save_task_toggles():
                         migration_version = current_data_from_file[MIGRATION_VERSION_KEY]
             except (json.JSONDecodeError, OSError) as e:
                 logging.warning(f"Could not read existing task toggles file to preserve metadata: {e}")
-                # Proceed with saving new state, potentially losing metadata if file was corrupt
-
-        # --- START EDIT: Build new save payload based on diffs only ---
-        # We now persist ONLY the latest differences so that stale keys are removed.
-        data_to_save = diff_task_states.copy()
 
         # Preserve the migration version marker
         if migration_version is not None:
             data_to_save[MIGRATION_VERSION_KEY] = migration_version
-        # --- END EDIT ---
 
         # Save the combined data to JSON file
         try:

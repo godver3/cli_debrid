@@ -83,7 +83,8 @@ def filter_results(
     target_air_date: Optional[str] = None,
     check_pack_wantedness: bool = False,
     current_scrape_target_version: Optional[str] = None,
-    original_episode: Optional[int] = None  # Add original episode parameter
+    original_episode: Optional[int] = None,
+    original_season: Optional[int] = None  # Original TVDB season before XEM remapping
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
 
     # --- START Logging for season_episode_counts ---
@@ -1209,8 +1210,14 @@ def filter_results(
                     
                     else: # Original logic for non-Formula 1 content
                         if season in result_seasons:
-                            # Parsed season explicitly matches the target season
+                            # Parsed season explicitly matches the target (XEM-mapped) season
                             season_match = True
+                        elif original_season is not None and original_season != season and original_season in result_seasons:
+                            # Torrent uses original TVDB season numbering (e.g. S03) while XEM mapped
+                            # the search to scene season (e.g. S01).  Accept both so that season-by-
+                            # season scene releases aren't rejected purely due to the XEM remap.
+                            season_match = True
+                            logging.debug(f"Season matched via original TVDB season S{original_season} (XEM remapped to S{season}) for '{original_title}'")
                         elif is_anime and parsed_season_is_missing_or_default and season > 1:
                              # Check if title explicitly mentions a different season before applying leniency
                              # Example: Searching S7, title says "S01". We should NOT be lenient here.

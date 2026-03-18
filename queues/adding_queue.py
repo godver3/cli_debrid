@@ -327,6 +327,14 @@ class AddingQueue:
                     if any(filter_term in original_torrent_filename_lower for filter_term in filters):
                         logging.warning(f"Torrent's original_filename '{original_torrent_filename}' matches filter list: {filters}. Rejecting entire torrent.")
                         item['torrent_id'] = torrent_info.get('id')
+                        _hash = (torrent_info.get('hash') or '').lower()
+                        if _hash:
+                            try:
+                                from database.not_wanted_magnets import add_to_not_wanted
+                                add_to_not_wanted(_hash)
+                                logging.info(f"Added hash {_hash} to not-wanted list (filename filter match)")
+                            except Exception as _e:
+                                logging.warning(f"Could not add hash to not-wanted list: {_e}")
                         self._handle_failed_item(item, f"Torrent's original name '{original_torrent_filename}' matched filter-out list", queue_manager)
                         processed_this_item = True
                         continue
@@ -335,12 +343,20 @@ class AddingQueue:
                 potential_torrent_title_from_info = torrent_info.get('title')
                 if not potential_torrent_title_from_info and chosen_result_info:
                     potential_torrent_title_from_info = chosen_result_info.get('title')
-                
+
                 if potential_torrent_title_from_info and filters:
                     potential_torrent_title_lower = potential_torrent_title_from_info.lower()
                     if any(filter_term in potential_torrent_title_lower for filter_term in filters):
                         logging.warning(f"Torrent's determined title '{potential_torrent_title_from_info}' matches filter list: {filters}. Rejecting torrent.")
                         item['torrent_id'] = torrent_info.get('id')
+                        _hash = (torrent_info.get('hash') or '').lower()
+                        if _hash:
+                            try:
+                                from database.not_wanted_magnets import add_to_not_wanted
+                                add_to_not_wanted(_hash)
+                                logging.info(f"Added hash {_hash} to not-wanted list (title filter match)")
+                            except Exception as _e:
+                                logging.warning(f"Could not add hash to not-wanted list: {_e}")
                         self._handle_failed_item(item, f"Torrent's title '{potential_torrent_title_from_info}' matched filter-out list", queue_manager)
                         processed_this_item = True
                         continue
@@ -582,6 +598,8 @@ class AddingQueue:
         try:
             if is_upgrade:
                 logging.warning(f"Handling failed upgrade for {item_identifier}: {error}")
+                # Store reason on item so upgrading_queue can log it to activity
+                item['_upgrade_failure_reason'] = error
                 upgrading_queue = UpgradingQueue() # Create instance only if needed
 
                 notification_data = {

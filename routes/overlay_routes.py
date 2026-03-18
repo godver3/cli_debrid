@@ -534,6 +534,131 @@ def regenerate_single_overlay(media_item_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@overlay_bp.route('/api/overlays/poster_list/<int:media_item_id>', methods=['GET'])
+def get_item_poster_list(media_item_id):
+    """Return list of available clean (non-overlay) Plex posters for a media item."""
+    try:
+        if is_jellyfin_mode():
+            return jsonify({'success': False, 'error': 'Poster picker only available for Plex'}), 400
+        conn = _get_db_connection()
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('SELECT ms_item_id, title FROM media_items WHERE id = ?', (media_item_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if not row or not row['ms_item_id']:
+            return jsonify({'success': False, 'error': 'Item not found or no Plex ID'}), 404
+        ms_item_id = row['ms_item_id']
+        plex_url = get_setting('Plex', 'url', default='http://localhost:32400').rstrip('/')
+        plex_token = get_setting('Plex', 'token', default='')
+        from overlays.plex_client import PlexClient
+        client = PlexClient(plex_url, plex_token)
+        all_posters = client.get_poster_list(ms_item_id)
+        # Filter out upload:// (our overlays) to prevent overlay-on-overlay
+        clean = [p for p in all_posters if not p.get('ratingKey', '').startswith('upload://')]
+        posters = [
+            {
+                'index': idx,
+                'rating_key': p.get('ratingKey', ''),
+                'selected': bool(p.get('selected')),
+                'provider': p.get('provider', ''),
+                'thumb_url': f"/api/overlays/poster_thumb/{ms_item_id}/{idx}",
+            }
+            for idx, p in enumerate(clean)
+        ]
+        return jsonify({'success': True, 'posters': posters, 'ms_item_id': ms_item_id})
+    except Exception as e:
+        logger.error(f"Failed to get poster list for item {media_item_id}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@overlay_bp.route('/api/overlays/poster_thumb/<ms_item_id>/<int:index>', methods=['GET'])
+def proxy_poster_thumb(ms_item_id, index):
+    """Proxy a specific Plex poster thumbnail to the browser."""
+    try:
+        if is_jellyfin_mode():
+            abort(400)
+        from io import BytesIO
+        plex_url = get_setting('Plex', 'url', default='http://localhost:32400').rstrip('/')
+        plex_token = get_setting('Plex', 'token', default='')
+        from overlays.plex_client import PlexClient
+        client = PlexClient(plex_url, plex_token)
+        all_posters = client.get_poster_list(ms_item_id)
+        clean = [p for p in all_posters if not p.get('ratingKey', '').startswith('upload://')]
+        logger.debug(f"poster_thumb {ms_item_id}/{index}: {len(clean)} clean posters available")
+        if index >= len(clean):
+            logger.warning(f"poster_thumb: index {index} out of range ({len(clean)} posters)")
+            abort(404)
+        poster = clean[index]
+        rating_key = poster.get('ratingKey', '')
+        logger.debug(f"poster_thumb: fetching ratingKey={rating_key!r} thumb={poster.get('thumb','')!r}")
+        # Use download_poster_by_rating_key which handles all ratingKey formats and auth
+        img_bytes = client.download_poster_by_rating_key(ms_item_id, rating_key)
+        if not img_bytes:
+            logger.warning(f"poster_thumb: download_poster_by_rating_key returned empty for {rating_key!r}")
+            abort(404)
+        return send_file(BytesIO(img_bytes), mimetype='image/jpeg')
+    except Exception as e:
+        logger.warning(f"Failed to proxy poster thumb {ms_item_id}/{index}: {e}")
+        abort(404)
+
+
+@overlay_bp.route('/api/overlays/apply_poster/<int:media_item_id>', methods=['POST'])
+def apply_specific_poster(media_item_id):
+    """Download a chosen Plex poster, save as backup, and apply overlay on top."""
+    try:
+        if is_jellyfin_mode():
+            return jsonify({'success': False, 'error': 'Poster picker only available for Plex'}), 400
+        data = request.get_json() or {}
+        poster_rating_key = data.get('rating_key')
+        if not poster_rating_key:
+            return jsonify({'success': False, 'error': 'rating_key required'}), 400
+        # Safety: never allow using an uploaded (overlay) poster as source
+        if poster_rating_key.startswith('upload://'):
+            return jsonify({'success': False, 'error': 'Cannot use an uploaded poster as source'}), 400
+        conn = _get_db_connection()
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('SELECT ms_item_id, title FROM media_items WHERE id = ?', (media_item_id,))
+        row = cursor.fetchone()
+        conn.close()
+        if not row or not row['ms_item_id']:
+            return jsonify({'success': False, 'error': 'Item not found or no Plex ID'}), 404
+        ms_item_id = row['ms_item_id']
+        plex_url = get_setting('Plex', 'url', default='http://localhost:32400').rstrip('/')
+        plex_token = get_setting('Plex', 'token', default='')
+        from overlays.plex_client import PlexClient
+        client = PlexClient(plex_url, plex_token)
+        # Download the specific clean poster
+        poster_bytes = client.download_poster_by_rating_key(ms_item_id, poster_rating_key)
+        if not poster_bytes:
+            return jsonify({'success': False, 'error': 'Failed to download poster from Plex'}), 500
+        # Save as backup so generate_overlay_for_item picks it up as the source
+        from overlays.cache_cleanup import PosterCacheManager
+        PosterCacheManager(None).backup_poster(ms_item_id, poster_bytes)
+        # Reset overlay state to 'pending' so the generate path uses the backup directly
+        # (avoids the 'removed' branch which would try to compare with current Plex poster)
+        _conn = _get_db_connection()
+        _conn.execute(
+            "UPDATE media_overlay_state SET status='pending', reason='poster pick',"
+            " updated_at=CURRENT_TIMESTAMP WHERE media_item_id=?",
+            (media_item_id,)
+        )
+        _conn.commit()
+        _conn.close()
+        # Apply overlay on top of the chosen poster
+        manager = _get_overlay_manager()
+        result = manager.generate_overlay_for_item(media_item_id, force=True)
+        log_activity('poster_pick',
+                     result='success' if result.get('success') else 'failed',
+                     title=f"Poster picked: {row['title']} (item {media_item_id})",
+                     stats={'media_item_id': media_item_id})
+        return jsonify(result), (200 if result.get('success') else 400)
+    except Exception as e:
+        logger.error(f"Failed to apply specific poster for item {media_item_id}: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @overlay_bp.route('/api/overlays/generate/batch', methods=['POST'])
 def batch_generate_overlays():
     """Start a background generate job for selected items."""
@@ -746,6 +871,8 @@ def _run_generate_all_work(data: dict):
     media_type = data.get('media_type')
     layout_id = data.get('layout_id')
     force = data.get('force', False)
+    force_fresh_poster = data.get('force_fresh_poster', False)
+    seasons_only = data.get('seasons_only', False)
 
     if not media_type:
         return
@@ -760,7 +887,7 @@ def _run_generate_all_work(data: dict):
             layout_media_type = layout_obj.get('media_type')  # 'movie', 'tv', 'season', 'both'
 
     # If a season layout is selected on the TV tab, only generate season overlays.
-    season_layout_only = (layout_media_type == 'season')
+    season_layout_only = (layout_media_type == 'season') or seasons_only
     # If a tv/movie layout is selected, skip season generation (use None to let it auto-select).
     skip_seasons = (layout_media_type in ('tv', 'movie'))
 
@@ -795,7 +922,9 @@ def _run_generate_all_work(data: dict):
         conn.close()
 
         if item_ids:
-            results = manager.batch_generate_overlays(item_ids, force=force, layout_id=layout_id)
+            results = manager.batch_generate_overlays(
+                item_ids, force=force, layout_id=layout_id,
+                force_fresh_poster=force_fresh_poster)
 
     # For TV: also generate season overlays for all processed shows
     # Skip if a non-season layout was explicitly selected (user wants shows only).
@@ -888,6 +1017,7 @@ def _run_generate_all_work(data: dict):
                     season_number=season_num,
                     force=force,
                     layout_id=season_layout_id,
+                    force_fresh_poster=force_fresh_poster,
                 )
                 _st = res.get('status')
                 season_results.append({
@@ -969,6 +1099,7 @@ def regenerate_all_overlays():
     try:
         data = request.get_json() or {}
         data['force'] = True
+        data['force_fresh_poster'] = True
         if get_generate_status().get('running'):
             return jsonify({'success': False, 'error': 'A generate job is already running'}), 409
         media_type = data.get('media_type', 'movie')
@@ -1132,6 +1263,27 @@ def _run_library_sync():
 
         conn.commit()
         conn.close()
+
+        # Clean up season_overlay_state rows whose show ratingKey is no longer valid.
+        # This happens when Plex rescans and assigns new ratingKeys to shows — the old
+        # season rows become orphaned and would 404 on the next overlay sync. Removing
+        # them here lets the overlay sync re-register the seasons with fresh ratingKeys.
+        try:
+            _conn2 = _get_db_connection()
+            _conn2.execute('''
+                DELETE FROM season_overlay_state
+                WHERE show_ms_item_id NOT IN (
+                    SELECT DISTINCT ms_item_id FROM media_items
+                    WHERE ms_item_id IS NOT NULL
+                )
+            ''')
+            _stale = _conn2.total_changes
+            _conn2.commit()
+            _conn2.close()
+            if _stale:
+                logger.info(f"sync_library: removed {_stale} stale season_overlay_state row(s)")
+        except Exception as _se:
+            logger.warning(f"sync_library: could not clean stale season rows: {_se}")
 
         m = _library_sync_state['updated_movies']
         ep = _library_sync_state['updated_episodes']
@@ -1463,7 +1615,8 @@ def list_shows():
                 ep.rep_id,
                 CASE WHEN o.status = 'removal_failed' THEN 'failed'
                      ELSE COALESCE(o.status, 'not_started') END AS overlay_status,
-                CASE WHEN o.status IN ('failed', 'removal_failed') THEN o.reason ELSE NULL END AS overlay_reason
+                CASE WHEN o.status IN ('failed', 'removal_failed') THEN o.reason ELSE NULL END AS overlay_reason,
+                ss.unprocessed_season_nums
             FROM (
                 SELECT
                     COALESCE(NULLIF(imdb_id, ''), NULLIF(tmdb_id, ''), title || CAST(year AS TEXT)) AS show_key,
@@ -1484,12 +1637,32 @@ def list_shows():
             LEFT JOIN tv_shows ts ON ts.imdb_id = ep.imdb_id
                                   OR ts.tmdb_id = ep.tmdb_id
             LEFT JOIN media_overlay_state o ON ep.rep_id = o.media_item_id
+            LEFT JOIN (
+                SELECT f.show_ms_item_id,
+                       GROUP_CONCAT(f.season_number) AS unprocessed_season_nums
+                FROM season_overlay_state f
+                WHERE f.status IN ('not_started', 'pending', 'failed', 'removal_failed')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM season_overlay_state a
+                      WHERE a.show_ms_item_id = f.show_ms_item_id
+                        AND a.season_number = f.season_number
+                        AND a.status = 'applied'
+                  )
+                GROUP BY f.show_ms_item_id
+            ) ss ON ss.show_ms_item_id = ep.ms_item_id
             WHERE ep.collected_episodes > 0
             ORDER BY COALESCE(ts.title, ep.title)
         ''')
 
         items = []
         for row in cursor.fetchall():
+            raw = row['unprocessed_season_nums']
+            if raw:
+                seasons_unprocessed = sorted(set(
+                    int(x) for x in raw.split(',') if x.strip().lstrip('-').isdigit()
+                ))
+            else:
+                seasons_unprocessed = []
             items.append({
                 'id': row['rep_id'],
                 'title': row['title'],
@@ -1502,6 +1675,7 @@ def list_shows():
                 'collected_episodes': row['collected_episodes'] or 0,
                 'total_episodes': row['total_episodes'] or 0,
                 'poster_path': _cached_poster_path(row['imdb_id'], row['tmdb_id'], 'show'),
+                'seasons_unprocessed': seasons_unprocessed,
             })
 
         conn.close()
@@ -1520,6 +1694,35 @@ def list_shows():
 # ============================================
 # Season Overlay Endpoints
 # ============================================
+
+@overlay_bp.route('/api/overlays/poster_applied/<ms_item_id>', methods=['GET'])
+def poster_applied(ms_item_id):
+    """
+    Proxy the currently-selected (overlay-applied) Plex poster for a movie or show.
+    Returns a 300px-wide JPEG thumbnail — same approach as season_thumb but for show/movie cards.
+    """
+    from io import BytesIO
+    from flask import Response
+    try:
+        manager = _get_overlay_manager()
+        img = manager.client.download_poster(ms_item_id)
+        if not img:
+            abort(404)
+        # Resize to thumbnail width so we don't serve 2000x3000 images for small cards
+        thumb_w = 300
+        w, h = img.size
+        if w > thumb_w:
+            thumb_h = int(h * thumb_w / w)
+            img = img.resize((thumb_w, thumb_h))
+        buf = BytesIO()
+        img.convert('RGB').save(buf, format='JPEG', quality=85)
+        buf.seek(0)
+        return Response(buf.read(), mimetype='image/jpeg',
+                        headers={'Cache-Control': 'public, max-age=3600'})
+    except Exception as e:
+        logger.debug(f"poster_applied {ms_item_id}: {e}")
+        abort(404)
+
 
 @overlay_bp.route('/api/overlays/seasons/<season_key>/thumb', methods=['GET'])
 def season_thumb(season_key):
@@ -2596,7 +2799,7 @@ def get_overlay_activity():
 
         if action_filter:
             cursor.execute(
-                '''SELECT id, action_type, triggered_by, result, title, stats_json, created_at
+                '''SELECT id, action_type, triggered_by, result, title, stats_json, duration_seconds, created_at
                    FROM overlay_activity
                    WHERE action_type = ?
                    ORDER BY created_at DESC
@@ -2605,7 +2808,7 @@ def get_overlay_activity():
             )
         else:
             cursor.execute(
-                '''SELECT id, action_type, triggered_by, result, title, stats_json, created_at
+                '''SELECT id, action_type, triggered_by, result, title, stats_json, duration_seconds, created_at
                    FROM overlay_activity
                    ORDER BY created_at DESC
                    LIMIT ? OFFSET ?''',
@@ -2629,13 +2832,14 @@ def get_overlay_activity():
                 except Exception:
                     stats = None
             activities.append({
-                'id':           row['id'],
-                'action_type':  row['action_type'],
-                'triggered_by': row['triggered_by'],
-                'result':       row['result'],
-                'title':        row['title'],
-                'stats':        stats,
-                'created_at':   row['created_at'],
+                'id':               row['id'],
+                'action_type':      row['action_type'],
+                'triggered_by':     row['triggered_by'],
+                'result':           row['result'],
+                'title':            row['title'],
+                'stats':            stats,
+                'duration_seconds': row['duration_seconds'],
+                'created_at':       row['created_at'],
             })
 
         return jsonify({'success': True, 'activities': activities, 'total': total})

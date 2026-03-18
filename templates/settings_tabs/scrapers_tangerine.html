@@ -291,6 +291,11 @@
         initializeScrapersFunctionality();
         initializeSortable();
     });
+
+    function toggleZileanDbFields(scraperId, show) {
+        const fields = document.getElementById(scraperId + '-db-fields');
+        if (fields) fields.style.display = show ? 'block' : 'none';
+    }
 </script>
 
 <div id="scraper-sortable-list">
@@ -473,6 +478,59 @@
             <label for="{{ scraper_id }}-opts" class="settings-title">Options:</label>
             <input type="text" id="{{ scraper_id }}-opts" name="Scrapers.{{ scraper_id }}.opts" value="{{ config.opts }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.opts">
             <small class="settings-description">Leave blank to use default options, otherwise copy from Torrentio URL. Recommend leaving blank.</small>
+        </div>
+        {% endif %}
+        {% if config.type == 'Zilean' %}
+        <!-- Zilean DB upgrade scanning -->
+        <div class="settings-form-group" style="margin-top:16px; border-top:1px solid rgba(255,255,255,0.08); padding-top:16px">
+            <label for="{{ scraper_id }}-db_enabled" class="settings-title">Enable DB Upgrades:</label>
+            <input type="checkbox" id="{{ scraper_id }}-db_enabled"
+                   name="Scrapers.{{ scraper_id }}.db_enabled"
+                   {% if config.db_enabled %}checked{% endif %}
+                   data-section="Scrapers" data-key="{{ scraper_id }}.db_enabled"
+                   onchange="toggleZileanDbFields('{{ scraper_id }}', this.checked)">
+            <small class="settings-description">Connect directly to the Zilean PostgreSQL database for fast bulk upgrade scanning (Upgrade Hub).</small>
+        </div>
+        <div id="{{ scraper_id }}-db-fields" style="display:{% if config.db_enabled %}block{% else %}none{% endif %}">
+            <div class="settings-form-group">
+                <label class="settings-title">Host:</label>
+                <input type="text" class="settings-input" value="{{ (config.url | default('')).replace('http://','').replace('https://','').split(':')[0] }}" disabled
+                       title="Derived from URL above">
+                <small class="settings-description">Derived from URL above (read-only).</small>
+            </div>
+            <div class="settings-form-group">
+                <label for="{{ scraper_id }}-db_port" class="settings-title">Port:</label>
+                <input type="number" id="{{ scraper_id }}-db_port"
+                       name="Scrapers.{{ scraper_id }}.db_port"
+                       value="{{ config.db_port | default(5432) }}"
+                       class="settings-input" style="max-width:120px"
+                       data-section="Scrapers" data-key="{{ scraper_id }}.db_port">
+            </div>
+            <div class="settings-form-group">
+                <label for="{{ scraper_id }}-db_name" class="settings-title">Database Name:</label>
+                <input type="text" id="{{ scraper_id }}-db_name"
+                       name="Scrapers.{{ scraper_id }}.db_name"
+                       value="{{ config.db_name | default('') }}"
+                       class="settings-input"
+                       data-section="Scrapers" data-key="{{ scraper_id }}.db_name"
+                       placeholder="e.g. zilean">
+            </div>
+            <div class="settings-form-group">
+                <label for="{{ scraper_id }}-db_username" class="settings-title">Username:</label>
+                <input type="text" id="{{ scraper_id }}-db_username"
+                       name="Scrapers.{{ scraper_id }}.db_username"
+                       value="{{ config.db_username | default('') }}"
+                       class="settings-input"
+                       data-section="Scrapers" data-key="{{ scraper_id }}.db_username">
+            </div>
+            <div class="settings-form-group">
+                <label for="{{ scraper_id }}-db_password" class="settings-title">Password:</label>
+                <input type="password" id="{{ scraper_id }}-db_password"
+                       name="Scrapers.{{ scraper_id }}.db_password"
+                       value="{{ config.db_password | default('') }}"
+                       class="settings-input"
+                       data-section="Scrapers" data-key="{{ scraper_id }}.db_password">
+            </div>
         </div>
         {% endif %}
     </div>
