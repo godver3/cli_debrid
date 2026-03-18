@@ -8,6 +8,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta
 from typing import Dict, Any
 
@@ -23,6 +24,9 @@ logger = logging.getLogger(__name__)
 # handle_state_change fires twice for the same item within a short window.
 _overlay_in_flight: set = set()
 _overlay_in_flight_lock = threading.Lock()
+
+# Lock to prevent concurrent Plex library reads in _sync_ms_keys_auto
+_sync_ms_keys_lock = threading.Lock()
 
 # Concurrency cap: at most 3 overlay threads run image operations simultaneously.
 # Without this, large batch downloads spawn 30+ threads, each loading/rendering
@@ -245,12 +249,22 @@ def _sync_library_keys_for_jellyfin() -> Dict[str, int]:
 
 
 def _sync_ms_keys_auto() -> Dict[str, int]:
-    """Route to the correct ms-key sync function based on current mode."""
-    if is_jellyfin_mode():
-        return _sync_library_keys_for_jellyfin()
-    plex_url   = get_setting('Plex', 'url',   default='http://localhost:32400').rstrip('/')
-    plex_token = get_setting('Plex', 'token', default='')
-    return _sync_library_keys_for_new_items(plex_url, plex_token)
+    """Route to the correct ms-key sync function based on current mode.
+
+    Uses a lock to prevent concurrent Plex library reads when multiple threads
+    (e.g. parallel apply_overlay_for_new_item retries) call this simultaneously.
+    """
+    if not _sync_ms_keys_lock.acquire(blocking=False):
+        logger.debug("_sync_ms_keys_auto: already running in another thread, skipping")
+        return {'movies': 0, 'episodes': 0, 'errors': 0}
+    try:
+        if is_jellyfin_mode():
+            return _sync_library_keys_for_jellyfin()
+        plex_url   = get_setting('Plex', 'url',   default='http://localhost:32400').rstrip('/')
+        plex_token = get_setting('Plex', 'token', default='')
+        return _sync_library_keys_for_new_items(plex_url, plex_token)
+    finally:
+        _sync_ms_keys_lock.release()
 
 
 def apply_overlay_for_new_item(item_id: int):
@@ -798,7 +812,6 @@ def _reset_content_changed_items(batch_size: int = 200) -> int:
 
         # Fetch cached ratings from OverlayManager's in-process cache when available;
         # fall back to MDBList API only for items in the rating-check batch.
-        from overlays.overlay_manager import OverlayManager
         ratings_cache: dict = OverlayManager._ratings_cache  # shared in-process cache
 
         def _get_ratings(imdb_id: str, do_fetch: bool, item_type: str = '') -> dict:
@@ -915,7 +928,6 @@ def _reset_content_changed_items(batch_size: int = 200) -> int:
             if not result.get('trakt_rating'):
                 try:
                     from utilities.settings import get_setting
-                    from overlays.overlay_manager import OverlayManager
                     client_id = get_setting('Trakt', 'client_id', '')
                     if client_id:
                         if time.time() < OverlayManager._trakt_backoff_until:
@@ -1132,7 +1144,7 @@ def _reset_content_changed_items(batch_size: int = 200) -> int:
         return 0
 
 
-def task_overlay_sync():
+def task_overlay_sync(triggered_by: str = 'scheduled'):
     """
     Periodic overlay sync task.
 
@@ -1154,6 +1166,7 @@ def task_overlay_sync():
         return {'success': False, 'message': 'Overlay system is disabled'}
 
     logger.info("Starting overlay sync task")
+    _sync_start = time.time()
 
     # Kick off IMDb dataset prefetch in the background so it is warm before
     # the first _fetch_ratings call hits the fallback path.
@@ -1181,6 +1194,41 @@ def task_overlay_sync():
 
         # Step 1: Auto-populate ms_item_id for any new Collected items
         _sync_ms_keys_auto()
+
+        # Step 1.1: Sibling cleanup — mark orphaned pending episode rows as applied
+        # where the episode was NEVER individually applied (overlay_applied_at IS NULL)
+        # but its show already has applied siblings. These rows were created before the
+        # sibling-marking fix and will never clear on their own because NULL-episode
+        # shows fill the sync limit ahead of them in the processing queue.
+        try:
+            _sc_conn = _get_db_connection()
+            _sc_conn.execute('''
+                UPDATE media_overlay_state
+                SET status = 'applied',
+                    reason = 'Marked applied via sibling cleanup',
+                    overlay_applied_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE status = 'pending'
+                  AND overlay_applied_at IS NULL
+                  AND media_item_id IN (
+                    SELECT m.id FROM media_items m
+                    WHERE m.type = 'episode'
+                      AND m.ms_item_id IN (
+                        SELECT DISTINCT m2.ms_item_id
+                        FROM media_items m2
+                        JOIN media_overlay_state o2 ON m2.id = o2.media_item_id
+                        WHERE m2.type = 'episode'
+                          AND o2.status = 'applied'
+                      )
+                  )
+            ''')
+            _sc_count = _sc_conn.total_changes
+            _sc_conn.commit()
+            _sc_conn.close()
+            if _sc_count:
+                logger.info(f"Sibling cleanup: marked {_sc_count} orphaned pending episode(s) applied")
+        except Exception as _sc_err:
+            logger.warning(f"Sibling cleanup failed: {_sc_err}")
 
         # Step 1.5: Reset 'applied' items whose quality improved since the overlay
         # was last generated (e.g. a 4K episode was added to a 1080p show).
@@ -1243,9 +1291,22 @@ def task_overlay_sync():
         conn = _get_db_connection()
         cursor = conn.cursor()
 
-        cursor.execute('''
+        # In Jellyfin mode, exclude legacy short Plex integer IDs (LENGTH < 20).
+        # In Plex mode, Plex rating keys are short numeric strings so no length filter.
+        _ms_id_filter = "AND LENGTH(m.ms_item_id) >= 20" if is_jellyfin_mode() else ""
+        _sync_limit = int(get_setting('Overlay Settings', 'sync_items_per_run', 200))
+
+        cursor.execute(f'''
             SELECT
-                MIN(m.id) AS id,
+                -- For episodes, prefer an ID that is NOT yet applied (NULL or
+                -- actionable status) so generate_overlay_for_item won't skip it.
+                -- Falls back to MIN(m.id) if all episodes in the group are applied.
+                COALESCE(
+                    MIN(CASE WHEN m.type = 'episode'
+                                  AND (o.status IS NULL OR o.status != 'applied')
+                             THEN m.id END),
+                    MIN(m.id)
+                ) AS id,
                 m.ms_item_id,
                 m.type,
                 MAX(m.title) AS title,
@@ -1260,27 +1321,30 @@ def task_overlay_sync():
                     ELSE NULL
                 END AS status,
                 MAX(o.retry_count) AS retry_count,
-                MIN(o.last_retry)  AS last_retry
+                MIN(o.last_retry)  AS last_retry,
+                -- Non-NULL if the show/movie was ever successfully applied before.
+                -- Used to decide whether to force a fresh poster on re-render.
+                MAX(o.overlay_applied_at) AS overlay_applied_at
             FROM media_items m
             LEFT JOIN media_overlay_state o ON m.id = o.media_item_id
             WHERE m.ms_item_id IS NOT NULL
-              AND LENGTH(m.ms_item_id) >= 20
+              {_ms_id_filter}
               AND m.state IN ('Collected', 'Upgrading')
             GROUP BY
                 CASE WHEN m.type = 'episode' THEN m.ms_item_id ELSE CAST(m.id AS TEXT) END
             HAVING
-                -- TV shows: only process if NO episode is currently applied.
-                -- New episodes added after a show was applied are caught by
-                -- _mark_all_episodes_applied running again on the next successful apply.
-                -- We do NOT use NULL as a trigger for shows — that would cause infinite
-                -- re-queuing whenever a new episode is added to an already-applied show.
                 (
+                    -- Episodes: process whenever any episode in the show group has an
+                    -- actionable status (NULL, pending, removed, stuck-analyzing, retryable-failed).
+                    -- The MAX(applied)=0 gate is intentionally absent — quality/content resets
+                    -- set individual episodes to 'pending' while others stay 'applied', so the
+                    -- gate would permanently hide those shows. After processing, _mark_all_episodes_applied
+                    -- marks the full group applied, preventing re-queuing next run.
                     m.type = 'episode'
-                    AND MAX(CASE WHEN o.status = 'applied' THEN 1 ELSE 0 END) = 0
                     AND (
-                        MAX(CASE WHEN o.status = 'pending' THEN 1 ELSE 0 END) = 1
+                        MAX(CASE WHEN o.status IS NULL    THEN 1 ELSE 0 END) = 1
+                        OR MAX(CASE WHEN o.status = 'pending' THEN 1 ELSE 0 END) = 1
                         OR MAX(CASE WHEN o.status = 'removed' THEN 1 ELSE 0 END) = 1
-                        OR MAX(CASE WHEN o.status IS NULL   THEN 1 ELSE 0 END) = 1
                         OR MAX(CASE WHEN o.status = 'analyzing' AND o.updated_at < datetime('now', '-30 minutes') THEN 1 ELSE 0 END) = 1
                         OR MAX(CASE WHEN o.status = 'failed' AND o.retry_count < 5 AND (o.last_retry IS NULL OR o.last_retry < datetime('now', '-1 hour')) THEN 1 ELSE 0 END) = 1
                     )
@@ -1298,15 +1362,15 @@ def task_overlay_sync():
                 )
             ORDER BY
                 CASE
-                    WHEN MAX(CASE WHEN o.status IS NULL     THEN 1 ELSE 0 END) = 1 THEN 1
-                    WHEN MAX(CASE WHEN o.status = 'pending' THEN 1 ELSE 0 END) = 1 THEN 2
-                    WHEN MAX(CASE WHEN o.status = 'removed' THEN 1 ELSE 0 END) = 1 THEN 3
-                    WHEN MAX(CASE WHEN o.status = 'analyzing' THEN 1 ELSE 0 END) = 1 THEN 4
-                    WHEN MAX(CASE WHEN o.status = 'failed'  THEN 1 ELSE 0 END) = 1 THEN 5
-                    ELSE 6
+                    -- NULL (never processed) and pending (needs refresh) are equal priority
+                    WHEN MAX(CASE WHEN o.status IS NULL OR o.status = 'pending' THEN 1 ELSE 0 END) = 1 THEN 1
+                    WHEN MAX(CASE WHEN o.status = 'removed'   THEN 1 ELSE 0 END) = 1 THEN 2
+                    WHEN MAX(CASE WHEN o.status = 'analyzing' THEN 1 ELSE 0 END) = 1 THEN 3
+                    WHEN MAX(CASE WHEN o.status = 'failed'    THEN 1 ELSE 0 END) = 1 THEN 4
+                    ELSE 5
                 END,
                 MIN(m.id)
-            LIMIT 200
+            LIMIT {_sync_limit}
         ''')
 
         items_to_process = cursor.fetchall()
@@ -1328,7 +1392,17 @@ def task_overlay_sync():
             item_title = row['title'] or ms_item_id
             total += 1
 
-            result = manager.generate_overlay_for_item(item_id, force=False)
+            # Use a fresh poster (from TMDB, not Plex) when re-rendering a
+            # previously-applied item. Plex's current poster is the overlaid
+            # version we uploaded, so downloading from Plex would produce
+            # overlay-on-overlay. force_fresh_poster deletes the local backup
+            # and forces a clean TMDB download as the new base.
+            was_previously_applied = (
+                row['overlay_applied_at'] is not None
+                or row['status'] == 'applied'  # TV show: some episodes still applied
+            )
+            result = manager.generate_overlay_for_item(
+                item_id, force=False, force_fresh_poster=was_previously_applied)
             status = result.get('status', 'failed')
 
             if status == 'applied':
@@ -1365,7 +1439,8 @@ def task_overlay_sync():
             # Find items that were just re-keyed (status=pending, key now populated)
             conn = _get_db_connection()
             cursor = conn.cursor()
-            cursor.execute('''
+            _s4_ms_id_filter = "AND LENGTH(m.ms_item_id) >= 20" if is_jellyfin_mode() else ""
+            cursor.execute(f'''
                 SELECT
                     MIN(m.id) AS id,
                     m.ms_item_id,
@@ -1374,7 +1449,7 @@ def task_overlay_sync():
                 FROM media_items m
                 JOIN media_overlay_state o ON m.id = o.media_item_id
                 WHERE m.ms_item_id IS NOT NULL
-                  AND LENGTH(m.ms_item_id) >= 20
+                  {_s4_ms_id_filter}
                   AND m.state IN ('Collected', 'Upgrading')
                   AND o.status = 'pending'
                 GROUP BY
@@ -1413,20 +1488,27 @@ def task_overlay_sync():
         # re-generation due to quality change, removal, or initial 'pending' status.
         conn = _get_db_connection()
         cursor = conn.cursor()
-        cursor.execute('''
-            SELECT show_ms_item_id, season_ms_item_id, season_number, status
-            FROM season_overlay_state
-            WHERE (status IN ('pending', 'removed')
-               OR (status = 'analyzing' AND updated_at < datetime('now', '-30 minutes'))
-               OR (status = 'failed' AND retry_count < 5
-                   AND (last_retry IS NULL OR last_retry < datetime('now', '-1 hour'))))
-               AND status != 'user_removed'
+        cursor.execute(f'''
+            SELECT s.show_ms_item_id, s.season_ms_item_id, s.season_number, s.status,
+                   COALESCE(mi.title, '') AS show_title, COALESCE(mi.year, '') AS show_year
+            FROM season_overlay_state s
+            LEFT JOIN (
+                SELECT ms_item_id, title, year
+                FROM media_items
+                WHERE type = 'episode'
+                GROUP BY ms_item_id
+            ) mi ON mi.ms_item_id = s.show_ms_item_id
+            WHERE (s.status IN ('pending', 'removed')
+               OR (s.status = 'analyzing' AND s.updated_at < datetime('now', '-30 minutes'))
+               OR (s.status = 'failed' AND s.retry_count < 5
+                   AND (s.last_retry IS NULL OR s.last_retry < datetime('now', '-1 hour'))))
+               AND s.status != 'user_removed'
             ORDER BY
-                CASE WHEN status = 'pending' THEN 1
-                     WHEN status = 'removed' THEN 2
-                     WHEN status = 'analyzing' THEN 3
+                CASE WHEN s.status = 'pending' THEN 1
+                     WHEN s.status = 'removed' THEN 2
+                     WHEN s.status = 'analyzing' THEN 3
                      ELSE 4 END
-            LIMIT 200
+            LIMIT {_sync_limit}
         ''')
         seasons_to_process = cursor.fetchall()
         conn.close()
@@ -1449,8 +1531,11 @@ def task_overlay_sync():
                 else:
                     season_failed += 1
                     sreason = sresult.get('message') or sresult.get('error') or sstatus
+                    show_label = srow['show_title'] or srow['show_ms_item_id']
+                    if srow['show_year']:
+                        show_label = f"{show_label} ({srow['show_year']})"
                     failure_details.append(
-                        f"season {srow['season_number']} ({srow['season_ms_item_id']}): {sreason}"
+                        f"{show_label} S{srow['season_number']} ({srow['season_ms_item_id']}): {sreason}"
                     )
             logger.info(
                 f"Season overlay sync complete: {season_applied} applied, "
@@ -1467,11 +1552,12 @@ def task_overlay_sync():
         total_failed = failed + season_failed
         log_activity(
             'overlay_sync',
-            triggered_by='scheduled',
+            triggered_by=triggered_by,
             result='success' if total_failed == 0 else 'partial',
             title=f"Overlay sync: {applied} applied, {failed} failed, {skipped} skipped"
                   + (f", {season_applied} seasons applied" if seasons_to_process else ""),
             stats=_sync_stats,
+            duration_seconds=int(time.time() - _sync_start),
         )
         return {
             'success': True,
@@ -1488,8 +1574,9 @@ def task_overlay_sync():
 
     except Exception as e:
         logger.error(f"Overlay sync task failed: {e}", exc_info=True)
-        log_activity('overlay_sync', triggered_by='scheduled', result='failed',
-                     title=f"Overlay sync failed: {e}")
+        log_activity('overlay_sync', triggered_by=triggered_by, result='failed',
+                     title=f"Overlay sync failed: {e}",
+                     duration_seconds=int(time.time() - _sync_start))
         return {'success': False, 'message': str(e)}
 
 
@@ -1748,7 +1835,7 @@ def _register_show_seasons_pending(manager: OverlayManager, show_ms_item_id: str
         logger.warning(f"Failed to register seasons for show {show_ms_item_id}: {e}")
 
 
-def task_overlay_cleanup():
+def task_overlay_cleanup(triggered_by: str = 'scheduled'):
     """
     Periodic overlay cleanup task — DB housekeeping + Plex poster pruning.
 
@@ -1764,6 +1851,7 @@ def task_overlay_cleanup():
         return {'success': False, 'message': 'Overlay system is disabled'}
 
     logger.info("Starting overlay cleanup task")
+    _cleanup_start = time.time()
 
     try:
         conn = _get_db_connection()
@@ -1818,13 +1906,23 @@ def task_overlay_cleanup():
         ''')
         season_old_count = cursor.rowcount
 
-        # Reset retry count for persistently failed season items after 7 days
+        # Delete stale 404 season rows (Plex ratingKey no longer exists) instead of
+        # resetting them — they will be re-registered with the new ratingKey on next sync.
+        cursor.execute('''
+            DELETE FROM season_overlay_state
+            WHERE status = 'failed'
+              AND retry_count >= 5
+              AND reason LIKE '%404%'
+        ''')
+
+        # Reset retry count for other persistently failed season items after 7 days
         cursor.execute('''
             UPDATE season_overlay_state
             SET retry_count = 0,
                 status = 'pending'
             WHERE status = 'failed'
               AND retry_count >= 5
+              AND (reason IS NULL OR reason NOT LIKE '%404%')
               AND (last_retry IS NULL OR last_retry < datetime('now', '-7 days'))
         ''')
         season_reset_count = cursor.rowcount
@@ -1902,6 +2000,124 @@ def task_overlay_cleanup():
                         _keep_hashes.update(r[0] for r in _hcur.fetchall())
                         _hconn.close()
 
+                        # ── Pre-pass: discover upload hashes for applied/pending items
+                        # BEFORE the disk-walk so their active overlay files are not
+                        # accidentally deleted. Runs Plex API calls, stores the selected
+                        # poster hash, and adds it to _keep_hashes.
+                        from concurrent.futures import ThreadPoolExecutor, as_completed
+                        from .plex_client import PlexClient
+                        client = PlexClient(plex_url, plex_token, timeout=10)
+
+                        _ppconn = _get_db_connection()
+                        _ppcur  = _ppconn.cursor()
+                        _ppcur.execute('''
+                            SELECT DISTINCT m.ms_item_id
+                            FROM media_items m
+                            JOIN media_overlay_state o ON m.id = o.media_item_id
+                            WHERE o.status IN ('applied', 'pending')
+                              AND o.overlay_applied_at IS NOT NULL
+                              AND (o.last_plex_upload_hash IS NULL OR o.last_plex_upload_hash = '')
+                              AND m.ms_item_id IS NOT NULL
+                              AND m.ms_item_id != ''
+                        ''')
+                        _pp_item_keys = [r[0] for r in _ppcur.fetchall()]
+                        _ppcur.execute('''
+                            SELECT DISTINCT season_ms_item_id
+                            FROM season_overlay_state
+                            WHERE status IN ('applied', 'pending')
+                              AND overlay_applied_at IS NOT NULL
+                              AND (last_plex_upload_hash IS NULL OR last_plex_upload_hash = '')
+                              AND season_ms_item_id IS NOT NULL
+                              AND season_ms_item_id != ''
+                        ''')
+                        _pp_season_keys = [r[0] for r in _ppcur.fetchall()]
+                        _ppconn.close()
+
+                        def _prepass_get_hash(rk):
+                            try:
+                                for _p in (client.get_poster_list(rk) or []):
+                                    if _p.get('selected'):
+                                        _pk = _p.get('ratingKey', '')
+                                        if _pk.startswith('upload://posters/'):
+                                            _h = _pk[len('upload://posters/'):]
+                                            if _h:
+                                                return rk, _h
+                            except Exception as _ppe:
+                                logger.debug(f"Pre-pass error for {rk}: {_ppe}")
+                            return rk, None
+
+                        _pp_found = {}         # ms_item_id -> hash
+                        _pp_season_found = {}  # season_ms_item_id -> hash
+                        if _pp_item_keys or _pp_season_keys:
+                            logger.info(
+                                f"Plex poster cleanup: pre-pass for "
+                                f"{len(_pp_item_keys)} item(s) + {len(_pp_season_keys)} season(s) "
+                                f"without stored hash — fetching before disk-walk"
+                            )
+                            _pp_total = len(_pp_item_keys) + len(_pp_season_keys)
+                            _pp_done  = 0
+                            with ThreadPoolExecutor(max_workers=10) as _pp_pool:
+                                _pp_item_futs = {
+                                    _pp_pool.submit(_prepass_get_hash, rk): rk
+                                    for rk in _pp_item_keys
+                                }
+                                _pp_season_futs = {
+                                    _pp_pool.submit(_prepass_get_hash, rk): rk
+                                    for rk in _pp_season_keys
+                                }
+                                for _pp_fut in as_completed(
+                                        list(_pp_item_futs) + list(_pp_season_futs)):
+                                    _rk, _h = _pp_fut.result()
+                                    _pp_done += 1
+                                    if _pp_done % 100 == 0:
+                                        logger.info(
+                                            f"Plex poster cleanup: pre-pass progress "
+                                            f"{_pp_done}/{_pp_total} "
+                                            f"({len(_pp_found) + len(_pp_season_found)} hashes found so far)"
+                                        )
+                                    if _h:
+                                        if _pp_fut in _pp_item_futs:
+                                            _pp_found[_rk] = _h
+                                        else:
+                                            _pp_season_found[_rk] = _h
+
+                            if _pp_found or _pp_season_found:
+                                try:
+                                    _pp_write = _get_db_connection()
+                                    for _ms_id, _uhash in _pp_found.items():
+                                        _pp_write.execute(
+                                            """UPDATE media_overlay_state
+                                                  SET last_plex_upload_hash = ?,
+                                                      updated_at = CURRENT_TIMESTAMP
+                                                WHERE media_item_id IN (
+                                                    SELECT id FROM media_items WHERE ms_item_id = ?
+                                                )
+                                                  AND (last_plex_upload_hash IS NULL
+                                                   OR last_plex_upload_hash = '')""",
+                                            (_uhash, _ms_id)
+                                        )
+                                    for _sms_id, _suhash in _pp_season_found.items():
+                                        _pp_write.execute(
+                                            """UPDATE season_overlay_state
+                                                  SET last_plex_upload_hash = ?,
+                                                      updated_at = CURRENT_TIMESTAMP
+                                                WHERE season_ms_item_id = ?
+                                                  AND (last_plex_upload_hash IS NULL
+                                                   OR last_plex_upload_hash = '')""",
+                                            (_suhash, _sms_id)
+                                        )
+                                    _pp_write.commit()
+                                    _pp_write.close()
+                                    _keep_hashes.update(_pp_found.values())
+                                    _keep_hashes.update(_pp_season_found.values())
+                                    logger.info(
+                                        f"Plex poster cleanup: pre-pass stored hashes for "
+                                        f"{len(_pp_found)} item(s) + {len(_pp_season_found)} season(s), "
+                                        f"added to disk-walk keep set"
+                                    )
+                                except Exception as _pp_err:
+                                    logger.warning(f"Pre-pass hash storage failed: {_pp_err}")
+
                         if _keep_hashes:
                             logger.info(
                                 f"Plex poster cleanup: disk-walk mode, "
@@ -1952,6 +2168,32 @@ def task_overlay_cleanup():
                                 "Falling back to legacy API pass for all items."
                             )
 
+                        # Log activity now (after fast DB + disk-walk phases) so the
+                        # entry appears promptly regardless of how long the legacy API
+                        # pass takes for items that still lack a stored upload hash.
+                        _activity_title = f"Cleanup: {total_removed} record(s) removed, {total_reset} reset"
+                        if total_deleted > 0:
+                            _activity_mb = round(total_bytes / (1024 * 1024), 2)
+                            _activity_title += f", {total_deleted} poster(s) deleted ({_activity_mb} MB)"
+                        log_activity(
+                            'cleanup',
+                            triggered_by=triggered_by,
+                            result='success' if total_errors == 0 else 'partial',
+                            title=_activity_title,
+                            stats={
+                                'orphaned_removed':           orphaned_count,
+                                'old_records_removed':        old_records_count,
+                                'failed_items_reset':         reset_count,
+                                'season_orphaned_removed':    season_orphaned_count,
+                                'season_old_records_removed': season_old_count,
+                                'season_failed_items_reset':  season_reset_count,
+                                'posters_deleted':            total_deleted,
+                                'mb_reclaimed':               round(total_bytes / (1024 * 1024), 2),
+                                'poster_errors':              total_errors,
+                            },
+                            duration_seconds=int(time.time() - _cleanup_start),
+                        )
+
                         # Legacy API-based cleanup.
                         # When disk-walk ran: only process items that lack a stored hash
                         # (they were applied before the hash-tracking column was added).
@@ -1998,7 +2240,6 @@ def task_overlay_cleanup():
                             )
 
                         # Legacy API pass — only runs when items list is non-empty.
-                        from concurrent.futures import ThreadPoolExecutor, as_completed
                         _stale_keys = []
                         _stale_lock = threading.Lock()
 
@@ -2006,6 +2247,7 @@ def task_overlay_cleanup():
                             _rk    = item['ms_item_id']
                             _title = item['title']
                             _del, _err, _byt = 0, 0, 0
+                            _found_hash = None
                             try:
                                 try:
                                     _posters = client.get_poster_list(_rk)
@@ -2018,12 +2260,18 @@ def task_overlay_cleanup():
                                         )
                                         with _stale_lock:
                                             _stale_keys.append(_rk)
-                                        return _del, _err, _byt
+                                        return _del, _err, _byt, None
                                     raise
                                 for _p in (_posters or []):
-                                    if _p.get('selected'):
-                                        continue
                                     _p_key = _p.get('ratingKey', '')
+                                    if _p.get('selected'):
+                                        # Capture selected poster hash so future cleanup runs
+                                        # can use the fast disk-walk path instead of API calls.
+                                        if _p_key.startswith('upload://posters/'):
+                                            _h = _p_key[len('upload://posters/'):]
+                                            if _h:
+                                                _found_hash = _h
+                                        continue
                                     if not _p_key.startswith('upload://posters/'):
                                         continue
                                     _uhash = _p_key[len('upload://posters/'):]
@@ -2049,18 +2297,45 @@ def task_overlay_cleanup():
                                 logger.error(
                                     f"Plex poster cleanup error for '{_title}' ({_rk}): {_ie}")
                                 _err += 1
-                            return _del, _err, _byt
+                            return _del, _err, _byt, _found_hash
 
+                        _hash_updates = {}  # ms_item_id -> selected upload hash
                         if items:
-                            from .plex_client import PlexClient
-                            client = PlexClient(plex_url, plex_token)
                             with ThreadPoolExecutor(max_workers=10) as _pool:
                                 _futs = {_pool.submit(_cleanup_one_item, dict(it)): it for it in items}
                                 for _fut in as_completed(_futs):
-                                    _d, _e, _b = _fut.result()
+                                    _d, _e, _b, _h = _fut.result()
                                     total_deleted += _d
                                     total_errors  += _e
                                     total_bytes   += _b
+                                    if _h:
+                                        _hash_updates[_futs[_fut]['ms_item_id']] = _h
+
+                        # Store discovered hashes so future cleanup runs use the fast
+                        # disk-walk path instead of per-item Plex API calls (self-healing).
+                        if _hash_updates:
+                            try:
+                                _hu_conn = _get_db_connection()
+                                for _ms_id, _uhash in _hash_updates.items():
+                                    _hu_conn.execute(
+                                        """UPDATE media_overlay_state
+                                              SET last_plex_upload_hash = ?,
+                                                  updated_at = CURRENT_TIMESTAMP
+                                            WHERE media_item_id IN (
+                                                SELECT id FROM media_items WHERE ms_item_id = ?
+                                            )
+                                              AND (last_plex_upload_hash IS NULL
+                                               OR last_plex_upload_hash = '')""",
+                                        (_uhash, _ms_id)
+                                    )
+                                _hu_conn.commit()
+                                _hu_conn.close()
+                                logger.info(
+                                    f"Plex poster cleanup: stored upload hash for "
+                                    f"{len(_hash_updates)} item(s) — future runs will use disk-walk"
+                                )
+                            except Exception as _hue:
+                                logger.warning(f"Failed to store upload hashes: {_hue}")
 
                         # Handle stale 404 keys sequentially (rare, needs DB writes)
                         for _sk in _stale_keys:
@@ -2117,12 +2392,17 @@ def task_overlay_cleanup():
                             _sn  = s_item['season_number']
                             _lbl = f"Season {_sn} (key={_sk})"
                             _del, _err, _byt = 0, 0, 0
+                            _found_hash = None
                             try:
                                 _posters = client.get_poster_list(_sk)
                                 for _p in (_posters or []):
-                                    if _p.get('selected'):
-                                        continue
                                     _p_key = _p.get('ratingKey', '')
+                                    if _p.get('selected'):
+                                        if _p_key.startswith('upload://posters/'):
+                                            _h = _p_key[len('upload://posters/'):]
+                                            if _h:
+                                                _found_hash = _h
+                                        continue
                                     if not _p_key.startswith('upload://posters/'):
                                         continue
                                     _usuffix = _p_key[len('upload://posters/'):]
@@ -2154,23 +2434,44 @@ def task_overlay_cleanup():
                             except Exception as _se:
                                 logger.error(f"Plex poster cleanup error for {_lbl}: {_se}")
                                 _err += 1
-                            return _del, _err, _byt
+                            return _del, _err, _byt, _found_hash
 
+                        _season_hash_updates = {}  # season_ms_item_id -> selected upload hash
                         if season_items:
-                            if not items:
-                                # client not yet created (items list was empty)
-                                from .plex_client import PlexClient
-                                client = PlexClient(plex_url, plex_token)
                             with ThreadPoolExecutor(max_workers=10) as _s_pool:
                                 _s_futs = {
                                     _s_pool.submit(_cleanup_one_season, dict(si)): si
                                     for si in season_items
                                 }
                                 for _s_fut in as_completed(_s_futs):
-                                    _d, _e, _b = _s_fut.result()
+                                    _d, _e, _b, _sh = _s_fut.result()
                                     total_deleted += _d
                                     total_errors  += _e
                                     total_bytes   += _b
+                                    if _sh:
+                                        _season_hash_updates[_s_futs[_s_fut]['season_ms_item_id']] = _sh
+
+                        if _season_hash_updates:
+                            try:
+                                _shu_conn = _get_db_connection()
+                                for _sms_id, _suhash in _season_hash_updates.items():
+                                    _shu_conn.execute(
+                                        """UPDATE season_overlay_state
+                                              SET last_plex_upload_hash = ?,
+                                                  updated_at = CURRENT_TIMESTAMP
+                                            WHERE season_ms_item_id = ?
+                                              AND (last_plex_upload_hash IS NULL
+                                               OR last_plex_upload_hash = '')""",
+                                        (_suhash, _sms_id)
+                                    )
+                                _shu_conn.commit()
+                                _shu_conn.close()
+                                logger.info(
+                                    f"Plex poster cleanup: stored upload hash for "
+                                    f"{len(_season_hash_updates)} season(s) — future runs will use disk-walk"
+                                )
+                            except Exception as _shue:
+                                logger.warning(f"Failed to store season upload hashes: {_shue}")
 
                         total_mb_plex = round(total_bytes / (1024 * 1024), 2)
                         logger.info(
@@ -2203,30 +2504,6 @@ def task_overlay_cleanup():
                     except Exception as _pce:
                         logger.warning(f"Plex poster cleanup failed: {_pce}")
 
-        # ── Single activity log entry covering both operations ─────────────────
-        total_mb = round(total_bytes / (1024 * 1024), 2)
-        title = f"Cleanup: {total_removed} record(s) removed, {total_reset} reset"
-        if total_deleted > 0:
-            title += f", {total_deleted} poster(s) deleted ({total_mb} MB)"
-
-        log_activity(
-            'cleanup',
-            triggered_by='scheduled',
-            result='success' if total_errors == 0 else 'partial',
-            title=title,
-            stats={
-                'orphaned_removed':           orphaned_count,
-                'old_records_removed':        old_records_count,
-                'failed_items_reset':         reset_count,
-                'season_orphaned_removed':    season_orphaned_count,
-                'season_old_records_removed': season_old_count,
-                'season_failed_items_reset':  season_reset_count,
-                'posters_deleted':            total_deleted,
-                'mb_reclaimed':               total_mb,
-                'poster_errors':              total_errors,
-            },
-        )
-
         return {
             'success': True,
             'message': 'Cleanup completed',
@@ -2237,13 +2514,14 @@ def task_overlay_cleanup():
             'season_old_records_removed': season_old_count,
             'season_failed_items_reset':  season_reset_count,
             'posters_deleted':            total_deleted,
-            'mb_reclaimed':               total_mb,
+            'mb_reclaimed':               round(total_bytes / (1024 * 1024), 2),
         }
 
     except Exception as e:
         logger.error(f"Overlay cleanup task failed: {e}", exc_info=True)
-        log_activity('cleanup', triggered_by='scheduled', result='failed',
-                     title=f"Overlay cleanup failed: {e}")
+        log_activity('cleanup', triggered_by=triggered_by, result='failed',
+                     title=f"Overlay cleanup failed: {e}",
+                     duration_seconds=int(time.time() - _cleanup_start))
         return {'success': False, 'message': str(e)}
 
 
@@ -2535,6 +2813,7 @@ def task_overlay_full_sync(force: bool = False):
         return {'success': False, 'message': 'Overlay system is disabled'}
 
     logger.info(f"Starting full overlay sync (force={force})")
+    _full_sync_start = time.time()
 
     try:
         if is_jellyfin_mode():
@@ -2614,7 +2893,8 @@ def task_overlay_full_sync(force: bool = False):
         log_activity('full_sync',
                      triggered_by='scheduled',
                      title=f"Full sync: {applied} applied, {failed} failed, {skipped} skipped of {total}",
-                     stats={'total': total, 'applied': applied, 'failed': failed, 'skipped': skipped})
+                     stats={'total': total, 'applied': applied, 'failed': failed, 'skipped': skipped},
+                     duration_seconds=int(time.time() - _full_sync_start))
         return {
             'success': True,
             'message': 'Full overlay sync completed',
@@ -2628,7 +2908,8 @@ def task_overlay_full_sync(force: bool = False):
     except Exception as e:
         logger.error(f"Full overlay sync task failed: {e}", exc_info=True)
         log_activity('full_sync', triggered_by='scheduled', result='failed',
-                     title=f"Full sync failed: {e}")
+                     title=f"Full sync failed: {e}",
+                     duration_seconds=int(time.time() - _full_sync_start))
         return {'success': False, 'message': str(e)}
 
 

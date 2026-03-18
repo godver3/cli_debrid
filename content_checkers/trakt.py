@@ -39,6 +39,10 @@ TRAKT_COLLECTION_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_collection_cac
 TRAKT_IMDB_ID_CACHE_FILE = os.path.join(DB_CONTENT_DIR, 'trakt_imdb_id_cache.pkl')
 CACHE_EXPIRY_DAYS = 7
 
+# In-memory TTL cache for special/discover list endpoints (reduces calls from every 15min to every 6h)
+_special_list_endpoint_cache: Dict[str, Any] = {}
+_SPECIAL_LIST_CACHE_TTL = 6 * 3600  # 6 hours
+
 # Get config directory from environment variable with fallback
 CONFIG_DIR = os.environ.get('USER_CONFIG', '/user/config')
 TRAKT_CONFIG_FILE = os.path.join(CONFIG_DIR, '.pytrakt.json')
@@ -852,12 +856,20 @@ def fetch_items_from_trakt(
             # Detect HTML responses that sometimes appear instead of JSON
             content_type = response.headers.get("content-type", "")
             if "html" in content_type.lower():
-                logging.error(f"Received HTML response instead of JSON from Trakt API. Status: {response.status_code}, Content-Type: {content_type}")
+                if response.status_code == 404 and '/lists/personal/' in url:
+                    logging.debug(f"Trakt 404 for {url} — no personal lists for this item yet. Skipping.")
+                    return []
+
+                logging.error(f"Received HTML response instead of JSON from Trakt API. URL: {url}, Status: {response.status_code}, Content-Type: {content_type}")
                 logging.error(f"Response headers: {dict(response.headers)}")
                 logging.error(f"Response body preview: {response.text[:500]}...")
 
                 # If this is a 429 rate limit with HTML response (Cloudflare block),
                 # extract Retry-After header before raising error so it gets handled properly
+                if response.status_code == 404:
+                    logging.warning(f"Trakt API returned 404 for {url} — resource may no longer exist. Skipping.")
+                    return []
+
                 if response.status_code == 429:
                     retry_after = int(response.headers.get("Retry-After", 60))
                     logging.warning(f"Rate limit (429) returned HTML. Retry-After: {retry_after}s")
@@ -1330,8 +1342,7 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[Lis
 
     all_wanted_items = []
     trakt_sources = get_trakt_sources()
-    disable_caching = True  # Hardcoded to True
-    cache = {} if disable_caching else load_trakt_cache(TRAKT_WATCHLIST_CACHE_FILE)
+    cache = load_trakt_cache(TRAKT_WATCHLIST_CACHE_FILE)
     current_time = datetime.now()
 
     # Check if watchlist removal is enabled
@@ -1344,8 +1355,20 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[Lis
     # Process Trakt Watchlist
     for watchlist_source in trakt_sources['watchlist']:
         if watchlist_source.get('enabled', False):
+            # Skip API fetch if watchlist hasn't changed and removal is not enabled
+            # (removal needs fresh items to check which are collected)
+            cached_processed = cache.get('processed_items') if isinstance(cache, dict) else None
+            if not should_remove and cached_processed and not check_for_updates(cache_ttl_minutes=30):
+                logging.debug("Trakt watchlist unchanged (check_for_updates=False), using cached items")
+                processed_items = cached_processed
+                all_wanted_items.append((processed_items, versions))
+                continue
+
             watchlist_items = fetch_items_from_trakt("/sync/watchlist")
             processed_items = process_trakt_items(watchlist_items)
+            # Save to cache for future skip-if-unchanged logic
+            cache['processed_items'] = processed_items
+            save_trakt_cache(cache, TRAKT_WATCHLIST_CACHE_FILE)
             
             # Handle removal of collected items if enabled
             if should_remove:
@@ -1641,30 +1664,36 @@ def get_wanted_from_special_trakt_lists(source_config: Dict[str, Any], versions_
             if not endpoint_path: continue # Skip if None (e.g. Box Office for shows)
 
             full_api_path = f"{endpoint_path}?{fetch_params_str}"
-            logging.info(f"Fetching from Special Trakt List '{list_type}', endpoint: {full_api_path}")
-            
-            response = make_trakt_request('get', full_api_path)
-            if response:
+
+            # Check in-memory TTL cache before hitting the API
+            cached_entry = _special_list_endpoint_cache.get(full_api_path)
+            if cached_entry and (time.time() - cached_entry['ts']) < _SPECIAL_LIST_CACHE_TTL:
+                logging.debug(f"Using cached result for Special Trakt List endpoint: {full_api_path} (age: {int(time.time() - cached_entry['ts'])}s)")
+                processed_batch = cached_entry['items']
+            else:
+                logging.info(f"Fetching from Special Trakt List '{list_type}', endpoint: {full_api_path}")
+                response = make_trakt_request('get', full_api_path)
+                if not response:
+                    logging.error(f"Failed to fetch data from {full_api_path} for list type {list_type}")
+                    continue
                 try:
                     raw_items = response.json()
                     if not isinstance(raw_items, list):
-                        # Some endpoints might return a dict with items inside, e.g. list items
-                        # For simplicity, this example assumes endpoints return a direct list of media items.
-                        # If structure varies (e.g. item['movie'] or item['show']), process_trakt_items handles it.
                         logging.warning(f"Expected a list from {full_api_path}, got {type(raw_items)}. Skipping this response.")
                         continue
-                    
                     processed_batch = process_trakt_items(raw_items)
-                    for item_detail in processed_batch:
-                        if item_detail['imdb_id'] and item_detail['imdb_id'] not in seen_imdb_ids_for_this_source:
-                            all_items_for_this_source.append(item_detail)
-                            seen_imdb_ids_for_this_source.add(item_detail['imdb_id'])
+                    _special_list_endpoint_cache[full_api_path] = {'items': processed_batch, 'ts': time.time()}
                 except json.JSONDecodeError:
                     logging.error(f"Failed to decode JSON from {full_api_path}")
+                    continue
                 except Exception as e:
                     logging.error(f"Error processing items from {full_api_path}: {e}")
-            else:
-                logging.error(f"Failed to fetch data from {full_api_path} for list type {list_type}")
+                    continue
+
+            for item_detail in processed_batch:
+                if item_detail['imdb_id'] and item_detail['imdb_id'] not in seen_imdb_ids_for_this_source:
+                    all_items_for_this_source.append(item_detail)
+                    seen_imdb_ids_for_this_source.add(item_detail['imdb_id'])
 
     if not all_items_for_this_source:
         logging.info(f"No items found for Special Trakt List source: {source_config.get('display_name')}")
@@ -1759,10 +1788,11 @@ def check_trakt_early_releases():
 
         # Now use the trakt_id (either from cache or freshly fetched)
         endpoint = f"/movies/{trakt_id}/lists/personal/popular" if item['type'] == 'movie' else f"/shows/{trakt_id}/lists/personal/popular"
+        logging.debug(f"Fetching personal lists for '{item.get('title')}' (Trakt ID: {trakt_id}, {cache_key}): {endpoint}")
         try:
             trakt_lists = fetch_items_from_trakt(endpoint)
         except Exception as e:
-             logging.error(f"Error fetching Trakt lists for {item['type']} ID {trakt_id} ({cache_key}): {e}")
+             logging.error(f"Error fetching Trakt lists for '{item.get('title')}' Trakt ID {trakt_id} ({cache_key}): {e}")
              continue # Skip item if list fetching fails
 
         if trakt_lists: # Ensure trakt_lists is not None or empty

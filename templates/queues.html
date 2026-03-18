@@ -394,6 +394,16 @@
         return content;
     }
 
+    function formatDuration(seconds) {
+        if (!seconds || seconds < 0) return null;
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = seconds % 60;
+        if (h > 0) return `${h}h ${m}m`;
+        if (m > 0) return `${m}m ${s}s`;
+        return `${s}s`;
+    }
+
     function generateCheckingItem(item, showProgress = true) {
         const isProcessing = item.is_processing || false; 
         const processingIndicator = isProcessing ? '<span class="processing-indicator"><i class="fas fa-spinner fa-spin"></i></span>' : '';
@@ -414,12 +424,19 @@
         `;
 
         if (item.filled_by_file) {
-            itemContent += `<span class="item-separator"> - </span><span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}"><span class="item-label">File:</span> ${item.filled_by_file}</span>`;
+            itemContent += `<span class="item-separator"> - </span><span class="item-label">File:</span> <span class="item-checking-file">${item.filled_by_file}</span>`;
         }
 
         // Add Content Source inline for Checking queue items
         if (item.content_source && item.content_source !== 'Unknown') {
             itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${item.content_source_display || item.content_source}</span>`;
+        }
+
+        // Time in queue
+        const tiqStr = formatDuration(item.time_in_queue);
+        if (tiqStr) {
+            const tickStr = item.plex_tick ? ` · ${item.plex_tick}/4 ticks` : '';
+            itemContent += `<span class="item-separator"> - </span><span class="item-checking-tiq" style="font-size: smaller; color: var(--text-muted, #888);"><span class="item-label">In queue:</span> ${tiqStr}${tickStr}</span>`;
         }
 
         // Show progress bar for items that are downloading, unknown, or don't have a state set

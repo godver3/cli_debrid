@@ -7,6 +7,15 @@ from urllib.parse import urlencode
 # Timeout for API requests in seconds
 TIMEOUT = 10
 
+_COMMON_TRACKERS = [
+    'udp://tracker.opentrackr.org:1337/announce',
+    'udp://open.demonii.com:1320/announce',
+    'udp://open.stealth.si:80/announce',
+    'udp://tracker.torrent.eu.org:451/announce',
+    'udp://explodie.org:6969/announce',
+]
+_TRACKER_SUFFIX = ''.join(f'&tr={t}' for t in _COMMON_TRACKERS)
+
 def scrape_zilean_instance(instance: str, settings: Dict[str, Any], imdb_id: str, title: str, year: int, content_type: str, season: int = None, episode: int = None, multi: bool = False) -> List[Dict[str, Any]]:
     zilean_url = settings.get('url', '')
     if not zilean_url:
@@ -57,7 +66,8 @@ def parse_zilean_results(data: List[Dict[str, Any]], instance: str) -> List[Dict
              size_gb = 0.0
         
         info_hash = item.get('info_hash', '')
-        magnet_link = f"magnet:?xt=urn:btih:{info_hash}" if info_hash else ''
+        bare = f"magnet:?xt=urn:btih:{info_hash}" if info_hash else ''
+        magnet_link = (bare + _TRACKER_SUFFIX) if bare else ''
 
         result = {
             'title': item.get('raw_title', 'N/A'),
@@ -73,7 +83,8 @@ def parse_zilean_results(data: List[Dict[str, Any]], instance: str) -> List[Dict
             'hdr': item.get('hdr'),
             'languages': item.get('languages'),
              # Add other potentially useful fields if needed
-             'year': item.get('year'), 
+             'year': item.get('year'),
+             'ingested_at': item.get('ingested_at') or item.get('ingestedAt') or '',
              'parsed_info': item # Store the full parsed details for potential future use/filtering
         }
         # Filter out results with no magnet link

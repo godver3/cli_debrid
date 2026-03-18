@@ -1471,6 +1471,35 @@ def find_item_by_title():
         return jsonify({'success': False, 'message': str(e)}), 500
 
 
+@plex_labels_debug_bp.route('/debug/plex-labels/fix-imdb-by-tmdb/<tmdb_id>/<imdb_id>', methods=['POST'])
+def fix_imdb_id_by_tmdb(tmdb_id, imdb_id):
+    """Fix IMDb ID for all items matching a TMDB ID"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, title, imdb_id FROM media_items WHERE tmdb_id = ?', (tmdb_id,))
+        rows = cursor.fetchall()
+        if not rows:
+            cursor.close()
+            conn.close()
+            return jsonify({'success': False, 'message': f'No items found with TMDB ID {tmdb_id}'}), 404
+        cursor.execute('UPDATE media_items SET imdb_id = ? WHERE tmdb_id = ?', (imdb_id, tmdb_id))
+        conn.commit()
+        updated = [{'id': r[0], 'title': r[1], 'imdb_id_before': r[2]} for r in rows]
+        cursor.close()
+        conn.close()
+        logging.info(f"Updated IMDb ID to {imdb_id} for {len(updated)} items with TMDB ID {tmdb_id}")
+        return jsonify({
+            'success': True,
+            'updated_count': len(updated),
+            'imdb_id_after': imdb_id,
+            'items': updated
+        })
+    except Exception as e:
+        logging.error(f"Error fixing IMDb ID by TMDB ID {tmdb_id}: {e}", exc_info=True)
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
 @plex_labels_debug_bp.route('/debug/plex-labels/fix-imdb/<int:item_id>/<imdb_id>', methods=['POST', 'GET'])
 def fix_imdb_id(item_id, imdb_id):
     """Fix missing IMDb ID for an item"""

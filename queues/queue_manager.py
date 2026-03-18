@@ -89,38 +89,52 @@ class QueueTimer:
                 logging.error(f"Error saving queue timing data: {e}")
                 
     def _prune_old_timing_data(self):
-        """Remove timing data for completed items or items older than 30 days"""
+        """Remove timing data for completed items or items older than 3 days"""
         current_time = datetime.now().timestamp()
-        thirty_days_ago = current_time - (30 * 24 * 60 * 60)
-        
+        three_days_ago = current_time - (3 * 24 * 60 * 60)
+
         # Find items to remove
         items_to_remove = []
         for item_id, queue_data in self.queue_times.items():
             all_completed = True
             has_old_entry = False
-            
+
             for queue_name, times in queue_data.items():
                 entry_time = times[0]
                 exit_time = times[1]
-                
-                # Check if entry is older than 30 days
-                if entry_time and entry_time < thirty_days_ago:
+
+                # Check if entry is older than 3 days
+                if entry_time and entry_time < three_days_ago:
                     has_old_entry = True
-                    
+
                 # If any queue doesn't have an exit time, item is not completed
                 if exit_time is None:
                     all_completed = False
-                    
-            # Remove if completed or all entries are old
+
+            # Remove if completed or any entry is older than 3 days
             if all_completed or has_old_entry:
                 items_to_remove.append(item_id)
-                
+
         # Remove the identified items
         for item_id in items_to_remove:
             del self.queue_times[item_id]
-            
+
         if items_to_remove:
             logging.debug(f"Pruned {len(items_to_remove)} old items from queue timing data")
+
+        # Hard cap: if still over 20k entries after pruning, remove oldest first
+        if len(self.queue_times) > 20000:
+            sorted_ids = sorted(
+                self.queue_times.keys(),
+                key=lambda iid: min(
+                    (t[0] for q in self.queue_times[iid].values() for t in [q] if t[0]),
+                    default=0
+                )
+            )
+            overflow = sorted_ids[:len(self.queue_times) - 20000]
+            for item_id in overflow:
+                del self.queue_times[item_id]
+            logging.info(f"queue_times hard cap: removed {len(overflow)} oldest entries (was over 20k)")
     
     def item_entered_queue(self, item_id, queue_name, item_identifier=None):
         """Record when an item enters a queue"""

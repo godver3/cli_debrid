@@ -1107,7 +1107,7 @@ async def get_recent_from_plex(scan_all_libraries: bool = False):
             for library_key in libraries_to_scan:
                 library_title = libraries_by_key.get(library_key, f"Unknown Library (Key: {library_key})")
                 logger.debug(f"Fetching recent items from library: {library_title} ({library_key})")
-                recent_url = f"{plex_url}/library/sections/{library_key}/recentlyAdded"
+                recent_url = f"{plex_url}/library/sections/{library_key}/recentlyAdded?X-Plex-Container-Size=200"
                 recent_data = await fetch_data(session, recent_url, headers, semaphore)
 
                 if 'MediaContainer' in recent_data and 'Metadata' in recent_data['MediaContainer']:
@@ -1875,7 +1875,7 @@ def remove_file_from_plex(item_title, item_path, episode_title=None):
         return False
 
 
-def scan_and_empty_plex_trash(paths: list = None, section_type: str = None) -> dict:
+def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empty_trash: bool = True) -> dict:
     """
     Scan specific Plex paths and then empty trash to clean up unavailable items.
 
@@ -1983,6 +1983,8 @@ def scan_and_empty_plex_trash(paths: list = None, section_type: str = None) -> d
             time.sleep(2)
 
         # Step 3: Empty trash ONLY for sections that were actually scanned
+        if not empty_trash:
+            return result
         for section in sections:
             try:
                 # Skip if this section wasn't scanned

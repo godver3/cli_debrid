@@ -1600,18 +1600,6 @@ def main():
     backup_config()
     backup_database(skip_if_recent=True, skip_hours=6)  # Skip if backup exists from last 6 hours
     
-    # Delete not wanted files on startup
-    try:
-        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-        not_wanted_files = ['not_wanted_magnets.pkl', 'not_wanted_urls.pkl']
-        for not_wanted_file in not_wanted_files:
-            file_path = os.path.join(db_content_dir, not_wanted_file)
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                logging.info(f"Deleted not wanted file on startup: {file_path}")
-    except Exception as e:
-        logging.warning(f"Could not delete not wanted files on startup: {str(e)}")
-    
     # Purge content source cache files on startup
     # try:
     #     logging.info("Purging content source cache files on startup...")

@@ -775,6 +775,24 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
             item['filled_by_torrent_id'] = item.get('filled_by_torrent_id', 'Unknown')
             item['progress'] = item.get('progress', 0)
             item['state'] = item.get('state', 'unknown')
+            # Time in queue from CheckingQueue's in-memory tracking
+            checking_q = queue_manager.queues.get('Checking')
+            if checking_q:
+                entered = checking_q.checking_queue_times.get(item['id'])
+                item['time_in_queue'] = round(time.time() - entered) if entered else None
+            else:
+                item['time_in_queue'] = None
+            # Plex scan tick count
+            try:
+                import queues.run_program as _rp
+                runner = _rp.program_runner
+                if runner and hasattr(runner, 'plex_scan_tick_counts'):
+                    cache_key = f"{item.get('filled_by_title', '')}:{item.get('filled_by_file', '')}"
+                    item['plex_tick'] = runner.plex_scan_tick_counts.get(cache_key, 0)
+                else:
+                    item['plex_tick'] = 0
+            except Exception:
+                item['plex_tick'] = 0
             if item.get('filled_by_torrent_id') and item['filled_by_torrent_id'] != 'Unknown':
                 # Use rate-limited function to prevent API bombardment
                 status_data = get_torrent_status_with_rate_limiting(item['filled_by_torrent_id'], queue_manager)

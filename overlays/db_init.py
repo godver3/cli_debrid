@@ -395,15 +395,23 @@ def init_overlay_tables(db_path: str = None):
         # Persistent audit log of every overlay-related action
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS overlay_activity (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                action_type TEXT    NOT NULL,
-                triggered_by TEXT   NOT NULL DEFAULT 'manual',
-                result      TEXT    NOT NULL DEFAULT 'success',
-                title       TEXT,
-                stats_json  TEXT,
-                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                action_type      TEXT    NOT NULL,
+                triggered_by     TEXT    NOT NULL DEFAULT 'manual',
+                result           TEXT    NOT NULL DEFAULT 'success',
+                title            TEXT,
+                stats_json       TEXT,
+                duration_seconds INTEGER,
+                created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        # Migration: add duration_seconds if missing from existing tables
+        cursor.execute("PRAGMA table_info(overlay_activity)")
+        _oa_cols = {col[1] for col in cursor.fetchall()}
+        if 'duration_seconds' not in _oa_cols:
+            cursor.execute("ALTER TABLE overlay_activity ADD COLUMN duration_seconds INTEGER")
+            conn.commit()
 
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_overlay_activity_created

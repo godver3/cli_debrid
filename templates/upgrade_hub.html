@@ -1,0 +1,1629 @@
+{% extends "base.html" %}
+
+{% block title %}Upgrade Hub{% endblock %}
+
+{% block head %}
+<script>
+    (function() {
+        const theme = document.cookie.split('; ').find(row => row.startsWith('selectedTheme='))?.split('=')[1] || 'classic';
+        const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_upgrade_hub.css' : 'css/upgrade_hub.css';
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = '{{ url_for("static", filename="") }}' + cssFile;
+        document.head.appendChild(link);
+    })();
+</script>
+{% endblock %}
+
+{% block content %}
+<div class="uh-container">
+    <div class="uh-header">
+        <h2>Upgrade Hub</h2>
+        <div class="uh-header-actions">
+            <span class="uh-status-text" id="uh-status-text">—</span>
+            <button class="uh-btn uh-btn-primary" id="scan-btn" onclick="startScan()">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+                </svg>
+                Scan for Upgrades
+            </button>
+        </div>
+    </div>
+
+    <!-- Info note -->
+    <div class="uh-note">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <span><strong>Note:</strong> A local instance of Zilean is required. Configure it in
+        <a href="/settings#scrapers" class="uh-note-link">Settings → Scraper Settings → Zilean Scraper</a>.</span>
+    </div>
+
+    <!-- Progress bar (shown during scan) -->
+    <div class="uh-progress-wrap" id="uh-progress-wrap" style="display:none">
+        <div class="uh-progress-bar">
+            <div class="uh-progress-fill" id="uh-progress-fill"></div>
+        </div>
+        <div class="uh-progress-label" id="uh-progress-label">Scanning…</div>
+    </div>
+
+    <!-- Summary chips -->
+    <div class="uh-summary" id="uh-summary" style="display:none">
+        <span class="uh-chip" id="chip-upgrades">0 upgrades</span>
+        <span class="uh-chip uh-chip-pack" id="chip-packs">0 packs</span>
+        <span class="uh-chip uh-chip-muted" id="chip-movies">0 movies scanned</span>
+        <span class="uh-chip uh-chip-muted" id="chip-episodes">0 episodes scanned</span>
+        <span class="uh-chip uh-chip-warn" id="chip-errors" style="display:none">0 errors</span>
+        <span class="uh-chip uh-chip-db" id="chip-db" style="display:none">Direct DB</span>
+    </div>
+
+    <!-- Tabs -->
+    <div class="uh-tabs" id="uh-tabs">
+        <button class="uh-tab active" data-tab="upgrades">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M5 10l7-7m0 0l7 7m-7-7v18"/>
+            </svg>
+            Upgrades
+            <span class="uh-tab-badge" id="tab-badge-upgrades"></span>
+        </button>
+        <button class="uh-tab" data-tab="packs">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+            </svg>
+            Season Packs
+            <span class="uh-tab-badge uh-tab-badge-pack" id="tab-badge-packs"></span>
+        </button>
+        <button class="uh-tab" data-tab="settings">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                <circle cx="12" cy="12" r="3"/>
+            </svg>
+            Settings
+        </button>
+        <button class="uh-tab" data-tab="activity">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            Activity
+        </button>
+    </div>
+
+    <!-- ── UPGRADES TAB ── -->
+    <div id="upgrades-tab" class="uh-panel active">
+        <div class="uh-toolbar">
+            <input type="text" id="upgrades-filter" class="uh-filter-input"
+                   placeholder="Filter by title, file, type… (regex ok)"
+                   oninput="applyFilter('upgrades-filter','upgrades-tbody')">
+            <div class="uh-type-filter-group">
+                <button class="uh-btn uh-btn-type-filter active" id="upgrades-type-all"
+                        onclick="setTypeFilter('upgrades','all')">All</button>
+                <button class="uh-btn uh-btn-type-filter" id="upgrades-type-movie"
+                        onclick="setTypeFilter('upgrades','movie')">Movies</button>
+                <button class="uh-btn uh-btn-type-filter" id="upgrades-type-episode"
+                        onclick="setTypeFilter('upgrades','episode')">Shows</button>
+            </div>
+            <button class="uh-btn uh-btn-cache-toggle" id="upgrades-cache-toggle"
+                    title="Toggle: show recently indexed only (≤90 days) or all"
+                    onclick="toggleCachedFilter('upgrades')">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                Recent Only
+            </button>
+            <div class="uh-threshold-wrap" title="Filter out candidates below this improvement threshold">
+                <label class="uh-threshold-label">Min <span id="upgrades-threshold-val">+0%</span></label>
+                <input type="range" id="upgrades-threshold" class="uh-threshold-slider"
+                       min="0" max="200" step="5" value="0"
+                       oninput="setThreshold('upgrades', this.value)">
+            </div>
+            <div class="uh-toolbar-right">
+                <button class="uh-btn uh-btn-warning" id="ignore-upgrades-btn" disabled
+                        onclick="ignoreSelected('upgrades')">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+                    </svg>
+                    Ignore Selected (<span id="upgrades-ignore-count">0</span>)
+                </button>
+                <button class="uh-btn uh-btn-success" id="queue-upgrades-btn" disabled
+                        onclick="queueSelected('upgrades')">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M12 4v16m8-8H4"/>
+                    </svg>
+                    Queue Selected (<span id="upgrades-selected-count">0</span>)
+                </button>
+            </div>
+        </div>
+        <div class="uh-table-wrap" id="upgrades-table-wrap">
+            <table class="uh-table" id="upgrades-table">
+                <thead>
+                    <tr>
+                        <th class="uh-col-check">
+                            <input type="checkbox" id="upgrades-select-all"
+                                   onchange="toggleSelectAll('upgrades')">
+                        </th>
+                        <th class="uh-col-type">Type</th>
+                        <th class="uh-col-title">Title</th>
+                        <th class="uh-col-files">Current / Best Candidate</th>
+                        <th class="uh-col-version">Version</th>
+                        <th class="uh-col-score">Score Δ</th>
+                        <th class="uh-col-size">Size</th>
+                    </tr>
+                </thead>
+                <tbody id="upgrades-tbody">
+                    <tr class="uh-empty-row">
+                        <td colspan="7">Run a scan to find upgrade candidates.</td>
+                    </tr>
+                </tbody>
+            </table>
+            <div class="uh-scroll-sentinel" id="upgrades-sentinel"></div>
+        </div>
+    </div>
+
+    <!-- ── SEASON PACKS TAB ── -->
+    <div id="packs-tab" class="uh-panel">
+        <div class="uh-toolbar">
+            <input type="text" id="packs-filter" class="uh-filter-input"
+                   placeholder="Filter by title, season… (regex ok)"
+                   oninput="applyFilter('packs-filter','packs-tbody')">
+            <button class="uh-btn uh-btn-cache-toggle" id="packs-cache-toggle"
+                    title="Toggle: show recently indexed only (≤90 days) or all"
+                    onclick="toggleCachedFilter('packs')">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                Recent Only
+            </button>
+            <div class="uh-threshold-wrap" title="Filter out candidates below this improvement threshold">
+                <label class="uh-threshold-label">Min <span id="packs-threshold-val">+0%</span></label>
+                <input type="range" id="packs-threshold" class="uh-threshold-slider"
+                       min="0" max="200" step="5" value="0"
+                       oninput="setThreshold('packs', this.value)">
+            </div>
+            <div class="uh-toolbar-right">
+                <button class="uh-btn uh-btn-warning" id="ignore-packs-btn" disabled
+                        onclick="ignoreSelected('packs')">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+                    </svg>
+                    Ignore Selected (<span id="packs-ignore-count">0</span>)
+                </button>
+                <button class="uh-btn uh-btn-success" id="queue-packs-btn" disabled
+                        onclick="queueSelected('packs')">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                              d="M12 4v16m8-8H4"/>
+                    </svg>
+                    Queue Selected (<span id="packs-selected-count">0</span>)
+                </button>
+            </div>
+        </div>
+        <div class="uh-table-wrap" id="packs-table-wrap">
+            <table class="uh-table" id="packs-table">
+                <thead>
+                    <tr>
+                        <th class="uh-col-check">
+                            <input type="checkbox" id="packs-select-all"
+                                   onchange="toggleSelectAll('packs')">
+                        </th>
+                        <th class="uh-col-title">Show</th>
+                        <th class="uh-col-season">Season</th>
+                        <th class="uh-col-collected">Collected</th>
+                        <th class="uh-col-new">Current / Best Pack</th>
+                        <th class="uh-col-version">Version</th>
+                        <th class="uh-col-score">Score</th>
+                        <th class="uh-col-size">Size</th>
+                    </tr>
+                </thead>
+                <tbody id="packs-tbody">
+                    <tr class="uh-empty-row">
+                        <td colspan="8">Run a scan to find season pack candidates.</td>
+                    </tr>
+                </tbody>
+            </table>
+            <div class="uh-scroll-sentinel" id="packs-sentinel"></div>
+        </div>
+    </div>
+
+    <!-- ── SETTINGS TAB ── -->
+    <div id="settings-tab" class="uh-panel">
+        <div class="uh-settings-grid">
+
+            <!-- ── GROUP 1: Automatic Scan ── -->
+            <div class="uh-maint-section">
+                <!-- Header card -->
+                <div class="uh-settings-section">
+                    <div class="uh-settings-card-header">
+                        <h3>Automatic Scan</h3>
+                        <label class="uh-settings-toggle">
+                            <input type="checkbox" id="settings-auto-scan">
+                            <span class="uh-settings-toggle-track"><span class="uh-settings-toggle-thumb"></span></span>
+                        </label>
+                    </div>
+                    <p class="uh-settings-desc">Run a scan automatically every 24 hours (requires enabling in the task scheduler).</p>
+                </div>
+
+                <!-- Sub-card: Score Threshold -->
+                <div class="uh-settings-section">
+                    <div class="uh-settings-subsection-title">Score Threshold</div>
+                    <p class="uh-settings-desc">Minimum improvement % to show an upgrade candidate. Applied to both Upgrades and Season Packs tabs.</p>
+                    <div class="uh-threshold-wrap">
+                        <label class="uh-threshold-label">Min <span id="settings-threshold-val">+0%</span></label>
+                        <input type="range" id="settings-threshold" class="uh-threshold-slider"
+                               min="0" max="200" step="5" value="0"
+                               oninput="setSettingsThreshold(this.value)">
+                    </div>
+                </div>
+
+                <!-- Sub-card: Only Show Recent Items -->
+                <div class="uh-settings-section">
+                    <div class="uh-settings-card-header">
+                        <div>
+                            <div class="uh-settings-subsection-title">Only Show Recent Items</div>
+                            <p class="uh-settings-desc" style="margin:4px 0 0">Hide candidates older than the threshold from both tabs by default.</p>
+                        </div>
+                        <label class="uh-settings-toggle">
+                            <input type="checkbox" id="settings-show-recent-only">
+                            <span class="uh-settings-toggle-track"><span class="uh-settings-toggle-thumb"></span></span>
+                        </label>
+                    </div>
+                    <div class="uh-settings-subsection-title" style="margin-top:14px">Recent Threshold</div>
+                    <p class="uh-settings-desc" style="margin:4px 0 8px">Candidates indexed within this many days are considered recent.</p>
+                    <div class="uh-number-input-wrap">
+                        <button class="uh-btn uh-numstep" onclick="stepRecentDays(-10)">−</button>
+                        <input type="number" id="settings-recent-days" min="1" max="3650" value="90" class="uh-number-input">
+                        <button class="uh-btn uh-numstep" onclick="stepRecentDays(10)">+</button>
+                        <span class="uh-settings-unit">days</span>
+                    </div>
+                </div>
+
+                <!-- Sub-card: Scan Limit -->
+                <div class="uh-settings-section">
+                    <div class="uh-settings-subsection-title">Scan Limit</div>
+                    <p class="uh-settings-desc">Maximum number of Collected items to scan per run. Useful for testing or rate-limiting large libraries.</p>
+                    <div class="uh-btn-group uh-scan-limit-group">
+                        <button class="uh-btn uh-scan-limit-btn active" data-limit="null" onclick="setScanLimit(null)">All</button>
+                        <button class="uh-btn uh-scan-limit-btn" data-limit="100" onclick="setScanLimit(100)">100</button>
+                        <button class="uh-btn uh-scan-limit-btn" data-limit="500" onclick="setScanLimit(500)">500</button>
+                        <button class="uh-btn uh-scan-limit-btn" data-limit="1000" onclick="setScanLimit(1000)">1000</button>
+                        <button class="uh-btn uh-scan-limit-btn" data-limit="2000" onclick="setScanLimit(2000)">2000</button>
+                        <button class="uh-btn uh-scan-limit-btn" data-limit="5000" onclick="setScanLimit(5000)">5000</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── GROUP 2: Auto Queue ── -->
+            <div class="uh-maint-section">
+                <!-- Header card -->
+                <div class="uh-settings-section">
+                    <div class="uh-settings-card-header">
+                        <h3>Auto Queue</h3>
+                        <label class="uh-settings-toggle">
+                            <input type="checkbox" id="settings-auto-queue">
+                            <span class="uh-settings-toggle-track"><span class="uh-settings-toggle-thumb"></span></span>
+                        </label>
+                    </div>
+                    <p class="uh-settings-desc">Automatically queue upgrade candidates above the score threshold after each scheduled scan. Respects the Upgrades Per Run limit.</p>
+                </div>
+
+                <!-- Sub-card: Hide Pack Episodes -->
+                <div class="uh-settings-section">
+                    <div class="uh-settings-card-header">
+                        <div>
+                            <div class="uh-settings-subsection-title">Hide Episodes Already in Season Packs</div>
+                            <p class="uh-settings-desc" style="margin:4px 0 0">Don't show individual episode upgrades in the Upgrades tab if the episode is already covered by a Season Pack candidate.</p>
+                        </div>
+                        <label class="uh-settings-toggle">
+                            <input type="checkbox" id="settings-hide-pack-episodes">
+                            <span class="uh-settings-toggle-track"><span class="uh-settings-toggle-thumb"></span></span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Sub-card: Upgrades Per Run -->
+                <div class="uh-settings-section">
+                    <div class="uh-settings-subsection-title">Upgrades Per Run</div>
+                    <p class="uh-settings-desc">Maximum items queued per side per auto-queue run. Applied independently to Upgrades and Season Packs (e.g. 3 = up to 3 upgrades + up to 3 packs).</p>
+                    <div class="uh-number-input-wrap">
+                        <button class="uh-btn uh-numstep" onclick="stepUpgradesPerRun(-1)">−</button>
+                        <input type="number" id="settings-max-upgrades" min="1" max="100" value="10" class="uh-number-input">
+                        <button class="uh-btn uh-numstep" onclick="stepUpgradesPerRun(1)">+</button>
+                    </div>
+                </div>
+
+                <!-- Sub-card: Excluded Genres -->
+                <div class="uh-settings-section">
+                    <div class="uh-settings-subsection-title uh-genre-title">Excluded Genres</div>
+                    <p class="uh-settings-desc">Skip items from these genres during scan. Applies to both movies and shows.</p>
+                    <div class="uh-genre-tags-row" id="uh-genre-chips-wrap-row">
+                        <div class="uh-genre-chips-wrap" id="uh-genre-chips-wrap"></div>
+                    </div>
+                    <div class="uh-genre-chips-container" id="uh-genre-chips-container">
+                        <input type="text" class="uh-genre-search" id="uh-genre-search"
+                               placeholder="Search genres…" autocomplete="off"
+                               oninput="uhGenreSearch(this.value)"
+                               onfocus="uhGenreOpenDropdown()"
+                               onblur="uhGenreBlur()">
+                        <div class="uh-genre-dropdown" id="uh-genre-dropdown" style="display:none"></div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="uh-settings-footer">
+            <button class="uh-btn uh-btn-primary" onclick="saveSettings()">Save Settings</button>
+            <button class="uh-btn uh-btn-danger" onclick="clearHubQueue()" id="btn-clear-hub-queue">Clear Hub Queue</button>
+            <button class="uh-btn uh-btn-secondary" onclick="runUpgradeCleanup()" id="btn-run-cleanup" title="Remove old files/torrents for upgrades that have already been collected">Run Upgrade Cleanup</button>
+            <span id="settings-save-msg" class="uh-settings-save-msg"></span>
+        </div>
+    </div>
+
+    <!-- ── ACTIVITY TAB ── -->
+    <div id="activity-tab" class="uh-panel">
+        <div class="uh-activity-toolbar">
+            <select id="uh-activity-type-filter" class="uh-filter-select" onchange="loadActivity(true)">
+                <option value="">All actions</option>
+                <option value="scan">Scan</option>
+                <option value="queue">Queue</option>
+                <option value="upgrade_processed">Upgrade Processed</option>
+            </select>
+            <button id="uh-activity-refresh-btn" class="uh-btn" onclick="loadActivity(true)">&#8635; Refresh</button>
+        </div>
+        <div class="uh-activity-table-wrap">
+            <table class="uh-table uh-activity-table">
+                <thead>
+                    <tr>
+                        <th style="width:175px">Date / Time</th>
+                        <th style="width:130px">Action</th>
+                        <th style="width:80px">By</th>
+                        <th style="width:70px">Result</th>
+                        <th>Details</th>
+                    </tr>
+                </thead>
+                <tbody id="uh-activity-tbody">
+                    <tr class="uh-empty-row"><td colspan="5">No activity yet.</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div id="uh-activity-pagination" class="uh-activity-pagination" style="display:none">
+            <button class="uh-btn" id="uh-activity-prev" onclick="activityPage(-1)">&#8592; Prev</button>
+            <span id="uh-activity-page-info"></span>
+            <button class="uh-btn" id="uh-activity-next" onclick="activityPage(1)">Next &#8594;</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let _upgradeResults = null;
+let _pollTimer = null;
+let _checkUpgradedTimer = null;
+let _scanInProgress = false;
+let _lastScanAt = null;
+
+// ---------------------------------------------------------------------------
+// Tabs
+// ---------------------------------------------------------------------------
+document.querySelectorAll('.uh-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        document.querySelectorAll('.uh-tab').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.uh-panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(tab + '-tab').classList.add('active');
+        sessionStorage.setItem('uh_active_tab', tab);
+    });
+});
+
+// Restore last active tab
+(function() {
+    const saved = sessionStorage.getItem('uh_active_tab');
+    if (saved) {
+        const btn = document.querySelector(`.uh-tab[data-tab="${saved}"]`);
+        if (btn) btn.click();
+    }
+})();
+
+// ---------------------------------------------------------------------------
+// Filter state
+// ---------------------------------------------------------------------------
+const _recentOnly     = { upgrades: false, packs: false };
+const _typeFilter     = { upgrades: 'all', packs: 'all' };
+const _minImprovement = { upgrades: 0, packs: 0 };
+
+// applyFilter kept for oninput= compatibility — delegates to applyVFilter
+function applyFilter(inputId, tbodyId) {
+    applyVFilter(tbodyId.replace('-tbody', ''));
+}
+
+function setThreshold(tab, val) {
+    _minImprovement[tab] = parseFloat(val);
+    const lbl = document.getElementById(tab + '-threshold-val');
+    if (lbl) lbl.textContent = '+' + val + '%';
+    const slider = document.getElementById(tab + '-threshold');
+    if (slider) {
+        slider.value = val;
+        slider.style.setProperty('--pct', (val / slider.max * 100).toFixed(1) + '%');
+    }
+    applyVFilter(tab);
+}
+
+function toggleCachedFilter(tab) {
+    _recentOnly[tab] = !_recentOnly[tab];
+    const btn = document.getElementById(tab + '-cache-toggle');
+    btn.classList.toggle('active', _recentOnly[tab]);
+    applyVFilter(tab);
+}
+
+function setTypeFilter(tab, type) {
+    _typeFilter[tab] = type;
+    ['all', 'movie', 'episode'].forEach(t => {
+        const btn = document.getElementById(tab + '-type-' + t);
+        if (btn) btn.classList.toggle('active', t === type);
+    });
+    applyVFilter(tab);
+}
+
+// ---------------------------------------------------------------------------
+// Virtual / infinite scroll
+// ---------------------------------------------------------------------------
+const _VS = {
+    upgrades: { data: [], filt: [], rendered: 0, observer: null },
+    packs:    { data: [], filt: [], rendered: 0, observer: null },
+};
+const _Selected = { upgrades: new Set(), packs: new Set() };
+const _VS_CHUNK = 75;
+
+function applyVFilter(tab) {
+    const vs  = _VS[tab];
+    const raw = (document.getElementById(tab + '-filter') || { value: '' }).value.trim();
+    let re;
+    try { re = new RegExp(raw, 'i'); }
+    catch { re = new RegExp(raw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); }
+    const recentOnly     = _recentOnly[tab];
+    const typeFilter     = _typeFilter[tab];
+    const minImp         = _minImprovement[tab] || 0;
+    const thresholdMs    = (_settings.recent_threshold_days || 90) * 86400000;
+
+    // Build set of item IDs covered by season packs (for hide_pack_episodes filter)
+    let packEpisodeIds = null;
+    if (tab === 'upgrades' && _settings.hide_pack_episodes) {
+        packEpisodeIds = new Set();
+        for (const p of _VS.packs.data) {
+            for (const id of (p.item_ids || [])) packEpisodeIds.add(id);
+        }
+    }
+
+    vs.filt = vs.data.filter(item => {
+        const text = tab === 'upgrades'
+            ? [item.title, item.current_file, item.new_title, item.type, item.version].join(' ')
+            : [item.title, 'S' + item.season, item.new_title].join(' ');
+        const textOk   = re.test(text);
+        const iatMs    = item.new_ingested_at ? Date.now() - new Date(item.new_ingested_at).getTime() : Infinity;
+        const recentOk = !recentOnly || iatMs <= thresholdMs;
+        const typeOk   = tab !== 'upgrades' || typeFilter === 'all' || item.type === typeFilter;
+        const impOk    = minImp <= 0 || (item.improvement_pct || 0) >= minImp;
+        const packOk   = !packEpisodeIds || !packEpisodeIds.has(item.item_id);
+        return textOk && recentOk && typeOk && impOk && packOk;
+    });
+
+    if (vs.observer) { vs.observer.disconnect(); vs.observer = null; }
+    renderVChunk(tab, true);
+}
+
+function renderVChunk(tab, reset) {
+    const vs    = _VS[tab];
+    const tbody = document.getElementById(tab + '-tbody');
+    if (reset) { tbody.innerHTML = ''; vs.rendered = 0; }
+
+    const slice = vs.filt.slice(vs.rendered, vs.rendered + _VS_CHUNK);
+    if (!slice.length) {
+        if (vs.rendered === 0) {
+            tbody.innerHTML = '<tr class="uh-empty-row"><td colspan="7">No results found.</td></tr>';
+        }
+        return;
+    }
+    tbody.insertAdjacentHTML('beforeend',
+        slice.map(item => tab === 'upgrades' ? buildUpgradeRow(item) : buildPackRow(item)).join(''));
+    vs.rendered += slice.length;
+    updateQueueBtn(tab);
+    setupVSentinel(tab);
+}
+
+function setupVSentinel(tab) {
+    const vs = _VS[tab];
+    if (vs.observer) { vs.observer.disconnect(); vs.observer = null; }
+    if (vs.rendered >= vs.filt.length) return;
+    const sentinel = document.getElementById(tab + '-sentinel');
+    if (!sentinel) return;
+    vs.observer = new IntersectionObserver(entries => {
+        if (entries[0].isIntersecting) {
+            vs.observer.disconnect();
+            vs.observer = null;
+            renderVChunk(tab, false);
+        }
+    }, { rootMargin: '400px', threshold: 0 });
+    vs.observer.observe(sentinel);
+}
+
+function onRowCheck(event, tab, id) {
+    if (event.target.checked) _Selected[tab].add(String(id));
+    else _Selected[tab].delete(String(id));
+    updateQueueBtn(tab);
+}
+
+function buildUpgradeRow(u) {
+    const label = u.type === 'movie' ? 'Movie'
+                : u.type === 'episode' ? `S${pad(u.season)}E${pad(u.episode)}`
+                : 'Unknown';
+    const title = u.type === 'episode'
+        ? escHtml(u.title) + ' ' + label
+        : escHtml(u.title) + (u.year ? ` (${u.year})` : '');
+    const impSign = u.improvement_pct >= 0 ? '+' : '';
+    const iatStr  = u.new_ingested_at || '';
+    let iatLabel  = '';
+    if (iatStr) {
+        const days = Math.round((Date.now() - new Date(iatStr)) / 86400000);
+        iatLabel = days < 1 ? 'today' : days + 'd ago';
+    }
+    const cacheBadge = u.rd_cached_bypass
+        ? '<span class="uh-cache-badge uh-cache-bypass" title="No recent Zilean result — included because Phalanx confirms this torrent is cached on RD">⚡ Cached Bypass</span>'
+        : u.is_recent
+            ? '<span class="uh-cache-badge uh-cache-yes">Recent</span>'
+            : '<span class="uh-cache-badge uh-cache-no">Older' + (iatLabel ? ' · ' + iatLabel : '') + '</span>';
+    const rdBadge = u.rd_cached === true && !u.rd_cached_bypass
+        ? '<span class="uh-cache-badge uh-rd-cached">⚡ RD Cached</span>'
+        : u.rd_cached === false
+            ? '<span class="uh-cache-badge uh-rd-uncached">✗ Not Cached</span>'
+            : '';
+    const chk = _Selected.upgrades.has(String(u.item_id)) ? 'checked' : '';
+    return `<tr data-item-id="${u.item_id}">
+        <td class="uh-col-check"><input type="checkbox" class="uh-row-check" data-id="${u.item_id}" ${chk} onchange="onRowCheck(event,'upgrades',${u.item_id})"></td>
+        <td class="uh-col-type"><span class="uh-type-badge uh-type-${u.type}">${escHtml(label)}</span></td>
+        <td class="uh-col-title">${title}</td>
+        <td class="uh-col-files">
+            <div class="uh-muted">${escHtml(u.current_file || '—')}</div>
+            <div class="uh-best-candidate">${escHtml(u.new_title || '—')}</div>
+        </td>
+        <td class="uh-col-version">${escHtml(u.version || '—')}<br>${cacheBadge}${rdBadge ? ' ' + rdBadge : ''}</td>
+        <td class="uh-col-score">
+            <span class="uh-score-delta ${u.improvement_pct >= 0 ? 'positive' : 'negative'}">${impSign}${u.improvement_pct}%</span>
+            <span class="uh-score-detail">${u.current_score} → ${u.new_score}</span>
+        </td>
+        <td class="uh-col-size">
+            <div class="uh-muted">${u.current_size_gb ? u.current_size_gb + '&nbsp;GB' : '—'}</div>
+            <div class="uh-best-candidate">${u.new_size_gb ? u.new_size_gb + '&nbsp;GB' : '—'}</div>
+        </td>
+    </tr>`;
+}
+
+function buildPackRow(p) {
+    const ids    = (p.item_ids || []).join(',');
+    const iatStr = p.new_ingested_at || '';
+    let iatLabel = '';
+    if (iatStr) {
+        const days = Math.round((Date.now() - new Date(iatStr)) / 86400000);
+        iatLabel = days < 1 ? 'today' : days + 'd ago';
+    }
+    const cacheBadge = p.rd_cached_bypass
+        ? '<span class="uh-cache-badge uh-cache-bypass" title="No recent Zilean result — included because Phalanx confirms this torrent is cached on RD">⚡ Cached Bypass</span>'
+        : p.is_recent
+            ? '<span class="uh-cache-badge uh-cache-yes">Recent</span>'
+            : '<span class="uh-cache-badge uh-cache-no">Older' + (iatLabel ? ' · ' + iatLabel : '') + '</span>';
+    const rdBadge = p.rd_cached === true && !p.rd_cached_bypass
+        ? '<span class="uh-cache-badge uh-rd-cached">⚡ RD Cached</span>'
+        : p.rd_cached === false
+            ? '<span class="uh-cache-badge uh-rd-uncached">✗ Not Cached</span>'
+            : '';
+    const chk     = _Selected.packs.has(ids) ? 'checked' : '';
+    const safeIds = escAttr(ids);
+
+    const files = p.current_files || [];
+    let currentHtml;
+    if (files.length === 0) {
+        currentHtml = '<div class="uh-muted">—</div>';
+    } else if (files.length === 1) {
+        currentHtml = `<div class="uh-muted">${escHtml(files[0].file || '—')}</div>`;
+    } else {
+        const epsHtml = files.map(f =>
+            `<div class="uh-pack-ep"><span class="uh-ep-num">E${pad(f.ep)}</span>${escHtml(f.file || '—')}</div>`
+        ).join('');
+        const tagsStr = fileTagsStr(files[0].file || '');
+        const tagsHtml = tagsStr ? `<span class="uh-ep-sep"> - </span><span class="uh-ep-tags">${escHtml(tagsStr)}</span>` : '';
+        currentHtml = `<button class="uh-pack-expand-btn" onclick="togglePackExpand(this)"><span class="uh-ep-count">${files.length} episodes</span>${tagsHtml}<span class="uh-expand-arrow">▼</span></button><div class="uh-pack-episodes">${epsHtml}</div>`;
+    }
+
+    return `<tr data-item-ids="${safeIds}">
+        <td class="uh-col-check"><input type="checkbox" class="uh-row-check" data-ids="${safeIds}" ${chk} onchange="onRowCheck(event,'packs','${safeIds}')"></td>
+        <td class="uh-col-title">${escHtml(p.title)}${p.year ? ` (${p.year})` : ''}</td>
+        <td class="uh-col-season"><span class="uh-season-label">Season ${p.season}</span></td>
+        <td class="uh-col-collected">
+            <div class="uh-collected-count">${p.collected_count}/${p.total_count}</div>
+            <span class="uh-ratio-bar"><span style="width:${p.ratio_pct}%"></span></span>
+        </td>
+        <td class="uh-col-new">
+            ${currentHtml}
+            <div class="uh-best-candidate">${escHtml(p.new_title || '—')}</div>
+        </td>
+        <td class="uh-col-version">${escHtml(p.version || '—')}<br>${cacheBadge}${rdBadge ? ' ' + rdBadge : ''}</td>
+        <td class="uh-col-score">
+            <span class="uh-score-delta ${(p.improvement_pct || 0) >= 0 ? 'positive' : 'negative'}">${(p.improvement_pct || 0) >= 0 ? '+' : ''}${p.improvement_pct ?? '—'}%</span>
+            <span class="uh-score-detail">${p.current_score ?? '—'} → ${p.best_score}</span>
+        </td>
+        <td class="uh-col-size">
+            <div class="uh-muted">${p.current_size_gb ? p.current_size_gb + '&nbsp;GB' : '—'}</div>
+            <div class="uh-best-candidate">${p.new_size_gb ? p.new_size_gb + '&nbsp;GB' : '—'}</div>
+        </td>
+    </tr>`;
+}
+
+function togglePackExpand(btn) {
+    const epsList = btn.nextElementSibling;
+    const arrow   = btn.querySelector('.uh-expand-arrow');
+    // Check inline style only — CSS class sets display:none by default so
+    // element.style.display starts as '' (not 'none'), causing a double-click bug.
+    const expanded = epsList.style.display === 'block';
+    epsList.style.display = expanded ? 'none' : 'block';
+    arrow.textContent = expanded ? '▼' : '▲';
+}
+
+// ---------------------------------------------------------------------------
+// Scan
+// ---------------------------------------------------------------------------
+async function startScan() {
+    const btn = document.getElementById('scan-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="uh-spinner"></span> Scanning…';
+    showProgress('starting', 0, 0);
+
+    try {
+        const res = await fetch('/upgrade_hub/api/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+        });
+        const data = await res.json();
+        if (!data.success) {
+            showStatus('error', data.error || 'Failed to start scan');
+            btn.disabled = false;
+            btn.innerHTML = svgSearch() + ' Scan for Upgrades';
+            hideProgress();
+            return;
+        }
+        _scanInProgress = true;
+        pollStatus();
+    } catch(e) {
+        showStatus('error', 'Network error: ' + e.message);
+        btn.disabled = false;
+        btn.innerHTML = svgSearch() + ' Scan for Upgrades';
+        hideProgress();
+    }
+}
+
+function pollStatus() {
+    clearTimeout(_pollTimer);
+    _pollTimer = setTimeout(async () => {
+        try {
+            const res = await fetch('/upgrade_hub/api/status');
+            const s = await res.json();
+            if (s.in_progress) {
+                const p = s.progress || {};
+                const pct = p.total > 0 ? Math.round(p.done / p.total * 100) : 0;
+                showProgress(p.phase || 'scanning', pct, p.total, p.done || 0);
+                pollStatus();
+            } else {
+                _scanInProgress = false;
+                hideProgress();
+                resetScanBtn();
+                if (s.has_results) {
+                    await loadResults();
+                }
+            }
+        } catch(e) {
+            _scanInProgress = false;
+            hideProgress();
+            resetScanBtn();
+        }
+    }, 1500);
+}
+
+function updateScanBtnAge() {
+    if (!_lastScanAt || _scanInProgress) return;
+    const btn = document.getElementById('scan-btn');
+    if (!btn || btn.disabled) return;
+    const ms   = Date.now() - _lastScanAt;
+    const mins = Math.floor(ms / 60000);
+    const hrs  = Math.floor(mins / 60);
+    const age  = hrs > 0 ? `${hrs}h ago` : mins > 0 ? `${mins}m ago` : 'just now';
+    btn.innerHTML = svgSearch() + ` Rescan <span class="uh-scan-age">${age}</span>`;
+}
+setInterval(() => { if (_lastScanAt && !_scanInProgress) updateScanBtnAge(); }, 60000);
+
+function resetScanBtn() {
+    const btn = document.getElementById('scan-btn');
+    btn.disabled = false;
+    if (_lastScanAt) {
+        updateScanBtnAge();
+    } else {
+        btn.innerHTML = svgSearch() + ' Scan for Upgrades';
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Results
+// ---------------------------------------------------------------------------
+async function loadResults() {
+    try {
+        const res = await fetch('/upgrade_hub/api/results');
+        const data = await res.json();
+        if (!data.success || !data.results) return;
+        renderResults(data.results);
+    } catch(e) {
+        console.error('loadResults:', e);
+    }
+}
+
+async function checkUpgraded() {
+    if (!_VS.upgrades.data.length && !_VS.packs.data.length) return;
+
+    // Build candidates: {id, min_score} — item is done when its DB score >= the candidate score
+    const candidates = [];
+    for (const u of _VS.upgrades.data) {
+        if (u.item_id != null && u.new_score != null)
+            candidates.push({id: u.item_id, min_score: u.new_score});
+    }
+    for (const p of _VS.packs.data) {
+        const score = p.best_score ?? p.new_score;
+        if (score != null) {
+            for (const id of (p.item_ids || [])) {
+                candidates.push({id, min_score: score});
+            }
+        }
+    }
+    if (!candidates.length) return;
+
+    try {
+        const res  = await fetch('/upgrade_hub/api/check_upgraded', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({candidates}),
+        });
+        const data = await res.json();
+        if (!data.success || !data.processed_ids.length) return;
+
+        const processed = new Set(data.processed_ids.map(String));
+        let changed = false;
+
+        // Remove upgrades where the item has been processed
+        const prevUpLen = _VS.upgrades.data.length;
+        _VS.upgrades.data = _VS.upgrades.data.filter(u => !processed.has(String(u.item_id)));
+        if (_VS.upgrades.data.length !== prevUpLen) changed = true;
+
+        // Remove packs where ALL item_ids have been processed
+        const prevPkLen = _VS.packs.data.length;
+        _VS.packs.data = _VS.packs.data.filter(p =>
+            !(p.item_ids || []).every(id => processed.has(String(id)))
+        );
+        if (_VS.packs.data.length !== prevPkLen) changed = true;
+
+        if (changed) {
+            applyVFilter('upgrades');
+            applyVFilter('packs');
+            // Update tab badges and summary chips
+            document.getElementById('tab-badge-upgrades').textContent = _VS.upgrades.data.length || '';
+            document.getElementById('tab-badge-packs').textContent    = _VS.packs.data.length    || '';
+            document.getElementById('chip-upgrades').textContent = _VS.upgrades.data.length + ' upgrades';
+            document.getElementById('chip-packs').textContent    = _VS.packs.data.length    + ' packs';
+        }
+    } catch(e) {
+        // silent — non-critical background poll
+    }
+}
+
+function renderResults(results) {
+    _upgradeResults = results;
+    const upgrades = results.upgrade_candidates || [];
+    const packs    = results.pack_candidates    || [];
+    const errors   = results.errors             || [];
+
+    // Summary chips
+    document.getElementById('chip-upgrades').textContent = upgrades.length + ' upgrades';
+    document.getElementById('chip-packs').textContent    = packs.length + ' packs';
+    document.getElementById('chip-movies').textContent   = (results.scanned_movies || 0) + ' movies scanned';
+    document.getElementById('chip-episodes').textContent = (results.scanned_episodes || 0) + ' eps scanned';
+
+    const chipErr = document.getElementById('chip-errors');
+    if (errors.length > 0) {
+        chipErr.textContent = errors.length + ' errors';
+        chipErr.style.display = '';
+    } else {
+        chipErr.style.display = 'none';
+    }
+
+    const chipDb = document.getElementById('chip-db');
+    chipDb.style.display = results.used_db ? '' : 'none';
+
+    document.getElementById('uh-summary').style.display = '';
+
+    // Tab badges
+    document.getElementById('tab-badge-upgrades').textContent = upgrades.length || '';
+    document.getElementById('tab-badge-packs').textContent    = packs.length || '';
+
+    // Last scan time
+    if (results.scanned_at) {
+        _lastScanAt = new Date(results.scanned_at).getTime();
+        const d = new Date(results.scanned_at);
+        const vUsed = results.version_used ? ` · version: ${results.version_used}` : '';
+        showStatus('ok', 'Last scan: ' + d.toLocaleString() + vUsed);
+        updateScanBtnAge();
+    }
+
+    // Clear prior selections and populate VS data
+    _Selected.upgrades.clear();
+    _Selected.packs.clear();
+    _VS.upgrades.data = upgrades;
+    _VS.packs.data    = packs;
+    applyVFilter('upgrades');
+    applyVFilter('packs');
+
+    // Start background polling to auto-remove processed items
+    if (_checkUpgradedTimer) clearInterval(_checkUpgradedTimer);
+    if (upgrades.length || packs.length) {
+        _checkUpgradedTimer = setInterval(checkUpgraded, 30000);
+    }
+}
+
+// Pause/resume _checkUpgradedTimer based on tab visibility
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        if (_checkUpgradedTimer) { clearInterval(_checkUpgradedTimer); _checkUpgradedTimer = null; }
+    } else {
+        // Resume only if there are still items to check
+        if (!_checkUpgradedTimer &&
+            (_VS.upgrades.data.length || _VS.packs.data.length)) {
+            checkUpgraded();
+            _checkUpgradedTimer = setInterval(checkUpgraded, 30000);
+        }
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Select / Queue
+// ---------------------------------------------------------------------------
+function toggleSelectAll(tab) {
+    const master  = document.getElementById(tab + '-select-all');
+    const checked = master.checked;
+    const vs      = _VS[tab];
+    // Apply to all filtered items (including unrendered ones)
+    vs.filt.forEach(item => {
+        const id = tab === 'upgrades' ? item.item_id : (item.item_ids || []).join(',');
+        if (checked) _Selected[tab].add(String(id));
+        else         _Selected[tab].delete(String(id));
+    });
+    // Sync rendered checkboxes
+    document.querySelectorAll(`#${tab}-tbody .uh-row-check`).forEach(cb => {
+        cb.checked = checked;
+    });
+    updateQueueBtn(tab);
+}
+
+function updateQueueBtn(tab) {
+    const count   = _Selected[tab].size;
+    const btn     = document.getElementById('queue-' + tab + '-btn');
+    const counter = document.getElementById(tab + '-selected-count');
+    btn.disabled = count === 0;
+    if (counter) counter.textContent = count;
+    const ignBtn     = document.getElementById('ignore-' + tab + '-btn');
+    const ignCounter = document.getElementById(tab + '-ignore-count');
+    if (ignBtn)     ignBtn.disabled = count === 0;
+    if (ignCounter) ignCounter.textContent = count;
+}
+
+async function queueSelected(tab) {
+    let ids = [];
+    if (tab === 'upgrades') {
+        _Selected.upgrades.forEach(id => ids.push(parseInt(id)));
+    } else {
+        _Selected.packs.forEach(idsStr => {
+            idsStr.split(',').filter(Boolean).forEach(id => ids.push(parseInt(id)));
+        });
+    }
+    if (!ids.length) return;
+
+    const btn = document.getElementById('queue-' + tab + '-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="uh-spinner"></span> Queuing…';
+
+    try {
+        const res = await fetch('/upgrade_hub/api/queue', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ item_ids: ids }),
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast(`Queued ${data.queued} item(s) for upgrade.${data.failed ? ` ${data.failed} failed.` : ''}`);
+            // Remove queued items from data and re-render
+            const queuedSet = new Set(ids.map(String));
+            _VS[tab].data = _VS[tab].data.filter(item => {
+                const id = tab === 'upgrades' ? item.item_id : (item.item_ids || []).join(',');
+                return !queuedSet.has(String(id));
+            });
+            _Selected[tab].clear();
+            applyVFilter(tab);
+        } else {
+            showToast('Queue failed: ' + (data.error || 'Unknown error'), true);
+        }
+    } catch(e) {
+        showToast('Network error: ' + e.message, true);
+    }
+
+    btn.innerHTML = svgPlus() + ' Queue Selected (<span id="' + tab + '-selected-count">0</span>)';
+    btn.disabled = true;
+    updateQueueBtn(tab);
+}
+
+async function ignoreSelected(tab) {
+    const magnets = [];
+    const titles  = [];
+    const selectedIds = new Set(_Selected[tab]);
+    _VS[tab].data.forEach(item => {
+        const id = tab === 'upgrades' ? String(item.item_id) : (item.item_ids || []).join(',');
+        if (selectedIds.has(id)) {
+            if (item.new_magnet) magnets.push(item.new_magnet);
+            if (item.new_title)  titles.push(item.new_title);
+            // Also block all known alternative magnets so next-best doesn't reappear
+            if (item._alt_magnets) item._alt_magnets.forEach(m => { if (m) magnets.push(m); });
+        }
+    });
+    if (!magnets.length && !titles.length) return;
+
+    const btn = document.getElementById('ignore-' + tab + '-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="uh-spinner"></span> Ignoring…';
+
+    try {
+        const res = await fetch('/upgrade_hub/api/ignore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ magnets, titles }),
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast(`Ignored ${data.added} candidate(s) — won't appear in future scans.`);
+            // Remove ignored items from data and re-render
+            _VS[tab].data = _VS[tab].data.filter(item => {
+                const id = tab === 'upgrades' ? String(item.item_id) : (item.item_ids || []).join(',');
+                return !selectedIds.has(id);
+            });
+            _Selected[tab].clear();
+            applyVFilter(tab);
+        } else {
+            showToast('Ignore failed: ' + (data.error || 'Unknown error'), true);
+        }
+    } catch(e) {
+        showToast('Network error: ' + e.message, true);
+    }
+
+    const svgBan = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>`;
+    btn.innerHTML = svgBan + ' Ignore Selected (<span id="' + tab + '-ignore-count">0</span>)';
+    btn.disabled = true;
+    updateQueueBtn(tab);
+}
+
+// ---------------------------------------------------------------------------
+// Progress / status helpers
+// ---------------------------------------------------------------------------
+const PHASE_LABELS = {
+    starting:  'Starting…',
+    prefetch:  'Loading Zilean data…',
+    scoring:   'Scoring episodes & packs…',
+    scanning:  'Scanning movies…',
+    done:      'Done',
+    error:     'Error',
+};
+
+// ETA tracking: reset per phase so each phase gets its own rate calculation
+let _etaState = { phase: null, startTime: null, startDone: 0, lastDone: 0 };
+
+function _fmtEta(secs) {
+    if (!isFinite(secs) || secs <= 0) return '';
+    const m = Math.floor(secs / 60), s = Math.round(secs % 60);
+    if (m >= 60) return `~${Math.floor(m/60)}h ${m%60}m`;
+    if (m > 0)   return `~${m}m ${s}s`;
+    return `~${s}s`;
+}
+
+function showProgress(phase, pct, total, done) {
+    document.getElementById('uh-progress-wrap').style.display = '';
+    document.getElementById('uh-progress-fill').style.width = pct + '%';
+
+    // Reset ETA state on phase change or when no progress yet
+    if (_etaState.phase !== phase) {
+        _etaState = { phase, startTime: done > 0 ? Date.now() : null, startDone: done, lastDone: done };
+    } else if (_etaState.startTime === null && done > 0) {
+        _etaState.startTime = Date.now();
+        _etaState.startDone = done;
+    }
+    _etaState.lastDone = done;
+
+    let eta = '';
+    if (_etaState.startTime && done > _etaState.startDone && total > 0) {
+        const elapsed = (Date.now() - _etaState.startTime) / 1000;
+        const rate = (done - _etaState.startDone) / elapsed;   // items/sec
+        if (rate > 0) eta = _fmtEta((total - done) / rate);
+    }
+
+    const base = PHASE_LABELS[phase] || phase;
+    const pctStr = total > 0 ? ` ${pct}%` : '';
+    const etaStr = eta ? ` · ${eta}` : '';
+    document.getElementById('uh-progress-label').textContent = base + pctStr + etaStr;
+}
+
+function hideProgress() {
+    _etaState = { phase: null, startTime: null, startDone: 0, lastDone: 0 };
+    document.getElementById('uh-progress-wrap').style.display = 'none';
+}
+
+function showStatus(type, msg) {
+    const el = document.getElementById('uh-status-text');
+    el.textContent = msg;
+    el.className = 'uh-status-text uh-status-' + type;
+}
+
+function showToast(msg, isError) {
+    const t = document.createElement('div');
+    t.className = 'uh-toast' + (isError ? ' uh-toast-error' : '');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => { t.classList.add('uh-toast-show'); }, 10);
+    setTimeout(() => { t.classList.remove('uh-toast-show'); setTimeout(() => t.remove(), 300); }, 3500);
+}
+
+// ---------------------------------------------------------------------------
+// Utility
+// ---------------------------------------------------------------------------
+function escHtml(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function escAttr(s) {
+    return String(s).replace(/"/g,'&quot;');
+}
+function pad(n) { return String(n || 0).padStart(2, '0'); }
+
+// Extract quality tags from a filename and return a pipe-separated string,
+// e.g. "BluRay|1080p|AVC|DTS-HD.MA|5.1|REMUX|FraMeSToR|mkv"
+function fileTagsStr(filename) {
+    if (!filename) return '';
+    const f = filename;
+    const tags = [];
+    // Source
+    if (/BluRay|Blu-Ray|BDRip|BDMV/i.test(f))      tags.push('BluRay');
+    else if (/WEB-?DL/i.test(f))                    tags.push('WEB-DL');
+    else if (/WEBRip/i.test(f))                     tags.push('WEBRip');
+    else if (/HDTV/i.test(f))                       tags.push('HDTV');
+    // Resolution
+    if (/2160p|4K|\bUHD\b/i.test(f))               tags.push('2160p');
+    else if (/1080p/i.test(f))                      tags.push('1080p');
+    else if (/720p/i.test(f))                       tags.push('720p');
+    else if (/480p/i.test(f))                       tags.push('480p');
+    // Codec
+    if (/HEVC|x265|H\.265/i.test(f))               tags.push('x265');
+    else if (/\bAVC\b|x264|H\.264/i.test(f))        tags.push('AVC');
+    else if (/\bAV1\b/i.test(f))                    tags.push('AV1');
+    // Audio
+    if (/Atmos/i.test(f))                           tags.push('Atmos');
+    else if (/TrueHD/i.test(f))                     tags.push('TrueHD');
+    else if (/DTS-?HD\.?MA/i.test(f))               tags.push('DTS-HD.MA');
+    else if (/DTS-?X/i.test(f))                     tags.push('DTS-X');
+    else if (/\bDTS\b/i.test(f))                    tags.push('DTS');
+    else if (/DD\+|E-?AC3|\bDDP\b/i.test(f))        tags.push('DD+');
+    else if (/\bAAC\b/i.test(f))                    tags.push('AAC');
+    // Channels
+    if (/7\.1/i.test(f))                            tags.push('7.1');
+    else if (/5\.1/i.test(f))                       tags.push('5.1');
+    else if (/2\.0/i.test(f))                       tags.push('2.0');
+    // HDR
+    if (/DoVi|Dolby\.?Vision|\bDV\b/i.test(f))     tags.push('DV');
+    if (/HDR10\+/i.test(f))                         tags.push('HDR10+');
+    else if (/HDR10(?!\+)/i.test(f))                tags.push('HDR10');
+    else if (/\bHDR\b/i.test(f))                    tags.push('HDR');
+    // REMUX
+    if (/\bREMUX\b/i.test(f))                       tags.push('REMUX');
+    // Release group (text after last hyphen, before extension)
+    const grp = f.match(/-([A-Za-z0-9]{2,}?)(?:\.\w{2,4})?$/);
+    if (grp) tags.push(grp[1]);
+    // Extension
+    const ext = f.match(/\.(\w{2,4})$/);
+    if (ext) tags.push(ext[1]);
+    return tags.join('|');
+}
+
+function svgSearch() {
+    return '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>';
+}
+function svgPlus() {
+    return '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>';
+}
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+let _settings = {
+    min_improvement_threshold: 0,
+    scan_limit: null,
+    auto_scan_enabled: false,
+    auto_queue_enabled: false,
+    max_upgrades_per_run: 10,
+    show_recent_only: false,
+    hide_pack_episodes: false,
+    recent_threshold_days: 90,
+    excluded_genres: '',
+};
+
+async function loadSettings() {
+    try {
+        const res = await fetch('/upgrade_hub/api/settings');
+        const data = await res.json();
+        if (!data.success) return;
+        _settings = data.settings;
+        applySettingsToUI();
+    } catch(e) {
+        console.error('loadSettings:', e);
+    }
+}
+
+function applySettingsToUI() {
+    const t = _settings.min_improvement_threshold || 0;
+    const slider = document.getElementById('settings-threshold');
+    if (slider) {
+        slider.value = t;
+        slider.style.setProperty('--pct', (t / 200 * 100).toFixed(1) + '%');
+    }
+    document.getElementById('settings-threshold-val').textContent = '+' + t + '%';
+    // Sync per-tab sliders
+    setThreshold('upgrades', t);
+    setThreshold('packs', t);
+
+    // Scan limit buttons
+    const lim = _settings.scan_limit;
+    document.querySelectorAll('.uh-scan-limit-btn').forEach(btn => {
+        const v = btn.dataset.limit === 'null' ? null : parseInt(btn.dataset.limit);
+        btn.classList.toggle('active', v === lim);
+    });
+
+    // Auto scan toggle
+    const autoChk = document.getElementById('settings-auto-scan');
+    if (autoChk) autoChk.checked = !!_settings.auto_scan_enabled;
+
+    // Auto queue toggle
+    const autoQChk = document.getElementById('settings-auto-queue');
+    if (autoQChk) autoQChk.checked = !!_settings.auto_queue_enabled;
+
+    // Show recent only toggle
+    const recentChk = document.getElementById('settings-show-recent-only');
+    if (recentChk) recentChk.checked = !!_settings.show_recent_only;
+    if (_settings.show_recent_only) {
+        _recentOnly['upgrades'] = true;
+        _recentOnly['packs']    = true;
+        ['upgrades', 'packs'].forEach(t => {
+            const btn = document.getElementById(t + '-cache-toggle');
+            if (btn) btn.classList.add('active');
+        });
+    }
+
+    // Hide pack episodes toggle
+    const hidePackChk = document.getElementById('settings-hide-pack-episodes');
+    if (hidePackChk) hidePackChk.checked = !!_settings.hide_pack_episodes;
+
+    // Recent threshold days
+    const recentDaysInp = document.getElementById('settings-recent-days');
+    if (recentDaysInp) recentDaysInp.value = _settings.recent_threshold_days || 90;
+
+    // Max upgrades
+    const maxInp = document.getElementById('settings-max-upgrades');
+    if (maxInp) maxInp.value = _settings.max_upgrades_per_run || 10;
+
+    // Excluded genres chips
+    const rawGenres = _settings.excluded_genres || '';
+    _uhExcludedGenres = rawGenres ? rawGenres.split(',').map(g => g.trim()).filter(Boolean) : [];
+    uhRenderChips();
+}
+
+function setSettingsThreshold(val) {
+    _settings.min_improvement_threshold = parseFloat(val);
+    document.getElementById('settings-threshold-val').textContent = '+' + val + '%';
+    const slider = document.getElementById('settings-threshold');
+    if (slider) slider.style.setProperty('--pct', (val / 200 * 100).toFixed(1) + '%');
+    setThreshold('upgrades', val);
+    setThreshold('packs', val);
+}
+
+function setScanLimit(limit) {
+    _settings.scan_limit = limit;
+    document.querySelectorAll('.uh-scan-limit-btn').forEach(btn => {
+        const v = btn.dataset.limit === 'null' ? null : parseInt(btn.dataset.limit);
+        btn.classList.toggle('active', v === limit);
+    });
+}
+
+function stepRecentDays(delta) {
+    const inp = document.getElementById('settings-recent-days');
+    if (!inp) return;
+    inp.value = Math.max(1, Math.min(3650, parseInt(inp.value || 90) + delta));
+}
+
+function stepUpgradesPerRun(delta) {
+    const inp = document.getElementById('settings-max-upgrades');
+    if (!inp) return;
+    inp.value = Math.max(1, Math.min(100, parseInt(inp.value || 10) + delta));
+}
+
+async function clearHubQueue() {
+    if (!confirm('Revert all hub-queued Upgrading items back to Collected and clear pre-seeded magnets?')) return;
+    const btn = document.getElementById('btn-clear-hub-queue');
+    if (btn) btn.disabled = true;
+    try {
+        const res = await fetch('/upgrade_hub/api/clear_hub_queue', { method: 'POST' });
+        const data = await res.json();
+        const msg = document.getElementById('settings-save-msg');
+        if (msg) {
+            msg.textContent = data.success ? `Reverted ${data.reverted} item(s) to Collected.` : `Error: ${data.error}`;
+            setTimeout(() => { msg.textContent = ''; }, 4000);
+        }
+    } catch(e) {
+        console.error('clearHubQueue:', e);
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function runUpgradeCleanup() {
+    if (!confirm('Remove old files and torrents for all completed upgrades?\n\nThis will delete old symlinks/files from disk, remove stale entries from Plex/Jellyfin, and delete old torrents from your debrid account.')) return;
+    const btn = document.getElementById('btn-run-cleanup');
+    const msg = document.getElementById('settings-save-msg');
+    if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
+    try {
+        const res  = await fetch('/upgrade_hub/api/run_cleanup', { method: 'POST' });
+        const data = await res.json();
+        if (msg) {
+            msg.textContent = data.success
+                ? (data.queued ? `Cleanup started for ${data.queued} item(s) in background.` : data.message)
+                : `Error: ${data.error}`;
+            setTimeout(() => { msg.textContent = ''; }, 6000);
+        }
+    } catch(e) {
+        console.error('runUpgradeCleanup:', e);
+        if (msg) { msg.textContent = 'Request failed'; setTimeout(() => { msg.textContent = ''; }, 4000); }
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Run Upgrade Cleanup'; }
+    }
+}
+
+async function saveSettings() {
+    const autoChk       = document.getElementById('settings-auto-scan');
+    const autoQChk      = document.getElementById('settings-auto-queue');
+    const maxInp        = document.getElementById('settings-max-upgrades');
+    const recentChk     = document.getElementById('settings-show-recent-only');
+    const hidePackChk   = document.getElementById('settings-hide-pack-episodes');
+    const recentDaysInp = document.getElementById('settings-recent-days');
+    const payload = {
+        min_improvement_threshold: _settings.min_improvement_threshold,
+        scan_limit: _settings.scan_limit,
+        auto_scan_enabled:      autoChk      ? autoChk.checked      : false,
+        auto_queue_enabled:     autoQChk     ? autoQChk.checked     : false,
+        max_upgrades_per_run:   maxInp       ? parseInt(maxInp.value) || 10 : 10,
+        show_recent_only:       recentChk    ? recentChk.checked    : false,
+        hide_pack_episodes:     hidePackChk  ? hidePackChk.checked  : false,
+        recent_threshold_days:  recentDaysInp ? parseInt(recentDaysInp.value) || 90 : 90,
+        excluded_genres:        _uhExcludedGenres.join(','),
+    };
+    try {
+        const res = await fetch('/upgrade_hub/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        const msg = document.getElementById('settings-save-msg');
+        if (msg) {
+            msg.textContent = data.success ? 'Saved.' : 'Error saving.';
+            setTimeout(() => { msg.textContent = ''; }, 2500);
+        }
+    } catch(e) {
+        console.error('saveSettings:', e);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Genre chip selector (Excluded Genres in Settings)
+// ---------------------------------------------------------------------------
+let _uhExcludedGenres = [];
+let _uhAllGenres = [];
+let _uhGenresLoaded = false;
+
+async function uhLoadGenres() {
+    if (_uhGenresLoaded) return;
+    try {
+        const res = await fetch('/upgrade_hub/api/genres');
+        const data = await res.json();
+        if (data.success) {
+            _uhAllGenres = data.genres || [];
+            _uhGenresLoaded = true;
+        }
+    } catch(e) {
+        console.error('uhLoadGenres:', e);
+    }
+}
+
+function uhRenderChips() {
+    const wrap = document.getElementById('uh-genre-chips-wrap');
+    if (!wrap) return;
+    wrap.innerHTML = _uhExcludedGenres.map(g =>
+        `<span class="uh-genre-chip">${escHtml(g)}<button class="uh-genre-chip-remove" onmousedown="uhGenreRemove('${escAttr(g)}')" type="button">&#215;</button></span>`
+    ).join('');
+    const row = document.getElementById('uh-genre-chips-wrap-row');
+    if (row) row.style.display = _uhExcludedGenres.length ? '' : 'none';
+}
+
+function uhRenderDropdown(query) {
+    const dd = document.getElementById('uh-genre-dropdown');
+    if (!dd) return;
+    const q = (query || '').toLowerCase().trim();
+    const items = _uhAllGenres.filter(g =>
+        !_uhExcludedGenres.includes(g) && (!q || g.toLowerCase().includes(q))
+    );
+    if (!items.length) {
+        dd.innerHTML = '<div class="uh-genre-item uh-genre-item-empty">No genres found</div>';
+    } else {
+        dd.innerHTML = items.map(g =>
+            `<div class="uh-genre-item" onmousedown="uhGenreAdd('${escAttr(g)}')">${escHtml(g)}</div>`
+        ).join('');
+    }
+}
+
+async function uhGenreSearch(val) {
+    await uhLoadGenres();
+    uhRenderDropdown(val);
+    const dd = document.getElementById('uh-genre-dropdown');
+    if (dd) dd.style.display = '';
+}
+
+async function uhGenreOpenDropdown() {
+    await uhLoadGenres();
+    const dd = document.getElementById('uh-genre-dropdown');
+    const inp = document.getElementById('uh-genre-search');
+    if (dd) {
+        uhRenderDropdown(inp ? inp.value : '');
+        dd.style.display = '';
+    }
+}
+
+function uhGenreBlur() {
+    setTimeout(() => {
+        const dd = document.getElementById('uh-genre-dropdown');
+        if (dd) dd.style.display = 'none';
+    }, 150);
+}
+
+function uhGenreAdd(genre) {
+    if (!_uhExcludedGenres.includes(genre)) {
+        _uhExcludedGenres.push(genre);
+        uhRenderChips();
+    }
+    const inp = document.getElementById('uh-genre-search');
+    if (inp) inp.value = '';
+    uhRenderDropdown('');
+    const dd = document.getElementById('uh-genre-dropdown');
+    if (dd) dd.style.display = 'none';
+}
+
+function uhGenreRemove(genre) {
+    _uhExcludedGenres = _uhExcludedGenres.filter(g => g !== genre);
+    uhRenderChips();
+    const inp = document.getElementById('uh-genre-search');
+    uhRenderDropdown(inp ? inp.value : '');
+}
+
+// ---------------------------------------------------------------------------
+// Activity tab
+// ---------------------------------------------------------------------------
+const _UH_ACTION_LABELS = {
+    scan:              'Scan',
+    queue:             'Queue',
+    upgrade_processed: 'Upgrade Processed',
+};
+const _UH_RESULT_COLORS = {
+    success:   '#28a745',
+    initiated: '#17a2b8',
+    failed:    '#dc3545',
+    partial:   '#fd7e14',
+};
+let _uhActivityOffset = 0;
+const _UH_PAGE_SIZE = 50;
+let _uhActivityTotal = 0;
+let _uhActivityLoaded = false;
+let _uhActivityAutoRefreshTimer = null;
+
+async function loadActivity(reset) {
+    if (reset) _uhActivityOffset = 0;
+    const atype = document.getElementById('uh-activity-type-filter').value;
+    const btn = document.getElementById('uh-activity-refresh-btn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<svg style="width:14px;height:14px;animation:uh-spin 0.7s linear infinite;vertical-align:middle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M4 4v5h5M20 20v-5h-5"/><path d="M4 9a9 9 0 0115-4M20 15a9 9 0 01-15 4"/></svg> Refreshing…'; }
+    try {
+        const res = await fetch(
+            `/upgrade_hub/api/activity?limit=${_UH_PAGE_SIZE}&offset=${_uhActivityOffset}&type=${atype}`
+        );
+        const data = await res.json();
+        if (!data.success) return;
+        _uhActivityTotal = data.total || 0;
+        renderActivityRows(data.activities || []);
+        updateActivityPagination();
+        _uhActivityLoaded = true;
+    } catch(e) {
+        console.error('loadActivity:', e);
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '&#8635; Refresh'; }
+    }
+}
+
+function _uhStartActivityAutoRefresh() {
+    if (_uhActivityAutoRefreshTimer) return;
+    _uhActivityAutoRefreshTimer = setInterval(() => {
+        // Only refresh if on page 1 (don't disrupt pagination browsing)
+        if (_uhActivityOffset === 0) loadActivity(false);
+    }, 30000);
+}
+
+function _uhStopActivityAutoRefresh() {
+    if (_uhActivityAutoRefreshTimer) {
+        clearInterval(_uhActivityAutoRefreshTimer);
+        _uhActivityAutoRefreshTimer = null;
+    }
+}
+
+function _fmtActivityDate(ts) {
+    if (!ts) return '—';
+    // Append 'Z' so JS treats the stored UTC timestamp as UTC, then converts to local time
+    const d = new Date(ts.includes('Z') || ts.includes('+') ? ts : ts + 'Z');
+    return isNaN(d) ? ts : d.toLocaleString();
+}
+
+function _buildActivityDetail(row) {
+    const s = row.stats || {};
+    if (row.action_type === 'upgrade_processed') {
+        const title = escHtml(s.title || row.title || '—');
+        if (row.result === 'success' || row.result === 'initiated') {
+            const fromFile = escHtml(s.from_file || '');
+            const toFile   = escHtml(s.to_file   || '');
+            return `<div style="font-weight:500">${title}</div>` +
+                   (fromFile ? `<div class="uh-muted">${fromFile}</div>` : '') +
+                   (toFile   ? `<div class="uh-best-candidate">${toFile}</div>` : '');
+        } else {
+            const fromFile = escHtml(s.from_file || '');
+            const errMsg   = escHtml(s.error || row.title || 'upgrade failed');
+            const actions  = Array.isArray(s.actions_taken) ? s.actions_taken : [];
+            const actionsHtml = actions.map(a =>
+                `<div style="color:#fd7e14;font-size:0.80rem">&#8627; ${escHtml(a)}</div>`
+            ).join('');
+            return `<div style="font-weight:500">${title}</div>` +
+                   (fromFile ? `<div class="uh-muted">${fromFile}</div>` : '') +
+                   `<div style="color:#dc3545;font-size:0.82rem">${errMsg}</div>` +
+                   actionsHtml;
+        }
+    }
+    return escHtml(row.title || '—');
+}
+
+function renderActivityRows(rows) {
+    const tbody = document.getElementById('uh-activity-tbody');
+    if (!rows.length) {
+        tbody.innerHTML = '<tr class="uh-empty-row"><td colspan="5">No activity recorded yet.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = rows.map(row => {
+        const dt = _fmtActivityDate(row.created_at);
+        const action = escHtml(_UH_ACTION_LABELS[row.action_type] || row.action_type);
+        const by = escHtml(row.triggered_by || '—');
+        const resultColor = _UH_RESULT_COLORS[row.result] || '#6c757d';
+        const result = `<span style="color:${resultColor};font-weight:600">${escHtml(row.result || '—')}</span>`;
+        const detail = _buildActivityDetail(row);
+        return `<tr>
+            <td class="uh-act-dt">${escHtml(dt)}</td>
+            <td><span class="uh-act-badge uh-act-badge-${escAttr(row.action_type)}">${action}</span></td>
+            <td class="uh-act-by">${by}</td>
+            <td>${result}</td>
+            <td class="uh-act-title">${detail}</td>
+        </tr>`;
+    }).join('');
+}
+
+function updateActivityPagination() {
+    const pg = document.getElementById('uh-activity-pagination');
+    const info = document.getElementById('uh-activity-page-info');
+    const prev = document.getElementById('uh-activity-prev');
+    const next = document.getElementById('uh-activity-next');
+    if (_uhActivityTotal <= _UH_PAGE_SIZE) {
+        pg.style.display = 'none';
+        return;
+    }
+    pg.style.display = '';
+    const page = Math.floor(_uhActivityOffset / _UH_PAGE_SIZE) + 1;
+    const pages = Math.ceil(_uhActivityTotal / _UH_PAGE_SIZE);
+    info.textContent = `Page ${page} of ${pages} (${_uhActivityTotal} total)`;
+    prev.disabled = _uhActivityOffset === 0;
+    next.disabled = _uhActivityOffset + _UH_PAGE_SIZE >= _uhActivityTotal;
+}
+
+function activityPage(dir) {
+    _uhActivityOffset = Math.max(0, _uhActivityOffset + dir * _UH_PAGE_SIZE);
+    loadActivity(false);
+}
+
+// Load activity / genres lazily when the tab is first activated; manage auto-refresh
+document.querySelectorAll('.uh-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+        if (btn.dataset.tab === 'activity') {
+            if (!_uhActivityLoaded) loadActivity(true);
+            _uhStartActivityAutoRefresh();
+        } else {
+            _uhStopActivityAutoRefresh();
+        }
+        if (btn.dataset.tab === 'settings') {
+            uhLoadGenres();
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Init: load existing results + check if scan is in progress
+// ---------------------------------------------------------------------------
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadSettings();
+    // If the activity tab is the restored active tab, load it now and start auto-refresh
+    if (sessionStorage.getItem('uh_active_tab') === 'activity') {
+        loadActivity(true);
+        _uhStartActivityAutoRefresh();
+    }
+    try {
+        const res = await fetch('/upgrade_hub/api/status');
+        const s = await res.json();
+
+        if (!s.zilean_configured) {
+            showStatus('error', 'Zilean scraper not configured — enable it in Settings → Scrapers');
+            document.getElementById('scan-btn').disabled = true;
+        }
+
+        if (s.in_progress) {
+            _scanInProgress = true;
+            document.getElementById('scan-btn').disabled = true;
+            document.getElementById('scan-btn').innerHTML = '<span class="uh-spinner"></span> Scanning…';
+            const _initP = s.progress || {};
+            const _initPct = _initP.total > 0 ? Math.round((_initP.done || 0) / _initP.total * 100) : 0;
+            showProgress(_initP.phase || 'scanning', _initPct, _initP.total || 0, _initP.done || 0);
+            pollStatus();
+        } else if (s.has_results) {
+            await loadResults();
+        } else if (s.last_scan_at) {
+            _lastScanAt = new Date(s.last_scan_at).getTime();
+            showStatus('ok', 'Last scan: ' + new Date(s.last_scan_at).toLocaleString());
+            updateScanBtnAge();
+        }
+    } catch(e) {
+        console.error('Init failed:', e);
+    }
+});
+</script>
+{% endblock %}
