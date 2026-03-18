@@ -7463,6 +7463,63 @@ def memory_snapshot():
     except Exception:
         pass
 
+    # queue_times (QueueTimer in-memory dict)
+    try:
+        from queues.queue_manager import QueueManager
+        qt = QueueManager().queue_timer
+        known_structures['queue_times_count'] = len(qt.queue_times)
+    except Exception as e:
+        known_structures['queue_times_count'] = f'error: {e}'
+
+    # _last_scan_results (upgrade hub in-memory scan cache)
+    try:
+        from database.zilean_upgrade import _last_scan_results, _queued_magnets
+        if _last_scan_results:
+            candidates = len(_last_scan_results.get('upgrade_candidates', []))
+            packs = len(_last_scan_results.get('pack_candidates', []))
+            known_structures['last_scan_results_candidates'] = candidates
+            known_structures['last_scan_results_packs'] = packs
+            known_structures['last_scan_results_size_kb'] = round(sys.getsizeof(_last_scan_results) / 1024, 1)
+        else:
+            known_structures['last_scan_results_candidates'] = 0
+        known_structures['queued_magnets_count'] = len(_queued_magnets) if _queued_magnets else 0
+    except Exception as e:
+        known_structures['last_scan_results'] = f'error: {e}'
+
+    # _search_cache (web_scraper module-level cache)
+    try:
+        from utilities.web_scraper import _search_cache
+        info = _search_cache.get_stats() if hasattr(_search_cache, 'get_stats') else {}
+        known_structures['search_cache_size'] = info.get('size', len(_search_cache._cache))
+        known_structures['search_cache_max'] = info.get('max_size', _search_cache.max_size)
+    except Exception as e:
+        known_structures['search_cache'] = f'error: {e}'
+
+    # Open SQLite connections (file handles to .db files)
+    try:
+        import os as _os
+        db_handles = []
+        fd_dir = '/proc/self/fd'
+        for fd_name in _os.listdir(fd_dir):
+            try:
+                target = _os.readlink(_os.path.join(fd_dir, fd_name))
+                if target.endswith('.db') or target.endswith('.db-wal') or target.endswith('.db-shm'):
+                    db_handles.append(_os.path.basename(target))
+            except Exception:
+                pass
+        known_structures['open_db_file_handles'] = len(db_handles)
+        known_structures['open_db_files'] = sorted(set(db_handles))
+    except Exception as e:
+        known_structures['open_db_file_handles'] = f'error: {e}'
+
+    # Poster cache entry count
+    try:
+        from routes.poster_cache import _cache as _poster_cache
+        known_structures['poster_cache_entries'] = len(_poster_cache)
+        known_structures['poster_cache_size_kb'] = round(sys.getsizeof(_poster_cache) / 1024, 1)
+    except Exception as e:
+        known_structures['poster_cache'] = f'error: {e}'
+
     report['known_structures'] = known_structures
 
     # --- Top Python object counts by type (gc) ---
@@ -7502,6 +7559,19 @@ def trim_memory():
         return None
 
     before = _read_rss_mb()
+
+    # Clear idle RD library cache to free ~200+ MB from torrent list
+    lib_torrents_freed = 0
+    try:
+        from routes.debrid_manager_routes import _lib, _lib_last_accessed
+        with _lib['lock']:
+            if _lib['stable'] is not None:
+                lib_torrents_freed = len(_lib['stable'].get('torrents', []))
+                _lib['stable'] = None
+        logging.info(f"[TRIM_MEMORY] Cleared RD library cache ({lib_torrents_freed} torrents)")
+    except Exception as e:
+        logging.debug(f"[TRIM_MEMORY] Could not clear RD library cache: {e}")
+
     collected = gc.collect()
     trim_ok = False
     try:
@@ -7520,4 +7590,5 @@ def trim_memory():
         'before_mb': round(before, 1) if before else None,
         'after_mb': round(after, 1) if after else None,
         'freed_mb': freed,
+        'lib_torrents_freed': lib_torrents_freed,
     })
