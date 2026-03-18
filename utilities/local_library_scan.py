@@ -1909,7 +1909,7 @@ def local_library_scan(items: List[Dict[str, Any]], extract_resolution: bool = T
                 if size_gb is not None:
                     item_with_data = item.copy()
                     item_with_data['size_gb'] = size_gb
-                    item_with_data['location'] = location
+                    item_with_data['location'] = item.get('location_on_disk') or location
                     size_found_count += 1
 
                     # OPTIONALLY extract resolution
