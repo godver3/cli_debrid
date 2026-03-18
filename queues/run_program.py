@@ -6105,6 +6105,18 @@ class ProgramRunner:
             logging.warning(f"Overlay module not available: {e}")
         except Exception as e:
             logging.error(f"Error in overlay sync task: {e}", exc_info=True)
+        finally:
+            # Overlay sync loads large amounts of Plex metadata into memory.
+            # Force glibc to return freed arena pages to the OS immediately.
+            try:
+                import gc, ctypes
+                _before_rss = _read_current_rss_kb()
+                gc.collect()
+                ctypes.CDLL('libc.so.6').malloc_trim(0)
+                _after_rss = _read_current_rss_kb()
+                logging.info(f"[OVERLAY_SYNC] malloc_trim: RSS {_before_rss//1024} MB → {_after_rss//1024} MB (freed {(_before_rss - _after_rss)//1024} MB)")
+            except Exception as _e:
+                logging.info(f"[OVERLAY_SYNC] malloc_trim skipped: {_e}")
 
     def task_overlay_cleanup(self):
         """Scheduled task to clean up unused posters and overlay cache."""
