@@ -40,6 +40,7 @@ _lib = {
     'lock':    threading.Lock(),
 }
 _lib_db_loaded = False  # track whether we've attempted a DB load this process
+_lib_last_accessed = 0.0  # timestamp of last debrid manager visit — used for idle eviction
 
 
 def _save_lib_cache_to_db(stable_data: dict) -> None:
@@ -1008,8 +1009,10 @@ def api_reinsert_torrent(torrent_id):
 @debrid_manager_bp.route('/api/library')
 @admin_required
 def api_library():
+    global _lib_last_accessed
     force = request.args.get('force') == '1'
     now   = time.time()
+    _lib_last_accessed = now  # track for idle eviction
 
     with _lib['lock']:
         stable   = _lib['stable']
