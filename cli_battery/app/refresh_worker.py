@@ -194,6 +194,7 @@ def _refresh_stale_fallback():
             for i in items
             if i.imdb_id and is_valid_imdb_id(i.imdb_id)  # Skip items without valid IMDb IDs
         ]
+        del items  # Release ORM objects immediately; candidates only holds primitive tuples
 
     stale_shows = []
     stale_movies = []
@@ -260,6 +261,7 @@ def _recheck_null_airdates():
                 item = session.query(Item).filter_by(id=season.item_id).first()
                 if item:
                     shows_to_refresh[season.item_id] = (item.id, item.imdb_id, item.title)
+        del episodes  # Release Episode ORM objects; shows_to_refresh holds only primitives
 
     refreshed = 0
     for item_id, (db_id, imdb_id, title) in shows_to_refresh.items():
