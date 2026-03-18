@@ -60,6 +60,10 @@ def parse_json_string(s):
     except json.JSONDecodeError:
         return s
 
+# Session-level negative cache for TMDB IDs that returned 404.
+# Avoids repeated HTTP calls and ERROR spam for deleted/merged TMDB entries.
+_tmdb_not_found: set = set()
+
 def get_tmdb_metadata(tmdb_id: str, media_type: str) -> Optional[Dict[str, Any]]:
     """Fetch metadata directly from TMDB API."""
     tmdb_api_key = get_setting('TMDB', 'api_key')
@@ -67,9 +71,14 @@ def get_tmdb_metadata(tmdb_id: str, media_type: str) -> Optional[Dict[str, Any]]
         logging.debug("No TMDB API key configured, skipping TMDB metadata fetch")
         return None
 
+    cache_key = f"{media_type}:{tmdb_id}"
+    if cache_key in _tmdb_not_found:
+        logging.debug(f"Skipping TMDB fetch for ID {tmdb_id} (cached 404)")
+        return None
+
     base_url = "https://api.themoviedb.org/3"
     endpoint = f"/{'movie' if media_type.lower() == 'movie' else 'tv'}/{tmdb_id}"
-    
+
     try:
         response = requests.get(
             f"{base_url}{endpoint}",
@@ -78,7 +87,7 @@ def get_tmdb_metadata(tmdb_id: str, media_type: str) -> Optional[Dict[str, Any]]
         )
         response.raise_for_status()
         data = response.json()
-        
+
         # Extract relevant fields
         metadata = {
             'title': data.get('title') or data.get('name'),
@@ -92,10 +101,17 @@ def get_tmdb_metadata(tmdb_id: str, media_type: str) -> Optional[Dict[str, Any]]
             'vote_average': data.get('vote_average'),
             'tmdb_id': tmdb_id
         }
-        
+
         logging.debug(f"Successfully fetched TMDB metadata for ID {tmdb_id}: {metadata}")
         return metadata
-        
+
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 404:
+            _tmdb_not_found.add(cache_key)
+            logging.warning(f"TMDB ID {tmdb_id} not found (404) — cached for this session")
+        else:
+            logging.error(f"Error fetching TMDB metadata for ID {tmdb_id}: {e}")
+        return None
     except Exception as e:
         logging.error(f"Error fetching TMDB metadata for ID {tmdb_id}: {str(e)}")
         return None
