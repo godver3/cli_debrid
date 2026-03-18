@@ -154,6 +154,28 @@
     background: var(--card-background, white);
 }
 
+/* Top scrim — helps APPLIED badge / regen button stand out */
+.media-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 70px;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.5), transparent);
+    z-index: 5;
+    pointer-events: none;
+}
+
+/* Bottom scrim — helps poster-picker button stand out (covers lower poster only) */
+.media-card::after {
+    content: '';
+    position: absolute;
+    top: 225px; left: 0; right: 0;
+    height: 75px;
+    background: linear-gradient(to top, rgba(0,0,0,0.5), transparent);
+    z-index: 5;
+    pointer-events: none;
+}
+
 .media-card:hover {
     transform: translateY(-5px);
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
@@ -163,7 +185,7 @@
     position: absolute;
     top: 6px;
     left: 6px;
-    background: rgba(0,0,0,0.65);
+    background: rgba(0,0,0,0.82);
     color: #fff;
     border: none;
     border-radius: 50%;
@@ -178,6 +200,7 @@
     opacity: 0;
     transition: opacity 0.2s, background 0.15s;
     z-index: 10;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
 }
 .media-card:hover .card-regen-btn {
     opacity: 1;
@@ -185,6 +208,105 @@
 .card-regen-btn:hover {
     background: rgba(230, 100, 0, 0.85);
 }
+
+/* ── Poster picker button (bottom-right of card) ── */
+.card-poster-btn {
+    position: absolute;
+    bottom: 6px;
+    right: 6px;
+    background: rgba(0,0,0,0.82);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s, background 0.15s;
+    z-index: 10;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+}
+.media-card:hover .card-poster-btn { opacity: 1; }
+.card-poster-btn:hover { background: rgba(40, 167, 69, 0.85); }
+
+/* ── Poster picker modal ── */
+.poster-picker-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 9000;
+    display: flex; align-items: center; justify-content: center;
+}
+.poster-picker-modal {
+    background: #1e1e1e;
+    border-radius: 10px;
+    padding: 20px;
+    width: 320px;
+    max-width: 95vw;
+    position: relative;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+    color: #e0e0e0;
+}
+.poster-picker-modal h3 {
+    margin: 0 0 14px;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+}
+.poster-picker-close {
+    position: absolute; top: 10px; right: 12px;
+    background: none; border: none; color: #aaa;
+    font-size: 20px; cursor: pointer; line-height: 1;
+}
+.poster-picker-close:hover { color: #fff; }
+.poster-picker-nav {
+    display: flex; align-items: center; gap: 10px;
+}
+.poster-nav-btn {
+    background: rgba(255,255,255,0.1);
+    border: none; color: #fff;
+    border-radius: 6px;
+    width: 36px; height: 36px;
+    font-size: 18px; cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s;
+}
+.poster-nav-btn:hover { background: rgba(255,255,255,0.25); }
+.poster-nav-btn:disabled { opacity: 0.3; cursor: default; }
+.poster-picker-img-wrap {
+    flex: 1; aspect-ratio: 2/3;
+    background: #111; border-radius: 6px; overflow: hidden;
+    position: relative;
+    min-height: 180px;
+}
+.poster-picker-img-wrap img {
+    width: 100%; height: 100%; object-fit: cover; display: block;
+}
+.poster-picker-spinner {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.5);
+    font-size: 13px; color: #aaa;
+}
+.poster-picker-info {
+    text-align: center; font-size: 12px; color: #aaa; margin-top: 8px;
+}
+.poster-picker-actions {
+    margin-top: 14px; display: flex; gap: 8px;
+}
+.poster-picker-apply-btn {
+    flex: 1; padding: 9px;
+    background: #28a745; color: #fff;
+    border: none; border-radius: 6px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: background 0.15s;
+}
+.poster-picker-apply-btn:hover { background: #218838; }
+.poster-picker-apply-btn:disabled { background: #555; cursor: default; }
 
 .card-version-badge {
     position: absolute;
@@ -225,6 +347,23 @@
 }
 .card-seasons-btn:hover {
     background: rgba(0, 123, 255, 0.85);
+}
+
+/* Unprocessed seasons badge on show cards */
+.card-seasons-unprocessed {
+    font-size: 10px;
+    font-weight: 600;
+    color: #fd7e14;
+    margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    letter-spacing: 0.2px;
+    line-height: 1.3;
+}
+.card-seasons-unprocessed:hover {
+    text-decoration: underline;
 }
 
 /* Season overlay modal */
@@ -379,6 +518,8 @@
     border-radius: 4px;
     font-size: 11px;
     font-weight: bold;
+    z-index: 10;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.55);
 }
 
 .status-applied {
@@ -952,6 +1093,26 @@
     </div>
 </div>
 
+<!-- Poster Picker Modal -->
+<div id="poster-picker-overlay" class="poster-picker-overlay" style="display:none" onclick="if(event.target===this)closePosterPicker()">
+    <div class="poster-picker-modal">
+        <button class="poster-picker-close" onclick="closePosterPicker()" title="Close">&times;</button>
+        <h3>Choose Poster</h3>
+        <div class="poster-picker-nav">
+            <button class="poster-nav-btn" id="pp-prev" onclick="navigatePoster(-1)" disabled>&#9664;</button>
+            <div class="poster-picker-img-wrap">
+                <img id="pp-img" src="" alt="Poster preview">
+                <div class="poster-picker-spinner" id="pp-spinner">Loading...</div>
+            </div>
+            <button class="poster-nav-btn" id="pp-next" onclick="navigatePoster(1)" disabled>&#9654;</button>
+        </div>
+        <div class="poster-picker-info" id="pp-info"></div>
+        <div class="poster-picker-actions">
+            <button class="poster-picker-apply-btn" id="pp-apply" onclick="applyChosenPoster()" disabled>Apply with Overlay</button>
+        </div>
+    </div>
+</div>
+
 <!-- Season Overlays Modal -->
 <div id="seasons-modal-backdrop">
     <div id="seasons-modal">
@@ -1040,6 +1201,7 @@ async function _pollSyncStatus() {
 
         if (!data.running && data.done) {
             clearInterval(_syncPollTimer);
+            _syncPollTimer = null;
             btn.disabled = false;
             btn.innerHTML = '<i class="fas fa-sync-alt"></i> Sync Library';
             // Refresh grids so new plex_rating_key counts are reflected
@@ -1049,6 +1211,13 @@ async function _pollSyncStatus() {
         }
     } catch (e) {
         console.warn('Sync poll error:', e);
+        // Stop polling on error — show message and re-enable button so user can retry
+        clearInterval(_syncPollTimer);
+        _syncPollTimer = null;
+        const status = document.getElementById('sync-library-status');
+        const btn = document.getElementById('sync-library-btn');
+        if (status) status.textContent = 'Status check failed — sync may still be running. Click to retry.';
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync-alt"></i> Sync Library'; }
     }
 }
 
@@ -1136,14 +1305,23 @@ async function resetFailedStats(e) {
 
 // Load movies
 function _posterSrc(item) {
+    // If overlay is applied and the item is synced to Plex, show the actual applied poster.
+    // Uses the currently-selected Plex poster (download_poster) resized to 300px thumbnail.
+    // Falls back to TMDB on error.
+    if (item.overlay_status === 'applied' && item.ms_item_id) {
+        return `/api/overlays/poster_applied/${encodeURIComponent(item.ms_item_id)}`;
+    }
     return item.poster_path ? `/scraper/tmdb_image/w185${item.poster_path}` : '/static/images/placeholder.png';
 }
 
 function _posterAttrs(item, mediaType) {
     const src = _posterSrc(item);
-    const lazy = !item.poster_path && item.imdb_id
+    // For applied posters served via the proxy, fall back to TMDB on error
+    const onError = (item.overlay_status === 'applied' && item.ms_item_id)
+        ? ` onerror="this.onerror=null;this.src='${item.poster_path ? `/scraper/tmdb_image/w185${item.poster_path}` : '/static/images/placeholder.png'}'"` : '';
+    const lazy = !item.poster_path && item.imdb_id && item.overlay_status !== 'applied'
         ? ` data-lazy-imdb="${item.imdb_id}" data-lazy-type="${mediaType}"` : '';
-    return `src="${src}"${lazy}`;
+    return `src="${src}"${onError}${lazy}`;
 }
 
 // Persists across grid reloads for the lifetime of the page session
@@ -1201,11 +1379,14 @@ function lazyLoadPosters(grid) {
 function _renderMovieCard(item) {
     const failReason = item.overlay_status === 'failed' && item.overlay_reason
         ? `<div class="overlay-fail-reason">${item.overlay_reason}</div>` : '';
+    const pickerBtn = item.ms_item_id
+        ? `<button class="card-poster-btn" title="Choose poster" onclick="event.stopPropagation(); openPosterPicker(${item.id})">&#9998;</button>` : '';
     return `<div class="media-card" data-item-id="${item.id}" data-status="${item.overlay_status}" onclick="toggleSelect(this)">
         <img class="media-poster" ${_posterAttrs(item, 'movie')} alt="${item.title}">
         <div class="overlay-status status-${item.overlay_status}">${item.overlay_status.replace('_', ' ')}</div>
         ${failReason}
         <button class="card-regen-btn" title="Regenerate overlay using current library poster" onclick="event.stopPropagation(); regenerateSingleOverlay(${item.id}, this)">↻</button>
+        ${pickerBtn}
         ${item.version_count > 1 ? `<div class="card-version-badge" title="${item.version_count} versions in library">${item.version_count} versions</div>` : ''}
         <div class="media-info">
             <div class="media-title">${item.title}</div>
@@ -1214,18 +1395,33 @@ function _renderMovieCard(item) {
     </div>`;
 }
 
+function _seasonsBadge(item) {
+    const nums = item.seasons_unprocessed;
+    if (!nums || !nums.length) return '';
+    const safeKey = (item.ms_item_id || '').replace(/'/g, "\\'");
+    const safeTitle = (item.title || '').replace(/'/g, "\\'");
+    const labels = nums.map(n => n === 0 ? 'S0' : `S${n}`);
+    const text = labels.length <= 4 ? labels.join(' · ') : labels.slice(0, 3).join(' · ') + ` +${labels.length - 3}`;
+    const tooltip = `Unprocessed seasons: ${labels.join(', ')} — click to manage`;
+    return `<div class="card-seasons-unprocessed" title="${tooltip}" onclick="event.stopPropagation(); openSeasonsModal('${safeKey}', '${safeTitle}')">${text} unprocessed</div>`;
+}
+
 function _renderShowCard(item) {
     const failReason = item.overlay_status === 'failed' && item.overlay_reason
         ? `<div class="overlay-fail-reason">${item.overlay_reason}</div>` : '';
+    const pickerBtn = item.ms_item_id
+        ? `<button class="card-poster-btn" title="Choose poster" onclick="event.stopPropagation(); openPosterPicker(${item.id})">&#9998;</button>` : '';
     return `<div class="media-card" data-item-id="${item.id}" data-status="${item.overlay_status}" onclick="toggleSelect(this)">
         <img class="media-poster" ${_posterAttrs(item, 'show')} alt="${item.title}">
         <div class="overlay-status status-${item.overlay_status}">${item.overlay_status.replace('_', ' ')}</div>
         ${failReason}
         <button class="card-regen-btn" title="Regenerate overlay using current library poster" onclick="event.stopPropagation(); regenerateSingleOverlay(${item.id}, this)">↻</button>
+        ${pickerBtn}
         ${item.ms_item_id ? `<button class="card-seasons-btn" title="Manage season poster overlays" onclick="event.stopPropagation(); openSeasonsModal('${item.ms_item_id}', '${(item.title||'').replace(/'/g,"\\'")}')">Seasons</button>` : ''}
         <div class="media-info">
             <div class="media-title">${item.title}</div>
             <div class="media-year">${item.year || 'Unknown'}${item.collected_episodes != null ? ` · ${item.collected_episodes}/${item.total_episodes} eps` : ''}</div>
+            ${_seasonsBadge(item)}
         </div>
     </div>`;
 }
@@ -1240,7 +1436,9 @@ function _renderGrid(gridId, items, renderFn, searchQuery, statusFilter) {
     const q = (searchQuery || '').trim().toLowerCase();
     const filtered = items.filter(item => {
         const titleMatch = !q || (item.title || '').toLowerCase().includes(q);
-        const statusMatch = !statusFilter || item.overlay_status === statusFilter;
+        const statusMatch = !statusFilter || item.overlay_status === statusFilter
+            || (gridId === 'shows-grid' && (item.seasons_unprocessed || []).length > 0
+                && (statusFilter === 'not_started' || statusFilter === 'failed'));
         return titleMatch && statusMatch;
     });
 
@@ -1605,6 +1803,107 @@ async function deleteAllBackups(event) {
         btn.disabled = false;
     }
 }
+
+// ── Poster Picker ─────────────────────────────────────────────────────────
+let _ppItemId = null;
+let _ppPosters = [];
+let _ppIndex = 0;
+
+async function openPosterPicker(itemId) {
+    _ppItemId = itemId;
+    _ppPosters = [];
+    _ppIndex = 0;
+    const overlay = document.getElementById('poster-picker-overlay');
+    overlay.style.display = 'flex';
+    _ppSetLoading(true);
+    document.getElementById('pp-apply').disabled = true;
+    document.getElementById('pp-prev').disabled = true;
+    document.getElementById('pp-next').disabled = true;
+    document.getElementById('pp-info').textContent = 'Loading posters…';
+    document.getElementById('pp-img').src = '';
+    try {
+        const resp = await fetch(`/api/overlays/poster_list/${itemId}`);
+        const data = await resp.json();
+        if (!data.success || !data.posters.length) {
+            document.getElementById('pp-info').textContent = data.error || 'No posters available';
+            _ppSetLoading(false);
+            return;
+        }
+        _ppPosters = data.posters;
+        // Start at the currently selected poster (or 0)
+        _ppIndex = _ppPosters.findIndex(p => p.selected);
+        if (_ppIndex < 0) _ppIndex = 0;
+        _ppShowPoster(_ppIndex);
+    } catch (e) {
+        document.getElementById('pp-info').textContent = 'Failed to load posters';
+        _ppSetLoading(false);
+    }
+}
+
+function closePosterPicker() {
+    document.getElementById('poster-picker-overlay').style.display = 'none';
+    _ppItemId = null;
+    _ppPosters = [];
+}
+
+function _ppSetLoading(on) {
+    document.getElementById('pp-spinner').style.display = on ? 'flex' : 'none';
+}
+
+function _ppShowPoster(idx) {
+    const p = _ppPosters[idx];
+    if (!p) return;
+    _ppSetLoading(true);
+    document.getElementById('pp-apply').disabled = true;
+    const img = document.getElementById('pp-img');
+    img.onload = () => { _ppSetLoading(false); document.getElementById('pp-apply').disabled = false; };
+    img.onerror = () => { _ppSetLoading(false); document.getElementById('pp-info').textContent = 'Failed to load image'; };
+    img.src = p.thumb_url + '?t=' + Date.now();
+    const provider = p.provider ? ` · ${p.provider}` : '';
+    const sel = p.selected ? ' · currently selected' : '';
+    document.getElementById('pp-info').textContent = `${idx + 1} of ${_ppPosters.length}${provider}${sel}`;
+    document.getElementById('pp-prev').disabled = idx === 0;
+    document.getElementById('pp-next').disabled = idx === _ppPosters.length - 1;
+}
+
+function navigatePoster(dir) {
+    const next = _ppIndex + dir;
+    if (next < 0 || next >= _ppPosters.length) return;
+    _ppIndex = next;
+    _ppShowPoster(_ppIndex);
+}
+
+async function applyChosenPoster() {
+    if (!_ppItemId || !_ppPosters[_ppIndex]) return;
+    const btn = document.getElementById('pp-apply');
+    const ratingKey = _ppPosters[_ppIndex].rating_key;
+    btn.disabled = true;
+    btn.textContent = 'Applying…';
+    _ppSetLoading(true);
+    try {
+        const resp = await fetch(`/api/overlays/apply_poster/${_ppItemId}`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({rating_key: ratingKey})
+        });
+        const data = await resp.json();
+        if (data.success) {
+            closePosterPicker();
+            _refreshGrids();
+        } else {
+            alert('Failed to apply poster: ' + (data.message || data.error || 'Unknown error'));
+            btn.disabled = false;
+            btn.textContent = 'Apply with Overlay';
+            _ppSetLoading(false);
+        }
+    } catch (e) {
+        alert('Failed to apply poster');
+        btn.disabled = false;
+        btn.textContent = 'Apply with Overlay';
+        _ppSetLoading(false);
+    }
+}
+// ── End Poster Picker ──────────────────────────────────────────────────────
 
 async function regenerateSingleOverlay(itemId, btn) {
     if (!confirm('Regenerate overlay using the currently-selected library poster?')) return;
@@ -2029,6 +2328,19 @@ function _formatActivityDate(ts) {
          + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+function _formatDuration(seconds) {
+    if (seconds == null) return '—';
+    seconds = Math.round(seconds);
+    if (seconds < 1) return '< 1s';
+    if (seconds < 60) return `${seconds}s`;
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+    const h = Math.floor(m / 60);
+    const rm = m % 60;
+    return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
+}
+
 async function loadActivity(reset) {
     if (reset) _activityOffset = 0;
     const container = document.getElementById('activity-log-container');
@@ -2064,6 +2376,7 @@ async function loadActivity(reset) {
                     <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:140px;">Action</th>
                     <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:80px;">By</th>
                     <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:70px;">Result</th>
+                    <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:90px;">Duration</th>
                     <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;">Details</th>
                 </tr>
             </thead>
@@ -2079,11 +2392,13 @@ async function loadActivity(reset) {
             const sub    = row.title && statsStr ? `<br><span style="font-size:11px;color:var(--text-secondary,#888);">${statsStr}</span>` : '';
             const failSub = failuresStr ? failuresStr : '';
             const triggeredLabel = row.triggered_by === 'scheduled' ? '⏱ auto' : '✋ manual';
+            const durationStr = _formatDuration(row.duration_seconds);
             html += `<tr style="border-bottom:1px solid var(--border-color,#eee);background:${bg};">
                 <td style="padding:8px 12px;white-space:nowrap;font-family:monospace;font-size:12px;color:var(--text-secondary,#888);">${_formatActivityDate(row.created_at)}</td>
                 <td style="padding:8px 12px;font-weight:500;">${label}</td>
                 <td style="padding:8px 12px;font-size:12px;color:var(--text-secondary,#888);">${triggeredLabel}</td>
                 <td style="padding:8px 12px;"><span style="color:${rColor};font-weight:600;font-size:12px;">${row.result}</span></td>
+                <td style="padding:8px 12px;white-space:nowrap;font-size:12px;color:var(--text-secondary,#888);">${durationStr}</td>
                 <td style="padding:8px 12px;">${detail}${sub}${failSub}</td>
             </tr>`;
         });
@@ -2183,7 +2498,10 @@ function filterByStatus(status) {
 
     // Decide which tab to show based on match counts (in-memory, no DOM query)
     const movieMatches = _moviesData.filter(i => i.overlay_status === status).length;
-    const showMatches  = _showsData.filter(i => i.overlay_status === status).length;
+    const showMatches  = _showsData.filter(i =>
+        i.overlay_status === status ||
+        ((status === 'not_started' || status === 'failed') && (i.seasons_unprocessed || []).length > 0)
+    ).length;
     const targetTab = (showMatches > 0 && movieMatches === 0) ? 'shows' : 'movies';
 
     document.querySelectorAll('.overlay-tab').forEach(t => t.classList.remove('active'));

@@ -1,7 +1,24 @@
 import pickle
 import os
+import re
 import logging
 from utilities.settings import get_setting
+
+
+def normalize_title(t: str) -> str:
+    """Normalize a torrent title for not-wanted comparison.
+    Lowercases, collapses dots to spaces, strips leading [group] tags and
+    trailing container extensions so titles match regardless of formatting.
+    """
+    t = (t or '').lower()
+    # Strip leading bracket tags like [tvN], [YIFY], [GroupName] — these vary
+    # between indexers and cause mismatches on the same underlying torrent
+    t = re.sub(r'^\s*\[[^\]]{1,20}\]\s*', '', t)
+    t = re.sub(r'\.+', ' ', t)
+    t = re.sub(r'\s+', ' ', t).strip()
+    # Strip trailing container extensions so stored titles match Zilean titles
+    t = re.sub(r'\s+(mkv|avi|mp4|mov|wmv|flv|webm|m4v|ts|m2ts|bdmv)$', '', t)
+    return t
 
 # Get db_content directory from environment variable with fallback
 DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
@@ -39,13 +56,22 @@ def get_base_filename(url):
     if url is None:
         logging.warning("Received None value for URL/magnet in get_base_filename")
         return None
-        
+
     if url.startswith('magnet:'):
-        # For magnet links, extract the hash
         import re
-        btih_match = re.search(r'btih:([a-fA-F0-9]{40})', url)
+        # Hex hash (40 chars, SHA1)
+        btih_match = re.search(r'btih:([a-fA-F0-9]{40})(?:[&?]|$)', url, re.IGNORECASE)
         if btih_match:
             return btih_match.group(1).lower()
+        # Base32 hash (32 chars, also valid btih encoding) — decode to hex for uniform comparison
+        b32_match = re.search(r'btih:([A-Z2-7]{32})(?:[&?]|$)', url, re.IGNORECASE)
+        if b32_match:
+            try:
+                import base64
+                raw = base64.b32decode(b32_match.group(1).upper())
+                return raw.hex().lower()
+            except Exception:
+                return b32_match.group(1).lower()
     
     # For URLs with file parameter
     if 'file=' in url:

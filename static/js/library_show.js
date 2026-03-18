@@ -1285,7 +1285,7 @@ async function handleSearchEpisode(event) {
     );
 }
 
-function handleRefreshClick(event) {
+async function handleRefreshClick(event) {
     const btn = event.currentTarget;
     const data = {
         imdb_id: btn.dataset.imdbId,
@@ -1294,34 +1294,42 @@ function handleRefreshClick(event) {
         episode_number: parseInt(btn.dataset.episode)
     };
 
-    // Disable button while processing
-    btn.disabled = true;
+    // Remember which season tab is active so we can restore it after reload
+    const activeTab = document.querySelector('.season-tab.active');
+    const activeSeason = activeTab ? parseInt(activeTab.dataset.season) : null;
 
-    fetch('/statistics/move_to_wanted', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(data)
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.success) {
-            // Reload the show data to reflect the updated state
-            loadShowData();
+    // Disable button and show spinner while processing
+    btn.disabled = true;
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 0.8s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>`;
+
+    try {
+        const response = await fetch('/statistics/move_to_wanted', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        const result = await response.json();
+
+        if (result.success) {
+            await loadShowData();
+            // Restore the season tab the user was on
+            if (activeSeason !== null) {
+                switchTab(activeSeason);
+            }
         } else {
-            throw new Error(data.error || 'Failed to move item to Wanted state');
+            throw new Error(result.error || 'Failed to move item to Wanted state');
         }
-    })
-    .catch(error => {
+    } catch (error) {
         console.error('Error:', error);
         showPopup({
             type: POPUP_TYPES.ERROR,
             message: `Error moving item to Wanted state: ${error.message}`,
             autoClose: 5000
         });
+        btn.innerHTML = originalHTML;
         btn.disabled = false;
-    });
+    }
 }
 
 function formatDate(dateInput) {

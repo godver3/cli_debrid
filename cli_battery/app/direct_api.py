@@ -110,8 +110,11 @@ def _refresh_show(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
     """Fetch full show data from metadata provider, persist to DB, return show dict."""
     client = _get_metadata_client()
     show_data = client.get_show_data(imdb_id)
+    if not show_data and client is not trakt_client:
+        logger.warning(f"{_get_metadata_source_name().upper()} returned no show data for {imdb_id}, trying Trakt fallback")
+        show_data = trakt_client.get_show_data(imdb_id)
     if not show_data:
-        logger.warning(f"{_get_metadata_source_name().upper()} returned no show data for {imdb_id}")
+        logger.warning(f"All sources returned no show data for {imdb_id}")
         return None
 
     show_data.setdefault('type', 'show')
@@ -123,8 +126,11 @@ def _refresh_movie(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
     """Fetch full movie data from metadata provider, persist to DB, return movie dict."""
     client = _get_metadata_client()
     movie_data = client.get_movie_data(imdb_id)
+    if not movie_data and client is not trakt_client:
+        logger.warning(f"{_get_metadata_source_name().upper()} returned no movie data for {imdb_id}, trying Trakt fallback")
+        movie_data = trakt_client.get_movie_data(imdb_id)
     if not movie_data:
-        logger.warning(f"{_get_metadata_source_name().upper()} returned no movie data for {imdb_id}")
+        logger.warning(f"All sources returned no movie data for {imdb_id}")
         return None
 
     movie_data.setdefault('type', 'movie')
@@ -1125,12 +1131,16 @@ class DirectAPI:
             return None, None
 
     @staticmethod
-    def force_refresh_metadata(imdb_id: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-        logger.info(f"DirectAPI.force_refresh_metadata for {imdb_id}")
+    def force_refresh_metadata(imdb_id: str, item_type: str = None) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        logger.info(f"DirectAPI.force_refresh_metadata for {imdb_id} (type={item_type})")
         try:
             with managed_session() as session:
-                item = session.query(Item).filter_by(imdb_id=imdb_id).first()
-                item_type = item.type if item else None
+                if not item_type:
+                    item = session.query(Item).filter_by(imdb_id=imdb_id).first()
+                    item_type = item.type if item else None
+                # Normalize: episode items fetch show-level metadata
+                if item_type == 'episode':
+                    item_type = 'show'
 
                 source = _get_metadata_source_name()
                 if item_type == 'movie':
@@ -1140,7 +1150,7 @@ class DirectAPI:
                     data = _refresh_show(imdb_id, session)
                     return data, source if data else None
                 else:
-                    # Try show first, then movie
+                    # Type unknown — try show first, then movie
                     data = _refresh_show(imdb_id, session)
                     if data:
                         return data, source

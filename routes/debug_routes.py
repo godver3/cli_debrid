@@ -496,8 +496,20 @@ def manual_blacklist():
         if action == 'add':
             try:
                 logging.info(f"Attempting to add IMDb ID '{imdb_id}' to manual blacklist.")
-                # 1. Determine the actual media type
-                tmdb_id, actual_media_type = get_tmdb_id_and_media_type(imdb_id)
+                # 1. Determine media type — check our own DB first (most reliable),
+                #    fall back to battery API. This prevents shows from being stored
+                #    as 'movie' when the battery DB returns movie data first.
+                from database.core import get_db_connection as _get_db
+                _conn = _get_db()
+                _row = _conn.execute(
+                    "SELECT type FROM media_items WHERE imdb_id=? LIMIT 1", (imdb_id,)
+                ).fetchone()
+                _conn.close()
+                if _row:
+                    actual_media_type = 'tv' if _row[0] == 'episode' else 'movie'
+                    tmdb_id = None
+                else:
+                    tmdb_id, actual_media_type = get_tmdb_id_and_media_type(imdb_id)
 
                 if not actual_media_type:
                     flash(f'Could not determine media type for IMDb ID {imdb_id}. Cannot add to blacklist.', 'error')
@@ -578,47 +590,42 @@ def manual_blacklist():
 
     # --- GET Request Logic ---
     blacklist = get_manual_blacklist()
-    
-    # ... (keep existing sorting logic) ...
+
     def get_sort_key(item):
         try:
             title = item[1].get('title', '')
             if not isinstance(title, str):
-                logging.warning(f"Invalid title type for IMDb ID {item[0]}: {type(title)}, converting to string")
                 title = str(title) if title is not None else ''
             return title.lower()
-        except Exception as e:
-            logging.error(f"Error getting sort key for blacklist item {item[0]}: {str(e)}")
+        except Exception:
             return ''
     sorted_blacklist = dict(sorted(blacklist.items(), key=get_sort_key))
-    
-    direct_api = DirectAPI()
-    for imdb_id, item in sorted_blacklist.items():
-        # REVERT: Check against 'episode' type for fetching seasons
-        if item['media_type'] == 'episode':
-            try:
-                # Fetching seasons based on IMDb ID remains the same
-                seasons_data, _ = direct_api.get_show_seasons(imdb_id)
-                if seasons_data:
-                    logging.debug(f"Seasons data for {imdb_id}: {seasons_data}")
-                    if isinstance(seasons_data, str):
-                        seasons_data = json.loads(seasons_data)
-
-                    if isinstance(seasons_data, dict) and all(str(k).isdigit() for k in seasons_data.keys()):
-                        item['available_seasons'] = sorted([int(season) for season in seasons_data.keys()])
-                        item['season_episodes'] = {int(season): data.get('episode_count', 0) for season, data in seasons_data.items()}
-                    else: # Backward compatibility
-                        item['available_seasons'] = sorted([int(s['season_number']) for s in seasons_data.get('seasons', []) if str(s.get('season_number')).isdigit()])
-                        item['season_episodes'] = {}
-                else:
-                    item['available_seasons'] = []
-                    item['season_episodes'] = {}
-            except Exception as e:
-                logging.error(f"Error fetching seasons for {imdb_id}: {str(e)}")
-                item['available_seasons'] = []
-                item['season_episodes'] = {}
-
+    # Seasons are no longer pre-fetched here — loaded lazily via /api/manual_blacklist/<id>/seasons
     return render_template('manual_blacklist.html', blacklist=sorted_blacklist)
+
+
+@debug_bp.route('/api/manual_blacklist/<imdb_id>/seasons', methods=['GET'])
+@admin_required
+def manual_blacklist_seasons(imdb_id):
+    """Lazy-load available seasons for a blacklisted show."""
+    direct_api = DirectAPI()
+    try:
+        seasons_data, _ = direct_api.get_show_seasons(imdb_id)
+        if seasons_data:
+            if isinstance(seasons_data, str):
+                seasons_data = json.loads(seasons_data)
+            if isinstance(seasons_data, dict) and all(str(k).isdigit() for k in seasons_data.keys()):
+                available_seasons = sorted([int(s) for s in seasons_data.keys()])
+                season_episodes = {int(s): d.get('episode_count', 0) for s, d in seasons_data.items()}
+            else:
+                available_seasons = sorted([int(s['season_number']) for s in seasons_data.get('seasons', [])
+                                            if str(s.get('season_number')).isdigit()])
+                season_episodes = {}
+            return jsonify({'success': True, 'seasons': available_seasons, 'season_episodes': season_episodes})
+        return jsonify({'success': True, 'seasons': [], 'season_episodes': {}})
+    except Exception as e:
+        logging.error(f"manual_blacklist_seasons error for {imdb_id}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @debug_bp.route('/api/get_collected_from_plex', methods=['POST'])
 @admin_required
@@ -3426,7 +3433,25 @@ def delete_battery_db_files():
     elif not deleted_files:
          return jsonify({'success': True, 'message': 'No battery DB files found to delete.'}), 200
     else:
-        return jsonify({'success': True, 'message': f'Successfully deleted files: {", ".join(deleted_files)}'}), 200
+        # Reinitialize the battery database engine so tables are recreated on the
+        # next request.  Without this the stale SQLAlchemy engine continues to
+        # point at the now-deleted file and every subsequent query fails with
+        # "no such table: items".
+        try:
+            from cli_battery.app.database import init_db
+            import cli_battery.app.database as _bat_db
+            if _bat_db.engine is not None:
+                try:
+                    _bat_db.Session.remove()
+                    _bat_db.engine.dispose()
+                except Exception:
+                    pass
+                _bat_db.engine = None
+            init_db()
+            logging.info("Battery database reinitialized after file deletion.")
+        except Exception as reinit_err:
+            logging.warning(f"Battery DB reinit after deletion failed (will retry on next request): {reinit_err}")
+        return jsonify({'success': True, 'message': f'Successfully deleted and reinitialized battery DB: {", ".join(deleted_files)}'}), 200
 
 # --- Rclone Mount to Symlinks Logic ---
 
@@ -7355,3 +7380,144 @@ def delete_old_databases():
     except Exception as e:
         logging.error(f"[DELETE] Error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/memory_snapshot', methods=['GET'])
+@admin_required
+def memory_snapshot():
+    """
+    Capture a memory diagnostic snapshot of the running process.
+    Hit this endpoint WHILE memory is high to identify the actual cause.
+    Returns: RSS/VMS, sizes of known module-level caches, top Python object counts by type.
+    """
+    import gc
+    import sys
+    import resource
+    from collections import Counter
+
+    report = {}
+
+    # --- Process-level RSS / VMS ---
+    try:
+        rusage = resource.getrusage(resource.RUSAGE_SELF)
+        # On Linux ru_maxrss is in kilobytes
+        report['process_rss_mb'] = round(rusage.ru_maxrss / 1024, 1)
+    except Exception:
+        pass
+
+    try:
+        with open('/proc/self/status') as fh:
+            for line in fh:
+                if line.startswith('VmRSS:'):
+                    report['vmrss_mb'] = round(int(line.split()[1]) / 1024, 1)
+                elif line.startswith('VmSize:'):
+                    report['vmsize_mb'] = round(int(line.split()[1]) / 1024, 1)
+    except Exception:
+        pass
+
+    # --- Known module-level data structures ---
+    known_structures = {}
+
+    # Session store
+    try:
+        from routes.extensions import InMemorySessionInterface
+        store = InMemorySessionInterface.session_store
+        known_structures['session_store_count'] = len(store)
+        known_structures['session_store_size_kb'] = round(sys.getsizeof(store) / 1024, 1)
+    except Exception as e:
+        known_structures['session_store'] = f'error: {e}'
+
+    # base_routes function cache
+    try:
+        from routes.base_routes import _function_cache
+        total_entries = sum(len(v) for v in _function_cache.values())
+        total_size = sys.getsizeof(_function_cache)
+        known_structures['function_cache_functions'] = list(_function_cache.keys())
+        known_structures['function_cache_total_entries'] = total_entries
+        known_structures['function_cache_size_kb'] = round(total_size / 1024, 1)
+    except Exception as e:
+        known_structures['function_cache'] = f'error: {e}'
+
+    # debug_routes progress dicts
+    try:
+        known_structures['scan_progress_keys'] = len(scan_progress)
+        known_structures['analysis_progress_keys'] = len(analysis_progress)
+        known_structures['rclone_scan_progress_keys'] = len(rclone_scan_progress)
+        known_structures['riven_analysis_progress_keys'] = len(riven_analysis_progress)
+    except Exception:
+        pass
+
+    # Notification queues
+    try:
+        from routes.base_routes import _notification_queues
+        known_structures['notification_queues_count'] = len(_notification_queues)
+    except Exception:
+        pass
+
+    # SimpleTaskQueue
+    try:
+        from routes.extensions import task_queue
+        known_structures['task_queue_count'] = len(task_queue.tasks)
+        done = sum(1 for t in task_queue.tasks.values() if t['status'] in ('SUCCESS', 'FAILURE'))
+        known_structures['task_queue_completed'] = done
+    except Exception:
+        pass
+
+    report['known_structures'] = known_structures
+
+    # --- Top Python object counts by type (gc) ---
+    try:
+        gc.collect()
+        type_counts = Counter(type(obj).__name__ for obj in gc.get_objects())
+        report['top_object_types'] = type_counts.most_common(30)
+    except Exception as e:
+        report['top_object_types_error'] = str(e)
+
+    # --- Thread count ---
+    try:
+        import threading
+        report['thread_count'] = threading.active_count()
+        report['thread_names'] = [t.name for t in threading.enumerate()]
+    except Exception:
+        pass
+
+    return jsonify({'success': True, 'snapshot': report})
+
+
+@debug_bp.route('/api/trim_memory', methods=['POST'])
+@admin_required
+def trim_memory():
+    """Run gc.collect() + malloc_trim(0) synchronously and return before/after RSS."""
+    import gc
+    import ctypes
+
+    def _read_rss_mb():
+        try:
+            with open('/proc/self/status') as f:
+                for line in f:
+                    if line.startswith('VmRSS:'):
+                        return int(line.split()[1]) / 1024
+        except Exception:
+            pass
+        return None
+
+    before = _read_rss_mb()
+    collected = gc.collect()
+    trim_ok = False
+    try:
+        ctypes.CDLL('libc.so.6').malloc_trim(0)
+        trim_ok = True
+    except Exception:
+        pass
+    after = _read_rss_mb()
+
+    freed = round(before - after, 1) if before and after else None
+    logging.info(f"[TRIM_MEMORY] Manual trigger: gc collected {collected} objects; malloc_trim={'ok' if trim_ok else 'unavailable'}; RSS {before:.0f} MB → {after:.0f} MB (freed {freed} MB)")
+    return jsonify({
+        'success': True,
+        'gc_collected': collected,
+        'malloc_trim': trim_ok,
+        'before_mb': round(before, 1) if before else None,
+        'after_mb': round(after, 1) if after else None,
+        'freed_mb': freed,
+    })

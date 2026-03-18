@@ -778,26 +778,36 @@ def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, li
         return cached_media_meta
 
     # Use the correct endpoints for TV shows and movies
-    if media_type == 'tv' or media_type == 'show':
+    _is_tv = media_type in ('tv', 'show')
+    if _is_tv:
         details_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
+        images_url  = f"https://api.themoviedb.org/3/tv/{tmdb_id}/images?api_key={tmdb_api_key}&include_image_language=en,null"
     else:
         details_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
-    
+        images_url  = f"https://api.themoviedb.org/3/movie/{tmdb_id}/images?api_key={tmdb_api_key}&include_image_language=en,null"
+
     try:
-        # Fetch details
+        # Fetch details (overview, genres, ratings, backdrop)
         details_response = api.get(details_url)
         details_response.raise_for_status()
         details_data = details_response.json()
 
-        # DISABLED: asyncio.run() creates event loop accumulation
-        # async def fetch_poster_url():
-        #     async with aiohttp.ClientSession() as session:
-        #         return await get_poster_url(session, tmdb_id, media_type)
-        # poster_url = asyncio.run(fetch_poster_url())
-
-        # Fallback: construct poster URL synchronously
+        # Fetch English-only posters from the images endpoint.
+        # include_image_language=en,null returns posters with English or no language tag.
+        # Sort by vote_average descending and pick the top result.
         poster_url = None
-        if details_data.get('poster_path'):
+        try:
+            images_response = api.get(images_url)
+            images_response.raise_for_status()
+            posters = images_response.json().get('posters', [])
+            if posters:
+                posters.sort(key=lambda p: p.get('vote_average', 0), reverse=True)
+                poster_url = f"https://image.tmdb.org/t/p/w500{posters[0]['file_path']}"
+        except Exception as _img_err:
+            logging.debug(f"TMDB images endpoint failed for {media_type} {tmdb_id}: {_img_err}")
+
+        # Fallback to the details poster_path if the images endpoint returned nothing
+        if not poster_url and details_data.get('poster_path'):
             poster_url = f"https://image.tmdb.org/t/p/w500{details_data['poster_path']}"
         
         overview = details_data.get('overview', '')

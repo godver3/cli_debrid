@@ -180,7 +180,8 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                 query = f'''
                     SELECT id, imdb_id, tmdb_id, title, type, season_number, episode_number, state, version,
                            filled_by_file, collected_at, release_date, upgrading_from, content_source,
-                           location_on_disk, location_basename, ghostlisted
+                           location_on_disk, location_basename, ghostlisted,
+                           upgrading_from_torrent_id, resolution
                     FROM media_items
                     WHERE filled_by_file IN ({placeholders})
                        OR upgrading_from IN ({placeholders})
@@ -494,30 +495,36 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                             # This 'is_upgrade' flag is primarily for cleanup/notification logic, separate from setting the state
                             is_upgrade = existing_db_item.get('collected_at') is not None 
 
-                            if is_upgrade and get_setting("Scraping", "enable_upgrading_cleanup", default=False):
+                            if is_upgrade and existing_db_item.get('upgrading_from'):
                                 upgrade_item = {
                                     'type': existing_db_item['type'],
                                     'title': existing_db_item['title'],
                                     'imdb_id': existing_db_item['imdb_id'],
                                     'upgrading_from': existing_db_item['upgrading_from'],
-                                    'filled_by_torrent_id': existing_db_item.get('filled_by_torrent_id'),
+                                    # Use upgrading_from_torrent_id (old torrent) not filled_by_torrent_id (new torrent)
+                                    'filled_by_torrent_id': existing_db_item.get('upgrading_from_torrent_id'),
                                     'version': existing_db_item['version'],
                                     'season_number': existing_db_item.get('season_number'),
                                     'episode_number': existing_db_item.get('episode_number'),
                                     'filled_by_file': existing_db_item.get('filled_by_file'),
-                                    'resolution': existing_db_item.get('resolution')  # Preserve old resolution for reference
+                                    'resolution': existing_db_item.get('resolution'),
+                                    # Full path to old file/symlink on disk (used for symlink mode cleanup)
+                                    'location_on_disk': existing_db_item.get('location_on_disk'),
                                 }
-                                
+
                                 if upgrade_item['filled_by_file'] != upgrade_item['upgrading_from']:
-                                    conn.execute('''
-                                        UPDATE media_items
-                                        SET upgraded = 1
-                                        WHERE id = ?
-                                    ''', (db_item_id,))
-                                    
-                                    remove_original_item_from_plex(upgrade_item)
-                                    remove_original_item_from_account(upgrade_item)
-                                    remove_original_item_from_results(upgrade_item, media_items_batch)
+                                    if get_setting("Scraping", "enable_upgrading_cleanup", default=False):
+                                        conn.execute('''
+                                            UPDATE media_items
+                                            SET upgraded = 1
+                                            WHERE id = ?
+                                        ''', (db_item_id,))
+
+                                        remove_original_item_from_plex(upgrade_item)
+                                        remove_original_item_from_account(upgrade_item)
+                                        remove_original_item_from_results(upgrade_item, media_items_batch)
+
+                                    # Log success regardless of cleanup setting
                                     log_successful_upgrade(upgrade_item)
                                 
                             existing_collected_at = existing_db_item.get('collected_at') or collected_at
@@ -1146,27 +1153,75 @@ def generate_identifier(item: Dict[str, Any]) -> str:
         
         return f"{item.get('title')} S{season}E{episode}"
 
-def remove_original_item_from_plex(item: Dict[str, Any]):
-    from utilities.plex_functions import remove_file_from_plex
+def remove_original_item_from_plex(item: Dict[str, Any]) -> bool:
+    """Remove the old file from the media server and disk.
 
+    Uses DeletionManager.remove_from_media_server so Plex, Jellyfin, and the
+    scan+trash fallback are all handled automatically.
+
+    For symlink mode the symlink is also deleted directly from disk first so
+    that Plex's 'Allow media deletion' permission is not a hard requirement.
+
+    Returns True if the media-server removal succeeded.
+    """
     item_identifier = f"{item['type']}_{item['title']}_{item['imdb_id']}"
     original_file_path = item.get('upgrading_from')
-    original_title = item.get('title')
 
-    if original_file_path and original_title:
-        success = remove_file_from_plex(original_title, original_file_path)
-        if not success:
-            logging.error(f"Failed to remove file from Plex: {item_identifier}")
-    else:
-        logging.warning(f"No file path or title found for item: {item_identifier}")
+    if not original_file_path or not item.get('title'):
+        logging.warning(f"[Cleanup] No file path or title for: {item_identifier}")
+        return False
+
+    # Construct a minimal item dict targeting the OLD file so DeletionManager
+    # removes the right entry — not the new (current) version.
+    old_item = {
+        'title':          item['title'],
+        'type':           item['type'],
+        'imdb_id':        item.get('imdb_id'),
+        'season_number':  item.get('season_number'),
+        'episode_number': item.get('episode_number'),
+        # DeletionManager checks location_on_disk first, then filled_by_file
+        'location_on_disk': item.get('location_on_disk'),
+        'filled_by_file':   original_file_path,
+    }
+
+    try:
+        from utilities.deletion_manager import DeletionManager
+        dm = DeletionManager()
+
+        # Symlink mode: delete the symlink from disk directly first —
+        # independent of Plex's 'Allow media deletion' permission.
+        if dm.using_symlinks:
+            symlink_path = item.get('location_on_disk') or ''
+            if symlink_path and os.path.islink(symlink_path):
+                try:
+                    os.unlink(symlink_path)
+                    logging.info(f"[Cleanup] Deleted old symlink: {symlink_path}")
+                except Exception as e:
+                    logging.error(f"[Cleanup] Failed to delete symlink {symlink_path}: {e}")
+            elif symlink_path:
+                logging.warning(f"[Cleanup] Old symlink not found on disk: {symlink_path}")
+
+        # Remove from media server (Plex / Jellyfin) — has scan+trash fallback built in
+        result = dm.remove_from_media_server(old_item)
+        if not result.get('success'):
+            logging.error(f"[Cleanup] Media server removal failed for {item_identifier}: {result.get('error')}")
+        return result.get('success', False)
+
+    except Exception as e:
+        logging.error(f"[Cleanup] remove_original_item_from_plex failed for {item_identifier}: {e}", exc_info=True)
+        return False
+
 
 def remove_original_item_from_account(item: Dict[str, Any]):
+    """Remove the old torrent from the debrid account."""
     from queues.adding_queue import AddingQueue
     original_torrent_id = item.get('filled_by_torrent_id')
 
     if original_torrent_id:
         adding_queue = AddingQueue()
         adding_queue.remove_unwanted_torrent(original_torrent_id)
+    else:
+        logging.warning(f"[Cleanup] No torrent ID to remove for: {item.get('title', 'unknown')}")
 
 def remove_original_item_from_results(item: Dict[str, Any], media_items_batch: List[Dict[str, Any]]):
     try:

@@ -979,7 +979,12 @@ SETTINGS_SCHEMA = {
             "Zilean": {
                 "enabled": {"type": "boolean", "default": False},
                 "priority": {"type": "integer", "default": 0, "description": "Scraper priority score (higher = better priority)"},
-                "url": {"type": "string", "default": "", "validate": "url"}
+                "url": {"type": "string", "default": "", "validate": "url"},
+                "db_enabled": {"type": "boolean", "default": False, "description": "Connect directly to Zilean PostgreSQL DB for Upgrade Hub scanning"},
+                "db_port": {"type": "integer", "default": 5432},
+                "db_name": {"type": "string", "default": ""},
+                "db_username": {"type": "string", "default": ""},
+                "db_password": {"type": "string", "default": "", "sensitive": True}
             },
             "Jackett": {
                 "enabled": {"type": "boolean", "default": False},
@@ -2138,6 +2143,11 @@ SETTINGS_SCHEMA = {
             "type": "number",
             "description": "How often (in days) to re-fetch ratings (IMDb/TMDB/Trakt/RT) and show status from the MDBList API to detect changes that should trigger an overlay refresh. Set to 0 to check every sync run. Default is 7 days. Version count changes are always checked every sync regardless of this setting.",
             "default": 7
+        },
+        "sync_items_per_run": {
+            "type": "number",
+            "description": "Maximum number of shows/movies to process per overlay sync run. Higher values clear backlogs faster but each run takes longer. Default is 200.",
+            "default": 200
         }
     }
 }

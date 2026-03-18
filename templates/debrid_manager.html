@@ -34,6 +34,18 @@
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
                 Usage
             </button>
+            {% if show_plex_trash %}
+            <button class="dm-tab" data-tab="plex-trash">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                Plex Trash
+                <span class="dm-tab-badge" id="plex-trash-tab-count"></span>
+            </button>
+            {% endif %}
+            <button class="dm-tab" data-tab="reconcile">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                Audit
+                <span class="dm-tab-badge" id="reconcile-tab-badge"></span>
+            </button>
         </div>
     </div>
 
@@ -407,6 +419,632 @@
         <div id="usage-error" class="dm-error" style="display:none"></div>
     </div>
 
+    {% if show_plex_trash %}
+    <!-- ── PLEX TRASH TAB ── -->
+    <div id="plex-trash-tab" class="dm-panel">
+        <div class="dm-toolbar">
+            <div class="dm-toolbar-left">
+                <span class="dm-pt-info" id="pt-info-text"></span>
+            </div>
+            <div class="dm-toolbar-right">
+                <button id="pt-purge-btn" class="dm-btn dm-btn-danger" disabled>
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    Delete from Plex (<span id="pt-selected-count">0</span>)
+                </button>
+                <button id="pt-reload-btn" class="dm-btn dm-btn-secondary">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    Refresh
+                </button>
+            </div>
+        </div>
+
+        <div id="pt-loading" class="dm-pt-loading" style="display:none">
+            <span class="dm-spinner"></span> Loading Plex Trash…
+        </div>
+        <div id="pt-rd-loading-banner" class="dm-pt-rd-banner" style="display:none"></div>
+        <div id="pt-error" class="dm-error" style="display:none"></div>
+        <div id="pt-content" style="display:none">
+
+            <!-- In Real-Debrid group -->
+            <div class="dm-pt-group">
+                <div class="dm-pt-group-header">
+                    <div class="dm-pt-group-title">
+                        <span class="dm-pt-group-dot dm-pt-dot-in"></span>
+                        In Real-Debrid
+                        <span class="dm-pt-group-count" id="pt-in-rd-count">0</span>
+                    </div>
+                    <div class="dm-pt-group-actions">
+                        <button class="dm-btn dm-btn-secondary dm-btn-sm" id="pt-select-in-rd">Select All</button>
+                    </div>
+                </div>
+                <p class="dm-pt-group-desc">These items are still in your Real-Debrid library. You may want to remove them from RD first before purging from Plex.</p>
+                <div class="dm-pt-bulk-bar">
+                    <button class="dm-pt-bulk-btn dm-pt-bulk-scan" id="pt-bulk-scan-all" title="Trigger Plex directory scan on all in-RD items">
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
+                        Scan All
+                    </button>
+                    <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-reinsert-good" title="Re-add all matched RD torrents to Real-Debrid">
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"/></svg>
+                        Reinsert All Good
+                    </button>
+                    <button class="dm-pt-bulk-btn dm-pt-bulk-del" id="pt-bulk-del-bad" title="Delete all Plex items with an orphaned bad file">
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                        Delete All Bad
+                    </button>
+                    <button class="dm-pt-bulk-btn dm-pt-bulk-del" id="pt-bulk-del-good" title="Delete all Plex items that have a matching good file">
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                        Delete All Good
+                    </button>
+                </div>
+                <div class="dm-table-wrap">
+                    <table class="dm-table dm-pt-table">
+                        <thead>
+                            <tr>
+                                <th class="dm-col-check"><input type="checkbox" id="pt-in-rd-select-all" title="Select all in-RD"></th>
+                                <th class="dm-pt-col-title">Title</th>
+                                <th class="dm-pt-col-type">Type</th>
+                                <th class="dm-pt-col-files-hdr">Files</th>
+                                <th class="dm-col-actions">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pt-in-rd-tbody">
+                            <tr class="dm-empty-row"><td colspan="5">Loading…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Not in Real-Debrid group -->
+            <div class="dm-pt-group">
+                <div class="dm-pt-group-header">
+                    <div class="dm-pt-group-title">
+                        <span class="dm-pt-group-dot dm-pt-dot-out"></span>
+                        Not in Real-Debrid
+                        <span class="dm-pt-group-count" id="pt-not-in-rd-count">0</span>
+                    </div>
+                    <div class="dm-pt-group-actions">
+                        <button class="dm-btn dm-btn-secondary dm-btn-sm" id="pt-select-not-in-rd">Select All</button>
+                    </div>
+                </div>
+                <p class="dm-pt-group-desc">These items are not found in Real-Debrid. Safe to permanently delete from Plex.</p>
+                <div class="dm-pt-bulk-bar">
+                    <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-reinsert-notrd" title="Re-add all items with a known magnet hash to Real-Debrid">
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"/></svg>
+                        Reinsert All
+                    </button>
+                    <button class="dm-pt-bulk-btn dm-pt-bulk-del" id="pt-bulk-del-notrd" title="Permanently delete all not-in-RD items from Plex">
+                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                        Delete All
+                    </button>
+                </div>
+                <div class="dm-table-wrap">
+                    <table class="dm-table dm-pt-table">
+                        <thead>
+                            <tr>
+                                <th class="dm-col-check"><input type="checkbox" id="pt-not-in-rd-select-all" title="Select all not-in-RD"></th>
+                                <th class="dm-pt-col-title">Title</th>
+                                <th class="dm-pt-col-type">Type</th>
+                                <th class="dm-pt-col-files-hdr">Files</th>
+                                <th class="dm-col-actions">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pt-not-in-rd-tbody">
+                            <tr class="dm-empty-row"><td colspan="5">Loading…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- ── RECONCILE TAB ── -->
+    {% set ms_label = 'Jellyfin' if media_server_type == 'jellyfin' else 'Plex' %}
+    {% set ms_badge = 'JF' if media_server_type == 'jellyfin' else 'Plex' %}
+    <div id="reconcile-tab" class="dm-panel">
+        <div class="dm-toolbar">
+            <div class="dm-toolbar-left">
+                <div class="dm-rc-healthy-pill" id="rc-healthy-pill-toolbar" style="display:none">
+                    <span class="dm-rc-healthy-icon">✓</span>
+                    <span id="rc-count-healthy">—</span>
+                    <span class="dm-rc-healthy-label">Healthy</span>
+                </div>
+                <span class="dm-pt-info" id="rc-info-text"></span>
+            </div>
+            <div class="dm-toolbar-right">
+                <button id="rc-clear-cache-btn" class="dm-btn dm-btn-secondary" title="Clear RD library and reconcile cache, then reload">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    Clear Cache
+                </button>
+                <button id="rc-reload-btn" class="dm-btn dm-btn-secondary">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    Refresh
+                </button>
+            </div>
+        </div>
+        <div id="rc-loading" class="dm-pt-loading" style="display:none"><span class="dm-spinner"></span> Analysing library…</div>
+        <div id="rc-error" class="dm-error" style="display:none"></div>
+        <div id="rc-content" style="display:none">
+
+            <!-- Stats header -->
+            <div class="dm-rc-header" style="flex-direction:column; align-items:flex-start;">
+                <p class="dm-rc-stats-bar">
+                    <span class="dm-rc-sn" id="rc-stat-rd">—</span><span class="dm-rc-sl">RD torrents</span>
+                    <span class="dm-rc-sep">·</span>
+                    <span class="dm-rc-sn" id="rc-stat-db">—</span><span class="dm-rc-sl">DB items</span>
+                    <span class="dm-rc-sep">·</span>
+                    <span class="dm-rc-sn" id="rc-stat-plex">—</span><span class="dm-rc-sl">{{ ms_label }} files</span>
+                    <span class="dm-rc-sep">·</span>
+                    <span class="dm-rc-sn" id="rc-stat-rclone">—</span><span class="dm-rc-sl">Rclone files</span>
+                    <span id="rc-stat-nas-wrap" style="display:none">
+                        <span class="dm-rc-sep">·</span>
+                        <span class="dm-rc-sn" id="rc-stat-nas">—</span><span class="dm-rc-sl">NAS files</span>
+                    </span>
+                </p>
+            </div>
+
+            <!-- Tab bar -->
+            <div class="dm-rc-tab-bar">
+                <button class="dm-rc-tab" data-rc-group="not-in-plex">
+                    <span class="dm-rc-tab-name">Not in {{ ms_label }}</span>
+                    <span class="dm-rc-tab-count" id="rc-count-not-in-plex">—</span>
+                    <span class="dm-rc-tab-badges">
+                        <span class="dm-rc-badge dm-rc-badge-ok">RD</span>
+                        <span class="dm-rc-badge dm-rc-badge-ok">DB</span>
+                        <span class="dm-rc-badge dm-rc-badge-bad">{{ ms_badge }}</span>
+                    </span>
+                </button>
+                <button class="dm-rc-tab" data-rc-group="torrent-gone">
+                    <span class="dm-rc-tab-name">Torrent Gone</span>
+                    <span class="dm-rc-tab-count" id="rc-count-torrent-gone">—</span>
+                    <span class="dm-rc-tab-badges">
+                        <span class="dm-rc-badge dm-rc-badge-bad">RD</span>
+                        <span class="dm-rc-badge dm-rc-badge-ok">DB</span>
+                        <span class="dm-rc-badge dm-rc-badge-ok">{{ ms_badge }}</span>
+                    </span>
+                </button>
+                <button class="dm-rc-tab" data-rc-group="lost">
+                    <span class="dm-rc-tab-name">Lost</span>
+                    <span class="dm-rc-tab-count" id="rc-count-lost">—</span>
+                    <span class="dm-rc-tab-badges">
+                        <span class="dm-rc-badge dm-rc-badge-bad">RD</span>
+                        <span class="dm-rc-badge dm-rc-badge-ok">DB</span>
+                        <span class="dm-rc-badge dm-rc-badge-bad">{{ ms_badge }}</span>
+                    </span>
+                </button>
+                <button class="dm-rc-tab" data-rc-group="untracked">
+                    <span class="dm-rc-tab-name">Untracked RD</span>
+                    <span class="dm-rc-tab-count" id="rc-count-untracked">—</span>
+                    <span class="dm-rc-tab-badges">
+                        <span class="dm-rc-badge dm-rc-badge-ok">RD</span>
+                        <span class="dm-rc-badge dm-rc-badge-bad">DB</span>
+                        <span class="dm-rc-badge dm-rc-badge-mixed">{{ ms_badge }}</span>
+                    </span>
+                </button>
+                <button class="dm-rc-tab" data-rc-group="nas" id="rc-tab-nas" style="display:none">
+                    <span class="dm-rc-tab-name">NAS</span>
+                    <span class="dm-rc-tab-count" id="rc-count-nas">—</span>
+                    <span class="dm-rc-tab-badges">
+                        <span class="dm-rc-badge dm-rc-badge-mixed">FS</span>
+                    </span>
+                </button>
+                {% if symlink_mode %}
+                <button class="dm-rc-tab" data-rc-group="symlinks" id="rc-tab-symlinks">
+                    <span class="dm-rc-tab-name">Symlinks</span>
+                    <span class="dm-rc-tab-count" id="rc-count-symlinks">—</span>
+                    <span class="dm-rc-tab-badges">
+                        <span class="dm-rc-badge dm-rc-badge-mixed">FS</span>
+                    </span>
+                </button>
+                {% endif %}
+                <button class="dm-rc-tab" data-rc-group="battery" id="rc-tab-battery">
+                    <span class="dm-rc-tab-name">Battery</span>
+                    <span class="dm-rc-tab-count" id="batt-total-badge">—</span>
+                    <span class="dm-rc-tab-badges">
+                        <span class="dm-rc-badge dm-rc-badge-mixed">META</span>
+                    </span>
+                </button>
+            </div>
+
+            <!-- Not in library panel -->
+            <div id="rc-panel-not-in-plex" class="dm-rc-group-panel" style="display:none">
+                <p class="dm-pt-group-desc">Collected items whose torrent is still in Real-Debrid but {{ ms_label }} has not indexed them. Use Scan to trigger a {{ ms_label }} library refresh.</p>
+                <div class="dm-rc-bulk-bar">
+                    <button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-scan-all">Scan All</button>
+                    <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-del-nip">Delete All</button>
+                </div>
+                <div class="dm-rc-filter-bar">
+                    <input type="text" class="dm-rc-search" placeholder="Search…" oninput="_rcFilterTable(this)">
+                    <select class="dm-rc-type-filter" onchange="_rcFilterTable(this)">
+                        <option value="">All types</option>
+                        <option value="movie">Movie</option>
+                        <option value="episode">TV</option>
+                    </select>
+                </div>
+                <div class="dm-table-wrap"><table class="dm-table">
+                    <thead><tr>
+                        <th class="dm-rc-th-sort" data-sort="title">Title</th>
+                        <th class="dm-pt-col-type dm-rc-th-sort" data-sort="type">Type</th>
+                        <th class="dm-rc-col-file dm-rc-th-sort" data-sort="filled_by_file">File</th>
+                        <th class="dm-col-actions">Actions</th>
+                    </tr></thead>
+                    <tbody id="rc-tbody-not-in-plex"><tr class="dm-empty-row"><td colspan="4">Loading…</td></tr></tbody>
+                </table></div>
+            </div>
+
+            <!-- Torrent Gone panel -->
+            <div id="rc-panel-torrent-gone" class="dm-rc-group-panel" style="display:none">
+                <p class="dm-pt-group-desc">Collected items present in {{ ms_label }} but whose torrent is no longer in Real-Debrid. Deduplicated by torrent — season packs show as one entry. Reinsert to restore the RD entry, or Re-queue to re-scrape.</p>
+                <div class="dm-rc-bulk-bar">
+                    <button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-reinsert-all">Reinsert All</button>
+                    <button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-requeue-tg">Re-queue All</button>
+                    <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-del-tg">Delete All</button>
+                </div>
+                <div class="dm-rc-filter-bar">
+                    <input type="text" class="dm-rc-search" placeholder="Search…" oninput="_rcFilterTable(this)">
+                    <select class="dm-rc-type-filter" onchange="_rcFilterTable(this)">
+                        <option value="">All types</option>
+                        <option value="movie">Movie</option>
+                        <option value="episode">TV</option>
+                    </select>
+                </div>
+                <div class="dm-table-wrap"><table class="dm-table">
+                    <thead><tr>
+                        <th class="dm-rc-th-sort" data-sort="title">Title</th>
+                        <th class="dm-pt-col-type dm-rc-th-sort" data-sort="type">Type</th>
+                        <th class="dm-rc-col-file dm-rc-th-sort" data-sort="filled_by_file">File</th>
+                        <th style="width:70px" class="dm-rc-th-sort" data-sort="affected_count">Items</th>
+                        <th class="dm-col-actions">Actions</th>
+                    </tr></thead>
+                    <tbody id="rc-tbody-torrent-gone"><tr class="dm-empty-row"><td colspan="5">Loading…</td></tr></tbody>
+                </table></div>
+            </div>
+
+            <!-- Lost panel -->
+            <div id="rc-panel-lost" class="dm-rc-group-panel" style="display:none">
+                <p class="dm-pt-group-desc">Collected items that are neither in Real-Debrid nor indexed in {{ ms_label }}. Re-queue to scrape them again.</p>
+                <div class="dm-rc-bulk-bar">
+                    <button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-requeue-lost">Re-queue All</button>
+                    <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-del-lost">Delete All</button>
+                </div>
+                <div class="dm-rc-filter-bar">
+                    <input type="text" class="dm-rc-search" placeholder="Search…" oninput="_rcFilterTable(this)">
+                    <select class="dm-rc-type-filter" onchange="_rcFilterTable(this)">
+                        <option value="">All types</option>
+                        <option value="movie">Movie</option>
+                        <option value="episode">TV</option>
+                    </select>
+                </div>
+                <div class="dm-table-wrap"><table class="dm-table">
+                    <thead><tr>
+                        <th class="dm-rc-th-sort" data-sort="title">Title</th>
+                        <th class="dm-pt-col-type dm-rc-th-sort" data-sort="type">Type</th>
+                        <th class="dm-rc-col-file dm-rc-th-sort" data-sort="filled_by_file">Last known file</th>
+                        <th class="dm-col-actions">Actions</th>
+                    </tr></thead>
+                    <tbody id="rc-tbody-lost"><tr class="dm-empty-row"><td colspan="4">Loading…</td></tr></tbody>
+                </table></div>
+            </div>
+
+            <!-- Untracked RD panel -->
+            <div id="rc-panel-untracked" class="dm-rc-group-panel" style="display:none">
+                <p class="dm-pt-group-desc">Torrents in Real-Debrid not referenced by any Collected item in the database. May be manually added or leftover from failed imports.</p>
+                <div class="dm-rc-bulk-bar">
+                    <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-del-noplex">Delete Not in {{ ms_label }}</button>
+                    <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-del-all-rd">Delete All</button>
+                </div>
+                <div class="dm-rc-filter-bar">
+                    <input type="text" class="dm-rc-search" placeholder="Search…" oninput="_rcFilterTable(this)">
+                </div>
+                <div class="dm-table-wrap"><table class="dm-table">
+                    <thead><tr>
+                        <th class="dm-rc-th-sort" data-sort="title">RD Filename</th>
+                        <th class="dm-rc-col-id">RD Torrent ID</th>
+                        <th style="width:70px;text-align:center">In {{ ms_label }}</th>
+                        <th class="dm-col-actions">Actions</th>
+                    </tr></thead>
+                    <tbody id="rc-tbody-untracked"><tr class="dm-empty-row"><td colspan="4">Loading…</td></tr></tbody>
+                </table></div>
+            </div>
+
+            <!-- NAS panel -->
+            <div id="rc-panel-nas" class="dm-rc-group-panel" style="display:none">
+                <p class="dm-pt-group-desc">Collected items stored on NAS / local storage (not in Real-Debrid). Detected by filesystem path not matching any known RD mount prefix.</p>
+                <div class="dm-rc-filter-bar">
+                    <input type="text" class="dm-rc-search" placeholder="Search…" oninput="_rcFilterTable(this)">
+                    <select class="dm-rc-type-filter" onchange="_rcFilterTable(this)">
+                        <option value="">All types</option>
+                        <option value="movie">Movie</option>
+                        <option value="episode">TV</option>
+                    </select>
+                </div>
+                <div class="dm-table-wrap"><table class="dm-table">
+                    <thead><tr>
+                        <th class="dm-rc-th-sort" data-sort="title">Title</th>
+                        <th class="dm-pt-col-type dm-rc-th-sort" data-sort="type">Type</th>
+                        <th class="dm-rc-col-file dm-rc-th-sort" data-sort="filled_by_file">File</th>
+                        <th class="dm-col-actions">Actions</th>
+                    </tr></thead>
+                    <tbody id="rc-tbody-nas"><tr class="dm-empty-row"><td colspan="4">Loading…</td></tr></tbody>
+                </table></div>
+            </div>
+
+            {% if symlink_mode %}
+            <!-- Symlinks panel -->
+            <div id="rc-panel-symlinks" class="dm-rc-group-panel" style="display:none">
+
+                <!-- Idle state -->
+                <div id="sl-idle">
+                    <p class="dm-pt-group-desc">
+                        Filesystem health check for symlink mode — walks the rclone mount and symlink directories to find broken links, unlinked files, and incorrect mappings. May take a minute on large libraries.
+                    </p>
+                    <div class="dm-rc-bulk-bar">
+                        <button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-bulk-btn" onclick="_slStartScan()">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:13px;height:13px;margin-right:4px;vertical-align:-2px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z"/></svg>
+                            Run Scan
+                        </button>
+                        <span id="sl-error-msg" class="sl-error-inline" style="display:none"></span>
+                    </div>
+                </div>
+
+                <!-- Scanning spinner -->
+                <div id="sl-scanning" class="dm-pt-loading" style="display:none">
+                    <span class="dm-spinner"></span> Scanning… this may take a minute on large libraries.
+                </div>
+
+                <!-- Results -->
+                <div id="sl-results" style="display:none">
+
+                    <!-- Stats header — mirrors dm-rc-header -->
+                    <div class="dm-rc-header">
+                        <p class="dm-rc-stats-bar">
+                            <span class="dm-rc-sn" id="sl-stat-scanned">—</span><span class="dm-rc-sl">Rclone files</span>
+                            <span class="dm-rc-sep">·</span>
+                            <span class="dm-rc-sn" id="sl-stat-indexed">—</span><span class="dm-rc-sl">Symlinks</span>
+                            <span class="dm-rc-sep">·</span>
+                            <span class="dm-rc-sn" id="sl-stat-unlinked">—</span><span class="dm-rc-sl" id="sl-lbl-unlinked">Unlinked</span>
+                            <span class="dm-rc-sep">·</span>
+                            <span class="dm-rc-sn" id="sl-stat-broken">—</span><span class="dm-rc-sl">Broken</span>
+                            <span class="dm-rc-sep">·</span>
+                            <span class="dm-rc-sn" id="sl-stat-incorrect">—</span><span class="dm-rc-sl">Multi-episode mismatch</span>
+                            <span class="dm-rc-sep">·</span>
+                            <span class="dm-rc-sn" id="sl-stat-correct">—</span><span class="dm-rc-sl">Multi-episode valid</span>
+                        </p>
+                        <div class="dm-rc-healthy-pill" id="sl-health-pill">
+                            <span class="dm-rc-healthy-icon" id="sl-health-icon">✓</span>
+                            <span id="sl-health-count">—</span>
+                            <span class="dm-rc-healthy-label" id="sl-health-label">Issues</span>
+                        </div>
+                    </div>
+
+                    <!-- Toolbar: rescan + last scanned + stale badge -->
+                    <div class="dm-rc-bulk-bar" style="align-items:center;margin-bottom:16px">
+                        <button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-bulk-btn" onclick="_slStartScan()">↺ Re-scan</button>
+                        <span id="sl-last-scanned" class="sl-last-scanned"></span>
+                        <span id="sl-stale-badge" class="sl-stale-badge" style="display:none">Updating…</span>
+                        <span class="sl-paths-hint" id="sl-paths-hint"></span>
+                    </div>
+
+                    <!-- Broken symlinks section -->
+                    <div id="sl-section-broken" style="display:none">
+                        <p class="dm-pt-group-desc">Broken symlinks — point to missing rclone targets. Safe to delete; your symlinker will re-create them on next run.</p>
+                        <div class="dm-rc-bulk-bar">
+                            <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-bulk-btn" onclick="_slDeleteAll('broken')">Delete All Broken</button>
+                        </div>
+                        <div class="dm-rc-filter-bar">
+                            <input type="text" class="dm-rc-search" placeholder="Search…" oninput="_slFilterBroken()">
+                            <select class="dm-rc-type-filter" onchange="_slFilterBroken()">
+                                <option value="">All types</option>
+                                <option value="tv">TV</option>
+                                <option value="movie">Movie</option>
+                            </select>
+                        </div>
+                        <div class="dm-table-wrap">
+                            <table class="dm-table">
+                                <thead><tr>
+                                    <th>Title</th>
+                                    <th style="width:70px">Type</th>
+                                    <th>File</th>
+                                    <th class="dm-col-actions">Actions</th>
+                                </tr></thead>
+                                <tbody id="sl-tbody-broken"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Unlinked rclone files section -->
+                    <div id="sl-section-unlinked" style="display:none">
+                        <p class="dm-pt-group-desc">Unlinked rclone files — exist in the rclone mount but no symlink points to them. May be leftover torrents not yet imported or already removed from the library.</p>
+                        <div class="dm-rc-bulk-bar">
+                            <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-bulk-btn" onclick="_slDeleteAll('unlinked')">Delete All Unlinked</button>
+                        </div>
+                        <div class="dm-table-wrap">
+                            <table class="dm-table">
+                                <thead><tr>
+                                    <th>File Path</th>
+                                    <th style="width:90px">Size</th>
+                                    <th class="dm-col-actions">Actions</th>
+                                </tr></thead>
+                                <tbody id="sl-tbody-unlinked"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Multi-episode mismatch section -->
+                    <div id="sl-section-incorrect" style="display:none">
+                        <p class="dm-pt-group-desc">Multi-episode mismatch — one rclone file has multiple symlinks pointing to it with mismatched episode numbers. Delete the bad symlinks so your symlinker can re-create correct mappings.</p>
+                        <div class="dm-rc-bulk-bar">
+                            <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-bulk-btn" onclick="_slDeleteAll('incorrect')">Delete All Mismatched</button>
+                        </div>
+                        <div class="dm-table-wrap">
+                            <table class="dm-table">
+                                <thead><tr>
+                                    <th>Title</th>
+                                    <th style="width:70px">Type</th>
+                                    <th>File</th>
+                                    <th>Symlinks</th>
+                                    <th class="dm-col-actions">Actions</th>
+                                </tr></thead>
+                                <tbody id="sl-tbody-incorrect"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div><!-- /#sl-results -->
+            </div><!-- /#rc-panel-symlinks -->
+            {% endif %}
+
+            <!-- ── BATTERY AUDIT PANEL ── -->
+            <div id="rc-panel-battery" class="dm-rc-group-panel" style="display:none">
+                <!-- Top action bar -->
+                <div class="dm-rc-bulk-bar">
+                    <button class="dm-batt-cat dm-batt-cat-active" data-batt-group="orphaned_battery" title="Battery entries with no matching media_items record">Orphaned <span class="dm-rc-tab-count" id="batt-n-orphaned_battery">—</span></button>
+                    <button class="dm-batt-cat" data-batt-group="missing_battery" title="Collected items missing from battery">Missing <span class="dm-rc-tab-count" id="batt-n-missing_battery">—</span></button>
+                    <button class="dm-batt-cat" data-batt-group="stale_metadata" title="Battery items with stale metadata">Stale <span class="dm-rc-tab-count" id="batt-n-stale_metadata">—</span></button>
+                    <button class="dm-batt-cat" data-batt-group="orphaned_tvdb" title="TVDB mappings pointing to unknown IMDB IDs">TVDB <span class="dm-rc-tab-count" id="batt-n-orphaned_tvdb">—</span></button>
+                    <button class="dm-batt-cat" data-batt-group="orphaned_tmdb" title="TMDB mappings pointing to unknown IMDB IDs">TMDB <span class="dm-rc-tab-count" id="batt-n-orphaned_tmdb">—</span></button>
+                    <button class="dm-batt-cat" data-batt-group="no_imdb_id" title="Collected items with no IMDB ID — metadata and upgrades won't work">No IMDB <span class="dm-rc-tab-count" id="batt-n-no_imdb_id">—</span></button>
+                    <span class="dm-rc-bulk-sep"></span>
+                    <button id="batt-sync-btn" class="dm-btn dm-btn-secondary dm-btn-sm" title="Sync battery → media_items (titles + episode data)">↕ Sync to Main DB</button>
+                    <button id="batt-reload-btn" class="dm-btn dm-btn-secondary dm-btn-sm">↺ Refresh Audit</button>
+                </div>
+
+                <div id="batt-loading" class="dm-pt-loading" style="display:none"><span class="dm-spinner"></span> Auditing battery database…</div>
+                <div id="batt-error" class="dm-error" style="display:none"></div>
+
+                <div id="batt-content" style="display:none">
+
+                    <!-- ── Orphaned Battery ── -->
+                    <div class="dm-batt-section" id="batt-sec-orphaned_battery" style="display:none">
+                        <p class="dm-pt-group-desc"><strong>Orphaned battery entries.</strong> These items exist in the metadata battery (cli_battery.db) but are no longer referenced anywhere in your media library. This typically happens when items are deleted or re-identified. They serve no purpose and can safely be deleted to free up space.</p>
+                        <div class="dm-rc-bulk-bar">
+                            <button class="dm-btn dm-btn-danger dm-btn-sm" id="batt-bulk-del-orphaned" disabled>Delete Selected</button>
+                            <label class="dm-batt-cb-all"><input type="checkbox" id="batt-chk-all-orphaned"> Select all</label>
+                        </div>
+                        <div class="dm-table-wrap"><table class="dm-table">
+                            <thead><tr>
+                                <th class="dm-col-check"></th>
+                                <th>Title</th><th>Year</th><th>IMDB ID</th><th>Type</th><th>Last Fetch</th><th class="dm-col-actions">Actions</th>
+                            </tr></thead>
+                            <tbody id="batt-tbody-orphaned_battery"></tbody>
+                        </table></div>
+                    </div>
+
+                    <!-- ── Missing Battery ── -->
+                    <div class="dm-batt-section" id="batt-sec-missing_battery" style="display:none">
+                        <p class="dm-pt-group-desc"><strong>Missing battery entries.</strong> These items are marked as Collected in your library but have no metadata stored in the battery. Without battery metadata, features like episode air date tracking and upgrade scoring may not work correctly for these items. Click Fetch to pull their metadata now.</p>
+                        <div class="dm-rc-bulk-bar">
+                            <button class="dm-btn dm-btn-secondary dm-btn-sm" id="batt-bulk-fetch-missing" disabled>Fetch Selected</button>
+                            <label class="dm-batt-cb-all"><input type="checkbox" id="batt-chk-all-missing"> Select all</label>
+                        </div>
+                        <div class="dm-table-wrap"><table class="dm-table">
+                            <thead><tr>
+                                <th class="dm-col-check"></th>
+                                <th>Title</th><th>Year</th><th>IMDB ID</th><th>Type</th><th class="dm-col-actions">Actions</th>
+                            </tr></thead>
+                            <tbody id="batt-tbody-missing_battery"></tbody>
+                        </table></div>
+                    </div>
+
+                    <!-- ── Stale Metadata ── -->
+                    <div class="dm-batt-section" id="batt-sec-stale_metadata" style="display:none">
+                        <p class="dm-pt-group-desc"><strong>Stale metadata.</strong> These items have battery metadata that hasn't been refreshed within the expected window. Returning/active shows refresh every 6 hours, ended shows every 30 days, and movies every 90 days. Stale data can cause incorrect episode schedules or upgrade decisions. Click Refresh to update them.</p>
+                        <div class="dm-rc-bulk-bar">
+                            <button class="dm-btn dm-btn-secondary dm-btn-sm" id="batt-bulk-refresh-stale" disabled>Refresh Selected</button>
+                            <label class="dm-batt-cb-all"><input type="checkbox" id="batt-chk-all-stale"> Select all</label>
+                        </div>
+                        <div class="dm-table-wrap"><table class="dm-table">
+                            <thead><tr>
+                                <th class="dm-col-check"></th>
+                                <th>Title</th><th>Year</th><th>IMDB ID</th><th>Type</th><th>Status</th><th>Age (days)</th><th class="dm-col-actions">Actions</th>
+                            </tr></thead>
+                            <tbody id="batt-tbody-stale_metadata"></tbody>
+                        </table></div>
+                    </div>
+
+                    <!-- ── Orphaned TVDB Mappings ── -->
+                    <div class="dm-batt-section" id="batt-sec-orphaned_tvdb" style="display:none">
+                        <p class="dm-pt-group-desc"><strong>Orphaned TVDB→IMDB mappings.</strong> The battery keeps a lookup table that translates TVDB IDs (used by the TVDB metadata source) into IMDB IDs. These entries point to IMDB IDs that no longer exist in the battery — meaning the show they referenced has been removed. Deleting them is safe; the mapping will be automatically recreated the next time that show is looked up.</p>
+                        <div class="dm-rc-bulk-bar">
+                            <button class="dm-btn dm-btn-danger dm-btn-sm" id="batt-bulk-del-tvdb" disabled>Delete Selected</button>
+                            <label class="dm-batt-cb-all"><input type="checkbox" id="batt-chk-all-tvdb"> Select all</label>
+                        </div>
+                        <div class="dm-table-wrap"><table class="dm-table">
+                            <thead><tr>
+                                <th class="dm-col-check"></th>
+                                <th>Title</th><th>Year</th><th>TVDB ID</th><th>IMDB ID</th><th>Type</th><th class="dm-col-actions">Actions</th>
+                            </tr></thead>
+                            <tbody id="batt-tbody-orphaned_tvdb"></tbody>
+                        </table></div>
+                    </div>
+
+                    <!-- ── Orphaned TMDB Mappings ── -->
+                    <div class="dm-batt-section" id="batt-sec-orphaned_tmdb" style="display:none">
+                        <p class="dm-pt-group-desc"><strong>Orphaned TMDB→IMDB mappings.</strong> The battery keeps a lookup table that translates TMDB IDs (used for poster fetching and metadata supplementation) into IMDB IDs. These entries point to IMDB IDs that no longer exist in the battery — meaning the movie or show they referenced has been removed. Deleting them is safe; the mapping will be automatically recreated the next time that title is looked up.</p>
+                        <div class="dm-rc-bulk-bar">
+                            <button class="dm-btn dm-btn-danger dm-btn-sm" id="batt-bulk-del-tmdb" disabled>Delete Selected</button>
+                            <label class="dm-batt-cb-all"><input type="checkbox" id="batt-chk-all-tmdb"> Select all</label>
+                        </div>
+                        <div class="dm-table-wrap"><table class="dm-table">
+                            <thead><tr>
+                                <th class="dm-col-check"></th>
+                                <th>Title</th><th>Year</th><th>TMDB ID</th><th>IMDB ID</th><th>Type</th><th class="dm-col-actions">Actions</th>
+                            </tr></thead>
+                            <tbody id="batt-tbody-orphaned_tmdb"></tbody>
+                        </table></div>
+                    </div>
+
+                    <!-- ── No IMDB ID ── -->
+                    <div class="dm-batt-section" id="batt-sec-no_imdb_id" style="display:none">
+                        <p class="dm-pt-group-desc"><strong>Collected items with no IMDB ID.</strong> These items are marked as Collected in your library but have no IMDB ID assigned. Without one, the battery cannot fetch metadata, upgrade scoring won't work, and sync will log "No metadata found" errors for them repeatedly. Enter an IMDB ID (format: tt1234567) and click Set, or use Auto to search automatically.</p>
+                        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+                            <button id="batt-auto-fill-all-btn" class="dm-btn dm-btn-secondary dm-btn-sm" onclick="_battAutoFillAll()">Auto Fill All</button>
+                            <button id="batt-set-all-found-btn" class="dm-btn dm-btn-secondary dm-btn-sm" onclick="_battSetAllFound()" style="display:none">Set All Found</button>
+                            <span id="batt-auto-fill-msg" style="font-size:0.8rem;color:#888"></span>
+                        </div>
+                        <div class="dm-table-wrap"><table class="dm-table">
+                            <thead><tr>
+                                <th>Title</th><th>Year</th><th>Type</th><th>File</th><th>Set IMDB ID</th>
+                            </tr></thead>
+                            <tbody id="batt-tbody-no_imdb_id"></tbody>
+                        </table></div>
+                    </div>
+
+                </div><!-- /#batt-content -->
+            </div><!-- /#rc-panel-battery -->
+
+        </div><!-- /#rc-content -->
+    </div><!-- /#reconcile-tab -->
+
+</div>
+
+<!-- ── BATTERY RE-IDENTIFY MODAL ── -->
+<div class="dm-modal-overlay" id="batt-reid-overlay"></div>
+<div class="dm-modal" id="batt-reid-modal">
+    <div class="dm-modal-header">
+        <h3>Re-identify Item</h3>
+        <button class="dm-modal-close" id="batt-reid-close">&times;</button>
+    </div>
+    <div class="dm-modal-body">
+        <p id="batt-reid-current"></p>
+        <div class="dm-batt-reid-form">
+            <label>New IMDB ID</label>
+            <input type="text" id="batt-reid-new-id" placeholder="tt1234567" class="dm-filter-input">
+            <button class="dm-btn dm-btn-secondary" id="batt-reid-verify-btn">Verify</button>
+        </div>
+        <div id="batt-reid-preview" class="dm-batt-reid-preview" style="display:none"></div>
+        <div class="dm-batt-reid-options" id="batt-reid-options" style="display:none">
+            <label class="dm-batt-reid-check">
+                <input type="checkbox" id="batt-reid-sync-main" checked>
+                Also update media_items.imdb_id in main database
+            </label>
+        </div>
+        <div class="dm-batt-reid-footer" id="batt-reid-footer" style="display:none">
+            <button class="dm-btn dm-btn-danger" id="batt-reid-commit-btn">Commit Re-identify</button>
+            <span class="dm-batt-reid-warn">This deletes the old battery entry and creates a new one.</span>
+        </div>
+        <div id="batt-reid-result" style="display:none"></div>
+    </div>
 </div>
 
 <!-- ── HISTORY DETAIL MODAL ── -->
@@ -445,6 +1083,11 @@
 {% block scripts %}
 <script>
 // ── helpers ────────────────────────────────────────────────────────────────
+function escHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 function fmt_bytes(b) {
     if (!b) return '—';
     const units = ['B','KB','MB','GB','TB'];
@@ -503,6 +1146,8 @@ document.querySelectorAll('.dm-tab').forEach(btn => {
         if (btn.dataset.tab === 'history' && !window._historyLoaded) loadHistory();
         if (btn.dataset.tab === 'library' && !window._libLoaded) loadLibrary(false);
         if (btn.dataset.tab === 'maintenance' && !_bkLoaded) loadMaintenance();
+        if (btn.dataset.tab === 'reconcile' && !window._rcLoaded) { loadReconcile(false); loadBatteryAudit(false); }
+        if (btn.dataset.tab === 'reconcile' && typeof _slInitAudit === 'function') _slInitAudit();
     });
 });
 const _urlTab = new URLSearchParams(window.location.search).get('tab');
@@ -524,6 +1169,7 @@ function getActiveDisplayTorrents() {
     const statusVal = document.getElementById('active-status-filter').value;
     if (statusVal === 'error') return _activeErrors;
     if (statusVal === 'no_files') return _activeNoFiles;
+    if (statusVal === '') return [..._activeTorrents, ..._activeErrors, ..._activeNoFiles];
     return _activeTorrents;
 }
 
@@ -908,6 +1554,7 @@ let _libStatusFilter = 'downloaded';
 let _libDupeFilter = 'none'; // 'none' | 'hash' | 'title'
 let _libPlexTrash = false;
 let _plexTrashFilenames = new Set(); // torrent folder names in plex trash
+let _plexTrashOrphanedFilenames = new Set(); // subset: folders with deletedAt (orphaned)
 let _hashCounts = {};
 let _titleCounts = {};
 let _libSelected = new Set();
@@ -1130,19 +1777,20 @@ function _applyLibraryData(data) {
 
 async function _pollLibraryUpdate() {
     _libPollTimer = null;
+    if (_dmActiveTab !== 'library') return; // stop if user switched tabs
     try {
         const r = await fetch('/debrid_manager/api/library');
         const data = await r.json();
         if (!data.success) { _libPollTimer = setTimeout(_pollLibraryUpdate, 10000); return; }
         const prevCount = _libAll.length;
         _applyLibraryData(data);
-        if (data.loading) {
+        if (data.loading && _dmActiveTab === 'library') {
             // Poll faster while data is actively growing
             const interval = (data.cache_status === 'partial' && data.total > prevCount) ? 5000 : 8000;
             _libPollTimer = setTimeout(_pollLibraryUpdate, interval);
         }
     } catch(e) {
-        _libPollTimer = setTimeout(_pollLibraryUpdate, 12000);
+        if (_dmActiveTab === 'library') _libPollTimer = setTimeout(_pollLibraryUpdate, 12000);
     }
 }
 
@@ -1193,6 +1841,14 @@ function applyLibFilters() {
     _libPage = 1;
     updateLibFilterInfo();
     renderLibPage();
+    // Keep the Plex Trash button count in sync with how many RD library entries actually match
+    if (_plexTrashBtn) {
+        if (_libPlexTrash) {
+            _plexTrashBtn.textContent = `Plex Trash (${_libFiltered.length})`;
+        } else if (_plexTrashFilenames && _plexTrashFilenames.size > 0) {
+            _plexTrashBtn.textContent = `Plex Trash (${_plexTrashFilenames.size})`;
+        }
+    }
 }
 
 function updateLibFilterInfo() {
@@ -1234,6 +1890,8 @@ function renderLibPage() {
                 ? `<span class="dm-dupe-badge dm-title-dupe-badge dm-dupe-badge-click" title="Click to see all ${titleDupeCount} title matches" onclick="event.stopPropagation();libOpenDupes('title','${_titleKey(t).replace(/'/g,"\\'")}','${t.id}')">${titleDupeCount}× title</span>`
                 : '';
         const typeBadge = `<span class="dm-type-badge dm-type-${t._type}">${t._type === 'tv' ? 'Show' : t._type === 'movie' ? 'Movie' : 'Other'}</span>`;
+        const orphanedBadge = (_libPlexTrash && _plexTrashOrphanedFilenames.has((t.filename || '').split('/')[0]))
+            ? `<span class="dm-orphaned-badge" title="This file was orphaned in Plex (deletedAt)">Orphaned</span>` : '';
         const cleanTitle = buildCleanTitle(t);
         const ago = timeAgo(t.added);
         const abs = fmt_added_abs(t.added);
@@ -1243,7 +1901,7 @@ function renderLibPage() {
         return `<tr data-id="${t.id}" data-hash="${t.hash||''}" style="cursor:pointer" onclick="libOpenDetail(event,'${t.id}')">
             <td class="dm-col-check" onclick="event.stopPropagation()"><input type="checkbox" class="lib-row-check" data-id="${t.id}" ${checked}></td>
             <td class="dm-col-lib-title">
-                <div class="dm-lib-title-row">${cleanTitle ? `<span class="dm-clean-title">${cleanTitle}</span>` : ''}${typeBadge}${dupeBadge}</div>
+                <div class="dm-lib-title-row">${cleanTitle ? `<span class="dm-clean-title">${cleanTitle}</span>` : ''}${typeBadge}${dupeBadge}${orphanedBadge}</div>
                 <div class="dm-lib-filename" title="${safeFile}">${t.filename||'—'}</div>
             </td>
             <td class="dm-col-size">${fmt_bytes(t.bytes)}</td>
@@ -1354,6 +2012,7 @@ async function _loadPlexTrash(force) {
         const data = await r.json();
         if (data.success) {
             _plexTrashFilenames = new Set(data.filenames);
+            _plexTrashOrphanedFilenames = new Set(data.orphaned_filenames || []);
             _plexTrashBtn.textContent = `Plex Trash (${data.filenames.length})`;
         } else {
             _libPlexTrash = false;
@@ -2172,8 +2831,1980 @@ document.querySelectorAll('.dm-tab[data-tab="usage"]').forEach(btn => {
 // If usage tab is the active tab on load, load immediately
 if (_dmActiveTab === 'usage') loadUsage();
 
+{% if show_plex_trash %}
+// ── PLEX TRASH TAB ─────────────────────────────────────────────────────────
+let _ptSelected = new Set();
+let _ptInRd = [];
+let _ptNotInRd = [];
+let _ptLoaded = false;
+
+function _ptUpdatePurgeBtn() {
+    const btn = document.getElementById('pt-purge-btn');
+    const countEl = document.getElementById('pt-selected-count');
+    if (!btn) return;
+    countEl.textContent = _ptSelected.size;
+    btn.disabled = _ptSelected.size === 0;
+}
+
+function _ptRenderGroup(tbodyId, items, groupId) {
+    const tbody = document.getElementById(tbodyId);
+    if (!tbody) return;
+    if (!items.length) {
+        tbody.innerHTML = '<tr class="dm-empty-row"><td colspan="5">None</td></tr>';
+        return;
+    }
+    const isInRd = groupId === 'in_rd';
+    tbody.innerHTML = items.map((item, idx) => {
+        const checked = _ptSelected.has(item.rating_key) ? 'checked' : '';
+        const typeLabel = item.media_type === 'show' ? '<span class="dm-type-badge dm-type-tv">Show</span>' : '<span class="dm-type-badge dm-type-movie">Movie</span>';
+        const year = item.year ? ` (${item.year})` : '';
+        const titleMatchCount = item.title_match_count || 0;
+        const titleMatchBadge = titleMatchCount > 0
+            ? `<span class="dm-dupe-badge dm-title-dupe-badge" title="${titleMatchCount} torrent(s) with matching title in RD library">${titleMatchCount}× title</span>`
+            : '';
+
+        // Build Files column: bad file (red, top) + good file (green, bottom) when both known
+        // Each file row gets inline action buttons
+        let filesHtml = '';
+        const _shorten = (s, n) => s && s.length > n ? s.substring(0, n) + '…' : (s || '');
+        const rk = escHtml(item.rating_key);
+        if (item.bad_file && item.has_good_file) {
+            const goodName = item.good_file || item.rd_filename || item.folder_name || '';
+            const goodHash = escHtml(item.rd_hash || '');
+            const goodFname = escHtml(goodName);
+            // Bad file: Reinsert disabled (no RD hash for orphaned file) + Delete
+            // Look up part IDs for per-file deletion
+            const _pids = item.part_ids || {};
+            const badPart = _pids[item.bad_file] || {};
+            const goodPart = _pids[goodName] || {};
+            const badMid = escHtml(badPart.media_id || '');
+            const badPid = escHtml(badPart.part_id || '');
+            const goodMid = escHtml(goodPart.media_id || '');
+            const goodPid = escHtml(goodPart.part_id || '');
+            // Bad file: Reinsert disabled (no RD hash for orphaned file) + Delete (per-part if IDs known)
+            const badBtns = `<span class="dm-pt-file-btns">`
+                + `<button class="dm-btn dm-btn-xs dm-pt-fbtn" data-faction="reinsert" data-hash="" data-fname="" data-rk="${rk}" disabled title="No RD hash available for this file">Reinsert</button>`
+                + `<button class="dm-btn dm-btn-xs dm-pt-fbtn dm-pt-fbtn-del" data-faction="delete-part" data-rk="${rk}" data-mid="${badMid}" data-pid="${badPid}" data-protected="1" title="Remove this file from Plex">Delete</button>`
+                + `</span>`;
+            // Good file: Reinsert (if hash available) + Delete (per-part if IDs known)
+            const goodReinsert = goodHash
+                ? `<button class="dm-btn dm-btn-xs dm-pt-fbtn" data-faction="reinsert" data-hash="${goodHash}" data-fname="${goodFname}" data-rk="${rk}" title="Re-add to Real-Debrid">Reinsert</button>`
+                : '';
+            const goodBtns = `<span class="dm-pt-file-btns">${goodReinsert}`
+                + `<button class="dm-btn dm-btn-xs dm-pt-fbtn dm-pt-fbtn-del" data-faction="delete-part" data-rk="${rk}" data-mid="${goodMid}" data-pid="${goodPid}" data-protected="1" title="Remove this file from Plex">Delete</button>`
+                + `</span>`;
+            const orphanLabel = item.bad_file_orphaned ? `<span class="dm-pt-badge-orphaned">Orphaned</span>` : '';
+            filesHtml = `<div class="dm-pt-file-row"><span class="dm-pt-file-bad" title="${escHtml(item.bad_file)}">${escHtml(item.bad_file)}</span>${orphanLabel}${badBtns}</div>`
+                      + `<div class="dm-pt-file-row"><span class="dm-pt-file-good" title="${escHtml(goodName)}">${escHtml(goodName)}</span>${goodBtns}</div>`;
+        } else if (item.bad_file) {
+            filesHtml = `<div class="dm-pt-file-row"><span class="dm-pt-file-bad" title="${escHtml(item.bad_file)}">${escHtml(item.bad_file)}</span></div>`;
+        } else {
+            filesHtml = `<div class="dm-pt-file-row"><span class="dm-pt-folder" title="${escHtml(item.folder_name)}">${escHtml(item.folder_name)}</span></div>`;
+        }
+
+        let actions = '';
+        if (isInRd && item.file_dir) {
+            actions = `<button class="dm-btn dm-btn-secondary dm-btn-sm dm-pt-action-btn" data-action="scan" data-idx="${idx}" title="Trigger Plex scan on this path">Scan</button>`;
+        }
+        if (!isInRd && item.rd_hash) {
+            actions = `<button class="dm-btn dm-btn-secondary dm-btn-sm dm-pt-action-btn" data-action="reinsert" data-idx="${idx}" title="Re-add torrent to Real-Debrid">Reinsert</button>`;
+        }
+        return `<tr>
+            <td class="dm-col-check"><input type="checkbox" data-rk="${escHtml(item.rating_key)}" data-group="${groupId}" ${checked}></td>
+            <td><span class="dm-pt-title">${escHtml(item.title)}${escHtml(year)}</span>${titleMatchBadge}</td>
+            <td class="dm-pt-col-type">${typeLabel}</td>
+            <td class="dm-pt-col-files">${filesHtml}</td>
+            <td class="dm-col-actions">${actions}</td>
+        </tr>`;
+    }).join('');
+
+    tbody.querySelectorAll('input[type=checkbox][data-rk]').forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (cb.checked) _ptSelected.add(cb.dataset.rk);
+            else _ptSelected.delete(cb.dataset.rk);
+            _ptUpdatePurgeBtn();
+        });
+    });
+
+    // Action button handlers
+    tbody.querySelectorAll('.dm-pt-action-btn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const action = btn.dataset.action;
+            const idx = parseInt(btn.dataset.idx);
+            const item = isInRd ? _ptInRd[idx] : _ptNotInRd[idx];
+            if (!item) return;
+            const origHtml = btn.innerHTML;
+            btn.disabled = true;
+            if (action === 'scan') {
+                btn.textContent = 'Scanning…';
+                try {
+                    const r = await fetch('/debrid_manager/api/plex_force_scan', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({paths: [item.file_dir]}),
+                    });
+                    const data = await r.json();
+                    if (data.success) {
+                        btn.textContent = 'Done';
+                        btn.classList.add('dm-pt-action-ok');
+                        setTimeout(() => { btn.textContent = 'Scan'; btn.classList.remove('dm-pt-action-ok'); btn.disabled = false; }, 3000);
+                    } else {
+                        alert('Scan failed: ' + (data.errors?.join(', ') || data.error || 'unknown'));
+                        btn.innerHTML = origHtml; btn.disabled = false;
+                    }
+                } catch(e) {
+                    alert('Scan failed: ' + e.message);
+                    btn.innerHTML = origHtml; btn.disabled = false;
+                }
+            } else if (action === 'reinsert') {
+                btn.textContent = 'Reinserting…';
+                try {
+                    const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({torrents: [{id: '', hash: item.rd_hash, filename: item.rd_filename || item.folder_name}]}),
+                    });
+                    const data = await r.json();
+                    if (data.success && data.reinserted?.length) {
+                        btn.textContent = 'Done';
+                        btn.classList.add('dm-pt-action-ok');
+                        setTimeout(() => { btn.textContent = 'Reinsert'; btn.classList.remove('dm-pt-action-ok'); btn.disabled = false; }, 3000);
+                    } else {
+                        const err = data.failed?.[0]?.error || data.error || 'unknown';
+                        alert('Reinsert failed: ' + err);
+                        btn.innerHTML = origHtml; btn.disabled = false;
+                    }
+                } catch(e) {
+                    alert('Reinsert failed: ' + e.message);
+                    btn.innerHTML = origHtml; btn.disabled = false;
+                }
+            }
+        });
+    });
+
+    // Per-file inline button handlers (.dm-pt-fbtn)
+    tbody.querySelectorAll('.dm-pt-fbtn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const faction = btn.dataset.faction;
+            const origHtml = btn.innerHTML;
+            if (btn.disabled) return;
+            btn.disabled = true;
+            if (faction === 'reinsert') {
+                const hash = btn.dataset.hash;
+                const fname = btn.dataset.fname;
+                if (!hash) { btn.disabled = false; return; }
+                btn.textContent = 'Reinserting…';
+                try {
+                    const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({torrents: [{id: '', hash, filename: fname}]}),
+                    });
+                    const data = await r.json();
+                    if (data.success && data.reinserted?.length) {
+                        btn.textContent = 'Done';
+                        btn.classList.add('dm-pt-action-ok');
+                        setTimeout(() => { btn.textContent = 'Reinsert'; btn.classList.remove('dm-pt-action-ok'); btn.disabled = false; }, 3000);
+                    } else {
+                        const err = data.failed?.[0]?.error || data.error || 'unknown';
+                        alert('Reinsert failed: ' + err);
+                        btn.innerHTML = origHtml; btn.disabled = false;
+                    }
+                } catch(e) { alert('Reinsert failed: ' + e.message); btn.innerHTML = origHtml; btn.disabled = false; }
+            } else if (faction === 'delete-part') {
+                const ratingKey = btn.dataset.rk;
+                const mediaId = btn.dataset.mid;
+                const partId = btn.dataset.pid;
+                if (!confirm(`Remove this file from Plex? This cannot be undone.`)) { btn.disabled = false; return; }
+                btn.textContent = 'Deleting…';
+                try {
+                    const scanItem = [..._ptInRd, ..._ptNotInRd].find(i => i.rating_key === ratingKey);
+                    const r = await fetch('/debrid_manager/api/plex_delete_part', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({rating_key: ratingKey, media_id: mediaId, part_id: partId}),
+                    });
+                    const data = await r.json();
+                    if (!data.success) { alert('Delete failed: ' + (data.error || 'unknown')); btn.innerHTML = origHtml; btn.disabled = false; return; }
+                    const inRdItem = _ptInRd.find(i => i.rating_key === ratingKey);
+                    if (inRdItem?.has_good_file) {
+                        inRdItem.bad_file = null; inRdItem.has_good_file = false; inRdItem.bad_file_orphaned = false;
+                        _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
+                    } else {
+                        _ptInRd = _ptInRd.filter(i => i.rating_key !== ratingKey);
+                        _ptNotInRd = _ptNotInRd.filter(i => i.rating_key !== ratingKey);
+                        _ptSelected.delete(ratingKey);
+                        _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
+                        _ptRenderGroup('pt-not-in-rd-tbody', _ptNotInRd, 'not_in_rd');
+                    }
+                    _ptUpdateCounts(); _ptUpdatePurgeBtn();
+                    if (scanItem?.file_dir) {
+                        fetch('/debrid_manager/api/plex_force_scan', {
+                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({paths: [scanItem.file_dir], empty_trash: false}),
+                        }).catch(() => {});
+                    }
+                } catch(e) { alert('Delete failed: ' + e.message); btn.innerHTML = origHtml; btn.disabled = false; }
+            }
+        });
+    });
+}
+
+function _ptUpdateCounts() {
+    const inCount = document.getElementById('pt-in-rd-count');
+    const outCount = document.getElementById('pt-not-in-rd-count');
+    const tabCount = document.getElementById('plex-trash-tab-count');
+    const total = _ptInRd.length + _ptNotInRd.length;
+    if (inCount) inCount.textContent = _ptInRd.length;
+    if (outCount) outCount.textContent = _ptNotInRd.length;
+    if (tabCount) tabCount.textContent = total ? total : '';
+    const info = document.getElementById('pt-info-text');
+    if (info) info.textContent = total ? `${total} item${total !== 1 ? 's' : ''} in Plex Trash` : '';
+}
+
+async function loadPlexTrash(force) {
+    const loading = document.getElementById('pt-loading');
+    const content = document.getElementById('pt-content');
+    const errEl = document.getElementById('pt-error');
+    if (!loading) return;
+    loading.style.display = '';
+    content.style.display = 'none';
+    errEl.style.display = 'none';
+    try {
+        const url = '/debrid_manager/api/plex_trash_items' + (force ? '?force=1' : '');
+        const r = await fetch(url);
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error || 'Failed to load');
+        _ptInRd = data.in_rd || [];
+        _ptNotInRd = data.not_in_rd || [];
+        _ptSelected.clear();
+        _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
+        _ptRenderGroup('pt-not-in-rd-tbody', _ptNotInRd, 'not_in_rd');
+        _ptUpdateCounts();
+        _ptUpdatePurgeBtn();
+        loading.style.display = 'none';
+        content.style.display = '';
+        _ptLoaded = true;
+        // If RD library was not ready, show a notice and auto-refresh in 15s
+        const rdBanner = document.getElementById('pt-rd-loading-banner');
+        if (data.rd_library_status === 'loading') {
+            if (rdBanner) {
+                rdBanner.style.display = '';
+                rdBanner.textContent = 'RD library is loading in the background — classification will update automatically.';
+            }
+            setTimeout(() => loadPlexTrash(true), 15000);
+        } else {
+            if (rdBanner) rdBanner.style.display = 'none';
+        }
+    } catch(e) {
+        loading.style.display = 'none';
+        errEl.textContent = 'Failed to load Plex Trash: ' + e.message;
+        errEl.style.display = '';
+    }
+}
+
+// Select all checkboxes in a group
+document.getElementById('pt-select-in-rd')?.addEventListener('click', () => {
+    _ptInRd.forEach(item => _ptSelected.add(item.rating_key));
+    _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
+    _ptUpdatePurgeBtn();
+});
+document.getElementById('pt-select-not-in-rd')?.addEventListener('click', () => {
+    _ptNotInRd.forEach(item => _ptSelected.add(item.rating_key));
+    _ptRenderGroup('pt-not-in-rd-tbody', _ptNotInRd, 'not_in_rd');
+    _ptUpdatePurgeBtn();
+});
+
+// Group select-all checkboxes
+document.getElementById('pt-in-rd-select-all')?.addEventListener('change', function() {
+    if (this.checked) _ptInRd.forEach(item => _ptSelected.add(item.rating_key));
+    else _ptInRd.forEach(item => _ptSelected.delete(item.rating_key));
+    _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
+    _ptUpdatePurgeBtn();
+});
+document.getElementById('pt-not-in-rd-select-all')?.addEventListener('change', function() {
+    if (this.checked) _ptNotInRd.forEach(item => _ptSelected.add(item.rating_key));
+    else _ptNotInRd.forEach(item => _ptSelected.delete(item.rating_key));
+    _ptRenderGroup('pt-not-in-rd-tbody', _ptNotInRd, 'not_in_rd');
+    _ptUpdatePurgeBtn();
+});
+
+document.getElementById('pt-reload-btn')?.addEventListener('click', () => loadPlexTrash(true));
+
+document.getElementById('pt-purge-btn')?.addEventListener('click', async function() {
+    const keys = [..._ptSelected];
+    if (!keys.length) return;
+    const total = _ptInRd.length + _ptNotInRd.length;
+    const deletingItems = [..._ptInRd, ..._ptNotInRd].filter(i => _ptSelected.has(i.rating_key));
+    const titles = deletingItems.map(i => i.title + (i.year ? ` (${i.year})` : ''));
+    const preview = titles.slice(0, 5).join('\n') + (titles.length > 5 ? `\n…and ${titles.length - 5} more` : '');
+    if (!confirm(`Permanently delete ${keys.length} item${keys.length !== 1 ? 's' : ''} from Plex?\n\nThis cannot be undone.\n\n${preview}`)) return;
+
+    this.disabled = true;
+    const origHtml = this.innerHTML;
+    this.innerHTML = '<span class="dm-spinner"></span> Deleting…';
+    try {
+        const r = await fetch('/debrid_manager/api/plex_trash_purge', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({rating_keys: keys}),
+        });
+        const data = await r.json();
+        if (data.success) {
+            const deletedSet = new Set(data.deleted);
+            // Collect file_dir paths of successfully deleted items for auto-scan
+            const scanPaths = deletingItems
+                .filter(i => deletedSet.has(i.rating_key) && i.file_dir)
+                .map(i => i.file_dir);
+            _ptInRd = _ptInRd.filter(i => !deletedSet.has(i.rating_key));
+            _ptNotInRd = _ptNotInRd.filter(i => !deletedSet.has(i.rating_key));
+            data.deleted.forEach(rk => _ptSelected.delete(rk));
+            _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
+            _ptRenderGroup('pt-not-in-rd-tbody', _ptNotInRd, 'not_in_rd');
+            _ptUpdateCounts();
+            if (data.failed.length) {
+                alert(`${data.deleted.length} deleted. ${data.failed.length} failed:\n` +
+                    data.failed.map(f => `${f.key}: ${f.error}`).join('\n'));
+            }
+            // Auto-scan the affected directories so Plex re-discovers working files
+            if (scanPaths.length) {
+                fetch('/debrid_manager/api/plex_force_scan', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({paths: scanPaths, empty_trash: false}),
+                }).catch(() => {});
+            }
+        } else {
+            alert('Purge failed: ' + (data.error || 'unknown'));
+        }
+    } catch(e) {
+        alert('Purge failed: ' + e.message);
+    }
+    _ptUpdatePurgeBtn();
+    this.innerHTML = origHtml;
+    this.disabled = _ptSelected.size === 0;
+});
+
+// ── BULK ACTION HELPERS ─────────────────────────────────────────────────────
+async function _ptBulkDelete(items, label) {
+    if (!items.length) { alert(`No ${label} items to delete.`); return; }
+    const preview = items.slice(0, 5).map(i => i.title + (i.year ? ` (${i.year})` : '')).join('\n')
+        + (items.length > 5 ? `\n…and ${items.length - 5} more` : '');
+    if (!confirm(`Permanently delete ${items.length} ${label} item${items.length !== 1 ? 's' : ''} from Plex?\n\nThis cannot be undone.\n\n${preview}`)) return;
+    const btn = event.currentTarget;
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="dm-spinner"></span>';
+    try {
+        const keys = items.map(i => i.rating_key);
+        const r = await fetch('/debrid_manager/api/plex_trash_purge', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({rating_keys: keys}),
+        });
+        const data = await r.json();
+        if (data.success) {
+            const deletedSet = new Set(data.deleted);
+            const scanPaths = items.filter(i => deletedSet.has(i.rating_key) && i.file_dir).map(i => i.file_dir);
+            _ptInRd = _ptInRd.filter(i => !deletedSet.has(i.rating_key));
+            _ptNotInRd = _ptNotInRd.filter(i => !deletedSet.has(i.rating_key));
+            data.deleted.forEach(rk => _ptSelected.delete(rk));
+            _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
+            _ptRenderGroup('pt-not-in-rd-tbody', _ptNotInRd, 'not_in_rd');
+            _ptUpdateCounts(); _ptUpdatePurgeBtn();
+            if (scanPaths.length) fetch('/debrid_manager/api/plex_force_scan', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({paths: scanPaths, empty_trash: false}),
+            }).catch(() => {});
+            if (data.failed.length) alert(`${data.deleted.length} deleted. ${data.failed.length} failed.`);
+        } else { alert('Delete failed: ' + (data.error || 'unknown')); }
+    } catch(e) { alert('Delete failed: ' + e.message); }
+    btn.innerHTML = origHtml; btn.disabled = false;
+}
+
+async function _ptBulkReinsert(items, label) {
+    const withHash = items.filter(i => i.rd_hash);
+    if (!withHash.length) { alert(`No ${label} items with a known hash to reinsert.`); return; }
+    if (!confirm(`Reinsert ${withHash.length} ${label} torrent${withHash.length !== 1 ? 's' : ''} to Real-Debrid?`)) return;
+    const btn = event.currentTarget;
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="dm-spinner"></span>';
+    try {
+        const torrents = withHash.map(i => ({id: '', hash: i.rd_hash, filename: i.rd_filename || i.folder_name || ''}));
+        const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({torrents}),
+        });
+        const data = await r.json();
+        const doneCount = data.reinserted?.length || 0;
+        const failCount = data.failed?.length || 0;
+        alert(`Reinserted: ${doneCount}${failCount ? `, Failed: ${failCount}` : ''}`);
+    } catch(e) { alert('Reinsert failed: ' + e.message); }
+    btn.innerHTML = origHtml; btn.disabled = false;
+}
+
+document.getElementById('pt-bulk-scan-all')?.addEventListener('click', async function() {
+    const paths = _ptInRd.filter(i => i.file_dir).map(i => i.file_dir);
+    if (!paths.length) { alert('No scan paths available.'); return; }
+    this.disabled = true;
+    const origHtml = this.innerHTML;
+    this.innerHTML = '<span class="dm-spinner"></span>';
+    try {
+        await fetch('/debrid_manager/api/plex_force_scan', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({paths: [...new Set(paths)], empty_trash: false}),
+        });
+        this.textContent = 'Done';
+        setTimeout(() => { this.innerHTML = origHtml; this.disabled = false; }, 2500);
+    } catch(e) { alert('Scan failed: ' + e.message); this.innerHTML = origHtml; this.disabled = false; }
+});
+
+document.getElementById('pt-bulk-reinsert-good')?.addEventListener('click', function() {
+    _ptBulkReinsert(_ptInRd.filter(i => i.rd_hash && i.has_good_file), 'good-file');
+});
+document.getElementById('pt-bulk-del-bad')?.addEventListener('click', async function() {
+    const items = _ptInRd.filter(i => i.bad_file);
+    if (!items.length) { alert('No bad-file items to delete.'); return; }
+    const preview = items.slice(0, 5).map(i => i.title + (i.year ? ` (${i.year})` : '')).join('\n')
+        + (items.length > 5 ? `\n…and ${items.length - 5} more` : '');
+    if (!confirm(`Delete bad (orphaned) file from ${items.length} item${items.length !== 1 ? 's' : ''}?\n\nItems with a good file will have only the orphaned version removed. Items with no good file will be fully deleted from Plex.\n\n${preview}`)) return;
+    const btn = event.currentTarget;
+    const origHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="dm-spinner"></span>';
+    let deleted = 0, failed = 0;
+    try {
+        for (const item of items) {
+            const partInfo = (item.part_ids || {})[item.bad_file] || {};
+            const mediaId = partInfo.media_id;
+            const partId = partInfo.part_id;
+            try {
+                const r = await fetch('/debrid_manager/api/plex_delete_part', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({rating_key: item.rating_key, media_id: mediaId, part_id: partId}),
+                });
+                const d = await r.json();
+                if (d.success) {
+                    item.bad_file = null; item.has_good_file = false; item.bad_file_orphaned = false;
+                    deleted++;
+                } else { failed++; }
+            } catch(e) { failed++; }
+        }
+        _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
+        _ptUpdateCounts(); _ptUpdatePurgeBtn();
+        if (failed) alert(`${deleted} deleted. ${failed} failed.`);
+    } catch(e) { alert('Delete failed: ' + e.message); }
+    btn.innerHTML = origHtml; btn.disabled = false;
+});
+document.getElementById('pt-bulk-del-good')?.addEventListener('click', function() {
+    _ptBulkDelete(_ptInRd.filter(i => i.has_good_file), 'good-file');
+});
+document.getElementById('pt-bulk-reinsert-notrd')?.addEventListener('click', function() {
+    _ptBulkReinsert(_ptNotInRd, 'not-in-RD');
+});
+document.getElementById('pt-bulk-del-notrd')?.addEventListener('click', function() {
+    _ptBulkDelete(_ptNotInRd, 'not-in-RD');
+});
+
+// Lazy load when tab is activated
+document.querySelectorAll('.dm-tab[data-tab="plex-trash"]').forEach(btn => {
+    btn.addEventListener('click', () => { if (!_ptLoaded) loadPlexTrash(false); });
+});
+if (_dmActiveTab === 'plex-trash') loadPlexTrash(false);
+{% endif %}
+
+// ── RECONCILE TAB ──────────────────────────────────────────────────────────
+window._rcLoaded = false;
+let _rcData = null;
+const _dmMsLabel = {{ ('Jellyfin' if media_server_type == 'jellyfin' else 'Plex') | tojson }};
+
+function _rcTypeBadge(type) {
+    const cls = type === 'movie' ? 'dm-type-movie' : 'dm-type-tv';
+    const lbl = type === 'movie' ? 'Movie' : type === 'episode' ? 'TV' : (type || '—');
+    return `<span class="dm-type-badge ${cls}">${escHtml(lbl)}</span>`;
+}
+
+function _rcFileCell(item) {
+    const f = item.filled_by_file;
+    if (!f) return '<span class="dm-pt-folder">—</span>';
+    const parts = f.split('/').filter(Boolean);
+    const name = parts[parts.length - 1] || f;
+    return `<span class="dm-pt-folder" title="${escHtml(f)}">${escHtml(name)}</span>`;
+}
+
+function _rcTitleCell(item) {
+    const yr = item.year ? ` <span class="dm-pt-folder">(${escHtml(String(item.year))})</span>` : '';
+    return `<span class="dm-pt-title">${escHtml(item.title)}${yr}</span>`;
+}
+
+// ── Reconcile sort / filter state ──────────────────────────────────────
+const _rcState = {
+    'not-in-plex':   { sort: 'title', dir: 1, search: '', type: '' },
+    'torrent-gone':  { sort: 'title', dir: 1, search: '', type: '' },
+    'lost':          { sort: 'title', dir: 1, search: '', type: '' },
+    'untracked':     { sort: 'title', dir: 1, search: '', type: '' },
+    'nas':           { sort: 'title', dir: 1, search: '', type: '' },
+};
+
+function _rcApplyFilter(group, items) {
+    const s = _rcState[group] || {};
+    let out = items.slice();
+    if (s.search) {
+        const q = s.search.toLowerCase();
+        out = out.filter(i => (i.title||'').toLowerCase().includes(q) || (i.filled_by_file||'').toLowerCase().includes(q) || (i.rd_filename||'').toLowerCase().includes(q));
+    }
+    if (s.type) {
+        out = out.filter(i => s.type === 'movie' ? i.type === 'movie' : i.type !== 'movie');
+    }
+    if (s.sort) {
+        const key = s.sort, dir = s.dir;
+        out.sort((a, b) => {
+            const av = (a[key]||'').toString().toLowerCase();
+            const bv = (b[key]||'').toString().toLowerCase();
+            return dir * av.localeCompare(bv);
+        });
+    }
+    return out;
+}
+
+function _rcFilterTable(el) {
+    const panel = el.closest('.dm-rc-group-panel');
+    const group = panel?.id?.replace('rc-panel-', '');
+    if (!group || !_rcState[group]) return;
+    const s = _rcState[group];
+    if (el.classList.contains('dm-rc-search')) s.search = el.value;
+    if (el.classList.contains('dm-rc-type-filter')) s.type = el.value;
+    _rcRerender(group);
+}
+
+function _rcSortBy(group, key, th) {
+    const s = _rcState[group];
+    if (!s) return;
+    s.dir = (s.sort === key) ? -s.dir : 1;
+    s.sort = key;
+    th.closest('thead').querySelectorAll('.dm-rc-th-sort').forEach(h => h.classList.remove('dm-rc-sort-asc', 'dm-rc-sort-desc'));
+    th.classList.add(s.dir === 1 ? 'dm-rc-sort-asc' : 'dm-rc-sort-desc');
+    _rcRerender(group);
+}
+
+function _rcRerender(group) {
+    if (!_rcData) return;
+    const map = {
+        'not-in-plex':  () => _rcRenderNotInPlex(_rcApplyFilter('not-in-plex', _rcData.not_in_plex||[])),
+        'torrent-gone': () => _rcRenderTorrentGone(_rcApplyFilter('torrent-gone', _rcData.torrent_gone||[])),
+        'lost':         () => _rcRenderLost(_rcApplyFilter('lost', _rcData.lost||[])),
+        'untracked':    () => _rcRenderUntracked(_rcApplyFilter('untracked', _rcData.untracked_rd||[])),
+        'nas':          () => _rcRenderNas(_rcApplyFilter('nas', _rcData.nas_items||[])),
+    };
+    map[group]?.();
+}
+
+function _rcRenderNotInPlex(items) {
+    const tbody = document.getElementById('rc-tbody-not-in-plex');
+    if (!items.length) { tbody.innerHTML = `<tr class="dm-empty-row"><td colspan="4">All collected content is indexed in ${_dmMsLabel}.</td></tr>`; return; }
+    tbody.innerHTML = items.map(item => {
+        const _ff = item.filled_by_file || '';
+        const _loc = (item.location_on_disk || '').replace(/\\/g, '/');
+        // filled_by_file is often a bare filename (no slashes); fall back to location_on_disk parent dir
+        const dir = _ff.includes('/') ? _ff.split('/').slice(0,-1).join('/')
+                  : _loc.includes('/') ? _loc.split('/').slice(0,-1).join('/')
+                  : '';
+        return `<tr>
+            <td>${_rcTitleCell(item)}</td>
+            <td>${_rcTypeBadge(item.type)}</td>
+            <td class="dm-rc-col-file">${_rcFileCell(item)}</td>
+            <td class="dm-col-actions" style="white-space:nowrap">
+                <button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-scan-btn" data-dir="${escHtml(dir)}" title="Trigger ${_dmMsLabel} scan">Scan</button>
+                <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-del-db-btn" data-id="${escHtml(String(item.id))}" title="Delete from database">Delete</button>
+            </td>
+        </tr>`;
+    }).join('');
+    tbody.querySelectorAll('.dm-rc-scan-btn').forEach(btn => btn.addEventListener('click', async function() {
+        const dir = this.dataset.dir;
+        if (!dir) { alert('No directory path available for this item.'); return; }
+        const orig = this.innerHTML; this.disabled = true; this.innerHTML = '<span class="dm-spinner"></span>';
+        try {
+            const r = await fetch('/debrid_manager/api/plex_force_scan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({paths:[dir], empty_trash:false})});
+            const d = await r.json();
+            if (d.success) {
+                this.textContent = 'Sent';
+                setTimeout(() => { this.innerHTML = orig; this.disabled = false; }, 3000);
+            } else {
+                this.innerHTML = orig; this.disabled = false;
+                alert('Scan failed: ' + (d.error || (d.errors||[]).join(', ') || 'unknown error'));
+            }
+        } catch(e) { alert('Scan failed: '+e.message); this.innerHTML = orig; this.disabled = false; }
+    }));
+    _rcBindActions(tbody);
+    tbody.closest('table').querySelectorAll('.dm-rc-th-sort').forEach(th => {
+        th.style.cursor = 'pointer';
+        th.onclick = () => _rcSortBy('not-in-plex', th.dataset.sort, th);
+    });
+}
+
+function _rcRenderTorrentGone(items) {
+    const tbody = document.getElementById('rc-tbody-torrent-gone');
+    if (!items.length) { tbody.innerHTML = '<tr class="dm-empty-row"><td colspan="5">All collected torrents are present in RD.</td></tr>'; return; }
+    tbody.innerHTML = items.map(item => {
+        const hash = item.magnet_hash || '';
+        const reinsertBtn = hash
+            ? `<button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-reinsert-btn" data-hash="${escHtml(hash)}" data-fname="${escHtml(item.rd_filename||item.title)}" title="Re-add to Real-Debrid">Reinsert</button>`
+            : '';
+        const affectedIds = JSON.stringify(item.affected_ids || [item.id]);
+        const cnt = (item.affected_count > 1) ? `<span class="dm-rc-affected-count" title="${item.affected_count} DB items share this torrent">${item.affected_count}</span>` : '1';
+        return `<tr>
+            <td>${_rcTitleCell(item)}</td>
+            <td>${_rcTypeBadge(item.type)}</td>
+            <td class="dm-rc-col-file">${_rcFileCell(item)}</td>
+            <td style="text-align:center">${cnt}</td>
+            <td class="dm-col-actions" style="white-space:nowrap">
+                ${reinsertBtn}
+                <button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-requeue-btn" data-ids="${escHtml(affectedIds)}" title="Move all ${item.affected_count||1} affected item(s) back to Wanted">Re-queue</button>
+                <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-del-db-btn" data-ids="${escHtml(affectedIds)}" title="Delete all ${item.affected_count||1} affected item(s) from database">Delete</button>
+            </td>
+        </tr>`;
+    }).join('');
+    _rcBindActions(tbody);
+    tbody.closest('table').querySelectorAll('.dm-rc-th-sort').forEach(th => {
+        th.style.cursor = 'pointer';
+        th.onclick = () => _rcSortBy('torrent-gone', th.dataset.sort, th);
+    });
+}
+
+function _rcRenderLost(items) {
+    const tbody = document.getElementById('rc-tbody-lost');
+    if (!items.length) { tbody.innerHTML = '<tr class="dm-empty-row"><td colspan="4">No lost items.</td></tr>'; return; }
+    tbody.innerHTML = items.map(item => `<tr>
+        <td>${_rcTitleCell(item)}</td>
+        <td>${_rcTypeBadge(item.type)}</td>
+        <td class="dm-rc-col-file">${_rcFileCell(item)}</td>
+        <td class="dm-col-actions" style="white-space:nowrap">
+            <button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-requeue-btn" data-id="${escHtml(String(item.id))}" title="Move back to Wanted">Re-queue</button>
+            <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-del-db-btn" data-id="${escHtml(String(item.id))}" title="Delete from database">Delete</button>
+        </td>
+    </tr>`).join('');
+    _rcBindActions(tbody);
+    tbody.closest('table').querySelectorAll('.dm-rc-th-sort').forEach(th => {
+        th.style.cursor = 'pointer';
+        th.onclick = () => _rcSortBy('lost', th.dataset.sort, th);
+    });
+}
+
+function _rcRenderUntracked(items) {
+    const tbody = document.getElementById('rc-tbody-untracked');
+    if (!items.length) { tbody.innerHTML = '<tr class="dm-empty-row"><td colspan="4">No untracked RD torrents.</td></tr>'; return; }
+    tbody.innerHTML = items.map(item => {
+        const plexBadge = item.in_plex === true
+            ? `<span class="dm-rc-plex-yes" title="Found in ${_dmMsLabel} library">Yes</span>`
+            : item.in_plex === false
+                ? `<span class="dm-rc-plex-no" title="Not found in ${_dmMsLabel} library">No</span>`
+                : '—';
+        return `<tr>
+        <td class="dm-col-name" title="${escHtml(item.rd_filename)}">${escHtml(item.rd_filename || '—')}</td>
+        <td class="dm-rc-col-id"><code class="dm-rc-torrent-id">${escHtml(item.filled_by_torrent_id)}</code></td>
+        <td style="text-align:center">${plexBadge}</td>
+        <td class="dm-col-actions">
+            <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-del-btn"
+                data-tid="${escHtml(item.filled_by_torrent_id)}" title="Delete from RD">Delete from RD</button>
+        </td>
+    </tr>`;
+    }).join('');
+    tbody.querySelectorAll('.dm-rc-del-btn').forEach(btn => btn.addEventListener('click', async function() {
+        const tid = this.dataset.tid;
+        if (!confirm(`Delete torrent ${tid} from Real-Debrid?`)) return;
+        const orig = this.innerHTML; this.disabled = true; this.innerHTML = '<span class="dm-spinner"></span>';
+        try {
+            const r = await fetch(`/debrid_manager/api/torrent/${encodeURIComponent(tid)}`, {method:'DELETE'});
+            const d = await r.json();
+            if (d.success) {
+                this.closest('tr')?.remove();
+                const el = document.getElementById('rc-group-count-untracked');
+                if (el) el.textContent = Math.max(0, parseInt(el.textContent||'0')-1);
+                _rcUpdateBadge();
+            } else { alert('Delete failed: '+(d.error||'unknown')); this.innerHTML = orig; this.disabled = false; }
+        } catch(e) { alert('Delete failed: '+e.message); this.innerHTML = orig; this.disabled = false; }
+    }));
+    tbody.closest('table').querySelectorAll('.dm-rc-th-sort').forEach(th => {
+        th.style.cursor = 'pointer';
+        th.onclick = () => _rcSortBy('untracked', th.dataset.sort, th);
+    });
+}
+
+function _rcRenderNas(items) {
+    const tbody = document.getElementById('rc-tbody-nas');
+    if (!items.length) { tbody.innerHTML = '<tr class="dm-empty-row"><td colspan="4">No NAS items found.</td></tr>'; return; }
+    tbody.innerHTML = items.map(item => `<tr>
+        <td>${_rcTitleCell(item)}</td>
+        <td>${_rcTypeBadge(item.type)}</td>
+        <td class="dm-rc-col-file" style="max-width:600px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><span class="dm-pt-folder" title="${escHtml(item.location_on_disk||item.filled_by_file||'')}">${escHtml(item.location_on_disk||item.filled_by_file||'—')}</span></td>
+        <td class="dm-col-actions" style="white-space:nowrap">
+            <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-del-db-btn" data-id="${escHtml(String(item.id))}" title="Delete from database">Delete</button>
+        </td>
+    </tr>`).join('');
+    _rcBindActions(tbody);
+    tbody.closest('table').querySelectorAll('.dm-rc-th-sort').forEach(th => {
+        th.style.cursor = 'pointer';
+        th.onclick = () => _rcSortBy('nas', th.dataset.sort, th);
+    });
+}
+
+function _rcGetIds(btn) {
+    // Returns an array of numeric IDs from either data-ids (JSON array) or data-id (single)
+    if (btn.dataset.ids) { try { return JSON.parse(btn.dataset.ids).map(Number).filter(Boolean); } catch(e) {} }
+    const id = parseInt(btn.dataset.id); return id ? [id] : [];
+}
+
+function _rcBindActions(tbody) {
+    tbody.querySelectorAll('.dm-rc-reinsert-btn').forEach(btn => btn.addEventListener('click', async function() {
+        const hash = this.dataset.hash, fname = this.dataset.fname;
+        const orig = this.innerHTML; this.disabled = true; this.textContent = 'Reinserting…';
+        try {
+            const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({torrents:[{id:'',hash,filename:fname}]})});
+            const d = await r.json();
+            if (d.success && d.reinserted?.length) { this.textContent = 'Done'; setTimeout(()=>{this.innerHTML=orig;this.disabled=false;},3000); }
+            else { alert('Reinsert failed: '+(d.failed?.[0]?.error||d.error||'unknown')); this.innerHTML=orig; this.disabled=false; }
+        } catch(e) { alert('Reinsert failed: '+e.message); this.innerHTML=orig; this.disabled=false; }
+    }));
+    tbody.querySelectorAll('.dm-rc-requeue-btn').forEach(btn => btn.addEventListener('click', async function() {
+        const ids = _rcGetIds(this);
+        if (!ids.length) return;
+        const label = ids.length > 1 ? `${ids.length} items` : `item #${ids[0]}`;
+        if (!confirm(`Move ${label} back to Wanted for re-scraping?`)) return;
+        const orig = this.innerHTML; this.disabled = true; this.textContent = 'Queueing…';
+        try {
+            const r = await fetch('/debrid_manager/api/reconcile/bulk_requeue', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({item_ids: ids})});
+            const d = await r.json();
+            if (d.success) { this.textContent = `Queued (${d.updated})`; setTimeout(()=>{this.innerHTML=orig;this.disabled=false;},3000); }
+            else { alert('Re-queue failed: '+(d.error||'unknown')); this.innerHTML=orig; this.disabled=false; }
+        } catch(e) { alert('Re-queue failed: '+e.message); this.innerHTML=orig; this.disabled=false; }
+    }));
+    tbody.querySelectorAll('.dm-rc-del-db-btn').forEach(btn => btn.addEventListener('click', async function() {
+        const ids = _rcGetIds(this);
+        if (!ids.length) { alert('Could not determine item ID (data-id="' + (this.dataset.id||'') + '", data-ids="' + (this.dataset.ids||'') + '")'); return; }
+        const label = ids.length > 1 ? `${ids.length} items` : 'this item';
+        if (!confirm(`Permanently delete ${label} from the database? This cannot be undone.`)) return;
+        const orig = this.innerHTML; this.disabled = true; this.innerHTML = '<span class="dm-spinner"></span>';
+        try {
+            const r = await fetch('/debrid_manager/api/reconcile/bulk_delete_db', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({item_ids: ids})});
+            const d = await r.json();
+            if (d.success) { this.closest('tr')?.remove(); _rcUpdateBadge(); }
+            else { alert('Delete failed: '+(d.error||'unknown')); this.innerHTML=orig; this.disabled=false; }
+        } catch(e) { alert('Delete failed: '+e.message); this.innerHTML=orig; this.disabled=false; }
+    }));
+}
+
+function _rcShowGroup(name) {
+    document.querySelectorAll('.dm-rc-group-panel').forEach(p => p.style.display = 'none');
+    document.querySelectorAll('.dm-rc-tab').forEach(t => t.classList.remove('dm-rc-tab-active'));
+    const panel = document.getElementById('rc-panel-' + name);
+    if (panel) panel.style.display = '';
+    const tab = document.querySelector(`.dm-rc-tab[data-rc-group="${name}"]`);
+    if (tab) tab.classList.add('dm-rc-tab-active');
+    if (name === 'battery') _battInitOnce();
+}
+
+function _rcUpdateBadge() {
+    if (!_rcData) return;
+    const issues = (_rcData.not_in_plex?.length||0) + (_rcData.torrent_gone?.length||0)
+                 + (_rcData.lost?.length||0) + (_rcData.untracked_rd?.length||0);
+    const badge = document.getElementById('reconcile-tab-badge');
+    if (badge) badge.textContent = issues ? issues : '';
+}
+
+// ── Reconcile bulk actions ─────────────────────────────────────────────
+async function _rcBulkRequeue(itemIds, btnEl) {
+    if (!itemIds.length) return;
+    if (!confirm(`Re-queue ${itemIds.length} item(s) for re-scraping?`)) return;
+    const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Working…';
+    try {
+        const r = await fetch('/debrid_manager/api/reconcile/bulk_requeue', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({item_ids: itemIds})
+        });
+        const d = await r.json();
+        btnEl.textContent = d.success ? `Done (${d.updated})` : 'Failed';
+        if (d.success) { window._rcLoaded = false; setTimeout(() => loadReconcile(true), 2000); }
+        else setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
+    } catch(e) { alert('Failed: '+e.message); btnEl.innerHTML = orig; btnEl.disabled = false; }
+}
+
+async function _rcBulkReinsert(items, btnEl) {
+    const torrents = items.filter(i => i.magnet_hash).map(i => ({id:'', hash: i.magnet_hash, filename: i.rd_filename||i.title}));
+    if (!torrents.length) { alert('No items have a torrent hash available.'); return; }
+    if (!confirm(`Reinsert ${torrents.length} torrent(s) to Real-Debrid?`)) return;
+    const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Working…';
+    try {
+        const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({torrents})
+        });
+        const d = await r.json();
+        btnEl.textContent = d.success ? `Done (${d.reinserted?.length||0})` : 'Failed';
+        setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
+    } catch(e) { alert('Failed: '+e.message); btnEl.innerHTML = orig; btnEl.disabled = false; }
+}
+
+async function _rcBulkDeleteDB(items, btnEl) {
+    const ids = items.flatMap(i => i.affected_ids || (i.id ? [i.id] : []));
+    if (!ids.length) { alert('No items to delete.'); return; }
+    if (!confirm(`Permanently delete ${ids.length} item(s) from the database? This cannot be undone.`)) return;
+    const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Deleting…';
+    try {
+        const r = await fetch('/debrid_manager/api/reconcile/bulk_delete_db', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({item_ids: ids})
+        });
+        const d = await r.json();
+        btnEl.textContent = d.success ? `Done (${d.deleted})` : 'Failed';
+        if (d.success) { window._rcLoaded = false; setTimeout(() => loadReconcile(true), 2000); }
+        else setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
+    } catch(e) { alert('Failed: '+e.message); btnEl.innerHTML = orig; btnEl.disabled = false; }
+}
+
+async function _rcBulkDeleteRD(items, btnEl) {
+    if (!items.length) { alert('Nothing to delete.'); return; }
+    if (!confirm(`Delete ${items.length} torrent(s) from Real-Debrid? This cannot be undone.`)) return;
+    const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Deleting…';
+    const tids = items.map(i => i.filled_by_torrent_id).filter(Boolean);
+    try {
+        const r = await fetch('/debrid_manager/api/torrent/batch-delete', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ids: tids})
+        });
+        const d = await r.json();
+        btnEl.textContent = d.success ? `Done (${d.deleted?.length||0})` : 'Failed';
+        if (d.success) { window._rcLoaded = false; setTimeout(() => loadReconcile(true), 2000); }
+        else setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
+    } catch(e) { alert('Failed: '+e.message); btnEl.innerHTML = orig; btnEl.disabled = false; }
+}
+
+async function _rcBulkScan(items, btnEl) {
+    const dirs = [...new Set(items.map(i => {
+        // Prefer location_on_disk (full symlink path) over filled_by_file (may be bare filename)
+        const src = i.location_on_disk || i.filled_by_file || '';
+        if (!src) return '';
+        const parts = src.split('/');
+        return parts.length >= 2 ? parts.slice(0,-1).join('/') : '';
+    }).filter(Boolean))];
+    if (!dirs.length) { alert('No directory paths available.'); return; }
+    if (!confirm(`Trigger ${_dmMsLabel} scan for ${dirs.length} ${dirs.length === 1 ? 'directory' : 'directories'}?`)) return;
+    const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Scanning…';
+    try {
+        const r = await fetch('/debrid_manager/api/plex_force_scan', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({paths: dirs, empty_trash: false})
+        });
+        const d = await r.json();
+        if (d.success) {
+            btnEl.textContent = 'Sent';
+            setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
+        } else {
+            btnEl.innerHTML = orig; btnEl.disabled = false;
+            alert('Scan failed: ' + (d.error || (d.errors||[]).join(', ') || 'unknown error'));
+        }
+    } catch(e) { alert('Failed: '+e.message); btnEl.innerHTML = orig; btnEl.disabled = false; }
+}
+
+function _rcRenderAll(data) {
+    _rcData = data;
+    // Stat header
+    const _fmt = n => n ? n.toLocaleString() : '—';
+    document.getElementById('rc-count-healthy').textContent      = _fmt(data.healthy_count);
+    const _pillEl = document.getElementById('rc-healthy-pill-toolbar');
+    if (_pillEl) _pillEl.style.display = '';
+    document.getElementById('rc-count-not-in-plex').textContent  = _fmt(data.not_in_plex?.length);
+    document.getElementById('rc-count-torrent-gone').textContent = _fmt(data.torrent_gone?.length);
+    document.getElementById('rc-count-lost').textContent         = _fmt(data.lost?.length);
+    document.getElementById('rc-count-untracked').textContent    = _fmt(data.untracked_rd?.length);
+    const _s = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = _fmt(val); };
+    _s('rc-stat-rd',     data.rd_total);
+    _s('rc-stat-db',     data.db_total);
+    _s('rc-stat-plex',   data.plex_total);
+    _s('rc-stat-rclone', data.rclone_total);
+    _s('rc-stat-nas',    data.nas_total);
+    _s('rc-count-nas',   data.nas_items?.length);
+    const nasWrap = document.getElementById('rc-stat-nas-wrap');
+    if (nasWrap) nasWrap.style.display = data.nas_total > 0 ? '' : 'none';
+    const nasTab = document.getElementById('rc-tab-nas');
+    if (nasTab) nasTab.style.display = (data.nas_items?.length > 0) ? '' : 'none';
+    // Toolbar info (hidden now but keep for compat)
+    const info = document.getElementById('rc-info-text');
+    if (info) info.textContent = '';
+    _rcRenderNotInPlex(data.not_in_plex||[]);
+    _rcRenderTorrentGone(data.torrent_gone||[]);
+    _rcRenderLost(data.lost||[]);
+    _rcRenderUntracked(data.untracked_rd||[]);
+    _rcRenderNas(data.nas_items||[]);
+    _rcUpdateBadge();
+
+    // Wire bulk buttons (use onclick to avoid duplicate listeners on refresh)
+    const btnScanAll = document.getElementById('rc-bulk-scan-all');
+    if (btnScanAll) btnScanAll.onclick = function() { _rcBulkScan(_rcData.not_in_plex||[], this); };
+    const btnReinsertAll = document.getElementById('rc-bulk-reinsert-all');
+    if (btnReinsertAll) btnReinsertAll.onclick = function() { _rcBulkReinsert(_rcData.torrent_gone||[], this); };
+    const btnRequeueTg = document.getElementById('rc-bulk-requeue-tg');
+    if (btnRequeueTg) btnRequeueTg.onclick = function() { _rcBulkRequeue((_rcData.torrent_gone||[]).map(i=>i.id).filter(Boolean), this); };
+    const btnRequeueLost = document.getElementById('rc-bulk-requeue-lost');
+    if (btnRequeueLost) btnRequeueLost.onclick = function() { _rcBulkRequeue((_rcData.lost||[]).map(i=>i.id).filter(Boolean), this); };
+    const btnDelNip = document.getElementById('rc-bulk-del-nip');
+    if (btnDelNip) btnDelNip.onclick = function() { _rcBulkDeleteDB(_rcData.not_in_plex||[], this); };
+    const btnDelTg = document.getElementById('rc-bulk-del-tg');
+    if (btnDelTg) btnDelTg.onclick = function() { _rcBulkDeleteDB(_rcData.torrent_gone||[], this); };
+    const btnDelLost = document.getElementById('rc-bulk-del-lost');
+    if (btnDelLost) btnDelLost.onclick = function() { _rcBulkDeleteDB(_rcData.lost||[], this); };
+    const btnDelNoplex = document.getElementById('rc-bulk-del-noplex');
+    if (btnDelNoplex) btnDelNoplex.onclick = function() { _rcBulkDeleteRD((_rcData.untracked_rd||[]).filter(i=>!i.in_plex), this); };
+    const btnDelAllRd = document.getElementById('rc-bulk-del-all-rd');
+    if (btnDelAllRd) btnDelAllRd.onclick = function() { _rcBulkDeleteRD(_rcData.untracked_rd||[], this); };
+
+    // Wire tab clicks
+    document.querySelectorAll('.dm-rc-tab').forEach(tab => {
+        tab.onclick = () => _rcShowGroup(tab.dataset.rcGroup);
+        tab.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); _rcShowGroup(tab.dataset.rcGroup); } };
+    });
+
+    // Auto-select first non-empty group
+    const order = ['not-in-plex','torrent-gone','lost','untracked','nas'];
+    const counts = {
+        'not-in-plex':   data.not_in_plex?.length||0,
+        'torrent-gone':  data.torrent_gone?.length||0,
+        'lost':          data.lost?.length||0,
+        'untracked':     data.untracked_rd?.length||0,
+        'nas':           data.nas_items?.length||0,
+    };
+    const first = order.find(g => counts[g] > 0) || 'not-in-plex';
+    _rcShowGroup(first);
+}
+
+async function loadReconcile(force) {
+    const loading = document.getElementById('rc-loading');
+    const content = document.getElementById('rc-content');
+    const errEl   = document.getElementById('rc-error');
+    if (!loading) return;
+    loading.style.display = ''; content.style.display = 'none'; errEl.style.display = 'none';
+    try {
+        const r = await fetch('/debrid_manager/api/reconcile' + (force ? '?force=1' : ''));
+        const data = await r.json();
+        if (!data.success) throw new Error(data.error || 'Failed to load');
+        _rcRenderAll(data);
+        loading.style.display = 'none'; content.style.display = ''; window._rcLoaded = true;
+    } catch(e) {
+        loading.style.display = 'none';
+        errEl.textContent = 'Failed to load: ' + e.message; errEl.style.display = '';
+    }
+}
+
+document.getElementById('rc-reload-btn')?.addEventListener('click', () => { window._rcLoaded = false; loadReconcile(true); });
+document.getElementById('rc-clear-cache-btn')?.addEventListener('click', async function() {
+    const orig = this.innerHTML; this.disabled = true; this.textContent = 'Clearing…';
+    try {
+        await fetch('/debrid_manager/api/clear_cache', {method: 'POST'});
+        this.textContent = 'Cleared';
+        window._rcLoaded = false;
+        setTimeout(() => { this.innerHTML = orig; this.disabled = false; loadReconcile(true); }, 800);
+    } catch(e) { this.innerHTML = orig; this.disabled = false; }
+});
+if (_dmActiveTab === 'reconcile') { loadReconcile(false); loadBatteryAudit(false); if (typeof _slInitAudit === 'function') _slInitAudit(); }
+
 // ── INIT ───────────────────────────────────────────────────────────────────
 // Only start active polling if active tab is shown on load
 if (_dmActiveTab === 'active') fetchActive();
+
+// ── SYMLINK AUDIT ───────────────────────────────────────────────────────────
+{% if symlink_mode %}
+let _slData        = null;
+let _slPollTimer   = null;
+
+function _slEl(id) { return document.getElementById(id); }
+function _slFmt(n)  { return (n||0).toLocaleString(); }
+
+function _slFmtAge(ts) {
+    if (!ts) return '';
+    const secs = Math.floor((Date.now() / 1000) - ts);
+    if (secs < 60)   return 'just now';
+    if (secs < 3600) return `${Math.floor(secs/60)}m ago`;
+    if (secs < 86400) return `${Math.floor(secs/3600)}h ago`;
+    return `${Math.floor(secs/86400)}d ago`;
+}
+
+function _slShowState(state) {
+    // In stale mode we keep results visible while scanning happens in background
+    const isStaleRefresh = state === 'scanning' && _slData !== null;
+    _slEl('sl-idle').style.display     = state === 'idle'     ? '' : 'none';
+    _slEl('sl-scanning').style.display = (!isStaleRefresh && state === 'scanning') ? '' : 'none';
+    _slEl('sl-results').style.display  = (state === 'done' || isStaleRefresh) ? '' : 'none';
+    const staleBadge = _slEl('sl-stale-badge');
+    if (staleBadge) staleBadge.style.display = isStaleRefresh ? '' : 'none';
+}
+
+async function _slPoll() {
+    try {
+        const r = await fetch('/debrid_manager/api/symlink_audit');
+        const d = await r.json();
+        if (!d.success) { _slShowError(d.error); return; }
+        if (d.status === 'scanning') {
+            // May have stale data to show while refreshing
+            if (d.data && !_slData) { _slData = d.data; _slRender(d.data); }
+            _slShowState('scanning');
+            _slPollTimer = setTimeout(_slPoll, 3000);
+            return;
+        }
+        clearTimeout(_slPollTimer);
+        if (d.status === 'done' && d.data) {
+            _slData = d.data;
+            _slRender(d.data);
+            _slShowState('done');
+        } else if (d.status === 'error') {
+            _slShowError(d.error || 'Scan failed');
+        } else {
+            _slShowState('idle');
+        }
+    } catch(e) {
+        clearTimeout(_slPollTimer);
+        _slShowError(e.message);
+    }
+}
+
+function _slShowError(msg) {
+    _slShowState('idle');
+    const el = _slEl('sl-error-msg');
+    if (el) { el.textContent = msg; el.style.display = ''; }
+}
+
+async function _slStartScan() {
+    const errEl = _slEl('sl-error-msg');
+    if (errEl) errEl.style.display = 'none';
+    _slShowState('scanning');
+    try {
+        const r = await fetch('/debrid_manager/api/symlink_audit/scan', {method:'POST'});
+        const d = await r.json();
+        if (!d.success) { _slShowError(d.error); return; }
+        _slPollTimer = setTimeout(_slPoll, 3000);
+    } catch(e) {
+        _slShowError(e.message);
+    }
+}
+
+function _slRender(data) {
+    const s = data.stats;
+
+    // Stats bar
+    _slEl('sl-stat-scanned').textContent   = _slFmt(s.rclone_scanned);
+    _slEl('sl-stat-indexed').textContent   = _slFmt(s.symlinks_indexed);
+    _slEl('sl-stat-unlinked').textContent  = _slFmt(s.unlinked_count);
+    _slEl('sl-stat-broken').textContent    = _slFmt(s.broken_count);
+    _slEl('sl-stat-incorrect').textContent = _slFmt(s.incorrect_count);
+    _slEl('sl-stat-correct').textContent   = _slFmt(s.correct_count);
+
+    // Unlinked label: add size if non-zero
+    const lblUnlinked = _slEl('sl-lbl-unlinked');
+    if (lblUnlinked) lblUnlinked.textContent = s.unlinked_count > 0 && s.unlinked_size_str
+        ? `Unlinked (${s.unlinked_size_str})`
+        : 'Unlinked';
+
+    // Health pill
+    const issues = (s.broken_count || 0) + (s.incorrect_count || 0);
+    const pill   = _slEl('sl-health-pill');
+    const icon   = _slEl('sl-health-icon');
+    const count  = _slEl('sl-health-count');
+    const label  = _slEl('sl-health-label');
+    if (pill) {
+        if (issues === 0) {
+            pill.style.cssText  = '';
+            icon.textContent    = '✓';
+            count.textContent   = 'Clean';
+            label.textContent   = '';
+            count.style.color   = '#4ade80';
+            icon.style.color    = '#4ade80';
+        } else {
+            icon.textContent    = '✗';
+            count.textContent   = issues.toLocaleString();
+            label.textContent   = 'Issues';
+            count.style.color   = '#ef4444';
+            icon.style.color    = '#ef4444';
+        }
+    }
+
+    // Tab badge
+    const badge = _slEl('rc-count-symlinks');
+    if (badge) badge.textContent = issues ? issues.toLocaleString() : '✓';
+
+    // Last scanned + paths hint
+    const lastEl = _slEl('sl-last-scanned');
+    if (lastEl) lastEl.textContent = data.scanned_at ? `Last scanned: ${_slFmtAge(data.scanned_at)}` : '';
+    const pathsEl = _slEl('sl-paths-hint');
+    if (pathsEl && data.rclone_dir && data.symlink_dir)
+        pathsEl.textContent = `${data.rclone_dir} → ${data.symlink_dir}`;
+
+    // Sections — only show when they have data
+    _slEl('sl-section-broken')?.style &&
+        (_slEl('sl-section-broken').style.display    = s.broken_count    > 0 ? '' : 'none');
+    _slEl('sl-section-unlinked')?.style &&
+        (_slEl('sl-section-unlinked').style.display  = s.unlinked_count  > 0 ? '' : 'none');
+    _slEl('sl-section-incorrect')?.style &&
+        (_slEl('sl-section-incorrect').style.display = s.incorrect_count > 0 ? '' : 'none');
+
+    _slRenderBroken(data.broken || []);
+    _slRenderUnlinked(data.unlinked || []);
+    _slRenderIncorrect(data.incorrect_dupes || []);
+}
+
+function _slParsePath(path) {
+    const parts = path.replace(/\\/g, '/').split('/').filter(Boolean);
+    const basename = parts[parts.length - 1] || path;
+    const parent    = parts[parts.length - 2] || '';
+    const grandparent = parts[parts.length - 3] || '';
+    // If parent looks like a season folder, use grandparent as the title
+    const title = /^season[\s._\-]?\d+$|^s\d{2}$/i.test(parent) ? grandparent : parent;
+    // Infer type from path segments
+    let type = '';
+    if (/\/shows\/|\/series\/|\/tv\/|\/television\//i.test(path) || /[._\s]s\d{2}e\d{2}[._\s]/i.test(basename)) {
+        type = 'tv';
+    } else if (/\/movies\/|\/films\/|\/movie\//i.test(path)) {
+        type = 'movie';
+    }
+    return { title, type, basename };
+}
+
+function _slTypeBadge(type) {
+    if (!type) return '';
+    return `<span class="dm-type-badge dm-type-${type}" data-type="${type}">${type === 'tv' ? 'TV' : 'Movie'}</span>`;
+}
+
+function _slRenderBroken(items) {
+    const tbody = _slEl('sl-tbody-broken');
+    if (!tbody) return;
+    if (!items.length) { tbody.innerHTML = '<tr class="dm-empty-row"><td colspan="4">None found</td></tr>'; return; }
+    tbody.innerHTML = items.map(p => {
+        const { title, type, basename } = _slParsePath(p);
+        return `<tr>
+            <td>${_esc(title)}</td>
+            <td>${_slTypeBadge(type)}</td>
+            <td class="dm-rc-col-file" title="${_esc(p)}">${_esc(basename)}</td>
+            <td class="dm-col-actions">
+                <button class="dm-btn dm-btn-danger dm-btn-sm" onclick="_slDeleteOne('broken', ${JSON.stringify(p)}, this)">Delete</button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function _slRenderUnlinked(items) {
+    const tbody = _slEl('sl-tbody-unlinked');
+    if (!tbody) return;
+    if (!items.length) { tbody.innerHTML = '<tr class="dm-empty-row"><td colspan="3">None found</td></tr>'; return; }
+    tbody.innerHTML = items.map(f => `
+        <tr>
+            <td class="dm-rc-col-file" title="${_esc(f.path)}">${_esc(f.path)}</td>
+            <td style="white-space:nowrap">${_esc(f.size_str)}</td>
+            <td class="dm-col-actions">
+                <button class="dm-btn dm-btn-danger dm-btn-sm" onclick="_slDeleteOne('unlinked', ${JSON.stringify(f.path)}, this)">Delete</button>
+            </td>
+        </tr>`).join('');
+}
+
+function _slFilterBroken() {
+    const section = _slEl('sl-section-broken');
+    if (!section) return;
+    const search = section.querySelector('.dm-rc-search')?.value.toLowerCase() || '';
+    const type   = section.querySelector('.dm-rc-type-filter')?.value || '';
+    section.querySelectorAll('#sl-tbody-broken tr').forEach(row => {
+        if (row.classList.contains('dm-empty-row')) return;
+        const badge    = row.querySelector('.dm-type-badge');
+        const rowType  = badge?.dataset.type || '';
+        const rowText  = row.textContent.toLowerCase();
+        const typeMatch   = !type   || rowType === type;
+        const searchMatch = !search || rowText.includes(search);
+        row.style.display = (typeMatch && searchMatch) ? '' : 'none';
+    });
+}
+
+function _slRenderIncorrect(items) {
+    const tbody = _slEl('sl-tbody-incorrect');
+    if (!tbody) return;
+    if (!items.length) { tbody.innerHTML = '<tr class="dm-empty-row"><td colspan="5">None found</td></tr>'; return; }
+    tbody.innerHTML = items.map(d => {
+        const { title, type, basename } = _slParsePath(d.target);
+        const linksHtml = d.links.map(l => `<div class="sl-link-path" title="${_esc(l)}">${_esc(l.split('/').pop())}</div>`).join('');
+        const allLinkPaths = JSON.stringify(d.links);
+        return `<tr>
+            <td>${_esc(title)}</td>
+            <td>${_slTypeBadge(type)}</td>
+            <td class="dm-rc-col-file" title="${_esc(d.target)}">${_esc(basename)}</td>
+            <td>${linksHtml}</td>
+            <td class="dm-col-actions">
+                <button class="dm-btn dm-btn-danger dm-btn-sm" onclick="_slDeletePaths(${allLinkPaths}, this)">Delete Links</button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+async function _slDeleteOne(kind, path, btnEl) {
+    if (!confirm(`Delete this file?\n${path}`)) return;
+    const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = '…';
+    try {
+        const r = await fetch('/debrid_manager/api/symlink_audit/delete', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({paths: [path]})
+        });
+        const d = await r.json();
+        if (d.success && d.deleted > 0) {
+            btnEl.closest('tr').remove();
+        } else {
+            alert('Delete failed: ' + (d.errors?.[0] || 'unknown'));
+            btnEl.innerHTML = orig; btnEl.disabled = false;
+        }
+    } catch(e) { alert('Error: '+e.message); btnEl.innerHTML = orig; btnEl.disabled = false; }
+}
+
+async function _slDeletePaths(paths, btnEl) {
+    if (!confirm(`Delete ${paths.length} symlink(s)?`)) return;
+    const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = '…';
+    try {
+        const r = await fetch('/debrid_manager/api/symlink_audit/delete', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({paths})
+        });
+        const d = await r.json();
+        if (d.success && d.deleted > 0) {
+            btnEl.textContent = `Deleted ${d.deleted}`;
+            btnEl.closest('tr').remove();
+        } else {
+            alert('Delete failed: ' + (d.errors?.[0] || 'unknown'));
+            btnEl.innerHTML = orig; btnEl.disabled = false;
+        }
+    } catch(e) { alert('Error: '+e.message); btnEl.innerHTML = orig; btnEl.disabled = false; }
+}
+
+async function _slDeleteAll(kind) {
+    if (!_slData) return;
+    let paths = [];
+    if      (kind === 'broken')   paths = _slData.broken || [];
+    else if (kind === 'unlinked') paths = (_slData.unlinked || []).map(f => f.path);
+    else if (kind === 'incorrect') paths = (_slData.incorrect_dupes || []).flatMap(d => d.links);
+    if (!paths.length) return;
+    if (!confirm(`Delete all ${paths.length} ${kind} file(s)? This cannot be undone.`)) return;
+    try {
+        const r = await fetch('/debrid_manager/api/symlink_audit/delete', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({paths})
+        });
+        const d = await r.json();
+        if (d.success) {
+            alert(`Deleted ${d.deleted}${d.failed ? `, failed ${d.failed}` : ''}`);
+            // Re-scan to refresh
+            await _slStartScan();
+        } else {
+            alert('Delete failed: ' + d.error);
+        }
+    } catch(e) { alert('Error: '+e.message); }
+}
+
+// Called when the Audit tab opens — fires in parallel with loadReconcile()
+// Must use var (not let) — function is called earlier in the script before this
+// declaration is reached; let has a temporal dead zone that causes silent failures.
+var _slAuditStarted = false;
+async function _slInitAudit() {
+    if (_slAuditStarted) return;
+    _slAuditStarted = true;
+    const r = await fetch('/debrid_manager/api/symlink_audit').catch(() => null);
+    if (!r) return;
+    const d = await r.json().catch(() => null);
+    if (!d?.success) return;
+    if (d.data) { _slData = d.data; _slRender(d.data); }
+    if (d.status === 'scanning') {
+        _slShowState('scanning');
+        if (!_slPollTimer) _slPollTimer = setTimeout(_slPoll, 3000);
+    } else if (d.status === 'done') {
+        _slShowState('done');
+    } else {
+        // No cache yet — auto-start scan immediately
+        _slStartScan();
+    }
+}
+{% endif %}
+
+// ── Battery Audit ──────────────────────────────────────────────────────────
+var _battLoaded = false;
+var _battData   = null;
+var _battActiveGroup = null;
+var _battReidImdbId  = null;  // old IMDB ID being re-identified
+
+function _battInitOnce() {
+    if (_battLoaded) return;
+    loadBatteryAudit(false);
+}
+
+function _battEl(id) { return document.getElementById(id); }
+
+async function loadBatteryAudit(force) {
+    _battLoaded = true;
+    const loadEl = _battEl('batt-loading');
+    const errEl  = _battEl('batt-error');
+    const contEl = _battEl('batt-content');
+    if (loadEl) { loadEl.style.display = ''; }
+    if (errEl)  { errEl.style.display = 'none'; }
+    if (contEl) { contEl.style.display = 'none'; }
+
+    try {
+        const url = '/debrid_manager/api/battery_audit' + (force ? '?force=1' : '');
+        const r = await fetch(url);
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Unknown error');
+        _battData = d;
+        _battRenderSummary(d.summary);
+        if (loadEl) loadEl.style.display = 'none';
+        if (contEl) contEl.style.display = '';
+        // Auto-open first non-zero group
+        if (!_battActiveGroup) {
+            for (const g of ['orphaned_battery','missing_battery','stale_metadata','orphaned_tvdb','orphaned_tmdb','no_imdb_id']) {
+                if ((d.summary[g] || 0) > 0) { _battShowGroup(g); break; }
+            }
+        } else {
+            _battShowGroup(_battActiveGroup);
+        }
+    } catch(e) {
+        if (loadEl) loadEl.style.display = 'none';
+        if (errEl)  { errEl.textContent = 'Battery audit failed: ' + e.message; errEl.style.display = ''; }
+    }
+}
+
+function _battRenderSummary(s) {
+    const total = Object.values(s).reduce((a,b) => a+b, 0);
+    const badge = _battEl('batt-total-badge');
+    if (badge) {
+        badge.textContent = total > 0 ? total : '✓';
+        badge.style.color = total > 0 ? '#ef4444' : '#22c55e';
+    }
+    for (const [k, v] of Object.entries(s)) {
+        const el = _battEl('batt-n-' + k);
+        if (el) {
+            el.textContent = v;
+            el.style.color = v > 0 ? '#ef4444' : '#22c55e';
+        }
+    }
+    // Mark category pill buttons active
+    document.querySelectorAll('.dm-batt-cat').forEach(btn => {
+        const g = btn.dataset.battGroup;
+        btn.classList.toggle('dm-batt-cat-active', g === _battActiveGroup);
+        btn.classList.toggle('dm-batt-cat-zero', (s[g] || 0) === 0);
+    });
+}
+
+function _battShowGroup(name) {
+    _battActiveGroup = name;
+    // Hide all sections
+    document.querySelectorAll('.dm-batt-section').forEach(s => s.style.display = 'none');
+    // Show selected
+    const sec = _battEl('batt-sec-' + name);
+    if (sec) sec.style.display = 'block';
+    // Update category pill active state
+    document.querySelectorAll('.dm-batt-cat').forEach(btn => {
+        btn.classList.toggle('dm-batt-cat-active', btn.dataset.battGroup === name);
+    });
+    // Render table if data available
+    if (_battData) _battRenderGroup(name, _battData[name] || []);
+}
+
+document.querySelectorAll('.dm-batt-cat').forEach(btn => {
+    btn.addEventListener('click', () => _battShowGroup(btn.dataset.battGroup));
+});
+
+function _battRenderGroup(group, rows) {
+    const tbody = _battEl('batt-tbody-' + group);
+    if (!tbody) return;
+    if (!rows.length) {
+        tbody.innerHTML = '<tr class="dm-empty-row"><td colspan="8">No issues found</td></tr>';
+        return;
+    }
+    tbody.innerHTML = rows.map((r, i) => {
+        const dataId = group === 'orphaned_tvdb' ? (r.tvdb_id || '') :
+                       group === 'orphaned_tmdb' ? (r.tmdb_id || '') :
+                       (r.imdb_id || '');
+        const chk = `<input type="checkbox" class="batt-row-chk" data-group="${group}" data-idx="${i}" data-id="${escHtml(dataId)}" data-type="${escHtml(r.type||'')}">`;
+        if (group === 'orphaned_battery') {
+            const lastFetch = r.last_trakt_fetch ? r.last_trakt_fetch.slice(0,10) : '—';
+            return `<tr>
+                <td class="dm-col-check">${chk}</td>
+                <td>${escHtml(r.title||'—')}</td>
+                <td>${r.year||'—'}</td>
+                <td><a href="https://www.imdb.com/title/${escHtml(r.imdb_id||'')}" target="_blank" rel="noopener">${escHtml(r.imdb_id||'—')}</a></td>
+                <td>${escHtml(r.type||'—')}</td>
+                <td>${lastFetch}</td>
+                <td>
+                    <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="_battReidentify('${escHtml(r.imdb_id||'')}','${escHtml(r.type||'')}',this)" title="Re-identify with correct IMDB ID">Re-ID</button>
+                    <button class="dm-btn dm-btn-danger dm-btn-sm" onclick="_battDeleteBattery(['${escHtml(r.imdb_id||'')}'],this)" title="Delete from battery">Delete</button>
+                </td>
+            </tr>`;
+        }
+        if (group === 'missing_battery') {
+            return `<tr>
+                <td class="dm-col-check">${chk}</td>
+                <td>${escHtml(r.title||'—')}</td>
+                <td>${r.year||'—'}</td>
+                <td><a href="https://www.imdb.com/title/${escHtml(r.imdb_id||'')}" target="_blank" rel="noopener">${escHtml(r.imdb_id||'—')}</a></td>
+                <td>${escHtml(r.type||'—')}</td>
+                <td>
+                    <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="_battFetchMetadata([{imdb_id:'${escHtml(r.imdb_id||'')}',type:'${escHtml(r.type||'')}'}],this)" title="Fetch battery metadata">Fetch</button>
+                </td>
+            </tr>`;
+        }
+        if (group === 'stale_metadata') {
+            const age = r.age_days != null ? r.age_days + 'd' : '—';
+            return `<tr>
+                <td class="dm-col-check">${chk}</td>
+                <td>${escHtml(r.title||'—')}</td>
+                <td>${r.year||'—'}</td>
+                <td><a href="https://www.imdb.com/title/${escHtml(r.imdb_id||'')}" target="_blank" rel="noopener">${escHtml(r.imdb_id||'—')}</a></td>
+                <td>${escHtml(r.type||'—')}</td>
+                <td>${escHtml(r.media_status||'—')}</td>
+                <td>${age}</td>
+                <td>
+                    <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="_battFetchMetadata([{imdb_id:'${escHtml(r.imdb_id||'')}',type:'${escHtml(r.type||'')}'}],this)" title="Refresh metadata">Refresh</button>
+                </td>
+            </tr>`;
+        }
+        if (group === 'orphaned_tvdb') {
+            const tvdbUrl = `https://thetvdb.com/series/${encodeURIComponent(r.tvdb_id||'')}`;
+            const imdbUrl = `https://www.imdb.com/title/${encodeURIComponent(r.imdb_id||'')}`;
+            const mt = r.media_type === 'tv' ? 'show' : (r.media_type || '—');
+            return `<tr>
+                <td class="dm-col-check">${chk}</td>
+                <td>${escHtml(r.title||'—')}</td>
+                <td>${r.year||'—'}</td>
+                <td><a href="${tvdbUrl}" target="_blank" rel="noopener">${escHtml(r.tvdb_id||'—')}</a></td>
+                <td><a href="${imdbUrl}" target="_blank" rel="noopener">${escHtml(r.imdb_id||'—')}</a></td>
+                <td>${escHtml(mt)}</td>
+                <td>
+                    <button class="dm-btn dm-btn-danger dm-btn-sm" onclick="_battDeleteMapping('tvdb',['${escHtml(r.tvdb_id||'')}'],this)" title="Delete mapping">Delete</button>
+                </td>
+            </tr>`;
+        }
+        if (group === 'orphaned_tmdb') {
+            const tmdbType = r.media_type === 'movie' ? 'movie' : 'tv';
+            const tmdbUrl = `https://www.themoviedb.org/${tmdbType}/${encodeURIComponent(r.tmdb_id||'')}`;
+            const imdbUrl = `https://www.imdb.com/title/${encodeURIComponent(r.imdb_id||'')}`;
+            const mt = r.media_type === 'tv' ? 'show' : (r.media_type || '—');
+            return `<tr>
+                <td class="dm-col-check">${chk}</td>
+                <td>${escHtml(r.title||'—')}</td>
+                <td>${r.year||'—'}</td>
+                <td><a href="${tmdbUrl}" target="_blank" rel="noopener">${escHtml(r.tmdb_id||'—')}</a></td>
+                <td><a href="${imdbUrl}" target="_blank" rel="noopener">${escHtml(r.imdb_id||'—')}</a></td>
+                <td>${escHtml(mt)}</td>
+                <td>
+                    <button class="dm-btn dm-btn-danger dm-btn-sm" onclick="_battDeleteMapping('tmdb',['${escHtml(r.tmdb_id||'')}'],this)" title="Delete mapping">Delete</button>
+                </td>
+            </tr>`;
+        }
+        if (group === 'no_imdb_id') {
+            const rowKey = `${encodeURIComponent(r.title||'')}|${r.year||''}|${encodeURIComponent(r.type||'')}`;
+            return `<tr id="batt-noimdb-row-${rowKey}">
+                <td>${escHtml(r.title||'—')}</td>
+                <td>${r.year||'—'}</td>
+                <td>${escHtml(r.type||'—')}</td>
+                <td style="font-size:0.78rem;color:#888">${escHtml(r.filled_by_file||'—')}</td>
+                <td>
+                    <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
+                        <input type="text" class="batt-noimdb-input" placeholder="tt1234567"
+                            style="width:100px;font-size:0.78rem;padding:2px 5px;border:1px solid var(--border-color,#444);background:var(--input-bg,#2a2a2a);color:var(--text-color,#eee);border-radius:3px"
+                            data-title="${escHtml(r.title||'')}" data-year="${r.year||''}" data-type="${escHtml(r.type||'')}">
+                        <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="_battAutoFillImdb(this)" title="Auto-search for IMDB ID">Auto</button>
+                        <button class="dm-btn dm-btn-secondary dm-btn-sm" onclick="_battSetImdbId(this)" title="Set IMDB ID">Set</button>
+                        <span class="batt-noimdb-msg" style="font-size:0.75rem"></span>
+                    </div>
+                </td>
+            </tr>`;
+        }
+        return '';
+    }).join('');
+
+    // Wire select-all checkbox (no_imdb_id has no checkboxes — info only)
+    const chkAll = _battEl('batt-chk-all-' + ({
+        orphaned_battery: 'orphaned', missing_battery: 'missing',
+        stale_metadata: 'stale', orphaned_tvdb: 'tvdb', orphaned_tmdb: 'tmdb'
+    }[group] || group));
+    if (chkAll) {
+        chkAll.checked = false;
+        chkAll.onchange = () => {
+            tbody.querySelectorAll('.batt-row-chk').forEach(cb => cb.checked = chkAll.checked);
+            _battUpdateBulkBtns(group);
+        };
+    }
+    // Per-row checkbox → update bulk btn
+    tbody.querySelectorAll('.batt-row-chk').forEach(cb =>
+        cb.addEventListener('change', () => _battUpdateBulkBtns(group))
+    );
+    _battUpdateBulkBtns(group);
+}
+
+function _battGetCheckedIds(group) {
+    const tbody = _battEl('batt-tbody-' + group);
+    if (!tbody) return [];
+    return Array.from(tbody.querySelectorAll('.batt-row-chk:checked')).map(cb => cb.dataset.id).filter(Boolean);
+}
+
+function _battUpdateBulkBtns(group) {
+    const checked = _battGetCheckedIds(group).length > 0;
+    const map = {
+        orphaned_battery: 'batt-bulk-del-orphaned',
+        missing_battery:  'batt-bulk-fetch-missing',
+        stale_metadata:   'batt-bulk-refresh-stale',
+        orphaned_tvdb:    'batt-bulk-del-tvdb',
+        orphaned_tmdb:    'batt-bulk-del-tmdb',
+    };
+    const btn = _battEl(map[group]);
+    if (btn) btn.disabled = !checked;
+}
+
+// Bulk action wiring
+_battEl('batt-bulk-del-orphaned')?.addEventListener('click', () => {
+    const ids = _battGetCheckedIds('orphaned_battery');
+    if (!ids.length) return;
+    _battDeleteBattery(ids);
+});
+_battEl('batt-bulk-fetch-missing')?.addEventListener('click', function() {
+    const ids = _battGetCheckedIds('missing_battery');
+    if (!ids.length) return;
+    _battFetchMetadata(ids, this, 'missing_battery');
+});
+_battEl('batt-bulk-refresh-stale')?.addEventListener('click', function() {
+    const ids = _battGetCheckedIds('stale_metadata');
+    if (!ids.length) return;
+    _battFetchMetadata(ids, this, 'stale_metadata');
+});
+_battEl('batt-bulk-del-tvdb')?.addEventListener('click', () => {
+    const ids = _battGetCheckedIds('orphaned_tvdb');
+    if (!ids.length) return;
+    if (!confirm(`Delete ${ids.length} TVDB mapping(s)?`)) return;
+    _battDeleteMapping('tvdb', ids);
+});
+_battEl('batt-bulk-del-tmdb')?.addEventListener('click', () => {
+    const ids = _battGetCheckedIds('orphaned_tmdb');
+    if (!ids.length) return;
+    if (!confirm(`Delete ${ids.length} TMDB mapping(s)?`)) return;
+    _battDeleteMapping('tmdb', ids);
+});
+
+// Reload + Sync buttons
+_battEl('batt-reload-btn')?.addEventListener('click', () => {
+    _battData = null;
+    _battLoaded = false;
+    loadBatteryAudit(true);
+});
+_battEl('batt-sync-btn')?.addEventListener('click', async function() {
+    const orig = this.innerHTML;
+    this.disabled = true;
+    this.textContent = 'Syncing…';
+    try {
+        const r = await fetch('/debrid_manager/api/battery_audit/sync', {method:'POST'});
+        const d = await r.json();
+        if (d.success) {
+            this.textContent = 'Started';
+            setTimeout(() => { this.innerHTML = orig; this.disabled = false; }, 3000);
+        } else {
+            alert('Sync failed: ' + (d.error || 'unknown'));
+            this.innerHTML = orig;
+            this.disabled = false;
+        }
+    } catch(e) {
+        alert('Error: ' + e.message);
+        this.innerHTML = orig;
+        this.disabled = false;
+    }
+});
+
+async function _battFetchMetadata(imdb_ids, btn, group) {
+    const isBulk = !!group;
+    if (btn) { btn.disabled = true; btn.textContent = isBulk ? 'Queuing…' : '…'; }
+    // Build items array with type info so the backend skips unnecessary API calls
+    let items;
+    if (isBulk) {
+        const tbody = _battEl('batt-tbody-' + group);
+        items = tbody
+            ? Array.from(tbody.querySelectorAll('.batt-row-chk:checked'))
+                   .map(cb => ({imdb_id: cb.dataset.id, type: cb.dataset.type || ''}))
+                   .filter(x => x.imdb_id)
+            : [];
+    } else {
+        items = (imdb_ids || []).map(x => typeof x === 'string' ? {imdb_id: x} : x);
+    }
+    try {
+        const r = await fetch('/debrid_manager/api/battery_audit/refresh', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({items})
+        });
+        const d = await r.json();
+        if (d.success) {
+            // Optimistic: remove rows from DOM immediately — fetch runs in background.
+            // If it fails the item will reappear on next "Refresh Audit".
+            if (isBulk) {
+                const tbody = _battEl('batt-tbody-' + group);
+                if (tbody) tbody.querySelectorAll('.batt-row-chk:checked').forEach(cb => cb.closest('tr')?.remove());
+                if (btn) { btn.textContent = 'Fetch Selected'; btn.disabled = true; }
+            } else if (btn) {
+                btn.closest('tr')?.remove();
+            }
+        } else {
+            alert('Failed: ' + d.error);
+            if (btn) { btn.textContent = isBulk ? 'Fetch Selected' : 'Fetch'; btn.disabled = false; }
+        }
+    } catch(e) {
+        alert('Error: ' + e.message);
+        if (btn) { btn.textContent = isBulk ? 'Fetch Selected' : 'Fetch'; btn.disabled = false; }
+    }
+}
+
+async function _battDeleteBattery(imdb_ids, btn) {
+    if (!confirm(`Delete ${imdb_ids.length} battery item(s)? This cannot be undone.`)) return;
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    try {
+        const r = await fetch('/debrid_manager/api/battery_audit/delete_battery', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({imdb_ids})
+        });
+        const d = await r.json();
+        if (d.success) {
+            _battData = null; _battLoaded = false;
+            loadBatteryAudit(true);
+        } else {
+            alert('Delete failed: ' + d.error);
+            if (btn) { btn.textContent = 'Delete'; btn.disabled = false; }
+        }
+    } catch(e) {
+        alert('Error: ' + e.message);
+        if (btn) { btn.textContent = 'Delete'; btn.disabled = false; }
+    }
+}
+
+async function _battDeleteMapping(type, ids, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    try {
+        const r = await fetch('/debrid_manager/api/battery_audit/delete_mapping', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({type, ids})
+        });
+        const d = await r.json();
+        if (d.success) {
+            _battData = null; _battLoaded = false;
+            loadBatteryAudit(true);
+        } else {
+            alert('Delete failed: ' + d.error);
+            if (btn) { btn.textContent = 'Delete'; btn.disabled = false; }
+        }
+    } catch(e) {
+        alert('Error: ' + e.message);
+        if (btn) { btn.textContent = 'Delete'; btn.disabled = false; }
+    }
+}
+
+// ── No IMDB ID: Set IMDB ID ────────────────────────────────────────────────
+async function _battSetImdbId(btn) {
+    const wrap  = btn.closest('td').querySelector('.batt-noimdb-input');
+    const msgEl = btn.closest('td').querySelector('.batt-noimdb-msg');
+    const imdb_id = (wrap.value || '').trim();
+    if (!/^tt\d{7,8}$/.test(imdb_id)) {
+        msgEl.style.color = '#dc3545';
+        msgEl.textContent = 'Use format tt1234567';
+        return;
+    }
+    btn.disabled = true; btn.textContent = '…';
+    msgEl.textContent = '';
+    try {
+        const r = await fetch('/debrid_manager/api/battery_audit/set_imdb_id', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+                title: wrap.dataset.title,
+                year:  wrap.dataset.year ? parseInt(wrap.dataset.year, 10) : null,
+                type:  wrap.dataset.type,
+                imdb_id
+            })
+        });
+        const d = await r.json();
+        if (d.success) {
+            msgEl.style.color = '#28a745';
+            msgEl.textContent = `Saved (${d.updated} row${d.updated !== 1 ? 's' : ''})`;
+            btn.textContent = 'Set';
+            btn.disabled = false;
+            // Reload audit after short delay so user sees confirmation
+            setTimeout(() => { _battData = null; _battLoaded = false; loadBatteryAudit(true); }, 1500);
+        } else {
+            msgEl.style.color = '#dc3545';
+            msgEl.textContent = d.error || 'Failed';
+            btn.textContent = 'Set'; btn.disabled = false;
+        }
+    } catch(e) {
+        msgEl.style.color = '#dc3545';
+        msgEl.textContent = e.message;
+        btn.textContent = 'Set'; btn.disabled = false;
+    }
+}
+
+// ── No IMDB ID: Auto-lookup single row ────────────────────────────────────
+function _battImdbMatchHtml(d) {
+    const label = `${escHtml(d.matched_title||'')}${d.matched_year ? ' (' + d.matched_year + ')' : ''}`;
+    const src   = d.source ? ` <span style="opacity:.6;font-size:.75em">[${escHtml(d.source)}]</span>` : '';
+    const lowConf = d.confidence === 'low';
+    const linkColor = lowConf ? '#fd7e14' : '#17a2b8';
+    const warning   = lowConf ? ' ⚠ low confidence — verify' : '';
+    return `<a href="https://www.imdb.com/title/${escHtml(d.imdb_id)}/" target="_blank" rel="noopener"
+        style="color:${linkColor};text-decoration:none" title="Open on IMDB to verify">${label}${warning} ↗</a>${src}`;
+}
+
+async function _battAutoFillImdb(btn) {
+    const td    = btn.closest('td');
+    const input = td.querySelector('.batt-noimdb-input');
+    const msgEl = td.querySelector('.batt-noimdb-msg');
+    btn.disabled = true; btn.textContent = '…';
+    msgEl.textContent = '';
+    try {
+        const r = await fetch('/debrid_manager/api/battery_audit/lookup_imdb', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({
+                title: input.dataset.title,
+                year:  input.dataset.year ? parseInt(input.dataset.year, 10) : null,
+                type:  input.dataset.type,
+            })
+        });
+        const d = await r.json();
+        if (d.success && d.imdb_id) {
+            input.value = d.imdb_id;
+            msgEl.innerHTML = _battImdbMatchHtml(d);
+            _battUpdateSetAllFoundBtn();
+        } else {
+            msgEl.style.color = '#dc3545';
+            msgEl.textContent = d.error || 'Not found';
+        }
+    } catch(e) {
+        msgEl.style.color = '#dc3545';
+        msgEl.textContent = e.message;
+    } finally {
+        btn.disabled = false; btn.textContent = 'Auto';
+    }
+}
+
+// ── No IMDB ID: Auto-fill all rows ────────────────────────────────────────
+async function _battAutoFillAll() {
+    const tbody   = _battEl('batt-tbody-no_imdb_id');
+    const fillBtn = _battEl('batt-auto-fill-all-btn');
+    const msgEl   = _battEl('batt-auto-fill-msg');
+    if (!tbody) return;
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    if (!rows.length) return;
+
+    fillBtn.disabled = true; fillBtn.textContent = 'Searching…';
+    msgEl.textContent = ''; msgEl.style.color = '#888';
+
+    const items = rows.map(row => {
+        const input = row.querySelector('.batt-noimdb-input');
+        if (!input) return null;
+        return {
+            title: input.dataset.title,
+            year:  input.dataset.year ? parseInt(input.dataset.year, 10) : null,
+            type:  input.dataset.type,
+            _input: input,
+            _msg:   row.querySelector('.batt-noimdb-msg'),
+        };
+    }).filter(Boolean);
+
+    try {
+        const r = await fetch('/debrid_manager/api/battery_audit/lookup_imdb_bulk', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ items: items.map(i => ({title: i.title, year: i.year, type: i.type})) })
+        });
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Bulk lookup failed');
+        let found = 0;
+        d.results.forEach((res, i) => {
+            const item = items[i];
+            if (!item) return;
+            if (res.success && res.imdb_id) {
+                item._input.value = res.imdb_id;
+                item._msg.innerHTML = _battImdbMatchHtml(res);
+                found++;
+            } else {
+                item._msg.style.color = '#888';
+                item._msg.textContent = res.error || 'Not found';
+            }
+        });
+        msgEl.textContent = `Found ${found} / ${items.length}`;
+        msgEl.style.color = found > 0 ? '#28a745' : '#888';
+        _battUpdateSetAllFoundBtn();
+    } catch(e) {
+        msgEl.style.color = '#dc3545';
+        msgEl.textContent = e.message;
+    } finally {
+        fillBtn.disabled = false; fillBtn.textContent = 'Auto Fill All';
+    }
+}
+
+function _battUpdateSetAllFoundBtn() {
+    const tbody  = _battEl('batt-tbody-no_imdb_id');
+    const setBtn = _battEl('batt-set-all-found-btn');
+    if (!tbody || !setBtn) return;
+    const hasValid = Array.from(tbody.querySelectorAll('.batt-noimdb-input'))
+        .some(inp => /^tt\d{7,8}$/.test(inp.value.trim()));
+    setBtn.style.display = hasValid ? '' : 'none';
+}
+
+async function _battSetAllFound() {
+    const tbody  = _battEl('batt-tbody-no_imdb_id');
+    const setBtn = _battEl('batt-set-all-found-btn');
+    const msgEl  = _battEl('batt-auto-fill-msg');
+    if (!tbody) return;
+
+    const toSet = Array.from(tbody.querySelectorAll('.batt-noimdb-input'))
+        .filter(inp => /^tt\d{7,8}$/.test(inp.value.trim()));
+    if (!toSet.length) return;
+
+    setBtn.disabled = true; setBtn.textContent = `Setting ${toSet.length}…`;
+    let ok = 0, fail = 0;
+    for (const input of toSet) {
+        const msgRow = input.closest('td').querySelector('.batt-noimdb-msg');
+        try {
+            const r = await fetch('/debrid_manager/api/battery_audit/set_imdb_id', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({
+                    title:   input.dataset.title,
+                    year:    input.dataset.year ? parseInt(input.dataset.year, 10) : null,
+                    type:    input.dataset.type,
+                    imdb_id: input.value.trim(),
+                })
+            });
+            const d = await r.json();
+            if (d.success) {
+                ok++;
+                msgRow.style.color = '#28a745';
+                msgRow.textContent = `Saved (${d.updated})`;
+            } else {
+                fail++;
+                msgRow.style.color = '#dc3545';
+                msgRow.textContent = d.error || 'Failed';
+            }
+        } catch(e) {
+            fail++;
+        }
+    }
+    msgEl.style.color = fail > 0 ? '#fd7e14' : '#28a745';
+    msgEl.textContent = `Set ${ok} / ${ok + fail}${fail > 0 ? ` (${fail} failed)` : ''}`;
+    setBtn.disabled = false; setBtn.textContent = 'Set All Found';
+    setBtn.style.display = 'none';
+    setTimeout(() => { _battData = null; _battLoaded = false; loadBatteryAudit(true); }, 1500);
+}
+
+// ── Re-identify Modal ──────────────────────────────────────────────────────
+function _battReidentify(imdb_id, item_type, btn) {
+    _battReidImdbId = imdb_id;
+    const overlay = _battEl('batt-reid-overlay');
+    const modal   = _battEl('batt-reid-modal');
+    const cur     = _battEl('batt-reid-current');
+    const newId   = _battEl('batt-reid-new-id');
+    const preview = _battEl('batt-reid-preview');
+    const opts    = _battEl('batt-reid-options');
+    const footer  = _battEl('batt-reid-footer');
+    const result  = _battEl('batt-reid-result');
+
+    if (cur)     cur.textContent = `Current IMDB ID: ${imdb_id} (${item_type || 'unknown type'})`;
+    if (newId)   { newId.value = ''; newId.dataset.itemType = item_type; }
+    if (preview) preview.style.display = 'none';
+    if (opts)    opts.style.display = 'none';
+    if (footer)  footer.style.display = 'none';
+    if (result)  { result.style.display = 'none'; result.innerHTML = ''; }
+
+    if (overlay) overlay.style.display = 'block';
+    if (modal)   modal.style.display = 'block';
+    if (newId)   newId.focus();
+}
+
+_battEl('batt-reid-close')?.addEventListener('click', _battCloseReid);
+_battEl('batt-reid-overlay')?.addEventListener('click', _battCloseReid);
+function _battCloseReid() {
+    _battEl('batt-reid-overlay').style.display = 'none';
+    _battEl('batt-reid-modal').style.display = 'none';
+}
+
+_battEl('batt-reid-verify-btn')?.addEventListener('click', async function() {
+    const newId = (_battEl('batt-reid-new-id')?.value || '').trim();
+    const itype = _battEl('batt-reid-new-id')?.dataset.itemType || '';
+    const preview = _battEl('batt-reid-preview');
+    const opts    = _battEl('batt-reid-options');
+    const footer  = _battEl('batt-reid-footer');
+    if (!newId.startsWith('tt')) { alert('Enter a valid IMDB ID (tt…)'); return; }
+    this.disabled = true;
+    this.textContent = 'Verifying…';
+    try {
+        const r = await fetch('/debrid_manager/api/battery_audit/reidentify/verify', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({new_imdb_id: newId, item_type: itype})
+        });
+        const d = await r.json();
+        if (d.success) {
+            if (preview) {
+                preview.innerHTML = `<strong>${escHtml(d.title)}</strong> (${d.year||'?'}) — ${escHtml(d.type||'?')} — <a href="https://www.imdb.com/title/${escHtml(d.imdb_id)}" target="_blank" rel="noopener">${escHtml(d.imdb_id)}</a>`;
+                preview.style.display = '';
+                preview.style.color = '#22c55e';
+            }
+            if (opts)   opts.style.display = '';
+            if (footer) footer.style.display = '';
+        } else {
+            if (preview) { preview.textContent = d.error; preview.style.display = ''; preview.style.color = '#ef4444'; }
+            if (opts)   opts.style.display = 'none';
+            if (footer) footer.style.display = 'none';
+        }
+    } catch(e) {
+        if (preview) { preview.textContent = 'Error: ' + e.message; preview.style.display = ''; preview.style.color = '#ef4444'; }
+    } finally {
+        this.disabled = false;
+        this.textContent = 'Verify';
+    }
+});
+
+_battEl('batt-reid-commit-btn')?.addEventListener('click', async function() {
+    const newId    = (_battEl('batt-reid-new-id')?.value || '').trim();
+    const syncMain = _battEl('batt-reid-sync-main')?.checked ?? true;
+    if (!_battReidImdbId || !newId) return;
+    if (!confirm(`Re-identify ${_battReidImdbId} → ${newId}?\nThis deletes the old battery entry and fetches metadata for the new ID.`)) return;
+    this.disabled = true;
+    this.textContent = 'Committing…';
+    const result = _battEl('batt-reid-result');
+    try {
+        const r = await fetch('/debrid_manager/api/battery_audit/reidentify/commit', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({old_imdb_id: _battReidImdbId, new_imdb_id: newId, sync_main_db: syncMain})
+        });
+        const d = await r.json();
+        if (d.success) {
+            if (result) {
+                result.innerHTML = `<span style="color:#22c55e">Done. ${escHtml(_battReidImdbId)} → ${escHtml(newId)} (${escHtml(d.new_title)})${d.main_updated ? ` — ${d.main_updated} main DB row(s) updated` : ''}</span>`;
+                result.style.display = '';
+            }
+            setTimeout(() => {
+                _battCloseReid();
+                _battData = null; _battLoaded = false;
+                loadBatteryAudit(true);
+            }, 2000);
+        } else {
+            if (result) { result.innerHTML = `<span style="color:#ef4444">Error: ${escHtml(d.error)}</span>`; result.style.display = ''; }
+            this.disabled = false;
+            this.textContent = 'Commit Re-identify';
+        }
+    } catch(e) {
+        if (result) { result.innerHTML = `<span style="color:#ef4444">Error: ${e.message}</span>`; result.style.display = ''; }
+        this.disabled = false;
+        this.textContent = 'Commit Re-identify';
+    }
+});
+
+// Battery audit loads on-demand when Battery sub-tab is clicked (not auto-loaded)
 </script>
 {% endblock %}

@@ -263,20 +263,37 @@ class OverlayManager:
                 ms_item_id = plex_rating_key
                 backup_file = backup_mgr.backup_dir / f"{ms_item_id}_original.jpg"
 
-                # force_fresh_poster: discard old backup so we re-download from Plex below
-                if force_fresh_poster and backup_file.exists():
-                    backup_file.unlink()
-                    self.logger.info(
-                        f"Deleted backup for {ms_item_id} to force re-download from Plex")
+                # force_fresh_poster: discard old backup and cached TMDB poster URL so we
+                # re-fetch a fresh English poster from TMDB on the next download attempt.
+                if force_fresh_poster:
+                    if backup_file.exists():
+                        backup_file.unlink()
+                        self.logger.info(
+                            f"Deleted backup for {ms_item_id} to force fresh poster fetch")
+                    # Clear any stale TMDB poster URL from the in-memory/disk cache so the
+                    # re-fetch honours the English language filter.
+                    try:
+                        from routes.poster_cache import _cache, _cache_lock
+                        media_type_key = 'movie' if item.get('type') == 'movie' else 'tv'
+                        with _cache_lock:
+                            for _k in (
+                                f"{item.get('imdb_id')}_{media_type_key}",
+                                f"{item.get('tmdb_id')}_{media_type_key}",
+                            ):
+                                _cache.pop(_k, None)
+                        self.logger.info(
+                            f"Cleared TMDB poster cache entries for {ms_item_id}")
+                    except Exception as _ce:
+                        self.logger.debug(f"Could not clear poster cache: {_ce}")
 
                 if backup_file.exists():
                     existing_state = self._get_overlay_state(media_item_id)
                     current_status = existing_state.get('status') if existing_state else None
                     poster_image = None
 
-                    if current_status != 'applied':
-                        # Overlay is not currently the active media server poster — user may have
-                        # switched to a different poster.  Check whether it changed.
+                    if current_status in ('removed', 'user_removed'):
+                        # Overlay was explicitly removed — user may have picked a new poster.
+                        # Check whether the media server poster differs from our backup.
                         try:
                             plex_poster = self.client.download_poster(plex_rating_key)
                             if plex_poster and not self._is_blank_image(plex_poster):
@@ -304,16 +321,15 @@ class OverlayManager:
                             poster_image.load()
                         self.logger.info(f"Using original backup poster for {plex_rating_key}")
                 else:
-                    # No backup — fetch a clean original.
-                    # For force_fresh_poster use Plex directly (that's what the user selected).
-                    # Otherwise prefer TMDB so we don't accidentally download an already-overlaid
-                    # Plex poster as the base.
-                    prefer_tmdb = not force_fresh_poster
+                    # No backup — fetch a clean original from TMDB.
+                    # Always prefer TMDB: if the overlay was previously applied, Plex's current
+                    # "selected" poster is the overlaid version we uploaded, so downloading from
+                    # Plex would give us overlay-on-overlay. TMDB always has the unmodified poster.
+                    # Fall back to Plex only if TMDB has nothing cached.
                     self.logger.info(
-                        f"Downloading {'Plex-selected' if force_fresh_poster else 'clean original'} "
-                        f"poster for {plex_rating_key}")
+                        f"Downloading clean original poster for {plex_rating_key}")
                     poster_image = self._download_poster(plex_rating_key, item,
-                                                         prefer_tmdb=prefer_tmdb)
+                                                         prefer_tmdb=True)
                     if not poster_image:
                         result['status'] = 'error'
                         result['message'] = 'Failed to download poster from TMDB or Plex'
@@ -456,6 +472,43 @@ class OverlayManager:
             result['message'] = 'Overlay successfully generated and applied'
             result['content_hash'] = content_hash  # propagated to all episodes by caller
             self.logger.info(f"Successfully applied overlay for {item.get('title', media_item_id)}")
+
+            # For episodes: mark ALL sibling episodes sharing the same show key as
+            # applied so that regenerate-all and batch operations don't leave
+            # thousands of pending rows behind (only the MIN(id) representative
+            # was processed; siblings share the same show poster).
+            if item.get('type') == 'episode' and plex_rating_key:
+                try:
+                    _sib_conn = _get_db_connection()
+                    # Update existing pending/failed/removed/analyzing rows
+                    _sib_conn.execute(
+                        """UPDATE media_overlay_state
+                              SET status = 'applied',
+                                  last_content_hash = COALESCE(?, last_content_hash),
+                                  overlay_applied_at = CURRENT_TIMESTAMP,
+                                  updated_at = CURRENT_TIMESTAMP
+                            WHERE media_item_id IN (
+                                SELECT id FROM media_items
+                                WHERE ms_item_id = ? AND type = 'episode'
+                            )
+                              AND status IN ('pending', 'analyzing', 'removed', 'failed')""",
+                        (content_hash, plex_rating_key)
+                    )
+                    # Insert applied rows for episodes with no state record yet
+                    _sib_conn.execute(
+                        """INSERT OR IGNORE INTO media_overlay_state
+                               (media_item_id, status, reason, last_content_hash,
+                                overlay_applied_at, created_at, updated_at)
+                           SELECT id, 'applied', 'Marked applied via sibling', ?,
+                                  CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                             FROM media_items
+                            WHERE ms_item_id = ? AND type = 'episode'""",
+                        (content_hash, plex_rating_key)
+                    )
+                    _sib_conn.commit()
+                    _sib_conn.close()
+                except Exception as _sib_err:
+                    self.logger.debug(f"Sibling episode mark-applied failed: {_sib_err}")
 
         except Exception as e:
             self.logger.error(f"Failed to generate overlay for item {media_item_id}: {e}",
@@ -934,8 +987,9 @@ class OverlayManager:
           1. In-memory cache (24h TTL — avoids any I/O within a single sync run)
           2. SQLite ratings cache (7-day TTL — survives container restarts, eliminates
              cold-start API burst for large libraries)
-          3. MDBList API (IMDb, TMDB, Trakt, RT — all in one call; 0.2s pre-sleep)
-          4. Combined Plex metadata + Trakt fallback (when MDBList fails/rate-limited)
+          3. TMDB direct API (tmdb_rating only, via /find by IMDB ID)
+          4. MDBList API (IMDb, TMDB, Trakt, RT — all in one call; 0.2s pre-sleep)
+          5. Combined Plex metadata + Trakt fallback (when MDBList fails/rate-limited)
         """
         import time
         import json
@@ -947,15 +1001,12 @@ class OverlayManager:
         if cached:
             ts, data = cached
             if time.time() - ts < 86400:
-                # If Trakt is configured, the cached entry has no trakt_rating, AND
-                # we're not currently in a backoff window — bypass cache so we retry.
-                # If we ARE in backoff, serve the stale-but-complete cache to avoid
-                # downstream hash mismatches from incomplete fetches.
                 try:
                     from utilities.settings import get_setting as _gs_mem
                     _trakt_ok = not _gs_mem('Trakt', 'client_id', '') or data.get('trakt_rating')
+                    _mdblist_ok = not _gs_mem('MDBList', 'api_key', '') or (data.get('imdb_rating') and data.get('tmdb_rating'))
                     _in_backoff = time.time() < OverlayManager._trakt_backoff_until
-                    if _trakt_ok or _in_backoff:
+                    if (_trakt_ok and _mdblist_ok) or _in_backoff:
                         return data
                 except Exception:
                     return data
@@ -966,6 +1017,7 @@ class OverlayManager:
             from database.core import get_db_connection
             from utilities.settings import get_setting as _gs
             _trakt_configured = bool(_gs('Trakt', 'client_id', ''))
+            _mdblist_configured = bool(_gs('MDBList', 'api_key', ''))
             _in_backoff = time.time() < OverlayManager._trakt_backoff_until
             _db = get_db_connection()
             _row = _db.execute(
@@ -975,12 +1027,11 @@ class OverlayManager:
             _db.close()
             if _row and (time.time() - _row[1]) < _RATINGS_TTL:
                 data = json.loads(_row[0])
-                # If Trakt is configured, the cached entry has no trakt_rating, AND
-                # we're not in a backoff window — treat as a miss to retry Trakt.
-                # If in backoff, serve the stale cache to avoid spurious hash resets.
-                if _trakt_configured and not data.get('trakt_rating') and not _in_backoff:
+                _trakt_miss = _trakt_configured and not data.get('trakt_rating') and not _in_backoff
+                _mdblist_miss = _mdblist_configured and not (data.get('imdb_rating') and data.get('tmdb_rating'))
+                if _trakt_miss or _mdblist_miss:
                     self.logger.debug(
-                        f"SQLite cache for {imdb_id} has no trakt_rating; will re-fetch")
+                        f"SQLite cache for {imdb_id} incomplete (trakt_miss={_trakt_miss}, mdblist_miss={_mdblist_miss}); will re-fetch")
                 else:
                     cache[imdb_id] = (_row[1], data)   # warm in-memory cache too
                     return data
@@ -1001,9 +1052,37 @@ class OverlayManager:
             except Exception as _w:
                 self.logger.debug(f"SQLite ratings cache write failed for {imdb_id}: {_w}")
 
-        # ── 3. MDBList (primary — provides IMDb, TMDB, Trakt, RT in one call) ─
-        mdblist_ok = False
+        # ── 3. TMDB direct API (tmdb_rating only; uses /find by IMDB ID) ────────
         ratings = {}
+        try:
+            from utilities.settings import get_setting as _gs_tmdb
+            _tmdb_key = _gs_tmdb('TMDB', 'api_key', '')
+            if _tmdb_key:
+                _tmdb_resp = requests.get(
+                    f'https://api.themoviedb.org/3/find/{imdb_id}',
+                    params={'api_key': _tmdb_key, 'external_source': 'imdb_id'},
+                    timeout=5
+                )
+                if _tmdb_resp.status_code == 200:
+                    _tmdb_data = _tmdb_resp.json()
+                    _tmdb_results = (
+                        _tmdb_data.get('tv_results') or
+                        _tmdb_data.get('movie_results') or []
+                    )
+                    if _tmdb_results:
+                        _va = _tmdb_results[0].get('vote_average')
+                        if _va is not None:
+                            v = float(_va)
+                            if v > 10:
+                                v = v / 10
+                            ratings['tmdb_rating'] = round(v, 1)
+                            self.logger.debug(
+                                f"TMDB direct rating for {imdb_id}: {ratings['tmdb_rating']}")
+        except Exception as _tmdb_exc:
+            self.logger.debug(f"TMDB direct fetch failed for {imdb_id}: {_tmdb_exc}")
+
+        # ── 4. MDBList (primary — provides IMDb, TMDB, Trakt, RT in one call) ─
+        mdblist_ok = False
         try:
             from utilities.mdblist_api import get_mdblist_api_key, is_mdblist_configured
             if is_mdblist_configured():
@@ -1029,9 +1108,10 @@ class OverlayManager:
                         if src == 'imdb':
                             ratings['imdb_rating'] = round(v, 1)
                         elif src == 'tmdb':
-                            if v > 10:
-                                v = v / 10
-                            ratings['tmdb_rating'] = round(v, 1)
+                            if not ratings.get('tmdb_rating'):  # don't overwrite TMDB direct API result
+                                if v > 10:
+                                    v = v / 10
+                                ratings['tmdb_rating'] = round(v, 1)
                         elif src == 'trakt':
                             if v > 10:
                                 v = v / 10
@@ -1279,6 +1359,7 @@ class OverlayManager:
         # Fetch ratings whenever any score is missing (cache makes this cheap).
         _needs_ratings = (
             not info.get('imdb_rating') or
+            not info.get('tmdb_rating') or
             not info.get('rt_critics_score') or
             not info.get('rt_user_score')
         )
@@ -1671,7 +1752,7 @@ class OverlayManager:
 
         def _tmdb_image():
             try:
-                from routes.poster_cache import get_cached_poster_url
+                from routes.poster_cache import get_cached_poster_url, cache_poster_url as _cpu
                 import requests as _requests
                 from PIL import Image as _Image
 
@@ -1679,6 +1760,38 @@ class OverlayManager:
                     (get_cached_poster_url(imdb_id, media_type) if imdb_id else None)
                     or (get_cached_poster_url(tmdb_id, media_type) if tmdb_id else None)
                 )
+
+                # Cache miss — fetch directly from TMDB API.
+                # Prefer English-language posters (iso_639_1=en) as they include the title
+                # text. Fall back to en+null only if no English-only results exist.
+                # Sort by vote_average to pick the community's top-rated poster.
+                if not cached_url and tmdb_id:
+                    from utilities.settings import get_setting as _gs_tmdb
+                    _api_key = _gs_tmdb('TMDB', 'api_key', default='')
+                    if _api_key:
+                        _posters = []
+                        for _lang in ('en', 'en,null'):
+                            _api_resp = _requests.get(
+                                f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}/images"
+                                f"?api_key={_api_key}&include_image_language={_lang}",
+                                timeout=15
+                            )
+                            if _api_resp.status_code == 200:
+                                _posters = _api_resp.json().get('posters', [])
+                                if _posters:
+                                    break  # English-only results found — skip null fallback
+                        if _posters:
+                            _posters.sort(
+                                key=lambda p: p.get('vote_average', 0), reverse=True)
+                            cached_url = (
+                                f"https://image.tmdb.org/t/p/w300"
+                                f"{_posters[0]['file_path']}"
+                            )
+                            _cpu(tmdb_id, media_type, cached_url)
+                            self.logger.info(
+                                f"Fetched fresh English TMDB poster for "
+                                f"{item.get('title', plex_rating_key)}")
+
                 if not cached_url or 'image.tmdb.org' not in cached_url:
                     return None
                 if '/t/p/' in cached_url:
@@ -1744,96 +1857,128 @@ class OverlayManager:
                              layout_hash: str = None, content_hash: str = None,
                              plex_upload_hash: str = None):
         """Update or insert overlay state in database (single ON CONFLICT upsert)."""
-        try:
-            conn = _get_db_connection()
-            conn.execute('''
-                INSERT INTO media_overlay_state
-                    (media_item_id, status, reason,
-                     last_poster_hash, last_metadata_hash, last_layout_hash, last_content_hash,
-                     last_plex_upload_hash,
-                     overlay_applied_at, last_retry, retry_count,
-                     created_at, updated_at)
-                VALUES (?, ?, ?,
-                        ?, ?, ?, ?,
-                        ?,
-                        CASE WHEN ? = 'applied' THEN CURRENT_TIMESTAMP ELSE NULL END,
-                        CASE WHEN ? = 'failed'  THEN CURRENT_TIMESTAMP ELSE NULL END,
-                        CASE WHEN ? IN ('failed', 'analyzing') THEN 1 ELSE 0 END,
-                        CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                ON CONFLICT(media_item_id) DO UPDATE SET
-                    status                = excluded.status,
-                    reason                = excluded.reason,
-                    last_poster_hash      = COALESCE(excluded.last_poster_hash,      last_poster_hash),
-                    last_metadata_hash    = COALESCE(excluded.last_metadata_hash,    last_metadata_hash),
-                    last_layout_hash      = COALESCE(excluded.last_layout_hash,      last_layout_hash),
-                    last_content_hash     = COALESCE(excluded.last_content_hash,     last_content_hash),
-                    last_plex_upload_hash = COALESCE(excluded.last_plex_upload_hash, last_plex_upload_hash),
-                    overlay_applied_at = CASE WHEN excluded.status = 'applied'
-                                              THEN CURRENT_TIMESTAMP
-                                              ELSE overlay_applied_at END,
-                    last_retry         = CASE WHEN excluded.status = 'failed'
-                                              THEN CURRENT_TIMESTAMP
-                                              ELSE last_retry END,
-                    retry_count        = CASE WHEN excluded.status IN ('failed', 'analyzing')
-                                              THEN retry_count + 1
-                                              ELSE retry_count END,
-                    updated_at         = CURRENT_TIMESTAMP
-            ''', (media_item_id, status, reason,
-                  poster_hash, metadata_hash, layout_hash, content_hash,
-                  plex_upload_hash,
-                  status, status, status))
-            conn.commit()
-            conn.close()
-
-        except Exception as e:
-            self.logger.error(f"Database error updating overlay state: {e}")
+        import time as _time
+        last_exc = None
+        for _attempt in range(5):
+            try:
+                conn = _get_db_connection()
+                conn.execute('''
+                    INSERT INTO media_overlay_state
+                        (media_item_id, status, reason,
+                         last_poster_hash, last_metadata_hash, last_layout_hash, last_content_hash,
+                         last_plex_upload_hash,
+                         overlay_applied_at, last_retry, retry_count,
+                         created_at, updated_at)
+                    VALUES (?, ?, ?,
+                            ?, ?, ?, ?,
+                            ?,
+                            CASE WHEN ? = 'applied' THEN CURRENT_TIMESTAMP ELSE NULL END,
+                            CASE WHEN ? = 'failed'  THEN CURRENT_TIMESTAMP ELSE NULL END,
+                            CASE WHEN ? IN ('failed', 'analyzing') THEN 1 ELSE 0 END,
+                            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT(media_item_id) DO UPDATE SET
+                        status                = excluded.status,
+                        reason                = excluded.reason,
+                        last_poster_hash      = COALESCE(excluded.last_poster_hash,      last_poster_hash),
+                        last_metadata_hash    = COALESCE(excluded.last_metadata_hash,    last_metadata_hash),
+                        last_layout_hash      = COALESCE(excluded.last_layout_hash,      last_layout_hash),
+                        last_content_hash     = COALESCE(excluded.last_content_hash,     last_content_hash),
+                        last_plex_upload_hash = COALESCE(excluded.last_plex_upload_hash, last_plex_upload_hash),
+                        overlay_applied_at = CASE WHEN excluded.status = 'applied'
+                                                  THEN CURRENT_TIMESTAMP
+                                                  ELSE overlay_applied_at END,
+                        last_retry         = CASE WHEN excluded.status = 'failed'
+                                                  THEN CURRENT_TIMESTAMP
+                                                  ELSE last_retry END,
+                        retry_count        = CASE WHEN excluded.status IN ('failed', 'analyzing')
+                                                  THEN retry_count + 1
+                                                  ELSE retry_count END,
+                        updated_at         = CURRENT_TIMESTAMP
+                ''', (media_item_id, status, reason,
+                      poster_hash, metadata_hash, layout_hash, content_hash,
+                      plex_upload_hash,
+                      status, status, status))
+                conn.commit()
+                conn.close()
+                return
+            except sqlite3.OperationalError as e:
+                conn_ref = locals().get('conn')
+                if conn_ref:
+                    try: conn_ref.close()
+                    except Exception: pass
+                if 'database is locked' in str(e) and _attempt < 4:
+                    last_exc = e
+                    _time.sleep(2 ** _attempt)
+                    continue
+                self.logger.error(f"Database error updating overlay state: {e}")
+                return
+            except Exception as e:
+                self.logger.error(f"Database error updating overlay state: {e}")
+                return
+        self.logger.error(f"Database error updating overlay state after retries: {last_exc}")
 
     def _update_media_item_info(self, media_item_id: int, media_info: Dict[str, Any],
                                plex_rating_key: str):
         """Update media_items table with media server info."""
-        try:
-            conn = _get_db_connection()
-            cursor = conn.cursor()
+        import time as _time
+        last_exc = None
+        for _attempt in range(5):
+            try:
+                conn = _get_db_connection()
+                cursor = conn.cursor()
 
-            cursor.execute('''
-                UPDATE media_items
-                SET ms_item_id = ?,
-                    ms_resolution = ?,
-                    ms_hdr = ?,
-                    ms_dolby_vision = ?,
-                    ms_hdr_format = ?,
-                    ms_audio_codec = ?,
-                    ms_audio_channels = ?,
-                    ms_video_codec = ?,
-                    ms_media_container = ?,
-                    ms_media_bitrate = ?,
-                    ms_network = ?,
-                    ms_studio = ?,
-                    ms_content_rating = ?,
-                    ms_last_scanned = CURRENT_TIMESTAMP
-                WHERE id = ?
-            ''', (
-                plex_rating_key,
-                media_info.get('resolution'),
-                1 if media_info.get('hdr') else 0,
-                1 if media_info.get('dolby_vision') else 0,
-                media_info.get('hdr_subtype'),
-                media_info.get('audio_codec'),
-                media_info.get('audio_channels'),
-                media_info.get('video_codec'),
-                media_info.get('container'),
-                media_info.get('bitrate'),
-                media_info.get('network'),
-                media_info.get('studio'),
-                media_info.get('content_rating'),
-                media_item_id
-            ))
+                cursor.execute('''
+                    UPDATE media_items
+                    SET ms_item_id = ?,
+                        ms_resolution = ?,
+                        ms_hdr = ?,
+                        ms_dolby_vision = ?,
+                        ms_hdr_format = ?,
+                        ms_audio_codec = ?,
+                        ms_audio_channels = ?,
+                        ms_video_codec = ?,
+                        ms_media_container = ?,
+                        ms_media_bitrate = ?,
+                        ms_network = ?,
+                        ms_studio = ?,
+                        ms_content_rating = ?,
+                        ms_last_scanned = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (
+                    plex_rating_key,
+                    media_info.get('resolution'),
+                    1 if media_info.get('hdr') else 0,
+                    1 if media_info.get('dolby_vision') else 0,
+                    media_info.get('hdr_subtype'),
+                    media_info.get('audio_codec'),
+                    media_info.get('audio_channels'),
+                    media_info.get('video_codec'),
+                    media_info.get('container'),
+                    media_info.get('bitrate'),
+                    media_info.get('network'),
+                    media_info.get('studio'),
+                    media_info.get('content_rating'),
+                    media_item_id
+                ))
 
-            conn.commit()
-            conn.close()
-
-        except Exception as e:
-            self.logger.error(f"Database error updating media item info: {e}")
+                conn.commit()
+                conn.close()
+                return
+            except sqlite3.OperationalError as e:
+                conn_ref = locals().get('conn')
+                if conn_ref:
+                    try: conn_ref.close()
+                    except Exception: pass
+                if 'database is locked' in str(e) and _attempt < 4:
+                    last_exc = e
+                    _time.sleep(2 ** _attempt)
+                    continue
+                self.logger.error(f"Database error updating media item info: {e}")
+                return
+            except Exception as e:
+                self.logger.error(f"Database error updating media item info: {e}")
+                return
+        self.logger.error(f"Database error updating media item info after retries: {last_exc}")
 
     def _calculate_image_hash(self, image) -> str:
         """Calculate hash of image for change detection."""
@@ -2113,6 +2258,7 @@ class OverlayManager:
             # Strategy 1: look up by ms_item_id (guaranteed correct, no title collisions).
             # Strategy 2: fall back to title lookup if ms_item_id yields nothing.
             show_imdb_id = None
+            show_tmdb_id = None
             _show_title_for_db = None
             _show_meta_early = None
             try:
@@ -2125,7 +2271,7 @@ class OverlayManager:
                 conn_tmp = _get_db_connection()
                 # Primary: ms_item_id lookup — immune to title collisions
                 row_tmp = conn_tmp.execute(
-                    """SELECT imdb_id FROM media_items
+                    """SELECT imdb_id, tmdb_id FROM media_items
                        WHERE ms_item_id = ?
                          AND type = 'episode'
                          AND imdb_id IS NOT NULL AND imdb_id != ''
@@ -2134,10 +2280,11 @@ class OverlayManager:
                 ).fetchone()
                 if row_tmp and row_tmp['imdb_id']:
                     show_imdb_id = row_tmp['imdb_id']
+                    show_tmdb_id = row_tmp['tmdb_id']
                 # Fallback: title lookup if ms_item_id found nothing
                 elif _show_title_for_db:
                     row_tmp = conn_tmp.execute(
-                        """SELECT imdb_id FROM media_items
+                        """SELECT imdb_id, tmdb_id FROM media_items
                            WHERE title = ?
                              AND type = 'episode'
                              AND imdb_id IS NOT NULL AND imdb_id != ''
@@ -2146,11 +2293,12 @@ class OverlayManager:
                     ).fetchone()
                     if row_tmp and row_tmp['imdb_id']:
                         show_imdb_id = row_tmp['imdb_id']
+                        show_tmdb_id = row_tmp['tmdb_id']
                 conn_tmp.close()
             except Exception as _db_exc:
                 self.logger.debug(f"DB imdb_id lookup for show {show_plex_rating_key} ('{_show_title_for_db}') failed: {_db_exc}")
 
-            self.logger.info(f"Season {season_number} show='{_show_title_for_db}' imdb_id={show_imdb_id}")
+            self.logger.info(f"Season {season_number} show='{_show_title_for_db}' imdb_id={show_imdb_id} tmdb_id={show_tmdb_id}")
 
             # ── Skip-check ────────────────────────────────────────────────
             if not force:
@@ -2363,8 +2511,9 @@ class OverlayManager:
                 state = self._get_season_overlay_state(season_plex_rating_key)
                 current_status = state.get('status') if state else None
 
-                if current_status != 'applied':
-                    # Check if the user changed the season poster in the media server
+                if current_status in ('removed', 'user_removed'):
+                    # Overlay was explicitly removed — user may have picked a new poster.
+                    # Check whether the media server season poster differs from our backup.
                     try:
                         server_poster = self.client.download_poster(season_plex_rating_key)
                         if server_poster and not self._is_blank_image(server_poster):
@@ -2392,10 +2541,68 @@ class OverlayManager:
                     self.logger.info(
                         f"Using backed-up season poster for {season_plex_rating_key}")
             else:
-                # No backup — download directly from media server (season posters aren't on TMDB)
-                self.logger.info(
-                    f"Downloading season poster from media server for {season_plex_rating_key}")
-                poster_image = self.client.download_poster(season_plex_rating_key)
+                # No backup — try TMDB season images (English-only) first, then fall back to media server.
+                poster_image = None
+                from utilities.settings import get_setting as _get_setting
+                _resolved_tmdb_id = show_tmdb_id
+                # If tmdb_id is missing from DB but we have imdb_id, resolve via TMDB find API.
+                if not _resolved_tmdb_id and show_imdb_id:
+                    try:
+                        import requests as _rq_find
+                        _find_api_key = _get_setting('TMDB', 'api_key', default='')
+                        if _find_api_key:
+                            _find_resp = _rq_find.get(
+                                f"https://api.themoviedb.org/3/find/{show_imdb_id}"
+                                f"?api_key={_find_api_key}&external_source=imdb_id",
+                                timeout=10
+                            )
+                            if _find_resp.status_code == 200:
+                                _tv_results = _find_resp.json().get('tv_results', [])
+                                if _tv_results:
+                                    _resolved_tmdb_id = _tv_results[0].get('id')
+                                    self.logger.info(
+                                        f"Resolved TMDB ID {_resolved_tmdb_id} from IMDB "
+                                        f"{show_imdb_id} for season poster lookup")
+                    except Exception as _find_err:
+                        self.logger.debug(f"TMDB find lookup failed for {show_imdb_id}: {_find_err}")
+
+                if _resolved_tmdb_id:
+                    try:
+                        import requests as _requests
+                        from PIL import Image as _Image
+                        from io import BytesIO as _BytesIO2
+                        _tmdb_api_key = _get_setting('TMDB', 'api_key', default='')
+                        if _tmdb_api_key:
+                            _season_images_url = (
+                                f"https://api.themoviedb.org/3/tv/{_resolved_tmdb_id}"
+                                f"/season/{season_number}/images"
+                                f"?api_key={_tmdb_api_key}&include_image_language=en,null"
+                            )
+                            _sresp = _requests.get(_season_images_url, timeout=15)
+                            _sresp.raise_for_status()
+                            _sposters = _sresp.json().get('posters', [])
+                            if _sposters:
+                                _sposters.sort(key=lambda p: p.get('vote_average', 0), reverse=True)
+                                _simg_url = f"https://image.tmdb.org/t/p/w500{_sposters[0]['file_path']}"
+                                _simg_resp = _requests.get(_simg_url, timeout=15)
+                                _simg_resp.raise_for_status()
+                                poster_image = _Image.open(_BytesIO2(_simg_resp.content))
+                                poster_image.load()
+                                self.logger.info(
+                                    f"Using TMDB English season poster for {season_plex_rating_key} "
+                                    f"(season {season_number}, tmdb_id={_resolved_tmdb_id})")
+                            else:
+                                self.logger.info(
+                                    f"No English season posters on TMDB for season {season_number} "
+                                    f"tmdb_id={_resolved_tmdb_id} — falling back to Plex")
+                    except Exception as _tmdb_season_err:
+                        self.logger.info(
+                            f"TMDB season poster fetch failed for {season_plex_rating_key}: {_tmdb_season_err}")
+
+                if not poster_image:
+                    self.logger.info(
+                        f"Downloading season poster from media server for {season_plex_rating_key}")
+                    poster_image = self.client.download_poster(season_plex_rating_key)
                 if not poster_image or self._is_blank_image(poster_image):
                     # Determine why: season removed from media server vs simply no poster
                     _season_gone = False
@@ -2533,12 +2740,29 @@ class OverlayManager:
                 exc_info=True)
             result['status'] = 'error'
             result['message'] = str(e)
-            try:
-                self._update_season_overlay_state(
-                    show_plex_rating_key, season_plex_rating_key, season_number,
-                    'failed', str(e))
-            except Exception:
-                pass
+            # 404 means the Plex ratingKey no longer exists (stale after library rescan).
+            # Delete the row so it stops being retried — it will be re-registered with
+            # the new ratingKey on the next sync.
+            if '404' in str(e):
+                try:
+                    from database.core import get_db_connection
+                    _conn = get_db_connection()
+                    _conn.execute(
+                        "DELETE FROM season_overlay_state WHERE season_ms_item_id = ?",
+                        (str(season_plex_rating_key),))
+                    _conn.commit()
+                    _conn.close()
+                    self.logger.info(
+                        f"Removed stale season_overlay_state row for {season_plex_rating_key} (404)")
+                except Exception:
+                    pass
+            else:
+                try:
+                    self._update_season_overlay_state(
+                        show_plex_rating_key, season_plex_rating_key, season_number,
+                        'failed', str(e))
+                except Exception:
+                    pass
 
         return result
 
@@ -2708,7 +2932,8 @@ class OverlayManager:
         return result
 
     def batch_generate_overlays(self, media_item_ids: list, force: bool = False,
-                               layout_id: Optional[int] = None) -> Dict[str, Any]:
+                               layout_id: Optional[int] = None,
+                               force_fresh_poster: bool = False) -> Dict[str, Any]:
         """
         Generate overlays for multiple items.
 
@@ -2729,8 +2954,24 @@ class OverlayManager:
             'items': []
         }
 
+        # Acquire the same semaphore used by apply_overlay_for_new_item so batch
+        # operations respect the 3-concurrent-image-op cap and don't bypass the
+        # OOM protection when "Generate All" is running alongside new-item triggers.
+        try:
+            from overlays.scheduled_tasks import _overlay_semaphore as _batch_sem
+        except Exception:
+            _batch_sem = None
+
         for item_id in media_item_ids:
-            result = self.generate_overlay_for_item(item_id, force=force, layout_id=layout_id)
+            if _batch_sem is not None:
+                _batch_sem.acquire()
+            try:
+                result = self.generate_overlay_for_item(
+                    item_id, force=force, layout_id=layout_id,
+                    force_fresh_poster=force_fresh_poster)
+            finally:
+                if _batch_sem is not None:
+                    _batch_sem.release()
             results['items'].append(result)
 
             # Update counters

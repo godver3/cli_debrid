@@ -978,7 +978,8 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
             scene_season_map: Optional[int] = None,
             scene_episode_map: Optional[int] = None,
             check_pack_wantedness: bool = False,
-            original_episode: Optional[int] = None
+            original_episode: Optional[int] = None,
+            original_season: Optional[int] = None
         ) -> Tuple[List[Dict[str, Any]], Optional[List[Dict[str, Any]]], Dict[str, float]]:
             start_time = time.time()
             task_timings = {}
@@ -1157,14 +1158,15 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                 normalized_results, tmdb_id, original_media_title, year, content_type,
                 season, episode, multi, version_settings, runtime, episode_count,
                 season_episode_counts, genres, effective_matching_aliases,
-                imdb_id=imdb_id_for_fallback, 
-                direct_api=direct_api_instance, 
+                imdb_id=imdb_id_for_fallback,
+                direct_api=direct_api_instance,
                 preferred_language=preferred_language,
                 translated_title=translated_title,
                 target_air_date=target_air_date,
                 check_pack_wantedness=check_pack_wantedness,
-                current_scrape_target_version=version, # Pass the 'version' from _do_scrape's scope
-                original_episode=original_episode  # Pass the original episode number for filtering
+                current_scrape_target_version=version,
+                original_episode=original_episode,
+                original_season=original_season  # Pass original TVDB season so filter accepts both scene and TVDB-numbered torrents
             )
             filtered_out_results = [result for result in normalized_results if result not in filtered_results]
             task_timings['filtering'] = time.time() - task_start
@@ -1347,8 +1349,9 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                     # Pass the determined scene mapping (or None) to _do_scrape
                     scene_season_map=scene_season, # This is the XEM-mapped season (or None)
                     scene_episode_map=scene_episode, # This is the XEM-mapped episode (or None)
-                    check_pack_wantedness=check_pack_wantedness, # Pass parameter
-                    original_episode=original_episode  # Pass the original episode number for filtering
+                    check_pack_wantedness=check_pack_wantedness,
+                    original_episode=original_episode,
+                    original_season=original_season  # Pass original TVDB season before any XEM remapping
                 )
                 logging.debug(f"[scrape_main] _do_scrape for '{search_title}' returned: passed={len(filtered_results)}, filtered_out={len(filtered_out_results if filtered_out_results else [])}")
                 

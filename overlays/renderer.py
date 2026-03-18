@@ -581,7 +581,9 @@ class OverlayRenderer:
             return raw
         if fmt == 'decimal':
             v = n / 10 if n > 10 else n
-            return f'{v:.1f}'.rstrip('0').rstrip('.') if v != int(v) else f'{v:.1f}'
+            if v >= 10:
+                return '10'
+            return f'{v:.1f}'
         if fmt == 'percentage':
             v = round(n * 10) if n <= 10 else round(n)
             return str(v)
@@ -628,6 +630,10 @@ class OverlayRenderer:
             if value is None:
                 return ''
             text = str(value)
+            # For rating values ≥ 10, always strip the trailing .0 regardless of format
+            # (str(10.0) produces "10.0" which should always display as "10")
+            if key in self._RATING_VARS and isinstance(value, float) and value >= 10 and value == int(value):
+                text = str(int(value))
             if key == 'contentRating':
                 text = _CR_NORMALIZE.get(text.lower(), text)
             if rating_format and rating_format != 'auto' and key in self._RATING_VARS:

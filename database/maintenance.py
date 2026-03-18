@@ -563,6 +563,60 @@ def update_movie_titles():
         cursor.close()
         conn.close()
 
+def cleanup_title_year_suffixes():
+    """
+    Database year-in-title cleanup.
+    Finds titles like 'Show Name (2023)' and strips the trailing year,
+    saving the original in title_aliases.
+    """
+    import sqlite3
+    import re
+    import json
+    import os
+
+    _year_pattern = re.compile(r'^(.+?)\s*\(\d{4}\)\s*$')
+
+    logging.info("[TitleCleanup] Starting database year-in-title cleanup")
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    db_path = os.path.join(db_content_dir, 'media_items.db')
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT id, title, title_aliases FROM media_items WHERE title LIKE '%(%)%'")
+        rows = cursor.fetchall()
+        updated = 0
+        for row in rows:
+            title = row['title'] or ''
+            m = _year_pattern.match(title)
+            if not m:
+                continue
+            clean_title = m.group(1).strip()
+            if not clean_title:
+                continue
+            aliases = []
+            if row['title_aliases']:
+                try:
+                    aliases = json.loads(row['title_aliases'])
+                except (json.JSONDecodeError, TypeError):
+                    aliases = []
+            if title not in aliases:
+                aliases.append(title)
+            cursor.execute(
+                "UPDATE media_items SET title = ?, title_aliases = ? WHERE id = ?",
+                (clean_title, json.dumps(aliases), row['id'])
+            )
+            updated += 1
+        conn.commit()
+        logging.info(f"[TitleCleanup] Done — cleaned {updated} title(s)")
+    except Exception as e:
+        logging.error(f"[TitleCleanup] Error: {e}", exc_info=True)
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def run_plex_library_maintenance():
     """
     Run maintenance tasks specific to Plex library management.

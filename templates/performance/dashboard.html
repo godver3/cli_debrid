@@ -9,9 +9,40 @@
 <div class="container">
     <div class="header">
         <h2>Performance Dashboard</h2>
-        <button id="export-btn">
-            <i class="fas fa-download"></i> Export Data
-        </button>
+        <div style="display:flex;gap:8px;">
+            <button id="memory-snapshot-btn" title="Capture a live memory snapshot — run this while memory is high">
+                <i class="fas fa-microscope"></i> Memory Snapshot
+            </button>
+            <button id="trim-memory-btn" title="Run gc.collect() + malloc_trim(0) to release glibc arena pages back to OS">
+                <i class="fas fa-broom"></i> Trim Memory
+            </button>
+            <button id="export-btn">
+                <i class="fas fa-download"></i> Export Data
+            </button>
+        </div>
+    </div>
+
+    <!-- Memory Snapshot Result Panel -->
+    <div id="memory-snapshot-panel" style="display:none;" class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                    <span><i class="fas fa-microscope"></i> Memory Snapshot</span>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <span id="memory-snapshot-ts" style="font-size:0.8em;opacity:0.7;"></span>
+                        <button id="memory-snapshot-download-btn" style="padding:4px 10px;font-size:0.8em;">
+                            <i class="fas fa-download"></i> Download
+                        </button>
+                        <button id="memory-snapshot-close-btn" style="padding:4px 10px;font-size:0.8em;">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="memory-snapshot-content"></div>
+                </div>
+            </div>
+        </div>
     </div>
     
     <div class="row">
@@ -621,6 +652,115 @@ function updateMemoryAnalysis(data) {
         }
     }
 }
+
+// Memory Snapshot
+let _lastSnapshotData = null;
+
+document.getElementById('memory-snapshot-btn').addEventListener('click', () => {
+    const btn = document.getElementById('memory-snapshot-btn');
+    const panel = document.getElementById('memory-snapshot-panel');
+    const content = document.getElementById('memory-snapshot-content');
+    const ts = document.getElementById('memory-snapshot-ts');
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Capturing...';
+    content.innerHTML = '<p style="opacity:0.6;">Fetching snapshot...</p>';
+    panel.style.display = '';
+
+    fetch('/debug/api/memory_snapshot')
+        .then(r => r.json())
+        .then(data => {
+            _lastSnapshotData = data;
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-microscope"></i> Memory Snapshot';
+            ts.textContent = 'Captured at ' + new Date().toLocaleTimeString();
+
+            if (!data.success) {
+                content.innerHTML = `<p style="color:#dc3545;">Error: ${data.error || 'Unknown error'}</p>`;
+                return;
+            }
+
+            const s = data.snapshot;
+            const mb = v => v != null ? v + ' MB' : '—';
+            const ks = s.known_structures || {};
+
+            let html = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:16px;">`;
+
+            // Process stats
+            html += `<div class="metric-item"><h6>RSS Memory</h6><span>${mb(s.vmrss_mb || s.process_rss_mb)}</span></div>`;
+            html += `<div class="metric-item"><h6>Virtual Memory</h6><span>${mb(s.vmsize_mb)}</span></div>`;
+            html += `<div class="metric-item"><h6>Active Threads</h6><span>${s.thread_count != null ? s.thread_count : '—'}</span></div>`;
+            html += `<div class="metric-item"><h6>Session Store</h6><span>${ks.session_store_count != null ? ks.session_store_count + ' sessions' : '—'}</span></div>`;
+            html += `<div class="metric-item"><h6>Task Queue</h6><span>${ks.task_queue_count != null ? ks.task_queue_count + ' tasks (' + ks.task_queue_completed + ' done)' : '—'}</span></div>`;
+            html += `<div class="metric-item"><h6>Function Cache</h6><span>${ks.function_cache_total_entries != null ? ks.function_cache_total_entries + ' entries' : '—'}</span></div>`;
+            html += `<div class="metric-item"><h6>Scan Progress Keys</h6><span>${ks.scan_progress_keys != null ? ks.scan_progress_keys : '—'}</span></div>`;
+            html += `<div class="metric-item"><h6>Analysis Progress Keys</h6><span>${ks.analysis_progress_keys != null ? ks.analysis_progress_keys : '—'}</span></div>`;
+            html += `<div class="metric-item"><h6>Notification Queues</h6><span>${ks.notification_queues_count != null ? ks.notification_queues_count : '—'}</span></div>`;
+            html += `</div>`;
+
+            // Top object types
+            if (s.top_object_types && s.top_object_types.length) {
+                html += `<h6 style="margin-top:8px;margin-bottom:6px;"><i class="fas fa-list"></i> Top Python Object Types (by count)</h6>`;
+                html += `<table style="width:100%;border-collapse:collapse;font-size:0.85em;">`;
+                html += `<thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid rgba(128,128,128,0.3);">Type</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid rgba(128,128,128,0.3);">Count</th></tr></thead><tbody>`;
+                s.top_object_types.forEach(([type, count]) => {
+                    html += `<tr><td style="padding:3px 8px;">${type}</td><td style="text-align:right;padding:3px 8px;">${count.toLocaleString()}</td></tr>`;
+                });
+                html += `</tbody></table>`;
+            }
+
+            // Thread names
+            if (s.thread_names && s.thread_names.length) {
+                html += `<details style="margin-top:12px;"><summary style="cursor:pointer;opacity:0.7;">Thread names (${s.thread_names.length})</summary>`;
+                html += `<div style="font-size:0.8em;margin-top:6px;column-count:2;">${s.thread_names.map(n => `<div>${n}</div>`).join('')}</div></details>`;
+            }
+
+            content.innerHTML = html;
+        })
+        .catch(err => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-microscope"></i> Memory Snapshot';
+            content.innerHTML = `<p style="color:#dc3545;">Request failed: ${err}</p>`;
+        });
+});
+
+document.getElementById('memory-snapshot-close-btn').addEventListener('click', () => {
+    document.getElementById('memory-snapshot-panel').style.display = 'none';
+});
+
+document.getElementById('memory-snapshot-download-btn').addEventListener('click', () => {
+    if (_lastSnapshotData) {
+        const ts = new Date().toISOString().replace(/[:.]/g, '-');
+        downloadJson(_lastSnapshotData, `memory-snapshot-${ts}.json`);
+    }
+});
+
+// Trim Memory button
+document.getElementById('trim-memory-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('trim-memory-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Trimming...';
+    try {
+        const res = await fetch('/debug/api/trim_memory', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            const freed = data.freed_mb !== null ? data.freed_mb : '?';
+            const before = data.before_mb !== null ? data.before_mb : '?';
+            const after = data.after_mb !== null ? data.after_mb : '?';
+            btn.innerHTML = `<i class="fas fa-check"></i> ${before}→${after} MB (freed ${freed} MB)`;
+            setTimeout(() => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-broom"></i> Trim Memory';
+            }, 5000);
+        } else {
+            btn.innerHTML = '<i class="fas fa-times"></i> Failed';
+            setTimeout(() => { btn.disabled = false; btn.innerHTML = '<i class="fas fa-broom"></i> Trim Memory'; }, 3000);
+        }
+    } catch(e) {
+        btn.innerHTML = '<i class="fas fa-times"></i> Error';
+        setTimeout(() => { btn.disabled = false; btn.innerHTML = '<i class="fas fa-broom"></i> Trim Memory'; }, 3000);
+    }
+});
 
 // Add click handler for export button
 document.getElementById('export-btn').addEventListener('click', () => {

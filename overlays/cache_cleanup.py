@@ -270,59 +270,37 @@ class PosterCacheManager:
 
             backup_file = self.backup_dir / f"{ms_item_id}_original.jpg"
 
-            # 1. Try TMDB first — guaranteed clean original, never an overlay.
-            #    The backup file can be corrupted (overwritten with the overlay image)
-            #    so TMDB is the more reliable source.
-            conn = _get_db_connection()
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            cursor.execute(
-                'SELECT imdb_id, tmdb_id, type FROM media_items WHERE ms_item_id = ? LIMIT 1',
-                (ms_item_id,)
-            )
-            row = cursor.fetchone()
-            conn.close()
-
-            if row:
-                self.logger.info(f"Fetching clean TMDB poster for {ms_item_id}...")
-                poster_data = self._fetch_tmdb_poster_bytes(dict(row))
-                if poster_data:
-                    source = 'tmdb'
-                else:
-                    self.logger.warning(f"TMDB poster fetch failed for {ms_item_id}, trying backup")
-
-            # 2. Fallback: local backup (may be corrupted with overlay — used only if TMDB fails)
-            if not poster_data and backup_file.exists():
+            # 1. Try local backup first — fast local disk read, avoids external network calls.
+            if backup_file.exists():
                 backup_size = backup_file.stat().st_size
                 if backup_size > 5120:
                     with open(backup_file, 'rb') as f:
                         poster_data = f.read()
                     source = 'backup'
                     self.logger.info(f"Using backup for {ms_item_id} ({backup_size} bytes)")
-                    # Detect corrupted backup (Plex only — Jellyfin doesn't use upload:// keys)
-                    if not _jellyfin:
-                        try:
-                            backup_sha1 = hashlib.sha1(poster_data).hexdigest()
-                            backup_key = f"upload://posters/{backup_sha1}"
-                            current_posters = client.get_poster_list(ms_item_id)
-                            selected_poster = next(
-                                (p for p in current_posters if p.get('selected')), None
-                            )
-                            if selected_poster and selected_poster.get('ratingKey') == backup_key:
-                                self.logger.warning(
-                                    f"Backup for {ms_item_id} IS the overlay poster "
-                                    f"(SHA-1={backup_sha1[:8]}…) — discarding, no clean poster available"
-                                )
-                                poster_data = None
-                                source = None
-                        except Exception as _e:
-                            self.logger.warning(
-                                f"Could not validate backup integrity for {ms_item_id}: {_e}"
-                            )
                 else:
                     self.logger.warning(
                         f"Backup for {ms_item_id} is too small ({backup_size} bytes), skipping"
                     )
+
+            # 2. Fallback: fetch clean original from TMDB (used when no backup exists).
+            if not poster_data:
+                conn = _get_db_connection()
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute(
+                    'SELECT imdb_id, tmdb_id, type FROM media_items WHERE ms_item_id = ? LIMIT 1',
+                    (ms_item_id,)
+                )
+                row = cursor.fetchone()
+                conn.close()
+                if row:
+                    self.logger.info(f"No backup — fetching TMDB poster for {ms_item_id}...")
+                    poster_data = self._fetch_tmdb_poster_bytes(dict(row))
+                    if poster_data:
+                        source = 'tmdb'
+                    else:
+                        self.logger.warning(f"TMDB poster fetch failed for {ms_item_id}")
 
             if not poster_data:
                 if _jellyfin:
@@ -337,6 +315,7 @@ class PosterCacheManager:
                                     backup_file.unlink()
                             except Exception:
                                 pass
+                            self._delete_season_backups(ms_item_id)
                             return {
                                 'success': True,
                                 'message': 'Overlay removed — Jellyfin poster image deleted'
@@ -387,6 +366,7 @@ class PosterCacheManager:
                                     backup_file.unlink()
                             except Exception:
                                 pass
+                            self._delete_season_backups(ms_item_id)
                             return {
                                 'success': True,
                                 'message': f'Overlay removed — {deleted} custom poster(s) deleted'
@@ -413,6 +393,10 @@ class PosterCacheManager:
                         self.logger.info(f"Deleted backup file for {ms_item_id}")
                 except Exception as _be:
                     self.logger.warning(f"Could not delete backup for {ms_item_id}: {_be}")
+
+                # Delete any season backup files for this show so a new Plex poster
+                # selection isn't blocked by stale season backups.
+                self._delete_season_backups(ms_item_id)
 
                 # Plex only: delete remaining non-selected uploaded poster files from disk
                 # (old overlay versions that are no longer active).
@@ -670,6 +654,28 @@ class PosterCacheManager:
                 'success': False,
                 'message': str(e)
             }
+
+    def _delete_season_backups(self, ms_item_id: str) -> None:
+        """Delete all season backup files associated with a show's ms_item_id."""
+        try:
+            conn = _get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                'SELECT DISTINCT season_ms_item_id FROM season_overlay_state WHERE show_ms_item_id = ?',
+                (ms_item_id,)
+            )
+            season_keys = [row[0] for row in cursor.fetchall() if row[0]]
+            conn.close()
+            for sk in season_keys:
+                season_file = self.backup_dir / f"season_{sk}_original.jpg"
+                if season_file.exists():
+                    try:
+                        season_file.unlink()
+                        self.logger.info(f"Deleted season backup for {sk}")
+                    except Exception as _e:
+                        self.logger.warning(f"Could not delete season backup {season_file}: {_e}")
+        except Exception as _e:
+            self.logger.warning(f"_delete_season_backups failed for {ms_item_id}: {_e}")
 
     def _mark_all_removed(self, ms_item_id: str, reason: str):
         """
