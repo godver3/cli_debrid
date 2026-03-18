@@ -41,14 +41,18 @@ class InMemorySession(CallbackDict, SessionMixin):
         self.modified = False
         self.created = created or time.time()
 
+# Flask-Login writes these keys into every session (including anonymous ones).
+# Sessions that contain only these keys hold no app state and can be skipped.
+_FLASK_LOGIN_INTERNAL_KEYS = frozenset({'_id', '_fresh', '_remember', '_remember_seconds', 'user_id'})
+
 class InMemorySessionInterface(SessionInterface):
     """Simple in-memory session interface that avoids file system issues"""
-    
+
     # Class-level storage for all sessions with creation timestamps
     # Format: {sid: (pickled_data, created_timestamp)}
     session_store = {}
     last_cleanup = time.time()
-    
+
     def __init__(self):
         self.logger = logging.getLogger(__name__)
     
@@ -78,32 +82,30 @@ class InMemorySessionInterface(SessionInterface):
                 )
             return
         
+        # When the user system is disabled, every unauthenticated request
+        # (polls, API calls, etc.) causes Flask-Login to write an `_id` key
+        # into a brand-new session.  Since API clients don't echo the cookie
+        # back, each request allocates a fresh entry that is never reused and
+        # won't expire for 31 days.  Skip saving sessions that contain only
+        # Flask-Login internal keys — they hold no app state.
+        try:
+            if not is_user_system_enabled():
+                app_keys = set(session.keys()) - _FLASK_LOGIN_INTERNAL_KEYS
+                if not app_keys:
+                    return  # Nothing worth persisting; don't store or set cookie
+        except Exception:
+            pass
+
         # Save the session data in the in-memory store with creation time
         created = getattr(session, 'created', time.time())
-        prev_count = len(self.session_store)
         self.session_store[session.sid] = (pickle.dumps(dict(session)), created)
 
-        # --------------------------------------------------------------
-        #  DEBUG ‑ Memory-leak investigation (anonymous session growth)
-        # --------------------------------------------------------------
-        # When the user system is DISABLED we expect many short-lived
-        # anonymous requests.  Each request that fails to send back the
-        # session cookie will allocate a new entry in `session_store`.
-        # The following lightweight logging helps confirm that behaviour
-        # without flooding the logs.
-        try:
-            if not is_user_system_enabled():  # Only track when feature OFF
-                new_count = len(self.session_store)
-                if new_count != prev_count:
-                    # Log every 50th new session (first <50 always logged)
-                    if new_count < 50 or new_count % 50 == 0:
-                        self.logger.info(
-                            f"[MemLeakDebug] Anonymous session added (total: {new_count})")
-        except Exception:
-            # Never let debug instrumentation break normal flow
-            pass
-        # --------------------------------------------------------------
-        
+        # Hard cap: if the store has grown very large, force an immediate
+        # cleanup regardless of the time-based interval.
+        if len(self.session_store) > 200:
+            self._cleanup_sessions(app)
+            self.last_cleanup = time.time()
+
         # Set the cookie with the session ID
         httponly = self.get_cookie_httponly(app)
         secure = self.get_cookie_secure(app)

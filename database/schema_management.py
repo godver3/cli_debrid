@@ -2,6 +2,7 @@ import logging
 from .core import get_db_connection, initialize_notifications_table
 from .torrent_tracking import create_torrent_tracking_table
 from .content_source_retry import create_retry_queue_table
+from .upgrade_hub_activity import create_upgrade_hub_activity_table
 import sqlite3
 import os
 
@@ -10,6 +11,7 @@ def create_database():
     create_tables()
     create_torrent_tracking_table()
     create_retry_queue_table()
+    create_upgrade_hub_activity_table()
     #TODO: create_upgrading_table()
 
     # Add statistics-specific indexes

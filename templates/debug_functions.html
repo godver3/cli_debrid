@@ -92,10 +92,17 @@
         </div>
         <div class="debug_item">
             <h3>Fix Missing IMDb ID</h3>
-            <p class="description">Add or update the IMDb ID for a media item. Useful when Plex has the IMDb ID but it's missing from the database, preventing Plex label matching.</p>
+            <p class="description">Add or update the IMDb ID for a media item. Search by Item ID (single row) or TMDB ID (updates all matching rows at once).</p>
             <form id="fix-imdb-form" onsubmit="return false;">
                 <div class="form-group">
-                    <label for="fix_imdb_item_id">Item ID:</label>
+                    <label for="fix_imdb_search_by">Search by:</label>
+                    <select id="fix_imdb_search_by">
+                        <option value="item_id">Item ID</option>
+                        <option value="tmdb_id">TMDB ID</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="fix_imdb_item_id" id="fix_imdb_lookup_label">Item ID:</label>
                     <input type="number" id="fix_imdb_item_id" name="item_id" placeholder="e.g., 98080" required>
                 </div>
                 <div class="form-group">
@@ -3986,16 +3993,21 @@ if (document.readyState === 'loading') {
     // --- End Test Plex Item Lookup Function ---
 
     // --- Fix Missing IMDb ID Function ---
+    document.getElementById('fix_imdb_search_by')?.addEventListener('change', function() {
+        document.getElementById('fix_imdb_lookup_label').textContent = this.value === 'tmdb_id' ? 'TMDB ID:' : 'Item ID:';
+        document.getElementById('fix_imdb_item_id').placeholder = this.value === 'tmdb_id' ? 'e.g., 12345' : 'e.g., 98080';
+    });
+
     window.fixImdbId = function() {
-        const itemId = document.getElementById('fix_imdb_item_id').value.trim();
+        const lookupVal = document.getElementById('fix_imdb_item_id').value.trim();
         const imdbId = document.getElementById('fix_imdb_id').value.trim();
+        const searchBy = document.getElementById('fix_imdb_search_by').value;
         const resultsDiv = document.getElementById('fix-imdb-results');
 
-        if (!itemId || !imdbId) {
-            resultsDiv.innerHTML = '<p style="color: #ff6b6b;">Please fill in both Item ID and IMDb ID</p>';
+        if (!lookupVal || !imdbId) {
+            resultsDiv.innerHTML = '<p style="color: #ff6b6b;">Please fill in both fields</p>';
             return;
         }
-
         if (!imdbId.match(/^tt\d+$/)) {
             resultsDiv.innerHTML = '<p style="color: #ff6b6b;">IMDb ID must start with "tt" followed by numbers (e.g., tt37212066)</p>';
             return;
@@ -4003,18 +4015,28 @@ if (document.readyState === 'loading') {
 
         resultsDiv.innerHTML = '<p>Updating IMDb ID...</p>';
 
-        fetch(`/debug/plex-labels/fix-imdb/${itemId}/${imdbId}`, {
-            method: 'POST'
-        })
+        const url = searchBy === 'tmdb_id'
+            ? `/debug/plex-labels/fix-imdb-by-tmdb/${lookupVal}/${imdbId}`
+            : `/debug/plex-labels/fix-imdb/${lookupVal}/${imdbId}`;
+
+        fetch(url, { method: 'POST' })
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                let html = `<p style="color: #4ecdc4;">✓ Success! Updated IMDb ID</p>`;
+                let html = `<p style="color: #4ecdc4;">✓ Success!</p>`;
                 html += `<div style="margin-top: 10px; padding: 10px; background: #2a2a2a; border-radius: 4px;">`;
-                html += `<div><strong>Item ID:</strong> ${data.item_id}</div>`;
-                html += `<div><strong>Title:</strong> ${data.title}</div>`;
-                html += `<div><strong>IMDb ID Before:</strong> ${data.imdb_id_before || 'None'}</div>`;
-                html += `<div><strong>IMDb ID After:</strong> ${data.imdb_id_after}</div>`;
+                if (searchBy === 'tmdb_id') {
+                    html += `<div><strong>Updated ${data.updated_count} item(s)</strong></div>`;
+                    html += `<div><strong>IMDb ID set to:</strong> ${data.imdb_id_after}</div>`;
+                    (data.items || []).forEach(i => {
+                        html += `<div style="margin-top:4px; font-size:12px;">ID ${i.id} — ${i.title} (was: ${i.imdb_id_before || 'None'})</div>`;
+                    });
+                } else {
+                    html += `<div><strong>Item ID:</strong> ${data.item_id}</div>`;
+                    html += `<div><strong>Title:</strong> ${data.title}</div>`;
+                    html += `<div><strong>IMDb ID Before:</strong> ${data.imdb_id_before || 'None'}</div>`;
+                    html += `<div><strong>IMDb ID After:</strong> ${data.imdb_id_after}</div>`;
+                }
                 html += `</div>`;
                 resultsDiv.innerHTML = html;
             } else {

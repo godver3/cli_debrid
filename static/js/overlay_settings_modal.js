@@ -41,7 +41,7 @@
     loadThemeCSS();
 
     let modal, overlay, closeBtn, cancelBtn, saveBtn;
-    let overlaysEnabledInput, mediaDataPathInput, contentCheckDaysInput;
+    let overlaysEnabledInput, mediaDataPathInput, contentCheckDaysInput, syncItemsPerRunInput;
     let currentSettings = null;
 
     function initializeElements() {
@@ -59,6 +59,7 @@
         overlaysEnabledInput = document.getElementById('overlaySettingsEnabled');
         mediaDataPathInput = document.getElementById('overlaySettingsMediaDataPath');
         contentCheckDaysInput = document.getElementById('overlaySettingsContentCheckDays');
+        syncItemsPerRunInput = document.getElementById('overlaySettingsSyncItemsPerRun');
 
         return true;
     }
@@ -93,6 +94,10 @@
 
             if (contentCheckDaysInput) {
                 contentCheckDaysInput.value = overlaySettings.overlay_content_check_interval_days ?? 7;
+            }
+
+            if (syncItemsPerRunInput) {
+                syncItemsPerRunInput.value = overlaySettings.sync_items_per_run ?? 200;
             }
 
             modal.style.display = 'flex';
@@ -139,6 +144,9 @@
             updatedSettings['Overlay Settings'].plex_data_path = mediaDataPathInput.value.trim();
             if (contentCheckDaysInput) {
                 updatedSettings['Overlay Settings'].overlay_content_check_interval_days = parseInt(contentCheckDaysInput.value) || 7;
+            }
+            if (syncItemsPerRunInput) {
+                updatedSettings['Overlay Settings'].sync_items_per_run = parseInt(syncItemsPerRunInput.value) || 200;
             }
 
             const response = await fetch('/settings/api/settings', {

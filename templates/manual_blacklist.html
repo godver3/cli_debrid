@@ -46,7 +46,7 @@
                 <td>{{ item.media_type }}</td>
                 <td>
                     {% if item.media_type == 'episode' %}
-                        <form class="seasons-form" data-imdb-id="{{ imdb_id }}">
+                        <form class="seasons-form" data-imdb-id="{{ imdb_id }}" data-selected-seasons="{{ item.seasons | tojson }}">
                             <div class="form-check mb-2 d-flex align-items-center">
                                 <input type="checkbox" class="form-check-input" id="all_seasons_{{ imdb_id }}" name="all_seasons" {% if not item.seasons %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="all_seasons_{{ imdb_id }}">All Seasons</label>
@@ -56,23 +56,7 @@
                             </div>
                             <div class="seasons-container">
                                 <div class="seasons-list" style="display: none;">
-                                    {% if item.available_seasons %}
-                                        {% for season in item.available_seasons %}
-                                            <div class="form-check">
-                                                <input type="checkbox" class="form-check-input season-checkbox" id="season_{{ imdb_id }}_{{ season }}" 
-                                                       name="seasons" value="{{ season }}" 
-                                                       {% if item.seasons and season in item.seasons %}checked{% endif %}>
-                                                <label class="form-check-label" for="season_{{ imdb_id }}_{{ season }}">
-                                                    Season {{ season }}
-                                                    {% if item.season_episodes and season in item.season_episodes %}
-                                                        <small class="text-muted">({{ item.season_episodes[season] }} episodes)</small>
-                                                    {% endif %}
-                                                </label>
-                                            </div>
-                                        {% endfor %}
-                                    {% else %}
-                                        <div class="text-muted">No season information available</div>
-                                    {% endif %}
+                                    <div class="seasons-loading text-muted" style="display:none"><i class="fas fa-spinner fa-spin"></i> Loading…</div>
                                 </div>
                             </div>
                         </form>
@@ -101,101 +85,118 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    // Handle season checkboxes and "All Seasons" interaction
-    document.querySelectorAll('.seasons-form').forEach(form => {
+
+    function initForm(form) {
         const allSeasonsCheckbox = form.querySelector('[name="all_seasons"]');
-        const seasonsList = form.querySelector('.seasons-list');
-        const seasonCheckboxes = form.querySelectorAll('.season-checkbox');
         const toggleButton = form.querySelector('.toggle-seasons');
-        
-        // Function to check if all seasons are selected
-        const areAllSeasonsSelected = () => {
-            return Array.from(seasonCheckboxes).every(cb => cb.checked);
-        };
-        
-        // Function to update "All Seasons" checkbox based on individual selections
+
+        const getSeasonCheckboxes = () => form.querySelectorAll('.season-checkbox');
+
         const updateAllSeasonsCheckbox = () => {
-            allSeasonsCheckbox.checked = areAllSeasonsSelected();
+            const boxes = getSeasonCheckboxes();
+            allSeasonsCheckbox.checked = boxes.length > 0 && Array.from(boxes).every(cb => cb.checked);
         };
 
-        // Handle "All Seasons" checkbox changes
         allSeasonsCheckbox.addEventListener('change', function() {
-            seasonCheckboxes.forEach(cb => cb.checked = this.checked);
+            getSeasonCheckboxes().forEach(cb => cb.checked = this.checked);
         });
 
-        // Handle toggle button
-        toggleButton.addEventListener('click', function(e) {
+        // Lazy-load seasons on first toggle expand
+        let loaded = false;
+        toggleButton.addEventListener('click', async function(e) {
             e.preventDefault();
-            const seasonsList = this.closest('.seasons-form').querySelector('.seasons-list');
+            const seasonsList = form.querySelector('.seasons-list');
             const isHidden = seasonsList.style.display === 'none';
-            seasonsList.style.display = isHidden ? 'block' : 'none';
-            this.classList.toggle('active');
-        });
 
-        // Handle individual season checkbox changes
-        seasonCheckboxes.forEach(checkbox => {
-            checkbox.addEventListener('change', function() {
-                updateAllSeasonsCheckbox();
-            });
-        });
+            if (isHidden && !loaded) {
+                loaded = true;
+                const loading = form.querySelector('.seasons-loading');
+                loading.style.display = 'block';
+                seasonsList.style.display = 'block';
+                this.classList.add('active');
 
-        // Handle shift-click selection
-        let lastChecked = null;
-        seasonCheckboxes.forEach(checkbox => {
-            checkbox.addEventListener('click', function(e) {
-                if (!lastChecked) {
-                    lastChecked = this;
-                    return;
-                }
+                const imdbId = form.dataset.imdbId;
+                const selectedSeasons = JSON.parse(form.dataset.selectedSeasons || '[]');
 
-                if (e.shiftKey) {
-                    const checkboxes = Array.from(seasonCheckboxes);
-                    const start = checkboxes.indexOf(this);
-                    const end = checkboxes.indexOf(lastChecked);
-                    
-                    const shouldCheck = this.checked;
-                    
-                    checkboxes
-                        .slice(Math.min(start, end), Math.max(start, end) + 1)
-                        .forEach(cb => {
-                            cb.checked = shouldCheck;
+                try {
+                    const res = await fetch(`/debug/api/manual_blacklist/${imdbId}/seasons`);
+                    const data = await res.json();
+                    loading.style.display = 'none';
+
+                    if (data.success && data.seasons.length) {
+                        let lastChecked = null;
+                        data.seasons.forEach(season => {
+                            const eps = data.season_episodes[season] || 0;
+                            const isChecked = selectedSeasons.length === 0 || selectedSeasons.includes(season);
+                            const div = document.createElement('div');
+                            div.className = 'form-check';
+                            div.innerHTML = `
+                                <input type="checkbox" class="form-check-input season-checkbox"
+                                       id="season_${imdbId}_${season}" name="seasons" value="${season}"
+                                       ${isChecked ? 'checked' : ''}>
+                                <label class="form-check-label" for="season_${imdbId}_${season}">
+                                    Season ${season}${eps ? ` <small class="text-muted">(${eps} episodes)</small>` : ''}
+                                </label>`;
+                            seasonsList.appendChild(div);
+
+                            // Shift-click support
+                            const cb = div.querySelector('input');
+                            cb.addEventListener('change', updateAllSeasonsCheckbox);
+                            cb.addEventListener('click', function(e) {
+                                if (e.shiftKey && lastChecked) {
+                                    const boxes = Array.from(getSeasonCheckboxes());
+                                    const start = boxes.indexOf(this);
+                                    const end = boxes.indexOf(lastChecked);
+                                    const shouldCheck = this.checked;
+                                    boxes.slice(Math.min(start, end), Math.max(start, end) + 1)
+                                         .forEach(b => b.checked = shouldCheck);
+                                    updateAllSeasonsCheckbox();
+                                }
+                                lastChecked = this;
+                            });
                         });
-                    
-                    updateAllSeasonsCheckbox();
+                        updateAllSeasonsCheckbox();
+                    } else {
+                        loading.style.display = 'none';
+                        seasonsList.insertAdjacentHTML('beforeend', '<div class="text-muted">No season information available</div>');
+                    }
+                } catch(err) {
+                    loading.style.display = 'none';
+                    seasonsList.insertAdjacentHTML('beforeend', '<div class="text-danger">Failed to load seasons</div>');
                 }
-
-                lastChecked = this;
-            });
+            } else {
+                seasonsList.style.display = isHidden ? 'block' : 'none';
+                this.classList.toggle('active', isHidden);
+            }
         });
-    });
+    }
+
+    document.querySelectorAll('.seasons-form').forEach(initForm);
 
     // Handle save all changes
     document.getElementById('saveAllChanges').addEventListener('click', async function() {
         const forms = document.querySelectorAll('.seasons-form');
         let success = true;
-        
+
         for (const form of forms) {
             const imdbId = form.dataset.imdbId;
             const allSeasons = form.querySelector('[name="all_seasons"]').checked;
             const selectedSeasons = Array.from(form.querySelectorAll('.season-checkbox:checked')).map(cb => cb.value);
-            
+
             const formData = new FormData();
             formData.append('action', 'update_seasons');
             formData.append('imdb_id', imdbId);
             if (allSeasons) {
                 formData.append('all_seasons', 'on');
             } else {
-                selectedSeasons.forEach(season => {
-                    formData.append('seasons', season);
-                });
+                selectedSeasons.forEach(season => formData.append('seasons', season));
             }
-            
+
             try {
                 const response = await fetch(window.location.href, {
                     method: 'POST',
                     body: formData
                 });
-                
                 if (!response.ok) {
                     success = false;
                     console.error(`Failed to update seasons for ${imdbId}`);
@@ -205,7 +206,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 console.error('Error:', error);
             }
         }
-        
+
         if (success) {
             window.location.reload();
         } else {

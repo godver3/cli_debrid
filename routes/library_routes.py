@@ -612,6 +612,10 @@ def get_library_data():
             count_query += " AND upgraded = ? AND state NOT IN ('Unreleased', 'Final Scrape', 'Scraping', 'Upgrading', 'Wanted')"
             params.append(1)
             count_params.append(1)
+        elif status_filter == 'broken':
+            # Collected/Upgrading items with no Plex match (ms_item_id is NULL)
+            query += " AND state IN ('Collected', 'Upgrading') AND (ms_item_id IS NULL OR ms_item_id = '')"
+            count_query += " AND state IN ('Collected', 'Upgrading') AND (ms_item_id IS NULL OR ms_item_id = '')"
         else:
             # Default to Collected and Partial for unknown filter values
             query += " AND state IN (?, ?)"

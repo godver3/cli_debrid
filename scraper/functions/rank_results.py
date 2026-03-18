@@ -43,7 +43,8 @@ def rank_result_key(
     multi: bool, content_type: str, version_settings: Dict[str, Any],
     preferred_language: str = None,
     translated_title: str = None,
-    show_season_episode_counts: Optional[Dict[int, int]] = None
+    show_season_episode_counts: Optional[Dict[int, int]] = None,
+    upgrade_mode: bool = False,
 ) -> Tuple:
     torrent_title = result.get('title', '')
     parsed_info = result.get('parsed_info', {})
@@ -64,6 +65,15 @@ def rank_result_key(
     country_weight = float(version_settings.get('country_weight', 3.0))
     language_weight = float(version_settings.get('language_weight', 3.0))
     year_match_weight = float(version_settings.get('year_match_weight', 3.0)) # New weight
+
+    # Upgrade Hub mode: size, bitrate, country and language are irrelevant when
+    # comparing quality upgrades — they cause REMUX files to be mis-scored and
+    # produce wildly inconsistent improvement percentages across items.
+    if upgrade_mode:
+        size_weight = 0.0
+        bitrate_weight = 0.0
+        country_weight = 0.0
+        language_weight = 0.0
 
     # Calculate base scores
     normalized_query = normalize_title(query).lower()
@@ -505,7 +515,9 @@ def rank_result_key(
 
     # Content type matching score
     content_type_score = 0
-    if content_type.lower() == 'movie' and not result.get('is_anime', False):
+    if upgrade_mode:
+        pass  # Content type is already known for upgrade candidates — skip penalties
+    elif content_type.lower() == 'movie' and not result.get('is_anime', False):
         if re.search(r'(s\d{2}|e\d{2}|season|episode)', torrent_title, re.IGNORECASE):
             content_type_score = -500
             #logging.debug(f"Applied penalty for movie with season/episode in title")
@@ -570,6 +582,12 @@ def rank_result_key(
                     logging.debug(f"Applied penalty for anime with no clear episode number")
     else:
         logging.warning(f"Unknown content type: {content_type} for result: {torrent_title}")
+
+    # The synthetic current-file result always has the correct content type — its
+    # title is the clean query title (no S/E indicators) so the pattern check above
+    # would incorrectly apply a -500 penalty.  Skip it entirely.
+    if result.get('source') == '__current__':
+        content_type_score = 0
 
     # Add content_type_score to the total score
     total_score += content_type_score

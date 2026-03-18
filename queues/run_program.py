@@ -147,6 +147,18 @@ class ProgramRunner:
         self.last_resume_time = None
         self.pause_resume_cooldown = 30  # Minimum seconds between pause/resume operations
         
+        # Task schedule persistence — load saved next-run times so timers survive restarts.
+        import os as _os
+        _db_dir = _os.environ.get('USER_DB_CONTENT', '/user/db_content')
+        _os.makedirs(_db_dir, exist_ok=True)
+        self._task_schedule_file = _os.path.join(_db_dir, 'task_schedule.json')
+        self._task_schedules = self._load_task_schedules()
+
+        # Persistent job store — survives restarts so task timers are not reset.
+        from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+        _scheduler_db = f"sqlite:///{_os.path.join(_db_dir, 'scheduler.db')}"
+        _jobstores = {'default': SQLAlchemyJobStore(url=_scheduler_db)}
+
         # Configure scheduler timezone using the local timezone helper
         try:
             from metadata.metadata import _get_local_timezone # Added import
@@ -161,7 +173,7 @@ class ProgramRunner:
                 'max_instances': 1, # Already part of individual job scheduling, but good to have as default
                 'misfire_grace_time': None  # Allow jobs to run no matter how late
             }
-            self.scheduler = BackgroundScheduler(executors=executors, job_defaults=job_defaults, timezone=tz)
+            self.scheduler = BackgroundScheduler(jobstores=_jobstores, executors=executors, job_defaults=job_defaults, timezone=tz)
             logging.info("APScheduler configured with a single worker thread for sequential job execution.")
             # --- END EDIT ---
         except Exception as e:
@@ -175,7 +187,7 @@ class ProgramRunner:
                 'max_instances': 1,
                 'misfire_grace_time': None  # Allow jobs to run no matter how late
             }
-            self.scheduler = BackgroundScheduler(executors=executors, job_defaults=job_defaults) # Fallback to default timezone
+            self.scheduler = BackgroundScheduler(jobstores=_jobstores, executors=executors, job_defaults=job_defaults) # Fallback to default timezone
             logging.info("APScheduler configured with a single worker thread for sequential job execution (using system default timezone).")
             # --- END EDIT ---
 
@@ -280,6 +292,7 @@ class ProgramRunner:
             'task_update_movie_titles': 55600,     # Run every ~15 hours
             'task_refresh_release_dates': 36600,   # Run every 10h 10m (10 hours + 600s stagger to avoid overlap with early_releases)
             'task_sync_episode_metadata': 24 * 60 * 60,  # Run every 24 hours to sync episode titles from TMDB/Trakt
+            'task_cleanup_title_year_suffixes': 24 * 60 * 60,  # Run every 24 hours
             # 'task_generate_airtime_report': 3600,  # Run every hour
             'task_run_library_maintenance': 12 * 60 * 60, # Run every twelve hours (if enabled)
             'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours (if enabled)
@@ -312,7 +325,10 @@ class ProgramRunner:
             'task_overlay_cleanup': 86400, # Run every 24 hours (if overlays enabled)
             # --- END EDIT ---
             # 'task_artificial_long_run': 1*60*60, # Run every 2 minutes
-            'task_regulate_system_load': 30 # Check system load every 30 seconds
+            'task_regulate_system_load': 30, # Check system load every 30 seconds
+            'task_upgrade_hub_scan': 24 * 60 * 60, # Run every 24 hours (disabled by default)
+            'task_upgrade_hub_auto_queue': 24 * 60 * 60, # Run every 24 hours (disabled by default)
+            'task_trim_memory': 60 * 60, # Run every hour
         }
         # Store original intervals for reference (will be updated after content sources)
         self.original_task_intervals = self.task_intervals.copy()
@@ -439,7 +455,7 @@ class ProgramRunner:
             'task_generate_airtime_report', 'task_sync_time', 'task_check_trakt_early_releases',
             'task_reconcile_queues', 'task_refresh_download_stats',
             'task_update_show_ids', 'task_update_show_titles', 'task_update_movie_ids',
-            'task_update_movie_titles', 'task_sync_episode_metadata', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
+            'task_update_movie_titles', 'task_sync_episode_metadata', 'task_cleanup_title_year_suffixes', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
             'task_check_database_health', 'task_run_library_maintenance',
             'task_verify_symlinked_files', 'task_update_statistics_summary',
             'task_precompute_airing_shows',
@@ -522,6 +538,7 @@ class ProgramRunner:
             # 'task_analyze_media_files', # disabled by default
             # --- END EDIT ---
             # 'task_artificial_long_run',
+            'task_trim_memory',
         }
         logging.info("Initialized base enabled tasks.")
         # (The accurate default snapshot will be captured later, after content-source and conditional tasks.)
@@ -530,6 +547,7 @@ class ProgramRunner:
         # --- START EDIT: Initialize saved_states before try block ---
         saved_states = {} # Ensure saved_states exists even if file loading fails
         # --- END EDIT ---
+
         try:
             import os
             import json
@@ -1004,10 +1022,31 @@ class ProgramRunner:
                         jittered_interval = int(interval_seconds * jitter_factor)
 
                         if initial_delay_seconds > 0:
+                            # Explicit delay requested (stagger, disable_initialization, etc.) — honour it.
                             from datetime import datetime, timedelta
                             first_run_time = datetime.now(resolved_timezone) + timedelta(seconds=initial_delay_seconds)
                             trigger = IntervalTrigger(seconds=jittered_interval, start_date=first_run_time, timezone=resolved_timezone)
                             logging.info(f"Task '{job_id}' will start in {initial_delay_seconds}s (at {first_run_time.strftime('%H:%M:%S')}) for startup staggering, interval: {jittered_interval}s (jittered from {interval_seconds}s)")
+                        elif initial_run:
+                            # On startup, resume from the persisted next-run time so the timer continues
+                            # where it left off before the restart instead of resetting to a full interval.
+                            from datetime import datetime, timedelta
+                            _persisted_next = getattr(self, '_task_schedules', {}).get(job_id)
+                            if _persisted_next:
+                                first_run_time = datetime.fromtimestamp(_persisted_next, tz=resolved_timezone)
+                                trigger = IntervalTrigger(seconds=jittered_interval, start_date=first_run_time, timezone=resolved_timezone)
+                                _remaining = (_persisted_next - time.time())
+                                if _remaining > 0:
+                                    logging.info(f"Task '{job_id}' resuming persisted schedule: next run in {_remaining/3600:.1f}h")
+                                else:
+                                    logging.info(f"Task '{job_id}' was overdue by {-_remaining/3600:.1f}h, will run immediately")
+                            else:
+                                # No persisted schedule — use exact interval for first fire so jitter
+                                # doesn't cause the first run to land outside the configured interval.
+                                from datetime import datetime, timedelta
+                                first_run_time = datetime.now(resolved_timezone) + timedelta(seconds=interval_seconds)
+                                trigger = IntervalTrigger(seconds=jittered_interval, start_date=first_run_time, timezone=resolved_timezone)
+                                logging.debug(f"Task '{job_id}' no persisted schedule, first run in {interval_seconds}s, interval jittered to {jittered_interval}s")
                         else:
                             trigger = IntervalTrigger(seconds=jittered_interval, timezone=resolved_timezone)
                             if jittered_interval != interval_seconds:
@@ -1066,25 +1105,17 @@ class ProgramRunner:
             if task.startswith('task_Trakt Lists_') or task == 'task_Trakt Collection_1'
         ])
 
-        # Check if any Trakt tasks are already scheduled - if so, don't apply stagger delays (this is a re-schedule)
-        already_scheduled = False
-        if self.scheduler and trakt_tasks_to_stagger:
-            already_scheduled = any(self.scheduler.get_job(task) is not None for task in trakt_tasks_to_stagger)
-
-        # Build a map of task_name -> initial_delay_seconds
+        # Build a map of task_name -> initial_delay_seconds (always stagger, even after reinitialize)
         trakt_task_stagger_map = {}
-        if not already_scheduled:
-            for idx, task_name in enumerate(trakt_tasks_to_stagger):
-                delay_seconds = (idx + 1) * 240  # 240s (4 min), 480s (8 min), 720s (12 min), etc.
-                trakt_task_stagger_map[task_name] = delay_seconds
+        for idx, task_name in enumerate(trakt_tasks_to_stagger):
+            delay_seconds = (idx + 1) * 240  # 240s (4 min), 480s (8 min), 720s (12 min), etc.
+            trakt_task_stagger_map[task_name] = delay_seconds
 
-            # Log stagger plan
-            if trakt_task_stagger_map:
-                logging.info(f"Staggering {len(trakt_task_stagger_map)} enabled Trakt tasks on startup to prevent concurrent API calls:")
-                for task_name, delay in sorted(trakt_task_stagger_map.items(), key=lambda x: x[1]):
-                    logging.info(f"  - {task_name}: +{delay}s delay")
-        else:
-            logging.info("Trakt tasks already scheduled - skipping stagger delays for re-schedule")
+        # Log stagger plan
+        if trakt_task_stagger_map:
+            logging.info(f"Staggering {len(trakt_task_stagger_map)} enabled Trakt tasks to prevent concurrent API calls:")
+            for task_name, delay in sorted(trakt_task_stagger_map.items(), key=lambda x: x[1]):
+                logging.info(f"  - {task_name}: +{delay}s delay")
         # *** END STAGGER EDIT ***
 
         for task_name in tasks_to_process:
@@ -1100,6 +1131,7 @@ class ProgramRunner:
                 # *** START STAGGER EDIT: Apply stagger delay for Trakt tasks ***
                 # Get the stagger delay for this task (0 if not a Trakt task)
                 delay = trakt_task_stagger_map.get(task_name, 0)
+
                 # Attempt to schedule with the appropriate delay
                 if self._schedule_task(task_name, interval, initial_run=True, initial_delay_seconds=delay):
                     scheduled_count += 1
@@ -1140,6 +1172,39 @@ class ProgramRunner:
                      f"Successfully Scheduled: {scheduled_count}, "
                      f"Failed/Skipped (e.g. no interval, other errors): {failed_to_schedule_count}, "
                      f"Pruned Obsolete Content Source Tasks: {pruned_obsolete_task_count}.")
+
+        # Seed task_schedule.json with the initial next-run times for any task that doesn't
+        # already have a persisted entry. This ensures that even daily tasks that have never
+        # completed survive their first restart correctly.
+        try:
+            _seeded = 0
+            for job in self.scheduler.get_jobs():
+                _jinterval = self.task_intervals.get(job.id, 0)
+                if job.next_run_time and job.id not in self._task_schedules and _jinterval >= 1200:
+                    self._task_schedules[job.id] = job.next_run_time.timestamp()
+                    _seeded += 1
+            if _seeded:
+                import json as _json_seed
+                with open(self._task_schedule_file, 'w') as _f_seed:
+                    _json_seed.dump(self._task_schedules, _f_seed)
+                logging.info(f"[TaskScheduler] Seeded {_seeded} new task schedules into task_schedule.json")
+        except Exception as _e_seed:
+            logging.debug(f"[TaskScheduler] Could not seed task schedules: {_e_seed}")
+
+        # Schedule a periodic snapshot so restarts always restore the actual remaining time.
+        try:
+            from apscheduler.triggers.interval import IntervalTrigger as _SnapshotTrigger
+            self.scheduler.add_job(
+                self._snapshot_task_schedules,
+                trigger=_SnapshotTrigger(minutes=5),
+                id='task_snapshot_schedules',
+                name='Snapshot Task Schedules',
+                replace_existing=True,
+                misfire_grace_time=60,
+            )
+            logging.info("[TaskScheduler] Snapshot job registered (every 5 min)")
+        except Exception as _e_snap:
+            logging.warning(f"[TaskScheduler] Could not register snapshot job: {_e_snap}")
 
     def _is_within_pause_schedule(self):
         """Checks if the current time is within the configured pause schedule."""
@@ -2142,6 +2207,66 @@ class ProgramRunner:
     # def task_generate_airtime_report(self):
     #     generate_airtime_report()
 
+    # ---------------------------------------------------------------------------
+    # Task schedule persistence helpers
+    # ---------------------------------------------------------------------------
+
+    def _load_task_schedules(self) -> dict:
+        """Load persisted task next-run timestamps from disk."""
+        import json
+        path = getattr(self, '_task_schedule_file', None)
+        if path:
+            try:
+                if os.path.exists(path):
+                    with open(path, 'r') as f:
+                        data = json.load(f)
+                    logging.info(f"[TaskScheduler] Loaded {len(data)} persisted task schedules from task_schedule.json")
+                    return data
+            except Exception as e:
+                logging.warning(f"[TaskScheduler] Could not load task_schedule.json: {e}")
+        return {}
+
+    def _save_task_schedule(self, task_name: str, next_run_time: float):
+        """Persist a task's next scheduled run time to disk."""
+        import json
+        path = getattr(self, '_task_schedule_file', None)
+        if not path:
+            return
+        try:
+            self._task_schedules[task_name] = next_run_time
+            with open(path, 'w') as f:
+                json.dump(self._task_schedules, f)
+        except Exception as e:
+            logging.debug(f"[TaskScheduler] Could not save task_schedule.json: {e}")
+
+    def _snapshot_task_schedules(self):
+        """Snapshot every qualifying task's current next_run_time to disk.
+
+        Runs every 5 minutes so that on restart the actual remaining time is
+        restored rather than resetting to the full default interval.
+        """
+        import json
+        path = getattr(self, '_task_schedule_file', None)
+        if not path:
+            return
+        try:
+            updated = 0
+            for job in self.scheduler.get_jobs():
+                if job.id == 'task_snapshot_schedules':
+                    continue
+                _jinterval = self.task_intervals.get(job.id, 0)
+                if job.next_run_time and _jinterval >= 1200:
+                    self._task_schedules[job.id] = job.next_run_time.timestamp()
+                    updated += 1
+            if updated:
+                with open(path, 'w') as f:
+                    json.dump(self._task_schedules, f)
+                logging.debug(f"[TaskScheduler] Snapshot saved {updated} task schedules")
+        except Exception as e:
+            logging.debug(f"[TaskScheduler] Snapshot error: {e}")
+
+    # ---------------------------------------------------------------------------
+
     def task_debug_log(self):
         current_time = time.time()
         debug_info = []
@@ -2508,7 +2633,7 @@ class ProgramRunner:
             'task_generate_airtime_report', 'task_sync_time', 'task_check_trakt_early_releases',
             'task_reconcile_queues', 'task_refresh_download_stats',
             'task_update_show_ids', 'task_update_show_titles', 'task_update_movie_ids',
-            'task_update_movie_titles', 'task_sync_episode_metadata', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
+            'task_update_movie_titles', 'task_sync_episode_metadata', 'task_cleanup_title_year_suffixes', 'task_get_plex_watch_history', 'task_refresh_plex_tokens',
             'task_check_database_health', 'task_run_library_maintenance',
             'task_verify_symlinked_files', 'task_update_statistics_summary',
             'task_precompute_airing_shows',
@@ -2934,12 +3059,8 @@ class ProgramRunner:
     def task_cleanup_debrid(self):
         """Scheduled task to clean up errored and duplicate debrid torrents."""
         try:
-            from utilities.debrid_backup import run_cleanup, get_cleanup_settings
-            settings = get_cleanup_settings()
-            if not settings.get('enabled'):
-                logging.debug('[DEBRID_CLEANUP] Task ran but cleanup is disabled — skipping')
-                return
-            result = run_cleanup(force=False)
+            from utilities.debrid_backup import run_cleanup
+            result = run_cleanup(force=True)
             if result.get('success'):
                 logging.info(f"[DEBRID_CLEANUP] Complete: {result.get('total_deleted', 0)} removed "
                              f"(errors={result.get('deleted_errors',0)}, "
@@ -3883,7 +4004,7 @@ class ProgramRunner:
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
-            items = cursor.execute('SELECT id, title, filled_by_title, filled_by_file, type, imdb_id, tmdb_id, season_number, episode_number, year, version, original_scraped_torrent_title, real_debrid_original_title FROM media_items WHERE state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)').fetchall()
+            items = cursor.execute('SELECT id, title, filled_by_title, filled_by_file, type, imdb_id, tmdb_id, season_number, episode_number, year, version, original_scraped_torrent_title, real_debrid_original_title, last_updated, upgrading_from, upgrading_from_torrent_id FROM media_items WHERE state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)').fetchall()
         except sqlite3.Error as db_err:
             logging.error(f"Database error fetching items for Plex check: {db_err}")
             conn.close()
@@ -4294,12 +4415,65 @@ class ProgramRunner:
                     self.file_location_cache[cache_key] = 'exists'
                     current_tick = self.plex_scan_tick_counts.get(cache_key, 0) + 1
                     self.plex_scan_tick_counts[cache_key] = current_tick
-                    if current_tick <= 3:
-                        should_trigger_scan = True
-                        updated_items += 1 # Count item here when scan is intended
-                        logging.info(f"File '{current_filename}' found (tick {current_tick}). Identifying relevant Plex sections to scan.")
-                    else:
-                        logging.info(f"File '{current_filename}' found (tick {current_tick}). Plex scan ticks exhausted — marking item {item_id} as Collected directly (file confirmed on disk, recentlyAdded did not resolve it).")
+
+                    # Option C: Direct Plex library lookup.
+                    # Try 1: file path search (most reliable — checks exact file Plex should have indexed).
+                    # Try 2: GUID search (fallback — sometimes unreliable in Plex).
+                    _force_collect_reason = None
+                    _imdb_id = item_dict['imdb_id']
+                    _tmdb_id = item_dict['tmdb_id']
+                    _item_type_lookup = 'show' if item_dict['type'] == 'episode' else item_dict['type']
+                    # File path search: ask Plex "do you have this exact file?"
+                    # Embed file in URL directly (not as kwarg) so requests doesn't alter the value.
+                    if actual_file_path:
+                        _plex_filename = os.path.basename(actual_file_path)
+                        _is_episode = item_dict['type'] == 'episode'
+                        for _section in sections:
+                            if _section.type != _item_type_lookup:
+                                continue
+                            try:
+                                _type_param = '&type=4' if _is_episode else ''
+                                _fp_results = plex.fetchItems(f'/library/sections/{_section.key}/all?file={_plex_filename}{_type_param}')
+                                if _fp_results:
+                                    _force_collect_reason = f"file indexed in Plex confirmed (tick {current_tick})"
+                                    break
+                            except Exception as _e_fp:
+                                logging.debug(f"[PlexCheck] File path search failed for item {item_id}: {_e_fp}")
+                    # GUID search fallback
+                    if not _force_collect_reason and (_imdb_id or _tmdb_id):
+                        for _section in sections:
+                            if _section.type != _item_type_lookup:
+                                continue
+                            try:
+                                _results = []
+                                if _imdb_id:
+                                    _results = _section.search(**{'guid': f'imdb://{_imdb_id}'})
+                                if not _results and _tmdb_id:
+                                    _results = _section.search(**{'guid': f'tmdb://{_tmdb_id}'})
+                                if _results:
+                                    _force_collect_reason = f"direct Plex GUID lookup confirmed in library (tick {current_tick})"
+                                    break
+                            except Exception as _e_search:
+                                logging.debug(f"[PlexCheck] Direct GUID search failed for item {item_id}: {_e_search}")
+
+                    # Option B: Time-based fallback using last_updated from DB (restart-resilient).
+                    if not _force_collect_reason:
+                        _last_updated = item_dict['last_updated']
+                        if _last_updated and current_tick > 1:
+                            try:
+                                _lu_dt = datetime.strptime(str(_last_updated), '%Y-%m-%d %H:%M:%S') if isinstance(_last_updated, str) else _last_updated
+                                _mins_in_checking = (datetime.now() - _lu_dt).total_seconds() / 60
+                                if _mins_in_checking > 30:
+                                    _force_collect_reason = f"{_mins_in_checking:.0f}m in Checking (time-based fallback, tick {current_tick})"
+                            except Exception:
+                                pass
+
+                    # Original tick fallback.
+                    if not _force_collect_reason and current_tick > 3:
+                        _force_collect_reason = f"tick {current_tick} exhausted (recentlyAdded did not resolve)"
+
+                    if _force_collect_reason:
+                        logging.info(f"[PlexCheck] Marking item {item_id} ('{item_title_for_log}') as Collected: {_force_collect_reason}.")
                         _conn_fb = None
                         try:
                             _conn_fb = get_db_connection()
@@ -4311,28 +4485,61 @@ class ProgramRunner:
                             )
                             if _cur_fb.rowcount > 0:
                                 _conn_fb.commit()
-                                logging.info(f"Fallback: marked item {item_id} ({item_dict['title'] if item_dict['title'] else 'N/A'}) as Collected after {current_tick} ticks with file on disk.")
+                                logging.info(f"[PlexCheck] Marked item {item_id} ({item_title_for_log}) as Collected ({_force_collect_reason}).")
                                 _fb_details = get_media_item_by_id(item_id)
                                 if _fb_details:
-                                    handle_state_change(dict(_fb_details))  # triggers replace_cleanup_after_collect internally
+                                    handle_state_change(dict(_fb_details))
                                     from database.database_writing import add_to_collected_notifications
                                     _notif = dict(_fb_details)
-                                    _notif['is_upgrade'] = False
+                                    _notif['is_upgrade'] = bool(_notif.get('upgrading_from'))
                                     _notif['new_state'] = "Collected"
                                     add_to_collected_notifications(_notif)
+                                    # Log upgrade success to Upgrade Hub activity
+                                    if _notif.get('upgrading_from'):
+                                        try:
+                                            from queues.upgrading_queue import log_successful_upgrade
+                                            log_successful_upgrade(_notif)
+                                        except Exception as _lsu_err:
+                                            logging.debug(f"[PlexCheck] log_successful_upgrade failed: {_lsu_err}")
+                                    # Upgrade cleanup: delete old torrent and remove old Plex entry
+                                    _old_torrent_id = _notif.get('upgrading_from_torrent_id')
+                                    _upgrading_from_path = _notif.get('upgrading_from')
+                                    if _old_torrent_id:
+                                        try:
+                                            from debrid import get_debrid_provider as _gdp
+                                            _dp = _gdp()
+                                            if _dp:
+                                                _dp.remove_torrent(_old_torrent_id, removal_reason='Replaced by upgrade')
+                                                logging.info(f"[PlexCheck] Removed old upgrade torrent {_old_torrent_id} for item {item_id} ({item_title_for_log})")
+                                        except Exception as _ct_err:
+                                            if '404' in str(_ct_err):
+                                                logging.debug(f"[PlexCheck] Old torrent {_old_torrent_id} already removed (404)")
+                                            else:
+                                                logging.warning(f"[PlexCheck] Failed to remove old upgrade torrent {_old_torrent_id}: {_ct_err}")
+                                    if _upgrading_from_path:
+                                        try:
+                                            from utilities.plex_functions import remove_file_from_plex
+                                            remove_file_from_plex(item_title_for_log, _upgrading_from_path)
+                                            logging.info(f"[PlexCheck] Removed old upgrade file from Plex for item {item_id} ({item_title_for_log})")
+                                        except Exception as _cp_err:
+                                            logging.warning(f"[PlexCheck] Failed to remove old upgrade file from Plex for item {item_id}: {_cp_err}")
                                 if cache_key in self.plex_scan_tick_counts:
                                     del self.plex_scan_tick_counts[cache_key]
                             else:
-                                logging.debug(f"Fallback: item {item_id} state already changed, skipping Collected update.")
+                                logging.debug(f"[PlexCheck] Item {item_id} state already changed, skipping Collected update.")
                         except sqlite3.Error as _fb_db_err:
-                            logging.error(f"Fallback: DB error marking item {item_id} as Collected: {_fb_db_err}")
+                            logging.error(f"[PlexCheck] DB error marking item {item_id} as Collected: {_fb_db_err}")
                             if _conn_fb: _conn_fb.rollback()
                         except Exception as _fb_err:
-                            logging.error(f"Fallback: unexpected error for item {item_id}: {_fb_err}", exc_info=True)
+                            logging.error(f"[PlexCheck] Unexpected error for item {item_id}: {_fb_err}", exc_info=True)
                             if _conn_fb: _conn_fb.rollback()
                         finally:
                             if _conn_fb: _conn_fb.close()
                         continue
+                    else:
+                        should_trigger_scan = True
+                        updated_items += 1
+                        logging.info(f"File '{current_filename}' found (tick {current_tick}). Identifying relevant Plex sections to scan.")
                 else:
                     # File not found
                     not_found_items += 1
@@ -4487,6 +4694,14 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error in task_sync_episode_metadata: {str(e)}")
 
+    def task_cleanup_title_year_suffixes(self):
+        """Database year-in-title cleanup — strips trailing (YYYY) from title column."""
+        try:
+            from database.maintenance import cleanup_title_year_suffixes
+            cleanup_title_year_suffixes()
+        except Exception as e:
+            logging.error(f"Error in task_cleanup_title_year_suffixes: {str(e)}")
+
     def trigger_task(self, task_name):
         """Manually trigger a task to run immediately by adding it to APScheduler's queue."""
         normalized_name = self._normalize_task_name(task_name)
@@ -4498,6 +4713,15 @@ class ProgramRunner:
 
         if target_func:
             try:
+                # Prevent duplicate concurrent runs — check if this task is already executing.
+                with self._running_task_lock:
+                    _already_running = any(
+                        job_id_base in jid for jid in self.currently_executing_tasks
+                    )
+                if _already_running:
+                    logging.warning(f"Task '{job_id_base}' is already running — skipping manual trigger.")
+                    return {"success": False, "message": f"Task '{job_id_base}' is already running."}
+
                 # Generate a unique ID for this manual job instance
                 manual_job_instance_id = f"manual_{job_id_base}_{uuid.uuid4()}"
                 
@@ -5501,6 +5725,12 @@ class ProgramRunner:
             self._record_task_runtime(task_name_for_logging, duration)
             # --- END EDIT ---
 
+            # Persist next-run time for tasks with interval >= 20 min so the schedule
+            # survives restarts. Only for regular scheduled tasks (not manual runs).
+            _task_interval = self.task_intervals.get(task_name_for_logging, 0)
+            if _task_interval >= 1200 and actual_job_id_from_scheduler == task_name_for_logging:
+                self._save_task_schedule(task_name_for_logging, time.time() + _task_interval)
+
             # Get memory usage after and log delta if sampling this execution
             # Check available again just before use
             if run_tracemalloc_sample and tracemalloc_available and tracemalloc:
@@ -5716,17 +5946,6 @@ class ProgramRunner:
                     trigger=IntervalTrigger(seconds=target_interval_seconds) # Use target seconds
                 )
                 logging.info(f"Successfully rescheduled task '{normalized_name}' with new interval {target_interval_seconds}s.")
-                # --- DEBUG LOGGING ---
-                job = self.scheduler.get_job(normalized_name)
-                if job:
-                    live_interval = job.trigger.interval.total_seconds()
-                    logging.info(f"[DEBUG] After live update: self.task_intervals['{normalized_name}']={self.task_intervals.get(normalized_name)}, scheduler job interval={live_interval}")
-                    # --- Force next run time to now + interval ---
-                    from datetime import datetime, timedelta
-                    next_run = datetime.now(self.scheduler.timezone) + timedelta(seconds=target_interval_seconds)
-                    job.modify(next_run_time=next_run)
-                    logging.info(f"[DEBUG] Forced next run time for '{normalized_name}' to {next_run}")
-                # --- END DEBUG LOGGING ---
                 return True
             except Exception as e:
                 logging.error(f"Error rescheduling job '{normalized_name}' with new interval: {e}", exc_info=True)
@@ -5872,7 +6091,12 @@ class ProgramRunner:
         """Scheduled task to sync overlay data and regenerate changed posters."""
         try:
             from overlays.scheduled_tasks import task_overlay_sync as sync_func
-            result = sync_func()
+            with self._running_task_lock:
+                _triggered_by = 'manual' if any(
+                    'manual_task_overlay_sync' in jid
+                    for jid in self.currently_executing_tasks
+                ) else 'scheduled'
+            result = sync_func(triggered_by=_triggered_by)
             if result.get('success'):
                 logging.info(f"Overlay sync completed: {result.get('message', 'Success')}")
             else:
@@ -5917,7 +6141,12 @@ class ProgramRunner:
 
             # 3. DB housekeeping + Plex poster pruning (unified in task_overlay_cleanup)
             from overlays.scheduled_tasks import task_overlay_cleanup as cleanup_func
-            result = cleanup_func()
+            with self._running_task_lock:
+                _triggered_by = 'manual' if any(
+                    'manual_task_overlay_cleanup' in jid
+                    for jid in self.currently_executing_tasks
+                ) else 'scheduled'
+            result = cleanup_func(triggered_by=_triggered_by)
             if result.get('success'):
                 logging.info(f"Overlay cleanup completed: {result.get('message', 'Success')}")
             else:
@@ -5927,6 +6156,202 @@ class ProgramRunner:
             logging.warning(f"Overlay module not available: {e}")
         except Exception as e:
             logging.error(f"Error in overlay cleanup task: {e}", exc_info=True)
+
+    def task_upgrade_hub_scan(self):
+        """Scheduled nightly scan for better-quality releases via Zilean."""
+        try:
+            from database.zilean_upgrade import scan_for_upgrades, get_scan_status
+            from utilities.settings import get_setting
+            if get_scan_status()['in_progress']:
+                logging.info("[UPGRADE_HUB] Scheduled scan skipped — scan already in progress")
+                return
+            scan_limit = get_setting('Upgrade Hub', 'scan_limit', None)
+            if scan_limit not in (None, '', 'null'):
+                try:
+                    scan_limit = int(scan_limit)
+                except (TypeError, ValueError):
+                    scan_limit = None
+            else:
+                scan_limit = None
+            logging.info("[UPGRADE_HUB] Starting scheduled upgrade scan")
+            result = scan_for_upgrades(scan_limit=scan_limit, triggered_by='scheduled')
+            if 'error' in result:
+                logging.warning(f"[UPGRADE_HUB] Scheduled scan error: {result['error']}")
+            else:
+                upgrades = len(result.get('upgrade_candidates', []))
+                packs    = len(result.get('pack_candidates', []))
+                logging.info(f"[UPGRADE_HUB] Scheduled scan complete: {upgrades} upgrades, {packs} packs")
+        except Exception as e:
+            logging.error(f"[UPGRADE_HUB] Scheduled scan failed: {e}", exc_info=True)
+
+    def task_upgrade_hub_auto_queue(self):
+        """Auto-queue upgrade candidates found in the most recent scan."""
+        try:
+            from utilities.settings import get_setting
+            from database.zilean_upgrade import (
+                get_last_results, scan_for_upgrades, get_scan_status, queue_upgrade_candidates
+            )
+            results = get_last_results()
+            if not results or 'error' in results:
+                if get_scan_status()['in_progress']:
+                    logging.info("[UPGRADE_HUB] Auto-queue skipped — scan in progress")
+                    return
+                scan_limit = get_setting('Upgrade Hub', 'scan_limit', None)
+                if scan_limit not in (None, '', 'null'):
+                    try:
+                        scan_limit = int(scan_limit)
+                    except (TypeError, ValueError):
+                        scan_limit = None
+                else:
+                    scan_limit = None
+                results = scan_for_upgrades(scan_limit=scan_limit, triggered_by='scheduled')
+            if not results or 'error' in results:
+                return
+            threshold = float(get_setting('Upgrade Hub', 'min_improvement_threshold', 0) or 0)
+            show_recent_only = str(get_setting('Upgrade Hub', 'show_recent_only', False)).lower() == 'true'
+            recent_threshold_days = int(get_setting('Upgrade Hub', 'recent_threshold_days', 90) or 90)
+            max_per_run = int(get_setting('Upgrade Hub', 'max_upgrades_per_run', 10) or 10)
+
+            import datetime as _dt
+            cutoff_dt = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=recent_threshold_days)
+
+            from dateutil import parser as _dtparser
+
+            # Fetch all item_ids already in Upgrading state so we skip them and
+            # queue the next batch instead (allows multiple button presses to work).
+            try:
+                from database.core import get_db_connection as _get_db
+                _conn = _get_db()
+                _already_upgrading = {
+                    r[0] for r in _conn.execute(
+                        "SELECT id FROM media_items WHERE state='Upgrading'"
+                    ).fetchall()
+                }
+                _conn.close()
+            except Exception:
+                _already_upgrading = set()
+
+            # Collect season pack candidates first (to build dedup set for upgrades)
+            pack_slots = []
+            pack_covered_ids = set()
+            for p in results.get('pack_candidates', []):
+                if p.get('improvement_pct', 0) < threshold:
+                    continue
+                if show_recent_only:
+                    pack_ep_ids = p.get('item_ids', [])
+                    if pack_ep_ids:
+                        try:
+                            from database.core import get_db_connection as _get_db
+                            _conn = _get_db()
+                            placeholders = ','.join('?' * len(pack_ep_ids))
+                            row = _conn.execute(
+                                f"SELECT MAX(ingested_at) FROM media_items WHERE id IN ({placeholders})",
+                                pack_ep_ids,
+                            ).fetchone()
+                            _conn.close()
+                            if row and row[0]:
+                                iat = _dtparser.parse(row[0])
+                                if iat.tzinfo is None:
+                                    iat = iat.replace(tzinfo=_dt.timezone.utc)
+                                if iat < cutoff_dt:
+                                    continue
+                        except Exception:
+                            pass
+                ep_ids = [i for i in p.get('item_ids', []) if i not in _already_upgrading]
+                if ep_ids:
+                    pack_slots.append(ep_ids)
+                    pack_covered_ids.update(ep_ids)
+
+            # Collect individual upgrade candidates — skip any episode covered by a pack slot
+            # or already in Upgrading state (so repeated button presses queue the next batch)
+            upgrade_item_ids = []
+            for c in results.get('upgrade_candidates', []):
+                if c.get('improvement_pct', 0) < threshold:
+                    continue
+                if c['item_id'] in pack_covered_ids:
+                    continue
+                if c['item_id'] in _already_upgrading:
+                    continue
+                if show_recent_only:
+                    iat_str = c.get('new_ingested_at', '')
+                    if not iat_str:
+                        continue  # no date — exclude when recent-only is on
+                    try:
+                        iat = _dtparser.parse(iat_str)
+                        if iat.tzinfo is None:
+                            iat = iat.replace(tzinfo=_dt.timezone.utc)
+                        if iat < cutoff_dt:
+                            continue
+                    except Exception:
+                        continue  # unparseable date — exclude when recent-only is on
+                upgrade_item_ids.append(c['item_id'])
+
+            # Cap each side independently by max_per_run, then combine
+            upgrade_slots = [([iid], 'upgrade') for iid in upgrade_item_ids][:max_per_run]
+            pack_slots_q  = [(ids, 'pack') for ids in pack_slots][:max_per_run]
+            all_slots     = upgrade_slots + pack_slots_q
+
+            if not all_slots:
+                logging.info("[UPGRADE_HUB] Auto-queue: no candidates matching settings filters")
+                try:
+                    from database.upgrade_hub_activity import log_hub_activity
+                    log_hub_activity('queue', triggered_by='scheduled', result='success',
+                                     title='Auto-queue: no candidates to queue',
+                                     stats={'queued': 0, 'failed': 0})
+                except Exception:
+                    pass
+                return
+
+            flat_item_ids = [iid for ids, _ in all_slots for iid in ids]
+            n_upgrades = sum(1 for _, t in all_slots if t == 'upgrade')
+            n_packs    = sum(1 for _, t in all_slots if t == 'pack')
+            queue_upgrade_candidates(flat_item_ids, triggered_by='scheduled')
+            logging.info(
+                f"[UPGRADE_HUB] Auto-queued {n_upgrades} upgrade(s) + {n_packs} pack(s) "
+                f"= {len(flat_item_ids)} item(s) total (limit: {max_per_run} per side)"
+            )
+        except Exception as e:
+            logging.error(f"[UPGRADE_HUB] Auto-queue task failed: {e}", exc_info=True)
+
+    def task_trim_memory(self):
+        """Run gc.collect() + malloc_trim(0) to return glibc arena pages to the OS.
+
+        Heavy operations (upgrade hub scan, debrid manager audit, rclone file count, etc.)
+        allocate large temporary objects that Python frees via GC but glibc holds in its
+        malloc arenas indefinitely. This task forces both layers to release those pages,
+        keeping the baseline RSS stable over long uptimes.
+        """
+        import gc
+
+        def _read_current_rss_kb():
+            """Read current RSS from /proc/self/status (VmRSS), not the peak high-water mark."""
+            try:
+                with open('/proc/self/status') as f:
+                    for line in f:
+                        if line.startswith('VmRSS:'):
+                            return int(line.split()[1])
+            except Exception:
+                pass
+            return None
+
+        before_rss = _read_current_rss_kb()
+        collected = gc.collect()
+
+        trim_ok = False
+        try:
+            import ctypes
+            ctypes.CDLL('libc.so.6').malloc_trim(0)
+            trim_ok = True
+        except Exception as e:
+            logging.debug(f"[TRIM_MEMORY] malloc_trim unavailable: {e}")
+
+        after_rss = _read_current_rss_kb()
+
+        if before_rss and after_rss:
+            freed_kb = before_rss - after_rss
+            logging.info(f"[TRIM_MEMORY] gc collected {collected} objects; malloc_trim={'ok' if trim_ok else 'unavailable'}; RSS delta: {freed_kb/1024:.1f} MB (before={before_rss//1024} MB, after={after_rss//1024} MB)")
+        else:
+            logging.info(f"[TRIM_MEMORY] gc collected {collected} objects; malloc_trim={'ok' if trim_ok else 'unavailable'}")
 
     def _fail_safe_resume_if_stuck(self):
         """Force-resume the queue if it has been paused due to connectivity issues for too long.

@@ -417,6 +417,78 @@ h6 {
     font-family: monospace;
 }
 
+/* Memory Snapshot button */
+#memory-snapshot-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background-color: #1565c0;
+    border: none;
+    border-radius: 4px;
+    color: #fff;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+#memory-snapshot-btn:hover {
+    background-color: #0d47a1;
+}
+
+#memory-snapshot-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+#memory-snapshot-btn i {
+    font-size: 1rem;
+}
+
+#memory-snapshot-download-btn,
+#memory-snapshot-close-btn {
+    background-color: #3a3a3a;
+    border: 1px solid #555;
+    border-radius: 4px;
+    color: #ccc;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+#memory-snapshot-download-btn:hover,
+#memory-snapshot-close-btn:hover {
+    background-color: #4a4a4a;
+    color: #fff;
+}
+
+/* Trim Memory button styles */
+#trim-memory-btn {
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background-color: #00695c;
+    border: none;
+    border-radius: 4px;
+    color: #fff;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+#trim-memory-btn:hover {
+    background-color: #004d40;
+}
+
+#trim-memory-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+#trim-memory-btn i {
+    font-size: 1rem;
+}
+
 /* Export button styles */
 #export-btn {
     padding: 0.5rem 1rem;

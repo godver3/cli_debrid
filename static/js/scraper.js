@@ -1378,20 +1378,20 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                         const folderData = await folderResponse.json();
                         const folders = folderData.folders || [];
                         if (folders.length > 0) {
-                            let selectedFolder = folders[0];
+                            let selectedFolder = folders[0].name;
                             const isAnimation = genre_ids && (genre_ids.includes(16) || genre_ids.includes('16'));
                             const isAnime = isAnimation && mediaType === 'tv';
-                            if (isAnime && folders.find(f => /anime/i.test(f))) {
-                                selectedFolder = folders.find(f => /anime/i.test(f));
-                            } else if (isAnimation && folders.find(f => /anim/i.test(f))) {
-                                selectedFolder = folders.find(f => /anim/i.test(f));
-                            } else if (mediaType === 'tv' && folders.find(f => /tv|show|series/i.test(f))) {
-                                selectedFolder = folders.find(f => /tv|show|series/i.test(f));
-                            } else if (mediaType === 'movie' && folders.find(f => /movie|film/i.test(f))) {
-                                selectedFolder = folders.find(f => /movie|film/i.test(f));
+                            if (isAnime && folders.find(f => /anime/i.test(f.name))) {
+                                selectedFolder = folders.find(f => /anime/i.test(f.name)).name;
+                            } else if (isAnimation && folders.find(f => /anim/i.test(f.name))) {
+                                selectedFolder = folders.find(f => /anim/i.test(f.name)).name;
+                            } else if (mediaType === 'tv' && folders.find(f => /tv|show|series/i.test(f.name))) {
+                                selectedFolder = folders.find(f => /tv|show|series/i.test(f.name)).name;
+                            } else if (mediaType === 'movie' && folders.find(f => /movie|film/i.test(f.name))) {
+                                selectedFolder = folders.find(f => /movie|film/i.test(f.name)).name;
                             }
                             const folderOptionsHTML = folders.map(f =>
-                                `<option value="${f}" ${f === selectedFolder ? 'selected' : ''}>${f}</option>`
+                                `<option value="${f.name}" ${f.name === selectedFolder ? 'selected' : ''}>${f.name}</option>`
                             ).join('');
                             folderDropdownHTML = `
                                 <div class="torrent-folder-dropdown-wrapper">

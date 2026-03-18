@@ -80,6 +80,12 @@ def _make_request(url: str, method: str = 'GET', max_retries: int = 4,
             continue
 
         try:
+            from utilities.trakt_coordinator import GlobalTraktCoordinator
+            GlobalTraktCoordinator.get_instance().wait_if_needed()
+        except Exception:
+            pass
+
+        try:
             resp = requests.request(method.upper(), url, headers=headers, timeout=REQUEST_TIMEOUT)
         except requests.exceptions.RequestException as e:
             logger.error(f"RequestException (attempt {attempt + 1}/{max_retries}) {url}: {e}")
@@ -103,6 +109,11 @@ def _make_request(url: str, method: str = 'GET', max_retries: int = 4,
         if resp.status_code == 429:
             retry_after = int(resp.headers.get('Retry-After', delay))
             logger.warning(f"Attempt {attempt + 1}/{max_retries} got 429 for {url}, backing off {retry_after}s")
+            try:
+                from utilities.trakt_coordinator import GlobalTraktCoordinator
+                GlobalTraktCoordinator.get_instance().set_global_cooldown(retry_after)
+            except Exception:
+                pass
             if attempt < max_retries - 1:
                 time.sleep(retry_after)
                 continue

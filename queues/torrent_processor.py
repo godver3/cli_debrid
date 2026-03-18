@@ -642,8 +642,20 @@ class TorrentProcessor:
                             existing_torrent_id = self.debrid_provider._all_torrent_ids.get(hash_value)
                             
                         if existing_torrent_id:
-                            logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Reusing existing torrent ID: {existing_torrent_id}")
-                            info = self.debrid_provider.get_torrent_info(existing_torrent_id)
+                            existing_info = self.debrid_provider.get_torrent_info(existing_torrent_id)
+                            existing_status = existing_info.get('status') if existing_info else None
+                            _error_statuses = ('error', 'magnet_error', 'virus', 'dead')
+                            if existing_status in _error_statuses:
+                                logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Existing torrent {existing_torrent_id} has status '{existing_status}', removing and re-adding")
+                                try:
+                                    self.debrid_provider.remove_torrent(existing_torrent_id, removal_reason=f"Error status '{existing_status}', re-adding")
+                                except Exception as remove_err:
+                                    logging.warning(f"[{item_identifier}] Could not remove errored torrent {existing_torrent_id}: {remove_err}")
+                                logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Addition - Adding to debrid service (after removing errored torrent)")
+                                info = self.add_to_account(original_link)
+                            else:
+                                logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Reusing existing torrent ID: {existing_torrent_id}")
+                                info = existing_info
                         else:
                             logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] PHASE: Addition - Adding to debrid service")
                             info = self.add_to_account(original_link)
