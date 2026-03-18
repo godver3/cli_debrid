@@ -4758,7 +4758,7 @@ class ProgramRunner:
                         name=f"Manual run of {job_id_base}",
                         replace_existing=False, # Should be false for unique IDs
                         max_instances=1, # Max instances for this specific job ID
-                        misfire_grace_time=60 # Allow 1 minute grace time for manual tasks
+                        misfire_grace_time=600 # Allow 10 minutes for long-running tasks to free the worker
                     )
                         
                     logging.info(f"Task '{job_id_base}' (Manual Job ID: {manual_job_instance_id}) successfully queued for immediate execution via APScheduler.")
@@ -6334,7 +6334,23 @@ class ProgramRunner:
                 pass
             return None
 
+        import time as _time
         before_rss = _read_current_rss_kb()
+
+        # Evict RD library stable cache if idle for 2+ hours
+        lib_torrents_freed = 0
+        try:
+            from routes.debrid_manager_routes import _lib, _lib_last_accessed
+            idle_secs = _time.time() - _lib_last_accessed
+            if _lib['stable'] is not None and idle_secs > 7200:
+                with _lib['lock']:
+                    if _lib['stable'] is not None:
+                        lib_torrents_freed = len(_lib['stable'].get('torrents', []))
+                        _lib['stable'] = None
+                logging.info(f"[TRIM_MEMORY] Evicted idle RD library cache ({lib_torrents_freed} torrents, idle {idle_secs/3600:.1f}h)")
+        except Exception as e:
+            logging.debug(f"[TRIM_MEMORY] Could not evict RD library cache: {e}")
+
         collected = gc.collect()
 
         trim_ok = False
