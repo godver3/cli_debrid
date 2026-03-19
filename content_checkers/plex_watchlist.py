@@ -568,3 +568,72 @@ def remove_from_plex_watchlist_by_item(item: dict) -> dict:
         logging.error(f"[PLEX_WATCHLIST_REMOVE] {result['message']}", exc_info=True)
 
     return result
+
+
+def remove_from_other_plex_watchlist_by_item(item: dict, token: str) -> dict:
+    """
+    Remove an item from another user's Plex Watchlist using their token.
+
+    Args:
+        item:  Dictionary with media item details (must have 'imdb_id', 'title', 'type')
+        token: Plex auth token belonging to the other user
+
+    Returns:
+        dict with 'success' boolean, 'message' string, optional 'not_found' boolean
+    """
+    start_time = time.time()
+    result = {'success': False, 'message': ''}
+
+    try:
+        account = MyPlexAccount(token=token)
+    except Exception as e:
+        result['message'] = f'Failed to connect to Other Plex account: {e}'
+        logging.error(f"[PLEX_WATCHLIST_REMOVE_OTHER] {result['message']}")
+        return result
+
+    imdb_id = item.get('imdb_id')
+    title   = item.get('title', 'Unknown')
+
+    if not imdb_id:
+        result['message'] = f'No IMDB ID provided for item: {title}'
+        logging.warning(f"[PLEX_WATCHLIST_REMOVE_OTHER] {result['message']}")
+        return result
+
+    logging.info(f"[PLEX_WATCHLIST_REMOVE_OTHER] Attempting to remove '{title}' (IMDB: {imdb_id}) "
+                 f"from {account.username}'s Plex Watchlist")
+    try:
+        watchlist = account.watchlist()
+        item_to_remove = None
+        for watchlist_item in watchlist:
+            for guid in getattr(watchlist_item, 'guids', []):
+                guid_str = str(guid.id) if hasattr(guid, 'id') else str(guid)
+                if f'imdb://{imdb_id}' in guid_str or imdb_id in guid_str:
+                    item_to_remove = watchlist_item
+                    break
+            if item_to_remove:
+                break
+
+        if not item_to_remove:
+            result['message'] = f"'{title}' (IMDB: {imdb_id}) not found in {account.username}'s Plex Watchlist"
+            result['not_found'] = True
+            logging.info(f"[PLEX_WATCHLIST_REMOVE_OTHER] {result['message']}")
+            return result
+
+        account.removeFromWatchlist(item_to_remove)
+        result['success'] = True
+        result['message'] = (f"Successfully removed '{title}' from {account.username}'s Plex Watchlist "
+                             f"(took {time.time() - start_time:.4f}s)")
+        logging.info(f"[PLEX_WATCHLIST_REMOVE_OTHER] {result['message']}")
+
+    except AttributeError as e:
+        if 'removeFromWatchlist' in str(e):
+            result['message'] = 'Plex API does not support watchlist removal (plexapi version too old)'
+            logging.warning(f"[PLEX_WATCHLIST_REMOVE_OTHER] {result['message']}: {e}")
+        else:
+            result['message'] = f'Attribute error: {e}'
+            logging.error(f"[PLEX_WATCHLIST_REMOVE_OTHER] {result['message']}", exc_info=True)
+    except Exception as e:
+        result['message'] = f'Error removing from Other Plex Watchlist: {e}'
+        logging.error(f"[PLEX_WATCHLIST_REMOVE_OTHER] {result['message']}", exc_info=True)
+
+    return result

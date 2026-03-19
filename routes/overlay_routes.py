@@ -16,6 +16,7 @@ from database.core import get_db_connection as _get_db_connection
 _SYSTEM_LOGO_DIR = Path(__file__).parent.parent / 'overlays' / 'assets' / 'logos'
 _USER_LOGO_DIR = Path('/user/config/overlay_assets/logos')
 
+from routes.models import admin_required
 from overlays import OverlayManager, LayoutManager, LayoutValidator
 from overlays.element_definitions import get_all_elements_by_category
 from overlays.activity_logger import log_activity
@@ -39,11 +40,13 @@ overlay_bp = Blueprint('overlay_api', __name__)
 
 # HTML routes
 @overlay_page_bp.route('/overlays')
+@admin_required
 def overlays_page():
     """Serve the overlay management UI."""
     return render_template('overlays.html')
 
 @overlay_page_bp.route('/overlays/builder')
+@admin_required
 def layout_builder_page():
     """Serve the layout builder UI."""
     return render_template('layout_builder.html')

@@ -247,6 +247,48 @@ def run_custom_script(item: Dict[str, Any]) -> None:
     except Exception as e:
         logging.error(f"Failed to run custom script: {str(e)}")
 
+def _handle_plex_watchlist_removal(item: Dict[str, Any]) -> None:
+    """Remove item from My Plex Watchlist or Other Plex Watchlist based on its content_source."""
+    if not get_setting('Debug', 'plex_watchlist_removal', False):
+        return
+
+    # Respect the keep_series setting: skip episodes/shows if enabled
+    keep_series = get_setting('Debug', 'plex_watchlist_keep_series', False)
+    if keep_series and item.get('type') in ('episode', 'show'):
+        logging.debug(f"[WATCHLIST_REMOVE] Skipping series '{item.get('title')}' (plex_watchlist_keep_series enabled)")
+        return
+
+    content_source = item.get('content_source', '')
+    if not content_source:
+        return
+
+    # Resolve source type from source config (e.g. "My Plex Watchlist_1" → type "My Plex Watchlist")
+    from queues.config_manager import load_config
+    config = load_config()
+    source_config = config.get('Content Sources', {}).get(content_source, {})
+    source_type = source_config.get('type', '')
+
+    if source_type == 'My Plex Watchlist':
+        from content_checkers.plex_watchlist import remove_from_plex_watchlist_by_item
+        result = remove_from_plex_watchlist_by_item(item)
+        if result.get('success'):
+            logging.info(f"[WATCHLIST_REMOVE] Removed '{item.get('title')}' from My Plex Watchlist")
+        elif not result.get('not_found'):
+            logging.warning(f"[WATCHLIST_REMOVE] Could not remove '{item.get('title')}' from My Plex Watchlist: {result.get('message')}")
+
+    elif source_type == 'Other Plex Watchlist':
+        token = source_config.get('token', '')
+        if not token:
+            logging.warning(f"[WATCHLIST_REMOVE] No token found for source '{content_source}', cannot remove from watchlist")
+            return
+        from content_checkers.plex_watchlist import remove_from_other_plex_watchlist_by_item
+        result = remove_from_other_plex_watchlist_by_item(item, token)
+        if result.get('success'):
+            logging.info(f"[WATCHLIST_REMOVE] Removed '{item.get('title')}' from Other Plex Watchlist ({content_source})")
+        elif not result.get('not_found'):
+            logging.warning(f"[WATCHLIST_REMOVE] Could not remove '{item.get('title')}' from Other Plex Watchlist ({content_source}): {result.get('message')}")
+
+
 def handle_state_change(item: Dict[str, Any]) -> None:
     """
     Handle any post-processing needed when an item enters a new state.
@@ -343,6 +385,14 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                     replace_cleanup_after_collect(dict(fresh_item))
                 except Exception as e:
                     logging.error(f"Failed to run replace cleanup after collect: {str(e)}")
+
+            # Remove from Plex Watchlist if the setting is enabled and the item
+            # came from a My Plex Watchlist or Other Plex Watchlist source.
+            if state == 'Collected':
+                try:
+                    _handle_plex_watchlist_removal(dict(fresh_item))
+                except Exception as e:
+                    logging.error(f"Failed to handle Plex Watchlist removal: {e}")
 
             # Apply poster overlay in a background thread (non-blocking).
             # Duplicate-run protection is handled inside apply_overlay_for_new_item
