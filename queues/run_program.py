@@ -4424,9 +4424,11 @@ class ProgramRunner:
                     _tmdb_id = item_dict['tmdb_id']
                     _item_type_lookup = 'show' if item_dict['type'] == 'episode' else item_dict['type']
                     # File path search: ask Plex "do you have this exact file?"
-                    # Embed file in URL directly (not as kwarg) so requests doesn't alter the value.
+                    # Plex ?file= matches against full Plex path; URL-encode the filename.
                     _plex_location = None
+                    _new_basename = os.path.basename(item_dict['filled_by_file'] or '')
                     if actual_file_path:
+                        from urllib.parse import quote as _urlquote
                         _plex_filename = os.path.basename(actual_file_path)
                         _is_episode = item_dict['type'] == 'episode'
                         for _section in sections:
@@ -4434,13 +4436,15 @@ class ProgramRunner:
                                 continue
                             try:
                                 _type_param = '&type=4' if _is_episode else ''
-                                _fp_results = plex.fetchItems(f'/library/sections/{_section.key}/all?file={_plex_filename}{_type_param}')
+                                _fp_results = plex.fetchItems(f'/library/sections/{_section.key}/all?file={_urlquote(_plex_filename)}{_type_param}')
                                 if _fp_results:
                                     _force_collect_reason = f"file indexed in Plex confirmed (tick {current_tick})"
                                     try:
                                         _plex_location = _fp_results[0].media[0].parts[0].file
                                     except Exception:
                                         pass
+                                    if not _plex_location:
+                                        logging.warning(f"[PlexCheck] File search found item {item_id} but could not extract location from result: {_fp_results[0]}")
                                     break
                             except Exception as _e_fp:
                                 logging.debug(f"[PlexCheck] File path search failed for item {item_id}: {_e_fp}")
@@ -4459,22 +4463,43 @@ class ProgramRunner:
                                     _force_collect_reason = f"direct Plex GUID lookup confirmed in library (tick {current_tick})"
                                     # Try to extract location_on_disk from the matched Plex item,
                                     # preferring the part whose filename matches filled_by_file.
-                                    if not _plex_location:
-                                        _new_basename = os.path.basename(item_dict.get('filled_by_file') or '')
+                                    # For episodes: _results is Show objects; must fetch episodes to get parts.
+                                    if not _plex_location and _new_basename:
                                         try:
+                                            _is_episode = item_dict['type'] == 'episode'
                                             for _pi in _results:
-                                                for _pm in getattr(_pi, 'media', []):
-                                                    for _pp in getattr(_pm, 'parts', []):
-                                                        _pp_file = getattr(_pp, 'file', '') or ''
-                                                        if _new_basename and os.path.basename(_pp_file) == _new_basename:
-                                                            _plex_location = _pp_file
+                                                _candidates = []
+                                                if _is_episode:
+                                                    # Show object: walk seasons→episodes to find parts
+                                                    try:
+                                                        _sn = item_dict['season_number']
+                                                        _ep = item_dict['episode_number']
+                                                        if _sn is not None and _ep is not None:
+                                                            _episode_obj = _pi.episode(season=int(_sn), episode=int(_ep))
+                                                            _candidates = [_episode_obj] if _episode_obj else []
+                                                        else:
+                                                            _candidates = _pi.episodes()
+                                                    except Exception:
+                                                        _candidates = []
+                                                else:
+                                                    _candidates = [_pi]
+                                                for _candidate in _candidates:
+                                                    for _pm in getattr(_candidate, 'media', []):
+                                                        for _pp in getattr(_pm, 'parts', []):
+                                                            _pp_file = getattr(_pp, 'file', '') or ''
+                                                            if os.path.basename(_pp_file) == _new_basename:
+                                                                _plex_location = _pp_file
+                                                                break
+                                                        if _plex_location:
                                                             break
                                                     if _plex_location:
                                                         break
                                                 if _plex_location:
                                                     break
-                                        except Exception:
-                                            pass
+                                        except Exception as _loc_err:
+                                            logging.debug(f"[PlexCheck] Location extraction from GUID results failed for item {item_id}: {_loc_err}")
+                                    if not _plex_location:
+                                        logging.warning(f"[PlexCheck] GUID search found item {item_id} ({item_title_for_log}) in Plex but could not extract location (filled_by_file basename='{_new_basename}')")
                                     break
                             except Exception as _e_search:
                                 logging.debug(f"[PlexCheck] Direct GUID search failed for item {item_id}: {_e_search}")
@@ -4678,6 +4703,77 @@ class ProgramRunner:
                 if final_updated_sections:
                     logging.info(f"Plex sections triggered for update in this run: {', '.join(sorted(list(final_updated_sections)))}")
 
+
+            # --- Stale location repair ---
+            # Fix Collected items where location_on_disk still points to the pre-upgrade file.
+            # These items were marked Collected via tick/time fallback without a Plex location,
+            # or the GUID/file search failed at upgrade time. Query Plex by filled_by_file to fix.
+            try:
+                _repair_conn = get_db_connection()
+                _all_upgraded = _repair_conn.execute(
+                    '''SELECT id, title, type, filled_by_file, location_on_disk, upgrading_from,
+                              imdb_id, tmdb_id, season_number, episode_number
+                       FROM media_items
+                       WHERE state = "Collected"
+                         AND upgrading_from IS NOT NULL AND upgrading_from != ""
+                         AND filled_by_file IS NOT NULL AND filled_by_file != ""
+                    '''
+                ).fetchall()
+                _repair_conn.close()
+
+                # Keep only items where location_on_disk is stale:
+                # - NULL/empty, OR
+                # - basename matches upgrading_from basename (path still points to old file)
+                _stale_set = {}
+                for _row in _all_upgraded:
+                    _loc = _row['location_on_disk'] or ''
+                    _upg = _row['upgrading_from'] or ''
+                    if not _loc:
+                        _stale_set[_row['id']] = _row
+                    elif os.path.basename(_loc) == os.path.basename(_upg):
+                        _stale_set[_row['id']] = _row
+
+                if _stale_set:
+                    logging.info(f"[PlexCheck] Stale location repair: found {len(_stale_set)} Collected items with stale location_on_disk")
+                    from urllib.parse import quote as _urlquote2
+                    for _sid, _sitem in _stale_set.items():
+                        _sfilled = _sitem['filled_by_file'] or ''
+                        _sbasename = os.path.basename(_sfilled)
+                        if not _sbasename:
+                            continue
+                        _stype = _sitem['type']
+                        _stype_lookup = 'show' if _stype == 'episode' else _stype
+                        _new_loc = None
+                        try:
+                            for _section in sections:
+                                if _section.type != _stype_lookup:
+                                    continue
+                                _type_p = '&type=4' if _stype == 'episode' else ''
+                                _sr = plex.fetchItems(f'/library/sections/{_section.key}/all?file={_urlquote2(_sbasename)}{_type_p}')
+                                if _sr:
+                                    try:
+                                        _new_loc = _sr[0].media[0].parts[0].file
+                                    except Exception:
+                                        pass
+                                    break
+                        except Exception as _se:
+                            logging.debug(f"[PlexCheck] Stale repair Plex query failed for item {_sid}: {_se}")
+                        if _new_loc and _new_loc != _sitem['location_on_disk']:
+                            try:
+                                _rc = get_db_connection()
+                                _rc.execute(
+                                    'UPDATE media_items SET location_on_disk = ?, last_updated = ? WHERE id = ? AND state = "Collected"',
+                                    (_new_loc, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), _sid)
+                                )
+                                _rc.commit()
+                                _rc.close()
+                                logging.info(f"[PlexCheck] Stale location repaired for item {_sid} ({_sitem['title']}): '{_sitem['location_on_disk']}' → '{_new_loc}'")
+                            except Exception as _ue:
+                                logging.warning(f"[PlexCheck] Stale location repair DB update failed for item {_sid}: {_ue}")
+                        else:
+                            logging.debug(f"[PlexCheck] Stale repair: no Plex result for item {_sid} ({_sitem['title']}) filled_by_file='{_sbasename}'")
+            except Exception as _repair_err:
+                logging.warning(f"[PlexCheck] Stale location repair block failed: {_repair_err}")
 
             # Log summary of operations
             processed_items_count = len(items) # Count items processed in this run
