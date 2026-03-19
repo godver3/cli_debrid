@@ -4425,6 +4425,7 @@ class ProgramRunner:
                     _item_type_lookup = 'show' if item_dict['type'] == 'episode' else item_dict['type']
                     # File path search: ask Plex "do you have this exact file?"
                     # Embed file in URL directly (not as kwarg) so requests doesn't alter the value.
+                    _plex_location = None
                     if actual_file_path:
                         _plex_filename = os.path.basename(actual_file_path)
                         _is_episode = item_dict['type'] == 'episode'
@@ -4436,6 +4437,10 @@ class ProgramRunner:
                                 _fp_results = plex.fetchItems(f'/library/sections/{_section.key}/all?file={_plex_filename}{_type_param}')
                                 if _fp_results:
                                     _force_collect_reason = f"file indexed in Plex confirmed (tick {current_tick})"
+                                    try:
+                                        _plex_location = _fp_results[0].media[0].parts[0].file
+                                    except Exception:
+                                        pass
                                     break
                             except Exception as _e_fp:
                                 logging.debug(f"[PlexCheck] File path search failed for item {item_id}: {_e_fp}")
@@ -4452,6 +4457,24 @@ class ProgramRunner:
                                     _results = _section.search(**{'guid': f'tmdb://{_tmdb_id}'})
                                 if _results:
                                     _force_collect_reason = f"direct Plex GUID lookup confirmed in library (tick {current_tick})"
+                                    # Try to extract location_on_disk from the matched Plex item,
+                                    # preferring the part whose filename matches filled_by_file.
+                                    if not _plex_location:
+                                        _new_basename = os.path.basename(item_dict.get('filled_by_file') or '')
+                                        try:
+                                            for _pi in _results:
+                                                for _pm in getattr(_pi, 'media', []):
+                                                    for _pp in getattr(_pm, 'parts', []):
+                                                        _pp_file = getattr(_pp, 'file', '') or ''
+                                                        if _new_basename and os.path.basename(_pp_file) == _new_basename:
+                                                            _plex_location = _pp_file
+                                                            break
+                                                    if _plex_location:
+                                                        break
+                                                if _plex_location:
+                                                    break
+                                        except Exception:
+                                            pass
                                     break
                             except Exception as _e_search:
                                 logging.debug(f"[PlexCheck] Direct GUID search failed for item {item_id}: {_e_search}")
@@ -4479,13 +4502,21 @@ class ProgramRunner:
                             _conn_fb = get_db_connection()
                             _cur_fb = _conn_fb.cursor()
                             _now_fb = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            _cur_fb.execute(
-                                'UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
-                                (_now_fb, item_id)
-                            )
+                            if _plex_location:
+                                _cur_fb.execute(
+                                    'UPDATE media_items SET state = "Collected", collected_at = ?, location_on_disk = ? WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
+                                    (_now_fb, _plex_location, item_id)
+                                )
+                            else:
+                                _cur_fb.execute(
+                                    'UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
+                                    (_now_fb, item_id)
+                                )
                             if _cur_fb.rowcount > 0:
                                 _conn_fb.commit()
                                 logging.info(f"[PlexCheck] Marked item {item_id} ({item_title_for_log}) as Collected ({_force_collect_reason}).")
+                                if _plex_location:
+                                    logging.info(f"[PlexCheck] Updated location_on_disk for item {item_id} ({item_title_for_log}): {_plex_location}")
                                 _fb_details = get_media_item_by_id(item_id)
                                 if _fb_details:
                                     handle_state_change(dict(_fb_details))
@@ -6110,10 +6141,16 @@ class ProgramRunner:
             # Force glibc to return freed arena pages to the OS immediately.
             try:
                 import gc, ctypes
-                _before_rss = _read_current_rss_kb()
+                def _rss_kb():
+                    with open('/proc/self/status') as _f:
+                        for _l in _f:
+                            if _l.startswith('VmRSS:'):
+                                return int(_l.split()[1])
+                    return 0
+                _before_rss = _rss_kb()
                 gc.collect()
                 ctypes.CDLL('libc.so.6').malloc_trim(0)
-                _after_rss = _read_current_rss_kb()
+                _after_rss = _rss_kb()
                 logging.info(f"[OVERLAY_SYNC] malloc_trim: RSS {_before_rss//1024} MB → {_after_rss//1024} MB (freed {(_before_rss - _after_rss)//1024} MB)")
             except Exception as _e:
                 logging.info(f"[OVERLAY_SYNC] malloc_trim skipped: {_e}")
@@ -7186,7 +7223,12 @@ def get_and_add_all_collected_from_plex(bypass=False, backfill=False):
                 if 'all_raw_episodes' in locals():
                     all_raw_episodes = None  # type: ignore
                 gc.collect()
-                logging.info("[MemCleanup] Cleared collected content and forced GC after Plex full scan.")
+                try:
+                    import ctypes as _ct
+                    _ct.CDLL('libc.so.6').malloc_trim(0)
+                    logging.info("[MemCleanup] Cleared collected content, GC + malloc_trim after Plex full scan.")
+                except Exception:
+                    logging.info("[MemCleanup] Cleared collected content and forced GC after Plex full scan.")
             except Exception as e_cleanup:
                 logging.debug(f"[MemCleanup] Exception during cleanup: {e_cleanup}")
             # ----------------------------------------------------------------

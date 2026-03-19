@@ -837,7 +837,7 @@
                         ('database.index', 'Database'),
                         ('database.phalanxdb_status', 'Phalanx DB'),
                         ('performance.performance_dashboard', 'Performance Dashboard')] +
-                        ([] if is_limited_environment() else [('debrid_manager.index', 'Debrid Manager'), ('upgrade_hub.index', 'Upgrade Hub')]) + [
+                        ([] if is_limited_environment() or (is_user_system_enabled() and not (current_user.is_authenticated and current_user.role == 'admin')) else [('debrid_manager.index', 'Debrid Manager'), ('upgrade_hub.index', 'Upgrade Hub')]) + [
                         ('connections.index', 'Connections'),
                         ('api_summary.index', 'API Summary'),
                         ('real_time_api.index', 'Real Time API')
@@ -852,8 +852,7 @@
                         ('user_token.collect_tokens_page', 'Plex User Token M.'),
                         ('symlink_tools.index', 'Symlink Tools'),
                         ('metadata.metadata_debug', 'Metadata Debug'),
-                        ('overlay_page.overlays_page', 'Overlays')
-                    ]
+                    ] + ([('overlay_page.overlays_page', 'Overlays')] if not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') else [])
                 } %}
 
                 {% set menu_icons = {
