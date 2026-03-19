@@ -441,6 +441,15 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                         db_item_id = existing_db_item['id']
                         logging.debug(f"[Collection Debug] Found existing DB item ID {db_item_id} for lookup_key '{lookup_key}', state: {existing_db_item['state']}")
 
+                        # Skip if this Plex entry is the OLD pre-upgrade file. After an upgrade,
+                        # both the old file (upgrading_from) and new file (filled_by_file) can appear
+                        # in Plex simultaneously. Processing the old file would set location_on_disk
+                        # back to the stale path, undoing the new file's correct update.
+                        _upgrading_from = existing_db_item.get('upgrading_from')
+                        if _upgrading_from and filename == os.path.basename(_upgrading_from):
+                            logging.info(f"[Collection] Skipping stale pre-upgrade Plex entry '{filename}' for DB item {db_item_id} (upgrading_from match, new file is '{existing_db_item.get('filled_by_file')}')")
+                            continue
+
                         is_this_db_item_checking = existing_db_item['state'] == 'Checking'
                         # other_checking_items_exist = checking_items_count > 0 and (not is_this_db_item_checking or checking_items_count > 1)
 

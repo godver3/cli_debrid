@@ -1350,8 +1350,25 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
             logger.info(f"[UPGRADE_HUB] Scan limit {scan_limit}: scanning {scan_limit}/{len(all_collected)} items")
             all_collected = all_collected[:scan_limit]
 
-        movies   = [i for i in all_collected if i['type'] == 'movie']
-        episodes = [i for i in all_collected if i['type'] == 'episode']
+        movies_raw = [i for i in all_collected if i['type'] == 'movie']
+        episodes   = [i for i in all_collected if i['type'] == 'episode']
+
+        # Deduplicate movies by (imdb_id, version): keep only the largest file per
+        # group. Torrents often contain extras (interviews, samples, featurettes)
+        # that end up as separate Collected rows with the same imdb_id. Scanning
+        # them individually produces spurious high-% upgrades (a 0.09 GB Sample.mkv
+        # looks like a +300% improvement vs. any real release).
+        _movie_best: dict = {}
+        for _m in movies_raw:
+            _key = (_m['imdb_id'], (_m.get('version') or default_version).rstrip('*').strip())
+            _existing = _movie_best.get(_key)
+            if _existing is None or _item_size_gb(_m) > _item_size_gb(_existing):
+                _movie_best[_key] = _m
+        movies = list(_movie_best.values())
+        _dedup_removed = len(movies_raw) - len(movies)
+        if _dedup_removed:
+            logger.info(f"[UPGRADE_HUB] Deduped {_dedup_removed} extra/duplicate movie files "
+                        f"(kept largest per imdb_id+version, {len(movies)} unique movies remain)")
 
         # Pre-populate version settings cache for every unique version in this
         # scan batch.  Workers only read the dict — no locking needed.
