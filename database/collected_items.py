@@ -245,6 +245,18 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                     is_filename_collected = filename and filename in existing_collected_files
                     is_upgrading_from = filename and filename in upgrading_from_files
 
+                    # If filename is collected but the full path differs (or location_on_disk is NULL),
+                    # this may be a stale/missing location_on_disk from an upgrade that completed
+                    # without updating the path (e.g. task_check_plex_files tick/time fallback).
+                    # Allow it through so the else branch in the processing loop can update location_on_disk.
+                    if is_filename_collected and not is_full_path_collected:
+                        db_item = existing_file_map.get(filename)
+                        if db_item:
+                            db_location = db_item.get('location_on_disk') or ''
+                            if not db_location or db_location != location:
+                                logging.debug(f"[Collection Filter] Allowing '{location}' - location_on_disk missing or mismatch (upgrade stale path), current='{db_location}'")
+                                is_filename_collected = False
+
                     # If full path is NOT collected AND (filename is NOT collected OR filename not set)
                     # then include this location
                     if not is_full_path_collected and not is_filename_collected and not is_upgrading_from:
