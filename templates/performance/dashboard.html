@@ -265,11 +265,9 @@ function updateDashboard() {
                     // Update Memory Progress
                     const memoryBar = document.getElementById('memory-progress');
                     const memoryText = document.getElementById('memory-text');
-                    // Calculate actual memory usage percentage based on RSS
-                    const totalMemory = metrics.memory_vms;  // Total available memory
-                    const usedMemory = metrics.memory_rss;   // Actually used memory
-                    const memoryPercent = (usedMemory / totalMemory) * 100;
-                    
+                    // Use system memory usage (total - available / total) from backend
+                    const memoryPercent = metrics.system_memory_used || 0;
+
                     memoryBar.style.width = `${Math.min(memoryPercent, 100)}%`;
                     memoryText.textContent = `${memoryPercent.toFixed(1)}%`;
                     

@@ -375,6 +375,12 @@
             </form>
         </div>
         <div class="debug_item">
+            <h3>Cleanup My Plex Watchlist and Other Plex Watchlists</h3>
+            <p class="description">Removes all Collected items from My Plex Watchlist and all configured Other Plex Watchlists. If an item appears in multiple watchlists it will be removed from all of them.</p>
+            <button type="button" id="cleanup-watchlist-btn" onclick="runWatchlistCleanup()">Run</button>
+            <div id="cleanup-watchlist-result" style="margin-top:8px;"></div>
+        </div>
+        <div class="debug_item">
             <h3>Get Wanted Content</h3>
             <form action="{{ url_for('debug.get_wanted_content') }}" method="POST" id="get-wanted-form">
                 <div class="form-group">
@@ -4517,6 +4523,21 @@ if (document.readyState === 'loading') {
     window.toggleAllBackups = toggleAllBackups;
     window.toggleAllContent = toggleAllContent;
     window.deleteOldDatabases = deleteOldDatabases;
+
+    function runWatchlistCleanup() {
+        const btn = document.getElementById('cleanup-watchlist-btn');
+        const result = document.getElementById('cleanup-watchlist-result');
+        btn.disabled = true;
+        result.textContent = 'Running... check logs for progress.';
+        fetch('/debug/api/cleanup_collected_watchlist', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                result.textContent = data.message || (data.success ? 'Started.' : 'Failed.');
+            })
+            .catch(e => { result.textContent = 'Error: ' + e; })
+            .finally(() => { btn.disabled = false; });
+    }
+    window.runWatchlistCleanup = runWatchlistCleanup;
 
 </script>
 
