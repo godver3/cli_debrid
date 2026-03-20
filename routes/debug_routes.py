@@ -5514,6 +5514,99 @@ def fix_episode_numbers():
             'error': f'An error occurred: {str(e)}'
         })
 
+@debug_bp.route('/api/cleanup_collected_watchlist', methods=['POST'])
+@admin_required
+def cleanup_collected_watchlist():
+    """Remove all Collected items from My Plex Watchlist and all Other Plex Watchlists."""
+    import threading
+    from flask import current_app
+    app = current_app._get_current_object()
+
+    def _run():
+        with app.app_context():
+            try:
+                from content_checkers.plex_watchlist import get_plex_client
+                from database.core import get_db_connection
+                from plexapi.myplex import MyPlexAccount
+
+                # Build set of collected imdb_ids
+                conn = get_db_connection()
+                rows = conn.execute(
+                    "SELECT DISTINCT imdb_id, title, type FROM media_items WHERE state = 'Collected' AND imdb_id IS NOT NULL AND imdb_id != ''"
+                ).fetchall()
+                conn.close()
+
+                collected = {row['imdb_id']: {'imdb_id': row['imdb_id'], 'title': row['title'], 'type': row['type']} for row in rows}
+                if not collected:
+                    logging.info("[WatchlistCleanup] No collected items with IMDB IDs found.")
+                    return
+
+                logging.info(f"[WatchlistCleanup] Found {len(collected)} collected items to check against watchlists.")
+                total_removed = 0
+
+                def _extract_imdb(witem):
+                    for guid in getattr(witem, 'guids', []):
+                        guid_str = str(guid.id) if hasattr(guid, 'id') else str(guid)
+                        if 'imdb://' in guid_str:
+                            return guid_str.replace('imdb://', '').strip()
+                    return None
+
+                # --- My Plex Watchlist ---
+                try:
+                    account, _token = get_plex_client()
+                    if account:
+                        watchlist = account.watchlist()
+                        logging.info(f"[WatchlistCleanup] My Plex Watchlist has {len(watchlist)} items.")
+                        for witem in watchlist:
+                            witem_imdb = _extract_imdb(witem)
+                            if witem_imdb and witem_imdb in collected:
+                                try:
+                                    account.removeFromWatchlist(witem)
+                                    total_removed += 1
+                                    logging.info(f"[WatchlistCleanup] Removed '{collected[witem_imdb]['title']}' ({witem_imdb}) from My Plex Watchlist.")
+                                except Exception as e:
+                                    logging.warning(f"[WatchlistCleanup] Failed to remove {witem_imdb} from My Plex Watchlist: {e}")
+                except Exception as e:
+                    logging.error(f"[WatchlistCleanup] Error accessing My Plex Watchlist: {e}")
+
+                # --- Other Plex Watchlists ---
+                try:
+                    runner = get_program_runner()
+                    content_sources = runner.get_content_sources() if runner else {}
+                    for source_key, source_data in content_sources.items():
+                        if source_data.get('type') != 'Other Plex Watchlist':
+                            continue
+                        username = source_data.get('username', '')
+                        other_token = source_data.get('token', '')
+                        if not other_token:
+                            continue
+                        try:
+                            other_account = MyPlexAccount(token=other_token)
+                            watchlist = other_account.watchlist()
+                            logging.info(f"[WatchlistCleanup] {username}'s watchlist has {len(watchlist)} items.")
+                            for witem in watchlist:
+                                witem_imdb = _extract_imdb(witem)
+                                if witem_imdb and witem_imdb in collected:
+                                    try:
+                                        other_account.removeFromWatchlist(witem)
+                                        total_removed += 1
+                                        logging.info(f"[WatchlistCleanup] Removed '{collected[witem_imdb]['title']}' ({witem_imdb}) from {username}'s Plex Watchlist.")
+                                    except Exception as e:
+                                        logging.warning(f"[WatchlistCleanup] Failed to remove {witem_imdb} from {username}'s watchlist: {e}")
+                        except Exception as e:
+                            logging.error(f"[WatchlistCleanup] Error accessing {username}'s Plex Watchlist: {e}")
+                except Exception as e:
+                    logging.error(f"[WatchlistCleanup] Error iterating Other Plex Watchlist sources: {e}")
+
+                logging.info(f"[WatchlistCleanup] Done. Removed {total_removed} items total across all watchlists.")
+
+            except Exception as e:
+                logging.error(f"[WatchlistCleanup] Unexpected error: {e}", exc_info=True)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'success': True, 'message': 'Watchlist cleanup started — check logs for progress.'})
+
+
 @debug_bp.route('/api/cleanup_failed_upgrades', methods=['POST'])
 @admin_required
 def cleanup_failed_upgrades():
