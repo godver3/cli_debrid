@@ -1849,3 +1849,6 @@ body[data-theme="tangerine"] .dm-batt-cb-all { color:var(--text-muted,#9ca3af); 
 body[data-theme="tangerine"] .dm-batt-reid-preview { background:var(--bg-secondary,#f9fafb); border-color:var(--border-color,#e5e7eb); color:var(--text-primary,#111); }
 body[data-theme="tangerine"] .dm-batt-reid-check { color:var(--text-secondary,#6b7280); }
 body[data-theme="tangerine"] .dm-batt-reid-warn { color:#d97706; }
+
+/* Beta notice box */
+.beta-notice-box { --beta-box-bg: #1e1a14; }

@@ -214,6 +214,28 @@ export function updateSettings() {
         settingsData['Bazarr Integration'][key] = input.type === 'checkbox' ? input.checked : input.value;
     });
 
+    // Create AI Assistant section if it doesn't exist
+    if (!settingsData['AI Assistant']) {
+        settingsData['AI Assistant'] = {};
+    }
+
+    // Handle AI Assistant settings
+    const aiAssistantInputs = document.querySelectorAll('[name^="AI Assistant."]');
+    aiAssistantInputs.forEach(input => {
+        const parts = input.name.split('.');
+        // parts[0] = 'AI Assistant', parts[1] = key or sub-section, parts[2] = sub-key (optional)
+        const val = input.type === 'checkbox' ? input.checked : input.value;
+        if (parts.length === 3) {
+            // nested: e.g. AI Assistant.plex_labels.enabled
+            if (!settingsData['AI Assistant'][parts[1]] || typeof settingsData['AI Assistant'][parts[1]] !== 'object') {
+                settingsData['AI Assistant'][parts[1]] = {};
+            }
+            settingsData['AI Assistant'][parts[1]][parts[2]] = val;
+        } else {
+            settingsData['AI Assistant'][parts[1]] = val;
+        }
+    });
+
 
     // Ensure UI Settings section exists
     if (!settingsData['UI Settings']) {
@@ -456,7 +478,7 @@ export function updateSettings() {
     }
     
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings', 'AI Assistant'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];

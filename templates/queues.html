@@ -214,16 +214,40 @@
         if (queueName === 'Checking') {
             return generateCheckingItems(items);
         }
-        
-        // Use document fragment for better performance
-        const htmlChunks = [];
-        
-        // Process items in batches to avoid blocking the main thread
-        for (let i = 0; i < items.length; i++) {
-            const item = items[i];
-            htmlChunks.push(generateSingleItem(item, queueName));
+
+        // For Wanted queue: merge duplicate entries (same title/year/type/season/episode/version)
+        // that differ only by content_source — show combined "Source A, Source B" instead of
+        // two identical rows. Backend keeps separate DB rows intentionally; display collapses them.
+        let displayItems = items;
+        if (queueName === 'Wanted') {
+            const seen = new Map();
+            for (const item of items) {
+                const key = [
+                    item.title || '', item.year || '', item.type || '',
+                    item.season_number || '', item.episode_number || '',
+                    item.version || ''
+                ].join('|');
+                if (seen.has(key)) {
+                    const existing = seen.get(key);
+                    const existingSrc = existing.content_source_display || existing.content_source || '';
+                    const newSrc = item.content_source_display || item.content_source || '';
+                    if (newSrc && newSrc !== 'Unknown' && !existingSrc.split(', ').includes(newSrc)) {
+                        existing.content_source_display = existingSrc ? `${existingSrc}, ${newSrc}` : newSrc;
+                        existing.content_source = existing.content_source_display;
+                    }
+                } else {
+                    // Clone so we don't mutate the original data
+                    seen.set(key, Object.assign({}, item));
+                }
+            }
+            displayItems = Array.from(seen.values());
         }
-        
+
+        const htmlChunks = [];
+        for (let i = 0; i < displayItems.length; i++) {
+            htmlChunks.push(generateSingleItem(displayItems[i], queueName));
+        }
+
         return htmlChunks.join('');
     }
 

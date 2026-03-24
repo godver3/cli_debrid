@@ -492,7 +492,7 @@ async function fetchItems(isReset = false) {
         if (data.success) {
             // Update state
             libraryState.hasMore = data.has_more;
-            // total is null when more pages exist (n+1 trick), exact on the last page
+            // total is provided on first page (offset=0) and on the last page; preserve it across subsequent pages
             if (data.total !== null && data.total !== undefined) {
                 libraryState.totalCount = data.total;
             }
@@ -1206,10 +1206,8 @@ function updateResultsInfo() {
     const displayedCount = libraryState.offset;
     let totalText;
     if (libraryState.totalCount > 0) {
-        // Exact total known (last page reached)
-        totalText = `Showing ${displayedCount} of ${libraryState.totalCount} items`;
+        totalText = `Showing ${displayedCount}/${libraryState.totalCount} items`;
     } else if (displayedCount > 0) {
-        // Still loading more pages — total not yet known
         totalText = `Showing ${displayedCount} items`;
     } else {
         totalText = 'Loading...';

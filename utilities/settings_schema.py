@@ -1053,6 +1053,11 @@ SETTINGS_SCHEMA = {
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
                 },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
+                    "default": False
+                },
                 "custom_symlink_subfolder": {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
@@ -1098,6 +1103,11 @@ SETTINGS_SCHEMA = {
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
                 },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
+                    "default": False
+                },
                 "custom_symlink_subfolder": {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
@@ -1127,6 +1137,11 @@ SETTINGS_SCHEMA = {
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
                     "default": False
                 },
                 "custom_symlink_subfolder": {
@@ -1159,6 +1174,11 @@ SETTINGS_SCHEMA = {
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
                     "default": False
                 },
                 "custom_symlink_subfolder": {
@@ -1215,6 +1235,11 @@ SETTINGS_SCHEMA = {
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
                 },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
+                    "default": False
+                },
                 "custom_symlink_subfolder": {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
@@ -1269,6 +1294,11 @@ SETTINGS_SCHEMA = {
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
                     "default": False
                 },
                 "custom_symlink_subfolder": {
@@ -1330,6 +1360,11 @@ SETTINGS_SCHEMA = {
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
                 },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
+                    "default": False
+                },
                 "custom_symlink_subfolder": {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
@@ -1382,6 +1417,11 @@ SETTINGS_SCHEMA = {
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
                     "default": False
                 },
                 "custom_symlink_subfolder": {
@@ -1440,6 +1480,11 @@ SETTINGS_SCHEMA = {
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
                 },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
+                    "default": False
+                },
                 "custom_symlink_subfolder": {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
@@ -1493,6 +1538,11 @@ SETTINGS_SCHEMA = {
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
                     "default": False
                 },
                 "custom_symlink_subfolder": {
@@ -1550,6 +1600,11 @@ SETTINGS_SCHEMA = {
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
                 },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
+                    "default": False
+                },
                 "custom_symlink_subfolder": {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
@@ -1604,6 +1659,11 @@ SETTINGS_SCHEMA = {
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
                     "default": False
                 },
                 "custom_symlink_subfolder": {
@@ -1675,6 +1735,11 @@ SETTINGS_SCHEMA = {
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
                     "default": False
                 },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
+                    "default": False
+                },
                 "custom_symlink_subfolder": {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
@@ -1736,6 +1801,11 @@ SETTINGS_SCHEMA = {
                 "allow_specials": {
                     "type": "boolean",
                     "description": "Allow processing of Season 0 (Specials) for shows added via this source.",
+                    "default": False
+                },
+                "unblacklist_on_source_run": {
+                    "type": "boolean",
+                    "description": "When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.",
                     "default": False
                 },
                 "custom_symlink_subfolder": {
@@ -2001,6 +2071,11 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "User agent for subtitle API requests",
             "default": "SubDownloader/1.0 (your-email@example.com)"
+        },
+        "probe_for_embedded_subtitles": {
+            "type": "boolean",
+            "description": "Before searching for subtitles, probe the file with ffprobe to detect embedded subtitle tracks. If all configured languages are already embedded, the external search is skipped. Applies to built-in subtitle downloader and Bazarr. Requires ffprobe to be installed. Note: probing dereferences the symlink to the debrid mount — ensure your mount is stable before enabling.",
+            "default": False
         }
     },
     "Custom Post-Processing": {
@@ -2125,6 +2200,92 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Version number to report to Bazarr. Change only if Bazarr requires a specific version.",
             "default": "5.14.0.9383"
+        }
+    },
+    "AI Assistant": {
+        "tab": "Additional Settings",
+        "enabled": {
+            "type": "boolean",
+            "description": "Enable the AI Butler chat widget. Requires OpenClaw to be installed and configured.",
+            "default": False
+        },
+        "openclaw_url": {
+            "type": "string",
+            "description": "URL of your OpenClaw instance (e.g. http://192.168.1.x:18789). OpenClaw handles AI provider selection and session memory.",
+            "default": ""
+        },
+        "openclaw_token": {
+            "type": "string",
+            "description": "Bearer token for OpenClaw authentication. Leave blank if OpenClaw has no auth configured.",
+            "default": "",
+            "sensitive": True
+        },
+        "agent_id": {
+            "type": "string",
+            "description": "OpenClaw agent ID to use (default: main).",
+            "default": "main"
+        },
+        "display_name": {
+            "type": "string",
+            "description": "Name shown in the AI Butler chat header. Set this to match your OpenClaw agent's name.",
+            "default": "AI Butler"
+        },
+        "health_notifications": {
+            "type": "boolean",
+            "description": "Send proactive health alerts via your configured notification channels when the AI Butler detects issues (stuck queues, high blacklist rate, errors, etc.).",
+            "default": True
+        },
+        "health_check_interval": {
+            "type": "integer",
+            "description": "How often (in seconds) the AI Butler runs background health checks. Minimum 300 (5 minutes).",
+            "default": 900
+        },
+        "enable_settings_assistant": {
+            "type": "boolean",
+            "description": "Phase 2 — Settings Assistant: Allows the AI to suggest and apply setting changes directly from chat. When enabled, the AI can output Apply buttons in its responses that save a setting with one click, and can trigger a program restart after applying changes. When disabled, the AI becomes read-only — it can still explain settings but cannot change them, and the /api/ai/apply_setting and /api/ai/restart endpoints will be blocked.",
+            "default": True
+        },
+        "enable_proactive_notifications": {
+            "type": "boolean",
+            "description": "Phase 3 — Proactive Notifications: Runs a background health monitor that periodically checks for issues (stuck queues, high blacklist rate, error spikes, stalled upgrades, large DB) and sends plain-English alerts via your configured notification channels (Discord, Telegram, etc.). When disabled, no background health checks run and you will not receive AI-generated alerts. The health_notifications and health_check_interval settings below only apply when this is enabled.",
+            "default": True
+        },
+        "enable_recommendations": {
+            "type": "boolean",
+            "description": "Phase 4 — Content Recommendations & Add to Library: Allows the AI to suggest movies and shows based on your watch history and ratings, and lets you add them to your library with one click from the chat. When enabled, your watch history (from Plex or Trakt) and your full collected library are included in the AI's context so it can make personalised suggestions and avoid recommending things you already have. When disabled, watch history and the full library list are excluded from the prompt, the ADD_TO_LIBRARY action cards will not appear, and the /api/ai/add_to_library endpoint will be blocked.",
+            "default": True
+        },
+        "enable_habit_tracking": {
+            "type": "boolean",
+            "description": "Phase 5 — Habit Learning & Automation: Records significant actions you take in cli_debrid (manually triggering content sources, upgrade scans, library adds, program start/stop) to a local ai_habits table. The AI analyses these patterns and proactively suggests automations — for example, if you trigger the same content source every morning it will suggest scheduling it, or if you frequently add items manually it will suggest adding a Trakt list. When disabled, no actions are recorded and the AI will not make automation suggestions. Previously recorded habit data is kept but ignored.",
+            "default": True
+        },
+        "share_full_config": {
+            "type": "boolean",
+            "description": "Share Full Config with AI: When enabled, the AI receives your complete config.json (with all tokens, passwords and API keys permanently redacted to ***) plus expanded log tails, upgrade hub history, and notification history. This gives the AI much deeper context — it can diagnose configuration problems, explain exactly why a setting is set the way it is, identify conflicting settings across sections, and give more accurate advice. When disabled, the AI only receives a short key-settings summary, which reduces prompt size and limits how much of your configuration is sent to the AI provider but also reduces the AI's ability to help with complex issues.",
+            "default": True
+        },
+        "plex_labels": {
+            "type": "object",
+            "description": "Plex label settings for items added via AI Butler.",
+            "schema": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Apply Plex labels to items added to your library via the AI Butler.",
+                    "default": False
+                },
+                "label_mode": {
+                    "type": "string",
+                    "description": "How to label items: 'fixed' applies the same label to all AI Butler additions.",
+                    "default": "fixed",
+                    "choices": ["fixed"]
+                },
+                "fixed_label": {
+                    "type": "string",
+                    "description": "Label to apply to all items added via AI Butler (e.g. 'AI Butler'). Comma-separated for multiple labels.",
+                    "default": "AI Butler"
+                }
+            }
         }
     },
     "Overlay Settings": {

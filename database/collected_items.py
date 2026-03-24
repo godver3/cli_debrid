@@ -587,10 +587,36 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                 add_to_collected_notifications(updated_item_dict)
                                 # logging.debug(f"add_to_collected_notifications for item {db_item_id} took {time.time() - start_notification_time:.4f} seconds.")
 
-                                # Notify Bazarr via SignalR if integration is enabled
+                                # Notify Bazarr via SignalR if integration is enabled.
+                                # If probe_for_embedded_subtitles is on and all configured
+                                # languages are already in the file, skip the notification
+                                # so Bazarr doesn't redundantly search for them.
                                 try:
                                     from routes.bazarr_signalr import notify_media_collected
-                                    notify_media_collected(updated_item_dict, item.get('type', 'movie'))
+                                    _skip_bazarr = False
+                                    try:
+                                        from utilities.settings import get_setting
+                                        if get_setting('Subtitle Settings', 'probe_for_embedded_subtitles', False):
+                                            _loc = updated_item_dict.get('location_on_disk')
+                                            if _loc:
+                                                from utilities.downsub import get_embedded_subtitle_languages, expand_languages
+                                                from utilities.config.downsub_config import config as _sub_cfg
+                                                _sub_cfg.reload()
+                                                _wanted_langs = {
+                                                    lang.alpha3
+                                                    for lang in expand_languages(_sub_cfg.SUBTITLE_LANGUAGES)
+                                                }
+                                                if _wanted_langs:
+                                                    import os as _os
+                                                    _real = _os.path.realpath(_loc) if _os.path.islink(_loc) else _loc
+                                                    _embedded = get_embedded_subtitle_languages(_real)
+                                                    if _wanted_langs and _wanted_langs.issubset(_embedded):
+                                                        logging.info(f"Bazarr notification skipped — all configured subtitle languages already embedded in {_loc}")
+                                                        _skip_bazarr = True
+                                    except Exception as _probe_err:
+                                        logging.debug(f"Embedded subtitle probe for Bazarr check failed: {_probe_err}")
+                                    if not _skip_bazarr:
+                                        notify_media_collected(updated_item_dict, item.get('type', 'movie'))
                                 except Exception as bazarr_err:
                                     logging.debug(f"Bazarr SignalR notification skipped: {bazarr_err}")
                             else:

@@ -1571,7 +1571,7 @@ def update_settings():
 
         # Detect if ONLY UI settings are being changed (no restart/reload needed)
         # Compare new settings with current config to find what actually changed
-        ui_only_categories = {'Library Manager', 'Discover Settings', 'Overlay Settings'}
+        ui_only_categories = {'Library Manager', 'Discover Settings', 'Overlay Settings', 'AI Assistant'}
         actually_changed_categories = set()
 
         for category, values in new_settings.items():
