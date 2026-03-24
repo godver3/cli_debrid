@@ -1352,6 +1352,13 @@ def get_wanted_content():
     source_id = request.json.get('source_id', 'all')
     from routes.extensions import task_queue # Import the task_queue
     task_id = task_queue.add_task(async_get_wanted_content, source_id) # Use task_queue
+    try:
+        from flask_login import current_user as _cu
+        from utilities.ai_habits import track_action
+        _uid = _cu.username if _cu.is_authenticated else 'system'
+        track_action('wanted_source_run', detail=source_id, user_id=_uid)
+    except Exception:
+        pass
     return jsonify({'task_id': task_id}), 202 # Return the real task_id and 202 Accepted
 
 @debug_bp.route('/api/rate_limit_info')

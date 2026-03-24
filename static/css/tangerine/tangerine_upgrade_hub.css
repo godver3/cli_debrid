@@ -1066,3 +1066,6 @@ body[data-theme="tangerine"] input#uh-genre-search:hover {
     border: none;
     box-shadow: none;
 }
+
+/* Beta notice box */
+.beta-notice-box { --beta-box-bg: #1e1a14; }

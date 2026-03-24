@@ -5,7 +5,7 @@
 </div>
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "Library Manager" and section != "Bazarr Integration" %}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" %}
     <div class="settings-section">
         <div class="settings-section-header">
             <h4>{{ section }}</h4>
@@ -879,6 +879,14 @@ document.addEventListener('DOMContentLoaded', function() {
         <!-- subtitle_providers setting removed - providers are now hardcoded in downsub.sh -->
 
         <!-- user_agent setting removed - user agent is now hardcoded in downsub.sh -->
+
+        <div class="settings-form-group">
+            <label for="additional-probe_for_embedded_subtitles" class="settings-title">Probe for Embedded Subtitles:</label>
+            <input type="checkbox" id="additional-probe_for_embedded_subtitles" name="Subtitle Settings.probe_for_embedded_subtitles"
+                   data-section="Subtitle Settings" data-key="probe_for_embedded_subtitles"
+                   {% if settings.get('Subtitle Settings', {}).get('probe_for_embedded_subtitles') %}checked{% endif %}>
+            <p class="settings-description">Before searching for subtitles, probe the file with ffprobe to detect embedded tracks. If all configured languages are already embedded, the external search (and Bazarr notification) is skipped. Requires ffprobe. Note: probing reads from the debrid mount — ensure your mount is stable before enabling.</p>
+        </div>
     </div>
 </div>
 
@@ -916,6 +924,149 @@ document.addEventListener('DOMContentLoaded', function() {
         </div>
     </div>
 </div>
+
+<!-- AI Assistant Section -->
+<div class="settings-section">
+    <div class="settings-section-header">
+        <h4>AI Assistant</h4>
+        <span class="settings-toggle-icon">+</span>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="ai-enabled" class="settings-title">Enable AI Butler:</label>
+            <input type="checkbox" id="ai-enabled" name="AI Assistant.enabled"
+                   data-section="AI Assistant" data-key="enabled"
+                   {% if settings.get('AI Assistant', {}).get('enabled') %}checked{% endif %}>
+            <p class="settings-description">Enable the AI Butler chat widget on all pages. Requires OpenClaw to be installed and configured.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-openclaw_url" class="settings-title">OpenClaw URL:</label>
+            <input type="text" id="ai-openclaw_url" name="AI Assistant.openclaw_url"
+                   value="{{ settings.get('AI Assistant', {}).get('openclaw_url', '') }}"
+                   class="settings-input" placeholder="http://192.168.1.x:18789"
+                   data-section="AI Assistant" data-key="openclaw_url">
+            <p class="settings-description">URL of your OpenClaw instance. OpenClaw handles AI provider selection and session memory.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-openclaw_token" class="settings-title">OpenClaw Token:</label>
+            <input type="password" id="ai-openclaw_token" name="AI Assistant.openclaw_token"
+                   value="{{ settings.get('AI Assistant', {}).get('openclaw_token', '') }}"
+                   class="settings-input" placeholder="Leave blank if no auth configured"
+                   data-section="AI Assistant" data-key="openclaw_token">
+            <p class="settings-description">Bearer token for OpenClaw authentication. Leave blank if OpenClaw has no auth configured.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-agent_id" class="settings-title">Agent ID:</label>
+            <input type="text" id="ai-agent_id" name="AI Assistant.agent_id"
+                   value="{{ settings.get('AI Assistant', {}).get('agent_id', 'main') }}"
+                   class="settings-input" placeholder="main"
+                   data-section="AI Assistant" data-key="agent_id">
+            <p class="settings-description">OpenClaw agent ID to use (default: main).</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-health_notifications" class="settings-title">Health Notifications:</label>
+            <input type="checkbox" id="ai-health_notifications" name="AI Assistant.health_notifications"
+                   {% if settings.get('AI Assistant', {}).get('health_notifications', True) %}checked{% endif %}
+                   data-section="AI Assistant" data-key="health_notifications">
+            <p class="settings-description">Send proactive alerts via your notification channels when the AI Butler detects issues (stuck queues, high blacklist rate, errors, etc.).</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-health_check_interval" class="settings-title">Health Check Interval (seconds):</label>
+            <input type="number" id="ai-health_check_interval" name="AI Assistant.health_check_interval"
+                   value="{{ settings.get('AI Assistant', {}).get('health_check_interval', 900) }}"
+                   class="settings-input" placeholder="900" min="300"
+                   data-section="AI Assistant" data-key="health_check_interval">
+            <p class="settings-description">How often the AI Butler runs background health checks. Minimum 300 (5 minutes). Default 900 (15 minutes).</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-enable_settings_assistant" class="settings-title">Settings Assistant:</label>
+            <input type="checkbox" id="ai-enable_settings_assistant" name="AI Assistant.enable_settings_assistant"
+                   {% if settings.get('AI Assistant', {}).get('enable_settings_assistant', True) %}checked{% endif %}
+                   data-section="AI Assistant" data-key="enable_settings_assistant">
+            <p class="settings-description">Allow the AI to read your full settings schema and suggest or apply configuration changes via the chat. When enabled, the AI can send <code>APPLY_SETTING</code> blocks that let you update settings with a single click, and it is given the list of all writable settings keys. Disabling this means the AI will still answer questions but cannot propose or apply any setting changes — useful if you want a read-only assistant.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-enable_proactive_notifications" class="settings-title">Proactive Notifications:</label>
+            <input type="checkbox" id="ai-enable_proactive_notifications" name="AI Assistant.enable_proactive_notifications"
+                   {% if settings.get('AI Assistant', {}).get('enable_proactive_notifications', True) %}checked{% endif %}
+                   data-section="AI Assistant" data-key="enable_proactive_notifications">
+            <p class="settings-description">Allow the AI Health Monitor to run background checks every few minutes and push plain-English alerts to your notification channels (Telegram, Discord, etc.) when it detects problems such as stuck queues, high blacklist rates, excessive errors, or a large database. Disabling this stops all automatic health checks and alerts — you can still ask the AI about health manually in the chat.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-enable_recommendations" class="settings-title">Content Recommendations:</label>
+            <input type="checkbox" id="ai-enable_recommendations" name="AI Assistant.enable_recommendations"
+                   {% if settings.get('AI Assistant', {}).get('enable_recommendations', True) %}checked{% endif %}
+                   data-section="AI Assistant" data-key="enable_recommendations">
+            <p class="settings-description">Allow the AI to recommend content based on your watch history and collected library, and add items directly to your wanted list via the chat with a single click. When enabled, the AI receives a summary of your recently watched and collected titles for context, and can generate <code>ADD_TO_LIBRARY</code> cards. Disabling this removes watch/library context from the AI prompt and disables the add-to-library action — the AI will still answer general questions but won't know what you have watched.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-enable_habit_tracking" class="settings-title">Habit Learning:</label>
+            <input type="checkbox" id="ai-enable_habit_tracking" name="AI Assistant.enable_habit_tracking"
+                   {% if settings.get('AI Assistant', {}).get('enable_habit_tracking', True) %}checked{% endif %}
+                   data-section="AI Assistant" data-key="enable_habit_tracking">
+            <p class="settings-description">Record significant user actions (running wanted sources, triggering upgrade scans, pausing queues, adding library items) in the background and surface pattern summaries to the AI. With this enabled, the AI can notice that you run a source every morning and suggest automating it, or spot that you frequently remove the same type of item from the blacklist and recommend a settings change. Disabling this stops all habit recording and removes the pattern summary from the AI context — no data is deleted, it just won't be updated or shown to the AI.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-share_full_config" class="settings-title">Share Full Config with AI:</label>
+            <input type="checkbox" id="ai-share_full_config" name="AI Assistant.share_full_config"
+                   {% if settings.get('AI Assistant', {}).get('share_full_config', True) %}checked{% endif %}
+                   data-section="AI Assistant" data-key="share_full_config">
+            <p class="settings-description">When enabled, the AI receives your full configuration (up to 15 000 chars), extended log tails (up to 20 000 chars), upgrade activity history, and recent notification logs — giving it the most complete picture of your setup for accurate diagnostics and suggestions. Secrets (API keys, tokens, passwords) are always redacted regardless of this setting. When disabled, the AI only receives a short config excerpt (2 000 chars) and a brief log tail (3 000 chars), which reduces context sent to the AI provider but may result in less accurate advice.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="ai-plex-labels-enabled" class="settings-title">Plex Labels:</label>
+            <input type="checkbox" id="ai-plex-labels-enabled" name="AI Assistant.plex_labels.enabled"
+                   data-section="AI Assistant" data-key="plex_labels.enabled"
+                   {% if settings.get('AI Assistant', {}).get('plex_labels', {}).get('enabled') %}checked{% endif %}>
+            <p class="settings-description">Apply a Plex label to items added to your library via the AI Butler.</p>
+        </div>
+        <div id="ai-plex-labels-dependent" style="margin-left: 10px; {% if not settings.get('AI Assistant', {}).get('plex_labels', {}).get('enabled') %}display:none;{% endif %}">
+            <div class="settings-form-group">
+                <label for="ai-plex-labels-label_mode" class="settings-title">Label Mode:</label>
+                <select id="ai-plex-labels-label_mode" name="AI Assistant.plex_labels.label_mode"
+                        data-section="AI Assistant" data-key="plex_labels.label_mode"
+                        class="settings-input"
+                        {% if not settings.get('AI Assistant', {}).get('plex_labels', {}).get('enabled') %}disabled{% endif %}>
+                    <option value="fixed" {% if settings.get('AI Assistant', {}).get('plex_labels', {}).get('label_mode', 'fixed') == 'fixed' %}selected{% endif %}>Fixed Label</option>
+                </select>
+                <p class="settings-description">Fixed: apply the same label to all AI Butler additions.</p>
+            </div>
+            <div class="settings-form-group" id="ai-plex-labels-fixed-group">
+                <label for="ai-plex-labels-fixed_label" class="settings-title">Fixed Label:</label>
+                <input type="text" id="ai-plex-labels-fixed_label" name="AI Assistant.plex_labels.fixed_label"
+                       value="{{ settings.get('AI Assistant', {}).get('plex_labels', {}).get('fixed_label', 'AI Butler') }}"
+                       class="settings-input" placeholder="AI Butler"
+                       data-section="AI Assistant" data-key="plex_labels.fixed_label"
+                       {% if not settings.get('AI Assistant', {}).get('plex_labels', {}).get('enabled') %}disabled{% endif %}>
+                <p class="settings-description">Label to apply to all items added via AI Butler. Comma-separated for multiple labels.</p>
+            </div>
+        </div>
+        <div class="settings-form-group">
+            <label class="settings-title">OpenClaw Skill File:</label>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <a href="/api/ai/skill_download" download="cli_debrid_skill.md" class="btn btn-secondary btn-sm">
+                    <i class="fas fa-download"></i> Download SKILL.md
+                </a>
+            </div>
+            <p class="settings-description">Downloads a pre-configured OpenClaw skill file with your URL and token already filled in. Drop it into <code>~/.openclaw/skills/</code> on your OpenClaw machine, then reload OpenClaw. Your agent will then be able to answer questions about your library from Telegram, Discord, etc.</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function() {
+        const aiPlexCb = document.getElementById('ai-plex-labels-enabled');
+        const aiPlexDependent = document.getElementById('ai-plex-labels-dependent');
+        if (aiPlexCb && aiPlexDependent) {
+            function toggleAiPlexLabels() {
+                const enabled = aiPlexCb.checked;
+                aiPlexDependent.style.display = enabled ? '' : 'none';
+                aiPlexDependent.querySelectorAll('input, select').forEach(el => el.disabled = !enabled);
+            }
+            aiPlexCb.addEventListener('change', toggleAiPlexLabels);
+        }
+    })();
+</script>
 
 <script>
     function initializeTraktAuthorization() {

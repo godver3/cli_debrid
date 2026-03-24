@@ -234,15 +234,8 @@ def validate_onboarding_settings():
                 'message': original_message
             })
             all_valid = all_valid and original_valid
-    # If update_plex_on_file_discovery is not enabled, only validate if path is provided
-    elif original_path:
-        original_valid, original_message = validate_path_exists(original_path)
-        validation_checks.append({
-            'name': 'Original Files Path',
-            'valid': original_valid,
-            'message': original_message
-        })
-        all_valid = all_valid and original_valid
+    # If update_plex_on_file_discovery is not enabled, original_files_path is optional
+    # during onboarding — skip validation even if a default value is pre-filled
 
     if management_type in ['plex_direct', 'plex_symlink', 'Plex']:
         # Validate Plex settings

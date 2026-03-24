@@ -86,6 +86,13 @@ def start_scan():
         scan_for_upgrades(scan_limit=scan_limit)
 
     threading.Thread(target=_run, daemon=True, name='upgrade-hub-scan').start()
+    try:
+        from flask_login import current_user as _cu
+        from utilities.ai_habits import track_action
+        _uid = _cu.username if _cu.is_authenticated else 'system'
+        track_action('upgrade_scan_manual', user_id=_uid)
+    except Exception:
+        pass
     return jsonify({'success': True, 'message': 'Scan started'})
 
 
