@@ -490,12 +490,12 @@ def _apply_version_hard_filters(candidates: List[Dict], version_settings: Dict) 
     from scraper.functions.other_functions import smart_search
     from scraper.functions.similarity_checks import normalize_title
 
-    max_resolution = version_settings.get('max_resolution', '2160p') or '2160p'
-    resolution_wanted = version_settings.get('resolution_wanted', '<=') or '<='
+    max_resolution = version_settings.get('max_resolution', '1080p') or '1080p'
+    resolution_wanted = version_settings.get('resolution_wanted', '==') or '=='
     filter_in_patterns  = version_settings.get('filter_in',  []) or []
     filter_out_patterns = version_settings.get('filter_out', []) or []
 
-    # Nothing to filter — skip the loop entirely
+    # Nothing to filter — skip the loop entirely (2160p/<= is the most permissive combination)
     if not filter_in_patterns and not filter_out_patterns and max_resolution == '2160p' and resolution_wanted == '<=':
         return candidates
 
@@ -787,13 +787,13 @@ def _db_batch_fetch_movies(conn, imdb_ids: List[str],
             if after_date:
                 cur.execute(
                     'SELECT "ImdbId", "RawTitle", "InfoHash", "Size", "Year", "IngestedAt"'
-                    ' FROM "Torrents" WHERE "ImdbId" = ANY(%s) AND "IngestedAt" >= %s LIMIT 100000',
+                    ' FROM "Torrents" WHERE "ImdbId" = ANY(%s) AND "Category" = \'movies\' AND "IngestedAt" >= %s LIMIT 100000',
                     (imdb_ids, after_date)
                 )
             else:
                 cur.execute(
                     'SELECT "ImdbId", "RawTitle", "InfoHash", "Size", "Year", "IngestedAt"'
-                    ' FROM "Torrents" WHERE "ImdbId" = ANY(%s) LIMIT 100000',
+                    ' FROM "Torrents" WHERE "ImdbId" = ANY(%s) AND "Category" = \'movies\' LIMIT 100000',
                     (imdb_ids,)
                 )
             rows = cur.fetchall()
@@ -1033,6 +1033,9 @@ def _scan_movie(item: Dict, zilean_instance: str, zilean_settings: Dict,
     else:
         _all_api = _api_query(zilean_instance, zilean_settings,
                               item['imdb_id'], item['title'], item.get('year'), 'movie')
+        # Filter REST results to movies only (Zilean may return tvSeries results for shared IMDB IDs)
+        _all_api = [r for r in _all_api
+                    if (r.get('parsed_info') or {}).get('category', 'movies').lower() in ('movies', 'movie', '')]
         results = _filter_by_date(_all_api, after_date)
         if not results and after_date and _all_api:
             results = _all_api

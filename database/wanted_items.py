@@ -61,7 +61,7 @@ def _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item):
     return None
 
 
-def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
+def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, unblacklist: bool = False):
     from metadata.metadata import get_show_airtime_by_imdb_id
     from utilities.settings import get_setting
 
@@ -382,6 +382,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                             continue
             
             is_blacklisted_in_db = False
+            is_ghostlisted_in_db = False
             if item_type == 'movie':
                 existing_versions_states_check = []
                 if imdb_id and imdb_id in existing_movies:
@@ -389,8 +390,12 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                 if tmdb_id and tmdb_id in existing_movies and (not imdb_id or imdb_id != tmdb_id):
                     existing_versions_states_check.extend(existing_movies[tmdb_id])
                 for _, state, ghostlisted in existing_versions_states_check:
-                    if state == 'Blacklisted' or ghostlisted == 1:
-                        is_blacklisted_in_db = True; break
+                    if ghostlisted == 1:
+                        is_ghostlisted_in_db = True; is_blacklisted_in_db = True
+                    elif state == 'Blacklisted':
+                        is_blacklisted_in_db = True
+                    if is_ghostlisted_in_db:
+                        break
             else:
                 season_number_check = item.get('season_number'); episode_number_check = item.get('episode_number')
                 existing_versions_states_check = []
@@ -403,12 +408,28 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input):
                     if tmdb_key_check in existing_episodes and (not imdb_key_check or imdb_key_check != tmdb_key_check):
                          existing_versions_states_check.extend(existing_episodes[tmdb_key_check])
                 for _, state, ghostlisted in existing_versions_states_check:
-                    if state == 'Blacklisted' or ghostlisted == 1:
-                        is_blacklisted_in_db = True; break
-            
+                    if ghostlisted == 1:
+                        is_ghostlisted_in_db = True; is_blacklisted_in_db = True
+                    elif state == 'Blacklisted':
+                        is_blacklisted_in_db = True
+                    if is_ghostlisted_in_db:
+                        break
+
             if is_blacklisted_in_db:
                 if not enable_granular_versions:
-                    skip_stats['existing_blacklisted'] += 1; items_skipped += 1; continue
+                    # If unblacklist is enabled and item is only blacklisted (not ghostlisted), reset it
+                    if unblacklist and not is_ghostlisted_in_db:
+                        db_item_id = _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item)
+                        if db_item_id:
+                            conn.execute(
+                                "UPDATE media_items SET state='Wanted', blacklisted_date=NULL, sleep_cycles=0 WHERE id=?",
+                                (db_item_id,)
+                            )
+                            conn.commit()
+                            logging.info(f"Unblacklisted item id={db_item_id} ({item.get('title', 'Unknown')}) per source unblacklist setting")
+                            # Allow item to proceed — do not skip
+                    else:
+                        skip_stats['existing_blacklisted'] += 1; items_skipped += 1; continue
 
             # Check if item is already Collected or Upgrading (prevent duplicate re-addition)
             is_collected_or_upgrading_in_db = False

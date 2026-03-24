@@ -200,18 +200,15 @@ class TraktRateLimiter:
         with self.lock:
             now = time.time()
 
-            # Phase 2.2: Check if we're in cooldown period
+            # Phase 2.2: Check if we're in cooldown period (429 cooldown applies to ALL tasks)
             if now < self.cooldown_until:
                 remaining_cooldown = self.cooldown_until - now
-                if task_priority == 'high':
-                    logging.info(f"High-priority task proceeding despite cooldown ({remaining_cooldown:.0f}s remaining)")
-                else:
-                    logging.warning(f"Cooldown active: waiting {remaining_cooldown:.1f}s before making Trakt request")
-                    time.sleep(remaining_cooldown)
-                    now = time.time()
-                    # Reset cooldown after waiting
-                    self.cooldown_until = 0
-                    self._reset_adaptive_scaling()
+                logging.warning(f"Cooldown active ({task_priority} priority): waiting {remaining_cooldown:.1f}s before making Trakt request")
+                time.sleep(remaining_cooldown)
+                now = time.time()
+                # Reset cooldown after waiting
+                self.cooldown_until = 0
+                self._reset_adaptive_scaling()
 
             # Phase 1.3 & 2.2: Apply adaptive per-request delay with scaling
             effective_delay = self.per_request_delay * self.adaptive_scaling_factor
@@ -1040,7 +1037,7 @@ def get_imdb_id(item: Dict[str, Any], media_type: str) -> str:
     logging.warning(f"No IMDb, TMDB, or TVDB ID found in 'ids' for item: {json.dumps(item, indent=2)}")
     return ''
 
-def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def process_trakt_items(items: List[Dict[str, Any]], unblacklist: bool = False) -> List[Dict[str, Any]]:
     from database.core import get_db_connection
 
     processed_items = []
@@ -1048,6 +1045,7 @@ def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     skipped_count = 0
     duplicate_count = 0
     blacklisted_count = 0
+    unblacklisted_count = 0
 
     for item in items:
         media_type = assign_media_type(item)
@@ -1066,7 +1064,10 @@ def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             duplicate_count += 1
             continue
 
-        # GHOSTLIST CHECK: Skip blacklisted/ghostlisted items from Trakt Collection
+        # GHOSTLIST/BLACKLIST CHECK
+        # Always skip ghostlisted items (user-deleted, permanent).
+        # For blacklisted-only items (ghostlisted=0): skip unless unblacklist=True,
+        # in which case let the item through — add_wanted_items will clear the state.
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
@@ -1082,11 +1083,22 @@ def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 is_ghostlisted = row[2] == 1
                 is_blacklisted = item_state == 'Blacklisted'
 
-                if is_ghostlisted or is_blacklisted:
-                    logging.info(f"⛔ BLOCKED: Skipping {'ghostlisted' if is_ghostlisted else 'blacklisted'} item from Trakt Collection: {item_title} (IMDB: {imdb_id})")
+                if is_ghostlisted:
+                    # Always block ghostlisted items regardless of toggle
+                    logging.info(f"⛔ BLOCKED: Skipping ghostlisted item from Trakt: {item_title} (IMDB: {imdb_id})")
                     blacklisted_count += 1
-                    seen_imdb_ids.add(imdb_id)  # Mark as seen to avoid re-checking
+                    seen_imdb_ids.add(imdb_id)
                     continue
+                elif is_blacklisted:
+                    if unblacklist:
+                        # Allow through — add_wanted_items will unblacklist it
+                        logging.info(f"🔓 Allowing blacklisted item through for unblacklist: {item_title} (IMDB: {imdb_id})")
+                        unblacklisted_count += 1
+                    else:
+                        logging.info(f"⛔ BLOCKED: Skipping blacklisted item from Trakt: {item_title} (IMDB: {imdb_id})")
+                        blacklisted_count += 1
+                        seen_imdb_ids.add(imdb_id)
+                        continue
         except Exception as e:
             logging.error(f"Error checking blacklist status for {imdb_id}: {e}")
             # Continue processing - don't block on database errors
@@ -1102,7 +1114,9 @@ def process_trakt_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     if duplicate_count > 0:
         logging.info(f"Skipped {duplicate_count} duplicate items")
     if blacklisted_count > 0:
-        logging.info(f"⛔ Blocked {blacklisted_count} blacklisted/ghostlisted items from Trakt Collection")
+        logging.info(f"⛔ Blocked {blacklisted_count} blacklisted/ghostlisted items from Trakt")
+    if unblacklisted_count > 0:
+        logging.info(f"🔓 Passing {unblacklisted_count} blacklisted item(s) through for unblacklist processing")
 
     return processed_items
 
@@ -1331,7 +1345,7 @@ def check_for_updates(list_url: str = None, cache_ttl_minutes=30) -> bool:
 
     return False
 
-def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_trakt_watchlist(versions: Dict[str, bool], unblacklist: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     logging.debug("Fetching Trakt watchlist")
     # Phase 2.3: Set high priority for user watchlist (critical task)
     _set_task_priority('high')
@@ -1365,7 +1379,7 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[Lis
                 continue
 
             watchlist_items = fetch_items_from_trakt("/sync/watchlist")
-            processed_items = process_trakt_items(watchlist_items)
+            processed_items = process_trakt_items(watchlist_items, unblacklist=unblacklist)
             # Save to cache for future skip-if-unchanged logic
             cache['processed_items'] = processed_items
             save_trakt_cache(cache, TRAKT_WATCHLIST_CACHE_FILE)
@@ -1433,7 +1447,7 @@ def get_wanted_from_trakt_watchlist(versions: Dict[str, bool]) -> List[Tuple[Lis
 
     return all_wanted_items
 
-def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool], unblacklist: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     logging.debug("Fetching Trakt lists")
     # Phase 2.3: Set high priority for user-created lists (critical task)
     _set_task_priority('high')
@@ -1465,13 +1479,13 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool]) 
     endpoint = f"/users/{clean_username}/lists/{list_id}/items"
     list_items = fetch_items_from_trakt(endpoint)
 
-    processed_items = process_trakt_items(list_items)
+    processed_items = process_trakt_items(list_items, unblacklist=unblacklist)
     logging.info(f"Found {len(processed_items)} items from Trakt list")
     all_wanted_items.append((processed_items, versions))
 
     return all_wanted_items
 
-def get_wanted_from_trakt_collection(versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_trakt_collection(versions: Dict[str, bool], unblacklist: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     # Phase 2.3: Set high priority for user collection (critical task)
     _set_task_priority('high')
     logging.debug("Fetching Trakt collection")
@@ -1490,7 +1504,7 @@ def get_wanted_from_trakt_collection(versions: Dict[str, bool]) -> List[Tuple[Li
     show_items = response.json() if response else []
 
     collection_items = movie_items + show_items
-    processed_items = process_trakt_items(collection_items)
+    processed_items = process_trakt_items(collection_items, unblacklist=unblacklist)
 
     logging.info(f"Found {len(processed_items)} items from Trakt collection")
     all_wanted_items.append((processed_items, versions))
@@ -1528,7 +1542,7 @@ def clean_username_for_api(username: str, auth_id: str = None) -> str:
     
     return username
 
-def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versions: Dict[str, bool]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versions: Dict[str, bool], unblacklist: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     """Get wanted items from a friend's Trakt watchlist"""
     auth_id = source_config.get('auth_id')
     if not auth_id:
@@ -1574,30 +1588,30 @@ def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versio
         items = fetch_items_from_trakt(endpoint, headers)
         
         # Process the items
-        processed_items = process_trakt_items(items)
+        processed_items = process_trakt_items(items, unblacklist=unblacklist)
         logging.info(f"Found {len(processed_items)} wanted items from friend's Trakt watchlist: {username}")
-        
+
         # Return in the same format as other content source functions
         return [(processed_items, versions)]
-        
+
     except Exception as e:
         logging.error(f"Error fetching friend's Trakt watchlist using cleaned username '{clean_username}' (original: '{username}'): {str(e)}")
-        
+
         # Try fallback: use user ID instead of username
         try:
             # Get user ID from auth state
             state_file = os.path.join(TRAKT_FRIENDS_DIR, f'{auth_id}.json')
             with open(state_file, 'r') as file:
                 state = json.load(file)
-            
+
             # Try to get user ID from the user data we fetched during authorization
             user_id = state.get('user_id')
             if user_id:
                 logging.info(f"Trying fallback with user ID: {user_id}")
                 endpoint = f"/users/{user_id}/watchlist"
                 items = fetch_items_from_trakt(endpoint, headers)
-                
-                processed_items = process_trakt_items(items)
+
+                processed_items = process_trakt_items(items, unblacklist=unblacklist)
                 logging.info(f"Found {len(processed_items)} wanted items from friend's Trakt watchlist using user ID: {user_id}")
                 return [(processed_items, versions)]
             else:
@@ -1607,7 +1621,7 @@ def get_wanted_from_friend_trakt_watchlist(source_config: Dict[str, Any], versio
         
         return []
 
-def get_wanted_from_special_trakt_lists(source_config: Dict[str, Any], versions_profile: Dict[str, Any]) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
+def get_wanted_from_special_trakt_lists(source_config: Dict[str, Any], versions_profile: Dict[str, Any], unblacklist: bool = False) -> List[Tuple[List[Dict[str, Any]], Dict[str, bool]]]:
     """
     Fetches and processes items from configured Special Trakt Lists.
     """
@@ -1681,7 +1695,7 @@ def get_wanted_from_special_trakt_lists(source_config: Dict[str, Any], versions_
                     if not isinstance(raw_items, list):
                         logging.warning(f"Expected a list from {full_api_path}, got {type(raw_items)}. Skipping this response.")
                         continue
-                    processed_batch = process_trakt_items(raw_items)
+                    processed_batch = process_trakt_items(raw_items, unblacklist=unblacklist)
                     _special_list_endpoint_cache[full_api_path] = {'items': processed_batch, 'ts': time.time()}
                 except json.JSONDecodeError:
                     logging.error(f"Failed to decode JSON from {full_api_path}")

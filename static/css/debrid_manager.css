@@ -1832,3 +1832,6 @@
 .dm-batt-reid-check { display:flex; align-items:center; gap:6px; font-size:0.84rem; color:#aaa; cursor:pointer; }
 .dm-batt-reid-footer { display:flex; align-items:center; gap:12px; margin-top:12px; flex-wrap:wrap; }
 .dm-batt-reid-warn { font-size:0.78rem; color:#f59e0b; }
+
+/* Beta notice box */
+.beta-notice-box { --beta-box-bg: #1e2433; }

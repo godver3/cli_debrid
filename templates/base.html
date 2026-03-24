@@ -71,6 +71,11 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/discover_settings_modal.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/overlay_settings_modal.css') }}">
 
+    {% if ai_butler_enabled and not is_onboarding %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/ai_butler.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_ai_butler.css') }}">
+    {% endif %}
+
     <!-- Load theme switcher early to prevent FOUC -->
     <script src="{{ url_for('static', filename='js/theme_switcher.js') }}"></script>
     <script>
@@ -1358,6 +1363,13 @@
     </div>
 
     {% block scripts %}{% endblock %}
+
+    {% if ai_butler_enabled and not is_onboarding %}
+    {% if not is_user_system_enabled() or current_user.is_authenticated %}
+    {% include 'ai_butler.html' %}
+    <script src="{{ url_for('static', filename='js/ai_butler.js') }}"></script>
+    {% endif %}
+    {% endif %}
 </body>
 </html>
 

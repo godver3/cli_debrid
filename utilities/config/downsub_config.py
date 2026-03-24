@@ -58,6 +58,7 @@ class Config:
 
         self.SUBTITLE_PROVIDERS = get_setting('Subtitle Settings', 'subtitle_providers', ["opensubtitles", "opensubtitlescom", "podnapisi", "tvsubtitles"])
         self.SUBLIMINAL_USER_AGENT = get_setting('Subtitle Settings', 'user_agent', 'SubDownloader/1.0 (your-email@example.com)')
+        self.PROBE_FOR_EMBEDDED = get_setting('Subtitle Settings', 'probe_for_embedded_subtitles', False)
 
         self.symlink_folder_order_str = get_setting('File Management', 'symlink_folder_order', 'type,version,resolution')
         self.symlink_organize_by_type = get_setting('File Management', 'symlink_organize_by_type', True)

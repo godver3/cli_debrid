@@ -967,6 +967,21 @@
                             <p class="settings-description">Allow TV show specials (Season 0) to be added from this source.</p>
                         </div>
 
+                        {# Unblacklist on Source Run #}
+                        {% set key = 'unblacklist_on_source_run' %}
+                        {% set value = config.get(key, False) %}
+                        <div class="settings-form-group">
+                            <label class="settings-title">
+                                <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}"
+                                       name="Content Sources.{{ source_id }}.{{ key }}"
+                                       data-section="Content Sources"
+                                       data-key="{{ source_id }}.{{ key }}"
+                                       {% if value %}checked{% endif %}>
+                                Unblacklist on Source Run
+                            </label>
+                            <p class="settings-description">When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.</p>
+                        </div>
+
                         {# Cutoff Date #}
                         {% set key = 'cutoff_date' %}
                         {% set value = config.get(key, '') %}
@@ -1280,6 +1295,21 @@
                            </div>
                         {% endif %}
 
+                        {# Unblacklist on Source Run #}
+                        {% set key = 'unblacklist_on_source_run' %}
+                        {% set value = config.get(key, False) %}
+                        <div class="settings-form-group">
+                            <label class="settings-title">
+                                <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}"
+                                       name="Content Sources.{{ source_id }}.{{ key }}"
+                                       data-section="Content Sources"
+                                       data-key="{{ source_id }}.{{ key }}"
+                                       {% if value %}checked{% endif %}>
+                                Unblacklist on Source Run
+                            </label>
+                            <p class="settings-description">When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.</p>
+                        </div>
+
                         {# 9. Exclude Genres #}
                         {% set key = 'exclude_genres' %}
                         {% set value = config.get(key, []) %}
@@ -1364,6 +1394,8 @@
                                     {% elif key == 'allow_specials' %}
                                         {# This key is handled by a dedicated block later (around lines 735-751) for non-'Other Plex Watchlist' types. #}
                                         {# Doing nothing here prevents it from being rendered as a text input by the 'else' block below. #}
+                                    {% elif key == 'unblacklist_on_source_run' %}
+                                        {# This key is handled by a dedicated block after 'allow_specials'. Skipping here to prevent text input rendering. #}
                                     {% elif key == 'ignore_tags' and config.type == 'Overseerr' %}
                                         {# Skip ignore_tags field for Overseerr sources - hidden as requested #}
                                     {% elif key == 'exclude_genres' %}
@@ -1470,7 +1502,7 @@
                                          {% if settings_schema['Content Sources'].schema is defined and
                                                config.type in settings_schema['Content Sources'].schema and
                                                key in settings_schema['Content Sources'].schema[config.type] and
-                                               key != 'allow_specials' and key != 'custom_symlink_subfolder' and key != 'monitor_mode' and
+                                               key != 'allow_specials' and key != 'unblacklist_on_source_run' and key != 'custom_symlink_subfolder' and key != 'monitor_mode' and
                                                settings_schema['Content Sources'].schema[config.type][key].description is defined %}
                                              <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
                                          {% endif %}
@@ -1500,6 +1532,21 @@
                                  {% endif %}
                              </div>
                          {% endif %}
+
+                        {# Unblacklist on Source Run #}
+                        {% set key = 'unblacklist_on_source_run' %}
+                        {% set value = config.get(key, False) %}
+                        <div class="settings-form-group">
+                            <label class="settings-title">
+                                <input type="checkbox" id="content-sources-{{ source_id }}-{{ key }}"
+                                       name="Content Sources.{{ source_id }}.{{ key }}"
+                                       data-section="Content Sources"
+                                       data-key="{{ source_id }}.{{ key }}"
+                                       {% if value %}checked{% endif %}>
+                                Unblacklist on Source Run
+                            </label>
+                            <p class="settings-description">When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.</p>
+                        </div>
 
                         {# Render Plex Labels configuration if available for this source type #}
                         {% set source_type = config.type %}

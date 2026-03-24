@@ -1412,6 +1412,30 @@ def api_reconcile():
             return jsonify({'success': True, 'cached': True, **_reconcile_cache['data']})
 
         # ── 1. RD library cache ────────────────────────────────────────────
+        # When force-refreshing the audit, also kick off a background library
+        # re-fetch so the next audit run uses up-to-date RD torrent data.
+        # This is non-blocking — reconcile still runs against the current stable
+        # snapshot; the background fetch updates the cache for the next call.
+        if force:
+            with _lib['lock']:
+                is_already_loading = _lib['loading']
+            if not is_already_loading:
+                try:
+                    provider = get_debrid_provider()
+                    with _lib['lock']:
+                        _lib['gen'] += 1
+                        _gen = _lib['gen']
+                        _lib['loading'] = True
+                        _lib['partial'] = []
+                    threading.Thread(
+                        target=_fetch_pages_bg,
+                        args=(provider.api_key, 1, _gen),
+                        daemon=True,
+                    ).start()
+                    logging.info('[Reconcile] Force refresh — triggered background RD library re-fetch')
+                except Exception as _e:
+                    logging.warning(f'[Reconcile] Could not trigger library re-fetch: {_e}')
+
         _load_lib_cache_from_db()
         with _lib['lock']:
             stable = _lib['stable']
@@ -1647,7 +1671,44 @@ def api_reconcile():
             get_setting('Plex', 'mounted_file_location', '')
             or get_setting('File Management', 'original_files_path', '/mnt/zurg/__all__')
         ).rstrip('/')
-        _rclone_dir = _zurg_all if _symlink_mode else ''
+
+        if _symlink_mode:
+            # Auto-detect the actual rclone/debrid mount prefix from live symlink targets.
+            # The configured path may differ from the real mount (e.g. user has
+            # /mnt/debrid/clid/__all__ but setting defaults to /mnt/zurg/__all__).
+            # Sample location_on_disk values from already-fetched db_rows to find the
+            # common target prefix. If detected, use it; otherwise fall back to the
+            # configured path. Empty string = existence-only check (no target validation).
+            _detected_rclone_dir = ''
+            _prefix_counts: dict = {}
+            for _row in db_rows[:50]:
+                _sloc = _row['location_on_disk'] or ''
+                if not _sloc:
+                    continue
+                try:
+                    if os.path.islink(_sloc):
+                        _target = os.readlink(_sloc)
+                        # Extract everything up to and including __all__ segment
+                        _tidx = _target.find('/__all__')
+                        if _tidx != -1:
+                            _candidate = _target[:_tidx + len('/__all__')]
+                            _prefix_counts[_candidate] = _prefix_counts.get(_candidate, 0) + 1
+                        else:
+                            # No __all__ — use first 2 path components as prefix
+                            _tparts = [p for p in _target.replace('\\', '/').split('/') if p]
+                            if len(_tparts) >= 2:
+                                _candidate = '/' + '/'.join(_tparts[:2])
+                                _prefix_counts[_candidate] = _prefix_counts.get(_candidate, 0) + 1
+                except OSError:
+                    pass
+            if _prefix_counts:
+                _detected_rclone_dir = max(_prefix_counts, key=_prefix_counts.get)
+
+            # Use detected prefix if found, otherwise fall back to configured path.
+            # Empty string means "skip target validation — existence check only".
+            _rclone_dir = _detected_rclone_dir or _zurg_all
+        else:
+            _rclone_dir = ''
 
         # Derive the RD mount root path component(s) from items currently confirmed
         # in RD. e.g. location_on_disk='/debrid/movies/...' → root='debrid'.
