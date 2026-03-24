@@ -47,6 +47,13 @@ CONFIG_FILE = os.path.join(config_dir, 'runtime-config.json')
 
 register_blueprints(app)
 
+# Start AI Butler health monitor (Phase 3 — proactive notifications)
+try:
+    from utilities.ai_health_monitor import start_health_monitor
+    start_health_monitor()
+except Exception as _e:
+    logging.warning(f"AI Health Monitor failed to start: {_e}")
+
 @app.context_processor
 def inject_program_status():
     return dict(program_is_running=program_is_running, get_program_status=get_program_status)
@@ -75,6 +82,12 @@ def inject_support_message_setting():
     # Get the hide_support_message setting from UI Settings
     hide_support_message = get_setting('UI Settings', 'hide_support_message', False)
     return dict(hide_support_message=hide_support_message)
+
+@app.context_processor
+def inject_ai_butler_enabled():
+    from utilities.settings import get_setting
+    ai_butler_enabled = get_setting('AI Assistant', 'enabled', False)
+    return dict(ai_butler_enabled=ai_butler_enabled)
 
 @app.context_processor
 def utility_processor():

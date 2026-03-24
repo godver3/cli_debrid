@@ -237,6 +237,13 @@ def request_content():
                 logging.warning(f"Post-add refresh failed for {imdb_id}: {e_refresh}")
 
         logging.info(f"Content request processed: TMDB ID {tmdb_id} -> IMDB ID {imdb_id} ({media_type}) with versions {versions}, items added: {items_added}")
+        try:
+            from utilities.ai_habits import track_action
+            _uid = current_user.username if is_user_system_enabled() and current_user.is_authenticated else 'system'
+            _detail = f"{data.get('title', '')} ({data.get('year', '')}) [{media_type}]"
+            track_action('library_add_manual', detail=_detail, user_id=_uid)
+        except Exception:
+            pass
         return jsonify({'success': True, 'item': wanted_item})
         
     except Exception as e:

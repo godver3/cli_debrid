@@ -44,6 +44,7 @@ from .bazarr_spoofing_routes import bazarr_bp
 from .overlay_routes import overlay_bp, overlay_page_bp
 from .debrid_manager_routes import debrid_manager_bp
 from .upgrade_hub_routes import upgrade_hub_bp
+from .ai_routes import ai_bp
 
 tooltip_bp = Blueprint('tooltip', __name__)
 
@@ -174,6 +175,7 @@ def register_blueprints(app):
         (overlay_bp, ''),  # Mounted at root for /api/overlays/* paths (includes prefix in blueprint)
         (debrid_manager_bp, '/debrid_manager'),
         (upgrade_hub_bp, '/upgrade_hub'),
+        (ai_bp, ''),  # /api/ai/* routes
     ]
     
     for blueprint, url_prefix in blueprints:

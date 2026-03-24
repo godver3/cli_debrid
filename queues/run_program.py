@@ -1784,6 +1784,7 @@ class ProgramRunner:
         except (ValueError, TypeError):
             logging.warning(f"Invalid list_length_limit value for source {source}: {data.get('list_length_limit')}. Using default value 0.")
             list_length_limit = 0
+        unblacklist_on_source_run = bool(data.get('unblacklist_on_source_run', False))
         parsed_cutoff_date = None
 
         if raw_cutoff_date:
@@ -1839,7 +1840,7 @@ class ProgramRunner:
                         wanted_content.extend(get_wanted_from_mdblists(mdblist_url, versions_from_config))
             elif source_type == 'Trakt Watchlist':
                 try:
-                    wanted_content = get_wanted_from_trakt_watchlist(versions_from_config)
+                    wanted_content = get_wanted_from_trakt_watchlist(versions_from_config, unblacklist=unblacklist_on_source_run)
                 except (ValueError, api.exceptions.RequestException) as e:
                     logging.error(f"Failed to fetch Trakt watchlist: {str(e)}")
                     return
@@ -1849,18 +1850,18 @@ class ProgramRunner:
                     trakt_list = trakt_list.strip()
                     if trakt_list: # Ensure not empty
                         try:
-                            wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions_from_config))
+                            wanted_content.extend(get_wanted_from_trakt_lists(trakt_list, versions_from_config, unblacklist=unblacklist_on_source_run))
                         except (ValueError, api.exceptions.RequestException) as e:
                             logging.error(f"Failed to fetch Trakt list {trakt_list}: {str(e)}")
                             continue
             elif source_type == 'Trakt Collection':
-                wanted_content = get_wanted_from_trakt_collection(versions_from_config)
+                wanted_content = get_wanted_from_trakt_collection(versions_from_config, unblacklist=unblacklist_on_source_run)
             elif source_type == 'Friends Trakt Watchlist':
                 # This function takes data (source_config) and versions
-                wanted_content = get_wanted_from_friend_trakt_watchlist(data, versions_from_config)
+                wanted_content = get_wanted_from_friend_trakt_watchlist(data, versions_from_config, unblacklist=unblacklist_on_source_run)
             elif source_type == 'Special Trakt Lists': # New elif block
                 # 'data' is the source_config, 'versions_dict' is the resolved simple versions map
-                wanted_content = get_wanted_from_special_trakt_lists(data, versions_from_config)
+                wanted_content = get_wanted_from_special_trakt_lists(data, versions_from_config, unblacklist=unblacklist_on_source_run)
             elif source_type == 'Collected':
                 wanted_content = get_wanted_from_collected() # Doesn't take versions arg
             elif source_type == 'My Plex Watchlist':
@@ -2047,7 +2048,7 @@ class ProgramRunner:
 
                                 from database import add_collected_items, add_wanted_items
                                 # Pass the CONVERTED versions dict to add_wanted_items
-                                add_wanted_items(all_items, versions_to_inject or versions_dict)
+                                add_wanted_items(all_items, versions_to_inject or versions_dict, unblacklist=unblacklist_on_source_run)
                                 
                                 # Update cache for all items that were processed (regardless of whether they made it through filtering)
                                 # This prevents reprocessing the same items repeatedly
@@ -2162,7 +2163,7 @@ class ProgramRunner:
 
                             from database import add_collected_items, add_wanted_items
                             # Pass the CONVERTED versions_dict to add_wanted_items
-                            add_wanted_items(all_items, versions_dict)
+                            add_wanted_items(all_items, versions_dict, unblacklist=unblacklist_on_source_run)
                             
                             # Update cache for all items that were processed (regardless of whether they made it through filtering)
                             # This prevents reprocessing the same items repeatedly

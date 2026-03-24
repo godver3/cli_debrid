@@ -542,6 +542,15 @@
     {% set ms_label = 'Jellyfin' if media_server_type == 'jellyfin' else 'Plex' %}
     {% set ms_badge = 'JF' if media_server_type == 'jellyfin' else 'Plex' %}
     <div id="reconcile-tab" class="dm-panel">
+        <div class="beta-notice-box" style="border-radius:6px;padding:16px 18px;margin:16px 0 8px 0;display:flex;gap:14px;align-items:flex-start;border-left:3px solid #60a5fa;background:var(--beta-box-bg,#1e2433);">
+            <svg style="width:18px;height:18px;color:#60a5fa;flex-shrink:0;margin-top:1px;" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <div style="font-size:13px;line-height:1.55;color:#b0bec5;">
+                <strong style="color:#e0e0e0;">Beta Feature</strong><br>
+                The Audit tab is in beta. Always verify the information shown before taking any action — do not delete items or run fixes without confirming the suggestion is accurate for your setup. If you believe a result is incorrect, please report it in the <a href="https://discord.gg/wDgQLnMjxS" target="_blank" rel="noopener" style="color:#60a5fa;">Discord server</a>.
+            </div>
+        </div>
         <div class="dm-toolbar">
             <div class="dm-toolbar-left">
                 <div class="dm-rc-healthy-pill" id="rc-healthy-pill-toolbar" style="display:none">

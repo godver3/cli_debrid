@@ -153,7 +153,7 @@ def format_notification_content(notifications, notification_type, notification_c
     content_source_display_names = get_content_source_display_names()
 
     # For system notifications (stop/crash/start/pause/resume), we'll use a different format
-    if notification_category in ['program_stop', 'program_crash', 'program_start', 'queue_pause', 'queue_resume', 'queue_start', 'queue_stop', 'upgrade_failed']:
+    if notification_category in ['program_stop', 'program_crash', 'program_start', 'queue_pause', 'queue_resume', 'queue_start', 'queue_stop', 'upgrade_failed', 'program_info']:
         emoji = EMOJIS.get(notification_category, "ℹ️")
         if notification_category == 'upgrade_failed':
             # Special formatting for failed upgrades
@@ -162,6 +162,8 @@ def format_notification_content(notifications, notification_type, notification_c
                 year = notifications.get('year', '')
                 reason = notifications.get('reason', 'Unknown reason')
                 return f"{emoji} **Upgrade Failed**\nTitle: {title} ({year})\nReason: {reason}"
+        if notification_category == 'program_info':
+            return f"{emoji} {notifications}"
         return f"{emoji} **cli_debrid {notification_category.replace('_', ' ').title()}**\n{notifications}"
 
     # --- START: Deduplicate notifications within this batch ---
@@ -555,7 +557,8 @@ def _send_notifications(notifications, enabled_notifications, notification_categ
         # Handle system operation notifications
         if notification_category in ['program_crash', 'program_stop', 'program_start',
                                    'queue_pause', 'queue_resume', 'queue_start', 'queue_stop',
-                                   'scraping_error', 'content_error', 'database_error']:
+                                   'scraping_error', 'content_error', 'database_error',
+                                   'program_info']:
 
             # --- RESTORED DICTIONARIES ---
             title = {

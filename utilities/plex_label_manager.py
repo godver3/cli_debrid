@@ -451,6 +451,7 @@ def remove_label_from_item(item_id: int, label: str, source_name: str, remove_fr
         return False
     finally:
         cursor.close()
+        conn.close()
 
 
 def apply_label_to_plex(item_id: int, label: str) -> bool:
@@ -680,6 +681,7 @@ def get_items_by_label(label: str) -> List[Dict[str, Any]]:
         return []
     finally:
         cursor.close()
+        conn.close()
 
 
 def get_labels_for_item(item_id: int) -> Dict[str, List[str]]:
@@ -712,6 +714,7 @@ def get_labels_for_item(item_id: int) -> Dict[str, List[str]]:
         return {}
     finally:
         cursor.close()
+        conn.close()
 
 
 def is_plex_labels_enabled_anywhere() -> bool:
@@ -785,6 +788,22 @@ def determine_labels_for_item(item: Dict[str, Any]) -> List[str]:
     content_source_detail = item.get('content_source_detail')
 
     if not content_source:
+        return []
+
+    # Handle AI Butler source using its own plex_labels config in AI Assistant settings
+    if content_source == 'ai_butler':
+        try:
+            all_settings = get_all_settings()
+            ai_plex = all_settings.get('AI Assistant', {}).get('plex_labels', {})
+            if not ai_plex.get('enabled', False):
+                return []
+            label_mode = ai_plex.get('label_mode', 'fixed')
+            if label_mode == 'fixed':
+                fixed_label = ai_plex.get('fixed_label', 'AI Butler')
+                if fixed_label:
+                    return [sanitize_label(lbl.strip()) for lbl in fixed_label.split(',') if lbl.strip()]
+        except Exception as e:
+            logging.error(f"Error reading AI Butler plex_labels config: {e}")
         return []
 
     # Handle internal CLI Debrid sources (no config needed, but respect global enable state)

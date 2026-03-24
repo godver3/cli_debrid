@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import os
 import sys
+import json
 import logging
+import subprocess
 import time
 from pathlib import Path
 from functools import wraps
@@ -100,6 +102,43 @@ def build_provider_configs():
             'apikey':   getattr(config, 'OSCOM_APIKEY', None)
         }
     return pc
+
+def get_embedded_subtitle_languages(file_path: Path) -> set:
+    """
+    Use ffprobe to detect embedded subtitle track languages in a video file.
+    Returns a set of ISO-639-2/3 language codes (lowercase) found as subtitle streams.
+    Returns empty set if ffprobe is unavailable, times out, or the file is inaccessible.
+    """
+    try:
+        result = subprocess.run(
+            [
+                'ffprobe', '-v', 'error',
+                '-select_streams', 's',
+                '-show_entries', 'stream_tags=language',
+                '-of', 'json',
+                str(file_path),
+            ],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            return set()
+        data = json.loads(result.stdout or '{}')
+        langs = set()
+        for stream in data.get('streams', []):
+            lang = (stream.get('tags') or {}).get('language', '').strip().lower()
+            if lang and lang not in ('und', 'unknown', ''):
+                langs.add(lang)
+        return langs
+    except FileNotFoundError:
+        logging.warning('ffprobe not found — skipping embedded subtitle probe')
+        return set()
+    except subprocess.TimeoutExpired:
+        logging.warning(f'ffprobe timed out probing {file_path} — skipping embedded subtitle probe')
+        return set()
+    except Exception as e:
+        logging.warning(f'ffprobe probe failed for {file_path}: {e}')
+        return set()
+
 
 def setup_subliminal_credentials():
     """
@@ -202,11 +241,32 @@ def download_subtitles_for_video(video_path):
         
         # Convert language codes to Language objects using expand_languages
         languages = expand_languages(config.SUBTITLE_LANGUAGES)
-        
+
         if not languages:
             logging.error("❌ No valid languages configured")
             return False
-        
+
+        # Probe for embedded subtitles if enabled — skip languages already in the file
+        if config.PROBE_FOR_EMBEDDED:
+            probe_path = video_path  # already resolved to real path above if symlink
+            embedded = get_embedded_subtitle_languages(probe_path)
+            if embedded:
+                logging.info(f"🔍 Embedded subtitle languages detected: {embedded}")
+                # Filter out languages already covered by an embedded track.
+                # babelfish Language alpha3 (e.g. 'eng', 'fra') is compared against
+                # ffprobe tags which are typically ISO-639-2 (also 3-letter).
+                filtered = [
+                    lang for lang in languages
+                    if lang.alpha3 not in embedded and str(lang) not in embedded
+                ]
+                if not filtered:
+                    logging.info("✅ All configured languages already embedded — skipping external search")
+                    return True
+                removed = len(languages) - len(filtered)
+                if removed:
+                    logging.info(f"ℹ️  Skipping {removed} language(s) already embedded; searching for remaining {len(filtered)}")
+                languages = filtered
+
         # Configure in-memory cache for faster performance (only if not already configured)
         try:
             region.configure('dogpile.cache.memory', replace_existing_backend=True)

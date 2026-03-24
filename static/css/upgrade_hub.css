@@ -961,3 +961,6 @@
     height: 1px;
     width: 100%;
 }
+
+/* Beta notice box */
+.beta-notice-box { --beta-box-bg: #1e2433; }

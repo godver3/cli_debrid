@@ -692,9 +692,15 @@ def get_library_data():
         has_more = len(items) > limit
         if has_more:
             items = items[:limit]  # Drop the sentinel row
-            total_count = None     # Total unknown while more pages exist
-        else:
+
+        # On the first page (offset=0), run the count query once so the UI can show "X/Y" from the start.
+        # On subsequent pages keep total_count=None to avoid repeated COUNT queries.
+        if offset == 0:
+            total_count = conn.execute(count_query, count_params).fetchone()[0]
+        elif not has_more:
             total_count = offset + len(items)  # Exact total on the last page
+        else:
+            total_count = None  # Still paginating — total already known from first page
 
         # Batch-fetch episode counts for all shows in one query (PERFORMANCE OPTIMIZATION)
         episode_start = time.time()
