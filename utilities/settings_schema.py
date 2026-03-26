@@ -37,6 +37,56 @@ def get_available_logos():
 AVAILABLE_LOGOS = get_available_logos()
 
 SETTINGS_SCHEMA = {
+    "SSO": {
+        "tab": "Additional Settings",
+        "enabled": {
+            "type": "boolean",
+            "description": "Enable SSO / OIDC login",
+            "default": False
+        },
+        "provider": {
+            "type": "string",
+            "description": "OIDC provider type",
+            "default": "authentik",
+            "choices": ["authentik", "authelia", "generic"]
+        },
+        "discovery_url": {
+            "type": "string",
+            "description": "OIDC discovery URL (e.g. https://auth.example.com/application/o/cli-debrid/.well-known/openid-configuration)",
+            "default": ""
+        },
+        "client_id": {
+            "type": "string",
+            "description": "OIDC client ID",
+            "default": ""
+        },
+        "client_secret": {
+            "type": "string",
+            "description": "OIDC client secret",
+            "default": ""
+        },
+        "default_role": {
+            "type": "string",
+            "description": "Default role for new SSO users",
+            "default": "user",
+            "choices": ["user", "requester", "admin"]
+        },
+        "auto_provision": {
+            "type": "boolean",
+            "description": "Automatically create accounts for new SSO users",
+            "default": True
+        },
+        "redirect_uri_base": {
+            "type": "string",
+            "description": "Public base URL for the OIDC callback (e.g. https://cli.mash2k3.us). Leave blank to auto-detect from request.",
+            "default": ""
+        },
+        "disable_local_auth": {
+            "type": "boolean",
+            "description": "Disable local username/password login (SSO only)",
+            "default": False
+        }
+    },
     "UI Settings": {
         "tab": "Additional Settings",
         "enable_user_system": {
@@ -388,12 +438,7 @@ SETTINGS_SCHEMA = {
         "tab": "Versions",
         "uncached_content_handling": {
             "type": "string",
-            "description": [
-                "Uncached content management in the program queue:",
-                "None: Only take the best Cached result",
-                #"Hybrid: Take the first best Cached result, and if no Cached results found, take the best Uncached result",
-                "Full: Take the best result, whether it's Cached or Uncached"
-            ],
+            "description": "Uncached content management in the program queue. None: Only take the best Cached result. Full: Take the best result, whether it's Cached or Uncached.",
             "default": "None",
             "choices": ["None", "Full"]
         },
@@ -426,7 +471,7 @@ SETTINGS_SCHEMA = {
             "default": False
         },
         "ultimate_sort_order": {
-            "type": "dropdown",
+            "type": "string",
             "description": "Ultimate sort order for scraped results. Recommend leaving off and using existing versioning logic",
             "default": "None",
             "choices": ["None", "Size: large to small", "Size: small to large"]

@@ -3,6 +3,7 @@
   "_instructions": [
     "TOKEN NOTE: The token here is the same 'OpenClaw Token' value you already set in cli_debrid Settings → AI Assistant.",
     "It is the token OpenClaw uses to authenticate TO cli_debrid — not a separate cli_debrid password.",
+    "Authentication is passed as a query parameter (?token=...) rather than an Authorization header, for compatibility with clients that cannot set custom headers.",
     "If you left OpenClaw Token blank in cli_debrid settings, remove the auth block below (the endpoints will be open).",
     "",
     "SETUP:",
@@ -17,8 +18,9 @@
   "version": "1.0.0",
   "base_url": "<CLI_DEBRID_URL>",
   "auth": {
-    "type": "bearer",
-    "token": "<YOUR_OPENCLAW_TOKEN>"
+    "type": "query",
+    "param": "token",
+    "value": "<YOUR_OPENCLAW_TOKEN>"
   },
   "tools": [
     {

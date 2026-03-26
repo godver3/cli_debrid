@@ -21,6 +21,11 @@ def _get_openclaw_config():
     return enabled, url, token, agent_id
 
 
+def _get_display_name():
+    """Return the configured AI Butler display name, falling back to 'AI Butler'."""
+    return get_setting('AI Assistant', 'display_name', '') or 'AI Butler'
+
+
 def _to_http_url(url):
     """Ensure URL uses http(s):// — convert wss:// or ws:// if user entered those."""
     if url.startswith('wss://'):
@@ -93,19 +98,39 @@ def _mdblist_search(title: str, year, media_type: str):
         api_key = get_mdblist_api_key()
         if not api_key or not title:
             return None
-        url = f"{MDBLIST_API_BASE}/?apikey={api_key}&s={_req.utils.quote(title)}&limit=10"
-        r = _req.get(url, timeout=10)
-        if not r.ok:
-            return None
-        data = r.json()
-        items = data if isinstance(data, list) else data.get('results', data.get('search', []))
-        title_lower = title.lower()
+        def _norm_title(s):
+            return s.lower().replace('\u2019', "'").replace('\u2018', "'").replace('\u201c', '"').replace('\u201d', '"')
+
+        def _fetch_mdb(query, yr=None):
+            params = f"apikey={api_key}&s={_req.utils.quote(query)}&limit=50"
+            if yr:
+                params += f"&y={yr}"
+            url = f"{MDBLIST_API_BASE}/?{params}"
+            r = _req.get(url, timeout=10)
+            if not r.ok:
+                return []
+            data = r.json()
+            return data if isinstance(data, list) else data.get('results', data.get('search', []))
+
+        title_norm = _norm_title(title)
         year_int = int(year) if year else None
+        # Try with year first (most specific), then without year as fallback
+        items = _fetch_mdb(title, year_int)
+        if not items:
+            items = _fetch_mdb(title)
+        # Also try stripped title (removes apostrophes/special chars) as fallback
+        stripped_title = title.replace("'", "").replace("\u2019", "").replace("\u2018", "")
+        if stripped_title != title:
+            stripped_items = _fetch_mdb(stripped_title, year_int)
+            if not stripped_items:
+                stripped_items = _fetch_mdb(stripped_title)
+            items = items + stripped_items
+        logger.info(f"AI add_to_library: MDBList search '{title}' ({year}) → {len(items)} results: {[i.get('title') for i in items[:5]]}")
         for item in items:
-            t = (item.get('title') or '').lower()
+            t = _norm_title(item.get('title') or '')
             y = item.get('year')
             mt = 'tv' if item.get('mediatype', 'movie') in ('show', 'tv', 'series') else 'movie'
-            if t == title_lower and (not year_int or y == year_int):
+            if t == title_norm and (not year_int or y == year_int):
                 imdb = item.get('imdb_id') or item.get('imdbid') or item.get('imdb')
                 tmdb_raw = item.get('tmdb_id')
                 # Never use item.get('id') — on the search endpoint that field contains the IMDb ID
@@ -257,20 +282,17 @@ def _enrich_library_blocks(content: str) -> str:
                 if mdb and mdb.get('tmdb_id'):
                     return mdb['tmdb_id']
             # Fallback 2: Trakt title+year text search — exact title match only
+            # search_trakt() returns converted dicts: {title, year, media_type, id (tmdb_id), ...}
             if title:
                 results = search_trakt(title, year)
                 title_lower = title.lower()
                 year_int = int(year) if year else None
                 for r in results:
-                    mtype = r.get('type', 'movie')
-                    item = r.get(mtype, {})
-                    if (item.get('title') or '').lower() == title_lower and (not year_int or item.get('year') == year_int):
-                        return str(item.get('ids', {}).get('tmdb', ''))
+                    if (r.get('title') or '').lower() == title_lower and (not year_int or r.get('year') == year_int):
+                        return str(r.get('id', ''))
                 for r in results:
-                    mtype = r.get('type', 'movie')
-                    item = r.get(mtype, {})
-                    if (item.get('title') or '').lower() == title_lower:
-                        return str(item.get('ids', {}).get('tmdb', ''))
+                    if (r.get('title') or '').lower() == title_lower:
+                        return str(r.get('id', ''))
             # Fallback 3: TMDB /find/{imdb_id} — works when Trakt is rate-limited
             if imdb_id:
                 try:
@@ -372,7 +394,7 @@ def ai_chat():
         system_prompt = build_system_prompt(page=page, page_data=page_data)
     except Exception as e:
         logger.error(f"AI Butler: failed to build system prompt: {e}")
-        system_prompt = "You are the cli_debrid AI Butler. Help users configure and use the application."
+        system_prompt = f"You are the cli_debrid {_get_display_name()}. Help users configure and use the application."
 
     if is_user_system_enabled() and cu.is_authenticated:
         base_id = f"clidebrid_{cu.id}"
@@ -391,6 +413,9 @@ def ai_chat():
         'recommend', 'suggest', 'what should i watch', 'what to watch',
         'similar to', 'like my taste', 'based on my', 'movies i would like',
         'shows i would like', 'what would i like', 'what movies', 'what shows',
+        'add movie', 'add show', 'add series', 'add to my library', 'add to library',
+        'add to the library', 'add to queue', 'download movie', 'download show',
+        'get movie', 'get show', 'queue movie', 'queue show',
     )
     last_user_msg = next((m['content'] for m in reversed(messages) if m.get('role') == 'user'), '')
     _is_recommend = any(kw in last_user_msg.lower() for kw in _RECOMMEND_KEYWORDS)
@@ -409,8 +434,10 @@ def ai_chat():
 
         _format_reminder = (
             "Understood. I will respond using ADD_TO_LIBRARY blocks for every title I recommend. "
-            "Format (one per line, no code fences, include tmdb_id and imdb_id when known):\n"
-            'ADD_TO_LIBRARY: {"title": "...", "year": 2023, "media_type": "movie", "imdb_id": "tt...", "tmdb_id": "12345", "reason": "..."}\n'
+            "Format (one per line, no code fences):\n"
+            'ADD_TO_LIBRARY: {"title": "...", "year": 2023, "media_type": "movie", "reason": "..."}\n'
+            "IMPORTANT: I will NEVER include imdb_id or tmdb_id unless I am 100% certain of the exact value — LLMs hallucinate IDs and wrong IDs cause failures. "
+            "The server resolves correct IDs from title+year automatically. "
             "I will not use plain numbered lists. Each recommendation gets its own ADD_TO_LIBRARY line with a brief explanation above it."
             + _excl_block
         )
@@ -433,9 +460,19 @@ def ai_chat():
     http_url = _to_http_url(openclaw_url)
     endpoint = f"{http_url}/v1/chat/completions"
 
+    # Determine the public-facing URL of this cli_debrid instance so OpenClaw
+    # can call back to tool endpoints without hitting a loopback/internal address.
+    # Reuse SSO redirect_uri_base — it's already set to the public URL.
+    _sso_base = get_setting('SSO', 'redirect_uri_base', '').strip().rstrip('/')
+    if not _sso_base:
+        _fwd_host = request.headers.get('X-Forwarded-Host') or request.host
+        _fwd_proto = request.headers.get('X-Forwarded-Proto') or ('https' if request.is_secure else 'http')
+        _sso_base = f"{_fwd_proto}://{_fwd_host}"
+
     headers = {
         "Content-Type": "application/json",
-        "x-openclaw-agent-id": agent_id
+        "x-openclaw-agent-id": agent_id,
+        "x-openclaw-skill-base-url": _sso_base,
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -607,7 +644,9 @@ def ai_add_to_library():
     from metadata.metadata import process_metadata
     from utilities.settings import load_config as _lc
 
-    if is_user_system_enabled() and not cu.is_authenticated:
+    # Allow access via session auth (built-in chat) OR tool token auth (OpenClaw/skill)
+    tool_auth_ok, _ = _check_tool_auth()
+    if is_user_system_enabled() and not cu.is_authenticated and not tool_auth_ok:
         return jsonify({'error': 'Authentication required'}), 401
 
     if not get_setting('AI Assistant', 'enabled', False):
@@ -642,12 +681,29 @@ def ai_add_to_library():
             info = _trakt_lookup_by_imdb(imdb_id)
             if info and info.get('imdb_id'):
                 confirmed_imdb = info['imdb_id']
-                if confirmed_imdb != imdb_id:
-                    logger.info(f"AI add_to_library: Trakt corrected imdb {imdb_id} → {confirmed_imdb} for '{title}'")
+                # Cross-check: if user supplied a title, verify Trakt's title loosely matches.
+                # This catches hallucinated IDs that happen to resolve to a *different* real film.
+                trakt_title = (info.get('title') or '').lower().strip()
+                user_title = title.lower().strip() if title else ''
+                title_ok = (
+                    not user_title  # no title to compare against
+                    or trakt_title == user_title
+                    or user_title in trakt_title
+                    or trakt_title in user_title
+                )
+                if not title_ok:
+                    logger.warning(
+                        f"AI add_to_library: Trakt title mismatch — requested '{title}' but "
+                        f"{confirmed_imdb} resolves to '{info.get('title')}' — falling back to title search"
+                    )
+                    needs_title_search = True
                 else:
-                    logger.info(f"AI add_to_library: Trakt confirmed imdb {imdb_id} for '{title}'")
-                imdb_id = confirmed_imdb
-                media_type = info.get('media_type', media_type)
+                    if confirmed_imdb != imdb_id:
+                        logger.info(f"AI add_to_library: Trakt corrected imdb {imdb_id} → {confirmed_imdb} for '{title}'")
+                    else:
+                        logger.info(f"AI add_to_library: Trakt confirmed imdb {imdb_id} for '{title}'")
+                    imdb_id = confirmed_imdb
+                    media_type = info.get('media_type', media_type)
             else:
                 logger.warning(f"AI add_to_library: Trakt imdb lookup for {imdb_id} returned nothing — falling back to title search")
                 needs_title_search = True
@@ -660,27 +716,32 @@ def ai_add_to_library():
                     imdb_id = mdb['imdb_id']
                     media_type = mdb.get('media_type', media_type)
             # Fallback 2: Trakt title+year text search — exact title match only
+            # search_trakt() returns converted dicts: {title, year, media_type, id (tmdb_id), ...}
             if (not imdb_id or needs_title_search) and title:
                 results = search_trakt(title, year)
-                title_lower = title.lower()
-                year_int = int(year) if year else None
+                _trakt_preview = [(r.get('title'), r.get('year')) for r in results[:5]]
+                logger.info(f"AI add_to_library: Trakt search '{title}' ({year}) → {len(results)} results: {_trakt_preview}")
+                # Normalize apostrophes/quotes for comparison — AI often uses curly quotes
+                def _norm(s):
+                    return s.lower().replace('\u2019', "'").replace('\u2018', "'").replace('\u201c', '"').replace('\u201d', '"')
+                title_norm_t = _norm(title)
+                year_int_t = int(year) if year else None
                 best = None
                 for r in results:
-                    mtype = r.get('type', 'movie')
-                    item = r.get(mtype, {})
-                    if (item.get('title') or '').lower() == title_lower and (not year_int or item.get('year') == year_int):
-                        best = (item, mtype)
+                    r_title = _norm(r.get('title') or '')
+                    r_year = r.get('year')
+                    if r_title == title_norm_t and (not year_int_t or r_year == year_int_t):
+                        best = r
                         break
                 if best is None:
                     for r in results:
-                        mtype = r.get('type', 'movie')
-                        item = r.get(mtype, {})
-                        if (item.get('title') or '').lower() == title_lower:
-                            best = (item, mtype)
+                        r_title = _norm(r.get('title') or '')
+                        if r_title == title_norm_t:
+                            best = r
                             break
                 if best:
-                    item, mtype = best
-                    tmdb_id_str = str(item.get('ids', {}).get('tmdb', ''))
+                    tmdb_id_str = str(best.get('id', ''))
+                    mtype = best.get('media_type', 'movie')
                     resolve_type = 'show' if mtype == 'show' else 'movie'
                     if tmdb_id_str:
                         resolved_imdb, _ = DirectAPI.tmdb_to_imdb(tmdb_id_str, media_type=resolve_type)
@@ -694,20 +755,27 @@ def ai_add_to_library():
     if not imdb_id:
         return jsonify({'error': f'Could not resolve IMDB ID for "{title}"'}), 404
 
-    # Use user-selected versions if provided, otherwise use all configured versions
+    # Use user-selected versions if provided, otherwise use the default (first) version
     selected_versions = data.get('selected_versions')  # list of version names from UI checkboxes
+    single_version = data.get('version')  # single version name (from skill/tool API)
     try:
         config = _lc()
         versions_dict = config.get('Scraping', {}).get('versions', {})
-        all_versions = {v: True for v in versions_dict.keys()} if versions_dict else {'1080p': True}
+        all_versions_list = list(versions_dict.keys()) if versions_dict else ['1080p']
+        all_versions = {v: True for v in all_versions_list}
     except Exception:
+        all_versions_list = ['1080p']
         all_versions = {'1080p': True}
     if selected_versions and isinstance(selected_versions, list) and len(selected_versions) > 0:
         versions = {v: True for v in selected_versions if v in all_versions}
         if not versions:
             versions = all_versions  # fallback if none matched
+    elif single_version and single_version in all_versions:
+        versions = {single_version: True}
     else:
-        versions = all_versions
+        # Default: use only the first configured version (not all versions)
+        default_version = all_versions_list[0] if all_versions_list else '1080p'
+        versions = {default_version: True}
 
     # Build wanted item
     wanted_item = {
@@ -749,9 +817,18 @@ def ai_add_to_library():
         if not all_items:
             return jsonify({'error': f'Could not retrieve metadata for "{title}" ({imdb_id}). The item may not be in the metadata database yet — try again in a moment.'}), 400
 
-        source_detail = 'AI-Butler'
+        _butler_name = _get_display_name()
+        source_detail = _butler_name
         if is_user_system_enabled() and cu.is_authenticated:
-            source_detail = f'AI-Butler ({cu.username})'
+            source_detail = f'{_butler_name} ({cu.username})'
+        elif is_user_system_enabled():
+            # Tool API call with token — try to resolve username from token
+            from routes.auth_routes import User as _User
+            _tok = request.args.get('token', '') or (request.headers.get('Authorization', '')[7:] if request.headers.get('Authorization', '').startswith('Bearer ') else '')
+            if _tok:
+                _u = _User.query.filter_by(api_token=_tok).first()
+                if _u:
+                    source_detail = f'{_butler_name} ({_u.username})'
 
         for item in all_items:
             item['content_source'] = 'ai_butler'
@@ -816,17 +893,35 @@ def ai_skill_download():
     into their OpenClaw ~/.openclaw/skills/ directory.
     """
     import os as _os
-    from flask import current_app, make_response
+    from flask import make_response
+    from flask_login import current_user as cu
+    from routes.utils import is_user_system_enabled
 
-    enabled, openclaw_url, token, agent_id = _get_openclaw_config()
+    enabled, openclaw_url, _openclaw_token, agent_id = _get_openclaw_config()
     if not enabled:
         return jsonify({'error': 'AI Assistant is not enabled'}), 503
 
+    # Determine the CLI_DEBRID_TOKEN to embed in the skill.
+    # When user management is enabled: use the current user's personal API token.
+    # When user management is disabled: no token needed (endpoints are unauthenticated).
+    if is_user_system_enabled():
+        if not cu.is_authenticated:
+            return jsonify({'error': 'Login required to download skill'}), 401
+        cli_debrid_token = getattr(cu, 'api_token', None) or ''
+        if not cli_debrid_token:
+            return jsonify({'error': 'Your account has no API token. Please regenerate one in User Management.'}), 400
+    else:
+        cli_debrid_token = ''  # no auth required
+
     # Determine the public URL of this cli_debrid instance.
-    # Use X-Forwarded-Host/Proto set by reverse proxy, else fall back to request host.
-    forwarded_host = request.headers.get('X-Forwarded-Host') or request.host
-    forwarded_proto = request.headers.get('X-Forwarded-Proto') or ('https' if request.is_secure else 'http')
-    cli_debrid_url = f"{forwarded_proto}://{forwarded_host}"
+    # Priority: 1) SSO redirect_uri_base (already configured for public access), 2) X-Forwarded-Host, 3) request host.
+    sso_base = get_setting('SSO', 'redirect_uri_base', '').strip().rstrip('/')
+    if sso_base:
+        cli_debrid_url = sso_base
+    else:
+        forwarded_host = request.headers.get('X-Forwarded-Host') or request.host
+        forwarded_proto = request.headers.get('X-Forwarded-Proto') or ('https' if request.is_secure else 'http')
+        cli_debrid_url = f"{forwarded_proto}://{forwarded_host}"
 
     skill_path = _os.path.join(
         _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
@@ -841,7 +936,7 @@ def ai_skill_download():
 
     # Fill in placeholders
     content = content.replace('{{CLI_DEBRID_URL}}', cli_debrid_url)
-    content = content.replace('{{CLI_DEBRID_TOKEN}}', token if token else '(no token set)')
+    content = content.replace('{{CLI_DEBRID_TOKEN}}', cli_debrid_token)
 
     resp = make_response(content)
     resp.headers['Content-Type'] = 'text/markdown; charset=utf-8'
@@ -912,16 +1007,43 @@ def ai_save_settings():
 # ---------------------------------------------------------------------------
 
 def _check_tool_auth():
-    """Validate Bearer token for tool endpoints. Returns (ok, error_response)."""
-    expected = get_setting('AI Assistant', 'openclaw_token', '')
-    if not expected:
-        return True, None  # No token configured = open (matches chat behaviour)
-    auth = request.headers.get('Authorization', '')
-    if not auth.startswith('Bearer '):
-        return False, (jsonify({'error': 'Authorization header required'}), 401)
-    if auth[7:] != expected:
-        return False, (jsonify({'error': 'Invalid token'}), 401)
-    return True, None
+    """Validate token for tool endpoints. Returns (ok, error_response).
+
+    When the user system is enabled, validates against any user's api_token.
+    When the user system is disabled, validates against the OpenClaw token setting.
+
+    Accepts token via:
+      - ?token=<token> query parameter
+      - Authorization: Bearer <token> header
+    """
+    from routes.settings_routes import is_user_system_enabled
+
+    # Extract token from request
+    incoming = request.args.get('token', '') or ''
+    if not incoming:
+        auth = request.headers.get('Authorization', '')
+        if auth.startswith('Bearer '):
+            incoming = auth[7:]
+
+    if is_user_system_enabled():
+        # Validate against any user's api_token
+        if not incoming:
+            return False, (jsonify({'error': 'API token required'}), 401)
+        from routes.auth_routes import User
+        user = User.query.filter_by(api_token=incoming).first()
+        if not user:
+            return False, (jsonify({'error': 'Invalid API token'}), 401)
+        return True, None
+    else:
+        # User system disabled — fall back to OpenClaw token setting
+        expected = get_setting('AI Assistant', 'openclaw_token', '')
+        if not expected:
+            return True, None  # No token configured = open
+        if not incoming:
+            return False, (jsonify({'error': 'Token required'}), 401)
+        if incoming != expected:
+            return False, (jsonify({'error': 'Invalid token'}), 401)
+        return True, None
 
 
 @ai_bp.route('/api/ai/tools/queue_status', methods=['GET'])
@@ -1262,7 +1384,9 @@ def tool_remove_duplicates():
         return jsonify({'error': str(e)}), 500
 
 
-def send_ai_notification(message: str, title: str = 'AI Butler') -> bool:
+def send_ai_notification(message: str, title: str = None) -> bool:
+    if title is None:
+        title = _get_display_name()
     """
     Shared helper: send a message to all configured external notification channels.
     Returns True if sent successfully, False otherwise.
@@ -1281,6 +1405,68 @@ def send_ai_notification(message: str, title: str = 'AI Butler') -> bool:
     except Exception as e:
         logger.error(f"send_ai_notification: failed: {e}")
         return False
+
+
+@ai_bp.route('/api/ai/tools/context', methods=['GET'])
+def tool_context():
+    """OpenClaw tool: get a rich live snapshot of cli_debrid state.
+
+    Returns queue counts, library stats, recent errors, upgrade hub activity,
+    recent notifications, and statistics — similar to the built-in chat context.
+
+    GET /api/ai/tools/context?token=<token>
+    """
+    ok, err = _check_tool_auth()
+    if not ok:
+        return err
+
+    try:
+        from utilities.ai_context import (
+            _get_queue_state, _get_library_stats, _get_recent_logs,
+            _get_statistics_summary, _get_upgrade_hub_activity,
+            _get_notifications_log, _get_program_uptime,
+            _get_collected_library, _get_watch_history,
+        )
+        from routes.program_operation_routes import program_is_running
+
+        # Optional expansions via query params
+        include_library = request.args.get('library', 'false').lower() == 'true'
+        include_history = request.args.get('history', 'false').lower() == 'true'
+
+        queue_state   = _get_queue_state()
+        lib_stats     = _get_library_stats()
+        uptime        = _get_program_uptime()
+        stats         = _get_statistics_summary()
+        error_count, recent_errors, last_warning, log_tail = _get_recent_logs()
+        upgrade_activity = _get_upgrade_hub_activity()
+        notifications = _get_notifications_log()
+
+        result = {
+            'ok': True,
+            'running': program_is_running(),
+            'uptime': uptime,
+            'queues': queue_state,
+            'library': lib_stats,
+            'statistics': stats,
+            'errors': {
+                'count': error_count,
+                'last_warning': last_warning,
+                'recent': recent_errors,
+            },
+            'log_tail': log_tail,
+            'upgrade_hub': upgrade_activity,
+            'notifications': notifications,
+        }
+
+        if include_library:
+            result['collected_library'] = _get_collected_library()
+        if include_history:
+            result['watch_history'] = _get_watch_history()
+
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"AI tool context: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 @ai_bp.route('/api/ai/tools/send_notification', methods=['POST'])
@@ -1306,7 +1492,7 @@ def tool_send_notification():
     try:
         data = request.get_json(silent=True) or {}
         message = (data.get('message') or '').strip()
-        title = (data.get('title') or 'AI Butler').strip()
+        title = (data.get('title') or _get_display_name()).strip()
         if not message:
             return jsonify({'error': 'message is required'}), 400
         sent = send_ai_notification(message, title=title)

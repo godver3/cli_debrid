@@ -376,10 +376,26 @@ def initialize_app():
             db.create_all()
         else:
             columns = [c['name'] for c in inspector.get_columns('user')]
-            if 'is_default' not in columns:
-                with db.engine.connect() as conn:
+            with db.engine.connect() as conn:
+                if 'is_default' not in columns:
                     conn.execute(db.text('ALTER TABLE user ADD COLUMN is_default BOOLEAN'))
-                    conn.commit()
+                if 'oidc_sub' not in columns:
+                    conn.execute(db.text('ALTER TABLE user ADD COLUMN oidc_sub VARCHAR(255)'))
+                if 'oidc_provider' not in columns:
+                    conn.execute(db.text('ALTER TABLE user ADD COLUMN oidc_provider VARCHAR(50)'))
+                if 'email' not in columns:
+                    conn.execute(db.text('ALTER TABLE user ADD COLUMN email VARCHAR(255)'))
+                if 'api_token' not in columns:
+                    conn.execute(db.text('ALTER TABLE user ADD COLUMN api_token VARCHAR(48)'))
+                conn.commit()
+        # Backfill api_token for any users that don't have one
+        from routes.auth_routes import User, _generate_api_token
+        users_without_token = User.query.filter(User.api_token == None).all()
+        if users_without_token:
+            for u in users_without_token:
+                u.api_token = _generate_api_token()
+            db.session.commit()
+            logging.info(f"Generated API tokens for {len(users_without_token)} existing user(s)")
         create_default_admin()
 
 def is_behind_proxy():

@@ -5,7 +5,7 @@
 </div>
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" %}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" %}
     <div class="settings-section">
         <div class="settings-section-header">
             <h4>{{ section }}</h4>
@@ -937,7 +937,7 @@ document.addEventListener('DOMContentLoaded', function() {
             <input type="checkbox" id="ai-enabled" name="AI Assistant.enabled"
                    data-section="AI Assistant" data-key="enabled"
                    {% if settings.get('AI Assistant', {}).get('enabled') %}checked{% endif %}>
-            <p class="settings-description">Enable the AI Butler chat widget on all pages. Requires OpenClaw to be installed and configured.</p>
+            <p class="settings-description">Enable the AI Butler chat widget on all pages. Requires OpenClaw to be installed and configured. <strong>Works best with a paid AI API</strong> (e.g. OpenAI, Anthropic, Gemini) — free tier models may lack the context window or tool-calling capability needed for reliable responses.</p>
         </div>
         <div class="settings-form-group">
             <label for="ai-openclaw_url" class="settings-title">OpenClaw URL:</label>
@@ -1048,7 +1048,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     <i class="fas fa-download"></i> Download SKILL.md
                 </a>
             </div>
-            <p class="settings-description">Downloads a pre-configured OpenClaw skill file with your URL and token already filled in. Drop it into <code>~/.openclaw/skills/</code> on your OpenClaw machine, then reload OpenClaw. Your agent will then be able to answer questions about your library from Telegram, Discord, etc.</p>
+            <p class="settings-description">Downloads a pre-configured OpenClaw skill file with your URL and API token already filled in. Drop it into <code>~/.openclaw/skills/</code> on your OpenClaw machine, then reload OpenClaw. Your agent will then be able to answer questions about your library from external messengers like Telegram or Discord.</p>
+            <p class="settings-description"><strong>Note:</strong> This skill requires cli_debrid to be publicly accessible — it cannot work via an internal IP only. Exposing cli_debrid publicly means anyone with your token can control it, so <strong>User Management must be enabled</strong> before downloading. For best security, use <strong>OIDC/SSO</strong> (e.g. Authentik) rather than local accounts.</p>
         </div>
     </div>
 </div>
