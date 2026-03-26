@@ -14,6 +14,7 @@
 {% endif %}
 <div class="auth-form">
     <h2>Login</h2>
+    {% if not local_auth_disabled %}
     <form method="POST">
         <input type="text" name="username" placeholder="Username" required>
         <input type="password" name="password" placeholder="Password" required>
@@ -23,6 +24,15 @@
         </div>
         <input type="submit" value="Login">
     </form>
+    {% if sso_enabled %}
+    <div class="sso-divider">
+        <span>or</span>
+    </div>
+    {% endif %}
+    {% endif %}
+    {% if sso_enabled %}
+    <a href="{{ url_for('oidc.login') }}" class="btn-sso">Sign in with SSO</a>
+    {% endif %}
     {% if show_login_reminder %}
     <p class="login-reminder">{{ login_reminder_message }}</p>
     {% endif %}

@@ -442,7 +442,15 @@ class UpgradingQueue:
                         else:
                             logging.info(f"Item {item_id} was removed during hourly scrape (likely upgraded). Skipping timeout check.")
                     else:
-                        logging.debug(f"Skipping scrape for item {item_id} - not time yet.")
+                        # Still check timeout even when skipping the hourly scrape
+                        if time_in_queue > max_duration:
+                            logging.info(f"Item {item_id} timed out (in queue > {queue_duration_hours} hours) while waiting for next scrape window.")
+                            self.remove_item(item)
+                            from database import update_media_item_state
+                            update_media_item_state(item_id, state="Collected")
+                            logging.info(f"Moved item {item_id} to Collected state due to timeout.")
+                        else:
+                            logging.debug(f"Skipping scrape for item {item_id} - not time yet.")
 
             except Exception as e:
                 logging.error(f"Error processing item {item.get('id', 'unknown')}: {str(e)}")

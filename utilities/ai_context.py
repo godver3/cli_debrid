@@ -679,12 +679,16 @@ def build_system_prompt(page: str = '', page_data: dict = None) -> str:
     # Read feature toggles
     try:
         from utilities.settings import get_setting as _gs
-        _phase2  = bool(_gs('AI Assistant', 'enable_settings_assistant',   True))
-        _phase4  = bool(_gs('AI Assistant', 'enable_recommendations',      True))
-        _phase5  = bool(_gs('AI Assistant', 'enable_habit_tracking',       True))
-        _fullcfg = bool(_gs('AI Assistant', 'share_full_config',           True))
+        _phase2      = bool(_gs('AI Assistant', 'enable_settings_assistant',   True))
+        _phase4      = bool(_gs('AI Assistant', 'enable_recommendations',      True))
+        _phase5      = bool(_gs('AI Assistant', 'enable_habit_tracking',       True))
+        _fullcfg     = bool(_gs('AI Assistant', 'share_full_config',           True))
+        _display_name = (_gs('AI Assistant', 'display_name', '') or 'AI Butler').strip()
+        _public_url   = (_gs('SSO', 'redirect_uri_base', '') or '').strip().rstrip('/')
     except Exception:
         _phase2 = _phase4 = _phase5 = _fullcfg = True
+        _display_name = 'AI Butler'
+        _public_url = ''
 
     queue_state = _get_queue_state()
     uptime = _get_program_uptime()
@@ -763,11 +767,12 @@ def build_system_prompt(page: str = '', page_data: dict = None) -> str:
         'ADD_TO_LIBRARY: {"title": "Show Name", "year": 2021, "media_type": "movie", "imdb_id": "tt1234567", "tmdb_id": "12345", "reason": "Brief reason"}\n'
         "\nRules:\n"
         "- media_type must be \"movie\" or \"tv\"\n"
-        "- Always include imdb_id and tmdb_id when you know them -- they enable correct linking\n"
+        "- NEVER guess or invent imdb_id or tmdb_id values -- LLMs hallucinate IDs. Only include them if you are 100% certain. If unsure, omit them entirely -- the server will resolve the correct IDs by title+year\n"
         "- Always explain WHY you are recommending it BEFORE the ADD_TO_LIBRARY line\n"
         "- The system will automatically filter out anything already collected -- do NOT pre-check or say 'already in library', always emit the block and let the server decide\n"
+        "- NEVER say an item was already added or reference a previous add -- you have no memory of past actions across sessions\n"
         "- Base recommendations on genres, ratings, and patterns visible in WATCH HISTORY\n"
-        "- If the user says \"add X to my library\", output an ADD_TO_LIBRARY block directly -- always include imdb_id and tmdb_id even for user-requested adds\n"
+        "- If the user says \"add X to my library\", output an ADD_TO_LIBRARY block directly -- omit imdb_id/tmdb_id unless you are absolutely certain of the exact value\n"
     ) if _phase4 else "## Content Recommendations are disabled\nDo not suggest ADD_TO_LIBRARY blocks or make recommendations."
 
     _habits_block = (
@@ -778,7 +783,7 @@ def build_system_prompt(page: str = '', page_data: dict = None) -> str:
         "- If \"library_add_manual\" is frequent -> suggest adding a Trakt list to automate it\n"
     ) if _phase5 else ""
 
-    prompt = f"""You are the cli_debrid AI Butler -- a helpful assistant embedded in the cli_debrid media automation application.
+    prompt = f"""You are the cli_debrid {_display_name} -- a helpful assistant embedded in the cli_debrid media automation application.
 
 ## CRITICAL: What you are and what data you have
 
@@ -893,14 +898,23 @@ For "is X collected?" questions, use the IMDB ID sets below or ask -- the system
 
 ## Sending notifications to the user
 When the user asks you to send them a notification or alert (e.g. "send me a notification about X", "notify me of the scan status", "ping me"), emit a SEND_NOTIFICATION block:
-SEND_NOTIFICATION: {{"title": "AI Butler", "message": "Your message here"}}
+SEND_NOTIFICATION: {{"title": "{_display_name}", "message": "Your message here"}}
 
 Rules:
 - One block per notification request
 - Compose a clear, informative message using data already in this prompt
-- The title field is optional (defaults to "AI Butler")
+- The title field is optional (defaults to "{_display_name}")
 - Do NOT claim you cannot send notifications — you can, via the SEND_NOTIFICATION block
 - The notification will be delivered via the user's configured external channels (Discord, Telegram, etc.)
+
+## Base URL for links
+{"The public URL of this cli_debrid instance is: " + _public_url if _public_url else "The public URL is not configured — use relative paths only (e.g. /library/movie/12345)."}
+- ALWAYS format ANY link as markdown: [Label](url) — never output a bare URL
+- When asked for a link, always respond with a clickable markdown link immediately — do not output the raw URL
+- NEVER use localhost, 127.0.0.1, or any IP address in links — always use the public URL above or a relative path
+- Library links use TMDB ID: movies → [Title]({(_public_url or "") + "/library/movie/<tmdb_id>"}), shows → [Title]({(_public_url or "") + "/library/show/<tmdb_id>"})
+- If the user asks for a link and you have the required ID, output the markdown link without asking for clarification
+- This applies to ALL links: library pages, settings, external sites (IMDB, TMDB, Trakt), anything
 
 ## Instructions
 - Answer questions directly using the data sections above -- do not ask the user for info you already have

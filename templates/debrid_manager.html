@@ -3692,7 +3692,8 @@ async function _rcBulkScan(items, btnEl) {
         // Prefer location_on_disk (full symlink path) over filled_by_file (may be bare filename)
         const src = i.location_on_disk || i.filled_by_file || '';
         if (!src) return '';
-        const parts = src.split('/');
+        const normalized = src.replace(/\\/g, '/');
+        const parts = normalized.split('/');
         return parts.length >= 2 ? parts.slice(0,-1).join('/') : '';
     }).filter(Boolean))];
     if (!dirs.length) { alert('No directory paths available.'); return; }

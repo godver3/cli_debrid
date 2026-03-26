@@ -501,6 +501,9 @@ def get_content_source_display_names():
         display_name = source_config.get('display_name', '').strip()
         # Use source_id as fallback if display_name is empty
         display_name_map[source_id] = display_name if display_name else source_id
+    # Map ai_butler to the configured AI Assistant display name
+    ai_display_name = (config.get('AI Assistant', {}).get('display_name') or 'AI Butler').strip()
+    display_name_map['ai_butler'] = ai_display_name
     return display_name_map
 
 def save_version_settings(version, settings):

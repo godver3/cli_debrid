@@ -112,8 +112,8 @@ class AIHealthMonitor:
         if not self._external_notifications_enabled():
             return
         try:
-            from routes.ai_routes import send_ai_notification
-            send_ai_notification(message, title='AI Butler Health Alert')
+            from routes.ai_routes import send_ai_notification, _get_display_name
+            send_ai_notification(message, title=f'{_get_display_name()} Health Alert')
         except Exception as e:
             logger.error(f"AI Health Monitor: failed to send external notification: {e}")
 
