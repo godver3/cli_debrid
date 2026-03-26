@@ -274,6 +274,44 @@ body {
         font-size: 14px;
     }
 
+    .sso-divider {
+        display: flex;
+        align-items: center;
+        margin: 15px 0;
+        color: #aaa;
+        font-size: 13px;
+    }
+    .sso-divider::before,
+    .sso-divider::after {
+        content: '';
+        flex: 1;
+        border-top: 1px solid #555;
+    }
+    .sso-divider span {
+        padding: 0 10px;
+    }
+    .btn-sso {
+        display: block;
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #555;
+        border-radius: 3px;
+        background-color: #3a3a3a;
+        color: #f4f4f4;
+        font-size: 15px;
+        text-align: center;
+        text-decoration: none;
+        cursor: pointer;
+        transition: background-color 0.2s;
+        box-sizing: border-box;
+        margin-bottom: 10px;
+    }
+    .btn-sso:hover {
+        background-color: #4a4a4a;
+        color: #fff;
+        text-decoration: none;
+    }
+
     .flash-message {
         max-width: 300px;
         margin: 10px auto;

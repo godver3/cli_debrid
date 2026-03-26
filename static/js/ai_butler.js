@@ -643,9 +643,12 @@
         // Inline code `...`
         text = text.replace(/`([^`]+)`/g, '<code class="ai-butler-inline-code">$1</code>');
 
-        // Markdown links [text](url) — only allow internal /library and /discover paths for safety
-        text = text.replace(/\[([^\]]+)\]\((\/(?:library|discover)[^)]*)\)/g, function (_, label, href) {
-            return '<a href="' + href + '" class="ai-butler-link">' + label + '</a>';
+        // Markdown links [text](url) — allow any https:// URL or relative /path
+        text = text.replace(/\[([^\]]+)\]\(((?:https?:\/\/[^)]+|\/[^)]+))\)/g, function (_, label, href) {
+            const isExternal = href.startsWith('http');
+            return '<a href="' + href + '" class="ai-butler-link"'
+                + (isExternal ? ' target="_blank" rel="noopener"' : '')
+                + '>' + label + '</a>';
         });
 
         // Bold **text**

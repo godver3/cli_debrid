@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, request, render_template, redirect, url_fo
 from flask_login import login_required, current_user, login_user, logout_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from routes.extensions import db
-from .auth_routes import User
+from .auth_routes import User, _generate_api_token
 from .models import admin_required, onboarding_required
 from .settings_routes import is_user_system_enabled
 
@@ -29,6 +29,9 @@ def change_password():
 @user_management_bp.route('/change_own_password', methods=['POST'])
 @login_required
 def change_own_password():
+    if current_user.oidc_sub and not current_user.password:
+        return jsonify({'success': False, 'error': 'SSO accounts cannot change their password here. Manage your password through your identity provider.'}), 400
+
     data = request.get_json()
     new_password = data.get('new_password')
     confirm_password = data.get('confirm_password')
@@ -73,7 +76,7 @@ def add_user():
         return jsonify({'success': False, 'error': 'Username already exists.'})
     else:
         hashed_password = generate_password_hash(password)
-        new_user = User(username=username, password=hashed_password, role=role, onboarding_complete=True)
+        new_user = User(username=username, password=hashed_password, role=role, onboarding_complete=True, api_token=_generate_api_token())
         db.session.add(new_user)
         db.session.commit()
         return jsonify({'success': True})
@@ -102,6 +105,14 @@ def delete_user(user_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': 'Database error'}), 500
+
+@user_management_bp.route('/regenerate_api_token', methods=['POST'])
+@login_required
+def regenerate_api_token():
+    """Regenerate the current user's API token."""
+    current_user.api_token = _generate_api_token()
+    db.session.commit()
+    return jsonify({'success': True, 'api_token': current_user.api_token})
 
 # Modify the register route
 @user_management_bp.route('/register', methods=['GET', 'POST'])
