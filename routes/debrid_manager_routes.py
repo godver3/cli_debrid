@@ -1928,7 +1928,7 @@ def api_reconcile():
                 if _sa:
                     rclone_total = _sa.get('stats', {}).get('rclone_scanned', 0)
         else:
-            _mount_path = (get_setting('File Management', 'mounted_file_location', '') or
+            _mount_path = (get_setting('Plex', 'mounted_file_location', '') or
                            get_setting('File Management', 'original_files_path', ''))
             if _mount_path and os.path.isdir(_mount_path):
                 _spawn_rclone = False
