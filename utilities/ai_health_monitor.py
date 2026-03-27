@@ -199,8 +199,13 @@ class AIHealthMonitor:
             log_path = os.path.join(log_dir, 'debug.log')
             if not os.path.exists(log_path):
                 return
-            with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
-                lines = f.readlines()[-1000:]
+            with open(log_path, 'rb') as f:
+                # Read only the last ~200 KB to avoid loading the full log into memory
+                f.seek(0, 2)
+                size = f.tell()
+                f.seek(max(0, size - 204800))
+                raw = f.read()
+            lines = raw.decode('utf-8', errors='replace').splitlines()[-1000:]
             errors = [l for l in lines if ' - ERROR - ' in l or ' - CRITICAL - ' in l]
             if len(errors) >= HIGH_ERROR_COUNT:
                 last_error = errors[-1].strip()[:200] if errors else ''
@@ -279,7 +284,8 @@ _monitor = AIHealthMonitor()
 
 def start_health_monitor():
     """Call once at app startup to begin background health checks."""
-    _monitor.start()
+    if _monitor._is_enabled():
+        _monitor.start()
 
 
 def stop_health_monitor():
