@@ -217,9 +217,9 @@
         <!-- Auto Run Program -->
         <div class="settings-form-group">
             <label class="settings-title">
-                <input type="checkbox" id="auto-run-program" name="UI Settings.auto_run_program"
-                       data-section="UI Settings" data-key="auto_run_program"
-                       {% if settings.get('UI Settings', {}).get('auto_run_program', True) %}checked{% endif %}>
+                <input type="checkbox" id="auto-run-program" name="Debug.auto_run_program"
+                       data-section="Debug" data-key="auto_run_program"
+                       {% if settings.get('Debug', {}).get('auto_run_program', False) %}checked{% endif %}>
                 Auto Run Program
             </label>
             <p class="settings-description">When enabled, the program will automatically start running when the application starts</p>

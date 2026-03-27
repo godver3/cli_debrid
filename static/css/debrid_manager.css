@@ -1266,6 +1266,7 @@
     border-bottom: 1px solid #1a1a1a;
 }
 .dm-bk-slot-row:last-child { border-bottom: none; }
+.dm-bk-slot-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
 .dm-bk-slot-row-info {
     display: flex;
     align-items: center;
