@@ -939,23 +939,26 @@ def filter_results(
                         target_year = year  # Default to original year
                         
                         # Try to get the season-specific year from the database
-                        if imdb_id and season is not None:
+                        # Use original_season for year lookup when XEM/absolute remapping has occurred
+                        # (e.g. anime S03E12 remapped to scene S01E12 — look up S3 year, not S1 year)
+                        year_lookup_season = original_season if (original_season is not None and original_season != season) else season
+                        if imdb_id and year_lookup_season is not None:
                             # Check cache first
-                            cache_key = (imdb_id, season)
+                            cache_key = (imdb_id, year_lookup_season)
                             if cache_key in _season_year_cache:
                                 target_year = _season_year_cache[cache_key]
                                 # logging.debug(f"Using cached season year for {imdb_id} S{season}: {target_year}")
                             else:
                                 try:
                                     from database.database_reading import get_season_year
-                                    season_year = get_season_year(imdb_id=imdb_id, season_number=season)
+                                    season_year = get_season_year(imdb_id=imdb_id, season_number=year_lookup_season)
                                     if season_year:
                                         target_year = season_year
                                         _season_year_cache[cache_key] = season_year  # Cache the result
-                                        logging.info(f"Using season {season} air date year ({season_year}) instead of original show year ({year}) for '{original_title}'")
+                                        logging.info(f"Using season {year_lookup_season} air date year ({season_year}) instead of original show year ({year}) for '{original_title}'")
                                     else:
                                         # Fallback: Try to get season year from metadata API
-                                        logging.debug(f"No season year in database for {imdb_id} S{season}, trying metadata API fallback")
+                                        logging.debug(f"No season year in database for {imdb_id} S{year_lookup_season}, trying metadata API fallback")
                                         if direct_api:
                                             # Check metadata cache first
                                             if imdb_id in _show_metadata_cache:
@@ -969,11 +972,11 @@ def filter_results(
                                                     logging.warning(f"Error getting show metadata for {imdb_id}: {api_err}")
                                                     show_metadata = None
                                                     _show_metadata_cache[imdb_id] = None  # Cache the failure
-                                            
+
                                             if show_metadata and isinstance(show_metadata, dict):
                                                 trakt_seasons_data = show_metadata.get('seasons')
-                                                if isinstance(trakt_seasons_data, dict) and season in trakt_seasons_data:
-                                                    current_season_trakt_data = trakt_seasons_data[season]
+                                                if isinstance(trakt_seasons_data, dict) and year_lookup_season in trakt_seasons_data:
+                                                    current_season_trakt_data = trakt_seasons_data[year_lookup_season]
                                                     if isinstance(current_season_trakt_data, dict) and 'episodes' in current_season_trakt_data:
                                                         episodes_dict_for_season = current_season_trakt_data['episodes']
                                                         if episodes_dict_for_season:
@@ -993,15 +996,15 @@ def filter_results(
                                                                         season_year = utc_dt.year
                                                                         target_year = season_year
                                                                         _season_year_cache[cache_key] = season_year  # Cache the result
-                                                                        logging.info(f"Using season {season} air date year ({season_year}) from metadata API instead of original show year ({year}) for '{original_title}'")
+                                                                        logging.info(f"Using season {year_lookup_season} air date year ({season_year}) from metadata API instead of original show year ({year}) for '{original_title}'")
                                                                     except Exception as date_parse_err:
-                                                                        logging.warning(f"Failed to parse season {season} air date from metadata API: {date_parse_err}")
-                                    
+                                                                        logging.warning(f"Failed to parse season {year_lookup_season} air date from metadata API: {date_parse_err}")
+
                                     if target_year == year:  # If we still haven't found a season year
                                         _season_year_cache[cache_key] = year  # Cache the fallback
-                                        logging.debug(f"No season-specific year found for {imdb_id} S{season}, using original show year ({year})")
+                                        logging.debug(f"No season-specific year found for {imdb_id} S{year_lookup_season}, using original show year ({year})")
                                 except Exception as season_year_err:
-                                    logging.warning(f"Error getting season year for {imdb_id} S{season}: {season_year_err}, using original show year ({year})")
+                                    logging.warning(f"Error getting season year for {imdb_id} S{year_lookup_season}: {season_year_err}, using original show year ({year})")
                                     _season_year_cache[cache_key] = year  # Cache the fallback
                         
                         if isinstance(parsed_year, list):

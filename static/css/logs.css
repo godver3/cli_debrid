@@ -50,11 +50,6 @@
             margin-right: 0 !important;
         }
 
-        .match-count {
-            font-size: 0.9em;
-            margin-top: 5px;
-        }
-
         .bottom-button {
             position: absolute !important;
             left: 50%;
@@ -66,10 +61,6 @@
         #pause-indicator {
             top: 124px !important;
             right: 10px !important;
-        }
-
-        #goto-container {
-            width: 100%;
         }
 
         /* --- START EDIT: Adjust height when task monitor overlay is visible --- */
@@ -114,6 +105,93 @@
         border: 1px solid #666;
         border-radius: 3px;
     }
+
+    /* ── Chip filter bar ─────────────────────────────────────────────── */
+    .log-filter-chips {
+        display: none;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 12px;
+        background-color: #2a2a2a;
+        border-bottom: 1px solid #3a3a3a;
+        box-sizing: border-box;
+        overflow: visible;
+    }
+
+    .log-chip {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+        padding: 2px 9px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--chip-color, #aaa);
+        font-size: 0.73em;
+        font-family: monospace;
+        cursor: pointer;
+        transition: opacity 0.15s;
+        white-space: nowrap;
+        line-height: 1.6;
+        flex-shrink: 0;
+    }
+
+    .log-chip:hover { opacity: 0.75; }
+
+    .log-chip-disabled {
+        opacity: 0.3;
+        text-decoration: line-through;
+    }
+
+    .log-chip-more {
+        --chip-color: #777;
+        font-family: sans-serif;
+        letter-spacing: 0.02em;
+        border-style: dashed;
+    }
+
+    .log-chip-more-wrapper {
+        position: relative;
+        flex-shrink: 0;
+    }
+
+    .log-chip-dropdown {
+        position: fixed;
+        z-index: 9999;
+        background: #252525;
+        border: 1px solid #4a4a4a;
+        border-radius: 6px;
+        padding: 4px;
+        min-width: 200px;
+        max-height: 320px;
+        overflow-y: auto;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+    }
+
+    .log-chip-dropdown-item {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+        padding: 4px 10px;
+        border-radius: 4px;
+        border: none;
+        background: transparent;
+        color: var(--chip-color, #bbb);
+        font-size: 0.76em;
+        font-family: monospace;
+        cursor: pointer;
+        text-align: left;
+        white-space: nowrap;
+        transition: background 0.1s;
+    }
+
+    .log-chip-dropdown-item:hover { background: rgba(255,255,255,0.07); }
+    .log-chip-dropdown-item.log-chip-disabled { opacity: 0.3; text-decoration: line-through; }
+    /* ── End chip filter ─────────────────────────────────────────────── */
 
     #log-entries {
         flex-grow: 1;
@@ -337,6 +415,7 @@
 
     .log-message {
         color: #ecf0f1;  /* Light gray for the main message */
+        opacity: 0.9;
     }
 
     .log-duration {
@@ -351,85 +430,9 @@
     .log-message.error { color: #e74c3c; }
     .log-message.critical { color: #9b59b6; }
 
-    /* Remove the generic message color since we'll use level-specific colors */
-    .log-message {
-        opacity: 0.9;  /* Slightly reduce opacity to differentiate from level indicator */
-    }
-
-    /* Add styles for the goto search container */
-    .goto-container {
-        display: flex;
-        gap: 5px;
-    }
-
-    .goto-btn {
-        padding: 5px;
-        background-color: #444;
-        color: #f4f4f4;
-        border: 1px solid #666;
-        border-radius: 3px;
-        cursor: pointer;
-        font-size: 14px;
-    }
-
-    .goto-btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-
-    .goto-btn:not(:disabled):hover {
-        background-color: #555;
-    }
-
-    .goto-nav-buttons {
-        display: flex;
-        gap: 2px;
-    }
-
-    .goto-nav-button {
-        padding: 5px;
-        background-color: #444;
-        color: #f4f4f4;
-        border: 1px solid #666;
-        border-radius: 3px;
-        cursor: pointer;
-    }
-
-    .goto-nav-button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-
-    .goto-nav-button:not(:disabled):hover {
-        background-color: #555;
-    }
-
-    .match-count {
-        color: #888;
-        font-size: 0.8em;
-        padding: 0 5px;
-        min-width: 45px;  /* Ensure consistent width for count */
-        text-align: left;
-    }
-
     /* Update the existing search box style */
     #log-search {
         min-width: 200px;
-    }
-
-    /* Add styles for highlighted matches */
-    .highlight-match {
-        background-color: rgba(255, 255, 0, 0.2);
-        outline: 2px solid rgba(255, 255, 0, 0.3);
-    }
-
-    #goto-search {
-        padding: 5px;
-        background-color: #444;
-        color: #f4f4f4;
-        border: 1px solid #666;
-        border-radius: 3px;
-        width: 150px;
     }
 
     /* Add styles for the bottom button */
