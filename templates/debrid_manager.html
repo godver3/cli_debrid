@@ -2519,12 +2519,19 @@ function _bkRenderSlots(status) {
             <span class="dm-bk-slot-stats">${count}${count && size !== '—' ? ' · ' : ''}${size !== '—' ? size : ''}</span>
         </div>
     </div>
-    <button class="dm-btn dm-btn-secondary dm-btn-sm dm-bk-restore-btn"
-            onclick="bkRestore('${filename}', this)"
-            title="Restore from this backup">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-        Restore
-    </button>
+    <div class="dm-bk-slot-actions">
+        <button class="dm-btn dm-btn-secondary dm-btn-sm dm-bk-restore-btn"
+                onclick="bkRestore('${filename}', this, true)"
+                title="Preview what would be restored without making any changes">
+            Dry Run
+        </button>
+        <button class="dm-btn dm-btn-secondary dm-btn-sm dm-bk-restore-btn"
+                onclick="bkRestore('${filename}', this, false)"
+                title="Restore from this backup">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            Restore
+        </button>
+    </div>
 </div>`;
         }
     }
@@ -2695,34 +2702,50 @@ document.getElementById('cl-run-btn').addEventListener('click', async function()
     btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0f01-15.357-2m15.357 2H15"/></svg> Run Now';
 });
 
-async function bkRestore(filename, btn) {
-    if (!confirm(`Restore from "${filename}"?\n\nThis will re-add any torrents missing from your current debrid library. Existing torrents are not affected.`)) return;
+async function bkRestore(filename, btn, dryRun) {
+    if (dryRun) {
+        if (!confirm(`Dry run for "${filename}"?\n\nThis will preview what would be restored without making any changes to your debrid library.`)) return;
+    } else {
+        if (!confirm(`Restore from "${filename}"?\n\nThis will re-add any torrents missing from your current debrid library. Existing torrents are not affected.`)) return;
+    }
+    // Disable all restore/dry-run buttons in this row to prevent double-clicks
+    const row = btn.closest('.dm-bk-slot-row');
+    const rowBtns = row ? row.querySelectorAll('button') : [btn];
+    rowBtns.forEach(b => b.disabled = true);
     const origHtml = btn.innerHTML;
-    btn.disabled = true;
     btn.innerHTML = '<span class="dm-spinner"></span>';
     const msg = document.getElementById('bk-save-msg');
     try {
         const r = await fetch('/debrid_manager/api/backup/restore', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({filename}),
+            body: JSON.stringify({filename, dry_run: dryRun}),
         });
         const data = await r.json();
         msg.style.display = '';
         if (data.success) {
             msg.className = 'dm-backup-msg dm-backup-msg-ok';
-            msg.textContent = `Restore complete: ${data.added} added, ${data.skipped} already present${data.failed ? ', ' + data.failed + ' failed' : ''}.`;
+            if (dryRun) {
+                const failNote = data.failures && data.failures.length ? `, ${data.failures.length} would fail` : '';
+                msg.textContent = `Dry run: ${data.added} would be added, ${data.skipped} already present${failNote}. No changes made.`;
+            } else {
+                const failNote = data.failed ? `, ${data.failed} failed` : '';
+                msg.textContent = `Restore complete: ${data.added} added, ${data.skipped} already present${failNote}.`;
+                if (data.failures && data.failures.length) {
+                    console.warn('Restore failures:', data.failures);
+                }
+            }
         } else {
             msg.className = 'dm-backup-msg dm-backup-msg-err';
-            msg.textContent = 'Restore failed: ' + (data.message || data.error || 'unknown');
+            msg.textContent = (dryRun ? 'Dry run failed: ' : 'Restore failed: ') + (data.message || data.error || 'unknown');
         }
-        setTimeout(() => { msg.style.display = 'none'; }, 8000);
+        setTimeout(() => { msg.style.display = 'none'; }, 10000);
     } catch(e) {
         msg.style.display = '';
         msg.className = 'dm-backup-msg dm-backup-msg-err';
         msg.textContent = 'Error: ' + e.message;
     }
-    btn.disabled = false;
+    rowBtns.forEach(b => b.disabled = false);
     btn.innerHTML = origHtml;
 }
 

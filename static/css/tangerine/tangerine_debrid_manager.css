@@ -1474,7 +1474,13 @@ body[data-theme="tangerine"] .dm-bk-provider-label {
     font-weight: 600;
 }
 
-/* Restore button inside slot row */
+/* Restore / Dry Run buttons inside slot row */
+body[data-theme="tangerine"] .dm-bk-slot-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-shrink: 0;
+}
 body[data-theme="tangerine"] .dm-bk-slot-row .dm-btn {
     flex-shrink: 0;
 }
