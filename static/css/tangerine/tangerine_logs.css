@@ -63,6 +63,93 @@
         box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
     }
 
+    /* ── Chip filter bar (tangerine) ─────────────────────────────────── */
+    .log-filter-chips {
+        display: none;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 12px;
+        background: rgba(255, 255, 255, 0.02);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        box-sizing: border-box;
+        overflow: visible;
+    }
+
+    .log-chip {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+        padding: 2px 9px;
+        border-radius: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--chip-color, #aaa);
+        font-size: 0.73em;
+        font-family: monospace;
+        cursor: pointer;
+        transition: opacity 0.15s;
+        white-space: nowrap;
+        line-height: 1.6;
+        flex-shrink: 0;
+    }
+
+    .log-chip:hover { opacity: 0.75; }
+
+    .log-chip-disabled {
+        opacity: 0.3;
+        text-decoration: line-through;
+    }
+
+    .log-chip-more {
+        --chip-color: #777;
+        font-family: sans-serif;
+        letter-spacing: 0.02em;
+        border-style: dashed;
+    }
+
+    .log-chip-more-wrapper {
+        position: relative;
+        flex-shrink: 0;
+    }
+
+    .log-chip-dropdown {
+        position: fixed;
+        z-index: 9999;
+        background: #1a1a24;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        padding: 4px;
+        min-width: 200px;
+        max-height: 320px;
+        overflow-y: auto;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+    }
+
+    .log-chip-dropdown-item {
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+        padding: 4px 10px;
+        border-radius: 4px;
+        border: none;
+        background: transparent;
+        color: var(--chip-color, #bbb);
+        font-size: 0.76em;
+        font-family: monospace;
+        cursor: pointer;
+        text-align: left;
+        white-space: nowrap;
+        transition: background 0.1s;
+    }
+
+    .log-chip-dropdown-item:hover { background: rgba(255, 107, 53, 0.1); }
+    .log-chip-dropdown-item.log-chip-disabled { opacity: 0.3; text-decoration: line-through; }
+    /* ── End chip filter ─────────────────────────────────────────────── */
+
     #log-entries {
         flex-grow: 1;
         overflow-y: auto;
@@ -308,95 +395,9 @@
         opacity: 0.9;  /* Slightly reduce opacity to differentiate from level indicator */
     }
 
-    /* Add styles for the goto search container */
-    .goto-container {
-        display: flex;
-        gap: 5px;
-    }
-
-    .goto-btn {
-        padding: 0.75rem 1rem;
-        background: rgba(255, 255, 255, 0.05);
-        color: #e0e0e0;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
-        cursor: pointer;
-        font-size: 14px;
-        transition: all 0.3s ease;
-    }
-
-    .goto-btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-
-    .goto-btn:not(:disabled):hover {
-        background: rgba(255, 255, 255, 0.08);
-        border-color: rgba(255, 107, 53, 0.5);
-        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
-    }
-
-    .goto-nav-buttons {
-        display: flex;
-        gap: 2px;
-    }
-
-    .goto-nav-button {
-        padding: 0.75rem;
-        background: rgba(255, 255, 255, 0.05);
-        color: #e0e0e0;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
-        cursor: pointer;
-        transition: all 0.3s ease;
-    }
-
-    .goto-nav-button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-
-    .goto-nav-button:not(:disabled):hover {
-        background: rgba(255, 255, 255, 0.08);
-        border-color: rgba(255, 107, 53, 0.5);
-        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
-    }
-
-    .match-count {
-        color: #888;
-        font-size: 0.8em;
-        padding: 0 5px;
-        min-width: 45px;  /* Ensure consistent width for count */
-        text-align: left;
-    }
-
     /* Update the existing search box style */
     #log-search {
         min-width: 200px;
-    }
-
-    /* Add styles for highlighted matches */
-    .highlight-match {
-        background-color: rgba(255, 255, 0, 0.2);
-        outline: 2px solid rgba(255, 255, 0, 0.3);
-    }
-
-    #goto-search {
-        padding: 0.75rem 1rem;
-        background: rgba(255, 255, 255, 0.05);
-        color: #e0e0e0;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
-        transition: all 0.3s ease;
-        width: 250px;
-    }
-
-    #goto-search:focus,
-    #goto-search:hover {
-        outline: none;
-        background: rgba(255, 255, 255, 0.08);
-        border-color: rgba(255, 107, 53, 0.5);
-        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
     }
 
     /* Add styles for the bottom button */
@@ -454,11 +455,6 @@
             margin-right: 0 !important;
         }
 
-        .match-count {
-            font-size: 0.9em;
-            margin-top: 5px;
-        }
-
         .bottom-button {
             position: absolute !important;
             left: 50%;
@@ -472,22 +468,9 @@
             right: 10px !important;
         }
 
-        #goto-container {
-            width: 100%;
-        }
-
         /* --- START EDIT: Adjust height when task monitor overlay is visible --- */
         body.has-bottom-overlay .log-container {
             height: calc(100vh - 100px); /* existing offset + overlay */
-        }
-        .goto-btn {
-            padding: 0.55rem .4rem;
-        }
-        #goto-search {
-            width: auto;
-        }
-        .goto-container {
-            flex-flow: wrap;
         }
     }
 

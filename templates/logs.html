@@ -2,7 +2,20 @@
 
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/logs.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/logs.css') }}?v=7">
+<script>
+(function(){
+    var theme = localStorage.getItem('selectedTheme') || 'tangerine';
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = '/static/css/tangerine/tangerine_logs.css?v=7';
+    link.id = 'theme-tangerine-logs';
+    link.setAttribute('data-theme-css', 'tangerine');
+    if (theme === 'tangerine') {
+        document.head.appendChild(link);
+    }
+})();
+</script>
 {% endblock %}
 {% block title %}Logs{% endblock %}
 
@@ -19,22 +32,13 @@
             <option value="error">Error</option>
             <option value="critical">Critical</option>
         </select>
-        <div class="goto-container">
-            <button class="goto-btn" onclick="navigateToFirstMatch()">⭱ First</button>
-            <button class="goto-nav-button" id="prev-match" title="Previous match (Shift+Enter)" disabled>
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
-                </svg>
-            </button>
-            <input type="text" id="goto-search" placeholder="Go to... (Enter/Shift+Enter to navigate)" />
-            <button class="goto-nav-button" id="next-match" title="Next match (Enter)" disabled>
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                </svg>
-            </button>
-            <button class="goto-btn" onclick="navigateToLastMatch()">⭳ Last</button>
-            <span class="match-count"></span>
-        </div>
+        <select id="log-lines-select" title="Number of log lines to display">
+            <option value="100">100 lines</option>
+            <option value="500">500 lines</option>
+            <option value="1000" selected>1000 lines</option>
+            <option value="2000">2000 lines</option>
+            <option value="5000">5000 lines</option>
+        </select>
         <input type="text" id="log-search" placeholder="Filter logs...">
         <button id="share-logs-btn" title="Share logs via transfer.sh">
             Share Logs
@@ -47,6 +51,7 @@
             </svg>
         </button>
     </div>
+    <div id="log-filter-chips" class="log-filter-chips"></div>
     <div id="log-entries">
     {% for log in logs %}
     <div class="log-entry {{ log.level }}" data-level="{{ log.level }}">{{ log.timestamp }} - {{ log.level.upper() }} - {{ log.message }}</div>
@@ -63,13 +68,182 @@
 <script>
 let lastLogTimestamp = '';
 let currentLevel = 'all';
+let currentLines = 1000;
 let isPaused = false;
 let isScrolledToBottom = true;
-let isSearchActive = false;
-let currentMatches = [];
-let currentMatchIndex = -1;
-const MAX_LOGS = 1500;
+const MAX_LOGS = 5000;
 const renderedLogIds = new Set(); // Track rendered logs to prevent duplicates
+
+// ── CHIP FILTER STATE ──────────────────────────────────────────────────────
+const CHIP_COLORS = [
+    '#ffa657','#f2cc60','#7ee787','#a5d6ff',
+    '#d2a8ff','#ff7eb6','#79c0ff','#e8b4a0'
+];
+const MAX_VISIBLE_CHIPS = 20;
+
+const FILE_GROUPS = {
+    queues:   ['adding_queue','scraping_queue','checking_queue','unreleased_queue','queue_manager','zilean_upgrade','base_queue','wanted_queue','upgrading_queue','blacklisted_queue','sleeping_queue','pending_uncached_queue','pre_release_queue','final_check_queue'],
+    scraper:  ['scraper','scraper_manager','media_matcher','jackett','prowlarr','knightcrawler','mediafusion','torrentio','zilean','nyaa','rank_results','filter_results','deduplicate_results','reverse_parser','renderer','web_scraper','media_info'],
+    torrent:  ['torrent_processor','torrent_tracking','client','magnet','debrid_backup'],
+    database: ['database','database_writing','database_reading','collected_items','wanted_items','not_wanted_magnets','schema_management','migrations','phalanx_db_cache_manager','db_init','maintenance'],
+    plex:     ['plex_functions','plex_client','plex_label_manager','plex_db_functions','plex_matching_functions','plex_watchlist','plex_rss_watchlist','overlay_manager','badge_manager','poster_cache'],
+    trakt:    ['trakt','trakt_client','trakt_coordinator','trakt_auth'],
+    routes:   ['program_operation_routes','content_requestor_routes','web_server','scraper_routes','library_routes','settings_routes','debug_routes','database_routes','overlay_routes','queues_routes','api_summary_routes'],
+    system:   ['main','base','config_manager','settings','scheduled_tasks','notifications','post_processing','statistics','cache_cleanup','ai_health_monitor','symlink_verification','run_program','initialization'],
+};
+
+// Build reverse map: filename -> group
+const FILE_TO_GROUP = {};
+for (const [group, files] of Object.entries(FILE_GROUPS)) {
+    for (const f of files) FILE_TO_GROUP[f] = group;
+}
+
+// group -> { count, color, enabled }
+const chipState = new Map();
+let chipDropdownOpen = false;
+
+// Pre-assign stable colors to groups
+const GROUP_COLORS = {
+    queues:   '#ffa657',
+    scraper:  '#f2cc60',
+    torrent:  '#7ee787',
+    database: '#a5d6ff',
+    plex:     '#d2a8ff',
+    trakt:    '#ff7eb6',
+    routes:   '#79c0ff',
+    system:   '#e8b4a0',
+};
+
+function extractFuncName(log) {
+    // message format from parse_log_line: "file.py:func_name:lineno - actual message"
+    const m = log.message.match(/^([^.:]+)\.py:[^:]+:\d+/);
+    if (!m) return null;
+    const stem = m[1];
+    return FILE_TO_GROUP[stem] || stem; // fall back to stem if unmapped
+}
+
+function registerFuncName(funcName) {
+    if (!funcName) return;
+    if (chipState.has(funcName)) {
+        chipState.get(funcName).count++;
+    } else {
+        chipState.set(funcName, {
+            count: 1,
+            color: GROUP_COLORS[funcName] || '#aaa',
+            enabled: true
+        });
+    }
+}
+
+function renderChips() {
+    const bar = document.getElementById('log-filter-chips');
+    if (!bar) return;
+
+    // Sort by count desc, take top 5 + rest
+    const sorted = Array.from(chipState.entries())
+        .sort((a, b) => b[1].count - a[1].count);
+    const visible = sorted.slice(0, MAX_VISIBLE_CHIPS);
+    const overflow = sorted.slice(MAX_VISIBLE_CHIPS);
+
+    bar.innerHTML = '';
+
+    if (sorted.length === 0) {
+        bar.style.display = 'none';
+        return;
+    }
+    bar.style.display = 'flex';
+
+    visible.forEach(([name, data]) => {
+        const chip = document.createElement('button');
+        chip.className = 'log-chip' + (data.enabled ? '' : ' log-chip-disabled');
+        chip.style.setProperty('--chip-color', data.color);
+        chip.textContent = name;
+        chip.title = `${data.count} occurrences`;
+        chip.addEventListener('click', () => {
+            data.enabled = !data.enabled;
+            chip.classList.toggle('log-chip-disabled');
+            applyChipFilter();
+        });
+        bar.appendChild(chip);
+    });
+
+    // Toggle all/none button
+    const allEnabled = sorted.every(([, d]) => d.enabled);
+    const toggleAll = document.createElement('button');
+    toggleAll.className = 'log-chip log-chip-more';
+    toggleAll.textContent = allEnabled ? 'Hide all' : 'Show all';
+    toggleAll.title = allEnabled ? 'Disable all filters' : 'Enable all filters';
+    toggleAll.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const enable = !sorted.every(([, d]) => d.enabled);
+        sorted.forEach(([, d]) => { d.enabled = enable; });
+        applyChipFilter();
+        renderChips();
+    });
+    bar.appendChild(toggleAll);
+
+    if (overflow.length > 0) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'log-chip-more-wrapper';
+
+        const moreBtn = document.createElement('button');
+        moreBtn.className = 'log-chip log-chip-more';
+        moreBtn.textContent = `+${overflow.length} more`;
+        moreBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            chipDropdownOpen = !chipDropdownOpen;
+            if (chipDropdownOpen) {
+                const rect = moreBtn.getBoundingClientRect();
+                dropdown.style.top = (rect.bottom + 5) + 'px';
+                dropdown.style.left = rect.left + 'px';
+                dropdown.style.display = 'flex';
+            } else {
+                dropdown.style.display = 'none';
+            }
+        });
+
+        const dropdown = document.createElement('div');
+        dropdown.className = 'log-chip-dropdown';
+        dropdown.style.display = 'none';
+        overflow.forEach(([name, data]) => {
+            const item = document.createElement('button');
+            item.className = 'log-chip-dropdown-item' + (data.enabled ? '' : ' log-chip-disabled');
+            item.style.setProperty('--chip-color', data.color);
+            item.textContent = `${name} (${data.count})`;
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                data.enabled = !data.enabled;
+                item.classList.toggle('log-chip-disabled');
+                applyChipFilter();
+            });
+            dropdown.appendChild(item);
+        });
+
+        wrapper.appendChild(moreBtn);
+        wrapper.appendChild(dropdown);
+        bar.appendChild(wrapper);
+    }
+}
+
+function applyChipFilter() {
+    const logEntries = document.getElementById('log-entries');
+    const searchTerm = document.getElementById('log-search').value.toLowerCase();
+    logEntries.querySelectorAll('.log-entry').forEach(div => {
+        const funcName = div.dataset.func;
+        const chipOk = !funcName || !chipState.has(funcName) || chipState.get(funcName).enabled;
+        const searchOk = !searchTerm || div.textContent.toLowerCase().includes(searchTerm);
+        div.style.display = (chipOk && searchOk) ? '' : 'none';
+    });
+}
+
+document.addEventListener('click', () => {
+    if (chipDropdownOpen) {
+        chipDropdownOpen = false;
+        const dd = document.querySelector('.log-chip-dropdown');
+        if (dd) dd.style.display = 'none';
+    }
+});
+// ── END CHIP FILTER ────────────────────────────────────────────────────────
 
 function checkScrollPosition() {
     const logEntries = document.getElementById('log-entries');
@@ -111,14 +285,18 @@ function scrollToBottom(element) {
 
 function updateLogs(forceRefresh = false) {
     const levelFilter = document.getElementById('log-level-filter').value.toLowerCase();
+    const linesVal = parseInt(document.getElementById('log-lines-select').value, 10) || 1000;
 
-    // If forcing refresh or changing levels, reset and start new stream
-    if (levelFilter !== currentLevel || forceRefresh) {
+    // If forcing refresh or changing levels/lines, reset and start new stream
+    if (levelFilter !== currentLevel || linesVal !== currentLines || forceRefresh) {
         const logEntries = document.getElementById('log-entries');
         lastLogTimestamp = '';
         logEntries.innerHTML = ''; // Clear existing logs
         renderedLogIds.clear(); // Clear duplicate tracking
+        chipState.clear();
+        renderChips();
         currentLevel = levelFilter;
+        currentLines = linesVal;
         isPaused = false;
         document.getElementById('pause-indicator').style.display = 'none';
         
@@ -162,7 +340,6 @@ function updateLogs(forceRefresh = false) {
                     if (isPaused) return;
                     
                     const searchTerm = document.getElementById('log-search').value.toLowerCase();
-                    const gotoTerm = document.getElementById('goto-search').value.toLowerCase();
                     const logEntries = document.getElementById('log-entries');
                     let addedLogs = false;
                     
@@ -175,35 +352,30 @@ function updateLogs(forceRefresh = false) {
                         chunk.forEach(log => {
                             // Create unique ID for this log entry
                             const logId = `${log.timestamp}-${log.level}-${log.message}`;
-                            
+
                             // Skip if we've already rendered this exact log
                             if (renderedLogIds.has(logId)) {
                                 return; // Skip duplicate
                             }
-                            
+
                             // Mark this log as rendered
                             renderedLogIds.add(logId);
-                            
+
+                            // Track function name for chip filter
+                            const funcName = extractFuncName(log);
+                            registerFuncName(funcName);
+
                             // Create the log entry div
                             const div = createHighlightedLogEntry(log);
-                            
-                            // Apply filter - hide if doesn't match search term
+                            if (funcName) div.dataset.func = funcName;
+
+                            // Apply text search filter
                             const logText = `${log.timestamp} - ${log.level.toUpperCase()} - ${log.message}`.toLowerCase();
-                            if (searchTerm && !logText.includes(searchTerm)) {
+                            const chipOk = !funcName || !chipState.has(funcName) || chipState.get(funcName).enabled;
+                            if ((searchTerm && !logText.includes(searchTerm)) || !chipOk) {
                                 div.style.display = 'none';
                             }
-                            
-                            // If we're in search mode and this log matches the goto term
-                            if (isSearchActive && logText.includes(gotoTerm)) {
-                                currentMatches.push(div);
-                                // If this is a new match and we're at the end, highlight it
-                                if (currentMatchIndex === currentMatches.length - 2) {
-                                    navigateToMatch(currentMatches.length - 1);
-                                } else {
-                                    updateGotoNavButtons();
-                                }
-                            }
-                            
+
                             fragment.appendChild(div);
                             addedLogs = true;
                         });
@@ -214,21 +386,13 @@ function updateLogs(forceRefresh = false) {
                             // Remove old logs if we're over the limit
                             while (logEntries.children.length > MAX_LOGS) {
                                 logEntries.removeChild(logEntries.firstChild);
-                                // Update matches array if we removed a match
-                                if (currentMatches.length > 0 && currentMatches[0].parentNode !== logEntries) {
-                                    currentMatches.shift();
-                                    if (currentMatchIndex > 0) {
-                                        currentMatchIndex--;
-                                    }
-                                    updateGotoNavButtons();
-                                }
                             }
                         }
                     }
 
                     if (addedLogs) {
                         lastLogTimestamp = data.logs[data.logs.length - 1].timestamp;
-                        
+                        renderChips();
                         if (isScrolledToBottom) {
                             requestAnimationFrame(() => scrollToBottom(logEntries));
                         }
@@ -283,7 +447,7 @@ function updateLogs(forceRefresh = false) {
         };
 
         // Create new EventSource connection with current interval
-        window.logStream = new EventSource(`/logs/api/logs/stream?level=${encodeURIComponent(levelFilter)}&interval=${window.lastPerformanceMetrics.interval}`);
+        window.logStream = new EventSource(`/logs/api/logs/stream?level=${encodeURIComponent(levelFilter)}&lines=${linesVal}&interval=${window.lastPerformanceMetrics.interval}`);
         
         window.logStream.onopen = function() {
             console.log('Stream connected, waiting for first message...');
@@ -314,7 +478,7 @@ function reconnectStream(levelFilter, interval) {
     
     // Small delay to ensure old connection is fully closed
     setTimeout(() => {
-        window.logStream = new EventSource(`/logs/api/logs/stream?level=${encodeURIComponent(levelFilter)}&interval=${interval}`);
+        window.logStream = new EventSource(`/logs/api/logs/stream?level=${encodeURIComponent(levelFilter)}&lines=${currentLines}&interval=${interval}`);
         // Reattach event handlers from stored handlers
         window.logStream.onmessage = window.streamHandlers.onMessage;
         window.logStream.onerror = window.streamHandlers.onError;
@@ -323,23 +487,9 @@ function reconnectStream(levelFilter, interval) {
 }
 
 function filterLogs() {
-    // Apply filter client-side without restarting the stream
-    const searchTerm = document.getElementById('log-search').value.toLowerCase();
-    const logEntries = document.getElementById('log-entries');
-    const allEntries = logEntries.querySelectorAll('.log-entry');
-    
-    allEntries.forEach(entry => {
-        const logText = entry.textContent.toLowerCase();
-        if (!searchTerm || logText.includes(searchTerm)) {
-            entry.style.display = '';
-        } else {
-            entry.style.display = 'none';
-        }
-    });
-    
-    // Scroll to bottom if we were already there
+    applyChipFilter();
     if (isScrolledToBottom) {
-        scrollToBottom(logEntries);
+        scrollToBottom(document.getElementById('log-entries'));
     }
 }
 
@@ -348,11 +498,20 @@ function loadSavedLogLevel() {
     if (savedLevel) {
         document.getElementById('log-level-filter').value = savedLevel;
     }
+    const savedLines = localStorage.getItem('selectedLogLines');
+    if (savedLines) {
+        document.getElementById('log-lines-select').value = savedLines;
+    }
 }
 
 document.getElementById('log-level-filter').addEventListener('change', (event) => {
     localStorage.setItem('selectedLogLevel', event.target.value);
-    updateLogs(true);  // Force a refresh when the level changes
+    updateLogs(true);
+});
+
+document.getElementById('log-lines-select').addEventListener('change', (event) => {
+    localStorage.setItem('selectedLogLines', event.target.value);
+    updateLogs(true);
 });
 
 document.getElementById('log-entries').addEventListener('scroll', checkScrollPosition);
@@ -603,147 +762,6 @@ function createHighlightedLogEntry(log) {
 
     return div;
 }
-
-// Add goto search functionality
-function performGotoSearch() {
-    const searchTerm = document.getElementById('goto-search').value.toLowerCase();
-    const logEntries = document.getElementById('log-entries');
-    currentMatches = [];
-    currentMatchIndex = -1;
-    isSearchActive = !!searchTerm;  // Set search active if we have a search term
-
-    // Clear previous highlights
-    logEntries.querySelectorAll('.highlight-match').forEach(el => {
-        el.classList.remove('highlight-match');
-    });
-
-    if (!searchTerm) {
-        updateGotoNavButtons();
-        return;
-    }
-
-    // Find all matching log entries
-    Array.from(logEntries.children).forEach((entry, index) => {
-        if (entry.textContent.toLowerCase().includes(searchTerm)) {
-            currentMatches.push(entry);
-        }
-    });
-
-    updateGotoNavButtons();
-    if (currentMatches.length > 0) {
-        navigateToMatch(0);
-    }
-}
-
-function updateGotoNavButtons() {
-    const prevButton = document.getElementById('prev-match');
-    const nextButton = document.getElementById('next-match');
-    const matchCount = document.querySelector('.match-count');
-    
-    prevButton.disabled = currentMatches.length === 0 || currentMatchIndex <= 0;
-    nextButton.disabled = currentMatches.length === 0 || currentMatchIndex >= currentMatches.length - 1;
-    
-    if (currentMatches.length > 0) {
-        matchCount.textContent = `${currentMatchIndex + 1}/${currentMatches.length}`;
-    } else {
-        matchCount.textContent = '';
-    }
-}
-
-function navigateToMatch(index) {
-    if (index < 0 || index >= currentMatches.length) return;
-
-    // Remove previous highlight
-    document.querySelectorAll('.highlight-match').forEach(el => {
-        el.classList.remove('highlight-match');
-    });
-
-    const match = currentMatches[index];
-    match.classList.add('highlight-match');
-    currentMatchIndex = index;
-    
-    // Scroll the match into view
-    match.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    updateGotoNavButtons();
-}
-
-function navigateToFirstMatch() {
-    if (currentMatches && currentMatches.length > 0) {
-        currentMatchIndex = 0;
-        navigateToMatch(currentMatchIndex);
-        updateGotoNavButtons();
-    }
-}
-
-function navigateToLastMatch() {
-    if (currentMatches && currentMatches.length > 0) {
-        currentMatchIndex = currentMatches.length - 1;
-        navigateToMatch(currentMatchIndex);
-        updateGotoNavButtons();
-    }
-}
-
-// Add event listeners for goto search
-document.getElementById('goto-search').addEventListener('input', (e) => {
-    if (e.target.value) {
-        isPaused = true;
-        document.getElementById('pause-indicator').style.display = 'block';
-    } else {
-        isPaused = false;
-        document.getElementById('pause-indicator').style.display = 'none';
-    }
-});
-
-document.getElementById('goto-search').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-        if (e.shiftKey) {
-            // Shift+Enter for previous
-            if (currentMatchIndex > 0) {
-                navigateToMatch(currentMatchIndex - 1);
-            }
-        } else {
-            // Enter for next
-            if (currentMatches.length === 0) {
-                performGotoSearch();
-            } else if (currentMatchIndex < currentMatches.length - 1) {
-                navigateToMatch(currentMatchIndex + 1);
-            }
-        }
-    }
-});
-
-document.getElementById('prev-match').addEventListener('click', () => {
-    if (currentMatchIndex > 0) {
-        navigateToMatch(currentMatchIndex - 1);
-    }
-});
-
-document.getElementById('next-match').addEventListener('click', () => {
-    if (currentMatches.length === 0) {
-        performGotoSearch();
-    } else if (currentMatchIndex < currentMatches.length - 1) {
-        navigateToMatch(currentMatchIndex + 1);
-    }
-});
-
-// Update the goto search event listener to perform searches as user types
-document.getElementById('goto-search').addEventListener('input', (e) => {
-    if (!e.target.value) {
-        isSearchActive = false;
-        currentMatches = [];
-        currentMatchIndex = -1;
-        document.querySelectorAll('.highlight-match').forEach(el => {
-            el.classList.remove('highlight-match');
-        });
-        updateGotoNavButtons();
-    } else {
-        // Debounce the search to avoid too many searches while typing
-        clearTimeout(window.searchTimeout);
-        window.searchTimeout = setTimeout(() => {
-            performGotoSearch();
-        }, 300);  // Wait 300ms after typing stops before searching
-    }
-});
 
 // Add function to scroll to bottom and resume logging
 function scrollToBottomAndResume() {

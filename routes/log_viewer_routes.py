@@ -434,6 +434,8 @@ def stream_logs():
     def generate():
         last_timestamp = request.args.get('since', '')
         level = request.args.get('level', 'all').lower()
+        lines = request.args.get('lines', default=1000, type=int)
+        lines = max(100, min(lines, 5000))  # clamp to valid range
         # Increase polling interval to 500ms (was 50ms) to reduce CPU usage
         # 500ms is still responsive enough for log viewing while being 10x more efficient
         interval = 0.5
@@ -452,9 +454,9 @@ def stream_logs():
             try:
                 start_time = time.time()
 
-                # On first connection, get all logs up to MAX_LOGS
+                # On first connection, get all logs up to requested lines
                 if first_batch:
-                    logs = get_recent_logs(1000, level=level)
+                    logs = get_recent_logs(lines, level=level)
                     first_batch = False
                     # Populate seen_log_hashes with initial logs
                     for log in logs:
@@ -462,7 +464,7 @@ def stream_logs():
                         seen_log_hashes.add(log_hash)
                 else:
                     # After first batch, only get new logs since last timestamp
-                    raw_logs = get_recent_logs(1000, since=last_timestamp, level=level)
+                    raw_logs = get_recent_logs(lines, since=last_timestamp, level=level)
 
                     # Filter out duplicates using seen_log_hashes
                     logs = []
