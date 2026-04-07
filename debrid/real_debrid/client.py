@@ -53,7 +53,8 @@ def _write_size_cache(size_str: str):
 
 class RealDebridProvider(DebridProvider):
     """Real-Debrid implementation of the DebridProvider interface"""
-    
+
+    PROVIDER_NAME = "Real-Debrid"
     API_BASE_URL = "https://api.real-debrid.com/rest/1.0"
     MAX_DOWNLOADS = 25
     
@@ -167,11 +168,15 @@ class RealDebridProvider(DebridProvider):
             return {
                 'days_remaining': days_remaining,
                 'expiration': expiration,
-                'premium': premium
+                'premium': premium,
+                'username': user_info.get('username', ''),
+                'email': user_info.get('email', ''),
+                'points': user_info.get('points', 0),
+                'locale': user_info.get('locale', ''),
+                'type': user_info.get('type', ''),
             }
         except Exception as e:
             logging.error(f"Error fetching subscription status: {str(e)}")
-            # Return a safe default
             return {
                 'days_remaining': None,
                 'expiration': None,
@@ -762,7 +767,8 @@ class RealDebridProvider(DebridProvider):
 
                 return {
                     'downloaded': round(daily_gb, 2),
-                    'limit': round(daily_limit, 2) if daily_limit is not None else 2000
+                    'limit': round(daily_limit, 2) if daily_limit is not None else 2000,
+                    'traffic_details': traffic_info,  # full date-keyed history for Usage tab
                 }
 
             except Exception as e:

@@ -48,6 +48,7 @@ STATUS_CODE_MAP = {
 class AllDebridProvider(DebridProvider):
     """AllDebrid implementation of the DebridProvider interface"""
 
+    PROVIDER_NAME = "AllDebrid"
     API_BASE_URL = "https://api.alldebrid.com/v4"
     MAX_DOWNLOADS = 20  # AllDebrid typical limit
 
@@ -141,7 +142,12 @@ class AllDebridProvider(DebridProvider):
             return {
                 'days_remaining': days_remaining,
                 'expiration': expiration,
-                'premium': premium
+                'premium': premium,
+                'username': user_info.get('username', ''),
+                'email': user_info.get('email', ''),
+                'points': user_info.get('fidelityPoints', 0),
+                'locale': user_info.get('lang', ''),
+                'type': 'premium' if premium else 'free',
             }
         except Exception as e:
             logging.error(f"Error fetching subscription status: {str(e)}")
@@ -500,7 +506,7 @@ class AllDebridProvider(DebridProvider):
                     'id': str(magnet.get('id', '')),
                     'filename': magnet.get('filename', ''),
                     'hash': magnet.get('hash', '').lower(),
-                    'status': status.value if hasattr(status, 'value') else str(status),
+                    'status': str(status.value) if hasattr(status, 'value') else str(status),
                     'progress': progress,
                     'bytes': size,
                     'original_filename': magnet.get('filename', '')
