@@ -183,6 +183,7 @@ def add_torrent_to_debrid():
         version_from_form = request.form.get('version') # Renamed to avoid conflict
         tmdb_id = request.form.get('tmdb_id')
         original_scraped_torrent_title = request.form.get('original_scraped_torrent_title')
+        source_context = request.form.get('source_context')  # e.g. 'recently_aired'
         # Get file management mode to check if we should process folder selection
         file_management_mode = get_setting('File Management', 'file_collection_management', 'Plex')
 
@@ -662,15 +663,66 @@ def add_torrent_to_debrid():
                     })
                 else:
                     # For single episodes or movies, proceed as normal
-                    from database import add_media_item
+                    from database import add_media_item, get_db_connection
 
-                    item_id = add_media_item(item, user_initiated=True)
-                    if not item_id:
-                        raise Exception("Failed to add item to database")
-                    
-                    # Add the database ID to the item
-                    item['id'] = item_id
-                    
+                    # When coming from recently_aired, find the existing DB entry and update it
+                    # instead of creating a new one — this fixes a missed item without duplicating
+                    if source_context == 'recently_aired' and media_type in ['tv', 'show'] and season_number is not None and episode_number is not None:
+                        from datetime import datetime as _dt
+                        _conn = get_db_connection()
+                        try:
+                            _row = _conn.execute(
+                                '''SELECT id, version FROM media_items
+                                   WHERE type = 'episode'
+                                   AND (imdb_id = ? OR tmdb_id = ?)
+                                   AND season_number = ? AND episode_number = ?
+                                   ORDER BY CASE state
+                                       WHEN 'Sleeping' THEN 1
+                                       WHEN 'Blacklisted' THEN 2
+                                       WHEN 'Wanted' THEN 3
+                                       ELSE 4
+                                   END
+                                   LIMIT 1''',
+                                (item.get('imdb_id'), item.get('tmdb_id'), season_number, episode_number)
+                            ).fetchone()
+                            if _row:
+                                existing_id = _row['id']
+                                logging.info(f"recently_aired fix: updating existing item id={existing_id} (version={_row['version']}) instead of inserting new")
+                                _conn.execute(
+                                    '''UPDATE media_items SET
+                                        state = 'Checking',
+                                        filled_by_magnet = ?,
+                                        filled_by_torrent_id = ?,
+                                        filled_by_title = ?,
+                                        filled_by_file = ?,
+                                        original_scraped_torrent_title = ?,
+                                        current_score = ?,
+                                        ghostlisted = 0,
+                                        blacklisted_date = NULL,
+                                        sleep_cycles = 0,
+                                        last_updated = ?
+                                       WHERE id = ?''',
+                                    (actual_magnet_to_add, torrent_id, item.get('filled_by_title'),
+                                     item.get('filled_by_file'), original_scraped_torrent_title,
+                                     current_score, _dt.now(), existing_id)
+                                )
+                                _conn.commit()
+                                item['id'] = existing_id
+                                item['version'] = _row['version']
+                            else:
+                                logging.info(f"recently_aired fix: no existing item found, inserting new")
+                                item_id = add_media_item(item, user_initiated=True)
+                                if not item_id:
+                                    raise Exception("Failed to add item to database")
+                                item['id'] = item_id
+                        finally:
+                            _conn.close()
+                    else:
+                        item_id = add_media_item(item, user_initiated=True)
+                        if not item_id:
+                            raise Exception("Failed to add item to database")
+                        item['id'] = item_id
+
                     # Add item to checking queue
                     from queues.checking_queue import CheckingQueue
                     checking_queue = CheckingQueue()

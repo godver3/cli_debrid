@@ -4113,8 +4113,8 @@ async function _slDeletePaths(paths, btnEl) {
 async function _slDeleteAll(kind) {
     if (!_slData) return;
     let paths = [];
-    if      (kind === 'broken')   paths = _slData.broken || [];
-    else if (kind === 'unlinked') paths = (_slData.unlinked || []).map(f => f.path);
+    if      (kind === 'broken')    paths = _slData.broken_all || _slData.broken || [];
+    else if (kind === 'unlinked')  paths = _slData.unlinked_all || (_slData.unlinked || []).map(f => f.path);
     else if (kind === 'incorrect') paths = (_slData.incorrect_dupes || []).flatMap(d => d.links);
     if (!paths.length) return;
     if (!confirm(`Delete all ${paths.length} ${kind} file(s)? This cannot be undone.`)) return;

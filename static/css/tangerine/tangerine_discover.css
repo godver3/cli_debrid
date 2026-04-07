@@ -3581,3 +3581,12 @@ body:has(.discover-container) {
         display: none;
     }
 }
+
+@keyframes cal-ep-pulse {
+    0%   { background-color: rgba(225, 124, 82, 0.3); }
+    50%  { background-color: rgba(225, 124, 82, 0.05); }
+    100% { background-color: rgba(225, 124, 82, 0.3); }
+}
+.cal-episode-highlight {
+    animation: cal-ep-pulse 1s ease-in-out infinite;
+}
