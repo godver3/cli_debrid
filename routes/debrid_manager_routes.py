@@ -7,7 +7,7 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Blueprint, render_template, jsonify, request
-from debrid import get_debrid_provider
+from debrid import get_debrid_provider, get_provider_display_name
 from database.torrent_tracking import get_recent_additions
 from .models import admin_required
 
@@ -99,8 +99,26 @@ def _load_lib_cache_from_db() -> None:
         logging.debug(f"[LibCache] Could not load library from DB: {e}")
 
 
+def _fetch_all_bg(gen):
+    """Background thread for providers that return all torrents in one call (e.g. AllDebrid).
+    Aborts silently if a newer fetch generation has started."""
+    try:
+        provider = get_debrid_provider()
+        result = provider.list_active_torrents()
+        if not isinstance(result, list):
+            result = []
+
+        with _lib['lock']:
+            if _lib['gen'] != gen:
+                return
+            _lib['partial'].extend(result)
+
+    except Exception as e:
+        logging.error(f"Library bg fetch error (all-at-once): {e}")
+
+
 def _fetch_pages_bg(api_key, start_page, gen):
-    """Background thread: fetch pages start_page..end and accumulate into _lib['partial'].
+    """Background thread for RD-style paginated /torrents endpoint.
     Aborts silently if a newer fetch generation has started."""
     from debrid.real_debrid.api import make_request
     page = start_page
@@ -223,6 +241,7 @@ def index():
         show_plex_trash=show_plex_trash,
         symlink_mode=symlink_mode,
         media_server_type=media_server,
+        debrid_provider_name=get_provider_display_name(),
     )
 
 
@@ -826,24 +845,18 @@ def api_plex_force_scan():
 @admin_required
 def api_active():
     try:
-        from debrid.real_debrid.api import make_request
         provider = get_debrid_provider()
-        api_key = provider.api_key
-        # filter=active → only in-progress/downloading torrents
-        torrents = make_request('GET', '/torrents', api_key,
-                                params={'filter': 'active', 'limit': 100})
-        if not isinstance(torrents, list):
-            torrents = []
+        all_torrents = provider.list_active_torrents()
+        if not isinstance(all_torrents, list):
+            all_torrents = []
 
-        # Fetch recent torrents to surface errors and no-files states
-        all_recent = make_request('GET', '/torrents', api_key,
-                                  params={'limit': 200})
-        if not isinstance(all_recent, list):
-            all_recent = []
         _error_statuses = {'error', 'magnet_error', 'virus', 'dead'}
         _no_files_statuses = {'waiting_files_selection', 'magnet_conversion', 'compressing', 'uploading'}
-        errors = [t for t in all_recent if (t.get('status') or '').lower() in _error_statuses]
-        no_files = [t for t in all_recent if (t.get('status') or '').lower() in _no_files_statuses]
+        _active_statuses = {'downloading', 'active', 'queued'}
+
+        torrents = [t for t in all_torrents if (t.get('status') or '').lower() in _active_statuses]
+        errors   = [t for t in all_torrents if (t.get('status') or '').lower() in _error_statuses]
+        no_files = [t for t in all_torrents if (t.get('status') or '').lower() in _no_files_statuses]
 
         active_count, max_downloads = provider.get_active_downloads()
         return jsonify({
@@ -863,9 +876,8 @@ def api_active():
 @admin_required
 def api_torrent_detail(torrent_id):
     try:
-        from debrid.real_debrid.api import make_request
         provider = get_debrid_provider()
-        detail = make_request('GET', f'/torrents/info/{torrent_id}', provider.api_key)
+        detail = provider.get_torrent_info(torrent_id)
         return jsonify({'success': True, 'torrent': detail})
     except Exception as e:
         logging.error(f"Debrid Manager torrent detail error for {torrent_id}: {e}")
@@ -1051,6 +1063,9 @@ def api_library():
                 'total_bytes': total_bytes,
             })
 
+    provider = get_debrid_provider()
+    _uses_pagination = (provider.PROVIDER_NAME == 'Real-Debrid')
+
     # ── 3. Complete but stale — serve stale, trigger background re-fetch ────
     if stable and not is_fresh and not is_loading and not force:
         with _lib['lock']:
@@ -1058,9 +1073,12 @@ def api_library():
             gen = _lib['gen']
             _lib['loading'] = True
             _lib['partial'] = []
-        provider = get_debrid_provider()
-        threading.Thread(target=_fetch_pages_bg,
-                         args=(provider.api_key, 1, gen), daemon=True).start()
+        if _uses_pagination:
+            threading.Thread(target=_fetch_pages_bg,
+                             args=(provider.api_key, 1, gen), daemon=True).start()
+        else:
+            threading.Thread(target=_fetch_all_bg,
+                             args=(gen,), daemon=True).start()
         return jsonify({
             'success': True, 'loading': True,
             'cache_status': 'stale', 'cache_age': stable_age,
@@ -1068,11 +1086,7 @@ def api_library():
             'total_bytes': stable['total_bytes'],
         })
 
-    # ── 4. No cache or force refresh — fetch initial pages synchronously ────
-    from debrid.real_debrid.api import make_request
-    provider = get_debrid_provider()
-    api_key  = provider.api_key
-
+    # ── 4. No cache or force refresh — fetch synchronously ──────────────────
     with _lib['lock']:
         _lib['gen'] += 1
         gen = _lib['gen']
@@ -1082,14 +1096,50 @@ def api_library():
 
     initial = []
     try:
-        for page in range(1, _INITIAL_PAGES + 1):
-            result = make_request('GET', '/torrents', api_key,
-                                  params={'limit': _PAGE_SIZE, 'page': page})
-            if not isinstance(result, list) or not result:
-                break
-            initial.extend(result)
-            if len(result) < _PAGE_SIZE:
-                # All torrents fit in the first few pages — enrich and cache
+        if not _uses_pagination:
+            # Non-paginated providers (AllDebrid, etc.) return everything at once
+            initial = provider.list_active_torrents() or []
+            # Ensure status is always a plain string (enum .value may be int for UNKNOWN)
+            for t in initial:
+                if 'status' in t and not isinstance(t['status'], str):
+                    t['status'] = str(t['status'])
+            _enrich_with_db(initial)
+            new_stable = {
+                'torrents':    initial,
+                'total':       len(initial),
+                'total_bytes': sum(t.get('bytes', 0) or 0 for t in initial),
+                'fetched_at':  time.time(),
+            }
+            with _lib['lock']:
+                if _lib['gen'] == gen:
+                    _lib['stable'] = new_stable
+                    _lib['partial'] = []
+                    _lib['loading'] = False
+            _save_lib_cache_to_db(new_stable)
+            return jsonify({
+                'success': True, 'loading': False,
+                'cache_status': 'live', 'cache_age': 0,
+                'torrents': initial, 'total': len(initial),
+                'total_bytes': sum(t.get('bytes', 0) or 0 for t in initial),
+            })
+        else:
+            # RD: fetch initial pages synchronously; if all fit, cache and return.
+            # If more pages exist, fall through to background thread below.
+            from debrid.real_debrid.api import make_request
+            api_key = provider.api_key
+            all_fit = False
+            for page in range(1, _INITIAL_PAGES + 1):
+                result = make_request('GET', '/torrents', api_key,
+                                      params={'limit': _PAGE_SIZE, 'page': page})
+                if not isinstance(result, list) or not result:
+                    all_fit = True
+                    break
+                initial.extend(result)
+                if len(result) < _PAGE_SIZE:
+                    # Partial page — all torrents fetched
+                    all_fit = True
+                    break
+            if all_fit:
                 _enrich_with_db(initial)
                 new_stable = {
                     'torrents':    initial,
@@ -1109,6 +1159,7 @@ def api_library():
                     'torrents': initial, 'total': len(initial),
                     'total_bytes': sum(t.get('bytes', 0) or 0 for t in initial),
                 })
+            # More pages exist — fall through to background thread
     except Exception as e:
         logging.error(f"Library initial fetch error: {e}")
         with _lib['lock']:
@@ -1121,8 +1172,9 @@ def api_library():
         if _lib['gen'] == gen:
             _lib['partial'] = initial
 
-    threading.Thread(target=_fetch_pages_bg,
-                     args=(api_key, _INITIAL_PAGES + 1, gen), daemon=True).start()
+    if _uses_pagination:
+        threading.Thread(target=_fetch_pages_bg,
+                         args=(provider.api_key, _INITIAL_PAGES + 1, gen), daemon=True).start()
 
     total_bytes = sum(t.get('bytes', 0) or 0 for t in initial)
     return jsonify({
@@ -1245,28 +1297,24 @@ def api_usage():
         provider = get_debrid_provider()
         sub = provider.get_subscription_status()
 
-        user_data = {}
-        traffic_details = {}
-        traffic_summary = {}
+        # Get traffic data via provider abstraction (handles RD and AllDebrid differences)
+        traffic = {}
         try:
-            from utilities.settings import get_setting
-            from debrid.real_debrid.api import make_request
-            api_key = get_setting("Debrid Provider", "api_key")
-            user_data        = make_request('GET', '/user', api_key) or {}
-            traffic_details  = make_request('GET', '/traffic/details', api_key) or {}
-            traffic_summary  = make_request('GET', '/traffic', api_key) or {}
+            traffic = provider.get_user_traffic() or {}
         except Exception as e:
-            logging.warning(f"Usage API direct call failed: {e}")
+            logging.warning(f"Usage traffic fetch failed: {e}")
 
-        today_utc  = datetime.utcnow().strftime("%Y-%m-%d")
-        today_data = traffic_details.get(today_utc, {})
+        # RD returns date-keyed traffic history; AllDebrid doesn't have this concept
+        traffic_details = traffic.get('traffic_details', {})
+
+        today_utc   = datetime.utcnow().strftime("%Y-%m-%d")
+        today_data  = traffic_details.get(today_utc, {})
         today_bytes = today_data.get('bytes', 0)
 
         history = []
         for date_str in sorted(traffic_details.keys(), reverse=True):
-            day  = traffic_details[date_str]
-            b    = day.get('bytes', 0)
-            # RD uses 'host' key (not 'hosters'); fall back to 'hosters' for other providers
+            day = traffic_details[date_str]
+            b   = day.get('bytes', 0)
             hosters_raw = day.get('host', {}) or day.get('hosters', {}) or {}
             hosters = []
             for name, info in hosters_raw.items():
@@ -1283,11 +1331,10 @@ def api_usage():
                 'hosters': hosters,
             })
 
-        # Aggregate all-time total from history
         total_all_bytes = sum(
             traffic_details[d].get('bytes', 0) for d in traffic_details
         )
-        # Active downloads slot info
+
         try:
             active_count, max_dl = provider.get_active_downloads()
         except Exception:
@@ -1295,15 +1342,16 @@ def api_usage():
 
         return jsonify({
             'success': True,
+            'has_traffic_history': bool(traffic_details),
             'user': {
-                'username':       user_data.get('username', ''),
-                'email':          user_data.get('email', ''),
-                'type':           user_data.get('type', ''),
-                'premium':        bool(user_data.get('premium', False)),
+                'username':       sub.get('username', ''),
+                'email':          sub.get('email', ''),
+                'type':           sub.get('type', ''),
+                'premium':        bool(sub.get('premium', False)),
                 'expiration':     sub.get('expiration', ''),
                 'days_remaining': sub.get('days_remaining'),
-                'points':         user_data.get('points', 0),
-                'locale':         user_data.get('locale', ''),
+                'points':         sub.get('points', 0),
+                'locale':         sub.get('locale', ''),
             },
             'today': {
                 'date':          today_utc,

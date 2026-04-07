@@ -394,7 +394,7 @@
                                 <span class="dm-usage-stat-val" id="usage-reset-timer">—</span>
                             </div>
                         </div>
-                        <div class="dm-backup-card">
+                        <div class="dm-backup-card" id="usage-today-card">
                             <div class="dm-backup-card-title">Today's Usage</div>
                             <div class="dm-usage-bar-header">
                                 <span class="dm-usage-bar-text" id="usage-today-text">—</span>
@@ -450,20 +450,20 @@
                 <div class="dm-pt-group-header">
                     <div class="dm-pt-group-title">
                         <span class="dm-pt-group-dot dm-pt-dot-in"></span>
-                        In Real-Debrid
+                        In {{ debrid_provider_name }}
                         <span class="dm-pt-group-count" id="pt-in-rd-count">0</span>
                     </div>
                     <div class="dm-pt-group-actions">
                         <button class="dm-btn dm-btn-secondary dm-btn-sm" id="pt-select-in-rd">Select All</button>
                     </div>
                 </div>
-                <p class="dm-pt-group-desc">These items are still in your Real-Debrid library. You may want to remove them from RD first before purging from Plex.</p>
+                <p class="dm-pt-group-desc">These items are still in your {{ debrid_provider_name }} library. You may want to remove them from {{ debrid_provider_name }} first before purging from Plex.</p>
                 <div class="dm-pt-bulk-bar">
-                    <button class="dm-pt-bulk-btn dm-pt-bulk-scan" id="pt-bulk-scan-all" title="Trigger Plex directory scan on all in-RD items">
+                    <button class="dm-pt-bulk-btn dm-pt-bulk-scan" id="pt-bulk-scan-all" title="Trigger Plex directory scan on all in-{{ debrid_provider_name }} items">
                         <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
                         Scan All
                     </button>
-                    <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-reinsert-good" title="Re-add all matched RD torrents to Real-Debrid">
+                    <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-reinsert-good" title="Re-add all matched torrents to {{ debrid_provider_name }}">
                         <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"/></svg>
                         Reinsert All Good
                     </button>
@@ -499,16 +499,16 @@
                 <div class="dm-pt-group-header">
                     <div class="dm-pt-group-title">
                         <span class="dm-pt-group-dot dm-pt-dot-out"></span>
-                        Not in Real-Debrid
+                        Not in {{ debrid_provider_name }}
                         <span class="dm-pt-group-count" id="pt-not-in-rd-count">0</span>
                     </div>
                     <div class="dm-pt-group-actions">
                         <button class="dm-btn dm-btn-secondary dm-btn-sm" id="pt-select-not-in-rd">Select All</button>
                     </div>
                 </div>
-                <p class="dm-pt-group-desc">These items are not found in Real-Debrid. Safe to permanently delete from Plex.</p>
+                <p class="dm-pt-group-desc">These items are not found in {{ debrid_provider_name }}. Safe to permanently delete from Plex.</p>
                 <div class="dm-pt-bulk-bar">
-                    <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-reinsert-notrd" title="Re-add all items with a known magnet hash to Real-Debrid">
+                    <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-reinsert-notrd" title="Re-add all items with a known magnet hash to {{ debrid_provider_name }}">
                         <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"/></svg>
                         Reinsert All
                     </button>
@@ -578,7 +578,7 @@
             <!-- Stats header -->
             <div class="dm-rc-header" style="flex-direction:column; align-items:flex-start;">
                 <p class="dm-rc-stats-bar">
-                    <span class="dm-rc-sn" id="rc-stat-rd">—</span><span class="dm-rc-sl">RD torrents</span>
+                    <span class="dm-rc-sn" id="rc-stat-rd">—</span><span class="dm-rc-sl">{{ debrid_provider_name }} torrents</span>
                     <span class="dm-rc-sep">·</span>
                     <span class="dm-rc-sn" id="rc-stat-db">—</span><span class="dm-rc-sl">DB items</span>
                     <span class="dm-rc-sep">·</span>
@@ -598,7 +598,7 @@
                     <span class="dm-rc-tab-name">Not in {{ ms_label }}</span>
                     <span class="dm-rc-tab-count" id="rc-count-not-in-plex">—</span>
                     <span class="dm-rc-tab-badges">
-                        <span class="dm-rc-badge dm-rc-badge-ok">RD</span>
+                        <span class="dm-rc-badge dm-rc-badge-ok">{{ debrid_provider_name[:2]|upper }}</span>
                         <span class="dm-rc-badge dm-rc-badge-ok">DB</span>
                         <span class="dm-rc-badge dm-rc-badge-bad">{{ ms_badge }}</span>
                     </span>
@@ -607,7 +607,7 @@
                     <span class="dm-rc-tab-name">Torrent Gone</span>
                     <span class="dm-rc-tab-count" id="rc-count-torrent-gone">—</span>
                     <span class="dm-rc-tab-badges">
-                        <span class="dm-rc-badge dm-rc-badge-bad">RD</span>
+                        <span class="dm-rc-badge dm-rc-badge-bad">{{ debrid_provider_name[:2]|upper }}</span>
                         <span class="dm-rc-badge dm-rc-badge-ok">DB</span>
                         <span class="dm-rc-badge dm-rc-badge-ok">{{ ms_badge }}</span>
                     </span>
@@ -616,16 +616,16 @@
                     <span class="dm-rc-tab-name">Lost</span>
                     <span class="dm-rc-tab-count" id="rc-count-lost">—</span>
                     <span class="dm-rc-tab-badges">
-                        <span class="dm-rc-badge dm-rc-badge-bad">RD</span>
+                        <span class="dm-rc-badge dm-rc-badge-bad">{{ debrid_provider_name[:2]|upper }}</span>
                         <span class="dm-rc-badge dm-rc-badge-ok">DB</span>
                         <span class="dm-rc-badge dm-rc-badge-bad">{{ ms_badge }}</span>
                     </span>
                 </button>
                 <button class="dm-rc-tab" data-rc-group="untracked">
-                    <span class="dm-rc-tab-name">Untracked RD</span>
+                    <span class="dm-rc-tab-name">Untracked {{ debrid_provider_name[:2]|upper }}</span>
                     <span class="dm-rc-tab-count" id="rc-count-untracked">—</span>
                     <span class="dm-rc-tab-badges">
-                        <span class="dm-rc-badge dm-rc-badge-ok">RD</span>
+                        <span class="dm-rc-badge dm-rc-badge-ok">{{ debrid_provider_name[:2]|upper }}</span>
                         <span class="dm-rc-badge dm-rc-badge-bad">DB</span>
                         <span class="dm-rc-badge dm-rc-badge-mixed">{{ ms_badge }}</span>
                     </span>
@@ -657,7 +657,7 @@
 
             <!-- Not in library panel -->
             <div id="rc-panel-not-in-plex" class="dm-rc-group-panel" style="display:none">
-                <p class="dm-pt-group-desc">Collected items whose torrent is still in Real-Debrid but {{ ms_label }} has not indexed them. Use Scan to trigger a {{ ms_label }} library refresh.</p>
+                <p class="dm-pt-group-desc">Collected items whose torrent is still in {{ debrid_provider_name }} but {{ ms_label }} has not indexed them. Use Scan to trigger a {{ ms_label }} library refresh.</p>
                 <div class="dm-rc-bulk-bar">
                     <button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-scan-all">Scan All</button>
                     <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-del-nip">Delete All</button>
@@ -683,7 +683,7 @@
 
             <!-- Torrent Gone panel -->
             <div id="rc-panel-torrent-gone" class="dm-rc-group-panel" style="display:none">
-                <p class="dm-pt-group-desc">Collected items present in {{ ms_label }} but whose torrent is no longer in Real-Debrid. Deduplicated by torrent — season packs show as one entry. Reinsert to restore the RD entry, or Re-queue to re-scrape.</p>
+                <p class="dm-pt-group-desc">Collected items present in {{ ms_label }} but whose torrent is no longer in {{ debrid_provider_name }}. Deduplicated by torrent — season packs show as one entry. Reinsert to restore the {{ debrid_provider_name }} entry, or Re-queue to re-scrape.</p>
                 <div class="dm-rc-bulk-bar">
                     <button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-reinsert-all">Reinsert All</button>
                     <button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-requeue-tg">Re-queue All</button>
@@ -711,7 +711,7 @@
 
             <!-- Lost panel -->
             <div id="rc-panel-lost" class="dm-rc-group-panel" style="display:none">
-                <p class="dm-pt-group-desc">Collected items that are neither in Real-Debrid nor indexed in {{ ms_label }}. Re-queue to scrape them again.</p>
+                <p class="dm-pt-group-desc">Collected items that are neither in {{ debrid_provider_name }} nor indexed in {{ ms_label }}. Re-queue to scrape them again.</p>
                 <div class="dm-rc-bulk-bar">
                     <button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-requeue-lost">Re-queue All</button>
                     <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-del-lost">Delete All</button>
@@ -737,7 +737,7 @@
 
             <!-- Untracked RD panel -->
             <div id="rc-panel-untracked" class="dm-rc-group-panel" style="display:none">
-                <p class="dm-pt-group-desc">Torrents in Real-Debrid not referenced by any Collected item in the database. May be manually added or leftover from failed imports.</p>
+                <p class="dm-pt-group-desc">Torrents in {{ debrid_provider_name }} not referenced by any Collected item in the database. May be manually added or leftover from failed imports.</p>
                 <div class="dm-rc-bulk-bar">
                     <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-del-noplex">Delete Not in {{ ms_label }}</button>
                     <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-bulk-btn" id="rc-bulk-del-all-rd">Delete All</button>
@@ -747,8 +747,8 @@
                 </div>
                 <div class="dm-table-wrap"><table class="dm-table">
                     <thead><tr>
-                        <th class="dm-rc-th-sort" data-sort="title">RD Filename</th>
-                        <th class="dm-rc-col-id">RD Torrent ID</th>
+                        <th class="dm-rc-th-sort" data-sort="title">Filename</th>
+                        <th class="dm-rc-col-id">Torrent ID</th>
                         <th style="width:70px;text-align:center">In {{ ms_label }}</th>
                         <th class="dm-col-actions">Actions</th>
                     </tr></thead>
@@ -758,7 +758,7 @@
 
             <!-- NAS panel -->
             <div id="rc-panel-nas" class="dm-rc-group-panel" style="display:none">
-                <p class="dm-pt-group-desc">Collected items stored on NAS / local storage (not in Real-Debrid). Detected by filesystem path not matching any known RD mount prefix.</p>
+                <p class="dm-pt-group-desc">Collected items stored on NAS / local storage (not in {{ debrid_provider_name }}). Detected by filesystem path not matching any known debrid mount prefix.</p>
                 <div class="dm-rc-filter-bar">
                     <input type="text" class="dm-rc-search" placeholder="Search…" oninput="_rcFilterTable(this)">
                     <select class="dm-rc-type-filter" onchange="_rcFilterTable(this)">
@@ -1091,6 +1091,9 @@
 
 {% block scripts %}
 <script>
+// ── Provider label (set from backend) ──────────────────────────────────────
+const providerLabel = {{ debrid_provider_name | tojson }};
+
 // ── helpers ────────────────────────────────────────────────────────────────
 function escHtml(s) {
     if (s == null) return '';
@@ -2818,31 +2821,44 @@ async function loadUsage() {
             `${_fmtBytes(t.downloaded_gb)} / ${_fmtBytes(t.limit_gb)}`;
         document.getElementById('usage-today-date').textContent = `UTC date: ${t.date}`;
 
-        // Traffic history — one row per hoster per day
+        // Traffic history — only available for providers that track bandwidth (e.g. Real-Debrid)
         const list = document.getElementById('usage-history-list');
-        let tableRows = '';
-        for (const day of data.history) {
-            const hosters = day.hosters || [];
-            if (hosters.length > 0) {
-                hosters.forEach((h, i) => {
+        const usageRight = document.querySelector('.dm-usage-right');
+        const todayCard = document.getElementById('usage-today-card');
+
+        if (!data.has_traffic_history) {
+            // Provider doesn't track traffic (e.g. AllDebrid is unlimited)
+            if (usageRight) usageRight.style.display = 'none';
+            if (todayCard) todayCard.style.display = 'none';
+            document.getElementById('usage-alltime').textContent = 'N/A';
+            document.getElementById('usage-reset-timer').textContent = 'N/A';
+        } else {
+            if (usageRight) usageRight.style.display = '';
+            if (todayCard) todayCard.style.display = '';
+            let tableRows = '';
+            for (const day of data.history) {
+                const hosters = day.hosters || [];
+                if (hosters.length > 0) {
+                    hosters.forEach((h, i) => {
+                        tableRows += `<tr>
+                            <td class="dm-usage-th-date">${i === 0 ? day.date : ''}</td>
+                            <td class="dm-usage-th-hoster">${h.name}</td>
+                            <td class="dm-usage-th-total">${_fmtBytes(h.gb)}</td>
+                        </tr>`;
+                    });
+                } else {
                     tableRows += `<tr>
-                        <td class="dm-usage-th-date">${i === 0 ? day.date : ''}</td>
-                        <td class="dm-usage-th-hoster">${h.name}</td>
-                        <td class="dm-usage-th-total">${_fmtBytes(h.gb)}</td>
+                        <td class="dm-usage-th-date">${day.date}</td>
+                        <td class="dm-usage-th-hoster">—</td>
+                        <td class="dm-usage-th-total">${_fmtBytes(day.gb)}</td>
                     </tr>`;
-                });
-            } else {
-                tableRows += `<tr>
-                    <td class="dm-usage-th-date">${day.date}</td>
-                    <td class="dm-usage-th-hoster">—</td>
-                    <td class="dm-usage-th-total">${_fmtBytes(day.gb)}</td>
-                </tr>`;
+                }
             }
+            list.innerHTML = `<table class="dm-usage-compact-table">
+                <thead><tr><th>Date</th><th>Hoster</th><th>Used</th></tr></thead>
+                <tbody>${tableRows}</tbody>
+            </table>`;
         }
-        list.innerHTML = `<table class="dm-usage-compact-table">
-            <thead><tr><th>Date</th><th>Hoster</th><th>Used</th></tr></thead>
-            <tbody>${tableRows}</tbody>
-        </table>`;
 
         document.getElementById('usage-loading').style.display = 'none';
         document.getElementById('usage-content').style.display = '';
@@ -2920,7 +2936,7 @@ function _ptRenderGroup(tbodyId, items, groupId) {
                 + `</span>`;
             // Good file: Reinsert (if hash available) + Delete (per-part if IDs known)
             const goodReinsert = goodHash
-                ? `<button class="dm-btn dm-btn-xs dm-pt-fbtn" data-faction="reinsert" data-hash="${goodHash}" data-fname="${goodFname}" data-rk="${rk}" title="Re-add to Real-Debrid">Reinsert</button>`
+                ? `<button class="dm-btn dm-btn-xs dm-pt-fbtn" data-faction="reinsert" data-hash="${goodHash}" data-fname="${goodFname}" data-rk="${rk}" title="Re-add to ${providerLabel}">Reinsert</button>`
                 : '';
             const goodBtns = `<span class="dm-pt-file-btns">${goodReinsert}`
                 + `<button class="dm-btn dm-btn-xs dm-pt-fbtn dm-pt-fbtn-del" data-faction="delete-part" data-rk="${rk}" data-mid="${goodMid}" data-pid="${goodPid}" data-protected="1" title="Remove this file from Plex">Delete</button>`
@@ -2939,7 +2955,7 @@ function _ptRenderGroup(tbodyId, items, groupId) {
             actions = `<button class="dm-btn dm-btn-secondary dm-btn-sm dm-pt-action-btn" data-action="scan" data-idx="${idx}" title="Trigger Plex scan on this path">Scan</button>`;
         }
         if (!isInRd && item.rd_hash) {
-            actions = `<button class="dm-btn dm-btn-secondary dm-btn-sm dm-pt-action-btn" data-action="reinsert" data-idx="${idx}" title="Re-add torrent to Real-Debrid">Reinsert</button>`;
+            actions = `<button class="dm-btn dm-btn-secondary dm-btn-sm dm-pt-action-btn" data-action="reinsert" data-idx="${idx}" title="Re-add torrent to ${providerLabel}">Reinsert</button>`;
         }
         return `<tr>
             <td class="dm-col-check"><input type="checkbox" data-rk="${escHtml(item.rating_key)}" data-group="${groupId}" ${checked}></td>
@@ -3256,7 +3272,7 @@ async function _ptBulkDelete(items, label) {
 async function _ptBulkReinsert(items, label) {
     const withHash = items.filter(i => i.rd_hash);
     if (!withHash.length) { alert(`No ${label} items with a known hash to reinsert.`); return; }
-    if (!confirm(`Reinsert ${withHash.length} ${label} torrent${withHash.length !== 1 ? 's' : ''} to Real-Debrid?`)) return;
+    if (!confirm(`Reinsert ${withHash.length} ${label} torrent${withHash.length !== 1 ? 's' : ''} to ${providerLabel}?`)) return;
     const btn = event.currentTarget;
     const origHtml = btn.innerHTML;
     btn.disabled = true;
@@ -3480,7 +3496,7 @@ function _rcRenderTorrentGone(items) {
     tbody.innerHTML = items.map(item => {
         const hash = item.magnet_hash || '';
         const reinsertBtn = hash
-            ? `<button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-reinsert-btn" data-hash="${escHtml(hash)}" data-fname="${escHtml(item.rd_filename||item.title)}" title="Re-add to Real-Debrid">Reinsert</button>`
+            ? `<button class="dm-btn dm-btn-secondary dm-btn-sm dm-rc-reinsert-btn" data-hash="${escHtml(hash)}" data-fname="${escHtml(item.rd_filename||item.title)}" title="Re-add to ${providerLabel}">Reinsert</button>`
             : '';
         const affectedIds = JSON.stringify(item.affected_ids || [item.id]);
         const cnt = (item.affected_count > 1) ? `<span class="dm-rc-affected-count" title="${item.affected_count} DB items share this torrent">${item.affected_count}</span>` : '1';
@@ -3543,7 +3559,7 @@ function _rcRenderUntracked(items) {
     }).join('');
     tbody.querySelectorAll('.dm-rc-del-btn').forEach(btn => btn.addEventListener('click', async function() {
         const tid = this.dataset.tid;
-        if (!confirm(`Delete torrent ${tid} from Real-Debrid?`)) return;
+        if (!confirm(`Delete torrent ${tid} from ${providerLabel}?`)) return;
         const orig = this.innerHTML; this.disabled = true; this.innerHTML = '<span class="dm-spinner"></span>';
         try {
             const r = await fetch(`/debrid_manager/api/torrent/${encodeURIComponent(tid)}`, {method:'DELETE'});
@@ -3663,7 +3679,7 @@ async function _rcBulkRequeue(itemIds, btnEl) {
 async function _rcBulkReinsert(items, btnEl) {
     const torrents = items.filter(i => i.magnet_hash).map(i => ({id:'', hash: i.magnet_hash, filename: i.rd_filename||i.title}));
     if (!torrents.length) { alert('No items have a torrent hash available.'); return; }
-    if (!confirm(`Reinsert ${torrents.length} torrent(s) to Real-Debrid?`)) return;
+    if (!confirm(`Reinsert ${torrents.length} torrent(s) to ${providerLabel}?`)) return;
     const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Working…';
     try {
         const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
@@ -3695,7 +3711,7 @@ async function _rcBulkDeleteDB(items, btnEl) {
 
 async function _rcBulkDeleteRD(items, btnEl) {
     if (!items.length) { alert('Nothing to delete.'); return; }
-    if (!confirm(`Delete ${items.length} torrent(s) from Real-Debrid? This cannot be undone.`)) return;
+    if (!confirm(`Delete ${items.length} torrent(s) from ${providerLabel}? This cannot be undone.`)) return;
     const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Deleting…';
     const tids = items.map(i => i.filled_by_torrent_id).filter(Boolean);
     try {
