@@ -179,14 +179,15 @@ def run_backup(force: bool = False) -> dict:
         return {'success': False, 'message': f'Provider unavailable: {e}'}
 
     provider_name = type(provider).__name__
-    if 'RealDebrid' in provider_name:
+    pname = getattr(provider, 'PROVIDER_NAME', provider_name)
+    if 'RealDebrid' in provider_name or pname == 'Real-Debrid':
         prefix = 'rd'
         torrents = fetch_rd_torrents(provider.api_key)
-    elif 'AllDebrid' in provider_name:
+    elif 'AllDebrid' in provider_name or pname == 'AllDebrid':
         prefix = 'ad'
         torrents = fetch_ad_magnets(provider.api_key)
     else:
-        return {'success': False, 'message': f'Unsupported provider: {provider_name}'}
+        return {'success': False, 'message': f'Unsupported provider: {pname}'}
 
     if not torrents:
         return {'success': False, 'message': 'No torrents returned from provider'}
@@ -339,7 +340,8 @@ def restore_from_file(filename: str, dry_run: bool = False) -> dict:
         return {'success': False, 'message': f'Provider unavailable: {e}'}
 
     provider_name = type(provider).__name__
-    if 'RealDebrid' in provider_name:
+    pname = getattr(provider, 'PROVIDER_NAME', provider_name)
+    if 'RealDebrid' in provider_name or pname == 'Real-Debrid':
         # Get current hashes
         current = fetch_rd_torrents(provider.api_key)
         current_hashes = {t.get('hash', '').lower() for t in current if t.get('hash')}
@@ -385,6 +387,54 @@ def restore_from_file(filename: str, dry_run: bool = False) -> dict:
                 _select_files_rd(torrent_id, provider.api_key, headers)
                 added.append(item_hash)
                 time.sleep(0.15)  # gentle rate limiting
+            except Exception as e:
+                failed.append({'hash': item_hash, 'reason': str(e)})
+
+        return {
+            'success': True,
+            'total':   len(backup),
+            'added':   len(added),
+            'skipped': len(skipped),
+            'failed':  len(failed),
+            'failures': failed,
+        }
+
+    elif 'AllDebrid' in provider_name or pname == 'AllDebrid':
+        # Get current hashes to skip already-present torrents
+        current = fetch_ad_magnets(provider.api_key)
+        current_hashes = {m.get('hash', '').lower() for m in current if m.get('hash')}
+
+        import requests
+        added = []
+        skipped = []
+        failed = []
+
+        for item in backup:
+            item_hash = (item.get('hash') or '').lower()
+            if not item_hash:
+                failed.append({'hash': '?', 'reason': 'no hash'})
+                continue
+            if item_hash in current_hashes:
+                skipped.append(item_hash)
+                continue
+            if dry_run:
+                added.append(item_hash)
+                continue
+            try:
+                magnet = f'magnet:?xt=urn:btih:{item_hash}'
+                r = requests.post(
+                    'https://api.alldebrid.com/v4/magnet/upload',
+                    params={'apikey': provider.api_key},
+                    data={'magnets[]': magnet},
+                    timeout=30,
+                )
+                resp = r.json()
+                if resp.get('status') != 'success':
+                    msg = resp.get('error', {}).get('message', 'unknown error') if isinstance(resp.get('error'), dict) else str(resp.get('error', 'unknown'))
+                    failed.append({'hash': item_hash, 'reason': msg})
+                    continue
+                added.append(item_hash)
+                time.sleep(0.2)
             except Exception as e:
                 failed.append({'hash': item_hash, 'reason': str(e)})
 

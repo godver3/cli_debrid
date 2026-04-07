@@ -48,9 +48,30 @@ def reset_provider() -> None:
     global _provider_instance
     _provider_instance = None
 
+def get_provider_display_name() -> str:
+    """Return the human-readable display name for the configured debrid provider.
+
+    Uses the provider instance's PROVIDER_NAME if already initialised,
+    otherwise reads directly from settings so no instantiation is needed.
+    This is the single source of truth for the provider name in templates
+    and routes — add new providers to the mapping here.
+    """
+    if _provider_instance is not None:
+        return _provider_instance.PROVIDER_NAME
+
+    provider_name = get_setting("Debrid Provider", "provider", "").lower()
+    _name_map = {
+        'realdebrid':  'Real-Debrid',
+        'alldebrid':   'AllDebrid',
+        'torbox':      'TorBox',
+        'premiumize':  'Premiumize',
+    }
+    return _name_map.get(provider_name, provider_name.title() or 'Debrid')
+
 # Export public interface
 __all__ = [
     'get_debrid_provider',
+    'get_provider_display_name',
     'reset_provider',
     'DebridProvider',
     'TooManyDownloadsError',
