@@ -56,8 +56,18 @@ class RateLimitError(DebridProviderError):
     pass
 
 class DebridProvider(ABC):
-    """Abstract base class that defines the interface for debrid providers"""
-    
+    """Abstract base class that defines the interface for debrid providers.
+
+    When adding a new provider (TorBox, Premiumize, etc.) implement every
+    @abstractmethod and set PROVIDER_NAME to the human-readable display name.
+    The rest of the application (routes, templates) uses PROVIDER_NAME so no
+    other file needs to be updated for the name to display correctly.
+    """
+
+    # Human-readable display name for the provider.
+    # Override in every subclass — used by the UI and routes.
+    PROVIDER_NAME: str = "Debrid"
+
     def __init__(self, api_key: str = None, rate_limit: float = 0.5):
         """Initialize the provider"""
         self.rate_limiter = RateLimiter(calls_per_second=rate_limit)
@@ -133,13 +143,39 @@ class DebridProvider(ABC):
         pass
     
     @abstractmethod
+    def get_subscription_status(self) -> Dict:
+        """Return subscription and user profile information.
+
+        All providers MUST return at minimum:
+            days_remaining  : int | None   — days left on subscription
+            expiration      : str | None   — ISO-8601 expiration date
+            premium         : bool         — whether account is premium
+            username        : str          — account username
+            email           : str          — account email
+            points          : int | float  — loyalty/fidelity points (0 if n/a)
+            locale          : str          — account locale/language
+            type            : str          — account type string
+
+        Additional provider-specific keys are allowed.
+        On error return a dict with at least {'error': str}.
+        """
+        pass
+
+    @abstractmethod
     def get_active_downloads(self) -> Tuple[int, int]:
         """Get number of active downloads and the concurrent download limit"""
         pass
-    
+
     @abstractmethod
     def get_user_traffic(self) -> Dict:
-        """Get user traffic/usage information"""
+        """Return traffic/usage information.
+
+        Providers that have daily traffic history SHOULD include:
+            traffic_details : Dict[date_str, {'bytes': int, 'host': Dict}]
+
+        Providers without daily traffic (e.g. AllDebrid) return:
+            {'downloaded': 0, 'limit': None}
+        """
         pass
 
     @abstractmethod
