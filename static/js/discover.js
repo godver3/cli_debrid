@@ -87,6 +87,8 @@ let ratingSlider, ratingDisplay, yearFromInput, yearToInput, genresContainer;
 let loadMoreBtn;
 // Category grids for trending rows
 let trendingContent, searchResults, moviesGrid, showsGrid, animeGrid;
+// Recommendations
+let recommendationsContent, recMoviesGrid, recShowsGrid;
 
 /**
  * Save current filter state to localStorage
@@ -437,6 +439,10 @@ function initializeElements() {
     moviesGrid = document.getElementById('movies-grid');
     showsGrid = document.getElementById('shows-grid');
     animeGrid = document.getElementById('anime-grid');
+    // Recommendations
+    recommendationsContent = document.getElementById('recommendations-content');
+    recMoviesGrid = document.getElementById('rec-movies-grid');
+    recShowsGrid  = document.getElementById('rec-shows-grid');
 
     // Only restore UI if filters were actually loaded from storage
     if (window.discoverState.hasRestoredFilters) {
@@ -2529,9 +2535,10 @@ async function loadTrending() {
         setLoadingFlag();
         window.discoverState.currentTab = 'trending';
 
-        // Show trending content, hide search results
+        // Show trending content, hide others
         if (trendingContent) trendingContent.style.display = 'block';
         if (searchResults) searchResults.style.display = 'none';
+        if (recommendationsContent) recommendationsContent.style.display = 'none';
 
         // Hybrid approach:
         // - Movies & Shows: Use trending/week endpoint for accurate weekly trending
@@ -2573,6 +2580,65 @@ async function loadTrending() {
 
     } catch (error) {
         console.error('[Discover] Trending error:', error);
+        showError();
+    } finally {
+        clearLoadingFlag();
+    }
+}
+
+/**
+ * Load personalised Trakt recommendations
+ */
+let _recLoaded = false;  // Only fetch once per page load
+
+async function loadRecommendations() {
+    try {
+        if (_recLoaded) return;
+        setLoadingFlag();
+        window.discoverState.currentTab = 'recommendations';
+
+        if (recommendationsContent) recommendationsContent.style.display = 'block';
+        if (trendingContent) trendingContent.style.display = 'none';
+        if (searchResults) searchResults.style.display = 'none';
+
+        const noTraktMsg = document.getElementById('rec-no-trakt');
+
+        const [moviesResp, showsResp] = await Promise.all([
+            fetch('/discover/api/recommendations?type=movie'),
+            fetch('/discover/api/recommendations?type=tv'),
+        ]);
+
+        if (!moviesResp.ok || !showsResp.ok) throw new Error('HTTP error fetching recommendations');
+
+        const moviesData = await moviesResp.json();
+        const showsData  = await showsResp.json();
+
+        // Trakt not authenticated
+        if (moviesData.error === 'Trakt not authenticated') {
+            if (noTraktMsg) noTraktMsg.style.display = 'block';
+            if (document.getElementById('rec-movies-section')) document.getElementById('rec-movies-section').style.display = 'none';
+            if (document.getElementById('rec-shows-section'))  document.getElementById('rec-shows-section').style.display  = 'none';
+            _recLoaded = true;
+            updateTabState();
+            return;
+        }
+
+        if (noTraktMsg) noTraktMsg.style.display = 'none';
+
+        const movies = filterValidResults(moviesData.results || []);
+        const shows  = filterValidResults(showsData.results  || []);
+
+        window.discoverState.currentResults = [...movies, ...shows];
+
+        renderCategoryGrid(recMoviesGrid, movies);
+        renderCategoryGrid(recShowsGrid,  shows);
+
+        bindResultEvents();
+        updateTabState();
+        _recLoaded = true;
+
+    } catch (error) {
+        console.error('[Discover] Recommendations error:', error);
         showError();
     } finally {
         clearLoadingFlag();
@@ -3450,10 +3516,16 @@ function switchTab(tab) {
         resetFlixPatrolSelection();
     }
 
+    // Show/hide content sections
+    if (trendingContent) trendingContent.style.display = tab === 'trending' ? 'block' : 'none';
+    if (recommendationsContent) recommendationsContent.style.display = tab === 'recommendations' ? 'block' : 'none';
+
     if (tab === 'search' && window.discoverState.searchTerm) {
         searchContent(window.discoverState.searchTerm);
     } else if (tab === 'trending') {
         loadTrending();
+    } else if (tab === 'recommendations') {
+        loadRecommendations();
     }
 
     updateTabState();
@@ -4080,7 +4152,9 @@ function createResultItemHTML(item) {
     const year = (item.release_date || item.first_air_date || '').substring(0, 4) || '';
     const releaseDate = item.release_date || item.first_air_date || '';
     const formattedDate = releaseDate ? formatReleaseDate(releaseDate) : '';
-    const posterUrl = item.poster_path ? `https://image.tmdb.org/t/p/w342${item.poster_path}` : '/static/images/placeholder.png';
+    const posterUrl = item.poster_path
+        ? (item.poster_path.startsWith('http') ? item.poster_path : `https://image.tmdb.org/t/p/w342${item.poster_path}`)
+        : '/static/images/placeholder.png';
     const overview = item.overview || 'No overview available.';
     const rating = item.vote_average ? item.vote_average.toFixed(1) : '';
 

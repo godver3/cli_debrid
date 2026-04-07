@@ -30,6 +30,7 @@ function addToRealDebrid(magnetLink, torrent) {
             formData.append('genres', torrent.genres || '');
             formData.append('original_scraped_torrent_title', torrent.original_title || torrent.title);
             formData.append('current_score', torrent.score_breakdown?.total_score || '0');
+            if (_scraperSourceContext) formData.append('source_context', _scraperSourceContext);
 
             // Get selected folder from dropdown if it exists (for symlink mode)
             const folderSelect = document.getElementById('torrent-folder-select');
@@ -2556,6 +2557,7 @@ function performLiveSearch(searchTerm, updateURL = true) {
 let availableVersions = [];
 let selectedContent = null;
 let scrapeContent = null;
+let _scraperSourceContext = null; // Set to 'recently_aired' when searching from recently aired box
 
 // Fetch available versions
 async function fetchVersions() {
@@ -4226,13 +4228,16 @@ function createResultElement(item, tmdb_api_key_set, isRequester, version, reque
     return searchResDiv;
 }
 
-async function selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, version) {
+async function selectMedia(mediaId, title, year, mediaType, season, episode, multi, genre_ids, version, source_context) {
     // Check if user is a requester before making the request
     const isRequesterEl = document.getElementById('is_requester');
     if (isRequesterEl && isRequesterEl.value === 'True') {
         // Display error message for requesters
         return;
     }
+
+    // Store source context so addToRealDebrid can pass it to the backend
+    _scraperSourceContext = source_context || null;
 
     if (!mediaId || mediaId === 'undefined') {
         if (window.DEBUG) console.error("selectMedia called with invalid mediaId:", mediaId);
