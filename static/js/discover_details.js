@@ -413,6 +413,36 @@ async function loadAndDisplaySeasons(data) {
     }
 
     seasonsContainer.style.display = 'block';
+
+    // Switch to season specified in URL ?season=N&episode=N params
+    const urlParams = new URLSearchParams(window.location.search);
+    const seasonParam = urlParams.get('season');
+    const episodeParam = urlParams.get('episode');
+    if (seasonParam) {
+        const seasonNumber = parseInt(seasonParam);
+        setTimeout(() => {
+            switchTab(seasonNumber);
+        }, 150);
+        if (episodeParam) {
+            const epNumber = parseInt(episodeParam);
+            let attempts = 0;
+            const scrollInterval = setInterval(() => {
+                const panel = document.querySelector(`.season-panel[data-season="${seasonNumber}"]`);
+                const scope = panel || document;
+                const epRow = scope.querySelector(`.episode-row[data-episode="${epNumber}"], .discover-episode-row[data-episode="${epNumber}"]`);
+                if (epRow) {
+                    clearInterval(scrollInterval);
+                    setTimeout(() => {
+                        epRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        epRow.classList.add('cal-episode-highlight');
+                        setTimeout(() => epRow.classList.remove('cal-episode-highlight'), 6000);
+                    }, 100);
+                } else if (++attempts > 40) {
+                    clearInterval(scrollInterval);
+                }
+            }, 250);
+        }
+    }
 }
 
 function createSeasonTab(season, isActive) {
@@ -529,6 +559,7 @@ function createEpisodeRow(episode, seasonNumber, showData) {
 
     // Use episode-row class for collected episodes (to match library styling)
     row.className = hasDbData ? 'episode-row' : 'discover-episode-row';
+    row.dataset.episode = episode.episode_number;
 
     if (hasDbData) {
         // Episode exists in database - show full details like Library page

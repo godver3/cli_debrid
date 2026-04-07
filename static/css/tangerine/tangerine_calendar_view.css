@@ -1,37 +1,336 @@
+/* ======================================================
+   Calendar: existing status colours (original)
+   ====================================================== */
+
 .calendar-event.status-premiered_uncollected {
-    border-left-color: #e74c3c; /* Example: A soft red for premiered but not collected */
+    border-left-color: #e74c3c;
     opacity: 0.9;
-}
-.calendar-event.status-premiered_uncollected .event-title {
-    /* Optional: different color or style */
 }
 .event-status-badge.status-premiered_uncollected {
     background-color: #e74c3c;
     color: white;
 }
 
-
 .calendar-event.status-upcoming_uncollected {
-    /* Movies that are upcoming and not yet marked as collected/wanted in a special way */
-    /* Often similar to default 'upcoming' or 'uncollected' for TV */
-    border-left-color: #3498db; /* Default blue for movies */
+    border-left-color: #3498db;
 }
 .event-status-badge.status-upcoming_uncollected {
-    background-color: #5dade2; /* Lighter blue for badge */
+    background-color: #5dade2;
     color: white;
 }
 
 .calendar-event.status-upcoming_collected {
-    /* For upcoming movies that are somehow already marked collected */
-    border-left-color: #2ecc71; /* Green for collected */
+    border-left-color: #2ecc71;
     opacity: 0.7;
 }
 .event-status-badge.status-upcoming_collected {
     background-color: #2ecc71;
 }
 
-/* Ensure existing collected styles also apply if status is just 'collected' */
 .calendar-event.event-type-movie.status-collected .event-title {
     text-decoration: line-through;
     color: #888;
+}
+
+
+.calendar-page-container {
+    max-width: 1600px;
+}
+
+.calendar-day-group h5 {
+    font-size: 1.1em;
+    color: #ffffff !important;
+    margin-bottom: 12px;
+    font-weight: 600;
+}
+
+/* ======================================================
+   Calendar: Simple / Advanced toggle
+   ====================================================== */
+
+.cal-toggle-wrap {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 14px;
+}
+.cal-toggle-group {
+    display: inline-flex;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #444;
+}
+.cal-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 14px;
+    border: none;
+    cursor: pointer;
+    font-size: 0.85em;
+    font-weight: 500;
+    background: #2a2a2a !important;
+    color: #aaa !important;
+    transition: background 0.15s, color 0.15s;
+}
+.cal-toggle-btn.active {
+    background: #e17c52 !important;
+    color: #1a1a1a !important;
+}
+
+/* ======================================================
+   Advanced calendar: header + nav arrows
+   ====================================================== */
+
+.cal-adv-header {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+}
+.cal-adv-title {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    text-align: center;
+    font-size: 1.25em;
+    color: #e17c52 !important;
+    margin: 0;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+    pointer-events: none;
+}
+.cal-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #e17c52 !important;
+    border: none !important;
+    color: #1a1a1a !important;
+    font-size: 1.2em;
+    line-height: 32px;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: none;
+    flex-shrink: 0;
+    transition: background 0.15s, opacity 0.15s;
+    user-select: none;
+}
+.cal-nav-btn:hover { background: #e8916a !important; }
+.cal-nav-btn.cal-nav-disabled,
+.cal-nav-btn:disabled {
+    opacity: 0.25;
+    pointer-events: none;
+    cursor: default;
+}
+
+/* ======================================================
+   Advanced calendar: 7-column table
+   ====================================================== */
+
+.cal-week-grid-wrap {
+    display: block;
+    overflow-x: auto;
+}
+
+/* Slide animation — tangerine inherits base rules; only overrides needed */
+body[data-theme="tangerine"] .cal-slide-viewport { position: relative; overflow: hidden; }
+body[data-theme="tangerine"] .cal-adv-grid-inner.cal-animating {
+    position: absolute; top: 0; left: 0; width: 100%;
+    transition: transform 0.32s cubic-bezier(0.4,0,0.2,1), opacity 0.32s ease;
+}
+body[data-theme="tangerine"] .cal-slide-incoming {
+    position: absolute; top: 0; left: 0; width: 100%;
+    transition: transform 0.32s cubic-bezier(0.4,0,0.2,1), opacity 0.32s ease;
+    pointer-events: none;
+}
+
+.cal-adv-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    table-layout: fixed !important;
+    background-color: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+}
+
+/* Column headers */
+.cal-adv-th {
+    background: #1a1a1a !important;
+    border: 1px solid #333 !important;
+    padding: 10px 6px 8px !important;
+    text-align: center !important;
+    vertical-align: middle !important;
+    width: calc(100% / 7);
+}
+.cal-adv-th-today {
+    background: #1e2e1a !important;
+    border-color: #4a5e40 !important;
+}
+.cal-th-dayname {
+    display: block;
+    font-size: 0.72em;
+    color: #888 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+}
+.cal-th-daynum {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.05em;
+    font-weight: 600;
+    color: #ccc !important;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+}
+.cal-today-pill {
+    background: #e17c52;
+    color: #1a1a1a;
+}
+.cal-th-month {
+    display: block;
+    font-size: 0.68em;
+    color: #e17c52;
+    margin-top: 3px;
+}
+
+/* Body cells */
+.cal-adv-body-row td {
+    vertical-align: top;
+}
+.cal-adv-cell {
+    border: 1px solid #2d2d2d !important;
+    padding: 6px !important;
+    vertical-align: top !important;
+    min-height: 120px;
+    background: #181818 !important;
+}
+.cal-adv-cell-today {
+    background: #1a261a !important;
+    border-color: #4a5e40 !important;
+}
+.cal-adv-empty {
+    min-height: 80px;
+}
+
+/* ======================================================
+   Advanced calendar: event cards
+   ====================================================== */
+
+.cal-adv-event {
+    background: #252525 !important;
+    border-left: 3px solid #555;
+    border-radius: 4px;
+    padding: 5px 7px;
+    margin-bottom: 5px;
+    font-size: 0.82em;
+    line-height: 1.35;
+    overflow: hidden;
+}
+.cal-adv-event:last-child { margin-bottom: 0; }
+.cal-adv-event { cursor: pointer; }
+.cal-adv-event:hover { filter: brightness(1.15); }
+
+.cal-adv-event.event-type-movie   { border-left-color: #3498db; }
+.cal-adv-event.event-type-tv_show { border-left-color: #9b59b6; }
+
+.cal-adv-event.status-collected          { border-left-color: #27ae60; opacity: 0.7; }
+.cal-adv-event.status-checking-upgrade   { border-left-color: #d35400; opacity: 0.75; }
+.cal-adv-event.status-upgrading          { border-left-color: #f1c40f; }
+.cal-adv-event.status-premiered-uncollected  { border-left-color: #e74c3c; }
+.cal-adv-event.status-upcoming-uncollected   { border-left-color: #5dade2; }
+.cal-adv-event.status-upcoming-collected     { border-left-color: #27ae60; opacity: 0.7; }
+.cal-adv-event.status-upcoming               { border-left-color: #3498db; }
+
+.cal-adv-event-time {
+    font-size: 0.78em;
+    color: #888 !important;
+    font-weight: 500;
+    margin-bottom: 2px;
+}
+.cal-adv-event-title {
+    color: #e8e8e8 !important;
+    font-weight: 600;
+    word-break: break-word;
+    margin-bottom: 3px;
+}
+.cal-adv-event.status-collected .cal-adv-event-title,
+.cal-adv-event.status-checking-upgrade .cal-adv-event-title {
+    text-decoration: line-through;
+    color: #777 !important;
+}
+.cal-adv-event-meta {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+}
+.cal-adv-event-type {
+    font-size: 0.72em;
+    color: #777 !important;
+}
+.cal-adv-event-status {
+    font-size: 0.68em;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-weight: 500;
+    color: #fff;
+    background: #444;
+}
+.cal-adv-event-status.status-collected           { background: #27ae60; }
+.cal-adv-event-status.status-checking-upgrade    { background: #d35400; }
+.cal-adv-event-status.status-upgrading           { background: #f1c40f; color: #333; }
+.cal-adv-event-status.status-premiered-uncollected  { background: #e74c3c; }
+.cal-adv-event-status.status-upcoming-uncollected   { background: #5dade2; }
+.cal-adv-event-status.status-upcoming-collected     { background: #27ae60; }
+.cal-adv-event-status.status-upcoming               { background: #3498db; }
+.cal-adv-event-status.status-uncollected            { background: #555; }
+
+/* ======================================================
+   Advanced calendar: mobile single-day view
+   ====================================================== */
+
+.cal-mobile-day-view { display: none; }
+
+.cal-mobile-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    gap: 8px;
+}
+.cal-mobile-title {
+    flex: 1;
+    text-align: center;
+    font-size: 1.1em;
+    color: #ffffff !important;
+    font-weight: 600;
+    margin: 0;
+}
+.cal-mobile-day-body {
+    padding: 0 2px;
+}
+.cal-mobile-day-body .cal-adv-event {
+    font-size: 0.9em;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+}
+.cal-mobile-no-events {
+    text-align: center;
+    color: #666;
+    font-style: italic;
+    padding: 30px 0;
+}
+
+@media (max-width: 768px) {
+    .cal-week-grid-wrap { display: none; }
+    .cal-mobile-day-view { display: block; }
 }

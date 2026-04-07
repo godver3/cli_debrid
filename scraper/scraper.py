@@ -820,7 +820,7 @@ def scrape(imdb_id: str, tmdb_id: str, title: str, year: int, content_type: str,
                             episode_in_xem = True
                             break
                 
-                if not episode_in_xem:
+                if isinstance(xem_mapping_list, list) and not episode_in_xem:
                     logging.info(f"Episode S{original_season}E{original_episode} not found in XEM mapping. Treating as absolute episode {original_episode}.")
                     # For anime, when episode is not in XEM mapping, treat it as absolute episode number
                     # Now check if this absolute episode maps to a different season/episode in XEM
