@@ -118,14 +118,33 @@ async function loadShowData() {
             renderShowHeader(showData);
             renderSeasons(seasonsData);
 
-            // Check for season parameter in URL and switch to that season
+            // Check for season/episode parameters in URL and switch to that season + scroll to episode
             const urlParams = new URLSearchParams(window.location.search);
             const seasonParam = urlParams.get('season');
+            const episodeParam = urlParams.get('episode');
             if (seasonParam) {
                 const seasonNumber = parseInt(seasonParam);
-                // Use setTimeout to ensure tabs are fully rendered before switching
                 setTimeout(() => {
                     switchTab(seasonNumber);
+                    if (episodeParam) {
+                        const epNumber = parseInt(episodeParam);
+                        // Poll until the panel has children (header is always added synchronously)
+                        let attempts = 0;
+                        const poll = setInterval(() => {
+                            const panel = document.querySelector(`.season-panel[data-season="${seasonNumber}"]`);
+                            if (panel && panel.querySelector('.episode-row')) {
+                                clearInterval(poll);
+                                const epRow = panel.querySelector(`.episode-row[data-episode="${epNumber}"]`);
+                                if (epRow) {
+                                    epRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                    epRow.classList.add('cal-episode-highlight');
+                                    setTimeout(() => epRow.classList.remove('cal-episode-highlight'), 6000);
+                                }
+                            } else if (++attempts > 30) {
+                                clearInterval(poll);
+                            }
+                        }, 100);
+                    }
                 }, 100);
             }
 
@@ -175,13 +194,16 @@ function addPhantomRowsToSeasonData(seasons) {
             episodeGroups[epNum].push(ep);
         });
 
-        // Find gaps from episode 1 to max episode
+        // Find gaps between the min and max episode numbers in the season
+        // Start from minEp (not 1) to avoid creating phantom rows for absolute-numbered anime
+        // where season 2 might start at episode 63 — those lower episodes belong to season 1
         const episodeNumbers = Object.keys(episodeGroups).map(n => parseInt(n));
         if (episodeNumbers.length > 0) {
+            const minEp = Math.min(...episodeNumbers);
             const maxEp = Math.max(...episodeNumbers);
 
-            // Add phantom episodes for gaps
-            for (let i = 1; i <= maxEp; i++) {
+            // Add phantom episodes for gaps within the season's episode range
+            for (let i = minEp; i <= maxEp; i++) {
                 if (!episodeGroups[i]) {
                     season.episodes.push({
                         episode_number: i,
@@ -763,13 +785,15 @@ function createSeasonPanel(season, isActive) {
     });
 
     // Detect gaps in episode numbering and create phantom rows
+    // Start from minEp (not 1) to avoid inflating counts for absolute-numbered anime
+    // where season 2 starts at episode 63 — episodes 1-62 belong to season 1
     const episodeNumbers = Object.keys(episodeGroups).map(n => parseInt(n)).sort((a, b) => a - b);
     if (episodeNumbers.length > 0) {
-        const maxEp = Math.max(...episodeNumbers);
+        const minEp = episodeNumbers[0];
+        const maxEp = episodeNumbers[episodeNumbers.length - 1];
 
-        // Check for gaps from episode 1 to max episode
-        // This catches missing episodes at the start and in the middle
-        for (let i = 1; i <= maxEp; i++) {
+        // Check for gaps from minEp to maxEp (within the season's own episode range)
+        for (let i = minEp; i <= maxEp; i++) {
             if (!episodeGroups[i]) {
                 // Create phantom row for missing episode
                 episodeGroups[i] = [{
@@ -920,6 +944,7 @@ function createEpisodeRow(episodes, seasonNumber) {
 
     const row = document.createElement('div');
     row.className = isPhantom ? 'episode-row phantom-row' : 'episode-row';
+    row.dataset.episode = firstEp.episode_number;
 
     // Status icon
     let statusIcon = '';

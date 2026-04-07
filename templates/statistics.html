@@ -612,6 +612,11 @@
                     const inLibrary = this.dataset.inLibrary === 'true';
                     const mediaType = this.dataset.mediaType;
                     const season = this.dataset.season;
+                    const episode = this.dataset.episode;
+
+                    const episodeParams = (mediaType === 'episode' && season)
+                        ? `?season=${season}${episode ? `&episode=${episode}` : ''}`
+                        : '';
 
                     // Determine which page to navigate to
                     let url;
@@ -619,21 +624,12 @@
                     if (inLibrary) {
                         // Navigate to library page
                         if (mediaType === 'episode' && imdbId) {
-                            // For episodes/shows, go to library show page with season parameter
-                            url = `/library/show/${imdbId}`;
-                            if (season) {
-                                url += `?season=${season}`;
-                            }
+                            url = `/library/show/${imdbId}${episodeParams}`;
                         } else if (mediaType === 'movie' && imdbId) {
-                            // For movies, go to library movie page
                             url = `/library/movie/${imdbId}`;
                         } else if (tmdbId) {
-                            // Fallback to TMDB ID
                             if (mediaType === 'episode') {
-                                url = `/library/show/${tmdbId}`;
-                                if (season) {
-                                    url += `?season=${season}`;
-                                }
+                                url = `/library/show/${tmdbId}${episodeParams}`;
                             } else {
                                 url = `/library/movie/${tmdbId}`;
                             }
@@ -642,11 +638,10 @@
                         // Navigate to discover details page
                         if (tmdbId) {
                             const type = mediaType === 'episode' ? 'tv' : 'movie';
-                            url = `/discover/details/${tmdbId}/${type}`;
+                            url = `/discover/details/${tmdbId}/${type}${episodeParams}`;
                         } else if (imdbId) {
-                            // Try with IMDb ID as fallback
                             const type = mediaType === 'episode' ? 'tv' : 'movie';
-                            url = `/discover/details/${imdbId}/${type}`;
+                            url = `/discover/details/${imdbId}/${type}${episodeParams}`;
                         }
                     }
 
@@ -710,8 +705,8 @@
             const cleanTitle = showInfo.dataset.showTitle || showInfo.dataset.title.replace(/\s+S\d+E\d+.*$/i, '').replace(/\s*\(\d{4}\)\s*$/, '').trim();
             const year = showInfo.dataset.year || new Date().getFullYear().toString();
 
-            // Get version from show data if available (default to 'Default')
-            const version = 'Default';
+            // Version is looked up server-side for recently_aired fixes; pass null here
+            const version = null;
 
             // Debug logging
             console.log('[Statistics] Search episode click - data:', {
@@ -736,7 +731,8 @@
                     episode,
                     false, // multi = false for single episode
                     null, // genre_ids
-                    version
+                    version,
+                    'recently_aired' // source_context: fix missed item, update existing entry
                 );
             } else {
                 console.error('[Statistics] selectMedia function not found - scraper.js may not be loaded');

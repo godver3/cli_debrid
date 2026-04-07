@@ -1460,8 +1460,9 @@ def api_reconcile():
         # ── 2. Live media-server library fetch (active items only) ────────────
         # plex_file_set: basenames of every file the media server knows about.
         # Used for "in_library" checks — filled_by_file/location_on_disk basename matching.
-        plex_file_set   = set()   # basenames  — matches single-file torrent names
-        plex_folder_set = set()   # parent dirs — matches pack/folder torrent names
+        plex_file_set    = set()   # basenames  — matches single-file torrent names
+        plex_folder_set  = set()   # parent dirs — matches pack/folder torrent names
+        plex_rating_keys = set()   # ratingKeys of every Video Plex knows about
         plex_total = 0
 
         _media_server = get_setting('File Management', 'media_server_type', 'plex')
@@ -1539,6 +1540,9 @@ def api_reconcile():
                             root2 = ET.fromstring(r2.text)
                             videos = root2.findall('Video')
                             for video in videos:
+                                rk = video.get('ratingKey', '')
+                                if rk:
+                                    names.append(('rk', rk))
                                 for part in video.iter('Part'):
                                     fp = part.get('file', '')
                                     if fp:
@@ -1560,8 +1564,10 @@ def api_reconcile():
                                 for _kind, _name in _f.result():
                                     if _kind == 'f':
                                         plex_file_set.add(_name)
-                                    else:
+                                    elif _kind == 'd':
                                         plex_folder_set.add(_name)
+                                    elif _kind == 'rk':
+                                        plex_rating_keys.add(_name)
                             except Exception as _pe:
                                 logging.warning(f"[Reconcile] Plex section fetch error: {_pe}")
                     plex_total = len(plex_file_set)
@@ -1742,6 +1748,12 @@ def api_reconcile():
                 else:
                     fname = _basename(row['filled_by_file'])
                 in_plex = bool(fname and fname.lower() in plex_file_set)
+                # Secondary check: if filename doesn't match but ms_item_id is a known
+                # Plex ratingKey, the item IS in Plex (multi-version movies share a
+                # ratingKey and one version's file may not appear in plex_file_set if
+                # Plex hasn't scanned it yet or the filename differs slightly).
+                if not in_plex and row['ms_item_id'] and plex_rating_keys:
+                    in_plex = str(row['ms_item_id']) in plex_rating_keys
             else:
                 # Plex unreachable — fall back to last known ms_item_id
                 in_plex = bool(row['ms_item_id'])
@@ -2306,7 +2318,9 @@ def _run_symlink_audit_bg(rclone_dir, symlink_dir):
                 'correct_count':    len(correct_dupes),
             },
             'unlinked':          unlinked[:1000],
+            'unlinked_all':      [f['path'] for f in unlinked],  # full list for bulk delete
             'broken':            broken[:1000],
+            'broken_all':        broken,  # full list for bulk delete
             'incorrect_dupes':   incorrect_list,
             'rclone_dir':        rclone_dir,
             'symlink_dir':       symlink_dir,

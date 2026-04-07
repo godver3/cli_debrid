@@ -89,6 +89,7 @@
     <!-- Tab Navigation -->
     <div class="discover-tabs">
         <button type="button" class="tab-btn active" data-tab="trending">Trending</button>
+        <button type="button" class="tab-btn" data-tab="recommendations" id="recommendations-tab-btn">Recommendations</button>
         <!-- FlixPatrol dropdown - Top 10 streaming charts (no API key required) -->
         <div id="flixpatrol-tabs" class="flixpatrol-tabs-container">
             <div class="flixpatrol-dropdown-wrapper">
@@ -1047,6 +1048,29 @@
                 <div class="category-grid" id="anime-grid">
                     <!-- Anime will be populated here -->
                 </div>
+            </div>
+        </div>
+
+        <!-- Recommendations content (hidden by default) -->
+        <div id="recommendations-content" style="display:none;">
+            <!-- Movies Row -->
+            <div class="category-section" id="rec-movies-section">
+                <div class="category-header">
+                    <h2 class="category-title">Movies</h2>
+                </div>
+                <div class="category-grid" id="rec-movies-grid"></div>
+            </div>
+            <!-- Shows Row -->
+            <div class="category-section" id="rec-shows-section">
+                <div class="category-header">
+                    <h2 class="category-title">Shows</h2>
+                </div>
+                <div class="category-grid" id="rec-shows-grid"></div>
+            </div>
+            <!-- No Trakt message -->
+            <div id="rec-no-trakt" style="display:none; text-align:center; padding:40px; color:#888;">
+                <p>Recommendations require a connected Trakt account.</p>
+                <p>Authenticate with Trakt in Settings → Content Sources.</p>
             </div>
         </div>
 
