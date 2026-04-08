@@ -242,6 +242,15 @@ class OverlayManager:
 
             result['details']['media_info'] = media_info
 
+            # Enrich media_info with title, year, TMDB clearlogo URL, and textless flag.
+            # textless_poster_used is set after poster download below.
+            media_info['title'] = item.get('title', '')
+            media_info['year']  = item.get('year')
+            media_info['clearlogo_url'] = self._fetch_clearlogo_url(
+                item.get('tmdb_id'), item.get('type', 'movie'))
+            # Default False — updated after poster_image is resolved below
+            media_info['textless_poster_used'] = False
+
             # Update media_items table with extracted info
             self._update_media_item_info(media_item_id, media_info, plex_rating_key)
 
@@ -349,6 +358,12 @@ class OverlayManager:
                     result['message'] = 'Failed to download poster'
                     self._update_overlay_state(media_item_id, 'failed', 'Poster download failed')
                     return result
+
+            # Read textless flag that _tmdb_image() attached to the PIL Image object
+            media_info['textless_poster_used'] = getattr(poster_image, '_cli_textless', False)
+            self.logger.debug(
+                f"Poster textless={media_info['textless_poster_used']} "
+                f"for {item.get('title', plex_rating_key)}")
 
             # Calculate poster hash (for change detection)
             poster_hash = self._calculate_image_hash(poster_image)
@@ -1762,35 +1777,69 @@ class OverlayManager:
                 )
 
                 # Cache miss — fetch directly from TMDB API.
-                # Prefer English-language posters (iso_639_1=en) as they include the title
-                # text. Fall back to en+null only if no English-only results exist.
-                # Sort by vote_average to pick the community's top-rated poster.
+                # When textless_posters is enabled: prefer iso_639_1=null (no baked-in title)
+                # so the Title Logo badge can add the title cleanly.  Fall back to English if
+                # no textless poster exists.
+                # When textless_posters is disabled (default): prefer English-language posters
+                # (iso_639_1=en) which include the title text — fall back to en+null.
                 if not cached_url and tmdb_id:
-                    from utilities.settings import get_setting as _gs_tmdb
+                    from utilities.settings import get_setting as _gs_tmdb, load_config as _lc_tmdb
                     _api_key = _gs_tmdb('TMDB', 'api_key', default='')
+                    _textless = _lc_tmdb().get('Overlay Settings', {}).get('textless_posters', False)
                     if _api_key:
                         _posters = []
-                        for _lang in ('en', 'en,null'):
-                            _api_resp = _requests.get(
-                                f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}/images"
-                                f"?api_key={_api_key}&include_image_language={_lang}",
-                                timeout=15
-                            )
-                            if _api_resp.status_code == 200:
-                                _posters = _api_resp.json().get('posters', [])
-                                if _posters:
-                                    break  # English-only results found — skip null fallback
+                        if _textless:
+                            # Textless mode: null-language first (no text), fall back to English
+                            for _lang in ('null', 'en', 'en,null'):
+                                _api_resp = _requests.get(
+                                    f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}/images"
+                                    f"?api_key={_api_key}&include_image_language={_lang}",
+                                    timeout=15
+                                )
+                                if _api_resp.status_code == 200:
+                                    _posters = _api_resp.json().get('posters', [])
+                                    if _posters:
+                                        break
+                        else:
+                            # Standard mode: English first, fall back to en+null
+                            for _lang in ('en', 'en,null'):
+                                _api_resp = _requests.get(
+                                    f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}/images"
+                                    f"?api_key={_api_key}&include_image_language={_lang}",
+                                    timeout=15
+                                )
+                                if _api_resp.status_code == 200:
+                                    _posters = _api_resp.json().get('posters', [])
+                                    if _posters:
+                                        break  # English-only results found — skip null fallback
                         if _posters:
-                            _posters.sort(
-                                key=lambda p: p.get('vote_average', 0), reverse=True)
+                            if _textless:
+                                # In textless mode filter out unvoted foreign posters
+                                # (vote_count=0/1 are typically obscure regional uploads).
+                                # Sort by vote_count * vote_average so popular clean posters
+                                # rank above niche foreign ones with no community engagement.
+                                _voted = [p for p in _posters if p.get('vote_count', 0) >= 3]
+                                _candidates = _voted if _voted else _posters
+                                _candidates.sort(
+                                    key=lambda p: p.get('vote_count', 0) * p.get('vote_average', 0),
+                                    reverse=True)
+                            else:
+                                _candidates = sorted(
+                                    _posters,
+                                    key=lambda p: p.get('vote_average', 0), reverse=True)
+                            _chosen = _candidates[0]
                             cached_url = (
                                 f"https://image.tmdb.org/t/p/w300"
-                                f"{_posters[0]['file_path']}"
+                                f"{_chosen['file_path']}"
                             )
+                            # Track whether a genuinely textless poster was found
+                            # iso_639_1 = null means no baked-in title text
+                            _is_textless_poster = (_chosen.get('iso_639_1') is None)
                             _cpu(tmdb_id, media_type, cached_url)
                             self.logger.info(
-                                f"Fetched fresh English TMDB poster for "
-                                f"{item.get('title', plex_rating_key)}")
+                                f"Fetched TMDB poster for "
+                                f"{item.get('title', plex_rating_key)} "
+                                f"(textless={_is_textless_poster})")
 
                 if not cached_url or 'image.tmdb.org' not in cached_url:
                     return None
@@ -1803,6 +1852,8 @@ class OverlayManager:
                 resp = _requests.get(tmdb_img_url, timeout=15)
                 resp.raise_for_status()
                 img = _Image.open(BytesIO(resp.content))
+                # Attach textless flag so generate_overlay_for_item can pass it to media_info
+                img._cli_textless = _is_textless_poster if '_is_textless_poster' in dir() else False
                 self.logger.info(
                     f"Using TMDB poster for {item.get('title', plex_rating_key)} ({tmdb_img_url})")
                 return img
@@ -1827,6 +1878,40 @@ class OverlayManager:
             return _tmdb_image() or _server_image()
         else:
             return _server_image() or _tmdb_image()
+
+    def _fetch_clearlogo_url(self, tmdb_id: Optional[str], item_type: str) -> Optional[str]:
+        """Fetch the best English PNG clearlogo URL from TMDB for the given item.
+
+        Returns a full https://image.tmdb.org URL or None if unavailable.
+        """
+        if not tmdb_id:
+            return None
+        try:
+            from utilities.settings import get_setting as _gs
+            import requests as _req
+            _api_key = _gs('TMDB', 'api_key', default='')
+            if not _api_key:
+                return None
+            _mtype = 'tv' if item_type == 'episode' else 'movie'
+            for _lang in ('en', 'en,null'):
+                _resp = _req.get(
+                    f"https://api.themoviedb.org/3/{_mtype}/{tmdb_id}/images"
+                    f"?api_key={_api_key}&include_image_language={_lang}",
+                    timeout=10
+                )
+                if _resp.status_code != 200:
+                    break
+                _logos = _resp.json().get('logos', [])
+                # Prefer PNG (transparent) logos, sort by vote_average
+                _png_logos = [l for l in _logos if (l.get('file_path') or '').endswith('.png')]
+                _candidates = _png_logos or _logos
+                if _candidates:
+                    _candidates.sort(key=lambda l: l.get('vote_average', 0), reverse=True)
+                    _path = _candidates[0]['file_path']
+                    return f"https://image.tmdb.org/t/p/original{_path}"
+        except Exception as _e:
+            self.logger.debug(f"Clearlogo fetch failed for tmdb_id={tmdb_id}: {_e}")
+        return None
 
     def _get_overlay_state(self, media_item_id: int) -> Optional[Dict[str, Any]]:
         """Get overlay state from database."""
