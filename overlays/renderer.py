@@ -206,6 +206,8 @@ class OverlayRenderer:
                         img = self._render_smart_badge_element(img, badge, media_info, width, height)
                     elif btype == 'designed_badge':
                         img = self._render_designed_badge(img, badge, media_info)
+                    elif btype == 'title_logo':
+                        img = self._render_title_logo(img, badge, media_info, width, height)
                     else:
                         img = self.render_badge(img, badge, media_info, width, height)
                 except Exception as e:
@@ -515,6 +517,356 @@ class OverlayRenderer:
                         final_x = text_x + x_off
                     draw.text((final_x, text_y), rendered1, font=font, fill=text_color1)
 
+        return base_img
+
+    def _render_title_logo(self, base_img: Image.Image, badge: Dict[str, Any],
+                           media_info: Dict[str, Any],
+                           poster_width: int, poster_height: int) -> Image.Image:
+        """Render the title clearlogo (TMDB PNG) or a text fallback onto the poster.
+
+        Badge JSON shape:
+            { "type": "title_logo", "x": 20, "y": 750,
+              "width": 300, "height": 80, "opacity": 1.0 }
+
+        If no clearlogo is available, falls back to rendering the title text
+        at the same position using the font/color settings.
+        """
+        import requests as _req
+        from io import BytesIO as _BytesIO
+
+        # Skip title_logo entirely when textless poster setting is on but no
+        # textless poster was found — the fallback English poster already has
+        # the title baked in, so compositing a logo would duplicate it.
+        from utilities.settings import load_config as _lc_tl
+        _textless_setting = _lc_tl().get('Overlay Settings', {}).get('textless_posters', False)
+        if _textless_setting and not media_info.get('textless_poster_used', False):
+            self.logger.info(
+                f"Skipping title_logo for '{media_info.get('title', '?')}' — "
+                f"textless poster not available, poster has baked-in title")
+            return base_img
+
+        opacity = float(badge.get('opacity', 1.0))
+        mode    = badge.get('positionMode', 'anchor')
+
+        if mode == 'anchor':
+            # Anchor mode: position by percentage of poster dimensions
+            anchor_x_side  = badge.get('anchorX', 'center')   # left / center / right
+            anchor_y_pct   = float(badge.get('anchorY',      85))   # % from top
+            max_w_pct      = float(badge.get('maxWidthPct',  60))   # % of poster width
+            max_h_pct      = float(badge.get('maxHeightPct', 12))   # % of poster height
+            max_logo_w = max(1, int(poster_width  * max_w_pct  / 100))
+            max_logo_h = max(1, int(poster_height * max_h_pct  / 100))
+            anchor_cy  = int(poster_height * anchor_y_pct / 100)
+        else:
+            # Pixel mode: legacy x/y/width/height in canvas-space (600×900 base)
+            s  = max(0.1, poster_width  / 600.0)
+            sy = max(0.1, poster_height / 900.0)
+            px = int(badge.get('x', 20)  * s)
+            py = int(badge.get('y', 750) * sy)
+            raw_w = int(badge.get('width',  300))
+            raw_h = int(badge.get('height', 80))
+            max_logo_w = int(raw_w * s) if raw_w else int(300 * s)
+            max_logo_h = int(raw_h * s) if raw_h else int(80  * sy)
+
+        # ── Poster scrim / blur (drawn before logo) ───────────────────────
+        if badge.get('scrimEnabled', False):
+            try:
+                from PIL import ImageDraw as _ID2, ImageFilter as _IFF
+                scrim_mode  = badge.get('scrimMode', 'gradient')
+                scrim_dir   = badge.get('scrimDirection', 'bottom')
+                start_pct   = float(badge.get('scrimStart',   55)) / 100
+                end_pct     = float(badge.get('scrimEnd',    100)) / 100
+                scrim_rgb   = self._parse_color(badge.get('scrimColor', '#000000'))[:3]
+                max_opacity = float(badge.get('scrimOpacity', 0.85))
+
+                if scrim_mode == 'blur':
+                    # Blur the region and feather the transition
+                    blur_radius = max(1, int(badge.get('scrimBlurRadius', 20)))
+                    w, h = base_img.size
+
+                    # Determine region extents in pixels
+                    if scrim_dir == 'bottom':
+                        region_start_y = int(h * (1 - end_pct))
+                        region_end_y   = h
+                        feather_start  = int(h * (1 - end_pct))
+                        feather_end    = int(h * (1 - start_pct))
+                    elif scrim_dir == 'top':
+                        region_start_y = 0
+                        region_end_y   = int(h * end_pct)
+                        feather_start  = region_end_y
+                        feather_end    = int(h * start_pct)
+                    elif scrim_dir == 'right':
+                        region_start_x = int(w * (1 - end_pct))
+                        region_end_x   = w
+                        feather_start  = region_start_x
+                        feather_end    = int(w * (1 - start_pct))
+                    else:  # left
+                        region_start_x = 0
+                        region_end_x   = int(w * end_pct)
+                        feather_start  = region_end_x
+                        feather_end    = int(w * start_pct)
+
+                    # Blur entire poster then mask back in with gradient alpha
+                    blurred_full = base_img.filter(_IFF.GaussianBlur(blur_radius))
+                    feather_mask = Image.new('L', base_img.size, 0)
+                    feather_draw = _ID2.Draw(feather_mask)
+                    feather_len  = max(1, abs(feather_end - feather_start))
+
+                    for i in range(feather_len):
+                        alpha = int(255 * i / feather_len)
+                        pos   = feather_start + i
+                        if scrim_dir == 'bottom':
+                            feather_draw.line([(0, pos), (w, pos)], fill=alpha)
+                        elif scrim_dir == 'top':
+                            feather_draw.line([(0, feather_start + feather_len - 1 - i),
+                                               (w, feather_start + feather_len - 1 - i)], fill=alpha)
+                        elif scrim_dir == 'right':
+                            feather_draw.line([(pos, 0), (pos, h)], fill=alpha)
+                        else:
+                            feather_draw.line([(feather_start + feather_len - 1 - i, 0),
+                                               (feather_start + feather_len - 1 - i, h)], fill=alpha)
+
+                    # Fill fully-blurred zone
+                    if scrim_dir == 'bottom' and feather_end < h:
+                        feather_draw.rectangle([(0, feather_end), (w, h)], fill=255)
+                    elif scrim_dir == 'top' and feather_end > 0:
+                        feather_draw.rectangle([(0, 0), (w, feather_end)], fill=255)
+                    elif scrim_dir == 'right' and feather_end < w:
+                        feather_draw.rectangle([(feather_end, 0), (w, h)], fill=255)
+                    elif scrim_dir == 'left' and feather_end > 0:
+                        feather_draw.rectangle([(0, 0), (feather_end, h)], fill=255)
+
+                    base_img = Image.composite(blurred_full, base_img, feather_mask)
+
+                else:
+                    # Gradient mode
+                    scrim_layer = Image.new('RGBA', base_img.size, (0, 0, 0, 0))
+                    w, h = base_img.size
+
+                    band_len = h if scrim_dir in ('bottom', 'top') else w
+                    start_px = int(band_len * (1 - end_pct))
+                    end_px   = int(band_len * (1 - start_pct))
+                    grad_len = max(1, end_px - start_px)
+
+                    scrim_draw = _ID2.Draw(scrim_layer)
+                    for i in range(grad_len):
+                        t     = i / grad_len
+                        alpha = int(255 * max_opacity * t)
+                        pos   = start_px + i
+                        if scrim_dir == 'bottom':
+                            scrim_draw.line([(0, pos), (w, pos)], fill=scrim_rgb + (alpha,))
+                        elif scrim_dir == 'top':
+                            scrim_draw.line([(0, band_len - 1 - pos), (w, band_len - 1 - pos)], fill=scrim_rgb + (alpha,))
+                        elif scrim_dir == 'right':
+                            scrim_draw.line([(pos, 0), (pos, h)], fill=scrim_rgb + (alpha,))
+                        else:
+                            scrim_draw.line([(band_len - 1 - pos, 0), (band_len - 1 - pos, h)], fill=scrim_rgb + (alpha,))
+
+                    full_alpha = int(255 * max_opacity)
+                    if scrim_dir == 'bottom' and end_px < h:
+                        scrim_draw.rectangle([(0, end_px), (w, h)], fill=scrim_rgb + (full_alpha,))
+                    elif scrim_dir == 'top' and end_px < h:
+                        scrim_draw.rectangle([(0, 0), (w, h - end_px)], fill=scrim_rgb + (full_alpha,))
+                    elif scrim_dir == 'right' and end_px < w:
+                        scrim_draw.rectangle([(end_px, 0), (w, h)], fill=scrim_rgb + (full_alpha,))
+                    elif end_px < w:
+                        scrim_draw.rectangle([(0, 0), (w - end_px, h)], fill=scrim_rgb + (full_alpha,))
+
+                    base_img = Image.alpha_composite(base_img, scrim_layer)
+
+            except Exception as _se:
+                self.logger.warning(f"Scrim render failed: {_se}")
+
+        clearlogo_url = media_info.get('clearlogo_url')
+        if clearlogo_url:
+            try:
+                resp = _req.get(clearlogo_url, timeout=10)
+                resp.raise_for_status()
+                logo_img = Image.open(_BytesIO(resp.content)).convert('RGBA')
+
+                lw, lh = logo_img.size
+                if lw > 0 and lh > 0:
+                    scale   = min(max_logo_w / lw, max_logo_h / lh)
+                    new_w   = max(1, int(lw * scale))
+                    new_h   = max(1, int(lh * scale))
+                    logo_img = logo_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+                # Apply opacity
+                if opacity < 1.0:
+                    r, g, b, a = logo_img.split()
+                    a = a.point(lambda p: int(p * opacity))
+                    logo_img = Image.merge('RGBA', (r, g, b, a))
+
+                # Resolve paste position
+                if mode == 'anchor':
+                    # Horizontal anchor
+                    if anchor_x_side == 'left':
+                        paste_x = 0
+                    elif anchor_x_side == 'right':
+                        paste_x = poster_width - logo_img.width
+                    else:  # center
+                        paste_x = (poster_width - logo_img.width) // 2
+                    # Vertical: centred on anchor_cy
+                    paste_y = anchor_cy - logo_img.height // 2
+                else:
+                    paste_x = px
+                    paste_y = py
+
+                paste_x = max(0, min(paste_x, poster_width  - logo_img.width))
+                paste_y = max(0, min(paste_y, poster_height - logo_img.height))
+
+                lw, lh = logo_img.width, logo_img.height
+
+                # ── Background pill ───────────────────────────────────────
+                if badge.get('pillEnabled', False):
+                    pill_pad     = max(0, int(badge.get('pillPadding', 12)))
+                    pill_radius  = max(0, int(badge.get('pillRadius',  10)))
+                    pill_opacity = float(badge.get('pillOpacity', 0.8))
+                    pill_rgb     = self._parse_color(badge.get('pillColor', '#000000'))[:3]
+                    pill_rgba    = pill_rgb + (int(255 * pill_opacity),)
+                    pill_layer   = Image.new('RGBA', base_img.size, (0, 0, 0, 0))
+                    pill_draw    = ImageDraw.Draw(pill_layer)
+                    rx = paste_x - pill_pad
+                    ry = paste_y - pill_pad
+                    rw = lw + pill_pad * 2
+                    rh = lh + pill_pad * 2
+                    pill_draw.rounded_rectangle(
+                        [(max(0, rx), max(0, ry)),
+                         (min(poster_width, rx + rw), min(poster_height, ry + rh))],
+                        radius=pill_radius, fill=pill_rgba
+                    )
+                    base_img = Image.alpha_composite(base_img, pill_layer)
+
+                # ── Drop shadow ───────────────────────────────────────────
+                if badge.get('shadowEnabled', False):
+                    from PIL import ImageFilter as _IF
+                    sh_blur    = max(1, int(badge.get('shadowBlur',    8)))
+                    sh_opacity = float(badge.get('shadowOpacity', 0.6))
+                    sh_ox      = int(badge.get('shadowOffsetX', 0))
+                    sh_oy      = int(badge.get('shadowOffsetY', 3))
+                    sh_hex     = badge.get('shadowColor', '#000000')
+                    sh_rgb     = self._parse_color(sh_hex)[:3]
+
+                    # Extract logo alpha channel — shadow follows exact logo shape
+                    _, _, _, logo_a = logo_img.split()
+
+                    # Build a same-size shadow image: shadow colour + logo-shaped alpha * opacity
+                    # Use a solid colour layer masked by the scaled logo alpha — no pixel loop needed
+                    shadow_colour = Image.new('RGBA', logo_img.size,
+                                              (sh_rgb[0], sh_rgb[1], sh_rgb[2], 255))
+                    scaled_alpha  = logo_a.point(lambda p: int(p * sh_opacity))
+                    shadow_logo   = Image.new('RGBA', logo_img.size, (0, 0, 0, 0))
+                    shadow_logo.paste(shadow_colour, mask=scaled_alpha)
+
+                    # Place shadow on a full-poster canvas at offset position, then blur
+                    shadow_canvas = Image.new('RGBA', base_img.size, (0, 0, 0, 0))
+                    sx = max(0, min(paste_x + sh_ox, poster_width  - logo_img.width))
+                    sy = max(0, min(paste_y + sh_oy, poster_height - logo_img.height))
+                    shadow_canvas.paste(shadow_logo, (sx, sy), shadow_logo)
+                    shadow_blurred = shadow_canvas.filter(_IF.GaussianBlur(sh_blur))
+                    base_img = Image.alpha_composite(base_img, shadow_blurred)
+
+                base_img.paste(logo_img, (paste_x, paste_y), logo_img)
+                self.logger.debug(f"Title logo rendered at ({paste_x},{paste_y}) "
+                                  f"{logo_img.width}×{logo_img.height} [{mode}]")
+                return base_img
+            except Exception as _e:
+                self.logger.warning(f"Clearlogo render failed ({clearlogo_url}): {_e} — falling back to text")
+
+        # ── Fallback: render title text ───────────────────────────────────
+        title = media_info.get('title') or ''
+        if not title:
+            return base_img
+
+        font_cfg     = badge.get('font', 'DejaVuSans-Bold')
+        raw_fs       = badge.get('fontSize', 'auto')
+        color        = self._parse_color(badge.get('color', '#FFFFFFDD'))
+        bold         = badge.get('fontWeight', 'bold') == 'bold'
+        border_width = max(0, int(badge.get('borderWidth', 0)))
+        border_color = self._parse_color(badge.get('borderColor', '#000000'))
+
+        draw = ImageDraw.Draw(base_img)
+
+        # Resolve font size — 'auto' fits the text into the container
+        if raw_fs == 'auto' or raw_fs is None:
+            max_text_w = max(10, max_logo_w - 16)
+            max_text_h = max(8,  max_logo_h - 8)
+            font_size  = max_text_h
+            for _try in range(max_text_h, 7, -1):
+                _f  = self._load_google_font(font_cfg, _try, bold=bold)
+                _bb = draw.textbbox((0, 0), title, font=_f)
+                if (_bb[2] - _bb[0]) <= max_text_w and (_bb[3] - _bb[1]) <= max_text_h:
+                    font_size = _try
+                    break
+        else:
+            _s = max(0.1, poster_width / 600.0)
+            font_size = max(8, int(float(raw_fs) * _s))
+
+        font = self._load_google_font(font_cfg, font_size, bold=bold)
+        bb   = draw.textbbox((0, 0), title, font=font)
+        tw   = bb[2] - bb[0]
+        th   = bb[3] - bb[1]
+
+        # Resolve text position matching the anchor/pixel mode
+        if mode == 'anchor':
+            if anchor_x_side == 'left':
+                tx = 8
+            elif anchor_x_side == 'right':
+                tx = poster_width - tw - 8
+            else:
+                tx = (poster_width - tw) // 2
+            ty = anchor_cy - th // 2 - bb[1]
+        else:
+            tx = px + max(0, (max_logo_w - tw) // 2)
+            ty = py  + max(0, (max_logo_h - th) // 2) - bb[1]
+
+        tx = max(0, min(tx, poster_width  - tw))
+        ty = max(0, min(ty, poster_height - th))
+
+        # ── Background pill behind text ───────────────────────────────
+        if badge.get('pillEnabled', False):
+            pill_pad     = max(0, int(badge.get('pillPadding', 12)))
+            pill_radius  = max(0, int(badge.get('pillRadius',  10)))
+            pill_opacity = float(badge.get('pillOpacity', 0.8))
+            pill_rgb     = self._parse_color(badge.get('pillColor', '#000000'))[:3]
+            pill_color   = pill_rgb + (int(255 * pill_opacity),)
+            pill_layer   = Image.new('RGBA', base_img.size, (0, 0, 0, 0))
+            pill_draw_t  = ImageDraw.Draw(pill_layer)
+            pill_draw_t.rounded_rectangle(
+                [(max(0, tx - bb[0] - pill_pad), max(0, ty + bb[1] - pill_pad)),
+                 (min(poster_width,  tx - bb[0] + tw + pill_pad),
+                  min(poster_height, ty + bb[1] + th + pill_pad))],
+                radius=pill_radius, fill=pill_color
+            )
+            base_img = Image.alpha_composite(base_img, pill_layer)
+            draw = ImageDraw.Draw(base_img)
+
+        # ── Drop shadow behind text ───────────────────────────────────
+        if badge.get('shadowEnabled', False):
+            from PIL import ImageFilter as _IF
+            sh_opacity = float(badge.get('shadowOpacity', 0.6))
+            sh_color   = self._parse_color(badge.get('shadowColor', '#000000'))
+            sh_ox      = int(badge.get('shadowOffsetX', 0))
+            sh_oy      = int(badge.get('shadowOffsetY', 3))
+            sh_blur    = max(1, int(badge.get('shadowBlur', 8)))
+            sh_fill    = sh_color[:3] + (int(255 * sh_opacity),)
+            sh_layer   = Image.new('RGBA', base_img.size, (0, 0, 0, 0))
+            sh_draw    = ImageDraw.Draw(sh_layer)
+            sh_draw.text((tx + sh_ox, ty + sh_oy), title, font=font, fill=sh_fill)
+            sh_layer   = sh_layer.filter(_IF.GaussianBlur(sh_blur))
+            base_img   = Image.alpha_composite(base_img, sh_layer)
+            draw = ImageDraw.Draw(base_img)
+
+        # Draw border/stroke by drawing text offset in border colour
+        if border_width > 0:
+            for dx in range(-border_width, border_width + 1):
+                for dy in range(-border_width, border_width + 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    draw.text((tx + dx, ty + dy), title, font=font, fill=border_color)
+
+        draw.text((tx, ty), title, font=font, fill=color)
+        self.logger.debug(f"Title text fallback rendered at ({tx},{ty}): '{title}'")
         return base_img
 
     def _evaluate_condition_badge(self, badge: Dict[str, Any],

@@ -42,6 +42,7 @@
 
     let modal, overlay, closeBtn, cancelBtn, saveBtn;
     let overlaysEnabledInput, mediaDataPathInput, contentCheckDaysInput, syncItemsPerRunInput;
+    let textlessPosterInput;
     let currentSettings = null;
 
     function initializeElements() {
@@ -60,6 +61,7 @@
         mediaDataPathInput = document.getElementById('overlaySettingsMediaDataPath');
         contentCheckDaysInput = document.getElementById('overlaySettingsContentCheckDays');
         syncItemsPerRunInput = document.getElementById('overlaySettingsSyncItemsPerRun');
+        textlessPosterInput = document.getElementById('overlaySettingsTextlessPoster');
 
         return true;
     }
@@ -86,6 +88,10 @@
 
             if (overlaysEnabledInput) {
                 overlaysEnabledInput.checked = overlaySettings.overlays_enabled || false;
+            }
+
+            if (textlessPosterInput) {
+                textlessPosterInput.checked = overlaySettings.textless_posters || false;
             }
 
             if (mediaDataPathInput) {
@@ -141,6 +147,9 @@
             }
 
             updatedSettings['Overlay Settings'].overlays_enabled = overlaysEnabledInput.checked;
+            if (textlessPosterInput) {
+                updatedSettings['Overlay Settings'].textless_posters = textlessPosterInput.checked;
+            }
             updatedSettings['Overlay Settings'].plex_data_path = mediaDataPathInput.value.trim();
             if (contentCheckDaysInput) {
                 updatedSettings['Overlay Settings'].overlay_content_check_interval_days = parseInt(contentCheckDaysInput.value) || 7;

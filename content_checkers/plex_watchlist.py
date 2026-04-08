@@ -428,70 +428,96 @@ def get_wanted_from_other_plex_watchlist(username: str, token: str, versions: Di
     logging.info(f"get_wanted_from_other_plex_watchlist for user {username} completed in {time.time() - overall_start_time:.4f} seconds.")
     return all_wanted_items
 
+def _check_plex_token(token, label):
+    """Check a single Plex token by hitting /api/v2/user directly.
+
+    Returns (valid: bool, username: str|None, expires_at, error: str|None, transient: bool)
+    - valid=True  → token confirmed good
+    - valid=False, transient=False → token is definitely bad (401)
+    - valid=False, transient=True  → could not reach Plex.tv; do not write invalid status
+    """
+    import requests as _req
+    headers = {
+        'Accept': 'application/json',
+        'X-Plex-Token': token,
+        'X-Plex-Client-Identifier': 'cli-debrid-token-check',
+    }
+    for attempt in range(2):
+        try:
+            r = _req.get('https://plex.tv/api/v2/user', headers=headers, timeout=15)
+            if r.status_code == 200:
+                data = r.json()
+                username = data.get('username') or data.get('title') or label
+                # rememberExpiresAt not in v2 API response — use None
+                return True, username, None, None, False
+            elif r.status_code == 401:
+                logging.warning(f"Plex token for '{label}' returned 401 — token is invalid/revoked.")
+                return False, None, None, f'401 Unauthorized', False
+            else:
+                logging.warning(f"Plex token check for '{label}' got HTTP {r.status_code} (attempt {attempt+1})")
+                if attempt == 0:
+                    time.sleep(2)
+                    continue
+                return False, None, None, f'HTTP {r.status_code}', True
+        except Exception as e:
+            logging.warning(f"Plex token check for '{label}' network error (attempt {attempt+1}): {e}")
+            if attempt == 0:
+                time.sleep(2)
+                continue
+            return False, None, None, str(e), True
+    return False, None, None, 'Unknown error', True
+
+
 def validate_plex_tokens():
     """Validate all Plex tokens and return their status."""
     overall_start_time = time.time()
     token_status = {}
-    
+
     # Validate main user's token
-    try:
-        plex_token_validation_start_time = time.time()
-        plex_token = get_setting('Plex', 'token')
-        if plex_token:
-            account = MyPlexAccount(token=plex_token)
-            # Ping to refresh the auth token
-            ping_start_time = time.time()
-            account.ping()
-            logging.debug(f"Main token ping took {time.time() - ping_start_time:.4f} seconds.")
-            # The expiration is stored in the account object directly
-            token_status['main'] = {
-                'valid': True,
-                'expires_at': account.rememberExpiresAt if hasattr(account, 'rememberExpiresAt') else None,
-                'username': account.username
-            }
-            update_token_status('main', True, 
-                              expires_at=account.rememberExpiresAt if hasattr(account, 'rememberExpiresAt') else None,
-                              plex_username=account.username)
-            logging.info(f"Main Plex token validation took {time.time() - plex_token_validation_start_time:.4f} seconds. Valid: True, User: {account.username}")
-    except Exception as e:
-        logging.error(f"Error validating main Plex token: {e}")
-        token_status['main'] = {'valid': False, 'expires_at': None, 'username': None}
-        update_token_status('main', False)
-        logging.info(f"Main Plex token validation took {time.time() - plex_token_validation_start_time:.4f} seconds. Valid: False")
-    
+    plex_token = get_setting('Plex', 'token')
+    if plex_token:
+        t0 = time.time()
+        valid, username, expires_at, error, transient = _check_plex_token(plex_token, 'main')
+        if valid:
+            token_status['main'] = {'valid': True, 'expires_at': expires_at, 'username': username}
+            update_token_status('main', True, expires_at=expires_at, plex_username=username)
+            logging.info(f"Main Plex token valid. User: {username} ({time.time()-t0:.2f}s)")
+        elif transient:
+            # Cannot reach Plex.tv — keep last known status, don't overwrite with False
+            existing = load_token_status().get('main', {})
+            token_status['main'] = existing if existing else {'valid': None, 'expires_at': None, 'username': None}
+            logging.warning(f"Main Plex token check failed transiently ({error}) — keeping last known status.")
+        else:
+            token_status['main'] = {'valid': False, 'expires_at': None, 'username': None}
+            update_token_status('main', False)
+            logging.error(f"Main Plex token invalid: {error} ({time.time()-t0:.2f}s)")
+
     # Validate other users' tokens
     config = load_config()
     content_sources = config.get('Content Sources', {})
-    
+
     for source_id, source in content_sources.items():
         if source.get('type') == 'Other Plex Watchlist':
             username = source.get('username')
             token = source.get('token')
-            
-            if username and token:
-                other_token_validation_start_time = time.time()
-                try:
-                    account = MyPlexAccount(token=token)
-                    # Ping to refresh the auth token
-                    ping_start_time = time.time()
-                    account.ping()
-                    logging.debug(f"Other token ping for user {username} took {time.time() - ping_start_time:.4f} seconds.")
-                    token_status[username] = {
-                        'valid': True,
-                        'expires_at': account.rememberExpiresAt if hasattr(account, 'rememberExpiresAt') else None,
-                        'username': account.username
-                    }
-                    update_token_status(username, True,
-                                      expires_at=account.rememberExpiresAt if hasattr(account, 'rememberExpiresAt') else None,
-                                      plex_username=account.username)
-                    logging.info(f"Plex token validation for user {username} took {time.time() - other_token_validation_start_time:.4f} seconds. Valid: True, User: {account.username}")
-                except Exception as e:
-                    logging.error(f"Error validating Plex token for user {username}: {e}")
-                    token_status[username] = {'valid': False, 'expires_at': None, 'username': None}
-                    update_token_status(username, False)
-                    logging.info(f"Plex token validation for user {username} took {time.time() - other_token_validation_start_time:.4f} seconds. Valid: False")
-    
-    logging.info(f"validate_plex_tokens completed in {time.time() - overall_start_time:.4f} seconds.")
+            if not username or not token:
+                continue
+            t0 = time.time()
+            valid, plex_username, expires_at, error, transient = _check_plex_token(token, username)
+            if valid:
+                token_status[username] = {'valid': True, 'expires_at': expires_at, 'username': plex_username}
+                update_token_status(username, True, expires_at=expires_at, plex_username=plex_username)
+                logging.info(f"Plex token for '{username}' valid. ({time.time()-t0:.2f}s)")
+            elif transient:
+                existing = load_token_status().get(username, {})
+                token_status[username] = existing if existing else {'valid': None, 'expires_at': None, 'username': None}
+                logging.warning(f"Plex token check for '{username}' failed transiently ({error}) — keeping last known status.")
+            else:
+                token_status[username] = {'valid': False, 'expires_at': None, 'username': None}
+                update_token_status(username, False)
+                logging.error(f"Plex token for '{username}' invalid: {error} ({time.time()-t0:.2f}s)")
+
+    logging.info(f"validate_plex_tokens completed in {time.time() - overall_start_time:.2f}s.")
     return token_status
 
 

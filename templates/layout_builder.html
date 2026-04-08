@@ -144,9 +144,31 @@
     color: white;
 }
 
+.element-list-item .drag-handle {
+    cursor: grab;
+    color: #ccc;
+    padding: 0 6px 0 0;
+    font-size: 11px;
+    letter-spacing: -2px;
+    flex-shrink: 0;
+    user-select: none;
+    opacity: 0.9;
+    line-height: 1;
+    font-family: monospace;
+}
+.element-list-item .drag-handle:hover { opacity: 1; color: #e07b39; }
+.element-list-item .drag-handle:active { cursor: grabbing; }
+.element-list-item.drag-over {
+    border-color: #e07b39 !important;
+    background: rgba(224,123,57,0.15) !important;
+}
+.element-list-item.dragging {
+    opacity: 0.35;
+}
+
 .badge-list-label {
     font-weight: 500;
-    color: #444;
+    color: #ddd;
 }
 
 .badge-list-type {
@@ -826,6 +848,17 @@
             </div>
         </div>
 
+        {% if textless_posters_enabled %}
+        <div class="palette-section">
+            <h3>Title Logo <span style="font-size:10px;color:#2ecc71;font-weight:400;text-transform:none;letter-spacing:0;">— TMDB clearlogo</span></h3>
+            <div class="palette-item" data-badge-type="title_logo" draggable="true"
+                 onclick="addBadgeFromPalette('title_logo')"
+                 style="border-left:3px solid #2ecc71;">
+                <i class="fas fa-film" style="color:#2ecc71"></i> Title Logo
+            </div>
+        </div>
+        {% endif %}
+
         <div class="palette-section">
             <h3>Text Badges</h3>
             <div class="palette-item" data-badge-type="imdb_rating" draggable="true"
@@ -1460,6 +1493,308 @@
         </div>
 
         <!-- Smart Badge Properties — visible when a smart badge is selected -->
+        <!-- ── Title Logo Properties ── -->
+        <div id="title-logo-properties" style="display:none;">
+            <div class="properties-section">
+                <span class="badge-type-chip" style="background:#2ecc71;">Title Logo</span>
+                <p style="font-size:11px;color:#aaa;margin:6px 0 10px;">
+                    Fetches the TMDB clearlogo PNG at the chosen position.
+                    Falls back to title text if no clearlogo is available.
+                </p>
+
+                <!-- Position mode toggle -->
+                <div class="form-group" style="margin-bottom:12px;">
+                    <label style="font-size:11px;color:#aaa;margin-bottom:6px;display:block;">Position Mode</label>
+                    <div style="display:flex;gap:0;border-radius:6px;overflow:hidden;border:1px solid #444;width:100%;">
+                        <button type="button" id="tl-mode-anchor" onclick="tlSetMode('anchor')"
+                            style="flex:1;padding:6px 0;font-size:12px;border:none;cursor:pointer;background:#e07b39;color:#1a1a1a;font-weight:600;">
+                            Smart (Anchor)
+                        </button>
+                        <button type="button" id="tl-mode-pixel" onclick="tlSetMode('pixel')"
+                            style="flex:1;padding:6px 0;font-size:12px;border:none;cursor:pointer;background:#2a2a2a;color:#aaa;">
+                            Pixel
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Anchor mode controls -->
+                <div id="tl-anchor-controls">
+                    <div class="form-group">
+                        <label>Horizontal Anchor</label>
+                        <select id="tl-anchor-x" onchange="updateSelectedTitleLogo()">
+                            <option value="left">Left</option>
+                            <option value="center" selected>Center</option>
+                            <option value="right">Right</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Vertical Position <span id="tl-anchor-y-val">85%</span> from top</label>
+                        <input type="range" id="tl-anchor-y" min="0" max="100" value="85"
+                            oninput="document.getElementById('tl-anchor-y-val').textContent=this.value+'%'; updateSelectedTitleLogo()">
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Max Width <span id="tl-max-w-val">60%</span></label>
+                            <input type="range" id="tl-max-width-pct" min="10" max="100" value="60"
+                                oninput="document.getElementById('tl-max-w-val').textContent=this.value+'%'; updateSelectedTitleLogo()">
+                        </div>
+                        <div class="form-group half">
+                            <label>Max Height <span id="tl-max-h-val">12%</span></label>
+                            <input type="range" id="tl-max-height-pct" min="2" max="40" value="12"
+                                oninput="document.getElementById('tl-max-h-val').textContent=this.value+'%'; updateSelectedTitleLogo()">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pixel mode controls -->
+                <div id="tl-pixel-controls" style="display:none;">
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>X (px)</label>
+                            <input type="number" id="tl-x" value="20" min="0" oninput="updateSelectedTitleLogo()">
+                        </div>
+                        <div class="form-group half">
+                            <label>Y (px)</label>
+                            <input type="number" id="tl-y" value="750" min="0" oninput="updateSelectedTitleLogo()">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Width (px, 0=auto)</label>
+                            <input type="number" id="tl-width" value="300" min="0" oninput="updateSelectedTitleLogo()">
+                        </div>
+                        <div class="form-group half">
+                            <label>Height (px, 0=auto)</label>
+                            <input type="number" id="tl-height" value="80" min="0" oninput="updateSelectedTitleLogo()">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Opacity <span id="tl-opacity-val">100%</span></label>
+                    <input type="range" id="tl-opacity" min="0" max="100" value="100"
+                        oninput="document.getElementById('tl-opacity-val').textContent=this.value+'%'; updateSelectedTitleLogo()">
+                </div>
+            </div>
+
+            <!-- Text Fallback -->
+            <div class="properties-section">
+                <div class="section-header-row">
+                    <h4>Text Fallback</h4>
+                    <small style="color:#aaa;font-weight:normal;margin-left:6px;">(when no clearlogo found)</small>
+                </div>
+                <div class="form-group" style="margin-bottom:10px;">
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                        <input type="checkbox" id="tl-preview-fallback" onchange="updateSelectedTitleLogo()">
+                        <span style="font-size:12px;">Preview text fallback in editor</span>
+                    </label>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Font size</label>
+                        <select id="tl-font-size" onchange="updateSelectedTitleLogo(); document.getElementById('tl-font-size-custom-row').style.display = this.value === 'custom' ? '' : 'none';">
+                            <option value="auto">Auto (fit container)</option>
+                            <option value="16">16 px</option>
+                            <option value="20">20 px</option>
+                            <option value="24">24 px</option>
+                            <option value="28">28 px</option>
+                            <option value="32" selected>32 px</option>
+                            <option value="40">40 px</option>
+                            <option value="48">48 px</option>
+                            <option value="56">56 px</option>
+                            <option value="64">64 px</option>
+                            <option value="custom">Custom…</option>
+                        </select>
+                    </div>
+                    <div class="form-group half">
+                        <label>Font weight</label>
+                        <select id="tl-font-weight" onchange="updateSelectedTitleLogo()">
+                            <option value="bold">Bold</option>
+                            <option value="normal">Normal</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="tl-font-size-custom-row" class="form-group" style="display:none;">
+                    <label>Custom font size (px)</label>
+                    <input type="number" id="tl-font-size-custom" value="32" min="8" max="200" oninput="updateSelectedTitleLogo()">
+                </div>
+                <div class="form-group">
+                    <label>Text Color</label>
+                    <div class="color-input-group">
+                        <input type="color" id="tl-color" value="#ffffff">
+                        <input type="text" id="tl-color-hex" value="#FFFFFFDD" placeholder="#FFFFFFDD" maxlength="9">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group half">
+                        <label>Border Width (px, 0=none)</label>
+                        <input type="number" id="tl-border-width" value="0" min="0" max="20" oninput="updateSelectedTitleLogo()">
+                    </div>
+                    <div class="form-group half">
+                        <label>Border Color</label>
+                        <div class="color-input-group">
+                            <input type="color" id="tl-border-color" value="#000000">
+                            <input type="text" id="tl-border-color-hex" value="#000000" placeholder="#000000" maxlength="7">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Contrast / Visibility -->
+            <div class="properties-section">
+                <div class="section-header-row">
+                    <h4>Contrast &amp; Visibility</h4>
+                </div>
+                <p style="font-size:11px;color:#aaa;margin:0 0 10px;">
+                    Helps logos stay visible against light or similarly-coloured poster backgrounds.
+                </p>
+
+                <!-- Drop Shadow -->
+                <div class="section-header-row" style="margin-bottom:6px;">
+                    <input type="checkbox" id="tl-shadow-enabled" class="section-enable-cb" onchange="updateSelectedTitleLogo()">
+                    <h4>Drop Shadow</h4>
+                </div>
+                <div id="tl-shadow-body">
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Blur radius (px)</label>
+                            <input type="number" id="tl-shadow-blur" value="8" min="0" max="40" oninput="updateSelectedTitleLogo()">
+                        </div>
+                        <div class="form-group half">
+                            <label>Opacity <span id="tl-shadow-opacity-val">60%</span></label>
+                            <input type="range" id="tl-shadow-opacity" min="0" max="100" value="60"
+                                oninput="document.getElementById('tl-shadow-opacity-val').textContent=this.value+'%'; updateSelectedTitleLogo()">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Offset X (px)</label>
+                            <input type="number" id="tl-shadow-offset-x" value="0" min="-20" max="20" oninput="updateSelectedTitleLogo()">
+                        </div>
+                        <div class="form-group half">
+                            <label>Offset Y (px)</label>
+                            <input type="number" id="tl-shadow-offset-y" value="3" min="-20" max="20" oninput="updateSelectedTitleLogo()">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Shadow Color</label>
+                        <div class="color-input-group">
+                            <input type="color" id="tl-shadow-color" value="#000000">
+                            <input type="text" id="tl-shadow-color-hex" value="#000000" placeholder="#000000" maxlength="7">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Background Pill -->
+                <div class="section-header-row" style="margin-top:12px;margin-bottom:6px;">
+                    <input type="checkbox" id="tl-pill-enabled" class="section-enable-cb" onchange="updateSelectedTitleLogo()">
+                    <h4>Background Pill</h4>
+                </div>
+                <div id="tl-pill-body">
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Padding (px)</label>
+                            <input type="number" id="tl-pill-padding" value="12" min="0" max="60" oninput="updateSelectedTitleLogo()">
+                        </div>
+                        <div class="form-group half">
+                            <label>Border Radius (px)</label>
+                            <input type="number" id="tl-pill-radius" value="10" min="0" max="60" oninput="updateSelectedTitleLogo()">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Pill Color</label>
+                        <div class="color-input-group">
+                            <input type="color" id="tl-pill-color" value="#000000">
+                            <input type="text" id="tl-pill-color-hex" value="#000000" placeholder="#000000" maxlength="7">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Pill Opacity <span id="tl-pill-opacity-val">80%</span></label>
+                        <input type="range" id="tl-pill-opacity" min="0" max="100" value="80"
+                            oninput="document.getElementById('tl-pill-opacity-val').textContent=this.value+'%'; updateSelectedTitleLogo()">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Poster Scrim / Blur -->
+            <div class="properties-section">
+                <div class="section-header-row">
+                    <input type="checkbox" id="tl-scrim-enabled" class="section-enable-cb" onchange="updateSelectedTitleLogo()">
+                    <h4>Poster Scrim / Blur</h4>
+                </div>
+                <p style="font-size:11px;color:#aaa;margin:0 0 10px;">
+                    Adds a gradient or blur effect over a region of the poster before the logo is placed.
+                </p>
+                <div id="tl-scrim-body">
+                    <!-- Mode toggle -->
+                    <div class="form-group" style="margin-bottom:10px;">
+                        <label style="font-size:11px;color:#aaa;margin-bottom:5px;display:block;">Effect Type</label>
+                        <div style="display:flex;gap:0;border-radius:6px;overflow:hidden;border:1px solid #444;">
+                            <button type="button" id="tl-scrim-mode-gradient" onclick="tlScrimSetMode('gradient')"
+                                style="flex:1;padding:5px 0;font-size:12px;border:none;cursor:pointer;background:#e07b39;color:#1a1a1a;font-weight:600;">
+                                Gradient
+                            </button>
+                            <button type="button" id="tl-scrim-mode-blur" onclick="tlScrimSetMode('blur')"
+                                style="flex:1;padding:5px 0;font-size:12px;border:none;cursor:pointer;background:#2a2a2a;color:#aaa;">
+                                Blur
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Shared: direction + start/end -->
+                    <div class="form-group">
+                        <label>Direction</label>
+                        <select id="tl-scrim-direction" onchange="updateSelectedTitleLogo()">
+                            <option value="bottom" selected>Bottom → Up (most common)</option>
+                            <option value="top">Top → Down</option>
+                            <option value="left">Left → Right</option>
+                            <option value="right">Right → Left</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group half">
+                            <label>Start <span id="tl-scrim-start-val">55%</span> from edge</label>
+                            <input type="range" id="tl-scrim-start" min="0" max="100" value="55"
+                                oninput="document.getElementById('tl-scrim-start-val').textContent=this.value+'%'; updateSelectedTitleLogo()">
+                        </div>
+                        <div class="form-group half">
+                            <label>End <span id="tl-scrim-end-val">100%</span> from edge</label>
+                            <input type="range" id="tl-scrim-end" min="0" max="100" value="100"
+                                oninput="document.getElementById('tl-scrim-end-val').textContent=this.value+'%'; updateSelectedTitleLogo()">
+                        </div>
+                    </div>
+
+                    <!-- Gradient-only controls -->
+                    <div id="tl-scrim-gradient-controls">
+                        <div class="form-group">
+                            <label>Scrim Color</label>
+                            <div class="color-input-group">
+                                <input type="color" id="tl-scrim-color" value="#000000">
+                                <input type="text" id="tl-scrim-color-hex" value="#000000" placeholder="#000000" maxlength="7">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Max Opacity <span id="tl-scrim-opacity-val">85%</span></label>
+                            <input type="range" id="tl-scrim-opacity" min="0" max="100" value="85"
+                                oninput="document.getElementById('tl-scrim-opacity-val').textContent=this.value+'%'; updateSelectedTitleLogo()">
+                        </div>
+                    </div>
+
+                    <!-- Blur-only controls -->
+                    <div id="tl-scrim-blur-controls" style="display:none;">
+                        <div class="form-group">
+                            <label>Blur Radius <span id="tl-scrim-blur-val">20px</span></label>
+                            <input type="range" id="tl-scrim-blur-radius" min="2" max="60" value="20"
+                                oninput="document.getElementById('tl-scrim-blur-val').textContent=this.value+'px'; updateSelectedTitleLogo()">
+                        </div>
+                        <p style="font-size:11px;color:#888;margin:4px 0 0;">
+                            The blur feathers into the sharp area using the Start % as the transition zone.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div id="smart-badge-properties" style="display:none;">
 
             <!-- Position + type chip -->
@@ -2345,5 +2680,9 @@ function copyVar(codeEl) {
     });
 }
 </script>
-<script src="{{ url_for('static', filename='js/layout_builder.js') }}?v=30"></script>
+<script>
+// Injected from server — controls textless poster + title logo preview features
+const TEXTLESS_POSTERS_ENABLED = {{ 'true' if textless_posters_enabled else 'false' }};
+</script>
+<script src="{{ url_for('static', filename='js/layout_builder.js') }}?v=32"></script>
 {% endblock %}
