@@ -49,7 +49,9 @@ def overlays_page():
 @admin_required
 def layout_builder_page():
     """Serve the layout builder UI."""
-    return render_template('layout_builder.html')
+    from utilities.settings import load_config
+    _textless = load_config().get('Overlay Settings', {}).get('textless_posters', False)
+    return render_template('layout_builder.html', textless_posters_enabled=_textless)
 
 # Initialize managers (will be configured on first use)
 _overlay_manager = None
@@ -2858,6 +2860,10 @@ def get_preview_posters():
     Cache keys are formatted as "{tmdb_id}_{type}" (e.g. "12345_movie", "67890_tv").
     Values are (url, cached_at) tuples where url is a full TMDB CDN URL.
     Meta/trending entries are skipped automatically.
+
+    When textless=1 is passed, attempts to return the null-language (textless) TMDB
+    poster for each candidate instead of the cached English one.
+    Also returns tmdb_id and media_type per entry so the builder can fetch clearlogos.
     """
     import random as _random
     from datetime import datetime, timedelta
@@ -2865,6 +2871,7 @@ def get_preview_posters():
 
     media_type = request.args.get('type', 'both')
     limit = min(int(request.args.get('limit', 20)), 50)
+    textless = request.args.get('textless', '0') == '1'
 
     type_filters = set()
     if media_type in ('movie', 'both'):
@@ -2892,11 +2899,84 @@ def get_preview_posters():
         # Match type suffix: key ends with "_movie" or "_tv"
         for t in type_filters:
             if cache_key.endswith(f'_{t}'):
-                candidates.append({'poster_url': url, 'type': t})
+                # Extract tmdb_id from key (format: "{tmdb_id}_{type}")
+                tmdb_id = cache_key[: -(len(t) + 1)]
+                candidates.append({
+                    'poster_url': url,
+                    'type': t,
+                    'tmdb_id': tmdb_id,
+                })
                 break
 
     _random.shuffle(candidates)
-    return jsonify({'posters': candidates[:limit]})
+    selected = candidates[:limit]
+
+    # For textless mode, swap poster URLs to null-language TMDB posters
+    if textless:
+        from utilities.settings import get_setting as _gs
+        _tmdb_key = _gs('TMDB', 'api_key', default='')
+        import requests as _req
+        for entry in selected:
+            try:
+                _mtype = 'tv' if entry['type'] == 'tv' else 'movie'
+                _r = _req.get(
+                    f"https://api.themoviedb.org/3/{_mtype}/{entry['tmdb_id']}/images"
+                    f"?api_key={_tmdb_key}&include_image_language=null",
+                    timeout=8
+                )
+                if _r.status_code == 200:
+                    _posters = _r.json().get('posters', [])
+                    if _posters:
+                        # Prefer voted posters — filters out obscure foreign uploads (vote_count=0)
+                        _voted = [p for p in _posters if p.get('vote_count', 0) >= 3]
+                        _cands = _voted if _voted else _posters
+                        _cands.sort(
+                            key=lambda p: p.get('vote_count', 0) * p.get('vote_average', 0),
+                            reverse=True)
+                        entry['poster_url'] = (
+                            f"https://image.tmdb.org/t/p/w300{_cands[0]['file_path']}")
+            except Exception:
+                pass  # keep original cached URL on error
+
+    return jsonify({'posters': selected})
+
+
+@overlay_bp.route('/api/overlays/preview/clearlogo', methods=['GET'])
+def get_preview_clearlogo():
+    """Return the best English clearlogo URL for a given TMDB ID.
+
+    Query params: tmdb_id, type (movie|tv)
+    Returns: { logo_url: str|null }
+    """
+    tmdb_id   = request.args.get('tmdb_id', '').strip()
+    item_type = request.args.get('type', 'movie')
+    if not tmdb_id:
+        return jsonify({'logo_url': None})
+    try:
+        from utilities.settings import get_setting as _gs
+        import requests as _req
+        _api_key = _gs('TMDB', 'api_key', default='')
+        if not _api_key:
+            return jsonify({'logo_url': None})
+        _mtype = 'tv' if item_type == 'tv' else 'movie'
+        logo_url = None
+        for _lang in ('en', 'en,null'):
+            _r = _req.get(
+                f"https://api.themoviedb.org/3/{_mtype}/{tmdb_id}/images"
+                f"?api_key={_api_key}&include_image_language={_lang}",
+                timeout=10
+            )
+            if _r.status_code == 200:
+                _logos = _r.json().get('logos', [])
+                _png = [l for l in _logos if (l.get('file_path') or '').endswith('.png')]
+                _best = sorted(_png or _logos, key=lambda l: l.get('vote_average', 0), reverse=True)
+                if _best:
+                    logo_url = f"https://image.tmdb.org/t/p/original{_best[0]['file_path']}"
+                    break
+        return jsonify({'logo_url': logo_url})
+    except Exception as e:
+        logger.warning(f"Preview clearlogo fetch failed for {tmdb_id}: {e}")
+        return jsonify({'logo_url': None})
 
 
 # ── Logo Library ───────────────────────────────────────────────────────────────
