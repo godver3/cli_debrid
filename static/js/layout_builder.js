@@ -695,8 +695,10 @@ let dragOffsetX = 0;
 let dragOffsetY = 0;
 let currentLayoutId = null;
 let posterImage = null;   // loaded poster HTMLImageElement (null = show gradient)
-let posterPool = [];      // array of {title, poster_url} from library
+let posterPool = [];      // array of {title, poster_url, tmdb_id, type} from library
 let posterPoolIndex = -1; // current position in posterPool (-1 = none loaded)
+// Clearlogo cache: keyed by tmdb_id — value is HTMLImageElement|null ('null' = no logo)
+const _clearlogoCache = {};
 let canvasZoom = 1.0;
 let showGrid = false;
 
@@ -900,8 +902,9 @@ async function loadPosterPool() {
     const typeParam = mediaType === 'movie' ? 'movie'
                     : mediaType === 'tv'    ? 'tv'
                     : 'both';
+    const textlessParam = (typeof TEXTLESS_POSTERS_ENABLED !== 'undefined' && TEXTLESS_POSTERS_ENABLED) ? '&textless=1' : '';
     try {
-        const resp = await fetch(`/api/overlays/preview/posters?type=${typeParam}&limit=20`);
+        const resp = await fetch(`/api/overlays/preview/posters?type=${typeParam}&limit=20${textlessParam}`);
         const data = await resp.json();
         posterPool = data.posters || [];
         posterPoolIndex = -1;
@@ -917,6 +920,11 @@ function cyclePoolPoster(direction) {
     if (posterPool.length === 0) { loadPosterPool(); return; }
     posterPoolIndex = (posterPoolIndex + direction + posterPool.length) % posterPool.length;
     const entry = posterPool[posterPoolIndex];
+    // Clear per-poster clearlogo cache so it re-fetches for the new poster's tmdb_id
+    const cacheKey = entry?.tmdb_id ? `${entry.tmdb_id}_${entry.type || 'movie'}` : null;
+    if (cacheKey && _clearlogoCache[cacheKey] !== undefined) {
+        // Keep it — it's already loaded, no need to re-fetch
+    }
     const img = new Image();
     img.onload = () => { posterImage = img; updatePosterCounter(); renderCanvas(); };
     img.onerror = () => {
@@ -1049,6 +1057,7 @@ function addBadgeFromPalette(type) {
 function addBadge(type, x, y) {
     if (type === 'background_panel') { addBackgroundPanel(x, y); return; }
     if (type === 'designed_badge') { addDesignedBadge(x, y); return; }
+    if (type === 'title_logo') { addTitleLogo(x, y); return; }
     // Route smart badge palette items
     if (SMART_BADGE_SLUGS[type]) {
         addSmartBadge(type, x, y);
@@ -1111,6 +1120,93 @@ function addDesignedBadge(x, y) {
     loadGoogleFont(badge.rightFont2);
 }
 
+// Scrim effect type toggle
+function tlScrimSetMode(mode) {
+    const badge = selectedBadgeId != null ? badges.find(b => b.id === selectedBadgeId) : null;
+    if (badge && badge.type === 'title_logo') {
+        badge.scrimMode = mode;
+        _tlScrimSyncModeButtons(mode);
+        renderCanvas();
+    }
+}
+
+function _tlScrimSyncModeButtons(mode) {
+    const gBtn  = document.getElementById('tl-scrim-mode-gradient');
+    const bBtn  = document.getElementById('tl-scrim-mode-blur');
+    const gCtrl = document.getElementById('tl-scrim-gradient-controls');
+    const bCtrl = document.getElementById('tl-scrim-blur-controls');
+    const active   = 'background:#e07b39;color:#1a1a1a;font-weight:600;';
+    const inactive = 'background:#2a2a2a;color:#aaa;font-weight:normal;';
+    if (gBtn) gBtn.style.cssText += mode === 'gradient' ? active : inactive;
+    if (bBtn) bBtn.style.cssText += mode === 'blur'     ? active : inactive;
+    if (gCtrl) gCtrl.style.display = mode === 'gradient' ? '' : 'none';
+    if (bCtrl) bCtrl.style.display = mode === 'blur'     ? '' : 'none';
+}
+
+// Called by mode toggle buttons in the title logo properties panel
+function tlSetMode(mode) {
+    const badge = selectedBadgeId != null ? badges.find(b => b.id === selectedBadgeId) : null;
+    if (badge && badge.type === 'title_logo') {
+        badge.positionMode = mode;
+        populateTitleLogoProperties(badge);
+        renderCanvas();
+    }
+}
+
+function addTitleLogo(x, y) {
+    const badge = {
+        id: Date.now() + Math.random(),
+        type: 'title_logo',
+        label: 'Title Logo',
+        // Default to anchor mode — the organic/dynamic approach
+        positionMode: 'anchor',
+        // Anchor mode fields
+        anchorX: 'center',
+        anchorY: 85,        // % from top
+        maxWidthPct: 60,    // max % of poster width
+        maxHeightPct: 12,   // max % of poster height
+        // Pixel mode fields (kept for when user switches mode)
+        x: x ?? 20,
+        y: y ?? 750,
+        width: 300,
+        height: 80,
+        opacity: 1.0,
+        previewFallback: false,
+        fontSize: 'auto',
+        font: 'DejaVuSans-Bold',
+        fontWeight: 'bold',
+        color: '#FFFFFFDD',
+        borderWidth: 0,
+        borderColor: '#000000',
+        // Drop shadow
+        shadowEnabled: false,
+        shadowBlur: 8,
+        shadowOpacity: 0.6,
+        shadowOffsetX: 0,
+        shadowOffsetY: 3,
+        shadowColor: '#000000',
+        // Poster scrim / blur
+        scrimEnabled: false,
+        scrimMode: 'gradient',   // 'gradient' | 'blur'
+        scrimDirection: 'bottom',
+        scrimStart: 55,
+        scrimEnd: 100,
+        scrimColor: '#000000',
+        scrimOpacity: 0.85,
+        scrimBlurRadius: 20,
+        // Background pill
+        pillEnabled: false,
+        pillPadding: 12,
+        pillRadius: 10,
+        pillColor: '#000000',
+        pillOpacity: 0.8,
+    };
+    badges.push(badge);
+    updateBadgesList();
+    selectBadge(badge.id);
+    renderCanvas();
+}
+
 function selectBadge(id) {
     selectedBadgeId = id;
     document.querySelectorAll('.element-list-item').forEach(item => {
@@ -1120,12 +1216,14 @@ function selectBadge(id) {
     const sbPanel    = document.getElementById('smart-badge-properties');
     const dbPanel    = document.getElementById('designed-badge-properties');
     const panPanel   = document.getElementById('panel-properties');
+    const tlPanel    = document.getElementById('title-logo-properties');
     const noMsg      = document.getElementById('no-selection-message');
     if (id === null) {
         panel.style.display   = 'none';
         sbPanel.style.display = 'none';
         dbPanel.style.display = 'none';
         panPanel.style.display = 'none';
+        if (tlPanel) tlPanel.style.display = 'none';
         noMsg.style.display   = 'block';
         renderCanvas();
         return;
@@ -1137,6 +1235,7 @@ function selectBadge(id) {
     sbPanel.style.display  = 'none';
     dbPanel.style.display  = 'none';
     panPanel.style.display = 'none';
+    if (tlPanel) tlPanel.style.display = 'none';
     if (badge.type === 'background_panel') {
         panPanel.style.display = 'block';
         populatePanelProperties(badge);
@@ -1146,6 +1245,8 @@ function selectBadge(id) {
     } else if (badge.type === 'designed_badge') {
         dbPanel.style.display = 'block';
         populateDesignedBadgeProperties(badge);
+    } else if (badge.type === 'title_logo') {
+        if (tlPanel) { tlPanel.style.display = 'block'; populateTitleLogoProperties(badge); }
     } else {
         panel.style.display = 'block';
         populateBadgeProperties(badge);
@@ -1162,6 +1263,8 @@ function deleteSelectedBadge() {
     document.getElementById('smart-badge-properties').style.display = 'none';
     document.getElementById('designed-badge-properties').style.display = 'none';
     document.getElementById('panel-properties').style.display = 'none';
+    const _tlp = document.getElementById('title-logo-properties');
+    if (_tlp) _tlp.style.display = 'none';
     document.getElementById('no-selection-message').style.display = 'block';
     updateBadgesList();
     renderCanvas();
@@ -1193,6 +1296,8 @@ function deleteBadgeById(id) {
     renderCanvas();
 }
 
+let _dragSrcIdx = null;
+
 function updateBadgesList() {
     const list = document.getElementById('badges-list');
     if (badges.length === 0) {
@@ -1204,21 +1309,60 @@ function updateBadgesList() {
         const item = document.createElement('li');
         item.className = 'element-list-item';
         item.dataset.badgeId = badge.id;
-        item.onclick = () => selectBadge(badge.id);
+        item.dataset.badgeIdx = idx;
+        item.draggable = true;
         if (badge.id === selectedBadgeId) item.classList.add('selected');
+
         const _listLabel = (badge.type === 'designed_badge')
             ? _dbPresetLabel(badge.badgePreset)
             : (badge.type === 'background_panel' ? 'Tray' : badge.label);
+
+        const pos = badge.type === 'title_logo'
+            ? `anchor: ${badge.anchorX ?? 'center'}, ${badge.anchorY ?? 85}%`
+            : `(${badge.x}, ${badge.y})`;
+
         item.innerHTML = `
-            <div>
+            <span class="drag-handle" title="Drag to reorder">&#8942;&#8942;</span>
+            <div style="flex:1;min-width:0;" onclick="selectBadge(${badge.id})">
                 <div class="badge-list-label">${idx + 1}. ${_listLabel}</div>
-                <div class="badge-list-type">${badge.type} — (${badge.x}, ${badge.y})</div>
+                <div class="badge-list-type">${badge.type} — ${pos}</div>
             </div>
             <div class="element-list-item-actions">
                 <button onclick="deleteBadgeById(${badge.id}); event.stopPropagation();" title="Delete">
                     <i class="fas fa-trash"></i>
                 </button>
             </div>`;
+
+        // ── Drag-to-reorder ──────────────────────────────────────────
+        item.addEventListener('dragstart', (e) => {
+            _dragSrcIdx = idx;
+            item.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        });
+        item.addEventListener('dragend', () => {
+            item.classList.remove('dragging');
+            list.querySelectorAll('.element-list-item').forEach(i => i.classList.remove('drag-over'));
+        });
+        item.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            list.querySelectorAll('.element-list-item').forEach(i => i.classList.remove('drag-over'));
+            item.classList.add('drag-over');
+        });
+        item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
+        item.addEventListener('drop', (e) => {
+            e.preventDefault();
+            item.classList.remove('drag-over');
+            const targetIdx = parseInt(item.dataset.badgeIdx);
+            if (_dragSrcIdx === null || _dragSrcIdx === targetIdx) return;
+            // Reorder badges array
+            const moved = badges.splice(_dragSrcIdx, 1)[0];
+            badges.splice(targetIdx, 0, moved);
+            _dragSrcIdx = null;
+            updateBadgesList();
+            renderCanvas();
+        });
+
         list.appendChild(item);
     });
 }
@@ -1348,6 +1492,183 @@ function populateSmartBadgeProperties(badge) {
     document.getElementById('sb-highlight-opacity').value = hlOpPct;
     document.getElementById('sb-highlight-opacity-val').textContent = hlOpPct + '%';
     document.querySelectorAll('.properties-panel input[type="range"]').forEach(_syncRangeVal);
+}
+
+function populateTitleLogoProperties(badge) {
+    const g = id => document.getElementById(id);
+    if (!g('tl-opacity')) return; // panel not in DOM yet
+
+    // Mode toggle
+    const mode = badge.positionMode || 'anchor';
+    const anchorBtn = g('tl-mode-anchor');
+    const pixelBtn  = g('tl-mode-pixel');
+    const anchorDiv = g('tl-anchor-controls');
+    const pixelDiv  = g('tl-pixel-controls');
+    if (anchorBtn && pixelBtn) {
+        const activeStyle   = 'background:#e07b39;color:#1a1a1a;font-weight:600;';
+        const inactiveStyle = 'background:#2a2a2a;color:#aaa;font-weight:normal;';
+        anchorBtn.style.cssText += mode === 'anchor' ? activeStyle : inactiveStyle;
+        pixelBtn.style.cssText  += mode === 'pixel'  ? activeStyle : inactiveStyle;
+    }
+    if (anchorDiv) anchorDiv.style.display = mode === 'anchor' ? '' : 'none';
+    if (pixelDiv)  pixelDiv.style.display  = mode === 'pixel'  ? '' : 'none';
+
+    // Anchor fields
+    if (g('tl-anchor-x')) g('tl-anchor-x').value = badge.anchorX ?? 'center';
+    const ay = badge.anchorY ?? 85;
+    if (g('tl-anchor-y')) { g('tl-anchor-y').value = ay; }
+    if (g('tl-anchor-y-val')) g('tl-anchor-y-val').textContent = ay + '%';
+    const mw = badge.maxWidthPct ?? 60;
+    const mh = badge.maxHeightPct ?? 12;
+    if (g('tl-max-width-pct'))  { g('tl-max-width-pct').value = mw; }
+    if (g('tl-max-w-val'))  g('tl-max-w-val').textContent  = mw + '%';
+    if (g('tl-max-height-pct')) { g('tl-max-height-pct').value = mh; }
+    if (g('tl-max-h-val')) g('tl-max-h-val').textContent = mh + '%';
+
+    // Pixel fields
+    if (g('tl-x')) g('tl-x').value      = badge.x      ?? 20;
+    if (g('tl-y')) g('tl-y').value      = badge.y      ?? 750;
+    if (g('tl-width'))  g('tl-width').value  = badge.width  ?? 300;
+    if (g('tl-height')) g('tl-height').value = badge.height ?? 80;
+
+    const opPct = Math.round((badge.opacity ?? 1.0) * 100);
+    g('tl-opacity').value = opPct;
+    if (g('tl-opacity-val')) g('tl-opacity-val').textContent = opPct + '%';
+
+    if (g('tl-preview-fallback')) g('tl-preview-fallback').checked = badge.previewFallback ?? false;
+
+    // Font size
+    const fs = badge.fontSize ?? 'auto';
+    const fsSelect = g('tl-font-size');
+    const fsCustomRow = g('tl-font-size-custom-row');
+    const fsCustom = g('tl-font-size-custom');
+    if (fsSelect) {
+        const knownVals = Array.from(fsSelect.options).map(o => o.value);
+        if (fs === 'auto' || knownVals.includes(String(fs))) {
+            fsSelect.value = String(fs);
+        } else {
+            fsSelect.value = 'custom';
+            if (fsCustom) fsCustom.value = fs;
+        }
+        if (fsCustomRow) fsCustomRow.style.display = fsSelect.value === 'custom' ? '' : 'none';
+    }
+
+    if (g('tl-font-weight')) g('tl-font-weight').value = badge.fontWeight ?? 'bold';
+    const fullColor = badge.color || '#FFFFFFDD';
+    if (g('tl-color'))     g('tl-color').value     = fullColor.slice(0, 7);
+    if (g('tl-color-hex')) g('tl-color-hex').value = fullColor;
+    if (g('tl-border-width')) g('tl-border-width').value = badge.borderWidth ?? 0;
+    const bc = badge.borderColor || '#000000';
+    if (g('tl-border-color'))     g('tl-border-color').value     = bc.slice(0, 7);
+    if (g('tl-border-color-hex')) g('tl-border-color-hex').value = bc;
+
+    // Scrim / blur
+    if (g('tl-scrim-enabled'))    g('tl-scrim-enabled').checked   = badge.scrimEnabled    ?? false;
+    const scrimMode = badge.scrimMode || 'gradient';
+    _tlScrimSyncModeButtons(scrimMode);
+    if (g('tl-scrim-direction'))  g('tl-scrim-direction').value   = badge.scrimDirection  ?? 'bottom';
+    const ss = badge.scrimStart ?? 55;
+    const se = badge.scrimEnd   ?? 100;
+    const so = Math.round((badge.scrimOpacity ?? 0.85) * 100);
+    const sbr = badge.scrimBlurRadius ?? 20;
+    if (g('tl-scrim-start'))       { g('tl-scrim-start').value = ss; }
+    if (g('tl-scrim-start-val'))   g('tl-scrim-start-val').textContent   = ss + '%';
+    if (g('tl-scrim-end'))         { g('tl-scrim-end').value   = se; }
+    if (g('tl-scrim-end-val'))     g('tl-scrim-end-val').textContent     = se + '%';
+    if (g('tl-scrim-opacity'))     { g('tl-scrim-opacity').value = so; }
+    if (g('tl-scrim-opacity-val')) g('tl-scrim-opacity-val').textContent = so + '%';
+    if (g('tl-scrim-blur-radius')) { g('tl-scrim-blur-radius').value = sbr; }
+    if (g('tl-scrim-blur-val'))    g('tl-scrim-blur-val').textContent    = sbr + 'px';
+    const sc2 = (badge.scrimColor || '#000000').slice(0, 7);
+    if (g('tl-scrim-color'))     g('tl-scrim-color').value     = sc2;
+    if (g('tl-scrim-color-hex')) g('tl-scrim-color-hex').value = sc2;
+
+    // Drop shadow
+    if (g('tl-shadow-enabled')) g('tl-shadow-enabled').checked = badge.shadowEnabled ?? false;
+    if (g('tl-shadow-blur'))    g('tl-shadow-blur').value       = badge.shadowBlur    ?? 8;
+    const shOpPct = Math.round((badge.shadowOpacity ?? 0.6) * 100);
+    if (g('tl-shadow-opacity'))     g('tl-shadow-opacity').value     = shOpPct;
+    if (g('tl-shadow-opacity-val')) g('tl-shadow-opacity-val').textContent = shOpPct + '%';
+    if (g('tl-shadow-offset-x')) g('tl-shadow-offset-x').value = badge.shadowOffsetX ?? 0;
+    if (g('tl-shadow-offset-y')) g('tl-shadow-offset-y').value = badge.shadowOffsetY ?? 3;
+    const sc = badge.shadowColor || '#000000';
+    if (g('tl-shadow-color'))     g('tl-shadow-color').value     = sc.slice(0, 7);
+    if (g('tl-shadow-color-hex')) g('tl-shadow-color-hex').value = sc;
+
+    // Background pill
+    if (g('tl-pill-enabled')) g('tl-pill-enabled').checked = badge.pillEnabled ?? false;
+    if (g('tl-pill-padding')) g('tl-pill-padding').value   = badge.pillPadding  ?? 12;
+    if (g('tl-pill-radius'))  g('tl-pill-radius').value    = badge.pillRadius   ?? 10;
+    const pc = (badge.pillColor || '#000000').slice(0, 7);
+    if (g('tl-pill-color'))     g('tl-pill-color').value     = pc;
+    if (g('tl-pill-color-hex')) g('tl-pill-color-hex').value = pc;
+    const pillOpPct = Math.round((badge.pillOpacity ?? 0.8) * 100);
+    if (g('tl-pill-opacity'))     g('tl-pill-opacity').value     = pillOpPct;
+    if (g('tl-pill-opacity-val')) g('tl-pill-opacity-val').textContent = pillOpPct + '%';
+}
+
+function updateSelectedTitleLogo() {
+    if (selectedBadgeId === null) return;
+    const badge = badges.find(b => b.id === selectedBadgeId);
+    if (!badge || badge.type !== 'title_logo') return;
+    const g = id => document.getElementById(id);
+    if (!g('tl-opacity')) return;
+
+    badge.positionMode = badge.positionMode || 'anchor';
+
+    // Anchor fields
+    badge.anchorX      = g('tl-anchor-x')?.value   || 'center';
+    badge.anchorY      = parseInt(g('tl-anchor-y')?.value)       ?? 85;
+    badge.maxWidthPct  = parseInt(g('tl-max-width-pct')?.value)  ?? 60;
+    badge.maxHeightPct = parseInt(g('tl-max-height-pct')?.value) ?? 12;
+
+    // Pixel fields
+    badge.x      = parseInt(g('tl-x')?.value)      || 20;
+    badge.y      = parseInt(g('tl-y')?.value)       || 750;
+    badge.width  = parseInt(g('tl-width')?.value)   || 0;
+    badge.height = parseInt(g('tl-height')?.value)  || 0;
+
+    badge.opacity        = (parseInt(g('tl-opacity').value) || 100) / 100;
+    badge.previewFallback = g('tl-preview-fallback')?.checked ?? false;
+
+    const fsSelect = g('tl-font-size');
+    if (fsSelect) {
+        if (fsSelect.value === 'auto') badge.fontSize = 'auto';
+        else if (fsSelect.value === 'custom') badge.fontSize = parseInt(g('tl-font-size-custom')?.value) || 32;
+        else badge.fontSize = parseInt(fsSelect.value) || 32;
+    }
+
+    badge.fontWeight  = g('tl-font-weight')?.value || 'bold';
+    badge.color       = g('tl-color-hex')?.value   || '#FFFFFFDD';
+    badge.borderWidth = parseInt(g('tl-border-width')?.value) || 0;
+    badge.borderColor = g('tl-border-color-hex')?.value || '#000000';
+
+    // Scrim / blur
+    badge.scrimEnabled    = g('tl-scrim-enabled')?.checked    ?? false;
+    badge.scrimMode       = badge.scrimMode || 'gradient'; // set by tlScrimSetMode
+    badge.scrimDirection  = g('tl-scrim-direction')?.value    || 'bottom';
+    badge.scrimStart      = parseInt(g('tl-scrim-start')?.value)        ?? 55;
+    badge.scrimEnd        = parseInt(g('tl-scrim-end')?.value)          ?? 100;
+    badge.scrimOpacity    = (parseInt(g('tl-scrim-opacity')?.value)     || 85) / 100;
+    badge.scrimBlurRadius = parseInt(g('tl-scrim-blur-radius')?.value)  || 20;
+    badge.scrimColor      = (g('tl-scrim-color-hex')?.value || '#000000').slice(0, 7);
+
+    // Drop shadow
+    badge.shadowEnabled  = g('tl-shadow-enabled')?.checked ?? false;
+    badge.shadowBlur     = parseInt(g('tl-shadow-blur')?.value)     || 8;
+    badge.shadowOpacity  = (parseInt(g('tl-shadow-opacity')?.value) || 60) / 100;
+    badge.shadowOffsetX  = parseInt(g('tl-shadow-offset-x')?.value) || 0;
+    badge.shadowOffsetY  = parseInt(g('tl-shadow-offset-y')?.value) || 3;
+    badge.shadowColor    = g('tl-shadow-color-hex')?.value || '#000000';
+
+    // Background pill
+    badge.pillEnabled = g('tl-pill-enabled')?.checked ?? false;
+    badge.pillPadding = parseInt(g('tl-pill-padding')?.value) || 12;
+    badge.pillRadius  = parseInt(g('tl-pill-radius')?.value)  || 10;
+    badge.pillColor   = (g('tl-pill-color-hex')?.value || '#000000').slice(0, 7);
+    badge.pillOpacity = (parseInt(g('tl-pill-opacity')?.value) || 80) / 100;
+
+    renderCanvas();
 }
 
 function updateSelectedSmartBadge() {
@@ -2063,6 +2384,56 @@ function setupPropertyBindings() {
         updateSelectedBadge();
     });
 
+    // Title Logo color pickers (color swatch ↔ hex text, same pattern as text-color)
+    const tlColorEl    = document.getElementById('tl-color');
+    const tlColorHexEl = document.getElementById('tl-color-hex');
+    const tlBorderEl    = document.getElementById('tl-border-color');
+    const tlBorderHexEl = document.getElementById('tl-border-color-hex');
+    if (tlColorEl && tlColorHexEl) {
+        tlColorEl.addEventListener('input', (e) => {
+            const alpha = tlColorHexEl.value.length === 9 ? tlColorHexEl.value.slice(7) : 'DD';
+            tlColorHexEl.value = e.target.value + alpha;
+            updateSelectedTitleLogo();
+        });
+        tlColorHexEl.addEventListener('input', (e) => {
+            if (e.target.value.length >= 7) tlColorEl.value = e.target.value.slice(0, 7);
+            updateSelectedTitleLogo();
+        });
+    }
+    if (tlBorderEl && tlBorderHexEl) {
+        tlBorderEl.addEventListener('input', (e) => {
+            tlBorderHexEl.value = e.target.value;
+            updateSelectedTitleLogo();
+        });
+        tlBorderHexEl.addEventListener('input', (e) => {
+            if (e.target.value.length >= 7) tlBorderEl.value = e.target.value.slice(0, 7);
+            updateSelectedTitleLogo();
+        });
+    }
+
+    // Scrim color picker
+    const tlScrimEl    = document.getElementById('tl-scrim-color');
+    const tlScrimHexEl = document.getElementById('tl-scrim-color-hex');
+    if (tlScrimEl && tlScrimHexEl) {
+        tlScrimEl.addEventListener('input', (e) => { tlScrimHexEl.value = e.target.value; updateSelectedTitleLogo(); });
+        tlScrimHexEl.addEventListener('input', (e) => { if (e.target.value.length >= 7) tlScrimEl.value = e.target.value.slice(0, 7); updateSelectedTitleLogo(); });
+    }
+
+    // Shadow color picker
+    const tlShadowEl    = document.getElementById('tl-shadow-color');
+    const tlShadowHexEl = document.getElementById('tl-shadow-color-hex');
+    if (tlShadowEl && tlShadowHexEl) {
+        tlShadowEl.addEventListener('input', (e) => { tlShadowHexEl.value = e.target.value; updateSelectedTitleLogo(); });
+        tlShadowHexEl.addEventListener('input', (e) => { if (e.target.value.length >= 7) tlShadowEl.value = e.target.value.slice(0, 7); updateSelectedTitleLogo(); });
+    }
+    // Pill color picker (RGB only — opacity via separate slider)
+    const tlPillEl    = document.getElementById('tl-pill-color');
+    const tlPillHexEl = document.getElementById('tl-pill-color-hex');
+    if (tlPillEl && tlPillHexEl) {
+        tlPillEl.addEventListener('input', (e) => { tlPillHexEl.value = e.target.value; updateSelectedTitleLogo(); });
+        tlPillHexEl.addEventListener('input', (e) => { if (e.target.value.length >= 7) tlPillEl.value = e.target.value.slice(0, 7); updateSelectedTitleLogo(); });
+    }
+
     // Smart badge property bindings
     ['sb-x', 'sb-y', 'sb-height', 'sb-opacity'].forEach(id => {
         const el = document.getElementById(id);
@@ -2241,6 +2612,10 @@ function renderBadgeOnCanvas(ctx, badge, isSelected) {
     }
     if (badge.type === 'smart_badge') {
         renderSmartBadgeOnCanvas(ctx, badge, isSelected);
+        return;
+    }
+    if (badge.type === 'title_logo') {
+        renderTitleLogoOnCanvas(ctx, badge, isSelected);
         return;
     }
     const { x, y, background: bg, icon, text } = badge;
@@ -3961,6 +4336,392 @@ function renderDesignedBadgeOnCanvas(ctx, b, isSelected) {
 
     b._previewW = W;
     b._previewH = H;
+}
+
+/**
+ * Resolve the bounding box for a title_logo badge on a canvas of given dimensions.
+ * Returns { x, y, maxW, maxH } in canvas pixels.
+ * In anchor mode x/y is the top-left of where the logo will be placed after alignment.
+ * In pixel mode returns the stored pixel values directly.
+ */
+function _tlResolveBounds(badge, canvasW, canvasH) {
+    const mode = badge.positionMode || 'anchor';
+    if (mode === 'anchor') {
+        const maxW   = Math.round(canvasW * (badge.maxWidthPct  ?? 60) / 100);
+        const maxH   = Math.round(canvasH * (badge.maxHeightPct ?? 12) / 100);
+        const cy     = Math.round(canvasH * (badge.anchorY ?? 85) / 100);
+        // x is resolved after we know actual logo width; use centre of canvas for now
+        return { anchorMode: true, anchorX: badge.anchorX || 'center', anchorY: cy, maxW, maxH, canvasW };
+    }
+    return {
+        anchorMode: false,
+        x: badge.x ?? 20, y: badge.y ?? 750,
+        maxW: badge.width  || 300,
+        maxH: badge.height || 80,
+    };
+}
+
+function renderTitleLogoOnCanvas(ctx, badge, isSelected) {
+    const CANVAS_W = 600, CANVAS_H = 900;
+    const opacity = badge.opacity ?? 1.0;
+    const bounds  = _tlResolveBounds(badge, CANVAS_W, CANVAS_H);
+
+    // For hit-detection we need _autoW/_autoH — set after we know actual rendered size
+    const w = bounds.anchorMode ? bounds.maxW : bounds.maxW;
+    const h = bounds.anchorMode ? bounds.maxH : bounds.maxH;
+    // Resolve x/y for placeholder/fallback drawing
+    let px = bounds.anchorMode ? Math.round((CANVAS_W - w) / 2) : (bounds.x ?? 20);
+    let py = bounds.anchorMode ? Math.max(0, bounds.anchorY - h / 2) : (bounds.y ?? 750);
+
+    badge._autoW = w;
+    badge._autoH = h;
+    // Keep x/y synced for dragging in pixel mode
+    if (!bounds.anchorMode) { badge._autoX = bounds.x; badge._autoY = bounds.y; }
+    else { badge._autoX = px; badge._autoY = py; }
+
+    // Selection outline around the resolved placeholder area
+    if (isSelected) {
+        ctx.save();
+        ctx.strokeStyle = '#4da6ff';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 4]);
+        ctx.strokeRect(px - 4, py - 4, w + 8, h + 8);
+        ctx.setLineDash([]);
+        ctx.restore();
+    }
+
+    // Draw the scrim/blur over the canvas (before logo/text)
+    if (badge.scrimEnabled) {
+        const dir       = badge.scrimDirection  || 'bottom';
+        const startPct  = (badge.scrimStart     ?? 55)   / 100;
+        const endPct    = (badge.scrimEnd       ?? 100)  / 100;
+        const col       = badge.scrimColor      || '#000000';
+        const maxOp     = badge.scrimOpacity    ?? 0.85;
+        const scrimMode = badge.scrimMode       || 'gradient';
+        const blurR     = badge.scrimBlurRadius ?? 20;
+
+        if (scrimMode === 'gradient') {
+            // Linear gradient fade
+            let x0, y0, x1, y1;
+            if (dir === 'bottom') {
+                x0 = 0; y0 = CANVAS_H * (1 - endPct);   x1 = 0; y1 = CANVAS_H * (1 - startPct);
+            } else if (dir === 'top') {
+                x0 = 0; y0 = CANVAS_H * endPct;          x1 = 0; y1 = CANVAS_H * startPct;
+            } else if (dir === 'right') {
+                x0 = CANVAS_W * (1 - endPct); y0 = 0;    x1 = CANVAS_W * (1 - startPct); y1 = 0;
+            } else {
+                x0 = CANVAS_W * endPct; y0 = 0;           x1 = CANVAS_W * startPct; y1 = 0;
+            }
+            const grad = ctx.createLinearGradient(x0, y0, x1, y1);
+            grad.addColorStop(0, `${col}00`);
+            grad.addColorStop(1, _hexToRgba(col, maxOp));
+            ctx.save();
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+            ctx.restore();
+
+        } else {
+            // Blur mode: blur the region from endPct edge inward, feather the transition
+            // Determine the region to blur
+            let blurX = 0, blurY = 0, blurW = CANVAS_W, blurH = CANVAS_H;
+            let featherStart, featherEnd; // in canvas pixels, sharp→blurred
+
+            if (dir === 'bottom') {
+                blurY = Math.round(CANVAS_H * (1 - endPct));
+                blurH = CANVAS_H - blurY;
+                featherStart = Math.round(CANVAS_H * (1 - endPct));
+                featherEnd   = Math.round(CANVAS_H * (1 - startPct));
+            } else if (dir === 'top') {
+                blurY = 0;
+                blurH = Math.round(CANVAS_H * endPct);
+                featherStart = blurH;
+                featherEnd   = Math.round(CANVAS_H * startPct);
+            } else if (dir === 'right') {
+                blurX = Math.round(CANVAS_W * (1 - endPct));
+                blurW = CANVAS_W - blurX;
+                featherStart = blurX;
+                featherEnd   = Math.round(CANVAS_W * (1 - startPct));
+            } else {
+                blurX = 0;
+                blurW = Math.round(CANVAS_W * endPct);
+                featherStart = blurW;
+                featherEnd   = Math.round(CANVAS_W * startPct);
+            }
+
+            if (blurW > 0 && blurH > 0 && posterImage) {
+                // Draw blurred region onto an offscreen canvas
+                const offscreen = document.createElement('canvas');
+                offscreen.width  = CANVAS_W;
+                offscreen.height = CANVAS_H;
+                const offCtx = offscreen.getContext('2d');
+
+                // Draw the full poster blurred
+                offCtx.filter = `blur(${blurR}px)`;
+                const iw = posterImage.naturalWidth  || posterImage.width;
+                const ih = posterImage.naturalHeight || posterImage.height;
+                const scale = Math.min(CANVAS_W / iw, CANVAS_H / ih);
+                const dw = iw * scale, dh = ih * scale;
+                const dx = (CANVAS_W - dw) / 2, dy = (CANVAS_H - dh) / 2;
+                offCtx.drawImage(posterImage, dx, dy, dw, dh);
+                offCtx.filter = 'none';
+
+                // Compose: sharp full canvas already drawn, paste blurred region with feather mask
+                ctx.save();
+                const featherLen = Math.max(1, featherEnd - featherStart);
+
+                // Create feather gradient mask
+                let maskGrad;
+                if (dir === 'bottom') {
+                    maskGrad = ctx.createLinearGradient(0, featherStart, 0, featherEnd);
+                } else if (dir === 'top') {
+                    maskGrad = ctx.createLinearGradient(0, featherEnd, 0, featherStart);
+                } else if (dir === 'right') {
+                    maskGrad = ctx.createLinearGradient(featherStart, 0, featherEnd, 0);
+                } else {
+                    maskGrad = ctx.createLinearGradient(featherEnd, 0, featherStart, 0);
+                }
+                maskGrad.addColorStop(0, 'rgba(0,0,0,0)');
+                maskGrad.addColorStop(1, 'rgba(0,0,0,1)');
+
+                // Draw feather mask rectangle, then use source-in to clip blurred image
+                const tempC = document.createElement('canvas');
+                tempC.width = CANVAS_W; tempC.height = CANVAS_H;
+                const tempCtx = tempC.getContext('2d');
+                // Fill mask
+                tempCtx.fillStyle = maskGrad;
+                tempCtx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+                // Composite blurred image through mask
+                tempCtx.globalCompositeOperation = 'source-in';
+                tempCtx.drawImage(offscreen, 0, 0);
+
+                ctx.drawImage(tempC, 0, 0);
+                ctx.restore();
+            }
+        }
+    }
+
+    // Helper: draw drop shadow behind a bounding rect
+    function _drawShadow(fx, fy, dw, dh) {
+        if (!badge.shadowEnabled) return;
+        const blur    = badge.shadowBlur    ?? 8;
+        const shadowOp = badge.shadowOpacity ?? 0.6;
+        const ox      = badge.shadowOffsetX ?? 0;
+        const oy      = badge.shadowOffsetY ?? 3;
+        const col     = badge.shadowColor   || '#000000';
+        ctx.save();
+        ctx.shadowColor   = col;
+        ctx.shadowBlur    = blur;
+        ctx.shadowOffsetX = ox;
+        ctx.shadowOffsetY = oy;
+        ctx.globalAlpha   = shadowOp;
+        ctx.fillStyle = col;
+        ctx.fillRect(fx, fy, dw, dh);
+        ctx.restore();
+    }
+
+    // Helper: draw background pill behind a bounding rect
+    function _drawPill(fx, fy, dw, dh) {
+        if (!badge.pillEnabled) return;
+        const pad    = badge.pillPadding ?? 12;
+        const radius = badge.pillRadius  ?? 10;
+        const color  = badge.pillColor   || '#000000CC';
+        const rx = fx - pad, ry = fy - pad;
+        const rw = dw + pad * 2, rh = dh + pad * 2;
+        ctx.save();
+        ctx.fillStyle = hexToRgba(color);
+        drawRoundedRect(ctx, rx, ry, rw, rh, radius);
+        ctx.restore();
+    }
+
+    // Helper: draw logo image respecting anchor/pixel mode
+    function _drawLogoImg(img) {
+        const aspect = img.naturalWidth / img.naturalHeight;
+        // Scale to fit within maxW × maxH
+        const s  = Math.min(bounds.maxW / img.naturalWidth, bounds.maxH / img.naturalHeight);
+        const dw = Math.max(1, Math.round(img.naturalWidth  * s));
+        const dh = Math.max(1, Math.round(img.naturalHeight * s));
+
+        // Resolve final x using anchor
+        let fx;
+        if (bounds.anchorMode) {
+            const ax = bounds.anchorX;
+            if      (ax === 'left')   fx = 0;
+            else if (ax === 'right')  fx = bounds.canvasW - dw;
+            else                      fx = Math.round((bounds.canvasW - dw) / 2); // center
+            py = Math.max(0, Math.min(bounds.anchorY - Math.round(dh / 2), CANVAS_H - dh));
+        } else {
+            fx = bounds.x;
+            py = bounds.y;
+        }
+        fx = Math.max(0, Math.min(fx, CANVAS_W - dw));
+
+        // Pill first (behind everything), then shadow, then image
+        _drawPill(fx, py, dw, dh);
+        _drawShadow(fx, py, dw, dh);
+
+        ctx.save();
+        ctx.globalAlpha = opacity;
+        ctx.drawImage(img, fx, py, dw, dh);
+        ctx.restore();
+
+        badge._autoW = dw; badge._autoH = dh;
+        badge._autoX = fx; badge._autoY = py;
+    }
+
+    // Current pool entry for tmdb_id lookup
+    const poolEntry = (posterPoolIndex >= 0 && posterPool[posterPoolIndex]) || null;
+    const tmdbId = poolEntry?.tmdb_id || null;
+    const mType  = poolEntry?.type    || 'movie';
+
+    if (tmdbId && typeof TEXTLESS_POSTERS_ENABLED !== 'undefined' && TEXTLESS_POSTERS_ENABLED) {
+        const cacheKey = `${tmdbId}_${mType}`;
+        if (_clearlogoCache[cacheKey] === undefined) {
+            _clearlogoCache[cacheKey] = 'loading';
+            fetch(`/api/overlays/preview/clearlogo?tmdb_id=${tmdbId}&type=${mType}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.logo_url) {
+                        const img = new Image();
+                        img.onload  = () => { _clearlogoCache[cacheKey] = img; renderCanvas(); };
+                        img.onerror = () => { _clearlogoCache[cacheKey] = null; renderCanvas(); };
+                        img.crossOrigin = 'anonymous';
+                        img.src = data.logo_url;
+                    } else {
+                        _clearlogoCache[cacheKey] = null;
+                        renderCanvas();
+                    }
+                })
+                .catch(() => { _clearlogoCache[cacheKey] = null; renderCanvas(); });
+            _drawTitleLogoPlaceholder(ctx, px, py, w, h, 'Loading logo…');
+            return;
+        }
+
+        const cached = _clearlogoCache[cacheKey];
+
+        if (cached === 'loading') {
+            _drawTitleLogoPlaceholder(ctx, px, py, w, h, 'Loading logo…');
+            return;
+        }
+
+        if (badge.previewFallback) {
+            _drawTitleLogoTextFallback(ctx, badge, px, py, w, h, opacity, bounds);
+            return;
+        }
+
+        if (cached instanceof HTMLImageElement) {
+            _drawLogoImg(cached);
+            return;
+        }
+
+        // null → no clearlogo, show text fallback
+        _drawTitleLogoTextFallback(ctx, badge, px, py, w, h, opacity, bounds);
+        return;
+    }
+
+    // Non-textless mode or no pool entry
+    if (badge.previewFallback) {
+        _drawTitleLogoTextFallback(ctx, badge, px, py, w, h, opacity, bounds);
+    } else {
+        _drawTitleLogoPlaceholder(ctx, px, py, w, h, 'Title Logo');
+    }
+}
+
+function _drawTitleLogoPlaceholder(ctx, x, y, w, h, label) {
+    ctx.save();
+    ctx.strokeStyle = '#2ecc71';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(x, y, w, h);
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(46,204,113,0.08)';
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = '#2ecc71';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, x + w / 2, y + h / 2);
+    ctx.restore();
+}
+
+function _drawTitleLogoTextFallback(ctx, badge, x, y, w, h, opacity, bounds) {
+    const CANVAS_W = 600, CANVAS_H = 900;
+    const fontWeight = badge.fontWeight ?? 'bold';
+    const color      = badge.color      || '#FFFFFFDD';
+    const borderW    = badge.borderWidth ?? 0;
+    const borderCol  = badge.borderColor || '#000000';
+
+    const poolEntry = (posterPoolIndex >= 0 && posterPool[posterPoolIndex]) || null;
+    const title = poolEntry?.title || 'Title Preview';
+
+    // Resolve font size — 'auto' fits the title into the container width
+    const maxW = w - 16;
+    const maxH = h -  8;
+    let fontSize;
+    const rawFs = badge.fontSize;
+    if (rawFs === 'auto' || rawFs == null) {
+        let lo = 8, hi = Math.min(maxH, 200), best = lo;
+        while (lo <= hi) {
+            const mid = Math.floor((lo + hi) / 2);
+            ctx.font = `${fontWeight} ${mid}px sans-serif`;
+            if (ctx.measureText(title).width <= maxW) { best = mid; lo = mid + 1; }
+            else { hi = mid - 1; }
+        }
+        fontSize = best;
+    } else {
+        fontSize = typeof rawFs === 'number' ? rawFs : (parseInt(rawFs) || 32);
+    }
+
+    ctx.save();
+    ctx.font = `${fontWeight} ${fontSize}px sans-serif`;
+    const tw = ctx.measureText(title).width;
+    const th = fontSize; // approx height
+
+    // Resolve horizontal position using anchor
+    let cx;
+    if (bounds?.anchorMode) {
+        const ax = bounds.anchorX || 'center';
+        if      (ax === 'left')  cx = Math.round(tw / 2) + 8;
+        else if (ax === 'right') cx = CANVAS_W - Math.round(tw / 2) - 8;
+        else                     cx = CANVAS_W / 2;
+        y = Math.max(0, Math.min(bounds.anchorY, CANVAS_H - fontSize));
+    } else {
+        cx = x + w / 2;
+    }
+
+    // Draw pill and shadow behind text (using approximate bounding box)
+    const textLeft = cx - tw / 2;
+    if (badge.pillEnabled) {
+        const pad = badge.pillPadding ?? 12, rad = badge.pillRadius ?? 10;
+        ctx.save();
+        ctx.fillStyle = hexToRgba(badge.pillColor || '#000000CC');
+        drawRoundedRect(ctx, textLeft - pad, y - th / 2 - pad, tw + pad * 2, th + pad * 2, rad);
+        ctx.restore();
+    }
+    if (badge.shadowEnabled) {
+        ctx.save();
+        ctx.shadowColor   = badge.shadowColor   || '#000000';
+        ctx.shadowBlur    = badge.shadowBlur    ?? 8;
+        ctx.shadowOffsetX = badge.shadowOffsetX ?? 0;
+        ctx.shadowOffsetY = badge.shadowOffsetY ?? 3;
+        ctx.globalAlpha   = badge.shadowOpacity ?? 0.6;
+        ctx.fillStyle = badge.shadowColor || '#000000';
+        ctx.fillRect(textLeft, y - th / 2, tw, th);
+        ctx.restore();
+    }
+
+    ctx.globalAlpha = opacity;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    if (borderW > 0) {
+        ctx.strokeStyle = borderCol;
+        ctx.lineWidth   = borderW * 2;
+        ctx.lineJoin    = 'round';
+        ctx.strokeText(title, cx, y);
+    }
+    ctx.fillStyle = color;
+    ctx.fillText(title, cx, y);
+    ctx.restore();
 }
 
 function renderSmartBadgeOnCanvas(ctx, badge, isSelected) {

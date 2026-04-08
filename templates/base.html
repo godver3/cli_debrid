@@ -1316,6 +1316,23 @@
                 </div>
 
                 <div class="overlay-setting-group">
+                    <label for="overlaySettingsTextlessPoster">
+                        <input type="checkbox" id="overlaySettingsTextlessPoster" class="overlay-setting-checkbox">
+                        Enable Textless / Clean Posters
+                    </label>
+                    <p class="overlay-setting-description">
+                        When enabled, cli_debrid will fetch a language-neutral (textless) poster from TMDB
+                        as the base image — these posters have no baked-in title text so the title logo
+                        badge can render it cleanly at your chosen position.
+                        Use the <strong>Title Logo</strong> badge in the layout editor to add the show or movie
+                        title as a transparent clearlogo PNG (with text fallback if no clearlogo exists).
+                        The Title Logo badge is only available in the layout editor when this setting is on.
+                        <br><strong>Note:</strong> Not all titles have textless posters on TMDB.
+                        If none is found, the standard English poster is used as fallback.
+                    </p>
+                </div>
+
+                <div class="overlay-setting-group">
                     <label for="overlaySettingsMediaDataPath">Media Server Data Path</label>
                     <input type="text" id="overlaySettingsMediaDataPath" class="overlay-setting-input" placeholder="/config/Library/Application Support/Plex Media Server">
                     <p class="overlay-setting-description">Path to the Plex Media Server data directory. Required for the poster cleanup task to delete old uploaded overlay versions directly from the filesystem.</p>
@@ -1365,6 +1382,16 @@
     </div>
 
     {% block scripts %}{% endblock %}
+    <script>
+    // Suppress unhandled promise rejections from browser extensions (e.g. Bitwarden autofill)
+    // that bubble into the page context — these are not app errors.
+    window.addEventListener('unhandledrejection', function(e) {
+        var msg = e.reason && (e.reason.message || String(e.reason));
+        if (msg && msg.includes('message channel closed before a response was received')) {
+            e.preventDefault();
+        }
+    });
+    </script>
 
     {% if ai_butler_enabled and not is_onboarding %}
     {% if not is_user_system_enabled() or current_user.is_authenticated %}

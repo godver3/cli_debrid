@@ -380,6 +380,43 @@ body[data-theme="tangerine"] .element-list-item-actions button {
     font-size: 11px;
 }
 
+body[data-theme="tangerine"] .badge-list-label {
+    color: #e0dbd5;
+    font-weight: 500;
+}
+
+body[data-theme="tangerine"] .badge-list-type {
+    color: #888;
+}
+
+/* Drag-to-reorder handle */
+body[data-theme="tangerine"] .element-list-item .drag-handle {
+    cursor: grab;
+    color: #ccc;
+    padding: 0 6px 0 0;
+    font-size: 11px;
+    letter-spacing: -2px;
+    flex-shrink: 0;
+    user-select: none;
+    opacity: 0.9;
+    line-height: 1;
+    font-family: monospace;
+}
+body[data-theme="tangerine"] .element-list-item .drag-handle:hover {
+    opacity: 1;
+    color: #ff6b35;
+}
+body[data-theme="tangerine"] .element-list-item .drag-handle:active {
+    cursor: grabbing;
+}
+body[data-theme="tangerine"] .element-list-item.drag-over {
+    border-color: #ff6b35 !important;
+    background: rgba(255,107,53,0.18) !important;
+}
+body[data-theme="tangerine"] .element-list-item.dragging {
+    opacity: 0.35;
+}
+
 /* Condition Builder */
 body[data-theme="tangerine"] .condition-builder {
     background: rgba(0, 0, 0, 0.3);
