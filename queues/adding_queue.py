@@ -477,6 +477,7 @@ class AddingQueue:
                     continue
 
                 matched_file_basename = match_result[0] # Now contains basename
+                debrid_folder_name = torrent_info.get('debrid_folder_name') or torrent_title
                 logging.info(f"Best matching file (basename) for {item_identifier}: {matched_file_basename}")
 
 
@@ -488,7 +489,8 @@ class AddingQueue:
                     title=torrent_title, # This title has now been effectively filtered
                     link=magnet,
                     filled_by_file=matched_file_basename, 
-                    torrent_id=torrent_info.get('id')
+                    torrent_id=torrent_info.get('id'),
+                    debrid_folder_name=debrid_folder_name,
                 )
                 processed_this_item = True # Mark primary item as processed for delay logic
 
@@ -533,7 +535,8 @@ class AddingQueue:
                                 title=torrent_title,
                                 link=magnet,
                                 filled_by_file=related_file_basename, # Pass the basename
-                                torrent_id=torrent_info.get('id')
+                                torrent_id=torrent_info.get('id'),
+                                debrid_folder_name=debrid_folder_name,
                             )
                             # move_to_checking handles removal from original queue (Scraping/Wanted)
 

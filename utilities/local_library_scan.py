@@ -1093,13 +1093,25 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
             filled_by_title = item.get('filled_by_title', '')
             original_torrent_title = item.get('original_scraped_torrent_title', '')
             real_debrid_original_title = item.get('real_debrid_original_title', '')
+            debrid_folder_name = item.get('debrid_folder_name', '')
             current_filename = item['filled_by_file'] # The actual file we are looking for
 
             found_file = False
             source_file = None # Initialize source_file
             source_folder = None # Track the folder where the file was found
 
-            # --- Check Order: Original Torrent Title -> Filled By Title ---
+            # --- Check Order: Exact provider folder -> Original Torrent Title -> Filled By Title ---
+
+            # 0. Check exact provider folder name persisted from the debrid API.
+            if debrid_folder_name:
+                potential_folder = os.path.join(original_path, debrid_folder_name)
+                potential_path = os.path.join(potential_folder, current_filename)
+                logging.debug(f"Attempt 0: Checking path using debrid_folder_name: {potential_path}")
+                if os.path.exists(potential_path):
+                    source_file = potential_path
+                    source_folder = potential_folder
+                    found_file = True
+                    logging.info(f"Found file using debrid_folder_name: {source_file}")
 
             # 1. Check original_scraped_torrent_title (raw)
             if original_torrent_title:
@@ -2214,6 +2226,7 @@ def _find_source_file_in_base(item: Dict[str, Any], base_search_path: str, filen
     logging.debug(f"[_find_source_file_in_base] Searching for '{filename_only}' under '{base_search_path}' for item ID {item.get('id')}")
 
     possible_folder_names = [
+        item.get('debrid_folder_name', ''),
         item.get('original_scraped_torrent_title', ''),
         item.get('real_debrid_original_title', ''),
         item.get('filled_by_title', ''),

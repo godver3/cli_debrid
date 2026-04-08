@@ -2423,6 +2423,8 @@ function _bkFmtSize(bytes) {
     return (bytes/1048576).toFixed(1) + ' MB';
 }
 
+const providerLabel = (pfx) => ({ rd: 'Real-Debrid', ad: 'AllDebrid', tb: 'Torbox' }[pfx] || pfx.toUpperCase());
+
 function _bkRenderActivity(status) {
     const el = document.getElementById('bk-activity');
     if (!el) return;
@@ -2431,12 +2433,11 @@ function _bkRenderActivity(status) {
     const lastCleanup = status.last_cleanup ? _bkFmtTs(status.last_cleanup) : 'Never';
     const providers   = status.providers || {};
     const cs          = (status.cleanup_stats || {}).last || null;
-
     // ── Backup section ──
     let backupSection = '';
     if (Object.keys(providers).length) {
         for (const [pfx, slots] of Object.entries(providers)) {
-            const label = pfx === 'rd' ? 'Real-Debrid' : 'AllDebrid';
+            const label = providerLabel(pfx);
             backupSection += `<div class="dm-bk-activity-provider">${label} Backup</div>`;
             for (const [slot, info] of Object.entries(slots)) {
                 const ts    = info.timestamp ? _bkFmtTs(info.timestamp) : '—';
@@ -2459,7 +2460,7 @@ function _bkRenderActivity(status) {
     // ── Cleanup section ──
     let cleanupSection = `<div class="dm-backup-activity-divider"></div>`;
     if (cs) {
-        const pfxLabel = cs.provider === 'rd' ? 'Real-Debrid' : 'AllDebrid';
+        const pfxLabel = providerLabel(cs.provider);
         const total    = cs.total ?? 0;
         const errs     = cs.deleted_errors  ?? 0;
         const dupes    = cs.deleted_dupes   ?? 0;
@@ -2505,7 +2506,7 @@ function _bkRenderSlots(status) {
 
     let html = '';
     for (const [pfx, slots] of Object.entries(providers)) {
-        const label = pfx === 'rd' ? 'Real-Debrid' : 'AllDebrid';
+        const label = providerLabel(pfx);
         html += `<div class="dm-bk-provider-label">${label}</div>`;
         for (const [slot, info] of Object.entries(slots)) {
             if (!info.exists) continue;
@@ -3553,7 +3554,7 @@ function _rcRenderUntracked(items) {
         <td style="text-align:center">${plexBadge}</td>
         <td class="dm-col-actions">
             <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-del-btn"
-                data-tid="${escHtml(item.filled_by_torrent_id)}" title="Delete from RD">Delete from RD</button>
+                data-tid="${escHtml(item.filled_by_torrent_id)}" title="Delete from debrid provider">Delete from Debrid</button>
         </td>
     </tr>`;
     }).join('');
