@@ -1,6 +1,6 @@
 """
 Debrid Backup Utility
-Handles backup and restore of Real-Debrid and AllDebrid torrent libraries.
+Handles backup and restore of Real-Debrid, AllDebrid, and Torbox torrent libraries.
 
 Backup strategy (rd.py-inspired):
   - Up to 3 rotating slots: 1d, 3d, 7d (user-configurable retention intervals)
@@ -143,6 +143,30 @@ def fetch_ad_magnets(api_key: str) -> List[dict]:
         return []
 
 
+def fetch_tb_torrents(api_key: str) -> List[dict]:
+    """Fetch all Torbox torrents."""
+    import requests
+    try:
+        r = requests.get(
+            'https://api.torbox.app/v1/api/torrents/mylist',
+            headers={'Authorization': f'Bearer {api_key}'},
+            params={'bypass_cache': 'true'},
+            timeout=30,
+        )
+        if r.status_code != 200:
+            logging.error(f'{_LOG_TAG} Torbox /torrents/mylist returned {r.status_code}')
+            return []
+        data = r.json().get('data', [])
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            return [data]
+        return []
+    except Exception as e:
+        logging.error(f'{_LOG_TAG} Torbox fetch error: {e}')
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Core backup logic
 # ---------------------------------------------------------------------------
@@ -186,6 +210,9 @@ def run_backup(force: bool = False) -> dict:
     elif 'AllDebrid' in provider_name or pname == 'AllDebrid':
         prefix = 'ad'
         torrents = fetch_ad_magnets(provider.api_key)
+    elif 'Torbox' in provider_name or pname == 'Torbox':
+        prefix = 'tb'
+        torrents = fetch_tb_torrents(provider.api_key)
     else:
         return {'success': False, 'message': f'Unsupported provider: {pname}'}
 
@@ -280,7 +307,7 @@ def get_backup_status() -> dict:
         'providers':    {},
     }
 
-    for prefix in ('rd', 'ad'):
+    for prefix in ('rd', 'ad', 'tb'):
         slots = {}
         for s in ('1d', '3d', '7d'):
             info = slot_info(prefix, s)
@@ -447,6 +474,53 @@ def restore_from_file(filename: str, dry_run: bool = False) -> dict:
             'failures': failed,
         }
 
+    elif 'Torbox' in provider_name or pname == 'Torbox':
+        current = fetch_tb_torrents(provider.api_key)
+        current_hashes = {t.get('hash', '').lower() for t in current if t.get('hash')}
+
+        import requests
+        added = []
+        skipped = []
+        failed = []
+
+        headers = {'Authorization': f'Bearer {provider.api_key}'}
+        for item in backup:
+            item_hash = (item.get('hash') or '').lower()
+            if not item_hash:
+                failed.append({'hash': '?', 'reason': 'no hash'})
+                continue
+            if item_hash in current_hashes:
+                skipped.append(item_hash)
+                continue
+            if dry_run:
+                added.append(item_hash)
+                continue
+            try:
+                magnet = f'magnet:?xt=urn:btih:{item_hash}'
+                r = requests.post(
+                    'https://api.torbox.app/v1/api/torrents/createtorrent',
+                    headers=headers,
+                    data={'magnet': magnet},
+                    timeout=30,
+                )
+                resp = r.json()
+                if not resp.get('success'):
+                    failed.append({'hash': item_hash, 'reason': resp.get('detail') or resp.get('error') or 'unknown error'})
+                    continue
+                added.append(item_hash)
+                time.sleep(0.2)
+            except Exception as e:
+                failed.append({'hash': item_hash, 'reason': str(e)})
+
+        return {
+            'success': True,
+            'total':   len(backup),
+            'added':   len(added),
+            'skipped': len(skipped),
+            'failed':  len(failed),
+            'failures': failed,
+        }
+
     else:
         return {'success': False, 'message': f'Restore not implemented for {provider_name}'}
 
@@ -530,6 +604,8 @@ def run_cleanup(force: bool = False) -> dict:
         return _cleanup_rd(provider.api_key, settings)
     elif 'AllDebrid' in provider_name:
         return _cleanup_ad(provider.api_key, settings)
+    elif 'Torbox' in provider_name:
+        return _cleanup_tb(provider.api_key, settings)
     else:
         return {'success': False, 'message': f'Unsupported provider: {provider_name}'}
 
@@ -743,6 +819,113 @@ def _cleanup_ad(api_key: str, settings: dict) -> dict:
         'deleted_stalled':  len(deleted_stalled),
         'total_deleted':    total,
         'message':          f'Cleanup complete: {total} magnets removed',
+    }
+
+
+def _cleanup_tb(api_key: str, settings: dict) -> dict:
+    """Torbox cleanup implementation."""
+    import requests
+
+    delete_errors = settings.get('cleanup_delete_errors', True)
+    delete_dupes = settings.get('cleanup_delete_dupes', True)
+    delete_stalled = settings.get('cleanup_delete_stalled', False)
+    stalled_days = settings.get('cleanup_stalled_days', 3)
+    stalled_cutoff = stalled_days * 86400
+
+    torrents = fetch_tb_torrents(api_key)
+    now = time.time()
+    headers = {'Authorization': f'Bearer {api_key}'}
+
+    def _tb_delete(torrent_id, reason: str):
+        try:
+            r = requests.post(
+                'https://api.torbox.app/v1/api/torrents/controltorrent',
+                headers=headers,
+                json={'operation': 'delete', 'torrent_id': int(torrent_id)},
+                timeout=15,
+            )
+            logging.info(f'{_LOG_TAG} Deleted Torbox torrent {torrent_id} ({reason}) — {r.status_code}')
+            time.sleep(0.1)
+            return r.status_code == 200
+        except Exception as e:
+            logging.warning(f'{_LOG_TAG} Failed to delete Torbox torrent {torrent_id}: {e}')
+            return False
+
+    deleted_errors = []
+    deleted_dupes = []
+    deleted_stalled = []
+
+    surviving = []
+    for torrent in torrents:
+        status = (torrent.get('download_state') or '').lower()
+        if delete_errors and status in {'error', 'failed'}:
+            if _tb_delete(torrent.get('id'), 'error status'):
+                deleted_errors.append(torrent.get('id'))
+            continue
+        surviving.append(torrent)
+
+    if delete_stalled:
+        still_surviving = []
+        for torrent in surviving:
+            created_at = torrent.get('created_at')
+            created_ts = 0
+            if created_at:
+                try:
+                    created_ts = time.mktime(time.strptime(created_at, '%Y-%m-%dT%H:%M:%SZ'))
+                except Exception:
+                    created_ts = 0
+            progress = torrent.get('progress', 0) or 0
+            if progress <= 0 and created_ts and (now - created_ts) > stalled_cutoff:
+                if _tb_delete(torrent.get('id'), f'stalled {stalled_days}d'):
+                    deleted_stalled.append(torrent.get('id'))
+                continue
+            still_surviving.append(torrent)
+        surviving = still_surviving
+
+    if delete_dupes:
+        by_hash: dict = {}
+        for torrent in surviving:
+            h = (torrent.get('hash') or '').lower()
+            if not h:
+                continue
+            by_hash.setdefault(h, []).append(torrent)
+        for _, copies in by_hash.items():
+            if len(copies) < 2:
+                continue
+            copies.sort(
+                key=lambda c: (
+                    1 if c.get('cached') or (c.get('download_state') == 'cached') else 0,
+                    c.get('progress', 0) or 0,
+                    int(c.get('id') or 0),
+                ),
+                reverse=True,
+            )
+            for torrent in copies[1:]:
+                if _tb_delete(torrent.get('id'), 'duplicate'):
+                    deleted_dupes.append(torrent.get('id'))
+
+    total = len(deleted_errors) + len(deleted_dupes) + len(deleted_stalled)
+
+    log = _read_log()
+    log['last_cleanup'] = now
+    log.setdefault('cleanup_stats', {})['last'] = {
+        'timestamp': now,
+        'deleted_errors': len(deleted_errors),
+        'deleted_dupes': len(deleted_dupes),
+        'deleted_stalled': len(deleted_stalled),
+        'total': total,
+        'provider': 'tb',
+    }
+    _write_log(log)
+
+    return {
+        'success': True,
+        'provider': 'tb',
+        'deleted_errors': len(deleted_errors),
+        'deleted_dupes': len(deleted_dupes),
+        'deleted_stalled': len(deleted_stalled),
+        'total_deleted': total,
+        'message': f'Cleanup complete: {total} torrents removed',
     }
 
 

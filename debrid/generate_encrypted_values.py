@@ -8,6 +8,11 @@ def generate_encrypted_values():
             'direct_cache': False, 
             'bulk_cache': False,
             'supports_uncached': True
+        },
+        'TorboxProvider': {
+            'direct_cache': True,
+            'bulk_cache': True,
+            'supports_uncached': True
         }
     }
     

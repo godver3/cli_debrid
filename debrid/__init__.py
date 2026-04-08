@@ -4,6 +4,7 @@ from utilities.settings import get_setting, ensure_settings_file
 from .base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError
 from .real_debrid import RealDebridProvider
 from .alldebrid import AllDebridProvider
+from .torbox import TorboxProvider
 from .common import (
     extract_hash_from_magnet,
     download_and_extract_hash,
@@ -38,6 +39,9 @@ def get_debrid_provider() -> DebridProvider:
     elif provider_name == 'alldebrid':
         logging.info("[DEBRID FACTORY] Instantiating AllDebridProvider")
         _provider_instance = AllDebridProvider()
+    elif provider_name == 'torbox':
+        logging.info("[DEBRID FACTORY] Instantiating TorboxProvider")
+        _provider_instance = TorboxProvider()
     else:
         raise ValueError(f"Unknown debrid provider: {provider_name}")
         
@@ -63,7 +67,7 @@ def get_provider_display_name() -> str:
     _name_map = {
         'realdebrid':  'Real-Debrid',
         'alldebrid':   'AllDebrid',
-        'torbox':      'TorBox',
+        'torbox':      'Torbox',
         'premiumize':  'Premiumize',
     }
     return _name_map.get(provider_name, provider_name.title() or 'Debrid')
@@ -78,6 +82,7 @@ __all__ = [
     'ProviderUnavailableError',
     'RealDebridProvider',
     'AllDebridProvider',
+    'TorboxProvider',
     'extract_hash_from_magnet',
     'download_and_extract_hash',
     'timed_lru_cache',
