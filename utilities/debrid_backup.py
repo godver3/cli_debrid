@@ -143,6 +143,92 @@ def fetch_ad_magnets(api_key: str) -> List[dict]:
         return []
 
 
+def fetch_tb_torrents(api_key: str) -> List[dict]:
+    """Fetch all Torbox torrents (backup source)."""
+    import requests
+    try:
+        r = requests.get(
+            'https://api.torbox.app/v1/api/torrents/mylist',
+            params={'bypass_cache': 'true'},
+            headers={'Authorization': f'Bearer {api_key}'},
+            timeout=30,
+        )
+        if r.status_code != 200:
+            logging.error(f'{_LOG_TAG} TB /torrents/mylist returned {r.status_code}')
+            return []
+        data = r.json()
+        torrents = data.get('data', [])
+        result = []
+        for t in (torrents if isinstance(torrents, list) else []):
+            h = (t.get('hash') or '').lower()
+            if not h:
+                continue
+            magnet = f"magnet:?xt=urn:btih:{h}&dn={t.get('name', '')}"
+            result.append({'hash': h, 'magnet': magnet, 'name': t.get('name', ''), 'id': t.get('id')})
+        return result
+    except Exception as e:
+        logging.error(f'{_LOG_TAG} TB fetch error: {e}')
+        return []
+
+
+def fetch_dl_torrents(api_key: str) -> List[dict]:
+    """Fetch all Debrid-Link seedbox torrents (backup source)."""
+    import requests
+    try:
+        result = []
+        page = 0
+        per_page = 100
+        while True:
+            r = requests.get(
+                'https://debrid-link.com/api/v2/seedbox/list',
+                params={'page': page, 'perPage': per_page},
+                headers={'Authorization': f'Bearer {api_key}'},
+                timeout=30,
+            )
+            if r.status_code != 200:
+                logging.error(f'{_LOG_TAG} DL /seedbox/list returned {r.status_code}')
+                break
+            data = r.json()
+            items = data.get('value', [])
+            if not isinstance(items, list):
+                break
+            for t in items:
+                h = (t.get('hashString') or '').lower()
+                if not h:
+                    continue
+                magnet = f"magnet:?xt=urn:btih:{h}&dn={t.get('name', '')}"
+                result.append({'hash': h, 'magnet': magnet, 'name': t.get('name', ''), 'id': t.get('id')})
+            pagination = data.get('pagination', {})
+            next_page = pagination.get('next', -1)
+            if next_page == -1 or len(items) < per_page:
+                break
+            page = next_page
+        return result
+    except Exception as e:
+        logging.error(f'{_LOG_TAG} DL fetch error: {e}')
+        return []
+
+
+def fetch_pm_transfers(api_key: str) -> List[dict]:
+    """Fetch all Premiumize transfers (backup source)."""
+    import requests
+    try:
+        r = requests.get(
+            'https://www.premiumize.me/api/transfer/list',
+            params={'apikey': api_key},
+            timeout=30,
+        )
+        if r.status_code != 200:
+            logging.error(f'{_LOG_TAG} PM /transfer/list returned {r.status_code}')
+            return []
+        data = r.json()
+        transfers = data.get('transfers', [])
+        return transfers if isinstance(transfers, list) else []
+    except Exception as e:
+        logging.error(f'{_LOG_TAG} PM fetch error: {e}')
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Core backup logic
 # ---------------------------------------------------------------------------
@@ -186,6 +272,15 @@ def run_backup(force: bool = False) -> dict:
     elif 'AllDebrid' in provider_name or pname == 'AllDebrid':
         prefix = 'ad'
         torrents = fetch_ad_magnets(provider.api_key)
+    elif 'Torbox' in provider_name or pname == 'Torbox':
+        prefix = 'tb'
+        torrents = fetch_tb_torrents(provider.api_key)
+    elif 'Debrid-Link' in provider_name or pname == 'Debrid-Link':
+        prefix = 'dl'
+        torrents = fetch_dl_torrents(provider.api_key)
+    elif 'Premiumize' in provider_name or pname == 'Premiumize':
+        prefix = 'pm'
+        torrents = fetch_pm_transfers(provider.api_key)
     else:
         return {'success': False, 'message': f'Unsupported provider: {pname}'}
 
@@ -280,7 +375,7 @@ def get_backup_status() -> dict:
         'providers':    {},
     }
 
-    for prefix in ('rd', 'ad'):
+    for prefix in ('rd', 'ad', 'tb', 'dl', 'pm'):
         slots = {}
         for s in ('1d', '3d', '7d'):
             info = slot_info(prefix, s)
@@ -447,6 +542,147 @@ def restore_from_file(filename: str, dry_run: bool = False) -> dict:
             'failures': failed,
         }
 
+    elif 'Torbox' in provider_name or pname == 'Torbox':
+        current = fetch_tb_torrents(provider.api_key)
+        current_hashes = {t.get('hash', '').lower() for t in current if t.get('hash')}
+
+        import requests
+        added = []
+        skipped = []
+        failed = []
+
+        for item in backup:
+            item_hash = (item.get('hash') or '').lower()
+            if not item_hash:
+                failed.append({'hash': '?', 'reason': 'no hash'})
+                continue
+            if item_hash in current_hashes:
+                skipped.append(item_hash)
+                continue
+            if dry_run:
+                added.append(item_hash)
+                continue
+            try:
+                magnet = f'magnet:?xt=urn:btih:{item_hash}'
+                r = requests.post(
+                    'https://api.torbox.app/v1/api/torrents/createtorrent',
+                    data={'magnet': magnet},
+                    headers={'Authorization': f'Bearer {provider.api_key}'},
+                    timeout=30,
+                )
+                resp = r.json()
+                if not resp.get('success'):
+                    failed.append({'hash': item_hash, 'reason': resp.get('detail', 'unknown error')})
+                    continue
+                added.append(item_hash)
+                time.sleep(0.25)
+            except Exception as e:
+                failed.append({'hash': item_hash, 'reason': str(e)})
+
+        return {
+            'success': True,
+            'total':   len(backup),
+            'added':   len(added),
+            'skipped': len(skipped),
+            'failed':  len(failed),
+            'failures': failed,
+        }
+
+    elif 'Debrid-Link' in provider_name or pname == 'Debrid-Link':
+        current = fetch_dl_torrents(provider.api_key)
+        current_hashes = {t.get('hash', '').lower() for t in current if t.get('hash')}
+
+        import requests
+        added = []
+        skipped = []
+        failed = []
+
+        for item in backup:
+            item_hash = (item.get('hash') or '').lower()
+            if not item_hash:
+                failed.append({'hash': '?', 'reason': 'no hash'})
+                continue
+            if item_hash in current_hashes:
+                skipped.append(item_hash)
+                continue
+            if dry_run:
+                added.append(item_hash)
+                continue
+            try:
+                magnet = f'magnet:?xt=urn:btih:{item_hash}'
+                r = requests.post(
+                    'https://debrid-link.com/api/v2/seedbox/add',
+                    json={'url': magnet, 'async': True},
+                    headers={'Authorization': f'Bearer {provider.api_key}'},
+                    timeout=30,
+                )
+                resp = r.json()
+                if not resp.get('success'):
+                    failed.append({'hash': item_hash, 'reason': resp.get('error_description', 'unknown error')})
+                    continue
+                added.append(item_hash)
+                time.sleep(0.3)
+            except Exception as e:
+                failed.append({'hash': item_hash, 'reason': str(e)})
+
+        return {
+            'success': True,
+            'total':   len(backup),
+            'added':   len(added),
+            'skipped': len(skipped),
+            'failed':  len(failed),
+            'failures': failed,
+        }
+
+    elif 'Premiumize' in provider_name or pname == 'Premiumize':
+        # Get current transfer hashes to avoid duplicates
+        current = fetch_pm_transfers(provider.api_key)
+        current_hashes = {(t.get('hash') or t.get('src', '').split('btih:')[-1].split('&')[0]).lower()
+                          for t in current}
+
+        added, skipped, failed = [], [], []
+        for item in backup:
+            # Premiumize backup stores transfers; extract hash from src or hash field
+            item_hash = (item.get('hash') or '').lower()
+            if not item_hash:
+                src = item.get('src', '')
+                if 'btih:' in src.lower():
+                    item_hash = src.lower().split('btih:')[-1].split('&')[0]
+            if not item_hash:
+                failed.append({'hash': '?', 'reason': 'no hash'})
+                continue
+            if item_hash in current_hashes:
+                skipped.append(item_hash)
+                continue
+            if dry_run:
+                added.append(item_hash)
+                continue
+            try:
+                magnet = f'magnet:?xt=urn:btih:{item_hash}'
+                r = requests.post(
+                    'https://www.premiumize.me/api/transfer/create',
+                    params={'apikey': provider.api_key},
+                    data={'src': magnet},
+                    timeout=30,
+                )
+                resp = r.json()
+                if resp.get('status') != 'success':
+                    failed.append({'hash': item_hash, 'reason': resp.get('message', 'unknown')})
+                    continue
+                added.append(item_hash)
+                time.sleep(0.3)
+            except Exception as e:
+                failed.append({'hash': item_hash, 'reason': str(e)})
+
+        return {
+            'success': True,
+            'total':   len(backup),
+            'added':   len(added),
+            'skipped': len(skipped),
+            'failed':  len(failed),
+            'failures': failed,
+        }
+
     else:
         return {'success': False, 'message': f'Restore not implemented for {provider_name}'}
 
@@ -526,12 +762,19 @@ def run_cleanup(force: bool = False) -> dict:
         return {'success': False, 'message': f'Provider unavailable: {e}'}
 
     provider_name = type(provider).__name__
-    if 'RealDebrid' in provider_name:
+    pname = getattr(provider, 'PROVIDER_NAME', provider_name)
+    if 'RealDebrid' in provider_name or pname == 'Real-Debrid':
         return _cleanup_rd(provider.api_key, settings)
-    elif 'AllDebrid' in provider_name:
+    elif 'AllDebrid' in provider_name or pname == 'AllDebrid':
         return _cleanup_ad(provider.api_key, settings)
+    elif 'Torbox' in provider_name or pname == 'Torbox':
+        return _cleanup_tb(provider.api_key, settings)
+    elif 'Debrid-Link' in provider_name or pname == 'Debrid-Link':
+        return _cleanup_dl(provider.api_key, settings)
+    elif 'Premiumize' in provider_name or pname == 'Premiumize':
+        return _cleanup_pm(provider.api_key, settings)
     else:
-        return {'success': False, 'message': f'Unsupported provider: {provider_name}'}
+        return {'success': False, 'message': f'Unsupported provider: {pname}'}
 
 
 def _cleanup_rd(api_key: str, settings: dict) -> dict:
@@ -743,6 +986,299 @@ def _cleanup_ad(api_key: str, settings: dict) -> dict:
         'deleted_stalled':  len(deleted_stalled),
         'total_deleted':    total,
         'message':          f'Cleanup complete: {total} magnets removed',
+    }
+
+
+def _cleanup_tb(api_key: str, settings: dict) -> dict:
+    """Torbox cleanup — removes errored, stalled, and duplicate torrents."""
+    import requests
+
+    delete_errors  = settings.get('cleanup_delete_errors', True)
+    delete_dupes   = settings.get('cleanup_delete_dupes', True)
+    delete_stalled = settings.get('cleanup_delete_stalled', False)
+    stalled_days   = settings.get('cleanup_stalled_days', 3)
+    stalled_cutoff = stalled_days * 86400
+
+    torrents = fetch_tb_torrents(api_key)
+    now = time.time()
+
+    deleted_errors  = []
+    deleted_dupes   = []
+    deleted_stalled = []
+    delete_failures = []
+
+    _TB_ERROR_STATES = frozenset({'error', 'failed'})
+
+    headers = {'Authorization': f'Bearer {api_key}'}
+
+    def _delete(torrent_id, bucket):
+        try:
+            r = requests.post(
+                'https://api.torbox.app/v1/api/torrents/controltorrent',
+                json={'operation': 'delete', 'torrent_id': int(torrent_id)},
+                headers=headers,
+                timeout=30,
+            )
+            if r.status_code == 200:
+                bucket.append(torrent_id)
+                return True
+            delete_failures.append({'id': torrent_id, 'reason': f'HTTP {r.status_code}'})
+        except Exception as e:
+            delete_failures.append({'id': torrent_id, 'reason': str(e)})
+        return False
+
+    seen_hashes: dict = {}
+
+    for t in torrents:
+        tid   = t.get('id')
+        state = (t.get('download_state') or '').lower()
+        h     = (t.get('hash') or '').lower()
+
+        if delete_errors and state in _TB_ERROR_STATES:
+            _delete(tid, deleted_errors)
+            continue
+
+        if delete_stalled and state not in {'cached', 'completed', 'downloaded'}:
+            added_ts = t.get('created_at')
+            if added_ts:
+                try:
+                    from datetime import datetime
+                    if isinstance(added_ts, str):
+                        added_ts = datetime.fromisoformat(added_ts.replace('Z', '+00:00')).timestamp()
+                    if (now - float(added_ts)) > stalled_cutoff:
+                        _delete(tid, deleted_stalled)
+                        continue
+                except Exception:
+                    pass
+
+        if delete_dupes and h:
+            if h in seen_hashes:
+                _delete(tid, deleted_dupes)
+                continue
+            seen_hashes[h] = tid
+
+    total = len(deleted_errors) + len(deleted_dupes) + len(deleted_stalled)
+
+    log = _read_log()
+    log['last_cleanup'] = now
+    log.setdefault('cleanup_stats', {})['last'] = {
+        'timestamp':       now,
+        'deleted_errors':  len(deleted_errors),
+        'deleted_dupes':   len(deleted_dupes),
+        'deleted_stalled': len(deleted_stalled),
+        'total':           total,
+        'provider':        'tb',
+    }
+    _write_log(log)
+
+    return {
+        'success':         True,
+        'provider':        'tb',
+        'deleted_errors':  len(deleted_errors),
+        'deleted_dupes':   len(deleted_dupes),
+        'deleted_stalled': len(deleted_stalled),
+        'total_deleted':   total,
+        'message':         f'Cleanup complete: {total} torrents removed',
+    }
+
+
+def _cleanup_dl(api_key: str, settings: dict) -> dict:
+    """Debrid-Link cleanup — removes errored, stalled, and duplicate torrents."""
+    import requests
+
+    delete_errors  = settings.get('cleanup_delete_errors', True)
+    delete_dupes   = settings.get('cleanup_delete_dupes', True)
+    delete_stalled = settings.get('cleanup_delete_stalled', False)
+    stalled_days   = settings.get('cleanup_stalled_days', 3)
+    stalled_cutoff = stalled_days * 86400
+
+    torrents = fetch_dl_torrents(api_key)
+    now = time.time()
+
+    deleted_errors  = []
+    deleted_dupes   = []
+    deleted_stalled = []
+    delete_failures = []
+
+    headers = {'Authorization': f'Bearer {api_key}'}
+
+    def _delete(torrent_id, bucket):
+        try:
+            r = requests.delete(
+                f'https://debrid-link.com/api/v2/seedbox/{torrent_id}/remove',
+                headers=headers,
+                timeout=30,
+            )
+            if r.status_code == 200:
+                resp = r.json()
+                if resp.get('success'):
+                    bucket.append(torrent_id)
+                    logging.info(f'{_LOG_TAG} DL deleted torrent {torrent_id}')
+                    return True
+                delete_failures.append({'id': torrent_id, 'reason': resp.get('error_description', 'API returned success=false')})
+            else:
+                delete_failures.append({'id': torrent_id, 'reason': f'HTTP {r.status_code}'})
+        except Exception as e:
+            delete_failures.append({'id': torrent_id, 'reason': str(e)})
+        return False
+
+    # Note: fetch_dl_torrents returns normalized dicts {hash, magnet, name, id}
+    # For error/stall detection we need the raw API — fetch directly here
+    raw_torrents = []
+    try:
+        page = 0
+        while True:
+            r = requests.get(
+                'https://debrid-link.com/api/v2/seedbox/list',
+                params={'page': page, 'perPage': 100},
+                headers=headers,
+                timeout=30,
+            )
+            if r.status_code != 200:
+                break
+            data = r.json()
+            items = data.get('value', [])
+            if not isinstance(items, list):
+                break
+            raw_torrents.extend(items)
+            pagination = data.get('pagination', {})
+            next_page = pagination.get('next', -1)
+            if next_page == -1 or len(items) < 100:
+                break
+            page = next_page
+    except Exception as e:
+        logging.warning(f'{_LOG_TAG} DL cleanup: failed to fetch raw torrents: {e}')
+
+    seen_hashes: dict = {}
+
+    for t in raw_torrents:
+        tid    = t.get('id')
+        error  = int(t.get('error', 0) or 0)
+        pct    = int(t.get('downloadPercent', 0) or 0)
+        done   = bool(t.get('downloaded'))
+        h      = (t.get('hashString') or '').lower()
+        created = t.get('created', 0) or 0
+
+        if delete_errors and error != 0:
+            _delete(tid, deleted_errors)
+            continue
+
+        if delete_stalled and not done and pct < 100:
+            try:
+                if created and (now - float(created)) > stalled_cutoff:
+                    _delete(tid, deleted_stalled)
+                    continue
+            except Exception:
+                pass
+
+        if delete_dupes and h:
+            if h in seen_hashes:
+                _delete(tid, deleted_dupes)
+                continue
+            seen_hashes[h] = tid
+
+    total = len(deleted_errors) + len(deleted_dupes) + len(deleted_stalled)
+
+    log = _read_log()
+    log['last_cleanup'] = now
+    log.setdefault('cleanup_stats', {})['last'] = {
+        'timestamp':       now,
+        'deleted_errors':  len(deleted_errors),
+        'deleted_dupes':   len(deleted_dupes),
+        'deleted_stalled': len(deleted_stalled),
+        'total':           total,
+        'provider':        'dl',
+    }
+    _write_log(log)
+
+    return {
+        'success':         True,
+        'provider':        'dl',
+        'deleted_errors':  len(deleted_errors),
+        'deleted_dupes':   len(deleted_dupes),
+        'deleted_stalled': len(deleted_stalled),
+        'total_deleted':   total,
+        'message':         f'Cleanup complete: {total} torrents removed',
+    }
+
+
+def _cleanup_pm(api_key: str, settings: dict) -> dict:
+    """Premiumize cleanup — removes errored and duplicate transfers."""
+    import requests
+    now = time.time()
+
+    try:
+        r = requests.get(
+            'https://www.premiumize.me/api/transfer/list',
+            params={'apikey': api_key},
+            timeout=30,
+        )
+        transfers = r.json().get('transfers', []) if r.status_code == 200 else []
+    except Exception as e:
+        return {'success': False, 'message': f'Failed to fetch Premiumize transfers: {e}'}
+
+    deleted_errors = []
+    deleted_dupes  = []
+
+    # Delete errored/deleted transfers
+    if settings.get('cleanup_delete_errors', True):
+        for t in transfers:
+            if (t.get('status') or '').lower() in ('error', 'deleted', 'timeout'):
+                try:
+                    requests.post(
+                        'https://www.premiumize.me/api/transfer/delete',
+                        params={'apikey': api_key},
+                        data={'id': t['id']},
+                        timeout=15,
+                    )
+                    deleted_errors.append(t['id'])
+                except Exception:
+                    pass
+
+    # Delete duplicate transfers (same name, keep newest by id)
+    if settings.get('cleanup_delete_dupes', True):
+        from collections import defaultdict
+        by_name: dict = defaultdict(list)
+        for t in transfers:
+            if (t.get('status') or '').lower() not in ('error', 'deleted', 'timeout'):
+                by_name[t.get('name', '').lower()].append(t)
+        for name, copies in by_name.items():
+            if len(copies) > 1:
+                copies.sort(key=lambda x: x.get('id', 0), reverse=True)
+                for dup in copies[1:]:
+                    try:
+                        requests.post(
+                            'https://www.premiumize.me/api/transfer/delete',
+                            params={'apikey': api_key},
+                            data={'id': dup['id']},
+                            timeout=15,
+                        )
+                        deleted_dupes.append(dup['id'])
+                    except Exception:
+                        pass
+
+    total = len(deleted_errors) + len(deleted_dupes)
+
+    log = _read_log()
+    log['last_cleanup'] = now
+    log.setdefault('cleanup_stats', {})['last'] = {
+        'timestamp':        now,
+        'deleted_errors':   len(deleted_errors),
+        'deleted_dupes':    len(deleted_dupes),
+        'deleted_stalled':  0,
+        'total':            total,
+        'provider':         'pm',
+    }
+    _write_log(log)
+
+    return {
+        'success':          True,
+        'provider':         'pm',
+        'deleted_errors':   len(deleted_errors),
+        'deleted_dupes':    len(deleted_dupes),
+        'deleted_stalled':  0,
+        'total_deleted':    total,
+        'message':          f'Cleanup complete: {total} transfers removed',
     }
 
 

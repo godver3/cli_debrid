@@ -505,11 +505,14 @@ class AllDebridProvider(DebridProvider):
                 torrents.append({
                     'id': str(magnet.get('id', '')),
                     'filename': magnet.get('filename', ''),
+                    'original_filename': magnet.get('filename', ''),
                     'hash': magnet.get('hash', '').lower(),
                     'status': str(status.value) if hasattr(status, 'value') else str(status),
                     'progress': progress,
                     'bytes': size,
-                    'original_filename': magnet.get('filename', '')
+                    'added': magnet.get('uploadDate'),
+                    'message': magnet.get('statusText', ''),
+                    'debrid_folder_name': magnet.get('filename', ''),
                 })
 
             return torrents
@@ -638,11 +641,13 @@ class AllDebridProvider(DebridProvider):
                             largest_file = max(video_files, key=lambda x: x.get('bytes', 0))
                             updated_item_data = {
                                 'filled_by_title': info.get('filename'),
-                                'filled_by_file': largest_file.get('path', '')
+                                'filled_by_file': largest_file.get('path', ''),
+                                'debrid_folder_name': info.get('filename'),
                             }
                             updated_trigger_details = {
                                 'source': 'alldebrid',
-                                'status_code': status_code
+                                'status_code': status_code,
+                                'selected_files': [{'path': f.get('path', ''), 'bytes': f.get('bytes', 0), 'selected': True} for f in video_files],
                             }
                             updated_metadata = {
                                 'debrid_info': {

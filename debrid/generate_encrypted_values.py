@@ -5,10 +5,15 @@ from cryptography.fernet import Fernet
 def generate_encrypted_values():
     providers = {
         'RealDebridProvider': {
-            'direct_cache': False, 
+            'direct_cache': False,
             'bulk_cache': False,
             'supports_uncached': True
-        }
+        },
+        'DebridLinkProvider': {
+            'direct_cache': True,   # uses /seedbox/add with raw hash as implicit probe
+            'bulk_cache': False,    # no batch endpoint
+            'supports_uncached': True
+        },
     }
     
     for provider_name, capabilities in providers.items():

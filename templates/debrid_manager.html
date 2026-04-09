@@ -374,9 +374,25 @@
                                 <span class="dm-usage-stat-label">Premium</span>
                                 <span class="dm-usage-stat-val" id="usage-premium">—</span>
                             </div>
-                            <div class="dm-usage-stat-row">
-                                <span class="dm-usage-stat-label">Fidelity Points</span>
+                            <div class="dm-usage-stat-row" id="usage-points-row">
+                                <span class="dm-usage-stat-label" id="usage-points-label">Points</span>
                                 <span class="dm-usage-stat-val" id="usage-points">—</span>
+                            </div>
+                            <div class="dm-usage-stat-row" id="usage-space-row" style="display:none">
+                                <span class="dm-usage-stat-label">Cloud Storage Used</span>
+                                <span class="dm-usage-stat-val" id="usage-space">—</span>
+                            </div>
+                            <div class="dm-usage-stat-row" id="usage-limit-row" style="display:none">
+                                <span class="dm-usage-stat-label">Fair-Use Used (GB)</span>
+                                <span class="dm-usage-stat-val" id="usage-limit">—</span>
+                            </div>
+                            <div class="dm-usage-stat-row" id="usage-created-row" style="display:none">
+                                <span class="dm-usage-stat-label">Member Since</span>
+                                <span class="dm-usage-stat-val" id="usage-created">—</span>
+                            </div>
+                            <div class="dm-usage-stat-row" id="usage-cooldown-row" style="display:none">
+                                <span class="dm-usage-stat-label">Cooldown Until</span>
+                                <span class="dm-usage-stat-val" id="usage-cooldown">—</span>
                             </div>
                         </div>
                         <div class="dm-backup-card">
@@ -394,6 +410,22 @@
                                 <span class="dm-usage-stat-val" id="usage-reset-timer">—</span>
                             </div>
                         </div>
+                        <!-- Debrid-Link: live speeds (left panel) -->
+                        <div class="dm-backup-card" id="dl-limits-card" style="display:none">
+                            <div class="dm-backup-card-title">Live</div>
+                            <div class="dm-usage-stat-row">
+                                <span class="dm-usage-stat-label">Download Rate</span>
+                                <span class="dm-usage-stat-val" id="dl-download-speed">—</span>
+                            </div>
+                            <div class="dm-usage-stat-row">
+                                <span class="dm-usage-stat-label">Upload Rate</span>
+                                <span class="dm-usage-stat-val" id="dl-upload-speed">—</span>
+                            </div>
+                            <div class="dm-usage-stat-row">
+                                <span class="dm-usage-stat-label">Peers Connected</span>
+                                <span class="dm-usage-stat-val" id="dl-peers">—</span>
+                            </div>
+                        </div>
                         <div class="dm-backup-card" id="usage-today-card">
                             <div class="dm-backup-card-title">Today's Usage</div>
                             <div class="dm-usage-bar-header">
@@ -407,11 +439,41 @@
                     </div>
                 </div>
 
-                <!-- RIGHT COLUMN: Traffic history -->
+                <!-- RIGHT COLUMN: Traffic history (RD) or Debrid-Link limits -->
                 <div class="dm-usage-right">
-                    <div class="dm-backup-card">
+                    <!-- RD: traffic history -->
+                    <div class="dm-backup-card" id="usage-history-card">
                         <div class="dm-backup-card-title">Traffic Details</div>
                         <div id="usage-history-list"></div>
+                    </div>
+                    <!-- Debrid-Link: quota limits -->
+                    <div class="dm-backup-card" id="dl-quota-card" style="display:none">
+                        <div class="dm-backup-card-title">Limits</div>
+                        <div class="dm-usage-stat-row" id="dl-usage-row" style="display:none">
+                            <span class="dm-usage-stat-label">Usage</span>
+                            <span class="dm-usage-stat-val" id="dl-usage">—</span>
+                        </div>
+                        <div class="dm-usage-stat-row" id="dl-active-row" style="display:none">
+                            <span class="dm-usage-stat-label">Active Transfers</span>
+                            <span class="dm-usage-stat-val" id="dl-active">—</span>
+                        </div>
+                        <div class="dm-usage-stat-row" id="dl-day-size-row" style="display:none">
+                            <span class="dm-usage-stat-label">Data / Day</span>
+                            <span class="dm-usage-stat-val" id="dl-day-size">—</span>
+                        </div>
+                        <div class="dm-usage-stat-row" id="dl-day-count-row" style="display:none">
+                            <span class="dm-usage-stat-label">Torrents / Day</span>
+                            <span class="dm-usage-stat-val" id="dl-day-count">—</span>
+                        </div>
+                        <div class="dm-usage-stat-row" id="dl-month-size-row" style="display:none">
+                            <span class="dm-usage-stat-label">Data / 30 Days</span>
+                            <span class="dm-usage-stat-val" id="dl-month-size">—</span>
+                        </div>
+                        <div class="dm-usage-stat-row" id="dl-month-count-row" style="display:none">
+                            <span class="dm-usage-stat-label">Torrents / 30 Days</span>
+                            <span class="dm-usage-stat-val" id="dl-month-count">—</span>
+                        </div>
+                        <div id="dl-extra-limits"></div>
                     </div>
                 </div>
             </div>
@@ -598,7 +660,7 @@
                     <span class="dm-rc-tab-name">Not in {{ ms_label }}</span>
                     <span class="dm-rc-tab-count" id="rc-count-not-in-plex">—</span>
                     <span class="dm-rc-tab-badges">
-                        <span class="dm-rc-badge dm-rc-badge-ok">{{ debrid_provider_name[:2]|upper }}</span>
+                        <span class="dm-rc-badge dm-rc-badge-ok">{{ debrid_provider_abbrev }}</span>
                         <span class="dm-rc-badge dm-rc-badge-ok">DB</span>
                         <span class="dm-rc-badge dm-rc-badge-bad">{{ ms_badge }}</span>
                     </span>
@@ -607,7 +669,7 @@
                     <span class="dm-rc-tab-name">Torrent Gone</span>
                     <span class="dm-rc-tab-count" id="rc-count-torrent-gone">—</span>
                     <span class="dm-rc-tab-badges">
-                        <span class="dm-rc-badge dm-rc-badge-bad">{{ debrid_provider_name[:2]|upper }}</span>
+                        <span class="dm-rc-badge dm-rc-badge-bad">{{ debrid_provider_abbrev }}</span>
                         <span class="dm-rc-badge dm-rc-badge-ok">DB</span>
                         <span class="dm-rc-badge dm-rc-badge-ok">{{ ms_badge }}</span>
                     </span>
@@ -616,16 +678,16 @@
                     <span class="dm-rc-tab-name">Lost</span>
                     <span class="dm-rc-tab-count" id="rc-count-lost">—</span>
                     <span class="dm-rc-tab-badges">
-                        <span class="dm-rc-badge dm-rc-badge-bad">{{ debrid_provider_name[:2]|upper }}</span>
+                        <span class="dm-rc-badge dm-rc-badge-bad">{{ debrid_provider_abbrev }}</span>
                         <span class="dm-rc-badge dm-rc-badge-ok">DB</span>
                         <span class="dm-rc-badge dm-rc-badge-bad">{{ ms_badge }}</span>
                     </span>
                 </button>
                 <button class="dm-rc-tab" data-rc-group="untracked">
-                    <span class="dm-rc-tab-name">Untracked {{ debrid_provider_name[:2]|upper }}</span>
+                    <span class="dm-rc-tab-name">Untracked {{ debrid_provider_abbrev }}</span>
                     <span class="dm-rc-tab-count" id="rc-count-untracked">—</span>
                     <span class="dm-rc-tab-badges">
-                        <span class="dm-rc-badge dm-rc-badge-ok">{{ debrid_provider_name[:2]|upper }}</span>
+                        <span class="dm-rc-badge dm-rc-badge-ok">{{ debrid_provider_abbrev }}</span>
                         <span class="dm-rc-badge dm-rc-badge-bad">DB</span>
                         <span class="dm-rc-badge dm-rc-badge-mixed">{{ ms_badge }}</span>
                     </span>
@@ -1099,6 +1161,7 @@ function escHtml(s) {
     if (s == null) return '';
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+function _esc(s) { return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 function fmt_bytes(b) {
     if (!b) return '—';
@@ -1523,7 +1586,11 @@ function showDetail(id) {
     }
 
     if (trigger.selected_files && trigger.selected_files.length) {
-        const rows = trigger.selected_files.map(f =>
+        const _sfVideoExts = /\.(mkv|mp4|avi|mov|wmv|m4v|ts|m2ts|flv|webm)$/i;
+        const _sfAll = trigger.selected_files;
+        const _sfVideo = _sfAll.filter(f => _sfVideoExts.test(f.path||f.name||''));
+        const _sfDisplay = _sfVideo.length ? _sfVideo : _sfAll;
+        const rows = _sfDisplay.map(f =>
             `<tr><td><code>${f.path||f.name||''}</code></td><td>${((f.bytes||0)/1024/1024).toFixed(2)} MB</td><td>${f.selected ? '✓' : '✗'}</td></tr>`
         ).join('');
         html += section('Selected Files', `<table class="dm-table dm-table-compact"><thead><tr><th>Path</th><th>Size</th><th>Selected</th></tr></thead><tbody>${rows}</tbody></table>`);
@@ -1539,7 +1606,7 @@ function showDetail(id) {
         ]));
     }
 
-    if (e.additional_metadata) {
+    if (e.additional_metadata && Object.keys(meta).length > 0) {
         html += section('Raw Metadata', pre(meta));
     }
 
@@ -2228,23 +2295,39 @@ function libOpenDetail(e, id) {
     <tr><th>Progress</th><td>${progress}</td></tr>
     ${d.seeders != null ? `<tr><th>Seeders</th><td>${d.seeders}</td></tr>` : ''}
     ${d.speed != null ? `<tr><th>Speed</th><td>${fmt_bytes(d.speed)}/s</td></tr>` : ''}
+    ${d.message ? `<tr><th>Message</th><td>${_esc(d.message)}</td></tr>` : ''}
 </table>`;
 
             if (files.length) {
                 const videoExts = /\.(mkv|mp4|avi|mov|wmv|m4v|ts|m2ts|flv|webm)$/i;
+                const videoFiles = files.filter(f => videoExts.test(f.path || f.name || ''));
+                const displayFiles = videoFiles.length ? videoFiles : files;
+                const hiddenCount = files.length - displayFiles.length;
                 html += `<div class="dm-detail-files-header">
-    <span>${files.length} file${files.length !== 1 ? 's' : ''}</span>
+    <span>${displayFiles.length} file${displayFiles.length !== 1 ? 's' : ''}${hiddenCount > 0 ? ` <span class="dm-file-hidden-note">(${hiddenCount} non-video hidden)</span>` : ''}</span>
 </div>
 <div class="dm-detail-files">`;
-                files.forEach(f => {
+                displayFiles.forEach(f => {
                     const isVideo = videoExts.test(f.path||'');
-                    const fsize = fmt_bytes(f.bytes||0);
+                    const fsize = fmt_bytes(f.bytes || f.size || 0);
                     const selected = f.selected === 1;
+                    // Premiumize-specific: stream_link, link, video metadata
+                    const streamLink = f.stream_link || '';
+                    const directLink = f.link || '';
+                    const vcodec = f.vcodec ? `<span class="dm-file-badge">${_esc(f.vcodec)}</span>` : '';
+                    const acodec = f.acodec ? `<span class="dm-file-badge">${_esc(f.acodec)}</span>` : '';
+                    const res    = (f.resx && f.resy) ? `<span class="dm-file-badge">${_esc(f.resx)}×${_esc(f.resy)}</span>` : '';
+                    const dur    = f.duration ? `<span class="dm-file-badge">${_esc(f.duration)}</span>` : '';
+                    const brate  = f.bitrate  ? `<span class="dm-file-badge">${Math.round(f.bitrate/1000)} kbps</span>` : '';
+                    const streamBtn = streamLink ? `<a class="dm-btn dm-btn-secondary dm-btn-xs" href="${_esc(streamLink)}" target="_blank" title="Stream">▶</a>` : '';
+                    const dlBtn     = directLink ? `<a class="dm-btn dm-btn-secondary dm-btn-xs" href="${_esc(directLink)}" target="_blank" title="Download">↓</a>` : '';
                     html += `<div class="dm-detail-file ${selected ? 'dm-file-selected' : 'dm-file-unselected'}">
     <span class="dm-file-sel-dot" title="${selected ? 'Selected' : 'Not selected'}"></span>
-    <span class="dm-file-path">${f.path||f.id}</span>
+    <span class="dm-file-path">${_esc(f.path||f.name||f.id||'')}</span>
     <span class="dm-file-size">${fsize}</span>
     ${isVideo ? `<span class="dm-file-badge dm-file-badge-video">video</span>` : ''}
+    ${vcodec}${acodec}${res}${dur}${brate}
+    ${streamBtn}${dlBtn}
 </div>`;
                 });
                 html += '</div>';
@@ -2402,6 +2485,11 @@ document.getElementById('lib-batch-reinsert-btn').addEventListener('click', asyn
 });
 
 // ── MAINTENANCE TAB (Backup + Cleanup) ──────────────────────────────────────
+function _bkPfxLabel(pfx) {
+    const map = { rd: 'Real-Debrid', ad: 'AllDebrid', pm: 'Premiumize', tb: 'Torbox', dl: 'Debrid-Link' };
+    return map[pfx] || pfx.toUpperCase();
+}
+
 function _bkFmtTs(ts) {
     if (!ts) return '—';
     const d = new Date(ts * 1000);
@@ -2436,7 +2524,7 @@ function _bkRenderActivity(status) {
     let backupSection = '';
     if (Object.keys(providers).length) {
         for (const [pfx, slots] of Object.entries(providers)) {
-            const label = pfx === 'rd' ? 'Real-Debrid' : 'AllDebrid';
+            const label = _bkPfxLabel(pfx);
             backupSection += `<div class="dm-bk-activity-provider">${label} Backup</div>`;
             for (const [slot, info] of Object.entries(slots)) {
                 const ts    = info.timestamp ? _bkFmtTs(info.timestamp) : '—';
@@ -2459,7 +2547,7 @@ function _bkRenderActivity(status) {
     // ── Cleanup section ──
     let cleanupSection = `<div class="dm-backup-activity-divider"></div>`;
     if (cs) {
-        const pfxLabel = cs.provider === 'rd' ? 'Real-Debrid' : 'AllDebrid';
+        const pfxLabel = _bkPfxLabel(cs.provider);
         const total    = cs.total ?? 0;
         const errs     = cs.deleted_errors  ?? 0;
         const dupes    = cs.deleted_dupes   ?? 0;
@@ -2505,7 +2593,7 @@ function _bkRenderSlots(status) {
 
     let html = '';
     for (const [pfx, slots] of Object.entries(providers)) {
-        const label = pfx === 'rd' ? 'Real-Debrid' : 'AllDebrid';
+        const label = _bkPfxLabel(pfx);
         html += `<div class="dm-bk-provider-label">${label}</div>`;
         for (const [slot, info] of Object.entries(slots)) {
             if (!info.exists) continue;
@@ -2802,8 +2890,120 @@ async function loadUsage() {
             premEl.innerHTML = `<span class="dm-usage-badge dm-usage-badge-red">Inactive</span>`;
         }
 
-        document.getElementById('usage-points').innerHTML =
-            `<span class="dm-usage-badge dm-usage-badge-blue">${(u.points || 0).toLocaleString()}</span>`;
+        // Points row — hide entirely for providers with no points system (null = hide)
+        const pointsRow = document.getElementById('usage-points-row');
+        const pointsLabel = document.getElementById('usage-points-label');
+        if (u.points === null) {
+            if (pointsRow) pointsRow.style.display = 'none';
+        } else {
+            if (pointsRow) pointsRow.style.display = '';
+            if (u.limit_used != null) {
+                if (pointsLabel) pointsLabel.textContent = 'Fair-Use Points';
+            } else {
+                if (pointsLabel) pointsLabel.textContent = 'Fidelity Points';
+            }
+            document.getElementById('usage-points').innerHTML =
+                `<span class="dm-usage-badge dm-usage-badge-blue">${(u.points || 0).toLocaleString()}</span>`;
+        }
+
+        // Torbox extras: member since + cooldown
+        const createdRow = document.getElementById('usage-created-row');
+        const cooldownRow = document.getElementById('usage-cooldown-row');
+        if (u.created_at && createdRow) {
+            createdRow.style.display = '';
+            document.getElementById('usage-created').textContent = u.created_at.substring(0, 10);
+        }
+        if (u.cooldown_until && cooldownRow) {
+            cooldownRow.style.display = '';
+            document.getElementById('usage-cooldown').textContent = u.cooldown_until.substring(0, 10);
+        }
+
+        // Premiumize extras: cloud storage + fair-use bandwidth
+        const spaceRow = document.getElementById('usage-space-row');
+        const limitRow = document.getElementById('usage-limit-row');
+        if (u.space_used != null && spaceRow) {
+            spaceRow.style.display = '';
+            document.getElementById('usage-space').textContent = _fmtBytes(u.space_used / (1024 ** 3));
+        }
+        if (u.limit_used != null && limitRow) {
+            limitRow.style.display = '';
+            document.getElementById('usage-limit').textContent =
+                typeof u.limit_used === 'number' ? u.limit_used.toFixed(2) + ' GB' : u.limit_used;
+        }
+
+        // Debrid-Link: live speeds + quota limits
+        const dlLimits = data.dl_limits || {};
+        const dlLimitsCard = document.getElementById('dl-limits-card');
+        const dlQuotaCard  = document.getElementById('dl-quota-card');
+        if (Object.keys(dlLimits).length > 0 || data.dl_download_speed != null) {
+            if (dlLimitsCard) dlLimitsCard.style.display = '';
+            if (dlQuotaCard)  dlQuotaCard.style.display  = '';
+
+            // Live speeds
+            document.getElementById('dl-download-speed').textContent = _fmtBytes((data.dl_download_speed || 0) / (1024**3)) + '/s';
+            document.getElementById('dl-upload-speed').textContent   = _fmtBytes((data.dl_upload_speed   || 0) / (1024**3)) + '/s';
+            document.getElementById('dl-peers').textContent          = (data.dl_peers || 0).toLocaleString();
+
+            // Helper: render a {current, value} limit pair
+            function _dlLimitRow(elId, rowId, lbl, data, fmt) {
+                const row = document.getElementById(rowId);
+                const el  = document.getElementById(elId);
+                if (!row || !el || !data) return;
+                row.style.display = '';
+                const cur = fmt(data.current != null ? data.current : 0);
+                const max = fmt(data.value   != null ? data.value   : 0);
+                el.textContent = `${cur} / ${max}`;
+            }
+            function _fmtBytes2(bytes) {
+                if (!bytes) return '0 B';
+                const gb = bytes / (1024**3);
+                if (gb >= 1000) return (gb/1000).toFixed(1) + ' TB';
+                if (gb >= 1)    return gb.toFixed(1) + ' GB';
+                return (bytes / (1024**2)).toFixed(1) + ' MB';
+            }
+            function _fmtNum(n) { return (n || 0).toLocaleString(); }
+
+            _dlLimitRow('dl-usage',      'dl-usage-row',      'Usage',            dlLimits.usagePercent,      n => n + '%');
+            _dlLimitRow('dl-active',     'dl-active-row',     'Active',           dlLimits.dayCount,          _fmtNum);
+            _dlLimitRow('dl-day-size',   'dl-day-size-row',   'Data/day',         dlLimits.daySize,           _fmtBytes2);
+            _dlLimitRow('dl-day-count',  'dl-day-count-row',  'Torrents/day',     dlLimits.dayTorrentCount,   _fmtNum);
+            _dlLimitRow('dl-month-size', 'dl-month-size-row', 'Data/30d',         dlLimits.monthSize,         _fmtBytes2);
+            _dlLimitRow('dl-month-count','dl-month-count-row','Torrents/30d',     dlLimits.monthTorrentCount, _fmtNum);
+
+            // Reset timer
+            const resetSecs = dlLimits.nextResetSeconds;
+            if (resetSecs && resetSecs.value > 0) {
+                const hrs = Math.floor(resetSecs.value / 3600);
+                const mins = Math.floor((resetSecs.value % 3600) / 60);
+                document.getElementById('usage-reset-timer').textContent = `~${hrs}h ${mins}m`;
+            }
+
+            // Render any remaining unknown limit fields generically
+            const knownKeys = new Set(['usagePercent','nextResetSeconds','dayCount','daySize','dayTorrentCount','monthSize','monthTorrentCount']);
+            const extraEl = document.getElementById('dl-extra-limits');
+            if (extraEl) {
+                let extraHtml = '';
+                for (const [k, v] of Object.entries(dlLimits)) {
+                    if (knownKeys.has(k) || !v || typeof v !== 'object') continue;
+                    const label = k.replace(/([A-Z])/g, ' $1').trim();
+                    const cur = v.current != null ? v.current : '—';
+                    const max = v.value   != null ? v.value   : '—';
+                    extraHtml += `<div class="dm-usage-stat-row"><span class="dm-usage-stat-label">${_esc(label)}</span><span class="dm-usage-stat-val">${_esc(String(cur))} / ${_esc(String(max))}</span></div>`;
+                }
+                extraEl.innerHTML = extraHtml;
+            }
+
+            // Hide the quota card entirely if no rows ended up visible
+            if (dlQuotaCard) {
+                const hasVisibleRows = dlQuotaCard.querySelectorAll('.dm-usage-stat-row[style*="display: none"]').length <
+                                       dlQuotaCard.querySelectorAll('.dm-usage-stat-row').length ||
+                                       (dlQuotaCard.querySelector('#dl-extra-limits') || {}).innerHTML;
+                const anyVisible = [...dlQuotaCard.querySelectorAll('.dm-usage-stat-row')].some(
+                    r => r.style.display !== 'none'
+                ) || (extraEl && extraEl.innerHTML.trim().length > 0);
+                dlQuotaCard.style.display = anyVisible ? '' : 'none';
+            }
+        }
 
         document.getElementById('usage-slots').textContent =
             tot.max_slots ? `${tot.active_slots} / ${tot.max_slots}` : '—';
@@ -2825,16 +3025,23 @@ async function loadUsage() {
         const list = document.getElementById('usage-history-list');
         const usageRight = document.querySelector('.dm-usage-right');
         const todayCard = document.getElementById('usage-today-card');
+        const historyCard = document.getElementById('usage-history-card');
+        const hasDlLimits = Object.keys(dlLimits).length > 0 || data.dl_download_speed != null;
 
         if (!data.has_traffic_history) {
-            // Provider doesn't track traffic (e.g. AllDebrid is unlimited)
-            if (usageRight) usageRight.style.display = 'none';
+            // Provider doesn't track daily traffic history
             if (todayCard) todayCard.style.display = 'none';
-            document.getElementById('usage-alltime').textContent = 'N/A';
+            if (historyCard) historyCard.style.display = 'none';
+            // Show right column only if DL limits are present to fill it
+            if (usageRight) usageRight.style.display = hasDlLimits ? '' : 'none';
+            // Show all-time if available (e.g. Torbox total_bytes_downloaded), else N/A
+            const allTimeGb = tot.all_time_gb || 0;
+            document.getElementById('usage-alltime').textContent = allTimeGb > 0 ? _fmtBytes(allTimeGb) : 'N/A';
             document.getElementById('usage-reset-timer').textContent = 'N/A';
         } else {
             if (usageRight) usageRight.style.display = '';
             if (todayCard) todayCard.style.display = '';
+            if (historyCard) historyCard.style.display = '';
             let tableRows = '';
             for (const day of data.history) {
                 const hosters = day.hosters || [];
@@ -3553,7 +3760,7 @@ function _rcRenderUntracked(items) {
         <td style="text-align:center">${plexBadge}</td>
         <td class="dm-col-actions">
             <button class="dm-btn dm-btn-danger dm-btn-sm dm-rc-del-btn"
-                data-tid="${escHtml(item.filled_by_torrent_id)}" title="Delete from RD">Delete from RD</button>
+                data-tid="${escHtml(item.filled_by_torrent_id)}" title="Delete from debrid provider">Delete from Debrid</button>
         </td>
     </tr>`;
     }).join('');
@@ -4087,7 +4294,7 @@ function _slRenderIncorrect(items) {
     }).join('');
 }
 
-function _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+// _esc defined below (unconditionally, outside symlink_mode block)
 
 async function _slDeleteOne(kind, path, btnEl) {
     if (!confirm(`Delete this file?\n${path}`)) return;

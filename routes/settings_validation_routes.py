@@ -140,6 +140,58 @@ def validate_debrid_api_key(api_key, provider="RealDebrid"):
         except requests.exceptions.RequestException as e:
             return False, f"Error validating AllDebrid API key: {str(e)}"
 
+    elif provider == "Torbox":
+        try:
+            response = requests.get(
+                "https://api.torbox.app/v1/api/user/me",
+                headers={'Authorization': f'Bearer {api_key}'},
+                timeout=10
+            )
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    if data.get('success') is True:
+                        return True, "Torbox API key is valid"
+                    return False, "Invalid Torbox API response"
+                except ValueError:
+                    return False, "Invalid Torbox API response format"
+            elif response.status_code == 401:
+                return False, "Invalid Torbox API key"
+            elif response.status_code == 403:
+                return False, "Access denied - please check your Torbox API key"
+            else:
+                return False, f"Torbox API error (HTTP {response.status_code})"
+        except requests.exceptions.Timeout:
+            return False, "Timeout while validating Torbox API key"
+        except requests.exceptions.RequestException as e:
+            return False, f"Error validating Torbox API key: {str(e)}"
+
+    elif provider == "DebridLink":
+        try:
+            response = requests.get(
+                "https://debrid-link.com/api/v2/account/infos",
+                headers={'Authorization': f'Bearer {api_key}'},
+                timeout=10
+            )
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    if data.get('success') is True:
+                        return True, "Debrid-Link API key is valid"
+                    return False, "Invalid Debrid-Link API response"
+                except ValueError:
+                    return False, "Invalid Debrid-Link API response format"
+            elif response.status_code == 401:
+                return False, "Invalid Debrid-Link API key"
+            elif response.status_code == 403:
+                return False, "Access denied - please check your Debrid-Link API key"
+            else:
+                return False, f"Debrid-Link API error (HTTP {response.status_code})"
+        except requests.exceptions.Timeout:
+            return False, "Timeout while validating Debrid-Link API key"
+        except requests.exceptions.RequestException as e:
+            return False, f"Error validating Debrid-Link API key: {str(e)}"
+
     return False, f"Unsupported debrid provider: {provider}"
 
 def validate_trakt_credentials(client_id, client_secret):

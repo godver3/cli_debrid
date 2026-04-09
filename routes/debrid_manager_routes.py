@@ -100,11 +100,17 @@ def _load_lib_cache_from_db() -> None:
 
 
 def _fetch_all_bg(gen):
-    """Background thread for providers that return all torrents in one call (e.g. AllDebrid).
+    """Background thread for providers that return all torrents in one call (e.g. AllDebrid, Premiumize).
+    For Premiumize, uses list_completed_torrents() so the library/reconcile only
+    shows finished items — pending downloads are excluded.
     Aborts silently if a newer fetch generation has started."""
     try:
         provider = get_debrid_provider()
-        result = provider.list_active_torrents()
+        # Premiumize: use completed-only list for the library snapshot
+        if hasattr(provider, 'list_completed_torrents'):
+            result = provider.list_completed_torrents()
+        else:
+            result = provider.list_active_torrents()
         if not isinstance(result, list):
             result = []
 
@@ -198,15 +204,26 @@ def _enrich_with_db(torrents):
             ).fetchall()
         finally:
             conn.close()
+        # Count how many media_items rows share each torrent ID
+        torrent_row_counts = {}
         for row in rows:
             tid = row[0]
-            if tid and tid in id_map:
+            if tid:
+                torrent_row_counts[tid] = torrent_row_counts.get(tid, 0) + 1
+
+        seen = set()
+        for row in rows:
+            tid = row[0]
+            if tid and tid in id_map and tid not in seen:
+                seen.add(tid)
+                is_pack = torrent_row_counts.get(tid, 1) > 1
                 id_map[tid]['_db'] = {
                     'title':          row[1],
                     'year':           row[2],
                     'type':           row[3],
                     'season_number':  row[4],
-                    'episode_number': row[5],
+                    # Omit episode number for season packs (multiple items share this torrent)
+                    'episode_number': None if is_pack else row[5],
                 }
         logging.debug(f"Library DB enrichment: {len(rows)}/{len(ids)} matched")
     except Exception as e:
@@ -236,12 +253,25 @@ def index():
         (file_mgmt == 'Symlinked/Local' and media_server == 'plex')
     )
     symlink_mode = (file_mgmt == 'Symlinked/Local')
+    provider_name = get_provider_display_name()
+    # Derive abbreviation from the backup prefix map (single source of truth)
+    # prefix → display name is defined in _bkPfxLabel in the template;
+    # here we reverse it: display name → prefix.upper()
+    _prefix_map = {
+        'Real-Debrid':  'RD',
+        'AllDebrid':    'AD',
+        'Premiumize':   'PM',
+        'Torbox':       'TB',
+        'Debrid-Link':  'DL',
+    }
+    provider_abbrev = _prefix_map.get(provider_name, provider_name[:2].upper())
     return render_template(
         'debrid_manager.html',
         show_plex_trash=show_plex_trash,
         symlink_mode=symlink_mode,
         media_server_type=media_server,
-        debrid_provider_name=get_provider_display_name(),
+        debrid_provider_name=provider_name,
+        debrid_provider_abbrev=provider_abbrev,
     )
 
 
@@ -514,9 +544,13 @@ def api_plex_trash_items():
                     _bg_gen = _lib['gen']
                     _lib['loading'] = True
                     _lib['partial'] = []
-                threading.Thread(target=_fetch_pages_bg,
-                                 args=(provider.api_key, 1, _bg_gen), daemon=True).start()
-                logging.info("[PlexTrash] No RD library — triggered background fetch")
+                if provider.PROVIDER_NAME == 'Real-Debrid':
+                    threading.Thread(target=_fetch_pages_bg,
+                                     args=(provider.api_key, 1, _bg_gen), daemon=True).start()
+                else:
+                    threading.Thread(target=_fetch_all_bg,
+                                     args=(_bg_gen,), daemon=True).start()
+                logging.info("[PlexTrash] No library — triggered background fetch")
                 rd_library_status = 'loading'
             except Exception as _bg_e:
                 logging.warning(f"[PlexTrash] Could not start bg fetch: {_bg_e}")
@@ -965,9 +999,9 @@ def api_batch_reinsert():
             magnet = f'magnet:?xt=urn:btih:{h}'
             if fn:
                 magnet += f'&dn={quote(fn)}'
-            # Add first — only delete old entry if add succeeds
-            provider.add_torrent(magnet)
-            if tid:
+            # Add first — only delete old entry if add succeeds and returned a different ID
+            new_id = provider.add_torrent(magnet)
+            if tid and str(new_id) != str(tid):
                 try:
                     provider.remove_torrent(tid)
                 except Exception:
@@ -1005,12 +1039,13 @@ def api_reinsert_torrent(torrent_id):
         if filename:
             from urllib.parse import quote
             magnet += f'&dn={quote(filename)}'
-        # Add first — only delete old entry if add succeeds
+        # Add first — only delete old entry if add succeeds and returned a different ID
         new_id = provider.add_torrent(magnet)
-        try:
-            provider.remove_torrent(torrent_id)
-        except Exception:
-            pass  # new copy added; best-effort cleanup of old
+        if str(new_id) != str(torrent_id):
+            try:
+                provider.remove_torrent(torrent_id)
+            except Exception:
+                pass  # new copy added; best-effort cleanup of old
         _invalidate_library_cache()
         return jsonify({'success': True, 'new_id': new_id})
     except Exception as e:
@@ -1097,8 +1132,12 @@ def api_library():
     initial = []
     try:
         if not _uses_pagination:
-            # Non-paginated providers (AllDebrid, etc.) return everything at once
-            initial = provider.list_active_torrents() or []
+            # Non-paginated providers: Premiumize uses completed-only list for
+            # the library snapshot; others use list_active_torrents
+            if hasattr(provider, 'list_completed_torrents'):
+                initial = provider.list_completed_torrents() or []
+            else:
+                initial = provider.list_active_torrents() or []
             # Ensure status is always a plain string (enum .value may be int for UNKNOWN)
             for t in initial:
                 if 'status' in t and not isinstance(t['status'], str):
@@ -1334,6 +1373,12 @@ def api_usage():
         total_all_bytes = sum(
             traffic_details[d].get('bytes', 0) for d in traffic_details
         )
+        # Fallback: providers without traffic history may expose all-time bytes directly
+        if not total_all_bytes:
+            total_all_bytes = (
+                traffic.get('total_bytes_downloaded', 0) or
+                sub.get('total_bytes_downloaded', 0) or 0
+            )
 
         try:
             active_count, max_dl = provider.get_active_downloads()
@@ -1350,8 +1395,14 @@ def api_usage():
                 'premium':        bool(sub.get('premium', False)),
                 'expiration':     sub.get('expiration', ''),
                 'days_remaining': sub.get('days_remaining'),
-                'points':         sub.get('points', 0),
+                'points':         sub.get('points', 0),  # None hides the row in JS
                 'locale':         sub.get('locale', ''),
+                # Premiumize-specific extras (ignored by other providers)
+                'space_used':     sub.get('space_used'),
+                'limit_used':     sub.get('limit_used'),
+                # Torbox-specific extras (ignored by other providers)
+                'created_at':     sub.get('created_at'),
+                'cooldown_until': sub.get('cooldown_until'),
             },
             'today': {
                 'date':          today_utc,
@@ -1364,6 +1415,11 @@ def api_usage():
                 'max_slots':     max_dl,
             },
             'history': history,
+            # Debrid-Link specific — raw limits dict + live speeds (None for all other providers)
+            'dl_limits':         traffic.get('limits', {}) if 'limits' in traffic else {},
+            'dl_download_speed': traffic.get('download_speed') if 'download_speed' in traffic else None,
+            'dl_upload_speed':   traffic.get('upload_speed')   if 'upload_speed'   in traffic else None,
+            'dl_peers':          traffic.get('peers_connected') if 'peers_connected' in traffic else None,
         })
     except Exception as e:
         logging.error(f"Usage API error: {e}")
@@ -1475,12 +1531,19 @@ def api_reconcile():
                         _gen = _lib['gen']
                         _lib['loading'] = True
                         _lib['partial'] = []
-                    threading.Thread(
-                        target=_fetch_pages_bg,
-                        args=(provider.api_key, 1, _gen),
-                        daemon=True,
-                    ).start()
-                    logging.info('[Reconcile] Force refresh — triggered background RD library re-fetch')
+                    if provider.PROVIDER_NAME == 'Real-Debrid':
+                        threading.Thread(
+                            target=_fetch_pages_bg,
+                            args=(provider.api_key, 1, _gen),
+                            daemon=True,
+                        ).start()
+                    else:
+                        threading.Thread(
+                            target=_fetch_all_bg,
+                            args=(_gen,),
+                            daemon=True,
+                        ).start()
+                    logging.info('[Reconcile] Force refresh — triggered background library re-fetch')
                 except Exception as _e:
                     logging.warning(f'[Reconcile] Could not trigger library re-fetch: {_e}')
 
@@ -1491,7 +1554,7 @@ def api_reconcile():
         if stable is None:
             return jsonify({
                 'success': False,
-                'error': 'RD library not yet loaded — visit the Torrents tab first, then retry.'
+                'error': 'Debrid library not yet loaded — visit the Torrents tab first, then retry.'
             })
 
         rd_torrents  = stable['torrents']

@@ -165,6 +165,9 @@
         <select id="debrid_provider" name="debrid_provider" required class="onboarding-input">
             <option value="RealDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'RealDebrid' %}selected{% endif %}>RealDebrid</option>
             <option value="AllDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'AllDebrid' %}selected{% endif %}>AllDebrid</option>
+            <option value="Premiumize" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'Premiumize' %}selected{% endif %}>Premiumize</option>
+            <option value="Torbox" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'Torbox' %}selected{% endif %}>Torbox</option>
+            <option value="DebridLink" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'DebridLink' %}selected{% endif %}>Debrid-Link</option>
         </select>
 
         <label for="debrid_api_key" class="onboarding-label">Debrid API Key:</label>
@@ -827,6 +830,12 @@ document.addEventListener('DOMContentLoaded', function() {
             formData.set('realdebrid_api_key', apiKey);
         } else if (provider === 'AllDebrid') {
             formData.set('alldebrid_api_key', apiKey);
+        } else if (provider === 'Premiumize') {
+            formData.set('premiumize_api_key', apiKey);
+        } else if (provider === 'Torbox') {
+            formData.set('torbox_api_key', apiKey);
+        } else if (provider === 'DebridLink') {
+            formData.set('debridlink_api_key', apiKey);
         }
         
         try {
