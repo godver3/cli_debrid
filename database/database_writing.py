@@ -181,7 +181,17 @@ def update_media_item_state(item_id, state, **kwargs):
         params = [state, datetime.now()]
 
         # Add optional fields to the query if they are provided
-        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 'filled_by_torrent_id', 'scrape_results', 'version', 'resolution', 'upgrading_from']
+        optional_fields = [
+            'filled_by_title',
+            'filled_by_magnet',
+            'filled_by_file',
+            'filled_by_torrent_id',
+            'scrape_results',
+            'version',
+            'resolution',
+            'upgrading_from',
+            'debrid_folder_name',
+        ]
         for field in optional_fields:
             if field in kwargs:
                 query += f", {field} = ?"
@@ -961,9 +971,9 @@ def update_media_items_state_batch(item_ids: List[int], state: str, **kwargs):
         base_params = [state, datetime.now()]
 
         # Add optional fields to the query
-        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file', 
-                         'filled_by_torrent_id', 'scrape_results', 'version', 
-                         'resolution', 'upgrading_from']
+        optional_fields = ['filled_by_title', 'filled_by_magnet', 'filled_by_file',
+                         'filled_by_torrent_id', 'scrape_results', 'version',
+                         'resolution', 'upgrading_from', 'debrid_folder_name']
         
         for field in kwargs:
             if field in optional_fields:

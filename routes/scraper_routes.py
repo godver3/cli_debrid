@@ -520,6 +520,7 @@ def add_torrent_to_debrid():
                 filled_by_file = os.path.basename(largest_file['path'])
                 # Get the torrent title from torrent_info's filename
                 filled_by_title = torrent_info.get('filename', '') or os.path.basename(os.path.dirname(largest_file['path']))
+                debrid_folder_name = torrent_info.get('debrid_folder_name') or filled_by_title
 
                 # Extract resolution from torrent title
                 resolution = extract_resolution_from_filename(original_scraped_torrent_title) if original_scraped_torrent_title else None
@@ -547,6 +548,7 @@ def add_torrent_to_debrid():
                     'genres': json.dumps(genres),  # JSON encode the genres list
                     'current_score': current_score,
                     'real_debrid_original_title': torrent_info.get('original_filename'),
+                    'debrid_folder_name': debrid_folder_name,
                     'content_source': 'content_requester',
                     'content_source_detail': current_user.username if (is_user_system_enabled() and current_user.is_authenticated) else 'CD-Discover',
                     'selected_folder': selected_folder,  # User-selected folder from dropdown
@@ -634,8 +636,34 @@ def add_torrent_to_debrid():
                                 
                                 if match_result:
                                     matching_filepath_basename, _ = match_result # Unpack the tuple
+
+                                    matched_file_dict = next(
+                                        (
+                                            file_dict for file_dict in torrent_files
+                                            if os.path.basename(file_dict.get('path', '')) == matching_filepath_basename
+                                        ),
+                                        None
+                                    )
+
                                     episode_item['filled_by_file'] = matching_filepath_basename # Use the basename
-                                    
+
+                                    if matched_file_dict:
+                                        matched_path = matched_file_dict.get('path', '')
+                                        matched_folder_name = os.path.basename(os.path.dirname(matched_path))
+                                        if matched_folder_name:
+                                            episode_item['filled_by_title'] = matched_folder_name
+                                            episode_item['debrid_folder_name'] = matched_folder_name
+                                        logging.info(
+                                            f"Season pack exact match for {title} S{season_number}E{episode_item.get('episode_number')}: "
+                                            f"folder='{episode_item.get('debrid_folder_name')}', "
+                                            f"file='{episode_item.get('filled_by_file')}'"
+                                        )
+                                    else:
+                                        logging.warning(
+                                            f"Matched basename '{matching_filepath_basename}' for {title} "
+                                            f"S{season_number}E{episode_item.get('episode_number')} but could not resolve original torrent path."
+                                        )
+
                                     # Add episode to database
                                     from database import add_media_item
                                     episode_id = add_media_item(episode_item, user_initiated=True)
@@ -696,6 +724,7 @@ def add_torrent_to_debrid():
                                         filled_by_title = ?,
                                         filled_by_file = ?,
                                         original_scraped_torrent_title = ?,
+                                        debrid_folder_name = ?,
                                         current_score = ?,
                                         ghostlisted = 0,
                                         blacklisted_date = NULL,
@@ -704,6 +733,7 @@ def add_torrent_to_debrid():
                                        WHERE id = ?''',
                                     (actual_magnet_to_add, torrent_id, item.get('filled_by_title'),
                                      item.get('filled_by_file'), original_scraped_torrent_title,
+                                     item.get('debrid_folder_name'),
                                      current_score, _dt.now(), existing_id)
                                 )
                                 _conn.commit()

@@ -4,6 +4,9 @@ from utilities.settings import get_setting, ensure_settings_file
 from .base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError
 from .real_debrid import RealDebridProvider
 from .alldebrid import AllDebridProvider
+from .premiumize import PremiumizeProvider
+from .torbox import TorboxProvider
+from .debridlink import DebridLinkProvider
 from .common import (
     extract_hash_from_magnet,
     download_and_extract_hash,
@@ -38,6 +41,15 @@ def get_debrid_provider() -> DebridProvider:
     elif provider_name == 'alldebrid':
         logging.info("[DEBRID FACTORY] Instantiating AllDebridProvider")
         _provider_instance = AllDebridProvider()
+    elif provider_name == 'premiumize':
+        logging.info("[DEBRID FACTORY] Instantiating PremiumizeProvider")
+        _provider_instance = PremiumizeProvider()
+    elif provider_name == 'torbox':
+        logging.info("[DEBRID FACTORY] Instantiating TorboxProvider")
+        _provider_instance = TorboxProvider()
+    elif provider_name in ('debridlink', 'debrid-link'):
+        logging.info("[DEBRID FACTORY] Instantiating DebridLinkProvider")
+        _provider_instance = DebridLinkProvider()
     else:
         raise ValueError(f"Unknown debrid provider: {provider_name}")
         
@@ -63,8 +75,10 @@ def get_provider_display_name() -> str:
     _name_map = {
         'realdebrid':  'Real-Debrid',
         'alldebrid':   'AllDebrid',
-        'torbox':      'TorBox',
+        'torbox':      'Torbox',
         'premiumize':  'Premiumize',
+        'debridlink':  'Debrid-Link',
+        'debrid-link': 'Debrid-Link',
     }
     return _name_map.get(provider_name, provider_name.title() or 'Debrid')
 
@@ -78,6 +92,9 @@ __all__ = [
     'ProviderUnavailableError',
     'RealDebridProvider',
     'AllDebridProvider',
+    'PremiumizeProvider',
+    'TorboxProvider',
+    'DebridLinkProvider',
     'extract_hash_from_magnet',
     'download_and_extract_hash',
     'timed_lru_cache',

@@ -4005,7 +4005,7 @@ class ProgramRunner:
         conn = get_db_connection()
         cursor = conn.cursor()
         try:
-            items = cursor.execute('SELECT id, title, filled_by_title, filled_by_file, type, imdb_id, tmdb_id, season_number, episode_number, year, version, original_scraped_torrent_title, real_debrid_original_title, last_updated, upgrading_from, upgrading_from_torrent_id FROM media_items WHERE state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)').fetchall()
+            items = cursor.execute('SELECT id, title, filled_by_title, filled_by_file, type, imdb_id, tmdb_id, season_number, episode_number, year, version, original_scraped_torrent_title, real_debrid_original_title, debrid_folder_name, last_updated, upgrading_from, upgrading_from_torrent_id FROM media_items WHERE state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)').fetchall()
         except sqlite3.Error as db_err:
             logging.error(f"Database error fetching items for Plex check: {db_err}")
             conn.close()
@@ -4085,6 +4085,7 @@ class ProgramRunner:
                 # --- START: Ensure new field is fetched ---
                 original_scraped_torrent_title = item_dict['original_scraped_torrent_title'] or ''
                 real_debrid_original_title = item_dict['real_debrid_original_title'] or ''
+                debrid_folder_name = item_dict['debrid_folder_name'] or ''
                 # --- END: Ensure new field is fetched ---
 
                 if not filled_by_title or not filled_by_file: # This check might need re-evaluation if filled_by_title can be empty but other titles exist
@@ -4099,6 +4100,10 @@ class ProgramRunner:
                 # --- Construct potential paths in order of priority ---
                 paths_to_check = []
                 base_path = plex_file_location # Base path to check within
+
+                # 0. Exact provider folder name
+                if debrid_folder_name:
+                    paths_to_check.append(os.path.join(base_path, debrid_folder_name, current_filename))
 
                 # 1. Original Scraped Torrent Title (raw)
                 if original_scraped_torrent_title:
@@ -4335,6 +4340,7 @@ class ProgramRunner:
                 # --- START: Ensure new field is fetched ---
                 original_scraped_torrent_title = item_dict['original_scraped_torrent_title'] or ''
                 real_debrid_original_title = item_dict['real_debrid_original_title'] or ''
+                debrid_folder_name = item_dict['debrid_folder_name'] or ''
                 # --- END: Ensure new field is fetched ---
 
                 if not filled_by_title or not current_filename: 
@@ -4346,6 +4352,11 @@ class ProgramRunner:
                 # --- START: UNIFIED FILE SEARCH LOGIC (consistent with disabled checks mode) ---
                 paths_to_check_info = [] # Stores dicts: {'name': folder_name, 'path': full_path, 'type': log_type}
                 base_path = plex_file_location
+
+                # 0. Exact provider folder name
+                if debrid_folder_name:
+                    path = os.path.join(base_path, debrid_folder_name, current_filename)
+                    paths_to_check_info.append({'name': debrid_folder_name, 'path': path, 'type': 'debrid_folder_name'})
 
                 # 1. Original Scraped Torrent Title (raw)
                 if original_scraped_torrent_title:

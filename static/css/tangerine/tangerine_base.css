@@ -133,7 +133,7 @@ select option {
 select option:hover,
 select option:focus,
 select option:checked {
-    background-color: rgba(255, 107, 53, 0.2);
+    background-color: rgb(55 35 18 / 85%);
 }
 
 /* ========================================

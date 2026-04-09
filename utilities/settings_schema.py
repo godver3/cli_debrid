@@ -275,7 +275,7 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Debrid service provider",
             "default": "RealDebrid",
-            "choices": ["RealDebrid", "AllDebrid"]
+            "choices": ["RealDebrid", "AllDebrid", "Premiumize", "Torbox", "DebridLink"]
         },
         "api_key": {
             "type": "string",

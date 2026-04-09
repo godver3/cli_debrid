@@ -238,8 +238,8 @@ class DebridProvider(ABC):
         active_count, max_downloads = self.get_active_downloads()
         return active_torrents, (active_count, max_downloads)
 
-    def is_cached_sync(self, magnet_link: str, temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, skip_phalanx_db: bool = False) -> Union[bool, Dict[str, bool], None]:
-        """Synchronous version of is_cached"""
+    def is_cached_sync(self, magnet_link: str, temp_file_path: Optional[str] = None, result_title: Optional[str] = None, result_index: Optional[str] = None, remove_uncached: bool = True, skip_phalanx_db: bool = False, **kwargs) -> Union[bool, Dict[str, bool], None]:
+        """Synchronous version of is_cached — passes all kwargs through to the async method."""
         import asyncio
         try:
             # Create a new event loop for this thread if one doesn't exist
@@ -248,10 +248,11 @@ class DebridProvider(ABC):
             except RuntimeError:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-            
-            # Run the async method in the event loop
+
+            # Run the async method in the event loop, forwarding all extra kwargs
             return loop.run_until_complete(
-                self.is_cached(magnet_link, temp_file_path, result_title, result_index, remove_uncached, skip_phalanx_db=skip_phalanx_db)
+                self.is_cached(magnet_link, temp_file_path, result_title, result_index,
+                               remove_uncached, skip_phalanx_db=skip_phalanx_db, **kwargs)
             )
         except Exception as e:
             logging.error(f"Error in is_cached_sync: {str(e)}")
