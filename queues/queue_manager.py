@@ -658,7 +658,16 @@ class QueueManager:
         except Exception as e:
             logging.error(f"Failed to send Adding state change notification: {str(e)}")
 
-    def move_to_checking(self, item: Dict[str, Any], from_queue: str, title: str, link: str, filled_by_file: str, torrent_id: str = None):
+    def move_to_checking(
+        self,
+        item: Dict[str, Any],
+        from_queue: str,
+        title: str,
+        link: str,
+        filled_by_file: str,
+        torrent_id: str = None,
+        debrid_folder_name: str = None,
+    ):
         item_identifier = self.generate_identifier(item)
 
         # GHOSTLIST CHECK: Prevent ghostlisted/blacklisted items from being moved to Checking
@@ -721,7 +730,8 @@ class QueueManager:
             filled_by_title=title,
             filled_by_magnet=link,
             filled_by_file=filled_by_file,
-            filled_by_torrent_id=torrent_id
+            filled_by_torrent_id=torrent_id,
+            debrid_folder_name=debrid_folder_name,
         )
         
         # Copy downloading flag from original item
