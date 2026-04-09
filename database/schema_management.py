@@ -271,6 +271,9 @@ def migrate_schema():
         if 'manual_replace' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN manual_replace BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added manual_replace column to media_items table.")
+        if 'debrid_folder_name' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN debrid_folder_name TEXT')
+            logging.info("Successfully added debrid_folder_name column to media_items table.")
 
         # ============================================
         # Overlay System Tables
@@ -887,7 +890,8 @@ def create_tables():
                 content_sources TEXT,
                 verification_failed BOOLEAN DEFAULT FALSE,
                 verification_failure_reason TEXT,
-                plex_labels_last_synced TIMESTAMP
+                plex_labels_last_synced TIMESTAMP,
+                debrid_folder_name TEXT
             )
         ''')
 
