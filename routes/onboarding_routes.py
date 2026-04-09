@@ -563,12 +563,12 @@ def validate_onboarding_settings():
             })
             
         # For existing Plex setups
-        elif management_type in ['plex_direct', 'plex_symlink']:
+        elif management_type in ['plex_direct', 'plex_symlink', 'Plex', 'Symlinked/Local']:
             checks = []
             is_valid = True
-            
+
             # Validate based on setup type
-            if management_type == 'plex_direct':
+            if management_type in ('plex_direct', 'Plex'):
                 # Check for direct mount requirements - only validate if path is provided
                 mount_path = config.get('File Management', {}).get('original_files_path')
                 # Since original_files_path is optional, we don't need to validate it if it's empty
@@ -580,7 +580,7 @@ def validate_onboarding_settings():
                     })
                 # Don't add any validation check if mount_path is empty since it's optional
                     
-            elif management_type == 'plex_symlink':
+            elif management_type in ('plex_symlink', 'Symlinked/Local'):
                 # Check for symlink requirements
                 symlink_path = config.get('File Management', {}).get('symlinked_files_path')
                 if not symlink_path:
