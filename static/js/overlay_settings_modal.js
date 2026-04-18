@@ -62,6 +62,8 @@
         contentCheckDaysInput = document.getElementById('overlaySettingsContentCheckDays');
         syncItemsPerRunInput = document.getElementById('overlaySettingsSyncItemsPerRun');
         textlessPosterInput = document.getElementById('overlaySettingsTextlessPoster');
+        textlessPosterInput = document.getElementById('overlaySettingsTextlessPoster');
+        textlessPosterInput = document.getElementById('overlaySettingsTextlessPoster');
 
         return true;
     }
@@ -88,6 +90,14 @@
 
             if (overlaysEnabledInput) {
                 overlaysEnabledInput.checked = overlaySettings.overlays_enabled || false;
+            }
+
+            if (textlessPosterInput) {
+                textlessPosterInput.checked = overlaySettings.textless_posters || false;
+            }
+
+            if (textlessPosterInput) {
+                textlessPosterInput.checked = overlaySettings.textless_posters || false;
             }
 
             if (textlessPosterInput) {
@@ -147,6 +157,12 @@
             }
 
             updatedSettings['Overlay Settings'].overlays_enabled = overlaysEnabledInput.checked;
+            if (textlessPosterInput) {
+                updatedSettings['Overlay Settings'].textless_posters = textlessPosterInput.checked;
+            }
+            if (textlessPosterInput) {
+                updatedSettings['Overlay Settings'].textless_posters = textlessPosterInput.checked;
+            }
             if (textlessPosterInput) {
                 updatedSettings['Overlay Settings'].textless_posters = textlessPosterInput.checked;
             }

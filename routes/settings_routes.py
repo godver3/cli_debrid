@@ -1531,9 +1531,21 @@ def get_scraping_settings():
 @user_required
 def get_full_config():
     """Get full configuration for modal/API access"""
+    import math
+
+    def sanitize(obj):
+        """Recursively replace non-JSON-serializable floats with None."""
+        if isinstance(obj, dict):
+            return {k: sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [sanitize(v) for v in obj]
+        if isinstance(obj, float) and (math.isinf(obj) or math.isnan(obj)):
+            return None
+        return obj
+
     try:
         config = load_config()
-        return jsonify(config)
+        return jsonify(sanitize(config))
     except Exception as e:
         logging.error(f"Error loading config: {str(e)}", exc_info=True)
         return jsonify({"error": "Failed to load configuration"}), 500

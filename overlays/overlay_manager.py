@@ -1771,9 +1771,13 @@ class OverlayManager:
                 import requests as _requests
                 from PIL import Image as _Image
 
+                from utilities.settings import load_config as _lc_tmdb_pre
+                _textless_pre = _lc_tmdb_pre().get('Overlay Settings', {}).get('textless_posters', False)
+                _cache_key = f"{tmdb_id}_textless" if _textless_pre else tmdb_id
+
                 cached_url = (
                     (get_cached_poster_url(imdb_id, media_type) if imdb_id else None)
-                    or (get_cached_poster_url(tmdb_id, media_type) if tmdb_id else None)
+                    or (get_cached_poster_url(_cache_key, media_type) if tmdb_id else None)
                 )
 
                 # Cache miss — fetch directly from TMDB API.
@@ -1783,9 +1787,9 @@ class OverlayManager:
                 # When textless_posters is disabled (default): prefer English-language posters
                 # (iso_639_1=en) which include the title text — fall back to en+null.
                 if not cached_url and tmdb_id:
-                    from utilities.settings import get_setting as _gs_tmdb, load_config as _lc_tmdb
+                    from utilities.settings import get_setting as _gs_tmdb
                     _api_key = _gs_tmdb('TMDB', 'api_key', default='')
-                    _textless = _lc_tmdb().get('Overlay Settings', {}).get('textless_posters', False)
+                    _textless = _textless_pre
                     if _api_key:
                         _posters = []
                         if _textless:
@@ -1835,7 +1839,9 @@ class OverlayManager:
                             # Track whether a genuinely textless poster was found
                             # iso_639_1 = null means no baked-in title text
                             _is_textless_poster = (_chosen.get('iso_639_1') is None)
-                            _cpu(tmdb_id, media_type, cached_url)
+                            # Use a separate cache key for textless posters so the
+                            # standard cache (used by library/stats pages) is not polluted
+                            _cpu(_cache_key, media_type, cached_url)
                             self.logger.info(
                                 f"Fetched TMDB poster for "
                                 f"{item.get('title', plex_rating_key)} "

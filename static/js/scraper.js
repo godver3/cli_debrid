@@ -937,7 +937,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
             if (window.DEBUG) console.log('📦 Final versions for dropdown:', versionsToUse, 'Current version:', version);
 
             // Strip asterisks from version for comparison (e.g., "4K Remux*" -> "4K Remux")
-            const cleanVersion = version.replace(/\*/g, '');
+            const cleanVersion = version ? version.replace(/\*/g, '') : '';
 
             // Generate version options HTML
             const versionOptionsHTML = versionsToUse.map(v =>

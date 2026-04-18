@@ -1343,65 +1343,72 @@ div#trakt-auth-status {
     align-items: center;
 }
 
-.loading-content {
-    background: rgba(26, 26, 26, 0.95);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 20px;
-    border-radius: 20px;
-    text-align: center;
+/* Loading overlay styles defined in base.css */
+
+.loading-progress-bar-container {
+    height: 3px;
+    background: rgba(255, 255, 255, 0.06);
 }
 
-.loading-content p {
-    color: #e0e0e0;
-    margin-bottom: 15px;
+.loading-progress-bar {
+    height: 100%;
+    width: 20%;
+    background: linear-gradient(90deg, #ff6b35, #ff8c5a);
+    border-radius: 0 2px 2px 0;
+    animation: loading-bar-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes loading-bar-pulse {
+    0%   { width: 20%; opacity: 1; }
+    50%  { width: 70%; opacity: 0.85; }
+    100% { width: 20%; opacity: 1; }
+}
+
+.loading-inner {
+    padding: 1.5rem 1.75rem 1.25rem;
+}
+
+.loading-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    margin-bottom: 0.6rem;
+}
+
+.loading-spin-icon {
+    color: #888;
+    font-size: 1.1rem;
+    flex-shrink: 0;
 }
 
 .loading-message {
-    margin-bottom: 10px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #e8e8e8;
+    margin: 0;
 }
 
 .loading-details {
-    font-size: 14px;
-    color: #ccc;
-    margin-top: 10px;
+    font-size: 0.82rem;
+    color: #888;
+    margin-left: 1.95rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
 }
 
-.spinner {
-    border: 4px solid rgba(255, 255, 255, 0.1);
-    border-top: 4px solid #007bff;
-    border-radius: 50%;
-    width: 40px;
-    height: 40px;
-    animation: spin 1s linear infinite;
-    margin: 0 auto 10px;
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
-
-.close-loading {
-    background: #007bff;
-    color: white;
-    border: none;
-    padding: 12px 20px;
-    text-align: center;
-    text-decoration: none;
-    display: inline-block;
-    font-size: 16px;
+.loading-progress {
+    font-size: 0.82rem;
+    color: #ff8c5a;
     font-weight: 600;
-    margin: 4px 2px;
-    cursor: pointer;
-    border-radius: 12px;
-    transition: all 0.3s ease;
+    margin-left: 1.95rem;
+    margin-top: 0.3rem;
+    letter-spacing: 0.01em;
 }
 
-.close-loading:hover {
-    background: #0056b3;
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(0, 123, 255, 0.4);
+.loading-button-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 1.1rem;
 }
 
 /* Plex Labels Disabled Fields Styling */

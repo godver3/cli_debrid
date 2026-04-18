@@ -2,7 +2,7 @@ from flask import Blueprint, render_template, flash, redirect, url_for
 import requests
 import os
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from utilities.settings import get_setting, get_all_settings
 from typing import Dict, List, Any
 from content_checkers.trakt import ensure_trakt_auth, get_trakt_headers, make_trakt_request, parse_trakt_list_url
@@ -11,6 +11,15 @@ import logging
 import feedparser # Keep import for RSS
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+
+# --- Connection status cache ---
+_connections_cache = {
+    'results': None,
+    'timestamp': None,
+    'refreshing': False,
+}
+_connections_cache_lock = threading.Lock()
+_CACHE_TTL = timedelta(seconds=60)  # Serve cached results for up to 60s
 
 # Attempt to import DirectAPI - adjust path if necessary based on your project structure
 try:
@@ -1223,13 +1232,171 @@ def get_trakt_sources() -> Dict[str, List[Dict[str, Any]]]:
         'friend_watchlist': friend_watchlist_sources
     }
 
-@connections_bp.route('/')
+@connections_bp.route('/api/check/system')
 @user_required
-def index():
-    """Render the connections status page with a timeout."""
-    start_time = datetime.now()
-    
-    # Initialize all statuses to None
+def api_check_system():
+    """Check cli_battery, plex/jellyfin, mounted files, phalanx db."""
+    from flask import jsonify
+    jellyfin_url = get_cached_setting('Debug', 'emby_jellyfin_url')
+    jellyfin_token = get_cached_setting('Debug', 'emby_jellyfin_token')
+    tasks = {
+        'cli_battery_status': check_cli_battery_connection,
+        'mounted_files_status': check_mounted_files_connection,
+        'phalanx_db_status': check_phalanx_db_connection,
+    }
+    if jellyfin_url and jellyfin_token:
+        tasks['jellyfin_status'] = check_jellyfin_connection
+    else:
+        tasks['plex_status'] = check_plex_connection
+    results = {}
+    with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+        future_to_task = {executor.submit(func): name for name, func in tasks.items()}
+        try:
+            for future in as_completed(future_to_task, timeout=10):
+                name = future_to_task[future]
+                try:
+                    results[name] = future.result()
+                except Exception as exc:
+                    results[name] = {'name': name, 'connected': False, 'error': str(exc), 'details': {}}
+        except TimeoutError:
+            pass
+    results.setdefault('plex_status', None)
+    results.setdefault('jellyfin_status', None)
+    results.setdefault('mounted_files_status', None)
+    results.setdefault('phalanx_db_status', None)
+    results.setdefault('cli_battery_status', None)
+    return jsonify(results)
+
+
+@connections_bp.route('/api/check/scrapers')
+@user_required
+def api_check_scrapers():
+    """Check all scraper connections."""
+    from flask import jsonify
+    results = {'scraper_statuses': []}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {executor.submit(check_nyaa_scrapers_only): 'nyaa',
+                   executor.submit(check_non_nyaa_scrapers): 'non_nyaa'}
+        try:
+            for future in as_completed(futures, timeout=15):
+                try:
+                    results['scraper_statuses'].extend(future.result())
+                except Exception as exc:
+                    log.error(f"Scraper check error: {exc}")
+        except TimeoutError:
+            pass
+    return jsonify(results)
+
+
+@connections_bp.route('/api/check/content-sources')
+@user_required
+def api_check_content_sources():
+    """Check all content source connections."""
+    from flask import jsonify
+    try:
+        statuses = check_content_sources_connections()
+    except Exception as exc:
+        log.error(f"Content sources check error: {exc}")
+        statuses = []
+    return jsonify({'content_source_statuses': statuses})
+
+
+@connections_bp.route('/api/stream/scrapers')
+@user_required
+def api_stream_scrapers():
+    """SSE stream: emits each scraper result as it completes."""
+    import json
+    from flask import Response
+
+    def generate():
+        try:
+            from queues.config_manager import load_config
+            config = load_config()
+            scrapers = config.get('Scrapers', {})
+            all_scrapers = [
+                (sid, cfg) for sid, cfg in scrapers.items()
+                if cfg.get('enabled', False)
+            ]
+        except Exception:
+            all_scrapers = []
+
+        if not all_scrapers:
+            yield "event: done\ndata: {}\n\n"
+            return
+
+        with ThreadPoolExecutor(max_workers=min(5, len(all_scrapers))) as executor:
+            future_to_scraper = {
+                executor.submit(check_scraper_connection, sid, cfg): (sid, cfg)
+                for sid, cfg in all_scrapers
+            }
+            try:
+                for future in as_completed(future_to_scraper, timeout=30):
+                    try:
+                        result = future.result()
+                        if result:
+                            yield f"event: scraper\ndata: {json.dumps(result)}\n\n"
+                    except Exception as exc:
+                        sid, cfg = future_to_scraper[future]
+                        scraper_type = cfg.get('type', sid)
+                        name = f"{scraper_type} ({sid})"
+                        yield f"event: scraper\ndata: {json.dumps({'name': name, 'connected': False, 'error': str(exc)})}\n\n"
+            except TimeoutError:
+                pass
+        yield "event: done\ndata: {}\n\n"
+
+    return Response(generate(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+@connections_bp.route('/api/stream/content-sources')
+@user_required
+def api_stream_content_sources():
+    """SSE stream: emits each content source result as it completes."""
+    import json
+    from flask import Response
+
+    def generate():
+        all_sources = []
+        try:
+            all_settings = get_all_settings()
+            content_sources = all_settings.get('Content Sources', {})
+            all_sources = [
+                (sid, cfg) for sid, cfg in content_sources.items()
+                if cfg.get('enabled', False) and cfg.get('type') != 'Collected'
+            ]
+        except Exception:
+            pass
+
+        if not all_sources:
+            yield "event: done\ndata: {}\n\n"
+            return
+
+        with ThreadPoolExecutor(max_workers=min(10, len(all_sources))) as executor:
+            future_to_source = {
+                executor.submit(check_content_source_connection, sid, cfg): (sid, cfg)
+                for sid, cfg in all_sources
+            }
+            try:
+                for future in as_completed(future_to_source, timeout=60):
+                    try:
+                        result = future.result()
+                        if result:
+                            yield f"event: source\ndata: {json.dumps(result)}\n\n"
+                    except Exception as exc:
+                        sid, cfg = future_to_source[future]
+                        display_name = cfg.get('display_name')
+                        name = f"{display_name} ({sid})" if display_name else sid
+                        yield f"event: source\ndata: {json.dumps({'name': name, 'connected': False, 'error': str(exc), 'details': {}})}\n\n"
+            except TimeoutError:
+                pass
+        yield "event: done\ndata: {}\n\n"
+
+    return Response(generate(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
+def _run_all_connection_checks():
+    """Run all connection checks and return results dict. Used by cache refresh."""
     results = {
         'cli_battery_status': None,
         'plex_status': None,
@@ -1240,12 +1407,9 @@ def index():
         'content_source_statuses': [],
     }
 
-    # Determine which media server check to run (use cached settings)
     jellyfin_url = get_cached_setting('Debug', 'emby_jellyfin_url')
     jellyfin_token = get_cached_setting('Debug', 'emby_jellyfin_token')
 
-    # Define tasks for ALL connection checks (including Nyaa scrapers now)
-    # Running Nyaa in parallel reduces total time despite potential proxy conflicts
     tasks = {
         'cli_battery_status': check_cli_battery_connection,
         'mounted_files_status': check_mounted_files_connection,
@@ -1254,53 +1418,95 @@ def index():
         'non_nyaa_scraper_statuses': check_non_nyaa_scrapers,
         'content_source_statuses': check_content_sources_connections,
     }
-    
+
     if jellyfin_url and jellyfin_token:
         tasks['jellyfin_status'] = check_jellyfin_connection
     else:
         tasks['plex_status'] = check_plex_connection
 
-    # Run all other connection checks in parallel with fixed worker limit
     with ThreadPoolExecutor(max_workers=min(6, len(tasks))) as executor:
         future_to_task = {executor.submit(func): name for name, func in tasks.items()}
-
         try:
-            # Wait for all futures to complete, with a total timeout of 25 seconds
             for future in as_completed(future_to_task, timeout=25):
                 task_name = future_to_task[future]
                 try:
                     task_result = future.result()
                     if task_name in ['nyaa_scraper_statuses', 'non_nyaa_scraper_statuses']:
-                        # Add scraper results to the scraper_statuses list
                         results['scraper_statuses'].extend(task_result)
                     else:
                         results[task_name] = task_result
                 except Exception as exc:
                     log.error(f"Task {task_name} generated an exception: {exc}", exc_info=True)
-                    # Optionally create an error status for the failed task
                     if task_name not in ['nyaa_scraper_statuses', 'non_nyaa_scraper_statuses', 'content_source_statuses']:
                         results[task_name] = {'name': task_name, 'connected': False, 'error': str(exc), 'details': {}}
-
         except TimeoutError:
-            log.warning("Connections page render timed out after 25 seconds. Rendering with available data.")
-            # The loop is broken, results will contain only completed tasks.
+            log.warning("Connections check timed out after 25 seconds.")
 
-    # Collect failing connections from the results we have
+    return results
+
+
+def _refresh_connections_cache():
+    """Run checks in background and update cache. Ensures only one refresh runs at a time."""
+    with _connections_cache_lock:
+        if _connections_cache['refreshing']:
+            return
+        _connections_cache['refreshing'] = True
+
+    try:
+        results = _run_all_connection_checks()
+        with _connections_cache_lock:
+            _connections_cache['results'] = results
+            _connections_cache['timestamp'] = datetime.now()
+    except Exception as exc:
+        log.error(f"Background connection cache refresh failed: {exc}", exc_info=True)
+    finally:
+        with _connections_cache_lock:
+            _connections_cache['refreshing'] = False
+
+
+@connections_bp.route('/')
+@user_required
+def index():
+    """Render the connections status page instantly with skeleton cards."""
+    # Build skeleton cards from config using exact SSE name format
+    skeleton_scrapers = []
+    skeleton_sources = []
+    try:
+        from queues.config_manager import load_config
+        _cfg = load_config()
+        for sid, scfg in _cfg.get('Scrapers', {}).items():
+            if scfg.get('enabled', False):
+                scraper_type = scfg.get('type', sid)
+                name = f"{scraper_type} ({sid})"
+                skeleton_scrapers.append({'name': name, 'connected': None, 'details': {}})
+        for sid, scfg in _cfg.get('Content Sources', {}).items():
+            if scfg.get('enabled', False) and scfg.get('type') != 'Collected':
+                display_name = scfg.get('display_name')
+                name = f"{display_name} ({sid})" if display_name else sid
+                skeleton_sources.append({'name': name, 'connected': None, 'details': {}})
+    except Exception:
+        pass
+
+    results = {
+        'cli_battery_status': None, 'plex_status': None,
+        'jellyfin_status': None, 'mounted_files_status': None,
+        'phalanx_db_status': None,
+        'scraper_statuses': skeleton_scrapers,
+        'content_source_statuses': skeleton_sources,
+    }
+    cache_info = None
+
+    # Collect failing connections
     failing_connections = []
     for key, status in results.items():
-        if not status: # Skip if status is None or empty list
+        if not status:
             continue
-
         if key in ['scraper_statuses', 'content_source_statuses']:
             failing_connections.extend([s for s in status if not s.get('connected')])
         elif isinstance(status, dict) and not status.get('connected'):
             failing_connections.append(status)
 
-    # Add a flash message if the page timed out
-    if (datetime.now() - start_time).total_seconds() >= 25:
-        flash("Some connection checks timed out and may not be displayed. The page was loaded with available data.", "warning")
-
-    return render_template('connections.html', 
+    return render_template('connections.html',
                          cli_battery_status=results['cli_battery_status'],
                          plex_status=results['plex_status'],
                          jellyfin_status=results['jellyfin_status'],
@@ -1308,4 +1514,5 @@ def index():
                          phalanx_db_status=results['phalanx_db_status'],
                          scraper_statuses=results['scraper_statuses'],
                          content_source_statuses=results['content_source_statuses'],
-                         failing_connections=failing_connections)
+                         failing_connections=failing_connections,
+                         cache_info=cache_info)

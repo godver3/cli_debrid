@@ -2,6 +2,15 @@
     <h2 class="debug-settings-title">Advanced Settings</h2>
     <p class="debug-settings-subtitle">Configure advanced and debug options</p>
 
+    <div class="info-banner info-banner-warning">
+        <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+        </svg>
+        <div class="info-banner-content">
+            <strong>Advanced Settings Warning:</strong> These settings should not typically be changed unless you are troubleshooting specific issues or have been instructed to do so by support. Changing these settings can affect system stability and performance.
+        </div>
+    </div>
+
     <div class="content-section">
         <div class="debug-settings-header section-header">
             <h3 class="debug-settings-settings-title section-title">
@@ -28,7 +37,7 @@
     </div>
     <div class="settings-section-content">
         {# Advanced settings hidden: 'disable_initialization', 'auto_run_program' #}
-        {% for key in ['logging_level', 'timezone_override', 'enable_crash_test', 'enable_tracemalloc', 'tracemalloc_sample_rate', 'check_for_updates'] %}
+        {% for key in ['logging_level', 'timezone_override', 'enable_crash_test', 'enable_tracemalloc', 'tracemalloc_sample_rate', 'check_for_updates', 'use_symlinks_on_windows'] %}
             {% set value = settings_schema.Debug.get(key) %}
             {% if value %}
             <div class="settings-form-group">
@@ -208,7 +217,7 @@
         </div>
     </div>
     <div class="settings-section-content">
-        {% for key in ['sort_by_uncached_status', 'checking_queue_period', 'ignore_wanted_queue_throttling', 'allow_partial_overseerr_requests', 'max_upgrading_score', 'upgrade_queue_duration_hours', 'only_current_file', 'enable_library_maintenance_task'] %}
+        {% for key in ['sort_by_uncached_status', 'checking_queue_period', 'ignore_wanted_queue_throttling', 'disable_not_wanted_check', 'allow_partial_overseerr_requests', 'max_upgrading_score', 'upgrade_queue_duration_hours', 'only_current_file', 'enable_library_maintenance_task'] %}
             {% set value = settings_schema.Debug.get(key) %}
             {% if value %}
             <div class="settings-form-group">
@@ -554,6 +563,170 @@
             </div>
             {% endif %}
         {% endfor %}
+    </div>
+</div>
+
+<!-- Scraping & Scoring Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Scraping & Scoring</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="debug-ultimate_sort_order" class="settings-title">Ultimate Sort Order:</label>
+            <select id="debug-ultimate_sort_order" name="Scraping.ultimate_sort_order" class="settings-input"
+                    data-section="Scraping" data-key="ultimate_sort_order">
+                <option value="None" {% if settings.get('Scraping', {}).get('ultimate_sort_order') == 'None' or not settings.get('Scraping', {}).get('ultimate_sort_order') %}selected{% endif %}>None</option>
+                <option value="Size: large to small" {% if settings.get('Scraping', {}).get('ultimate_sort_order') == 'Size: large to small' %}selected{% endif %}>Size: large to small</option>
+                <option value="Size: small to large" {% if settings.get('Scraping', {}).get('ultimate_sort_order') == 'Size: small to large' %}selected{% endif %}>Size: small to large</option>
+            </select>
+            <p class="settings-description">Ultimate sort order for scraped results. Recommend leaving off and using existing versioning logic</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-soft_max_size_gb" class="settings-title">Soft Max Size Gb:</label>
+            <input type="checkbox" id="debug-soft_max_size_gb" name="Scraping.soft_max_size_gb"
+                   data-section="Scraping" data-key="soft_max_size_gb"
+                   {% if settings.get('Scraping', {}).get('soft_max_size_gb', False) %}checked{% endif %}>
+            <p class="settings-description">If enabled, apply the assigned max size to the scraped results, but if no results are returned accept the smallest result available</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-emphasize_number_of_items_over_quality" class="settings-title">Emphasize Number of Items Over Quality:</label>
+            <input type="checkbox" id="debug-emphasize_number_of_items_over_quality" name="Debug.emphasize_number_of_items_over_quality"
+                   data-section="Debug" data-key="emphasize_number_of_items_over_quality"
+                   {% if settings.get('Debug', {}).get('emphasize_number_of_items_over_quality', False) %}checked{% endif %}>
+            <p class="settings-description">Emphasize the number of items over quality when ranking results</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-delayed_scrape_based_on_score" class="settings-title">Delayed Scrape Based On Score:</label>
+            <input type="checkbox" id="debug-delayed_scrape_based_on_score" name="Debug.delayed_scrape_based_on_score"
+                   data-section="Debug" data-key="delayed_scrape_based_on_score"
+                   {% if settings.get('Debug', {}).get('delayed_scrape_based_on_score', false) %}checked{% endif %}>
+            <p class="settings-description">If enabled, only accept results above the minimum scrape score for a limited period before accepting lower scored releases.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-delayed_scrape_time_limit" class="settings-title">Delayed Scrape Time Limit (Hours):</label>
+            <input type="number" step="any" min="0.1" id="debug-delayed_scrape_time_limit" name="Debug.delayed_scrape_time_limit"
+                   value="{% set val = settings.get('Debug', {}).get('delayed_scrape_time_limit', settings_schema.Debug.delayed_scrape_time_limit.default) %}{{ val if val != None else '' }}" class="settings-input"
+                   data-section="Debug" data-key="delayed_scrape_time_limit">
+            <p class="settings-description">Time limit (in hours) to only accept results above the minimum scrape score before accepting lower scored releases.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-minimum_scrape_score" class="settings-title">Minimum Scrape Score:</label>
+            <input type="number" step="any" min="0.0" id="debug-minimum_scrape_score" name="Debug.minimum_scrape_score"
+                   value="{% set val = settings.get('Debug', {}).get('minimum_scrape_score', settings_schema.Debug.minimum_scrape_score.default) %}{{ val if val != None else '' }}" class="settings-input"
+                   data-section="Debug" data-key="minimum_scrape_score">
+            <p class="settings-description">Minimum scrape score to accept results above.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Scraping Strategy Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Scraping Strategy</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="debug-enable_reverse_order_scraping" class="settings-title">Enable Reverse Order Scraping:</label>
+            <input type="checkbox" id="debug-enable_reverse_order_scraping" name="Debug.enable_reverse_order_scraping"
+                   data-section="Debug" data-key="enable_reverse_order_scraping"
+                   {% if settings.get('Debug', {}).get('enable_reverse_order_scraping', False) %}checked{% endif %}>
+            <p class="settings-description">Enable reverse order scraping</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-use_alternate_scrape_time_strategy" class="settings-title">Enable Alternate Scraping Time Strategy:</label>
+            <input type="checkbox" id="debug-use_alternate_scrape_time_strategy" name="Debug.use_alternate_scrape_time_strategy"
+                   data-section="Debug" data-key="use_alternate_scrape_time_strategy"
+                   {% if settings.get('Debug', {}).get('use_alternate_scrape_time_strategy', false) %}checked{% endif %}>
+            <p class="settings-description">Enable alternate scraping time strategy: Instead of scraping based on queue offsets/airtime/release date, scrape all items with release dates and airtimes within the past 24 hours of the user-identified time each day.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-alternate_scrape_time_24h-tangerine" class="settings-title">Alternate Scrape Time (24h format):</label>
+            <input type="text" id="debug-alternate_scrape_time_24h-tangerine" name="Debug.alternate_scrape_time_24h"
+                   value="{{ settings.get('Debug', {}).get('alternate_scrape_time_24h', '00:00') if settings.get('Debug', {}).get('alternate_scrape_time_24h') != None else '00:00' }}"
+                   class="settings-input" data-section="Debug" data-key="alternate_scrape_time_24h">
+            <p class="settings-description">24-hour time (HH:MM) to use as the daily scrape time for the alternate scraping strategy. Only used if alternate strategy is enabled.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-skip_initial_multi_scrape_for_new_content" class="settings-title">Skip Initial Multi-Scrape for New Content:</label>
+            <input type="checkbox" id="debug-skip_initial_multi_scrape_for_new_content" name="Debug.skip_initial_multi_scrape_for_new_content"
+                   data-section="Debug" data-key="skip_initial_multi_scrape_for_new_content"
+                   {% if settings.get('Debug', {}).get('skip_initial_multi_scrape_for_new_content', False) %}checked{% endif %}>
+            <p class="settings-description">Skip the initial multi-provider scrape for new content (released within the past 7 days).</p>
+        </div>
+    </div>
+</div>
+
+<!-- Performance & Monitoring Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Performance & Monitoring</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="debug-staleness_threshold" class="settings-title">Staleness Threshold (Days):</label>
+            <input type="number" id="debug-staleness_threshold" name="Staleness Threshold.staleness_threshold"
+                   value="{{ settings.get('Staleness Threshold', {}).get('staleness_threshold', 7) }}" class="settings-input"
+                   data-section="Staleness Threshold" data-key="staleness_threshold">
+            <p class="settings-description">Staleness threshold for metadata (in days)</p>
+        </div>
+    </div>
+</div>
+
+<!-- File System Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>File System</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="debug-sanitizer_replacement_character-tangerine" class="settings-title">Sanitizer Replacement Character:</label>
+            <input type="text" id="debug-sanitizer_replacement_character-tangerine" name="Debug.sanitizer_replacement_character"
+                   value="{{ settings.get('Debug', {}).get('sanitizer_replacement_character', '_') }}" class="settings-input"
+                   data-section="Debug" data-key="sanitizer_replacement_character" maxlength="1">
+            <p class="settings-description">Character to use when replacing invalid characters in filenames (default: '_'). Must be a valid character for both Windows and Linux filesystems.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Testing & Development Section -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Testing & Development</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="settings-form-group">
+            <label for="debug-enable_crash_test-td" class="settings-title">Enable Crash Test:</label>
+            <input type="checkbox" id="debug-enable_crash_test-td" name="Debug.enable_crash_test"
+                   data-section="Debug" data-key="enable_crash_test"
+                   {% if settings.get('Debug', {}).get('enable_crash_test', False) %}checked{% endif %}>
+            <p class="settings-description">Enable crash testing functionality</p>
+        </div>
     </div>
 </div>
 
