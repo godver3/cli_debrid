@@ -333,11 +333,10 @@ def validate_onboarding_settings():
                 })
                 all_valid = False
 
-    if management_type in ['plex_symlink', 'Local']:
+    if management_type in ['plex_symlink', 'Local', 'Symlinked/Local']:
         # Validate symlink settings
         symlink_path = settings_data.get('symlinked_files_path', '')
-        
-        # Only validate symlink setup if both paths are provided
+
         if symlink_path and original_path:
             symlink_valid, symlink_message = validate_symlink_setup(original_path, symlink_path)
             validation_checks.append({
@@ -347,24 +346,56 @@ def validate_onboarding_settings():
             })
             all_valid = all_valid and symlink_valid
         elif symlink_path:
-            # If only symlink path is provided (original path is optional)
             validation_checks.append({
                 'name': 'Symlink Configuration',
                 'valid': True,
                 'message': 'Symlink path is configured'
             })
 
-        # If Plex integration is configured for symlinks, validate those settings
-        plex_url = settings_data.get('plex_url_for_symlink', '')
-        plex_token = settings_data.get('plex_token_for_symlink', '')
-        if plex_url and plex_token:
-            plex_valid, plex_message = validate_plex_settings(plex_url, plex_token)
-            validation_checks.append({
-                'name': 'Plex Integration (Optional)',
-                'valid': plex_valid,
-                'message': plex_message
-            })
-            # Don't affect all_valid since this is optional
+        # Check which media server is configured (optional)
+        symlink_media_server = settings_data.get('symlink_media_server', 'none')
+
+        if symlink_media_server == 'plex':
+            plex_url = settings_data.get('plex_url_for_symlink', '')
+            plex_token = settings_data.get('plex_token_for_symlink', '')
+            if plex_url and plex_token:
+                plex_valid, plex_message = validate_plex_settings(plex_url, plex_token)
+                validation_checks.append({
+                    'name': 'Plex Connection',
+                    'valid': plex_valid,
+                    'message': plex_message
+                })
+                # Don't affect all_valid — media server is optional
+        elif symlink_media_server == 'jellyfin':
+            jellyfin_url = settings_data.get('emby_jellyfin_url', '')
+            jellyfin_token = settings_data.get('emby_jellyfin_token', '')
+            if jellyfin_url and jellyfin_token:
+                try:
+                    import requests as _req
+                    resp = _req.get(f"{jellyfin_url.rstrip('/')}/System/Info",
+                                    headers={'X-Emby-Token': jellyfin_token}, timeout=5)
+                    jf_valid = resp.status_code == 200
+                    jf_message = 'Jellyfin connection successful' if jf_valid else f'Jellyfin returned status {resp.status_code}'
+                except Exception as e:
+                    jf_valid = False
+                    jf_message = f'Error connecting to Jellyfin: {str(e)}'
+                validation_checks.append({
+                    'name': 'Jellyfin Connection',
+                    'valid': jf_valid,
+                    'message': jf_message
+                })
+                # Don't affect all_valid — media server is optional
+        else:
+            # Fallback: check old-style plex_url_for_symlink fields (backwards compat)
+            plex_url = settings_data.get('plex_url_for_symlink', '')
+            plex_token = settings_data.get('plex_token_for_symlink', '')
+            if plex_url and plex_token:
+                plex_valid, plex_message = validate_plex_settings(plex_url, plex_token)
+                validation_checks.append({
+                    'name': 'Plex Integration (Optional)',
+                    'valid': plex_valid,
+                    'message': plex_message
+                })
 
     # Validate Debrid settings
     debrid_provider = settings_data.get('debrid_provider', 'RealDebrid')

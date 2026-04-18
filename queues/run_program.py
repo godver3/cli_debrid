@@ -262,7 +262,7 @@ class ProgramRunner:
             'Wanted': 60,             # Increased from 5
             'Scraping': 1,           # Increased from 5
             'Adding': 1,             # Increased from 5
-            'Checking': 180,
+            'Checking': 30,
             'Sleeping': 300,
             'Unreleased': 300,
             'Blacklisted': 7200,
@@ -5541,12 +5541,12 @@ class ProgramRunner:
                             imdb_id, tmdb_id, title, year, status, is_complete,
                             total_episodes, total_seasons, last_status_check, added_at, last_updated
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT added_at FROM tv_shows WHERE imdb_id = ?), ?), ?)
-                        ON CONFLICT(imdb_id) DO UPDATE SET
+                        ON CONFLICT DO UPDATE SET
                             tmdb_id = COALESCE(NULLIF(excluded.tmdb_id, ''), tv_shows.tmdb_id),
                             title = COALESCE(NULLIF(excluded.title, ''), tv_shows.title),
                             year = COALESCE(excluded.year, tv_shows.year),
                             status = COALESCE(NULLIF(excluded.status, ''), tv_shows.status),
-                            is_complete = excluded.is_complete, -- Set based on show_status=='ended'/'canceled'
+                            is_complete = excluded.is_complete,
                             total_episodes = excluded.total_episodes,
                             total_seasons = excluded.total_seasons,
                             last_status_check = excluded.last_status_check,

@@ -460,6 +460,7 @@ def get_library_data():
                     FROM media_items
                     WHERE type = 'episode'
                     AND (ghostlisted = 0 OR ghostlisted IS NULL)
+                    AND (season_number IS NULL OR season_number != 0)
                     GROUP BY tmdb_id
                     HAVING COUNT(DISTINCT CASE WHEN state IN ('Collected', 'Upgrading') THEN season_number || '-' || episode_number END) > 0
                     AND COUNT(DISTINCT CASE WHEN state IN ('Collected', 'Upgrading') THEN season_number || '-' || episode_number END) < COUNT(DISTINCT CASE WHEN state != 'Unreleased' THEN season_number || '-' || episode_number END)
@@ -479,6 +480,7 @@ def get_library_data():
                     FROM media_items
                     WHERE type = 'episode'
                     AND (ghostlisted = 0 OR ghostlisted IS NULL)
+                    AND (season_number IS NULL OR season_number != 0)
                     GROUP BY tmdb_id
                     HAVING COUNT(DISTINCT CASE WHEN state IN ('Collected', 'Upgrading') THEN season_number || '-' || episode_number END) > 0
                     AND COUNT(DISTINCT CASE WHEN state IN ('Collected', 'Upgrading') THEN season_number || '-' || episode_number END) < COUNT(DISTINCT CASE WHEN state != 'Unreleased' THEN season_number || '-' || episode_number END)
@@ -1917,7 +1919,9 @@ def refresh_show_metadata(media_id):
         cursor.close()
         db_content.close()
 
-        # Clear poster/backdrop cache to force fresh fetch from TMDB on next load
+        # Clear poster/backdrop cache then immediately re-fetch so library page
+        # shows the updated poster without requiring a full page reload
+        new_poster_url = None
         if tmdb_id:
             try:
                 cache = load_cache()
@@ -1927,8 +1931,36 @@ def refresh_show_metadata(media_id):
                 cache.pop(backdrop_key, None)
                 save_cache(cache)
                 logging.info(f"Cleared poster/backdrop cache for show {tmdb_id}")
+                # Re-fetch fresh poster and cache it immediately
+                from routes.poster_cache import cache_poster_url, get_cached_poster_url
+                from utilities.settings import get_setting as _gs
+                import requests as _req
+                _api_key = _gs('TMDB', 'api_key', default='')
+                if _api_key:
+                    _resp = _req.get(
+                        f"https://api.themoviedb.org/3/tv/{tmdb_id}/images"
+                        f"?api_key={_api_key}&include_image_language=en",
+                        timeout=10
+                    )
+                    if _resp.status_code == 200:
+                        _posters = _resp.json().get('posters', [])
+                        # Fall back to en+null if no English-only results
+                        if not _posters:
+                            _resp2 = _req.get(
+                                f"https://api.themoviedb.org/3/tv/{tmdb_id}/images"
+                                f"?api_key={_api_key}&include_image_language=en,null",
+                                timeout=10
+                            )
+                            if _resp2.status_code == 200:
+                                # Only keep English (iso_639_1='en') posters from fallback
+                                _all = _resp2.json().get('posters', [])
+                                _posters = [p for p in _all if p.get('iso_639_1') == 'en'] or _all
+                        if _posters:
+                            _best = sorted(_posters, key=lambda p: p.get('vote_average', 0), reverse=True)[0]
+                            new_poster_url = f"https://image.tmdb.org/t/p/w300{_best['file_path']}"
+                            cache_poster_url(tmdb_id, 'tv', new_poster_url)
             except Exception as e:
-                logging.warning(f"Failed to clear poster cache: {e}")
+                logging.warning(f"Failed to clear/refresh poster cache: {e}")
 
         logging.info(f"Refreshed metadata for {title} (IMDb: {imdb_id}): Updated {updated_count} episode titles from {source}, added {new_episodes_added} missing episode(s){', TMDB data updated' if tmdb_updated else ''}")
 
@@ -1943,7 +1975,8 @@ def refresh_show_metadata(media_id):
             'new_episodes_added': new_episodes_added,
             'tmdb_updated': tmdb_updated,
             'source': source,
-            'cache_cleared': tmdb_id is not None
+            'cache_cleared': tmdb_id is not None,
+            'new_poster_url': new_poster_url
         })
 
     except Exception as e:
@@ -2099,7 +2132,9 @@ def refresh_movie_metadata(media_id):
         cursor.close()
         db_content.close()
 
-        # Clear poster/backdrop cache to force fresh fetch from TMDB on next load
+        # Clear poster/backdrop cache then immediately re-fetch so library page
+        # shows the updated poster without requiring a full page reload
+        new_poster_url = None
         if tmdb_id:
             try:
                 cache = load_cache()
@@ -2109,8 +2144,36 @@ def refresh_movie_metadata(media_id):
                 cache.pop(backdrop_key, None)
                 save_cache(cache)
                 logging.info(f"Cleared poster/backdrop cache for movie {tmdb_id}")
+                # Re-fetch fresh poster and cache it immediately
+                from routes.poster_cache import cache_poster_url
+                from utilities.settings import get_setting as _gs
+                import requests as _req
+                _api_key = _gs('TMDB', 'api_key', default='')
+                if _api_key:
+                    _resp = _req.get(
+                        f"https://api.themoviedb.org/3/movie/{tmdb_id}/images"
+                        f"?api_key={_api_key}&include_image_language=en",
+                        timeout=10
+                    )
+                    if _resp.status_code == 200:
+                        _posters = _resp.json().get('posters', [])
+                        # Fall back to en+null if no English-only results
+                        if not _posters:
+                            _resp2 = _req.get(
+                                f"https://api.themoviedb.org/3/movie/{tmdb_id}/images"
+                                f"?api_key={_api_key}&include_image_language=en,null",
+                                timeout=10
+                            )
+                            if _resp2.status_code == 200:
+                                # Only keep English (iso_639_1='en') posters from fallback
+                                _all = _resp2.json().get('posters', [])
+                                _posters = [p for p in _all if p.get('iso_639_1') == 'en'] or _all
+                        if _posters:
+                            _best = sorted(_posters, key=lambda p: p.get('vote_average', 0), reverse=True)[0]
+                            new_poster_url = f"https://image.tmdb.org/t/p/w300{_best['file_path']}"
+                            cache_poster_url(tmdb_id, 'movie', new_poster_url)
             except Exception as e:
-                logging.warning(f"Failed to clear poster cache: {e}")
+                logging.warning(f"Failed to clear/refresh poster cache: {e}")
 
         logging.info(f"Refreshed metadata for {title} (IMDb: {imdb_id}, TMDB: {tmdb_id}): Updated {updated_count} records from {source}{', TMDB data updated' if tmdb_updated else ''}")
 
@@ -2120,7 +2183,8 @@ def refresh_movie_metadata(media_id):
             'updated_count': updated_count,
             'tmdb_updated': tmdb_updated,
             'source': source,
-            'cache_cleared': tmdb_id is not None
+            'cache_cleared': tmdb_id is not None,
+            'new_poster_url': new_poster_url
         })
 
     except Exception as e:

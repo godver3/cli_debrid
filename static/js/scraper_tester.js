@@ -130,99 +130,64 @@ document.addEventListener('DOMContentLoaded', function() {
             return response.json();
         })
         .then(data => {
-            console.log('Raw search results:', data);  // Debug log for raw results
-            data.forEach(result => {
-                console.log('Result media type:', result.mediaType);  // Debug log for each result's media type
-            });
+            // Always show search results, hide compare section
+            scrapeSection.style.display = 'none';
+            searchResults.style.display = 'block';
             displaySearchResults(data);
         })
         .catch(error => {
             console.error('Error:', error);
             searchResults.innerHTML = '<p>Error performing search. Please try again.</p>';
-        })
-        .finally(() => {
             Loading.hide();
         });
     }
 
     function displaySearchResults(results) {
-        console.log('Display search results called with:', results);  // Debug log
         const searchResultsElement = document.getElementById('search-results');
         searchResultsElement.innerHTML = '';
-        
+
+        // imdb_id is now returned inline by live_search — no conversion needed
+        const validResults = results.filter(result => result.imdbId && result.imdbId !== 'N/A');
+
+        if (validResults.length === 0) {
+            searchResultsElement.innerHTML = `<p>No results found with valid IMDB IDs.</p>`;
+            Loading.hide();
+            return;
+        }
+
         const table = document.createElement('table');
         table.className = 'search-results-table';
-        
-        // Create table header
+
         const headerRow = table.insertRow();
         ['Title', 'Year', 'Type', 'IMDB ID'].forEach(headerText => {
             const th = document.createElement('th');
             th.textContent = headerText;
             headerRow.appendChild(th);
         });
-        
-        // Process results and convert TMDB IDs to IMDB IDs if necessary
-        const processedResults = results.map(result => {
-            console.log('Processing result:', result);  // Debug log
-            console.log('Result media type before processing:', result.mediaType);  // Debug log
-            if (!result.imdbId || result.imdbId === 'N/A') {
-                return fetch(`/scraper/convert_tmdb_to_imdb/${result.id}`)
-                    .then(response => response.json())
-                    .then(data => {
-                        result.imdbId = data.imdb_id;
-                        return result;
-                    })
-                    .catch(error => {
-                        console.error('Error converting TMDB ID to IMDB ID:', error);
-                        return result;
-                    });
-            }
-            return Promise.resolve(result);
-        });
-    
-        Promise.all(processedResults).then(validResults => {
-            validResults = validResults.filter(result => result.imdbId && result.imdbId !== 'N/A');
-            
-            console.log('Valid results after IMDB conversion:', validResults);  // Debug log
-            
-            if (validResults.length === 0) {
-                searchResultsElement.innerHTML = `
-                    <p>No results found with valid IMDB IDs.</p>
-                    <p>Total results received: ${results.length}</p>
-                    <p>Check the console for more details on filtered results.</p>
-                `;
-                return;
-            }
-            
-            validResults.forEach(result => {
-                console.log('Processing valid result:', result);  // Debug log
-                console.log('Valid result media type:', result.mediaType);  // Debug log
-                const row = table.insertRow();
-                row.className = 'search-result';
-                
-                const title = result.title || 'N/A';
-                const year = result.year || 'N/A';
-                const mediaType = result.mediaType === 'tv' || result.mediaType === 'show' ? 'TV Show' : 
-                                result.mediaType === 'movie' ? 'Movie' : 'N/A';
-                const imdbId = result.imdbId || 'N/A';
-                
-                console.log(`Processed values - Title: ${title}, Year: ${year}, Type: ${mediaType}, IMDB ID: ${imdbId}`);  // Debug log
-                
-                [title, year, mediaType, imdbId].forEach(cellText => {
-                    const cell = row.insertCell();
-                    cell.textContent = cellText;
-                });
-                
-                row.addEventListener('click', () => {
-                    selectItem(result);
-                    showScrapeSection();
-                });
+
+        validResults.forEach(result => {
+            const row = table.insertRow();
+            row.className = 'search-result';
+
+            const title = result.title || 'N/A';
+            const year = result.year || 'N/A';
+            const mediaType = result.mediaType === 'tv' || result.mediaType === 'show' ? 'TV Show' :
+                              result.mediaType === 'movie' ? 'Movie' : 'N/A';
+            const imdbId = result.imdbId || 'N/A';
+
+            [title, year, mediaType, imdbId].forEach(cellText => {
+                const cell = row.insertCell();
+                cell.textContent = cellText;
             });
-            
-            searchResultsElement.appendChild(table);
-            
-            console.log(`Displayed ${validResults.length} results with valid IMDB IDs`);  // Debug log
+
+            row.addEventListener('click', () => {
+                selectItem(result);
+                showScrapeSection();
+            });
         });
+
+        searchResultsElement.appendChild(table);
+        Loading.hide();
     }
     
     // Update event listeners
@@ -287,7 +252,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const tvControls = document.getElementById('tv-controls');
         if (tvControls) {
             const isTV = item.mediaType === 'tv' || item.mediaType === 'show';
-            tvControls.style.display = isTV ? 'block' : 'none';
+            tvControls.style.display = isTV ? 'contents' : 'none';
             if (isTV) {
                 // Fetch season and episode data for the TV show
                 fetch(`/scraper/get_tv_details/${item.id}`)
@@ -554,18 +519,257 @@ document.addEventListener('DOMContentLoaded', function() {
             modifiedSettingsContainer.appendChild(modifiedGroup);
         }
     
-        // Add the save button
+        // Add the save button to hidden modified container (still needed by saveVersionSettings)
         const saveButton = document.createElement('button');
         saveButton.id = 'save-modified-version-button';
         saveButton.textContent = 'Save Modified Version';
         saveButton.onclick = saveVersionSettings;
         modifiedSettingsContainer.appendChild(saveButton);
-    
+
         // Store the original settings for comparison
         originalSettingsContainer.dataset.settings = JSON.stringify(settings);
-    
+
+        // Build accordion UI
+        buildSettingsAccordion(version, settings, sortedSettings);
+
         // Initialize the save button state
         updateSaveButtonState();
+    }
+
+    function buildGroupPreview(group, settings) {
+        const get = (k) => settings[k] !== undefined ? settings[k] : null;
+        const countVal = (v) => {
+            if (!v) return 0;
+            if (Array.isArray(v)) return v.length;
+            if (typeof v === 'string') return v.trim().split('\n').filter(l => l.trim()).length;
+            if (typeof v === 'object') return Object.keys(v).length;
+            return 0;
+        };
+
+        const pills = [];
+
+        const boolPill = (label, val) => `${label}: ${(val === true || val === 'true') ? 'Enabled' : 'Disabled'}`;
+
+        if (group.label === 'Resolution & Quality') {
+            const res = get('max_resolution');
+            if (res) pills.push(res);
+            const hdr = get('enable_hdr');
+            if (hdr !== null) pills.push(boolPill('HDR', hdr));
+            const hdrW = get('hdr_weight');
+            if (hdrW !== null && hdrW !== 0 && hdrW !== '0') pills.push(`HDR wt: ${hdrW}`);
+        } else if (group.label === 'Size & Bitrate') {
+            const minS = get('min_size_gb'), maxS = get('max_size_gb');
+            pills.push(`${minS ?? 0}–${maxS || '∞'} GB`);
+            const minB = get('min_bitrate_mbps'), maxB = get('max_bitrate_mbps');
+            pills.push(`${minB ?? 0}–${maxB || '∞'} Mbps`);
+        } else if (group.label === 'Scoring & Weights') {
+            const rw = get('resolution_weight'), sw = get('size_weight');
+            const bw = get('bitrate_weight'), simw = get('similarity_weight');
+            const thresh = get('similarity_threshold'), animeThresh = get('similarity_threshold_anime');
+            if (rw != null) pills.push(`Res: ${rw}`);
+            if (sw != null) pills.push(`Size: ${sw}`);
+            if (bw != null) pills.push(`Bit: ${bw}`);
+            if (simw != null) pills.push(`Sim: ${simw}`);
+            if (thresh != null) pills.push(`Thresh: ${thresh}`);
+            if (animeThresh != null) pills.push(`Anime: ${animeThresh}`);
+        } else if (group.label === 'Filters') {
+            const fi = countVal(get('filter_in'));
+            const fo = countVal(get('filter_out'));
+            const pfi = countVal(get('preferred_filter_in'));
+            const pfo = countVal(get('preferred_filter_out'));
+            if (fi) pills.push(`${fi} filter-in`);
+            if (fo) pills.push(`${fo} filter-out`);
+            if (pfi) pills.push(`${pfi} pref-in`);
+            if (pfo) pills.push(`${pfo} pref-out`);
+            if (!pills.length) pills.push('No filters');
+        } else if (group.label === 'Scrapers') {
+            const enabled = get('enable_scraper_priorities');
+            pills.push(boolPill('Priorities', enabled));
+            // Add a pill for each scraper key (ends with _N)
+            Object.entries(settings).forEach(([k, v]) => {
+                if (/_\d+$/.test(k)) pills.push(`${k}: ${v}`);
+            });
+        } else {
+            (group.keys || []).forEach(k => {
+                const v = get(k);
+                if (v === null || v === '' || v === undefined) return;
+                const label = k.replace(/_/g,' ');
+                if (typeof v === 'boolean' || v === 'true' || v === 'false') {
+                    pills.push(boolPill(label, v));
+                } else {
+                    pills.push(`${label}: ${v}`);
+                }
+            });
+        }
+
+        if (!pills.length) return '';
+        return pills.map(p => `<span class="st-preview-pill">${p}</span>`).join('');
+    }
+
+    // Known setting keys that belong to named groups
+    const KNOWN_SETTING_KEYS = new Set([
+        'max_resolution','resolution_wanted','enable_hdr','hdr_weight',
+        'min_size_gb','max_size_gb','min_bitrate_mbps','max_bitrate_mbps',
+        'resolution_weight','size_weight','bitrate_weight','similarity_weight','similarity_threshold','similarity_threshold_anime',
+        'filter_in','filter_out','preferred_filter_in','preferred_filter_out',
+        'enable_scraper_priorities','scraper_priorities', // scraper_priorities hidden from accordion
+        'display_name',
+    ]);
+
+    // Accordion group definitions — Scrapers keys are extended dynamically
+    const SETTING_GROUPS = [
+        { label: 'Resolution & Quality', keys: ['max_resolution', 'resolution_wanted', 'enable_hdr', 'hdr_weight'] },
+        { label: 'Size & Bitrate', keys: ['min_size_gb', 'max_size_gb', 'min_bitrate_mbps', 'max_bitrate_mbps'] },
+        { label: 'Scoring & Weights', keys: ['resolution_weight', 'size_weight', 'bitrate_weight', 'similarity_weight', 'similarity_threshold', 'similarity_threshold_anime'] },
+        { label: 'Filters', keys: ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'] },
+        { label: 'Scrapers', keys: ['enable_scraper_priorities'] },
+    ];
+
+    function buildSettingsAccordion(version, settings, sortedSettings) {
+        const accordion = document.getElementById('settings-accordion');
+        if (!accordion) return;
+        accordion.innerHTML = `
+            <div class="st-accordion-col-headers">
+                <div>Setting</div>
+                <div>Original</div>
+                <div>Modified</div>
+            </div>`;
+
+        // Scraper keys end with _N (e.g. Jackett_1, AIOStreams-API_1, Zilean_1)
+        const isScraperKey = (k) => /_\d+$/.test(k);
+
+        const scraperGroup = SETTING_GROUPS.find(g => g.label === 'Scrapers');
+        sortedSettings.forEach(([k]) => {
+            if (!KNOWN_SETTING_KEYS.has(k) && isScraperKey(k)) {
+                if (!scraperGroup.keys.includes(k)) scraperGroup.keys.push(k);
+                KNOWN_SETTING_KEYS.add(k);
+            }
+        });
+
+        const assignedKeys = new Set(SETTING_GROUPS.flatMap(g => g.keys));
+
+        // Keys to never render in the accordion UI
+        const HIDDEN_KEYS = new Set(['scraper_priorities', 'display_name']);
+
+        // Add "Other" group for remaining unknown keys
+        const otherKeys = sortedSettings.map(([k]) => k).filter(k => !assignedKeys.has(k) && !HIDDEN_KEYS.has(k));
+        const groups = otherKeys.length > 0
+            ? [...SETTING_GROUPS, { label: 'Other', keys: otherKeys }]
+            : SETTING_GROUPS;
+
+        groups.forEach((group, gi) => {
+            const keysInGroup = sortedSettings
+                .map(([k, v]) => ({ k, v }))
+                .filter(({ k }) => group.keys.includes(k) && !HIDDEN_KEYS.has(k));
+
+            if (keysInGroup.length === 0) return;
+
+            // Check if any value differs from original for badge
+            let hasChanges = false;
+
+            const section = document.createElement('div');
+            section.className = 'st-accordion-section';
+
+            const header = document.createElement('div');
+            header.className = 'st-accordion-header';
+            header.innerHTML = `<span class="st-accordion-label">${group.label}</span><span class="st-accordion-arrow">▾</span>`;
+
+            // Preview bar — shown when collapsed, hidden when open
+            const preview = document.createElement('div');
+            preview.className = 'st-accordion-preview';
+            preview.style.display = 'flex'; // visible by default (collapsed state)
+
+            header.addEventListener('click', () => {
+                const isOpen = section.classList.toggle('open');
+                header.querySelector('.st-accordion-arrow').textContent = isOpen ? '▴' : '▾';
+                preview.style.display = isOpen ? 'none' : 'block';
+            });
+
+            const body = document.createElement('div');
+            body.className = 'st-accordion-body';
+
+            keysInGroup.forEach(({ k, v }) => {
+                // Get the original and modified inputs from hidden containers
+                const origEl = document.getElementById(`original-scraping-${version}-${k}`);
+                const modEl = document.getElementById(`scraping-${version}-${k}`);
+                if (!origEl || !modEl) return;
+
+                let labelText = k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                if (k === 'max_resolution') labelText = 'Resolution Wanted';
+                if (k === 'resolution_wanted') labelText = 'Resolution Symbol';
+
+                const row = document.createElement('div');
+                row.className = 'st-setting-row';
+                row.dataset.key = k;
+
+                const lbl = document.createElement('div');
+                lbl.className = 'st-setting-label';
+                lbl.textContent = labelText;
+
+                const origWrap = document.createElement('div');
+                origWrap.className = 'st-setting-orig';
+                const origClone = origEl.cloneNode(true);
+                origClone.disabled = true;
+                origWrap.appendChild(origClone);
+
+                const modWrap = document.createElement('div');
+                modWrap.className = 'st-setting-mod';
+                // Move actual modifiable input into accordion (keep reference)
+                modWrap.appendChild(modEl.cloneNode(true));
+
+                // Sync changes back to the hidden original so getModifiedVersionSettings still works
+                const visibleMod = modWrap.querySelector('[id]');
+                if (visibleMod) {
+                    visibleMod.id = modEl.id + '-vis';
+                    const refreshPreview = () => {
+                        // Read from visible (-vis) inputs to get current modified values
+                        const liveSettings = {};
+                        keysInGroup.forEach(({ k: key }) => {
+                            const el = document.getElementById(`scraping-${version}-${key}-vis`)
+                                    || document.getElementById(`scraping-${version}-${key}`);
+                            if (!el) return;
+                            liveSettings[key] = el.type === 'checkbox' ? el.checked : el.value;
+                        });
+                        const newPills = buildGroupPreview(group, liveSettings);
+                        if (newPills) preview.innerHTML = newPills;
+                    };
+                    visibleMod.addEventListener('input', () => {
+                        modEl.value = visibleMod.value;
+                        modEl.checked = visibleMod.checked;
+                        refreshPreview();
+                    });
+                    visibleMod.addEventListener('change', () => {
+                        modEl.value = visibleMod.value;
+                        if (visibleMod.type === 'checkbox') modEl.checked = visibleMod.checked;
+                        refreshPreview();
+                        updateSaveButtonState();
+                    });
+                }
+
+                row.appendChild(lbl);
+                row.appendChild(origWrap);
+                row.appendChild(modWrap);
+                body.appendChild(row);
+            });
+
+            // Build preview text from settings object directly
+            const previewPills = buildGroupPreview(group, settings);
+            if (previewPills) {
+                preview.innerHTML = previewPills;
+            }
+
+            section.appendChild(header);
+            section.appendChild(preview);
+            section.appendChild(body);
+            accordion.appendChild(section);
+
+            // Open first group by default — hide preview when open
+            if (gi === 0) {
+                section.classList.add('open');
+                header.querySelector('.st-accordion-arrow').textContent = '▴';
+                preview.style.display = 'none';
+            }
+        });
     }
     
     function createInputElements(key, value) {
@@ -894,8 +1098,24 @@ document.addEventListener('DOMContentLoaded', function() {
         const adjustedPassedCount = (data.adjustedResults || []).length;
         const adjustedFilteredCount = (data.adjustedFilteredOutResults || []).length;
         
-        if (originalResultsDiv) originalResultsDiv.innerHTML = `<h3>Original Results (${originalPassedCount} passed, ${originalFilteredCount} filtered)</h3>`;
-        if (adjustedResultsDiv) adjustedResultsDiv.innerHTML = `<h3>Adjusted Results (${adjustedPassedCount} passed, ${adjustedFilteredCount} filtered)</h3>`;
+        const makeHeader = (label, passedCount, filteredCount, colId) => `
+            <div class="results-header-row">
+                <h3>${label} <span style="font-size:0.8em;font-weight:normal;color:#aaa">(${passedCount} passed, ${filteredCount} filtered)</span></h3>
+                <label class="show-filtered-toggle">
+                    <input type="checkbox" id="show-filtered-${colId}">
+                    <span>Show filtered</span>
+                </label>
+            </div>`;
+
+        if (originalResultsDiv) originalResultsDiv.innerHTML = makeHeader('Original Results', originalPassedCount, originalFilteredCount, 'original');
+        if (adjustedResultsDiv) adjustedResultsDiv.innerHTML = makeHeader('Adjusted Results', adjustedPassedCount, adjustedFilteredCount, 'adjusted');
+
+        // Build title sets for diff indicators
+        const originalTitles = new Set((data.originalResults || []).map(r => r.title || r.original_title || ''));
+        const adjustedTitles = new Set((data.adjustedResults || []).map(r => r.title || r.original_title || ''));
+        // Attach to data for use in createResultsTable
+        data._originalTitles = originalTitles;
+        data._adjustedTitles = adjustedTitles;
 
         console.log("Original Results Div:", originalResultsDiv);
         console.log("Adjusted Results Div:", adjustedResultsDiv);
@@ -908,26 +1128,56 @@ document.addEventListener('DOMContentLoaded', function() {
 
         if (originalResultsDiv) {
             if (allOriginalDisplayItems.length > 0) {
-                originalResultsDiv.appendChild(createResultsTable(allOriginalDisplayItems, 'original'));
+                const tbl = createResultsTable(allOriginalDisplayItems, 'original');
+                // Mark rows only in original (not in adjusted)
+                tbl.querySelectorAll('tr.result-item').forEach((row, i) => {
+                    const item = allOriginalDisplayItems[i];
+                    if (!item || item.__isActuallyFilteredOut) return;
+                    const title = item.title || item.original_title || '';
+                    if (!adjustedTitles.has(title)) row.classList.add('result-only-in-original');
+                });
+                originalResultsDiv.appendChild(tbl);
             } else {
                 originalResultsDiv.innerHTML += '<p>No original results or filtered out items to display.</p>';
             }
         }
-    
+
         // Combine passed and filtered out results for the "Adjusted" column
-        // Add a marker to distinguish them
         const passedAdjustedResults = (data.adjustedResults || []).map(r => ({ ...r, __isActuallyFilteredOut: false }));
         const filteredAdjustedResults = (data.adjustedFilteredOutResults || []).map(r => ({ ...r, __isActuallyFilteredOut: true }));
         const allAdjustedDisplayItems = passedAdjustedResults.concat(filteredAdjustedResults);
 
         if (adjustedResultsDiv) {
             if (allAdjustedDisplayItems.length > 0) {
-                adjustedResultsDiv.appendChild(createResultsTable(allAdjustedDisplayItems, 'adjusted'));
+                const tbl = createResultsTable(allAdjustedDisplayItems, 'adjusted');
+                // Mark rows only in adjusted (new results from settings change)
+                tbl.querySelectorAll('tr.result-item').forEach((row, i) => {
+                    const item = allAdjustedDisplayItems[i];
+                    if (!item || item.__isActuallyFilteredOut) return;
+                    const title = item.title || item.original_title || '';
+                    if (!originalTitles.has(title)) row.classList.add('result-only-in-adjusted');
+                });
+                adjustedResultsDiv.appendChild(tbl);
             } else {
                 adjustedResultsDiv.innerHTML += '<p>No adjusted results or filtered out items to display.</p>';
             }
         }
     
+        // Hide filtered rows by default, wire up toggles
+        ['original', 'adjusted'].forEach(col => {
+            const container = document.getElementById(`${col}-results`);
+            if (!container) return;
+            const checkbox = container.querySelector(`#show-filtered-${col}`);
+            const filteredRows = container.querySelectorAll('tr.filtered-out-item');
+            // Hide by default
+            filteredRows.forEach(r => r.style.display = 'none');
+            if (checkbox) {
+                checkbox.addEventListener('change', () => {
+                    filteredRows.forEach(r => r.style.display = checkbox.checked ? '' : 'none');
+                });
+            }
+        });
+
         // Ensure scrapeResults element exists before trying to scroll
         const scrapeResultsElement = document.getElementById('scrape-results');
         if (scrapeResultsElement) {
@@ -999,40 +1249,44 @@ document.addEventListener('DOMContentLoaded', function() {
         const thead = document.createElement('thead');
         const tbody = document.createElement('tbody');
         
-        // Header (no Filter Reason column)
         const headerRow = thead.insertRow();
-        headerRow.innerHTML = `
-            <th>Title</th>
-            <th>Source</th>
-            <th>Score</th>
-        `;
-        
+        headerRow.innerHTML = `<th>Release</th><th>Size</th><th>Source</th><th>Score</th>`;
+
         table.appendChild(thead);
         table.appendChild(tbody);
-        
-        results.forEach((result, index) => {
-            const isFilteredOut = result.__isActuallyFilteredOut; 
 
+        results.forEach((result, index) => {
+            const isFilteredOut = result.__isActuallyFilteredOut;
             const row = tbody.insertRow();
             row.className = 'result-item' + (isFilteredOut ? ' filtered-out-item' : '');
             row.dataset.type = type + (isFilteredOut ? '-filtered-out-actual' : '-passed-actual');
             row.dataset.index = index;
 
+            // Release: title + quality badges
             const titleCell = row.insertCell();
-            titleCell.textContent = result.title || result.original_title || 'N/A';
+            const title = result.title || result.original_title || 'N/A';
+            titleCell.innerHTML = `<div class="release-title${isFilteredOut ? ' filtered-title' : ''}">${title}</div>`;
 
+            // Size
+            const sizeCell = row.insertCell();
+            sizeCell.className = 'result-size-cell';
+            sizeCell.textContent = result.size != null ? result.size.toFixed(2) + ' GB' : '—';
+            if (isFilteredOut) sizeCell.style.color = '#666';
+
+            // Source: badge(s)
             const sourceCell = row.insertCell();
-            sourceCell.textContent = result.source || 'N/A';
+            const sourceParts = (result.source || 'N/A').split(' - ');
+            sourceCell.innerHTML = `<div class="st-source-container">${sourceParts.map(p => `<span class="st-source-badge">${p.trim()}</span>`).join('')}</div>`;
 
+            // Score / filter reason
             const scoreCell = row.insertCell();
             if (isFilteredOut) {
                 scoreCell.textContent = result.filter_reason || 'Filtered';
                 scoreCell.className = 'filter-reason-cell';
                 scoreCell.title = result.filter_reason || 'Filtered';
             } else {
-                scoreCell.textContent = result.score_breakdown && result.score_breakdown.total_score !== undefined 
-                    ? result.score_breakdown.total_score.toFixed(2) 
-                    : (result.score !== undefined ? result.score.toFixed(2) : 'N/A');
+                const score = result.score_breakdown?.total_score ?? result.score;
+                scoreCell.innerHTML = `<span class="st-score">${score != null ? parseFloat(score).toFixed(2) : 'N/A'}</span>`;
             }
         });
         return table;
@@ -1099,56 +1353,102 @@ document.addEventListener('DOMContentLoaded', function() {
         scoreBreakdown.className = 'settings-section score-breakdown-container';
 
         if (result.score_breakdown) {
-            const breakdownList = document.createElement('ul');
-            breakdownList.className = 'score-breakdown-list';
+            const table = document.createElement('table');
+            table.className = 'score-breakdown-table';
+            const tbody = document.createElement('tbody');
 
-            // Define the display order - priority scores near the bottom, total_score last
             const keyOrder = [
-                'similarity_score', 'resolution_score', 'hdr_score', 'size_score', 'bitrate_score',
-                'country_score', 'language_score', 'year_match_score', 'season_match_score',
+                // Scalars first — fill complete rows of 3
+                'similarity_score', 'resolution_score', 'hdr_score',
+                'size_score', 'bitrate_score', 'country_score',
+                'language_score', 'year_match_score', 'season_match_score',
                 'episode_match_score', 'multi_pack_score', 'single_episode_score',
-                'preferred_filter_score', 'preferred_filter_in_breakdown', 'preferred_filter_out_breakdown',
-                'content_type_score', 'language_code_penalty', 'is_multi_pack', 'num_items',
-                'version', 'scraper_priority_score', 'version_scraper_priority_score', 'total_score'
+                'content_type_score', 'language_code_penalty', 'is_multi_pack',
+                'num_items', 'scraper_priority_score', 'version_scraper_priority_score',
+                // preferred_filter_score sits just above its breakdown
+                'preferred_filter_score',
+                // Wide items (objects) at the bottom
+                'preferred_filter_in_breakdown', 'preferred_filter_out_breakdown',
+                'version',
+                // Total always last
+                'total_score'
             ];
 
-            // Sort entries according to keyOrder
+            const isWideEntry = ([key, value]) =>
+                (typeof value === 'object' && value !== null && !Array.isArray(value)) || key === 'total_score';
+
+            // tier: 0=scalar, 1=scalar-adjacent (goes just before wides), 2=wide, 3=total
+            const getTier = ([key, value]) => {
+                if (key === 'total_score') return 3;
+                if (isWideEntry([key, value])) return 2;
+                if (key === 'preferred_filter_score') return 1;
+                return 0;
+            };
+
             const sortedEntries = Object.entries(result.score_breakdown).sort((a, b) => {
-                const aIndex = keyOrder.indexOf(a[0]);
-                const bIndex = keyOrder.indexOf(b[0]);
-                // If not in keyOrder, put at the end
-                if (aIndex === -1 && bIndex === -1) return 0;
-                if (aIndex === -1) return 1;
-                if (bIndex === -1) return -1;
-                return aIndex - bIndex;
+                const at = getTier(a), bt = getTier(b);
+                if (at !== bt) return at - bt;
+                const ai = keyOrder.indexOf(a[0]), bi = keyOrder.indexOf(b[0]);
+                if (ai === -1 && bi === -1) return 0;
+                if (ai === -1) return 1; if (bi === -1) return -1;
+                return ai - bi;
             });
 
-            for (const [key, value] of sortedEntries) {
-                const breakdownItem = document.createElement('li');
-                breakdownItem.className = 'score-breakdown-item';
-    
-                if (typeof value === 'object' && value !== null) {
-                    if (Array.isArray(value)) {
-                        breakdownItem.innerHTML = `<strong>${key}:</strong> ${value.join(', ')}`;
-                    } else {
-                        breakdownItem.innerHTML = `<strong>${key}:</strong>`;
-                        const subList = document.createElement('ul');
-                        for (const [subKey, subValue] of Object.entries(value)) {
-                            const subItem = document.createElement('li');
-                            subItem.className = 'score-breakdown-subitem';
-                            subItem.innerHTML = `<strong>${subKey}:</strong> ${formatValue(subValue)}`;
-                            subList.appendChild(subItem);
-                        }
-                        breakdownItem.appendChild(subList);
-                    }
+            // Group into rows of 3, wide items get their own full row
+            const rows = [];
+            let currentRow = [];
+            for (const entry of sortedEntries) {
+                const [key, value] = entry;
+                const isWide = isWideEntry(entry);
+                if (isWide) {
+                    if (currentRow.length) { rows.push(currentRow); currentRow = []; }
+                    rows.push([entry]); // wide row
                 } else {
-                    breakdownItem.innerHTML = `<strong>${key}:</strong> ${formatValue(value)}`;
+                    currentRow.push(entry);
+                    if (currentRow.length === 3) { rows.push(currentRow); currentRow = []; }
                 }
-    
-                breakdownList.appendChild(breakdownItem);
             }
-    
-            scoreBreakdown.appendChild(breakdownList);
+            if (currentRow.length) rows.push(currentRow);
+
+            rows.forEach(rowItems => {
+                const tr = document.createElement('tr');
+                const isWideRow = rowItems.length === 1 && isWideEntry(rowItems[0]);
+
+                if (isWideRow) {
+                    const [key, value] = rowItems[0];
+                    const td = document.createElement('td');
+                    td.colSpan = 3;
+                    td.className = 'score-breakdown-item' + (key === 'total_score' ? ' score-breakdown-item--total' : '');
+                    if (typeof value === 'object' && !Array.isArray(value)) {
+                        const subParts = Object.entries(value)
+                            .map(([sk, sv]) => `<span class="score-sub-item"><strong>${sk}:</strong> ${formatValue(sv)}</span>`)
+                            .join('');
+                        td.innerHTML = `<strong>${key}:</strong><div class="score-sub-list">${subParts}</div>`;
+                    } else {
+                        td.innerHTML = `<strong>${key}:</strong> ${formatValue(value)}`;
+                    }
+                    tr.appendChild(td);
+                } else {
+                    // Fill up to 3 cells
+                    for (let i = 0; i < 3; i++) {
+                        const td = document.createElement('td');
+                        td.className = 'score-breakdown-item';
+                        if (rowItems[i]) {
+                            const [key, value] = rowItems[i];
+                            if (Array.isArray(value)) {
+                                td.innerHTML = `<strong>${key}:</strong> ${value.join(', ')}`;
+                            } else {
+                                td.innerHTML = `<strong>${key}:</strong> ${formatValue(value)}`;
+                            }
+                        }
+                        tr.appendChild(td);
+                    }
+                }
+                tbody.appendChild(tr);
+            });
+
+            table.appendChild(tbody);
+            scoreBreakdown.appendChild(table);
         } else {
             scoreBreakdown.innerHTML += '<p>No score breakdown available.</p>';
         }
@@ -1196,11 +1496,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function updateSaveButtonState() {
         const saveButton = document.getElementById('save-modified-version-button');
+        const visibleButton = document.getElementById('save-settings-visible-button');
         const originalSettings = JSON.parse(document.getElementById('originalSettings').dataset.settings);
         const modifiedSettings = getModifiedVersionSettings();
-        
+
         const hasChanges = JSON.stringify(originalSettings) !== JSON.stringify(modifiedSettings);
         saveButton.disabled = !hasChanges;
+        if (visibleButton) visibleButton.style.display = hasChanges ? 'inline-block' : 'none';
     }
 
     function revertSettings() {
@@ -1229,15 +1531,13 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function showScrapeSection() {
-        searchSection.style.display = 'none';
+        searchResults.style.display = 'none';
         scrapeSection.style.display = 'block';
     }
 
     function startNewSearch() {
-        searchInput.value = '';
-        searchResults.innerHTML = '';
         scrapeSection.style.display = 'none';
-        searchSection.style.display = 'block';
+        searchResults.style.display = 'block';
     }
 
     Loading.init()

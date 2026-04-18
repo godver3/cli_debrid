@@ -1803,7 +1803,7 @@ async function deleteSelectedItems() {
                         // } else if (source.startsWith('MDBList_')) {
                         //     sourceName = source.replace('MDBList_', '').replace(/_/g, ' ');
                         } else if (source === 'Overseerr') {
-                            sourceName = 'Overseerr';
+                            sourceName = 'Seerr';
                         }
                         reportLines.push(`✓ Removed from ${sourceName}`);
                     });

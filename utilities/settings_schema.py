@@ -2270,11 +2270,6 @@ SETTINGS_SCHEMA = {
             "description": "OpenClaw agent ID to use (default: main).",
             "default": "main"
         },
-        "display_name": {
-            "type": "string",
-            "description": "Name shown in the AI Butler chat header. Set this to match your OpenClaw agent's name.",
-            "default": "AI Butler"
-        },
         "health_notifications": {
             "type": "boolean",
             "description": "Send proactive health alerts via your configured notification channels when the AI Butler detects issues (stuck queues, high blacklist rate, errors, etc.).",
@@ -2338,6 +2333,11 @@ SETTINGS_SCHEMA = {
         "overlays_enabled": {
             "type": "boolean",
             "description": "Enable the poster overlay system. When enabled, overlay sync tasks will automatically run and apply media info badges to Plex posters. Requires Plex URL and token to be configured.",
+            "default": False
+        },
+        "textless_posters": {
+            "type": "boolean",
+            "description": "When enabled, cli_debrid will fetch a language-neutral (textless) poster from TMDB as the base image. Use the Title Logo badge in the layout editor to add the title as a transparent clearlogo PNG. Note: Not all titles have textless posters on TMDB — the standard English poster is used as fallback.",
             "default": False
         },
         "plex_data_path": {

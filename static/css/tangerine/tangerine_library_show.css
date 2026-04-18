@@ -1629,19 +1629,7 @@ tr.filtered-out-item:hover {
     align-items: center;
 }
 
-.loading-content {
-    background: rgba(26, 26, 26, 0.95);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 20px;
-    border-radius: 20px;
-    text-align: center;
-}
-
-.loading-content p {
-    color: #e0e0e0;
-    margin-bottom: 15px;
-}
+/* Loading overlay styles defined in base.css */
 
 .loading-message {
     margin-bottom: 10px;
@@ -1667,27 +1655,6 @@ tr.filtered-out-item:hover {
     background-color: #ff6b35;
     transition: width 0.3s ease;
     border-radius: 20px 0 0 0;
-}
-
-.close-loading {
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
-    color: white;
-    border: none;
-    padding: 12px 20px;
-    text-align: center;
-    text-decoration: none;
-    display: inline-block;
-    font-size: 16px;
-    font-weight: 600;
-    margin: 4px 2px;
-    cursor: pointer;
-    border-radius: 12px;
-    transition: all 0.3s ease;
-}
-
-.close-loading:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(255, 107, 53, 0.4);
 }
 
 /* ========================================
