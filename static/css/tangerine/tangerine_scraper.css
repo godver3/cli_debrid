@@ -73,17 +73,7 @@ body.modal-open {
     color: #fff;
 }
 
-button.close-loading {
-    width: auto;
-    padding: 10px;
-    border: none;
-    border-radius: 10px;
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
-    color: white;
-    cursor: pointer;
-    font-size: 16px;
-    transition: all 0.3s ease;
-}
+/* Loading overlay styles defined in base.css */
 
 #scraper-container {
     display: flex;
@@ -1496,13 +1486,6 @@ tr.filtered-out-item {
         text-align: center;
     }
 
-    /* Loading popup mobile */
-    .loading-content {
-        width: 90%;
-        max-width: 90%;
-        padding: 1.5rem;
-    }
-
     .loading-message p {
         font-size: 1rem;
     }
@@ -1578,44 +1561,7 @@ tr.filtered-out-item {
     align-items: center;
 }
 
-.loading-content {
-    background: rgba(26, 26, 26, 0.95);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 2rem;
-    border-radius: 20px;
-    text-align: center;
-    min-width: 300px;
-    max-width: 500px;
-    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
-    position: relative;
-    overflow: hidden;
-}
-
-.loading-content::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: linear-gradient(90deg, #ff6b35, #f7931e);
-}
-
-.spinner {
-    border: 4px solid rgba(255, 255, 255, 0.1);
-    border-top: 4px solid #ff6b35;
-    border-radius: 50%;
-    width: 50px;
-    height: 50px;
-    animation: spin 1s linear infinite;
-    margin: 0 auto 20px;
-}
-
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
+/* Loading overlay styles defined in base.css */
 
 .loading-message {
     color: #e0e0e0;
@@ -1637,24 +1583,6 @@ tr.filtered-out-item {
     font-size: 0.9rem;
     line-height: 1.5;
     display: none;
-}
-
-.close-loading {
-    margin-top: 20px;
-    padding: 0.75rem 1.5rem;
-    background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
-    color: white;
-    border: none;
-    border-radius: 12px;
-    font-size: 0.95rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.3s ease;
-}
-
-.close-loading:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(255, 107, 53, 0.4);
 }
 
 /* Container */

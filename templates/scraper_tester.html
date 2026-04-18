@@ -25,54 +25,61 @@
 </div>
 <div class="scraper-tester-container">
     <h1>Scraper Tester</h1>
+    <!-- Search bar always visible -->
     <div id="search-section">
         <div class="search-container">
             <input type="text" id="search-input" placeholder="Enter search term..." class="settings-input">
             <button id="search-button" class="settings-submit-button">Search</button>
         </div>
+        <!-- Search results shown here, replaced by scrape details on item select -->
         <div id="search-results" class="search-results"></div>
     </div>
-    <div id="scrape-section" style="display: none;">
+    <div id="scrape-section" style="display: none; margin-top: 0;">
         <div id="scrape-details" class="scraper-tester-section">
-            <div class="scraper-tester-section-header">
-                <h4>Scrape Details</h4>
-            </div>
             <div class="scraper-tester-section-content active">
+                <button id="new-search-button" class="btn btn-sm btn-secondary" style="margin-bottom:12px;">
+                    ← Back to results
+                </button>
                 <input type="hidden" id="imdbId">
                 <div id="selected-item"></div>
-                <div class="form-group">
-                    <label for="version-select">Version:</label>
-                    <select id="version-select" class="settings-input">
-                        {% for version in versions %}
-                            <option value="{{ version }}">{{ version }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-                <div id="tv-controls" style="display: none;">
-                    <div class="form-group">
-                        <label for="season-select">Season:</label>
-                        <select id="season-select" class="settings-input"></select>
+                <div class="scrape-controls-row">
+                    <div class="scrape-control-group">
+                        <label for="version-select">Version</label>
+                        <select id="version-select" class="settings-input">
+                            {% for version in versions %}
+                                <option value="{{ version }}">{{ version }}</option>
+                            {% endfor %}
+                        </select>
                     </div>
-                    <div class="form-group">
-                        <label for="episode-select">Episode:</label>
-                        <select id="episode-select" class="settings-input"></select>
-                    </div>
-                    <div class="form-group">
-                        <label for="multi-checkbox">Multi:</label>
-                        <input type="checkbox" id="multi-checkbox" class="settings-input">
-                    </div>
-                </div>
-                <div class="version-settings-container">
-                    <div id="originalSettings" class="settings-column">
-                        <h3>Original Settings</h3>
-                        <!-- Original settings will be populated here -->
-                    </div>
-                    <div id="modifiedSettings" class="settings-column">
-                        <h3>Modified Settings</h3>
-                        <!-- Editable settings will be populated here -->
+                    <div id="tv-controls" style="display: none; contents">
+                        <div class="scrape-control-group">
+                            <label for="season-select">Season</label>
+                            <select id="season-select" class="settings-input"></select>
+                        </div>
+                        <div class="scrape-control-group">
+                            <label for="episode-select">Episode</label>
+                            <select id="episode-select" class="settings-input"></select>
+                        </div>
+                        <div class="scrape-control-group scrape-control-group--checkbox">
+                            <label for="multi-checkbox">Multi</label>
+                            <input type="checkbox" id="multi-checkbox">
+                        </div>
                     </div>
                 </div>
-                <button id="run-scrape-button" class="settings-submit-button">Run Scrape</button>
+                <!-- Settings accordion — populated by JS -->
+                <div id="settings-accordion"></div>
+
+                <!-- Sticky action buttons -->
+                <div id="run-scrape-sticky">
+                    <button id="run-scrape-button" class="settings-submit-button">▶ Run Scrape</button>
+                    <button id="save-settings-visible-button" class="settings-submit-button" style="display:none;" onclick="document.getElementById('save-modified-version-button').click()">Save Modified Version</button>
+                </div>
+
+                <!-- Hidden containers still needed by JS internals -->
+                <div style="display:none">
+                    <div id="originalSettings"></div>
+                    <div id="modifiedSettings"></div>
+                </div>
             </div>
         </div>
         <div id="scrape-results" class="scrape-results">
@@ -94,7 +101,6 @@
             <div class="scraper-tester-section-content"></div>
         </div>
         <button id="save-settings-button" class="settings-submit-button" style="display: none;">Save Modified Settings</button>
-        <button id="new-search-button" class="settings-submit-button">New Search</button>
     </div>
 </div>
 {% endblock %}
@@ -108,20 +114,16 @@
                     const url = typeof input === 'string' ? input : (input && input.url) || '';
                     const method = (init && init.method) ? init.method.toUpperCase() : 'GET';
                     if (url.endsWith('/scraper/scraper_tester') && method === 'POST') {
-                        // Reroute to content search to avoid backend expecting mediaType
-                        const resp = await originalFetch('/content/search', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: init && init.body ? init.body : JSON.stringify({})
-                        });
+                        // Use battery DirectAPI search — same source the scraper uses internally
+                        const body = init && init.body ? JSON.parse(init.body) : {};
+                        const query = encodeURIComponent(body.search_term || body.query || '');
+                        const resp = await originalFetch(`/scraper/api/search?query=${query}`);
                         const data = await resp.json();
-                        const transformed = Array.isArray(data) ? data.map(r => {
-                            if (r && !r.mediaType) {
-                                const mt = r.media_type || r.mediaType;
-                                r.mediaType = mt === 'show' ? 'tv' : (mt || 'movie');
-                            }
+                        const transformed = (data.results || []).map(r => {
+                            r.mediaType = r.media_type === 'show' ? 'tv' : (r.media_type || 'movie');
+                            r.imdbId = r.imdb_id || null;
                             return r;
-                        }) : data;
+                        });
                         return new Response(JSON.stringify(transformed), { status: 200, headers: { 'Content-Type': 'application/json' }});
                     }
                 } catch (e) {
@@ -132,6 +134,7 @@
         })();
     </script>
     <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
-    <script src="{{ url_for('static', filename='js/scraper_tester.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/scraper_tester.js') }}?v={{ range(1, 99999) | random }}"></script>
 
 {% endblock %}

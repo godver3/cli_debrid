@@ -1593,6 +1593,34 @@ def add_torrent():
     else:
         return render_template('scraper.html', error="Invalid torrent selection")
     
+@scraper_bp.route('/api/search', methods=['GET'])
+@user_required
+def api_battery_search():
+    """Search using battery DirectAPI — same source the scraper uses internally."""
+    from cli_battery.app.direct_api import DirectAPI
+    query = request.args.get('query', '').strip()
+    if not query:
+        return jsonify({'results': [], 'error': 'No query provided'}), 400
+    try:
+        results, source = DirectAPI.search_media(query)
+        if not results:
+            return jsonify({'results': []})
+        normalized = []
+        for r in results:
+            normalized.append({
+                'id': r.get('tmdb_id'),
+                'tmdb_id': r.get('tmdb_id'),
+                'imdb_id': r.get('imdb_id'),
+                'title': r.get('title'),
+                'year': r.get('year'),
+                'media_type': 'tv' if r.get('type') == 'show' else r.get('type', 'movie'),
+            })
+        return jsonify({'results': normalized, 'source': source})
+    except Exception as e:
+        log.error(f"Battery search error: {e}", exc_info=True)
+        return jsonify({'results': [], 'error': str(e)}), 500
+
+
 @scraper_bp.route('/scraper_tester', methods=['GET', 'POST'])
 @admin_required
 @onboarding_required

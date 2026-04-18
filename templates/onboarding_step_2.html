@@ -116,21 +116,44 @@
 
         <!-- Local/Symlinked-specific fields -->
         <div id="local-fields" class="conditional-fields">
-            <label for="plex_url_for_symlink" class="onboarding-label">Plex URL (Optional):</label>
-            <div class="settings-description">Plex server URL for symlink updates (optional)</div>
-            <input type="text" id="plex_url_for_symlink" name="plex_url_for_symlink" class="onboarding-input" value="{{ settings.get('File Management', {}).get('plex_url_for_symlink', '') }}">
 
-            <label for="plex_token_for_symlink" class="onboarding-label">Plex Token (Optional):</label>
-            <div class="settings-description">Plex authentication token for symlink updates (optional)</div>
-            <input type="text" id="plex_token_for_symlink" name="plex_token_for_symlink" class="onboarding-input" value="{{ settings.get('File Management', {}).get('plex_token_for_symlink', '') }}">
-        
+            <label class="onboarding-label">Media Server (Optional):</label>
+            <div class="settings-description">Select your media server for automatic library updates when new files are added.</div>
+            <select id="symlink_media_server" name="symlink_media_server" class="onboarding-input">
+                <option value="none">None</option>
+                <option value="plex" {% if settings.get('File Management', {}).get('plex_url_for_symlink') %}selected{% endif %}>Plex</option>
+                <option value="jellyfin" {% if settings.get('Debug', {}).get('emby_jellyfin_url') %}selected{% endif %}>Jellyfin / Emby</option>
+            </select>
+
+            <!-- Plex fields for symlink -->
+            <div id="symlink-plex-fields" style="display:none;">
+                <label for="plex_url_for_symlink" class="onboarding-label">Plex URL:</label>
+                <div class="settings-description">Plex server URL e.g. http://192.168.1.100:32400</div>
+                <input type="text" id="plex_url_for_symlink" name="plex_url_for_symlink" class="onboarding-input" value="{{ settings.get('File Management', {}).get('plex_url_for_symlink', '') }}">
+
+                <label for="plex_token_for_symlink" class="onboarding-label">Plex Token:</label>
+                <div class="settings-description">Plex authentication token</div>
+                <input type="text" id="plex_token_for_symlink" name="plex_token_for_symlink" class="onboarding-input" value="{{ settings.get('File Management', {}).get('plex_token_for_symlink', '') }}">
+            </div>
+
+            <!-- Jellyfin fields for symlink -->
+            <div id="symlink-jellyfin-fields" style="display:none;">
+                <label for="emby_jellyfin_url" class="onboarding-label">Jellyfin / Emby URL:</label>
+                <div class="settings-description">URL of your Jellyfin or Emby server e.g. http://192.168.1.100:8096</div>
+                <input type="text" id="emby_jellyfin_url" name="emby_jellyfin_url" class="onboarding-input" value="{{ settings.get('Debug', {}).get('emby_jellyfin_url', '') }}">
+
+                <label for="emby_jellyfin_token" class="onboarding-label">Jellyfin / Emby API Token:</label>
+                <div class="settings-description">API key from your Jellyfin/Emby server (Dashboard → API Keys)</div>
+                <input type="text" id="emby_jellyfin_token" name="emby_jellyfin_token" class="onboarding-input" value="{{ settings.get('Debug', {}).get('emby_jellyfin_token', '') }}">
+            </div>
+
             <div class="advice-section">
                 <div class="advice-header">
                     💡 Want my advice?
                     <i class="fas fa-chevron-down toggle-icon"></i>
                 </div>
                 <div class="advice-content">
-                    I recommend including your Plex URL and token even when using Symlinked libraries! This allows cli_debrid to automatically trigger Plex library scans when new files are added, ensuring your content appears in Plex immediately.
+                    Connect your media server so cli_debrid can automatically trigger library scans when new files are added, ensuring your content appears immediately.
                 </div>
             </div>
 
@@ -245,6 +268,19 @@
 import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Show/hide Plex or Jellyfin fields based on media server selection
+    function toggleSymlinkMediaServerFields(value) {
+        const plexFields = document.getElementById('symlink-plex-fields');
+        const jellyfinFields = document.getElementById('symlink-jellyfin-fields');
+        if (plexFields) plexFields.style.display = value === 'plex' ? 'block' : 'none';
+        if (jellyfinFields) jellyfinFields.style.display = value === 'jellyfin' ? 'block' : 'none';
+    }
+
+    const symlinkMediaServer = document.getElementById('symlink_media_server');
+    if (symlinkMediaServer) {
+        toggleSymlinkMediaServerFields(symlinkMediaServer.value);
+        symlinkMediaServer.addEventListener('change', (e) => toggleSymlinkMediaServerFields(e.target.value));
+    }
     const settingsForm = document.getElementById('settings-form');
     const nextStepBtn = document.querySelector('.next-step-btn');
     const fileManagementSelect = document.getElementById('file_collection_management');

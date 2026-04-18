@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Skip Onboarding{% endblock %}
 {% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/onboarding.css') }}">
 <div class="onboarding-container">
     <h1 class="onboarding-title">Skip Onboarding</h1>
     <p class="onboarding-text">Are you sure you want to skip the onboarding process? You can always configure settings later.</p>

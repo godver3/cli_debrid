@@ -793,13 +793,17 @@ def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, li
         details_data = details_response.json()
 
         # Fetch English-only posters from the images endpoint.
-        # include_image_language=en,null returns posters with English or no language tag.
-        # Sort by vote_average descending and pick the top result.
+        # Prefer iso_639_1='en' posters — these have baked-in title text and are
+        # the standard library poster. Only fall back to null-language posters if
+        # no English results exist (e.g. non-English original content with no EN poster).
         poster_url = None
         try:
             images_response = api.get(images_url)
             images_response.raise_for_status()
-            posters = images_response.json().get('posters', [])
+            all_posters = images_response.json().get('posters', [])
+            # Prefer English posters; fall back to all results only if none found
+            en_posters = [p for p in all_posters if p.get('iso_639_1') == 'en']
+            posters = en_posters if en_posters else all_posters
             if posters:
                 posters.sort(key=lambda p: p.get('vote_average', 0), reverse=True)
                 poster_url = f"https://image.tmdb.org/t/p/w500{posters[0]['file_path']}"
