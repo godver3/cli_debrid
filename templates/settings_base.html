@@ -438,7 +438,8 @@
         <option value="notifications">Notifications</option>
         {% if environment_mode == 'full' %}
         <option value="reverse-parser">Reverse Parser</option>
-        <option value="true-debug">Debug</option>
+        <!-- true-debug hidden: merged into Advanced Settings -->
+        <!-- <option value="true-debug">Debug</option> -->
         {% endif %}
     </select>
     <div class="settings-tabs settings-tabs-desktop">
@@ -453,7 +454,8 @@
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="notifications">Notifications</button>
         {% if environment_mode == 'full' %}
         <button type="button" class="btn btn-secondary settings-tab-button" data-tab="reverse-parser">Reverse Parser</button>
-        <button type="button" class="btn btn-secondary settings-tab-button" data-tab="true-debug">Debug</button>
+        <!-- true-debug hidden: merged into Advanced Settings -->
+        <!-- <button type="button" class="btn btn-secondary settings-tab-button" data-tab="true-debug">Debug</button> -->
         {% endif %}
     </div>
     

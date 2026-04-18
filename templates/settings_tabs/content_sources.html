@@ -121,7 +121,7 @@
                 const dropdownOptions = sourceTypes.map(type => ({
                     value: type,
                     text: type === 'MDBList' ? 'MDBList/JSON list)' : 
-                          type === 'Overseerr' ? 'Overseerr/Jellyseerr' : type
+                          type === 'Overseerr' ? 'Seerr' : type
                 }));
 
                 window.showPopup({
@@ -822,10 +822,10 @@
                     <span class="settings-toggle-icon">+</span>
                     <h4>
                         {% if config.display_name %}
-                            {{ config.display_name }} [{{ config.type }}{% if config.type == 'MDBList' %}/JSON list{% elif config.type == 'Overseerr' %}/Jellyseerr{% endif %}]
+                            {{ config.display_name }} [{{ config.type }}{% if config.type == 'MDBList' %}/JSON list{% endif %}]
                         {% else %}
                             {% if config.type == 'Overseerr' %}
-                                Overseerr/Jellyseerr_{{ source_id.split('_')[-1] if '_' in source_id else source_id }} [{{ config.type }}/Jellyseerr]
+                                Seerr_{{ source_id.split('_')[-1] if '_' in source_id else source_id }} [{{ config.type }}]
                             {% else %}
                                 {{ source_id }} [{{ config.type }}{% if config.type == 'MDBList' %}/JSON list{% endif %}]
                             {% endif %}

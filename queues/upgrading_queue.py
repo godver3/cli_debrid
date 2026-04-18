@@ -283,10 +283,13 @@ class UpgradingQueue:
             pass
         for item in self.items:
             if item['id'] not in self.upgrade_times:
-                collected_at = item.get('original_collected_at') or datetime.now()
+                # Use last_updated (when item was moved to Upgrading) for display
+                # rather than original_collected_at which could be years ago for hub items
+                _last_updated = item.get('last_updated')
+                display_time = _last_updated if _last_updated else (item.get('original_collected_at') or datetime.now())
                 self.upgrade_times[item['id']] = {
                     'start_time': datetime.now(),
-                    'time_added': collected_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(collected_at, datetime) else str(collected_at)
+                    'time_added': display_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(display_time, datetime) else str(display_time)
                 }
 
     def get_contents(self):
@@ -308,11 +311,14 @@ class UpgradingQueue:
 
     def add_item(self, item: Dict[str, Any]):
         self.items.append(item)
-        collected_at = item.get('original_collected_at', datetime.now())
-        logging.info(f"collected_at: {collected_at}")
+        # Use last_updated (when item was moved to Upgrading) for display
+        # rather than original_collected_at which could be years ago for hub items
+        _last_updated = item.get('last_updated')
+        display_time = _last_updated if _last_updated else item.get('original_collected_at', datetime.now())
+        logging.info(f"upgrading queue time_added: {display_time}")
         self.upgrade_times[item['id']] = {
             'start_time': datetime.now(),
-            'time_added': collected_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(collected_at, datetime) else str(collected_at)
+            'time_added': display_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(display_time, datetime) else str(display_time)
         }
         self.last_scrape_times[item['id']] = datetime.now()
         self.upgrades_found[item['id']] = 0  # Initialize upgrades found count
@@ -385,10 +391,24 @@ class UpgradingQueue:
 
                 upgrade_info = self.upgrade_times.get(item_id)
 
-                if upgrade_info:
-                    collected_at = datetime.fromisoformat(item['original_collected_at']) if isinstance(item['original_collected_at'], str) else item['original_collected_at']
+                # If upgrade_info is missing (e.g. after a restart, in-memory dict was lost),
+                # synthesize it from the item's original_collected_at so the timeout check still runs.
+                if not upgrade_info:
+                    self.upgrade_times[item_id] = {'start_time': current_time, 'time_added': current_time}
+                    upgrade_info = self.upgrade_times[item_id]
 
-                    # Fall back to queue entry time if original_collected_at is missing
+                if upgrade_info:
+                    # For hub-queued items use last_updated (when they were moved to Upgrading)
+                    # rather than original_collected_at (which could be years ago).
+                    # For regular upgrading items, last_updated is also set at queue time so
+                    # this is safe to use universally.
+                    _last_updated = item.get('last_updated')
+                    if _last_updated:
+                        collected_at = datetime.fromisoformat(_last_updated) if isinstance(_last_updated, str) else _last_updated
+                    else:
+                        collected_at = datetime.fromisoformat(item['original_collected_at']) if isinstance(item.get('original_collected_at'), str) else item.get('original_collected_at')
+
+                    # Fall back to queue entry time if both are missing
                     if collected_at is None:
                         collected_at = upgrade_info.get('start_time', current_time)
 

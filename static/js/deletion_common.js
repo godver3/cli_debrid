@@ -729,7 +729,7 @@ export function buildDeletionReport(result, itemTitle = 'Item', mediaType = 'sho
             } else if (source.startsWith('Trakt_Collection_') || source.startsWith('Trakt Collection_')) {
                 sourceName = 'Trakt Collection';
             } else if (source === 'Overseerr') {
-                sourceName = 'Overseerr';
+                sourceName = 'Seerr';
             } else if (source === 'Plex_Watchlist') {
                 sourceName = 'Plex Watchlist';
             // } else if (source.startsWith('MDBList_')) {

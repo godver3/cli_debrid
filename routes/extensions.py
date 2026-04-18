@@ -286,6 +286,9 @@ elif enable_caching and not COMPRESS_AVAILABLE:
 elif not enable_caching:
     logging.info("Web caching is disabled in settings (UI Settings > Enable Caching)")
 
+# Disable static file caching so CSS/JS changes are served immediately
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+
 # Configure Flask session settings
 app.config['SESSION_TYPE'] = 'filesystem'  # Using a valid type for Flask-Session
 app.config['SESSION_PERMANENT'] = True
