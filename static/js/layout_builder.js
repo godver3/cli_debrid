@@ -136,6 +136,14 @@ const BADGE_PRESETS = {
         background: { enabled: true, color: '#000000CC', width: 345, height: 140, borderRadius: 18 },
         icon: { enabled: false, type: 'image', path: '', width: 90, height: 90, side: 'left' },
         text: { enabled: true, value: 'Custom Text', font: 'DejaVuSans-Bold', size: 60, color: '#FFFFFF', align: 'center', fallback: '' }
+    },
+    file_match: {
+        label: 'File Match',
+        condition: '',
+        background: { enabled: true, color: '#000000CC', width: 300, height: 110, borderRadius: 14 },
+        icon: { enabled: false, type: 'image', path: '', width: 70, height: 70, side: 'left' },
+        text: { enabled: true, value: '', font: 'DejaVuSans-Bold', size: 60, color: '#FFFFFF', align: 'center', fallback: '' },
+        filenameMatch: { searchTerm: '', displayText: '', useIcon: false }
     }
 };
 
@@ -1455,6 +1463,19 @@ function populateBadgeProperties(badge) {
     if (puEl) puEl.checked = !!(badge.percentUnit);
     _updateRatingFormatVisibility();
     document.querySelectorAll('.properties-panel input[type="range"]').forEach(_syncRangeVal);
+
+    // File Match section — only visible for file_match type
+    const fmSection = document.getElementById('file-match-section');
+    if (fmSection) {
+        const isFileMatch = badge.type === 'file_match';
+        fmSection.style.display = isFileMatch ? '' : 'none';
+        if (isFileMatch) {
+            const fm = badge.filenameMatch || {};
+            document.getElementById('fm-search-term').value = fm.searchTerm || '';
+            document.getElementById('fm-display-text').value = fm.displayText || '';
+            document.getElementById('fm-use-icon').checked = !!fm.useIcon;
+        }
+    }
 }
 
 function populateSmartBadgeProperties(badge) {
@@ -1759,6 +1780,14 @@ function updateSelectedBadge() {
     const _puEl = document.getElementById('text-percent-unit');
     badge.percentUnit = _puEl ? _puEl.checked : false;
     // condition is kept from preset — not user-editable
+
+    // File Match properties
+    if (badge.type === 'file_match') {
+        if (!badge.filenameMatch) badge.filenameMatch = {};
+        badge.filenameMatch.searchTerm  = (document.getElementById('fm-search-term')?.value || '').trim();
+        badge.filenameMatch.displayText = (document.getElementById('fm-display-text')?.value || '').trim();
+        badge.filenameMatch.useIcon     = !!(document.getElementById('fm-use-icon')?.checked);
+    }
 
     updateBadgesList();
     renderCanvas();
@@ -2272,6 +2301,12 @@ function setupPropertyBindings() {
                 text: { ...preset.text },
                 x, y,
             });
+            // Include filenameMatch for file_match type
+            if (newType === 'file_match') {
+                badge.filenameMatch = preset.filenameMatch ? { ...preset.filenameMatch } : { searchTerm: '', displayText: '', useIcon: false };
+            } else {
+                delete badge.filenameMatch;
+            }
             updateBadgesList();
             populateBadgeProperties(badge);
             renderCanvas();
@@ -2315,6 +2350,12 @@ function setupPropertyBindings() {
 
     // Percent unit checkbox
     document.getElementById('text-percent-unit').addEventListener('change', updateSelectedBadge);
+
+    // File Match inputs
+    ['fm-search-term', 'fm-display-text'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', updateSelectedBadge);
+    });
+    document.getElementById('fm-use-icon')?.addEventListener('change', updateSelectedBadge);
 
     // Enable checkboxes
     const sectionMap = { 'bg-enabled': 'bg-body', 'icon-enabled': 'icon-body', 'text-enabled': 'text-body' };
@@ -2617,6 +2658,14 @@ function renderBadgeOnCanvas(ctx, badge, isSelected) {
     if (badge.type === 'title_logo') {
         renderTitleLogoOnCanvas(ctx, badge, isSelected);
         return;
+    }
+    // For file_match: inject the display text (or search term) so the preview
+    // shows how the badge will look when it matches. Style is controlled by the
+    // existing Text/Value section — only the match logic is in File Match section.
+    if (badge.type === 'file_match') {
+        const fm = badge.filenameMatch || {};
+        const previewText = fm.displayText || fm.searchTerm || 'Match';
+        badge = { ...badge, text: { ...badge.text, value: previewText } };
     }
     const { x, y, background: bg, icon, text } = badge;
     const pad = bg.padding ?? 8;

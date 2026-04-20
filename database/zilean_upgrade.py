@@ -587,7 +587,7 @@ def _make_current_result(filename: str, title: str, size_bytes: float = 0,
 
     Key design decisions:
       - `title` is set to the CLEAN query title (e.g. "Star Wars: The Rise of Skywalker"),
-        NOT the raw filename.  rank_result_key runs a regex check for /episode|season|s\d{2}/
+        NOT the raw filename.  rank_result_key runs a regex check for /episode|season|s\\d{2}/
         on the result title to detect wrong content-type and applies a -500 penalty.
         Filenames like "Star.Wars.Episode.IX..." or "Handmaids.Tale.S03..." would
         incorrectly trigger that penalty if the filename were used as the title.
@@ -1129,6 +1129,7 @@ def _scan_episode(item: Dict, zilean_instance: str, zilean_settings: Dict,
     candidate_scored = [
         (s, r) for s, r in candidate_scored
         if (r.get('parsed_info') or {}).get('episodes')
+        and episode in (r.get('parsed_info') or {}).get('episodes', [])
     ]
     if not candidate_scored:
         return None

@@ -46,93 +46,178 @@ def _sync_library_keys_for_new_items(plex_url: str, plex_token: str) -> Dict[str
     """
     Auto-populate ms_item_id for Collected items that don't have one yet.
 
-    Runs a targeted Plex key match for any item in state='Collected' that is
-    missing a ms_item_id. This avoids requiring a manual "Sync Plex Library"
-    button press every time a new item is added.
+    DB-first approach: fetch only the rows that are missing ms_item_id, build
+    in-memory lookup dicts from a single Plex API call, resolve each missing row
+    in O(1), then write only the matched rows. This avoids iterating the entire
+    Plex library (4000+ items) for every row — previously caused 16+ minute
+    sync times when only 14 rows needed updating.
+
+    Also detects ms_item_id changes (e.g. after Plex split-apart) and resets
+    overlay state to pending so overlays are regenerated with the new key.
 
     Returns a dict with counts: {'movies': N, 'episodes': N, 'errors': N}
     """
     conn = _get_db_connection()
     cursor = conn.cursor()
 
-    # Fast check — if nothing is missing a key, skip entirely
+    # Fetch rows needing a key update — two categories:
+    # 1. Missing: ms_item_id is NULL/empty → first-time assignment
+    # 2. Candidates for split-detection: have ms_item_id AND location_on_disk
+    #    → Plex may have assigned a new ratingKey after split-apart
+    # Both are fetched upfront; the Plex lookup dicts resolve both in O(1).
     cursor.execute('''
-        SELECT COUNT(*) FROM media_items
+        SELECT id, type, imdb_id, tmdb_id, title, year, location_on_disk, ms_item_id
+        FROM media_items
         WHERE state IN ('Collected', 'Upgrading')
-          AND (ms_item_id IS NULL OR ms_item_id = '')
     ''')
-    missing_count = cursor.fetchone()[0]
+    all_rows = cursor.fetchall()
     conn.close()
 
-    if not missing_count:
+    missing_rows   = [dict(r) for r in all_rows if not (r['ms_item_id'] or '').strip()]
+    split_rows     = [dict(r) for r in all_rows
+                      if (r['ms_item_id'] or '').strip() and (r['location_on_disk'] or '').strip()]
+
+    missing_count = len(missing_rows)
+    split_candidate_count = len(split_rows)
+
+    if not missing_count and not split_candidate_count:
         return {'movies': 0, 'episodes': 0, 'errors': 0}
 
-    logger.info(f"Auto ms-key sync: {missing_count} Collected item(s) missing ms_item_id")
+    logger.info(
+        f"Auto ms-key sync: {missing_count} missing ms_item_id, "
+        f"{split_candidate_count} candidate(s) for split-apart detection"
+    )
 
     counts = {'movies': 0, 'episodes': 0, 'errors': 0}
+
+    # Group by type for separate Plex API calls
+    def _by_type(rows):
+        d = {'movie': [], 'episode': []}
+        for r in rows:
+            if r['type'] in d:
+                d[r['type']].append(r)
+        return d
+
+    missing_by_type = _by_type(missing_rows)
+    split_by_type   = _by_type(split_rows)
 
     try:
         from .plex_client import PlexClient
         client = PlexClient(plex_url, plex_token)
 
-        # Unified loop: plex_type=1 → movies, plex_type=2 → TV shows (episodes in DB)
-        for plex_type, db_type, count_key in (
-            (1, 'movie',   'movies'),
-            (2, 'episode', 'episodes'),
+        for db_type, count_key, plex_type in (
+            ('movie',   'movies',   1),
+            ('episode', 'episodes', 2),
         ):
+            rows_missing = missing_by_type[db_type]
+            rows_split   = split_by_type[db_type]
+
+            if not rows_missing and not rows_split:
+                continue
+
             try:
+                # Single Plex API call — build in-memory lookup dicts
                 plex_items = client.get_all_items_with_guids(plex_type=plex_type)
-                conn = _get_db_connection()
-                cursor = conn.cursor()
+
+                file_map:  dict = {}   # location_on_disk → ratingKey
+                imdb_map:  dict = {}   # imdb_id          → ratingKey
+                tmdb_map:  dict = {}   # tmdb_id (str)    → ratingKey
+                title_map: dict = {}   # (title_lower, year_str) → ratingKey
+
                 for pi in plex_items:
                     rk = pi.get('ratingKey')
-                    imdb_id = pi.get('imdb_id')
-                    tmdb_id = pi.get('tmdb_id')
                     if not rk:
                         continue
-                    updated = False
-                    if imdb_id:
-                        cursor.execute('''
-                            UPDATE media_items
-                            SET ms_item_id = ?
-                            WHERE type = ?
-                              AND imdb_id = ?
-                              AND state IN ('Collected', 'Upgrading')
-                              AND (ms_item_id IS NULL OR ms_item_id = ''
-                                   OR LENGTH(ms_item_id) >= 20)
-                        ''', (rk, db_type, imdb_id))
+                    for fp in (pi.get('file_paths') or []):
+                        if fp:
+                            file_map[fp] = rk
+                    if pi.get('imdb_id'):
+                        imdb_map[pi['imdb_id']] = rk
+                    if pi.get('tmdb_id'):
+                        tmdb_map[str(pi['tmdb_id'])] = rk
+                    if pi.get('title') and pi.get('year'):
+                        title_map[(pi['title'].lower(), str(pi['year']))] = rk
+
+                # resolved: list of (db_id, new_rk, old_rk)
+                resolved = []
+
+                # Pass 1: rows missing ms_item_id entirely
+                for row in rows_missing:
+                    db_id   = row['id']
+                    old_rk  = ''
+                    loc     = row['location_on_disk'] or ''
+                    imdb_id = row['imdb_id'] or ''
+                    tmdb_id = str(row['tmdb_id'] or '')
+                    title   = (row['title'] or '').lower()
+                    year    = str(row['year'] or '')
+
+                    new_rk = (
+                        file_map.get(loc)
+                        or (imdb_map.get(imdb_id) if imdb_id else None)
+                        or (tmdb_map.get(tmdb_id) if tmdb_id else None)
+                        or (title_map.get((title, year)) if title and year else None)
+                    )
+                    if new_rk:
+                        resolved.append((db_id, new_rk, old_rk))
+
+                # Pass 2: rows that have ms_item_id but Plex file-path now maps
+                # to a different ratingKey — these are split-apart items.
+                # Only file-path matching is reliable here; imdb_id would resolve
+                # to whichever split item Plex returns first.
+                for row in rows_split:
+                    db_id   = row['id']
+                    old_rk  = row['ms_item_id']
+                    loc     = row['location_on_disk']
+
+                    new_rk = file_map.get(loc)
+                    if new_rk and new_rk != old_rk:
+                        resolved.append((db_id, new_rk, old_rk))
+
+                if not resolved:
+                    continue
+
+                # Write all resolved matches in one short-lived transaction
+                conn = _get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    changed_item_ids = []
+
+                    for db_id, new_rk, old_rk in resolved:
+                        cursor.execute(
+                            'UPDATE media_items SET ms_item_id = ? WHERE id = ?',
+                            (new_rk, db_id))
                         if cursor.rowcount:
-                            counts[count_key] += cursor.rowcount
-                            updated = True
-                    if not updated and tmdb_id:
-                        cursor.execute('''
-                            UPDATE media_items
-                            SET ms_item_id = ?
-                            WHERE type = ?
-                              AND tmdb_id = ?
-                              AND state IN ('Collected', 'Upgrading')
-                              AND (ms_item_id IS NULL OR ms_item_id = ''
-                                   OR LENGTH(ms_item_id) >= 20)
-                        ''', (rk, db_type, tmdb_id))
+                            counts[count_key] += 1
+                            if old_rk and old_rk != new_rk:
+                                changed_item_ids.append(db_id)
+
+                    # Reset overlay state for split-apart items so overlays
+                    # are regenerated with the new unique ratingKey
+                    if changed_item_ids:
+                        placeholders = ','.join('?' * len(changed_item_ids))
+                        cursor.execute(
+                            f'UPDATE media_overlay_state '
+                            f'SET status = \'pending\', '
+                            f'reason = \'ms_item_id changed — overlay needs regeneration\', '
+                            f'updated_at = CURRENT_TIMESTAMP '
+                            f'WHERE media_item_id IN ({placeholders}) AND status = \'applied\'',
+                            changed_item_ids)
                         if cursor.rowcount:
-                            counts[count_key] += cursor.rowcount
-                            updated = True
-                    # Fallback: match by title + year, only for Plex items with no external IDs at all
-                    if not updated and not imdb_id and not tmdb_id and pi.get('title') and pi.get('year'):
-                        cursor.execute('''
-                            UPDATE media_items
-                            SET ms_item_id = ?
-                            WHERE type = ?
-                              AND LOWER(title) = LOWER(?)
-                              AND year = ?
-                              AND state IN ('Collected', 'Upgrading')
-                              AND (ms_item_id IS NULL OR ms_item_id = ''
-                                   OR LENGTH(ms_item_id) >= 20)
-                        ''', (rk, db_type, pi['title'], pi['year']))
-                        if cursor.rowcount:
-                            counts[count_key] += cursor.rowcount
-                conn.commit()
-                conn.close()
+                            logger.info(
+                                f"ms-key sync: reset {cursor.rowcount} overlay(s) to pending "
+                                f"(ms_item_id changed after Plex split-apart)")
+
+                    conn.commit()
+                except Exception as _we:
+                    logger.error(f"ms-key sync write failed ({db_type}): {_we}", exc_info=True)
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                    counts['errors'] += 1
+                finally:
+                    conn.close()
+
             except Exception as e:
                 label = 'movies' if plex_type == 1 else 'shows'
                 logger.error(f"Auto ms-key sync ({label}) failed: {e}", exc_info=True)
@@ -469,7 +554,9 @@ def _reset_quality_changed_items() -> int:
         # Pre-fetch best quality per show (ms_item_id) and per movie (imdb_id)
         # using efficient grouped queries rather than N+1 individual queries.
         show_keys  = list({r['ms_item_id'] for r in applied_rows if r['type'] == 'episode'})
-        movie_imdb = list({r['imdb_id'] for r in applied_rows if r['type'] == 'movie' and r['imdb_id']})
+        # Movies: scope by ms_item_id so split Plex items (unique ratingKey per version)
+        # each compare quality against their own DB rows, not all versions of the movie.
+        movie_ms_ids = list({r['ms_item_id'] for r in applied_rows if r['type'] == 'movie' and r['ms_item_id']})
 
         _RES = ("CASE lower(ms_resolution) WHEN '2160p' THEN 6 WHEN '4k' THEN 6 "
                 "WHEN '1440p' THEN 5 WHEN '1080p' THEN 4 WHEN '720p' THEN 3 "
@@ -512,27 +599,27 @@ def _reset_quality_changed_items() -> int:
             for r in cursor.fetchall():
                 show_best[r['ms_item_id']] = r
 
-        if movie_imdb:
-            placeholders = ','.join('?' * len(movie_imdb))
+        if movie_ms_ids:
+            placeholders = ','.join('?' * len(movie_ms_ids))
             cursor.execute(f'''
-                SELECT imdb_id,
+                SELECT ms_item_id,
                        ms_resolution, ms_hdr, ms_dolby_vision,
                        ms_audio_codec, ms_audio_channels, ms_video_codec
                 FROM (
                     SELECT *, ROW_NUMBER() OVER (
-                        PARTITION BY imdb_id
+                        PARTITION BY ms_item_id
                         ORDER BY ({_RES}) DESC, ({_HDR}) DESC, ({_AUD}) DESC,
                                  CAST(COALESCE(ms_audio_channels,'0') AS REAL) DESC
                     ) AS rn
                     FROM media_items
                     WHERE type = 'movie'
-                      AND imdb_id IN ({placeholders})
+                      AND ms_item_id IN ({placeholders})
                       AND state IN ('Collected','Upgrading')
                       AND ms_resolution IS NOT NULL
                 ) WHERE rn = 1
-            ''', movie_imdb)
+            ''', movie_ms_ids)
             for r in cursor.fetchall():
-                movie_best[r['imdb_id']] = r
+                movie_best[r['ms_item_id']] = r
 
         # Compare stored hash vs current quality hash; collect items to reset
         reset_ids = []
@@ -541,7 +628,7 @@ def _reset_quality_changed_items() -> int:
             if row['type'] == 'episode':
                 best = show_best.get(row['ms_item_id'])
             else:
-                best = movie_best.get(row['imdb_id'])
+                best = movie_best.get(row['ms_item_id'])
 
             if not best:
                 continue
@@ -741,15 +828,18 @@ def _reset_content_changed_items(batch_size: int = 200) -> int:
         ''')
         show_version_counts = {r['imdb_id']: r['cnt'] for r in cursor.fetchall()}
 
+        # Movies: scope by ms_item_id so split Plex items (unique ratingKey per version)
+        # each get their own count of 1 rather than being grouped with other versions
+        # of the same movie. Merged items (same ms_item_id) still get the correct count.
         cursor.execute('''
-            SELECT imdb_id, COUNT(*) AS cnt
+            SELECT ms_item_id, COUNT(*) AS cnt
             FROM media_items
             WHERE type = 'movie'
               AND state IN ('Collected', 'Upgrading')
-              AND imdb_id IS NOT NULL
-            GROUP BY imdb_id
+              AND ms_item_id IS NOT NULL AND ms_item_id != ''
+            GROUP BY ms_item_id
         ''')
-        movie_version_counts = {r['imdb_id']: r['cnt'] for r in cursor.fetchall()}
+        movie_version_counts = {r['ms_item_id']: r['cnt'] for r in cursor.fetchall()}
 
         # Pre-fetch show statuses using the same source and normalization as
         # overlay_manager._fetch_show_status so the hashes always agree.
@@ -993,13 +1083,16 @@ def _reset_content_changed_items(batch_size: int = 200) -> int:
             imdb_id = row['imdb_id'] or ''
             plex_key = row['ms_item_id'] or ''
 
-            # Version count — both shows and movies keyed by imdb_id to match overlay_manager.
-            # Shows: default 0 (OverlayManager uses COALESCE(SUM,0) which returns 0 for
-            # shows with no duplicate episodes — using 1 here causes a permanent hash
-            # mismatch and resets every non-duplicate show to pending on every sync run).
-            # Movies: default 1 (OverlayManager counts all movie files so single-file movies
-            # return 1 and will always be present in the dict anyway).
-            vc = show_version_counts.get(imdb_id, 0) if item_type == 'episode' else movie_version_counts.get(imdb_id, 1)
+            # Version count — shows keyed by imdb_id, movies keyed by ms_item_id.
+            # Shows: default 0 (no duplicate episodes).
+            # Movies: scope to ms_item_id so split Plex items (different ms_item_id)
+            # each get count=1 independently. Merged items (same ms_item_id, multiple
+            # DB rows) still get the correct count > 1. Falls back to 1 when ms_item_id
+            # is not set (item not yet synced).
+            if item_type == 'episode':
+                vc = show_version_counts.get(imdb_id, 0)
+            else:
+                vc = movie_version_counts.get(plex_key, 1) if plex_key else 1
 
             # Ratings: only fetch/use when this item is in the current batch OR
             # already in the in-process cache. If we have no ratings at all, skip

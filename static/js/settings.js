@@ -150,8 +150,17 @@ export function updateSettings() {
 
         // Skip hidden inputs and inputs inside hidden containers
         // This prevents hidden duplicate fields from overwriting visible ones
-        // EXCEPTION: Always include inputs with data-section attribute (legitimate settings in collapsed sections)
-        if (input.offsetParent === null && input.type !== 'hidden' && !input.hasAttribute('data-section')) return;
+        // EXCEPTION: Include inputs with data-section attribute (legitimate settings in collapsed sections),
+        // BUT exclude inputs inside mode-switching panels that are currently display:none — these panels
+        // contain duplicate fields that would overwrite the visible counterparts (e.g. plex library fields
+        // duplicated across #plex-settings-in-file-management and .symlink-plex-setting).
+        if (input.offsetParent === null && input.type !== 'hidden') {
+            if (!input.hasAttribute('data-section')) return;
+            // Check if a nearest ancestor panel (not a collapsible settings-section-content) is display:none.
+            // Mode-switching panels are direct children of the form or have specific ids/classes.
+            const hiddenPanel = input.closest('#plex-settings-in-file-management, #jellyfin-settings-in-file-management, .symlink-plex-setting');
+            if (hiddenPanel && hiddenPanel.style.display === 'none') return;
+        }
         
         let value = input.value;
         
