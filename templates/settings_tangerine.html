@@ -547,9 +547,11 @@
         let totalMatches = 0;
         const matchesByTab = {};
 
-        // Search through all tabs
+        // Search through all tabs (skip true-debug — it's merged into Advanced Settings
+        // and inaccessible via the nav, so its matches would duplicate the debug tab count)
         tabContents.forEach(tabContent => {
             const tabId = tabContent.id;
+            if (tabId === 'true-debug') return;
             const sections = tabContent.querySelectorAll('.settings-section');
             let tabMatches = 0;
 
@@ -667,13 +669,25 @@
                 'debug': 'Advanced Settings',
                 'notifications': 'Notifications',
                 'reverse-parser': 'Reverse Parser',
-                'true-debug': 'Debug'
+                'true-debug': 'Advanced Settings'
             };
 
-            let tabsList = Object.entries(matchesByTab)
-                .map(([tabId, count]) => {
-                    const tabName = tabDisplayNames[tabId] || tabId.charAt(0).toUpperCase() + tabId.slice(1).replace(/-/g, ' ');
-                    return `<span class="search-tab-match" data-tab="${tabId}">${tabName} (${count})</span>`;
+            // Merge counts for tabs that share the same display name (debug + true-debug → Advanced Settings)
+            const mergedMatches = {};
+            const mergedTabId = {};  // display name → first tab id (for navigation)
+            Object.entries(matchesByTab).forEach(([tabId, count]) => {
+                const name = tabDisplayNames[tabId] || tabId.charAt(0).toUpperCase() + tabId.slice(1).replace(/-/g, ' ');
+                if (mergedMatches[name] === undefined) {
+                    mergedMatches[name] = 0;
+                    mergedTabId[name] = tabId;
+                }
+                mergedMatches[name] += count;
+            });
+
+            let tabsList = Object.entries(mergedMatches)
+                .map(([name, count]) => {
+                    const tabId = mergedTabId[name];
+                    return `<span class="search-tab-match" data-tab="${tabId}">${name} (${count})</span>`;
                 })
                 .join('');
 
