@@ -370,6 +370,19 @@ class DeletionManager:
                 result['deleted_symlinks'].append(symlink_path)
                 logging.info(f"Deleted symlink: {symlink_path}")
 
+                # Delete subtitle sidecar files left by Bazarr (if setting enabled)
+                subtitle_extensions = {'.srt', '.ass', '.sub', '.ssa', '.vtt', '.idx', '.sup'}
+                delete_subtitles = get_setting('Bazarr Integration', 'delete_subtitles_on_removal', fallback=True)
+                if delete_subtitles and parent_folder and os.path.exists(parent_folder):
+                    try:
+                        for fname in os.listdir(parent_folder):
+                            if os.path.splitext(fname)[1].lower() in subtitle_extensions:
+                                sub_path = os.path.join(parent_folder, fname)
+                                os.remove(sub_path)
+                                logging.info(f"[SYMLINK_DELETION] Deleted subtitle sidecar: {sub_path}")
+                    except Exception as e:
+                        logging.warning(f"[SYMLINK_DELETION] Error cleaning up subtitle files in {parent_folder}: {e}")
+
                 # Handle parent folder cleanup (with safety checks)
                 if parent_folder and os.path.exists(parent_folder) and is_safe_to_delete(parent_folder):
                     try:

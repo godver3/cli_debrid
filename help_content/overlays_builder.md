@@ -24,13 +24,15 @@ The builder is divided into three panels:
 
 This is where you pick badge types to add to the canvas. Each type adds a badge with sensible defaults that you can then customize in the right panel.
 
-*   **Tray** — A background panel behind a group of badges. Use this as a semi-transparent strip or box at the bottom (or anywhere) of the poster to give badges a unified background. Trays support solid or gradient fills, borders, and rounded corners. Add a tray first, then position badges on top of it for a polished look.
+*   **Tray** — A background panel that sits behind a group of badges. Use it as a semi-transparent strip or box — typically at the bottom of the poster — to give badges a unified visual foundation. Trays support solid or gradient fills, optional borders, border radius, and opacity. Add a tray first, then position badges on top of it. A tray has no text or icon of its own — it is purely a background element. Configured via the **Tray Properties** panel when selected.
 
-*   **Text Badges** — Dynamic text rendered directly onto the poster. The text value comes from a template variable (e.g., `{{imdbRating}}`, `{{resolution}}`, `{{audioChannels}}`). Fully customizable: font, size, weight, color, background, optional icon/logo. Use these for ratings, codec names, resolution labels, year, network, studio, and more.
+*   **Text Badges** — The most versatile badge type. Renders text directly onto the poster, driven by a `{{variable}}` template (e.g., `{{imdbRating}}`, `{{resolution}}`, `{{audioChannels}}`). Supports a background box, an optional icon/logo to the left or right of the text, full font control (family, size, weight, color, alignment), and optional vertical stacking for two-line labels. Presets are available for every common data type (ratings, resolution, HDR, audio, video codec, network, studio, content rating, show status, versions) plus a free-form Custom type for any combination of text and variables. Use Text Badges when you want precise control over appearance or need to display data that Smart Badges do not cover. Configured via the **Badge Properties** panel when selected.
 
-*   **Smart Badges / Library Badges** — PNG image badges auto-selected at render time based on the item's metadata. Instead of drawing text, the system looks up the matching PNG file from your Badge Library (e.g., `audio-truehd-atmos.png` for a TrueHD Atmos track). The badge category (audio codec, video codec, etc.) and the item's actual metadata determine which image is shown. Requires badge assets to be uploaded in the Badge Library.
+*   **Smart Badges / Library Badges** — Image-based badges auto-selected at render time from your Badge Library. Instead of rendering text, the system looks up the matching PNG file based on the item's metadata (e.g., it selects `audio-truehd-atmos.png` for a TrueHD Atmos track). You control the badge's size and position in the layout; the correct image is chosen automatically. Requires PNG assets to be uploaded in the Badge Library. If no matching asset exists for a given item, the badge is silently skipped — no error, no empty space. Configured via the **Smart Badge Properties** panel when selected (size, position, badge category).
 
-*   **Designed Badges** — SVG vector badges served from the badge library. These scale without quality loss and are selected the same way as Smart Badges (by metadata match). Designed badges are vector alternatives to PNG smart badges.
+*   **Designed Badges** — SVG vector equivalents of Smart Badges. Selected the same way (by metadata match from the Badge Library), but use vector SVG files which scale perfectly at any size. Use Designed Badges when you have SVG assets and want crisp rendering at all poster dimensions. Configured via the same properties panel as Smart Badges.
+
+*   **Title Logo** — A special badge that renders the movie or TV show title onto the poster. When **Enable Textless / Clean Posters** is on and a textless (language-neutral) poster is found, the title is rendered using a clearlogo PNG from TMDB — a transparent logo image in the style of the title's official branding. If no clearlogo exists, falls back to rendering the title text using the configured font. The Title Logo is the main reason to use textless posters: it lets you place the title at any position with any styling, instead of relying on the baked-in title from the standard poster. Configured via the **Title Logo Properties** panel when selected (position mode, anchor point, size, font fallback settings).
 
 **Layout Badges List:**
 
@@ -140,6 +142,7 @@ Visible when any badge (text, smart, or designed) is selected.
     *   **Media Info:** Resolution, HDR Format, Audio Codec, Audio Channels, Video Codec, Format/Source
     *   **Library:** Network, Studio, Content Rating, Show Status, Versions/Duplicates
     *   **Custom:** A freeform text/template expression of your own design
+    *   **File Match:** A conditional badge that only renders when the video filename contains a specified search term — see below for details
     *   Changing the type applies that type's default style preset. Your position is preserved but visual properties reset to defaults for the new type.
 
 *   **Background:** (toggle-able)
@@ -203,6 +206,26 @@ Opens from the **?** button in the canvas toolbar. Lists every available `{{vari
 7.  Use the **Preview Data** section to test different metadata combinations and confirm all badges look correct.
 8.  Click **Save**.
 9.  Return to the Overlay Management page, select the new layout in the Movies or TV Shows tab, and click **Generate Selected** on a few items to test before running **Generate Library**.
+
+---
+
+**File Match Badge:**
+
+The **File Match** badge type renders only when the video filename contains a specified search term. This is useful for flagging attributes that aren't available as standard metadata — such as extended cuts, director's cuts, specific encode groups, or any keyword present in the filename.
+
+*   **File Match section** (visible only when badge type is set to File Match):
+    *   **Search Term:** The text to look for in the filename. The match is case-insensitive — `REMUX`, `remux`, and `Remux` all match the same files.
+    *   **Display Text:** The text shown on the badge when a match is found. Leave empty to display the search term itself.
+    *   **Use icon instead of text:** When enabled, the badge shows the icon configured in the Icon/Logo section instead of any text. Use this to show a logo rather than a label.
+
+*   **Styling:** All other badge properties work exactly as with any other badge type — configure the Background, Icon, and Text/Value sections to control how the badge looks when it appears.
+
+*   **Preview:** The canvas always shows the badge (using the display text or search term as a placeholder) so you can design its appearance regardless of whether a match exists. At render time, if the filename does not contain the search term, the badge is completely hidden.
+
+*   **Example uses:**
+    *   Search term `EXTENDED` — badge appears only on extended cut files
+    *   Search term `REMUX`, display text `REMUX` — styled badge visible only on remux files
+    *   Search term `x265` — badge visible only on x265 encodes, useful when the video codec badge doesn't distinguish x264 vs x265 source clearly
 
 ---
 

@@ -40,6 +40,8 @@ _SHOW_CACHE_TTL_HOURS = 6  # Refresh cache every 6 hours
 _plex_movie_cache: Dict[str, Any] = {}
 _plex_movie_cache_timestamp: Optional[float] = None
 _MOVIE_CACHE_TTL_HOURS = 6  # Refresh cache every 6 hours
+import threading as _threading
+_plex_movie_cache_lock = _threading.Lock()  # Prevents concurrent cache refreshes
 
 def normalize_plex_resolution(resolution: str) -> str:
     """
@@ -2512,10 +2514,28 @@ def refresh_plex_movie_cache():
     This method fetches ALL movies from movie libraries in one API call with includeGuids=1,
     which is much faster and more reliable than using guid__contains (which is broken).
 
+    A threading lock ensures only one refresh runs at a time — concurrent callers
+    (e.g. simultaneous Agregarr webhooks) wait for the first to complete and then
+    reuse the freshly-populated cache rather than each issuing a full Plex API call
+    and DB write, which caused SQLite lock contention.
+
     Returns:
         bool: True if cache was refreshed successfully, False otherwise
     """
     global _plex_movie_cache, _plex_movie_cache_timestamp
+
+    if not _plex_movie_cache_lock.acquire(blocking=True, timeout=60):
+        logger.warning("refresh_plex_movie_cache: could not acquire lock within 60s, skipping")
+        return False
+
+    try:
+        # Re-check staleness after acquiring lock — a concurrent caller may have
+        # already refreshed the cache while we were waiting.
+        if not is_plex_movie_cache_stale():
+            logger.debug("refresh_plex_movie_cache: cache refreshed by another thread while waiting — skipping")
+            return True
+    except Exception:
+        pass
 
     try:
         # Get Plex connection details
@@ -2591,6 +2611,8 @@ def refresh_plex_movie_cache():
     except Exception as e:
         logger.error(f"Error refreshing Plex movie cache: {e}", exc_info=True)
         return False
+    finally:
+        _plex_movie_cache_lock.release()
 
 
 def is_plex_movie_cache_stale() -> bool:

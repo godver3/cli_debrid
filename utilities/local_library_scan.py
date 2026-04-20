@@ -2443,9 +2443,26 @@ def resync_symlinks_with_new_settings(
             norm_new_symlink = os.path.normpath(new_symlink_destination)
 
             if norm_db_symlink != norm_new_symlink:
+                old_parent = os.path.dirname(db_symlink_location) if db_symlink_location else None
+                new_parent = os.path.dirname(new_symlink_destination)
+
                 if db_symlink_location and os.path.lexists(db_symlink_location):
                     if os.path.islink(db_symlink_location): os.unlink(db_symlink_location)
-                
+
+                # Move any subtitle sidecar files from old folder to new folder
+                subtitle_extensions = {'.srt', '.ass', '.sub', '.ssa', '.vtt', '.idx', '.sup'}
+                if old_parent and old_parent != new_parent and os.path.exists(old_parent):
+                    try:
+                        os.makedirs(new_parent, exist_ok=True)
+                        for fname in os.listdir(old_parent):
+                            if os.path.splitext(fname)[1].lower() in subtitle_extensions:
+                                src = os.path.join(old_parent, fname)
+                                dst = os.path.join(new_parent, fname)
+                                shutil.move(src, dst)
+                                logging.info(f"[RESYNC] Moved subtitle sidecar: {src} -> {dst}")
+                    except Exception as e:
+                        logging.warning(f"[RESYNC] Error moving subtitle files from {old_parent} to {new_parent}: {e}")
+
                 symlink_created = create_symlink(actual_source_file_to_use, new_symlink_destination, item_id, skip_verification=True)
                 if symlink_created:
                     try:

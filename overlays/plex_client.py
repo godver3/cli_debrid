@@ -705,6 +705,15 @@ class PlexClient:
                             elif gid.startswith('tmdb://'):
                                 tmdb_id = gid[7:]
 
+                        # Extract file paths from Media[].Part[].file so the sync
+                        # can match split Plex items to DB rows by location_on_disk.
+                        file_paths = []
+                        for media in item.get('Media', []):
+                            for part in media.get('Part', []):
+                                fp = part.get('file')
+                                if fp:
+                                    file_paths.append(fp)
+
                         results.append({
                             'ratingKey': rk,
                             'title': item.get('title', ''),
@@ -712,6 +721,7 @@ class PlexClient:
                             'imdb_id': imdb_id,
                             'tmdb_id': tmdb_id,
                             'grandparentRatingKey': str(item.get('grandparentRatingKey', '')) or None,
+                            'file_paths': file_paths,
                         })
 
                     fetched = container_start + len(items)

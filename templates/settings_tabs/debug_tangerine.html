@@ -37,7 +37,7 @@
     </div>
     <div class="settings-section-content">
         {# Advanced settings hidden: 'disable_initialization', 'auto_run_program' #}
-        {% for key in ['logging_level', 'timezone_override', 'enable_crash_test', 'enable_tracemalloc', 'tracemalloc_sample_rate', 'check_for_updates', 'use_symlinks_on_windows'] %}
+        {% for key in ['logging_level', 'timezone_override', 'enable_tracemalloc', 'tracemalloc_sample_rate', 'check_for_updates', 'use_symlinks_on_windows'] %}
             {% set value = settings_schema.Debug.get(key) %}
             {% if value %}
             <div class="settings-form-group">
@@ -157,7 +157,7 @@
         </div>
     </div>
     <div class="settings-section-content">
-        {% for key in ['disable_not_wanted_check', 'do_not_add_plex_watch_history_items_to_queue', 'item_process_delay_seconds', 'disable_content_source_caching', 'enable_granular_version_additions'] %}
+        {% for key in ['do_not_add_plex_watch_history_items_to_queue', 'item_process_delay_seconds', 'disable_content_source_caching', 'enable_granular_version_additions'] %}
             {% set value = settings_schema.Debug.get(key) %}
             {% if value %}
             <div class="settings-form-group">
@@ -621,6 +621,13 @@
                    value="{% set val = settings.get('Debug', {}).get('minimum_scrape_score', settings_schema.Debug.minimum_scrape_score.default) %}{{ val if val != None else '' }}" class="settings-input"
                    data-section="Debug" data-key="minimum_scrape_score">
             <p class="settings-description">Minimum scrape score to accept results above.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="debug-scale_final_scores" class="settings-title">Scale Final Scores:</label>
+            <input type="checkbox" id="debug-scale_final_scores" name="Debug.scale_final_scores"
+                   data-section="Debug" data-key="scale_final_scores"
+                   {% if settings.get('Debug', {}).get('scale_final_scores', settings_schema.Debug.scale_final_scores.default) == True %}checked{% endif %}>
+            <p class="settings-description">{{ settings_schema.Debug.scale_final_scores.description }}</p>
         </div>
     </div>
 </div>
