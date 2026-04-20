@@ -192,7 +192,7 @@ def _sync_library_keys_for_new_items(plex_url: str, plex_token: str) -> Dict[str
                                 changed_item_ids.append(db_id)
 
                     # Reset overlay state for split-apart items so overlays
-                    # are regenerated with the new unique ratingKey
+                    # are regenerated with the new unique ratingKey.
                     if changed_item_ids:
                         placeholders = ','.join('?' * len(changed_item_ids))
                         cursor.execute(
@@ -206,6 +206,35 @@ def _sync_library_keys_for_new_items(plex_url: str, plex_token: str) -> Dict[str
                             logger.info(
                                 f"ms-key sync: reset {cursor.rowcount} overlay(s) to pending "
                                 f"(ms_item_id changed after Plex split-apart)")
+
+                        # Also reset siblings — items that still hold the old shared
+                        # ms_item_id (the pre-split merged ratingKey). Their overlays
+                        # were generated when the items were merged (version_count=2,
+                        # possibly wrong resolution data) and need regeneration too.
+                        old_rks = list({old_rk for _, _, old_rk in resolved if old_rk})
+                        if old_rks:
+                            excl_ph = ','.join('?' * len(changed_item_ids))
+                            old_ph  = ','.join('?' * len(old_rks))
+                            cursor.execute(
+                                f'SELECT id FROM media_items '
+                                f'WHERE ms_item_id IN ({old_ph}) '
+                                f'AND id NOT IN ({excl_ph}) '
+                                f'AND state IN (\'Collected\', \'Upgrading\')',
+                                old_rks + changed_item_ids)
+                            sibling_ids = [r[0] for r in cursor.fetchall()]
+                            if sibling_ids:
+                                sib_ph = ','.join('?' * len(sibling_ids))
+                                cursor.execute(
+                                    f'UPDATE media_overlay_state '
+                                    f'SET status = \'pending\', '
+                                    f'reason = \'sibling split-apart — overlay needs regeneration\', '
+                                    f'updated_at = CURRENT_TIMESTAMP '
+                                    f'WHERE media_item_id IN ({sib_ph}) AND status = \'applied\'',
+                                    sibling_ids)
+                                if cursor.rowcount:
+                                    logger.info(
+                                        f"ms-key sync: reset {cursor.rowcount} sibling overlay(s) "
+                                        f"to pending (were merged with split-apart item)")
 
                     conn.commit()
                 except Exception as _we:

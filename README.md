@@ -56,7 +56,7 @@ This extension streamlines the process of assigning magnets to your media by aut
 
 ## Overall Program
 
-For full details on how cli_debrid works, see the **[Documentation](https://mash2k3.github.io/cli_docs/)**.
+For full details on how cli_debrid works, see the **[Documentation](https://godver3.github.io/cli_docs/)**.
 
 ### dev vs main
 
@@ -68,7 +68,7 @@ Development generally works on a 6-8 week cycle, with dev being moved to main at
 
 ### Library Management
 
-Supports either a Plex or Symlinked library — see [Plex](https://mash2k3.github.io/cli_docs/integrations/plex/) and [Jellyfin](https://mash2k3.github.io/cli_docs/integrations/jellyfin/) integration guides.
+Supports either a Plex or Symlinked library — see [Plex](https://godver3.github.io/cli_docs/integrations/plex/) and [Jellyfin](https://godver3.github.io/cli_docs/integrations/jellyfin/) integration guides.
 
 - Plex: Uses Plex's API to get your library and track what you have.
 - Symlinked: Uses a local folder structure to track your library.
@@ -78,26 +78,26 @@ Supports either a Plex or Symlinked library — see [Plex](https://mash2k3.githu
 
 A settings menu allows you to configure all program settings. Full configuration docs:
 
-- [Required settings](https://mash2k3.github.io/cli_docs/configuration/required/) (Plex, Debrid Provider, Trakt)
-- [Scrapers](https://mash2k3.github.io/cli_docs/configuration/scrapers/) (Zilean, Jackett, Torrentio, Nyaa)
-- [Versions](https://mash2k3.github.io/cli_docs/configuration/versions/) (scraping quality preferences, filters)
-- [Content sources](https://mash2k3.github.io/cli_docs/configuration/content-sources/) (MDBList, Collected content, Trakt watchlists/lists, Seerr)
-- [Additional settings](https://mash2k3.github.io/cli_docs/configuration/additional/) (UI settings, TMDB key, Metadata age threshold, deletions syncing, queue management)
-- [Advanced settings](https://mash2k3.github.io/cli_docs/configuration/advanced/)
-- [Notifications](https://mash2k3.github.io/cli_docs/configuration/notifications/) (Discord, Email, Telegram, NTFY)
+- [Required settings](https://godver3.github.io/cli_docs/configuration/required/) (Plex, Debrid Provider, Trakt)
+- [Scrapers](https://godver3.github.io/cli_docs/configuration/scrapers/) (Zilean, Jackett, Torrentio, Nyaa)
+- [Versions](https://godver3.github.io/cli_docs/configuration/versions/) (scraping quality preferences, filters)
+- [Content sources](https://godver3.github.io/cli_docs/configuration/content-sources/) (MDBList, Collected content, Trakt watchlists/lists, Seerr)
+- [Additional settings](https://godver3.github.io/cli_docs/configuration/additional/) (UI settings, TMDB key, Metadata age threshold, deletions syncing, queue management)
+- [Advanced settings](https://godver3.github.io/cli_docs/configuration/advanced/)
+- [Notifications](https://godver3.github.io/cli_docs/configuration/notifications/) (Discord, Email, Telegram, NTFY)
 
 ### Manual/Testing Scraper
 
-Allows you to manually initiate scraping for specific content. The [Testing Scraper](https://mash2k3.github.io/cli_docs/features/scraper-tester/) allows you to fine tune your scraping settings and weights to ensure your preferred releases are grabbed.
+Allows you to manually initiate scraping for specific content. The [Testing Scraper](https://godver3.github.io/cli_docs/features/scraper-tester/) allows you to fine tune your scraping settings and weights to ensure your preferred releases are grabbed.
 
 ### Debug Functions
 
-Provides various debugging tools for advanced users — see [Debug Functions](https://mash2k3.github.io/cli_docs/features/debug-functions/).
+Provides various debugging tools for advanced users — see [Debug Functions](https://godver3.github.io/cli_docs/features/debug-functions/).
 
 
 ## Queue Operations
 
-For detailed information on queue processing intervals, upgrading criteria, sleep/wake mechanics, blacklisting, multi-pack processing and webhook support, see the **[Queue Operations](https://mash2k3.github.io/cli_docs/features/queues/)** documentation.
+For detailed information on queue processing intervals, upgrading criteria, sleep/wake mechanics, blacklisting, multi-pack processing and webhook support, see the **[Queue Operations](https://godver3.github.io/cli_docs/features/queues/)** documentation.
 
 ## Philosophy
 
@@ -107,15 +107,15 @@ cli_debrid maintains a local database of your media collection, keeping track of
 
 ## Getting Started
 
-New to cli_debrid? Start with the **[Getting Started guide](https://mash2k3.github.io/cli_docs/getting-started/)** in the documentation.
+New to cli_debrid? Start with the **[Getting Started guide](https://godver3.github.io/cli_docs/getting-started/)** in the documentation.
 
-- **New here:** [Getting Started](https://mash2k3.github.io/cli_docs/getting-started/), [Prerequisites](https://mash2k3.github.io/cli_docs/getting-started/prerequisites/), [What's Next](https://mash2k3.github.io/cli_docs/getting-started/whats-next/)
-- **Installing:** [Docker](https://mash2k3.github.io/cli_docs/installation/docker/), [Unraid](https://mash2k3.github.io/cli_docs/installation/unraid/), [Windows](https://mash2k3.github.io/cli_docs/installation/windows/), [TrueNAS](https://mash2k3.github.io/cli_docs/installation/truenas/), [Updating](https://mash2k3.github.io/cli_docs/installation/updating/)
-- **Configuring:** [Required](https://mash2k3.github.io/cli_docs/configuration/required/), [Content Sources](https://mash2k3.github.io/cli_docs/configuration/content-sources/), [Scrapers](https://mash2k3.github.io/cli_docs/configuration/scrapers/), [Versions](https://mash2k3.github.io/cli_docs/configuration/versions/), [Notifications](https://mash2k3.github.io/cli_docs/configuration/notifications/)
-- **Scrapers:** [Zilean](https://mash2k3.github.io/cli_docs/scrapers/zilean/), [Jackett](https://mash2k3.github.io/cli_docs/scrapers/jackett/), [Torrentio](https://mash2k3.github.io/cli_docs/scrapers/torrentio/), [Nyaa](https://mash2k3.github.io/cli_docs/scrapers/nyaa/), [AIOStreams](https://mash2k3.github.io/cli_docs/scrapers/aiostreams/), [MediaFusion](https://mash2k3.github.io/cli_docs/scrapers/mediafusion/)
-- **Integrations:** [Plex](https://mash2k3.github.io/cli_docs/integrations/plex/), [Jellyfin](https://mash2k3.github.io/cli_docs/integrations/jellyfin/), [Seerr](https://mash2k3.github.io/cli_docs/integrations/seerr/), [Zurg](https://mash2k3.github.io/cli_docs/integrations/zurg/), [OpenClaw](https://mash2k3.github.io/cli_docs/integrations/openclaw/)
-- **Features:** [Library](https://mash2k3.github.io/cli_docs/features/library/), [Queues](https://mash2k3.github.io/cli_docs/features/queues/), [Upgrade Hub](https://mash2k3.github.io/cli_docs/features/upgrade-hub/), [Overlays](https://mash2k3.github.io/cli_docs/features/overlays/), [Discover](https://mash2k3.github.io/cli_docs/features/discover/), [Debrid Manager](https://mash2k3.github.io/cli_docs/features/debrid-manager/)
-- **Troubleshooting:** [FAQ](https://mash2k3.github.io/cli_docs/faq/), [Debug Functions](https://mash2k3.github.io/cli_docs/features/debug-functions/)
+- **New here:** [Getting Started](https://godver3.github.io/cli_docs/getting-started/), [Prerequisites](https://godver3.github.io/cli_docs/getting-started/prerequisites/), [What's Next](https://godver3.github.io/cli_docs/getting-started/whats-next/)
+- **Installing:** [Docker](https://godver3.github.io/cli_docs/installation/docker/), [Unraid](https://godver3.github.io/cli_docs/installation/unraid/), [Windows](https://godver3.github.io/cli_docs/installation/windows/), [TrueNAS](https://godver3.github.io/cli_docs/installation/truenas/), [Updating](https://godver3.github.io/cli_docs/installation/updating/)
+- **Configuring:** [Required](https://godver3.github.io/cli_docs/configuration/required/), [Content Sources](https://godver3.github.io/cli_docs/configuration/content-sources/), [Scrapers](https://godver3.github.io/cli_docs/configuration/scrapers/), [Versions](https://godver3.github.io/cli_docs/configuration/versions/), [Notifications](https://godver3.github.io/cli_docs/configuration/notifications/)
+- **Scrapers:** [Zilean](https://godver3.github.io/cli_docs/scrapers/zilean/), [Jackett](https://godver3.github.io/cli_docs/scrapers/jackett/), [Torrentio](https://godver3.github.io/cli_docs/scrapers/torrentio/), [Nyaa](https://godver3.github.io/cli_docs/scrapers/nyaa/), [AIOStreams](https://godver3.github.io/cli_docs/scrapers/aiostreams/), [MediaFusion](https://godver3.github.io/cli_docs/scrapers/mediafusion/)
+- **Integrations:** [Plex](https://godver3.github.io/cli_docs/integrations/plex/), [Jellyfin](https://godver3.github.io/cli_docs/integrations/jellyfin/), [Seerr](https://godver3.github.io/cli_docs/integrations/seerr/), [Zurg](https://godver3.github.io/cli_docs/integrations/zurg/), [OpenClaw](https://godver3.github.io/cli_docs/integrations/openclaw/)
+- **Features:** [Library](https://godver3.github.io/cli_docs/features/library/), [Queues](https://godver3.github.io/cli_docs/features/queues/), [Upgrade Hub](https://godver3.github.io/cli_docs/features/upgrade-hub/), [Overlays](https://godver3.github.io/cli_docs/features/overlays/), [Discover](https://godver3.github.io/cli_docs/features/discover/), [Debrid Manager](https://godver3.github.io/cli_docs/features/debrid-manager/)
+- **Troubleshooting:** [FAQ](https://godver3.github.io/cli_docs/faq/), [Debug Functions](https://godver3.github.io/cli_docs/features/debug-functions/)
 
 ### Quick Start (Docker)
 
