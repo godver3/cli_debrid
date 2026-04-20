@@ -503,7 +503,23 @@ def _resolve_tvdb_id_via_tmdb(imdb_id: str, tmdb_api_key: str) -> Optional[int]:
 
 
 def _get_trakt_status(imdb_id: str) -> Optional[str]:
-    """Lightweight Trakt status check — fetches only show summary, returns status string or None."""
+    """Lightweight Trakt status check — fetches only show summary, returns status string or None.
+
+    Skips immediately if the GlobalTraktCoordinator reports an active cooldown —
+    avoids blocking the caller (e.g. a web request) for the full cooldown period.
+    """
+    try:
+        from utilities.trakt_coordinator import GlobalTraktCoordinator
+        cooldown = GlobalTraktCoordinator.get_instance().get_cooldown_status()
+        if cooldown.get('active'):
+            logger.debug(
+                f"TVDB: skipping Trakt status cross-check for {imdb_id} "
+                f"— Trakt cooldown active ({cooldown.get('remaining_seconds', 0):.0f}s remaining)"
+            )
+            return None
+    except Exception:
+        pass
+
     try:
         from . import trakt_client
         from .trakt_client import TRAKT_BASE_URL, _make_request as trakt_request

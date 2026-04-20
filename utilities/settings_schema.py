@@ -2245,6 +2245,11 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Version number to report to Bazarr. Change only if Bazarr requires a specific version.",
             "default": "5.14.0.9383"
+        },
+        "delete_subtitles_on_removal": {
+            "type": "boolean",
+            "description": "When deleting media, also delete any subtitle files (.srt, .ass, .sub, etc.) left in the symlink folder by Bazarr. Disable this to keep subtitle files after deletion.",
+            "default": True
         }
     },
     "AI Assistant": {

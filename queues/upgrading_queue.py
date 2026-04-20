@@ -30,9 +30,11 @@ class UpgradingQueue:
         self.upgrades_file = Path(db_content_dir) / "upgrades.pkl"
         self.failed_upgrades_file = Path(db_content_dir) / "failed_upgrades.pkl"
         self.upgrade_states_file = Path(db_content_dir) / "upgrade_states.pkl"
+        self.upgrade_times_file = Path(db_content_dir) / "upgrade_times.pkl"
         self.upgrades_data = self.load_upgrades_data()
         self.failed_upgrades = self.load_failed_upgrades()
         self.upgrade_states = self.load_upgrade_states()
+        self.upgrade_times = self.load_upgrade_times()
         self.currently_processing_item_id: Optional[str] = None
         # Track last run date for the daily delayed-upgrade pass
         self._last_delayed_upgrade_run_date = None
@@ -127,12 +129,26 @@ class UpgradingQueue:
         try:
             with open(self.upgrade_states_file, 'wb') as f:
                 pickle.dump(self.upgrade_states, f)
-            # Optional: Add a debug log here if needed, but maybe too verbose
-            # logging.debug(f"Successfully saved upgrade states to {self.upgrade_states_file}")
         except (IOError, pickle.PicklingError, EOFError) as e:
             logging.error(f"Failed to save upgrade states to {self.upgrade_states_file}: {str(e)}", exc_info=True)
-            # Depending on severity, you might want to raise the exception
-            # or implement a more robust backup/retry mechanism here.
+
+    def load_upgrade_times(self):
+        """Load persisted upgrade_times from disk so start_time survives restarts."""
+        try:
+            if self.upgrade_times_file.exists() and self.upgrade_times_file.stat().st_size > 0:
+                with open(self.upgrade_times_file, 'rb') as f:
+                    return pickle.load(f)
+        except (EOFError, pickle.UnpicklingError, Exception) as e:
+            logging.error(f"Error loading upgrade_times, starting fresh: {e}")
+        return {}
+
+    def save_upgrade_times(self):
+        """Persist upgrade_times to disk so start_time survives restarts."""
+        try:
+            with open(self.upgrade_times_file, 'wb') as f:
+                pickle.dump(self.upgrade_times, f)
+        except (IOError, pickle.PicklingError, EOFError) as e:
+            logging.error(f"Failed to save upgrade_times: {str(e)}", exc_info=True)
 
     def save_item_state(self, item: Dict[str, Any]):
         """Save complete item state before attempting an upgrade"""
@@ -281,16 +297,25 @@ class UpgradingQueue:
             self.items.sort(key=lambda x: 0 if x['id'] in _queued_magnets else 1)
         except Exception:
             pass
+        changed = False
         for item in self.items:
             if item['id'] not in self.upgrade_times:
-                # Use last_updated (when item was moved to Upgrading) for display
-                # rather than original_collected_at which could be years ago for hub items
+                # Use last_updated (when item was moved to Upgrading) as the queue-entry
+                # timestamp. Captured here on first registration and persisted to disk so
+                # it survives restarts without relying on the DB field (which gets
+                # overwritten by hourly update_media_item() calls).
                 _last_updated = item.get('last_updated')
-                display_time = _last_updated if _last_updated else (item.get('original_collected_at') or datetime.now())
+                if _last_updated:
+                    start_time = datetime.fromisoformat(_last_updated) if isinstance(_last_updated, str) else _last_updated
+                else:
+                    start_time = datetime.now()
                 self.upgrade_times[item['id']] = {
-                    'start_time': datetime.now(),
-                    'time_added': display_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(display_time, datetime) else str(display_time)
+                    'start_time': start_time,
+                    'time_added': start_time.strftime('%Y-%m-%d %H:%M:%S')
                 }
+                changed = True
+        if changed:
+            self.save_upgrade_times()
 
     def get_contents(self):
         contents = []
@@ -311,15 +336,19 @@ class UpgradingQueue:
 
     def add_item(self, item: Dict[str, Any]):
         self.items.append(item)
-        # Use last_updated (when item was moved to Upgrading) for display
-        # rather than original_collected_at which could be years ago for hub items
+        # Capture last_updated as the queue-entry timestamp before any subsequent
+        # update_media_item() calls reset it during hourly scrapes.
         _last_updated = item.get('last_updated')
-        display_time = _last_updated if _last_updated else item.get('original_collected_at', datetime.now())
-        logging.info(f"upgrading queue time_added: {display_time}")
+        if _last_updated:
+            start_time = datetime.fromisoformat(_last_updated) if isinstance(_last_updated, str) else _last_updated
+        else:
+            start_time = datetime.now()
+        logging.info(f"upgrading queue start_time: {start_time}")
         self.upgrade_times[item['id']] = {
-            'start_time': datetime.now(),
-            'time_added': display_time.strftime('%Y-%m-%d %H:%M:%S') if isinstance(display_time, datetime) else str(display_time)
+            'start_time': start_time,
+            'time_added': start_time.strftime('%Y-%m-%d %H:%M:%S')
         }
+        self.save_upgrade_times()
         self.last_scrape_times[item['id']] = datetime.now()
         self.upgrades_found[item['id']] = 0  # Initialize upgrades found count
         
@@ -342,17 +371,22 @@ class UpgradingQueue:
             self.save_upgrades_data()
 
     def clean_up_upgrade_times(self):
+        active_ids = {item['id'] for item in self.items}
+        changed = False
         for item_id in list(self.upgrade_times.keys()):
-            if item_id not in [item['id'] for item in self.items]:
+            if item_id not in active_ids:
                 del self.upgrade_times[item_id]
                 if item_id in self.last_scrape_times:
                     del self.last_scrape_times[item_id]
                 logging.debug(f"Cleaned up upgrade time for item ID: {item_id}")
+                changed = True
+        if changed:
+            self.save_upgrade_times()
         for item_id in list(self.upgrades_found.keys()):
-            if item_id not in [item['id'] for item in self.items]:
+            if item_id not in active_ids:
                 del self.upgrades_found[item_id]
         for item_id in list(self.upgrades_data.keys()):
-            if item_id not in [item['id'] for item in self.items]:
+            if item_id not in active_ids:
                 del self.upgrades_data[item_id]
         self.save_upgrades_data()
 
@@ -391,26 +425,26 @@ class UpgradingQueue:
 
                 upgrade_info = self.upgrade_times.get(item_id)
 
-                # If upgrade_info is missing (e.g. after a restart, in-memory dict was lost),
-                # synthesize it from the item's original_collected_at so the timeout check still runs.
+                # upgrade_times is now persisted to disk, so a missing entry here means
+                # the pkl was lost or this is a brand-new item that somehow bypassed
+                # add_item/update. Use current_time as a safe fallback — the item gets
+                # a fresh window which is acceptable for this rare edge case.
                 if not upgrade_info:
-                    self.upgrade_times[item_id] = {'start_time': current_time, 'time_added': current_time}
+                    logging.warning(f"[UpgradingQueue] No upgrade_times entry for {item_id} — synthesizing with current time.")
+                    self.upgrade_times[item_id] = {
+                        'start_time': current_time,
+                        'time_added': current_time.strftime('%Y-%m-%d %H:%M:%S')
+                    }
+                    self.save_upgrade_times()
                     upgrade_info = self.upgrade_times[item_id]
 
                 if upgrade_info:
-                    # For hub-queued items use last_updated (when they were moved to Upgrading)
-                    # rather than original_collected_at (which could be years ago).
-                    # For regular upgrading items, last_updated is also set at queue time so
-                    # this is safe to use universally.
-                    _last_updated = item.get('last_updated')
-                    if _last_updated:
-                        collected_at = datetime.fromisoformat(_last_updated) if isinstance(_last_updated, str) else _last_updated
-                    else:
-                        collected_at = datetime.fromisoformat(item['original_collected_at']) if isinstance(item.get('original_collected_at'), str) else item.get('original_collected_at')
-
-                    # Fall back to queue entry time if both are missing
-                    if collected_at is None:
-                        collected_at = upgrade_info.get('start_time', current_time)
+                    # Use start_time from upgrade_times — captured once when the item
+                    # first entered the queue (from last_updated at that moment).
+                    # We intentionally do NOT re-read last_updated from the item here
+                    # because update_media_item() resets last_updated on every hourly
+                    # scrape, which would make time_in_queue never exceed the timeout.
+                    collected_at = upgrade_info.get('start_time', current_time)
 
                     time_in_queue = current_time - collected_at
 
