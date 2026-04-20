@@ -1542,8 +1542,12 @@ def list_movies():
         conn = _get_db_connection()
         cursor = conn.cursor()
 
-        # Get movies with overlay status — one card per unique movie title/year,
-        # deduplicated by imdb_id/tmdb_id so multi-version movies show once.
+        # Get movies with overlay status.
+        # Group by ms_item_id when available so split Plex items (each with a unique
+        # ratingKey) appear as separate cards with their own overlays. Fall back to
+        # imdb_id/tmdb_id grouping only for items not yet synced (ms_item_id is NULL).
+        # Merged Plex items (multiple DB rows sharing the same ms_item_id) are still
+        # collapsed to one card and show a version_count badge.
         cursor.execute('''
             SELECT
                 MIN(m.id) AS id,
@@ -1551,7 +1555,7 @@ def list_movies():
                 m.year,
                 m.imdb_id,
                 m.tmdb_id,
-                MAX(m.ms_item_id) AS ms_item_id,
+                m.ms_item_id,
                 COUNT(*) AS version_count,
                 CASE
                     WHEN MAX(CASE WHEN o.status = 'applied'         THEN 1 ELSE 0 END) = 1 THEN 'applied'
@@ -1566,7 +1570,12 @@ def list_movies():
             LEFT JOIN media_overlay_state o ON m.id = o.media_item_id
             WHERE m.type = 'movie'
               AND m.state IN ('Collected', 'Upgrading')
-            GROUP BY COALESCE(NULLIF(m.imdb_id, ''), NULLIF(m.tmdb_id, ''), m.title || CAST(m.year AS TEXT))
+            GROUP BY
+                CASE
+                    WHEN m.ms_item_id IS NOT NULL AND m.ms_item_id != ''
+                    THEN m.ms_item_id
+                    ELSE COALESCE(NULLIF(m.imdb_id, ''), NULLIF(m.tmdb_id, ''), m.title || CAST(m.year AS TEXT))
+                END
             ORDER BY m.title
         ''')
 

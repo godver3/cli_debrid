@@ -152,13 +152,20 @@ class OverlayManager:
 
             # Pre-fetch best-quality data once so the skip check and later
             # _build_media_info_from_db both reuse it without a second DB query.
+            # Movies: scope to ms_item_id so split Plex items (unique ratingKey each)
+            # only aggregate quality across their own DB rows, not all versions of the
+            # same movie. This ensures each split item gets its own correct overlay.
             _item_type = item.get('type')
             _imdb_id   = item.get('imdb_id') or ''
+            _ms_id     = item.get('ms_item_id') or ''
             _best_data: Optional[Dict[str, Any]] = None
             if _item_type == 'episode' and _imdb_id:
                 _best_data = self._best_version(_imdb_id, 'episode')
-            elif _item_type == 'movie' and _imdb_id:
-                _best_data = self._best_version(_imdb_id, 'movie')
+            elif _item_type == 'movie':
+                if _ms_id:
+                    _best_data = self._best_version_by_ms_id(_ms_id, 'movie')
+                elif _imdb_id:
+                    _best_data = self._best_version(_imdb_id, 'movie')
 
             # Check if already processed (unless force=True).
             # Re-apply if: quality improved OR layout was updated since last apply.
@@ -719,6 +726,53 @@ class OverlayManager:
             self.logger.warning(f"Best-version query failed for imdb_id={imdb_id} type={item_type}: {e}")
         return None
 
+    def _best_version_by_ms_id(self, ms_item_id: str, item_type: str) -> Optional[Dict[str, Any]]:
+        """
+        Like _best_version but scoped to rows sharing the same ms_item_id rather
+        than the same imdb_id. Used for movies so that Plex split items (each with
+        a unique ratingKey / ms_item_id) only aggregate quality data across their
+        own DB rows, not across all versions of the same movie.
+        """
+        if not ms_item_id or item_type not in ('episode', 'movie'):
+            return None
+        try:
+            conn = _get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(f'''
+                SELECT ms_resolution, ms_hdr, ms_dolby_vision, ms_hdr_format,
+                       ms_audio_codec, ms_audio_channels,
+                       ms_video_codec, ms_media_container, ms_media_bitrate,
+                       filled_by_file, location_on_disk, location_basename
+                FROM media_items
+                WHERE ms_item_id = ?
+                  AND type = ?
+                  AND state IN ('Collected', 'Upgrading')
+                  AND ms_resolution IS NOT NULL
+                ORDER BY
+                    ({self._RES_RANK}) DESC,
+                    ({self._HDR_RANK}) DESC,
+                    ({self._AUD_RANK}) DESC,
+                    CAST(COALESCE(ms_audio_channels, '0') AS REAL) DESC
+            ''', (ms_item_id, item_type))
+            rows = cursor.fetchall()
+            conn.close()
+            if not rows:
+                return None
+            merged = dict(rows[0])
+            missing = [f for f in self._FILLABLE if not merged.get(f)]
+            if missing:
+                for row in rows[1:]:
+                    for field in list(missing):
+                        if row[field]:
+                            merged[field] = row[field]
+                            missing.remove(field)
+                    if not missing:
+                        break
+            return merged
+        except Exception as e:
+            self.logger.warning(f"Best-version-by-ms-id query failed for ms_item_id={ms_item_id}: {e}")
+        return None
+
     def _best_episode_data_for_show(self, imdb_id: str) -> Optional[Dict[str, Any]]:
         """Compatibility wrapper — delegates to _best_version."""
         return self._best_version(imdb_id, 'episode')
@@ -756,7 +810,16 @@ class OverlayManager:
         elif item_type == 'episode':
             best = self._best_version(item.get('imdb_id') or '', 'episode')
         elif item_type == 'movie':
-            best = self._best_version(item.get('imdb_id') or '', 'movie')
+            # For split Plex items (each with a unique ms_item_id), only aggregate
+            # quality data across DB rows that share the same ms_item_id (i.e. the
+            # same Plex item / truly merged). If this item has a unique ms_item_id,
+            # _best_version will only find one row and return its own data.
+            # Fall back to imdb_id scope if ms_item_id is not set.
+            _ms_id = item.get('ms_item_id')
+            if _ms_id:
+                best = self._best_version_by_ms_id(_ms_id, 'movie')
+            else:
+                best = self._best_version(item.get('imdb_id') or '', 'movie')
         else:
             best = None
 
@@ -839,10 +902,21 @@ class OverlayManager:
                     ")",
                     (imdb_id,))
             elif imdb_id:
-                _vc_cur.execute(
-                    "SELECT COUNT(*) FROM media_items "
-                    "WHERE imdb_id = ? AND type = 'movie' AND state IN ('Collected', 'Upgrading')",
-                    (imdb_id,))
+                # For movies, scope by ms_item_id so split Plex items (unique ratingKey
+                # per version) each show their own count rather than all versions of the
+                # same movie being counted together. Falls back to imdb_id count when
+                # ms_item_id is not set.
+                _ms_id = item.get('ms_item_id')
+                if _ms_id:
+                    _vc_cur.execute(
+                        "SELECT COUNT(*) FROM media_items "
+                        "WHERE ms_item_id = ? AND type = 'movie' AND state IN ('Collected', 'Upgrading')",
+                        (_ms_id,))
+                else:
+                    _vc_cur.execute(
+                        "SELECT COUNT(*) FROM media_items "
+                        "WHERE imdb_id = ? AND type = 'movie' AND state IN ('Collected', 'Upgrading')",
+                        (imdb_id,))
             else:
                 _vc_cur = None
             version_count = int(_vc_cur.fetchone()[0]) if _vc_cur else 1
@@ -1316,6 +1390,12 @@ class OverlayManager:
         filename), and imdb/tmdb/trakt ratings (from MDBList API).
         Called on both the Plex-metadata path and the DB-fallback path.
         """
+        # ── Carry file path fields into info so renderers (e.g. file_match badge)
+        # can access them directly from media_info without needing the item dict.
+        for _fp_field in ('filled_by_file', 'location_on_disk', 'location_basename'):
+            if not info.get(_fp_field) and item.get(_fp_field):
+                info[_fp_field] = item[_fp_field]
+
         # ── Release format + HDR from filename ───────────────────────────
         file_path = (item.get('filled_by_file') or item.get('location_on_disk')
                      or item.get('location_basename') or '').strip()
@@ -1486,10 +1566,19 @@ class OverlayManager:
                             ")",
                             (imdb_id,))
                 elif imdb_id:
-                    cur.execute(
-                        "SELECT COUNT(*) FROM media_items "
-                        "WHERE imdb_id = ? AND type = 'movie' AND state IN ('Collected', 'Upgrading')",
-                        (imdb_id,))
+                    # For movies, scope by ms_item_id so split Plex items each show
+                    # their own count. Falls back to imdb_id when ms_item_id not set.
+                    _ms_id = item.get('ms_item_id')
+                    if _ms_id:
+                        cur.execute(
+                            "SELECT COUNT(*) FROM media_items "
+                            "WHERE ms_item_id = ? AND type = 'movie' AND state IN ('Collected', 'Upgrading')",
+                            (_ms_id,))
+                    else:
+                        cur.execute(
+                            "SELECT COUNT(*) FROM media_items "
+                            "WHERE imdb_id = ? AND type = 'movie' AND state IN ('Collected', 'Upgrading')",
+                            (imdb_id,))
                 else:
                     cur = None
                 if cur:
@@ -1585,9 +1674,19 @@ class OverlayManager:
                     # ms_* fields), then overlay file-path fields from best DB
                     # version so format (filled_by_file) uses the ranked version.
                     # Reuse _best_data if already fetched by the caller.
+                    # Movies: scope to ms_item_id so split Plex items each use only
+                    # their own DB rows for file-path fields (filled_by_file etc).
                     enrich_item = dict(item)
                     imdb_id = item.get('imdb_id') or ''
-                    best_db = _best_data if _best_data is not None else (self._best_version(imdb_id, 'movie') if imdb_id else None)
+                    _mv_ms_id = item.get('ms_item_id') or ''
+                    if _best_data is not None:
+                        best_db = _best_data
+                    elif _mv_ms_id:
+                        best_db = self._best_version_by_ms_id(_mv_ms_id, 'movie')
+                    elif imdb_id:
+                        best_db = self._best_version(imdb_id, 'movie')
+                    else:
+                        best_db = None
                     if best_db:
                         for _f in ('filled_by_file', 'location_on_disk',
                                    'location_basename'):
@@ -1858,8 +1957,18 @@ class OverlayManager:
                 resp = _requests.get(tmdb_img_url, timeout=15)
                 resp.raise_for_status()
                 img = _Image.open(BytesIO(resp.content))
-                # Attach textless flag so generate_overlay_for_item can pass it to media_info
-                img._cli_textless = _is_textless_poster if '_is_textless_poster' in dir() else False
+                # Attach textless flag so generate_overlay_for_item can pass it to media_info.
+                # When served from cache, _is_textless_poster was set during the API call that
+                # populated the cache. Re-derive it: if the cached URL was stored under the
+                # textless cache key AND textless mode is on, treat it as textless.
+                if '_is_textless_poster' in dir():
+                    img._cli_textless = _is_textless_poster
+                elif _textless_pre and cached_url:
+                    # Cache hit in textless mode — the cached URL was chosen as the best
+                    # textless (null-language) poster when it was first stored. Treat as textless.
+                    img._cli_textless = True
+                else:
+                    img._cli_textless = False
                 self.logger.info(
                     f"Using TMDB poster for {item.get('title', plex_rating_key)} ({tmdb_img_url})")
                 return img

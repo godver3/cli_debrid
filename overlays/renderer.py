@@ -208,6 +208,8 @@ class OverlayRenderer:
                         img = self._render_designed_badge(img, badge, media_info)
                     elif btype == 'title_logo':
                         img = self._render_title_logo(img, badge, media_info, width, height)
+                    elif btype == 'file_match':
+                        img = self._render_file_match_badge(img, badge, media_info, width, height)
                     else:
                         img = self.render_badge(img, badge, media_info, width, height)
                 except Exception as e:
@@ -913,6 +915,53 @@ class OverlayRenderer:
         except Exception as e:
             self.logger.error(f"Badge condition eval error '{condition}': {e}")
             return False
+
+    def _render_file_match_badge(self, base_img, badge, media_info, poster_width, poster_height):
+        """
+        Render a file_match badge — only displays when the item's filename contains
+        the user-specified search term (case-insensitive substring match).
+
+        If matched:
+          - useIcon=True  → render with icon only (text disabled)
+          - useIcon=False → render with displayText (or searchTerm if displayText is empty)
+        If not matched: returns base_img unchanged.
+        """
+        fm = badge.get('filenameMatch') or {}
+        search_term = (fm.get('searchTerm') or '').strip()
+        if not search_term:
+            return base_img  # no search term configured — skip
+
+        # Check filename: try filled_by_file, then location_on_disk, then location_basename
+        filename = (
+            media_info.get('filled_by_file') or
+            media_info.get('location_on_disk') or
+            media_info.get('location_basename') or
+            ''
+        )
+        if search_term.lower() not in filename.lower():
+            self.logger.debug(f"File match badge: '{search_term}' not found in '{filename}' — skipping")
+            return base_img
+
+        self.logger.debug(f"File match badge: '{search_term}' matched in '{filename}'")
+
+        use_icon = bool(fm.get('useIcon', False))
+        display_text = (fm.get('displayText') or '').strip() or search_term
+
+        # Build a modified badge copy for rendering via the standard render_badge path
+        import copy
+        render_badge = copy.deepcopy(badge)
+
+        if use_icon:
+            # Show icon only — disable text
+            render_badge['text']['enabled'] = False
+            render_badge['icon']['enabled'] = True
+        else:
+            # Show text — inject the resolved display text as a literal value
+            render_badge['text']['enabled'] = True
+            render_badge['text']['value'] = display_text
+            render_badge['text']['fallback'] = ''
+
+        return self.render_badge(base_img, render_badge, media_info, poster_width, poster_height)
 
     # Rating variable names that can be reformatted
     _RATING_VARS = frozenset({'imdbRating', 'tmdbRating', 'traktRating', 'rtCriticsScore', 'rtUserScore'})

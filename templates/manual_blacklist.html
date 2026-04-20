@@ -46,7 +46,7 @@
                 <td>{{ item.media_type }}</td>
                 <td>
                     {% if item.media_type == 'episode' %}
-                        <form class="seasons-form" data-imdb-id="{{ imdb_id }}" data-selected-seasons="{{ item.seasons | tojson }}">
+                        <form class="seasons-form" data-imdb-id="{{ imdb_id }}" data-selected-seasons="{{ (item.seasons if item.seasons is defined else []) | tojson }}">
                             <div class="form-check mb-2 d-flex align-items-center">
                                 <input type="checkbox" class="form-check-input" id="all_seasons_{{ imdb_id }}" name="all_seasons" {% if not item.seasons %}checked{% endif %}>
                                 <label class="form-check-label ms-2" for="all_seasons_{{ imdb_id }}">All Seasons</label>
