@@ -86,7 +86,7 @@
     {% endif %}
 
     <!-- Load theme switcher early to prevent FOUC -->
-    <script src="{{ url_for('static', filename='js/theme_switcher.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/theme_switcher.js') }}?v=2"></script>
     <script>
         // Mark page as ready to show after theme is applied
         if (document.readyState === 'loading') {

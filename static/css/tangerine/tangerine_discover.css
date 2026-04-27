@@ -527,7 +527,7 @@ body:has(.discover-container) {
 @media (min-width: 769px) {
     .filter-section-inner {
         display: grid;
-        grid-template-columns: repeat(2, 1fr);
+        /* grid-template-columns: repeat(2, 1fr); */
         gap: 0.625rem 1rem;
     }
 
@@ -2313,7 +2313,7 @@ body:has(.discover-container) {
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: #e17c52;
-    background-color: rgba(255, 255, 255, 0.03);
+    background-color: rgb(23 23 23);
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     position: sticky;
     top: 0;

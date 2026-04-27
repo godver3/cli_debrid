@@ -2122,6 +2122,67 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
                         _keep_hashes.update(r[0] for r in _hcur.fetchall())
                         _hconn.close()
 
+                        # ── Collect hashes of active collection + smart collection posters
+                        # so the disk-walk doesn't delete them.
+                        try:
+                            import requests as _rq_coll
+                            _coll_headers = {'X-Plex-Token': plex_token, 'Accept': 'application/json'}
+
+                            # Regular collections from plex_collection_sync DB
+                            _coll_rks = []
+                            try:
+                                _ccdb = _get_db_connection()
+                                _ccrows = _ccdb.execute(
+                                    'SELECT movie_collection_ratingkey, show_collection_ratingkey FROM plex_collection_sync'
+                                ).fetchall()
+                                _ccdb.close()
+                                for _row in _ccrows:
+                                    for _rk in [_row[0], _row[1]]:
+                                        if _rk:
+                                            _coll_rks.append(str(_rk))
+                            except Exception as _cdb_e:
+                                logger.debug(f"Collection hash pre-pass: DB read error: {_cdb_e}")
+
+                            # Smart collection ratingKeys from config
+                            try:
+                                from utilities.settings import get_all_settings as _gas
+                                _psc = _gas().get('Plex Smart Collections', {})
+                                _sc_colls = _psc.get('collections', {}) if isinstance(_psc, dict) else {}
+                                if not isinstance(_sc_colls, dict):
+                                    _sc_colls = {}
+                                for _sc_rk in _sc_colls.keys():
+                                    _coll_rks.append(str(_sc_rk))
+                            except Exception as _sc_e:
+                                logger.debug(f"Collection hash pre-pass: smart collection read error: {_sc_e}")
+
+                            # Fetch selected poster hash for each collection ratingKey
+                            _coll_added = 0
+                            for _crk in _coll_rks:
+                                try:
+                                    _pr = _rq_coll.get(
+                                        f"{plex_url}/library/metadata/{_crk}/posters",
+                                        headers=_coll_headers, timeout=10
+                                    )
+                                    if _pr.status_code != 200:
+                                        continue
+                                    for _pp in _pr.json().get('MediaContainer', {}).get('Metadata', []):
+                                        _ppk = _pp.get('ratingKey', '')
+                                        if _ppk.startswith('upload://posters/'):
+                                            _ph = _ppk[len('upload://posters/'):]
+                                            if _ph:
+                                                _keep_hashes.add(_ph)
+                                                _coll_added += 1
+                                except Exception as _cre:
+                                    logger.debug(f"Collection hash pre-pass error for rk={_crk}: {_cre}")
+
+                            if _coll_rks:
+                                logger.info(
+                                    f"Plex poster cleanup: collection pre-pass added {_coll_added} hash(es) "
+                                    f"from {len(_coll_rks)} collection(s) to keep set"
+                                )
+                        except Exception as _cp_e:
+                            logger.warning(f"Plex poster cleanup: collection hash pre-pass failed: {_cp_e}")
+
                         # ── Pre-pass: discover upload hashes for applied/pending items
                         # BEFORE the disk-walk so their active overlay files are not
                         # accidentally deleted. Runs Plex API calls, stores the selected
@@ -2626,17 +2687,139 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
                     except Exception as _pce:
                         logger.warning(f"Plex poster cleanup failed: {_pce}")
 
+        # ── Collection poster cleanup ──────────────────────────────────────────
+        # Delete old non-selected uploaded posters from CLI Debrid managed collections.
+        # Uses filesystem deletion (same as media poster cleanup) — Plex API DELETE
+        # for uploaded posters is unreliable for collections.
+        collection_posters_deleted = 0
+        try:
+            if not is_jellyfin_mode():
+                _coll_plex_data = get_setting('Overlay Settings', 'plex_data_path', default='').strip()
+                if not _coll_plex_data or not os.path.isdir(_coll_plex_data):
+                    logger.debug("Collection poster cleanup: plex_data_path not configured or inaccessible — skipping.")
+                else:
+                    from database.core import get_db_connection as _get_coll_db
+                    from utilities.settings import get_setting as _gs
+                    import requests as _requests
+                    _plex_url = _gs('Plex', 'url', '').rstrip('/')
+                    _plex_token = _gs('Plex', 'token', '')
+                    if _plex_url and _plex_token:
+                        _headers = {'X-Plex-Token': _plex_token, 'Accept': 'application/json'}
+                        _cconn = _get_coll_db()
+                        _rks = []
+                        try:
+                            rows = _cconn.execute(
+                                'SELECT movie_collection_ratingkey, show_collection_ratingkey FROM plex_collection_sync'
+                            ).fetchall()
+                            for row in rows:
+                                for rk in [row[0], row[1]]:
+                                    if rk:
+                                        _rks.append(str(rk))
+                        finally:
+                            _cconn.close()
+
+                        for _rk in _rks:
+                            try:
+                                r = _requests.get(
+                                    f"{_plex_url}/library/metadata/{_rk}/posters",
+                                    headers=_headers, timeout=10
+                                )
+                                if r.status_code != 200:
+                                    continue
+                                posters = r.json().get('MediaContainer', {}).get('Metadata', [])
+                                for p in posters:
+                                    pk = p.get('ratingKey', '')
+                                    if p.get('selected') or not pk.startswith('upload://posters/'):
+                                        continue
+                                    _chash = pk[len('upload://posters/'):]
+                                    if not _chash:
+                                        continue
+                                    # Delete via filesystem — same approach as media overlay cleanup
+                                    import glob as _cglob
+                                    _cpat = os.path.join(
+                                        _coll_plex_data, 'Metadata', '*', '*', '*.bundle',
+                                        'Uploads', 'posters', _chash
+                                    )
+                                    for _cf in _cglob.glob(_cpat):
+                                        try:
+                                            os.remove(_cf)
+                                            collection_posters_deleted += 1
+                                            logger.info(f"Collection poster cleanup: deleted '{_cf}' (rk={_rk})")
+                                        except Exception as _cfe:
+                                            logger.warning(f"Collection poster cleanup: failed to delete '{_cf}': {_cfe}")
+                            except Exception as _ce:
+                                logger.debug(f"Collection poster cleanup error for rk={_rk}: {_ce}")
+
+                    if collection_posters_deleted > 0:
+                        logger.info(f"Collection poster cleanup: deleted {collection_posters_deleted} old poster(s)")
+        except Exception as _cpe:
+            logger.warning(f"Collection poster cleanup failed: {_cpe}")
+
+        # ── Smart collection poster cleanup ────────────────────────────────────
+        # Same filesystem approach for smart collection posters.
+        smart_posters_deleted = 0
+        try:
+            if not is_jellyfin_mode():
+                _sc_plex_data = get_setting('Overlay Settings', 'plex_data_path', default='').strip()
+                if not _sc_plex_data or not os.path.isdir(_sc_plex_data):
+                    logger.debug("Smart collection poster cleanup: plex_data_path not configured — skipping.")
+                else:
+                    from database.plex_smart_collections import _load_state as _sc_load, _migrate_state as _sc_migrate
+                    import requests as _screquests
+                    _sc_state = _sc_migrate(_sc_load())
+                    _sc_collections = _sc_state.get('collections', {})
+                    _sc_plex_url = get_setting('Plex', 'url', '').rstrip('/')
+                    _sc_token = get_setting('Plex', 'token', '')
+                    if _sc_plex_url and _sc_token and _sc_collections:
+                        _sc_headers = {'X-Plex-Token': _sc_token, 'Accept': 'application/json'}
+                        import glob as _scglob
+                        for _sc_rk in _sc_collections.keys():
+                            try:
+                                _scr = _screquests.get(
+                                    f"{_sc_plex_url}/library/metadata/{_sc_rk}/posters",
+                                    headers=_sc_headers, timeout=10
+                                )
+                                if _scr.status_code != 200:
+                                    continue
+                                for _scp in _scr.json().get('MediaContainer', {}).get('Metadata', []):
+                                    _scpk = _scp.get('ratingKey', '')
+                                    if _scp.get('selected') or not _scpk.startswith('upload://posters/'):
+                                        continue
+                                    _schash = _scpk[len('upload://posters/'):]
+                                    if not _schash:
+                                        continue
+                                    _scpat = os.path.join(
+                                        _sc_plex_data, 'Metadata', '*', '*', '*.bundle',
+                                        'Uploads', 'posters', _schash
+                                    )
+                                    for _scf in _scglob.glob(_scpat):
+                                        try:
+                                            os.remove(_scf)
+                                            smart_posters_deleted += 1
+                                            logger.info(f"Smart collection poster cleanup: deleted '{_scf}' (rk={_sc_rk})")
+                                        except Exception as _scfe:
+                                            logger.warning(f"Smart collection poster cleanup: failed to delete '{_scf}': {_scfe}")
+                            except Exception as _sce:
+                                logger.debug(f"Smart collection poster cleanup error for rk={_sc_rk}: {_sce}")
+
+                    if smart_posters_deleted > 0:
+                        logger.info(f"Smart collection poster cleanup: deleted {smart_posters_deleted} old poster(s)")
+        except Exception as _spe:
+            logger.warning(f"Smart collection poster cleanup failed: {_spe}")
+
         return {
             'success': True,
             'message': 'Cleanup completed',
-            'orphaned_removed':           orphaned_count,
-            'old_records_removed':        old_records_count,
-            'failed_items_reset':         reset_count,
-            'season_orphaned_removed':    season_orphaned_count,
-            'season_old_records_removed': season_old_count,
-            'season_failed_items_reset':  season_reset_count,
-            'posters_deleted':            total_deleted,
-            'mb_reclaimed':               round(total_bytes / (1024 * 1024), 2),
+            'orphaned_removed':               orphaned_count,
+            'old_records_removed':            old_records_count,
+            'failed_items_reset':             reset_count,
+            'season_orphaned_removed':        season_orphaned_count,
+            'season_old_records_removed':     season_old_count,
+            'season_failed_items_reset':      season_reset_count,
+            'posters_deleted':                total_deleted,
+            'mb_reclaimed':                   round(total_bytes / (1024 * 1024), 2),
+            'collection_posters_deleted':     collection_posters_deleted,
+            'smart_collection_posters_deleted': smart_posters_deleted,
         }
 
     except Exception as e:

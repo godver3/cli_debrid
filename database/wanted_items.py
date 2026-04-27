@@ -61,7 +61,7 @@ def _get_existing_item_id_any_state(conn, imdb_id, tmdb_id, item_type, item):
     return None
 
 
-def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, unblacklist: bool = False):
+def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, unblacklist: bool = False, force_granular_versions: bool = False):
     from metadata.metadata import get_show_airtime_by_imdb_id
     from utilities.settings import get_setting
 
@@ -248,7 +248,7 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
             'episodes': {}
         }
 
-        enable_granular_versions = get_setting('Debug', 'enable_granular_version_additions', False)
+        enable_granular_versions = force_granular_versions or get_setting('Debug', 'enable_granular_version_additions', False)
 
         if movie_imdb_ids:
             movie_imdb_list = list(movie_imdb_ids)
@@ -466,6 +466,11 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                             lookup_id = _get_existing_item_id_collected(conn, imdb_id, tmdb_id, item_type, item)
                             if lookup_id:
                                 pending_secondary_labels.append((lookup_id, new_source, new_detail))
+                                if item.get('source_position') is not None:
+                                    conn.execute(
+                                        "UPDATE media_items SET source_position=? WHERE id=?",
+                                        (item['source_position'], lookup_id)
+                                    )
                     skip_stats['already_collected_or_upgrading'] += 1; items_skipped += 1; continue
 
             if item_type == 'movie':
@@ -724,7 +729,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                         item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
                         item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime'),
                         item.get('country', '').lower(), item.get('content_source'), item.get('content_source_detail'),
-                        item.get('physical_release_date'), item.get('theatrical_release_date'), early_release_flag
+                        item.get('physical_release_date'), item.get('theatrical_release_date'), early_release_flag,
+                        item.get('source_position')
                     )
                     movies_to_insert.append(movie_data)
                     items_added += 1
@@ -777,7 +783,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                         release_date, initial_state, 'episode',
                         item['season_number'], item['episode_number'], item.get('episode_title', ''),
                         datetime.now(), version, item.get('runtime'), airtime, genres, item.get('country', '').lower(),
-                        blacklisted_date, item.get('requested_season', False), item.get('content_source'), item.get('content_source_detail')
+                        blacklisted_date, item.get('requested_season', False), item.get('content_source'), item.get('content_source_detail'),
+                        item.get('source_position')
                     )
                     episodes_to_insert.append(episode_data)
                     items_added += 1
@@ -794,17 +801,17 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
         if movies_to_insert:
             conn.executemany('''
                 INSERT INTO media_items
-                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime, country, content_source, content_source_detail, physical_release_date, theatrical_release_date, early_release)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime, country, content_source, content_source_detail, physical_release_date, theatrical_release_date, early_release, source_position)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', movies_to_insert)
 
         if episodes_to_insert:
             conn.executemany('''
                 INSERT INTO media_items
-                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, 
+                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number,
                  episode_title, last_updated, version, runtime, airtime, genres, country, blacklisted_date,
-                 requested_season, content_source, content_source_detail)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 requested_season, content_source, content_source_detail, source_position)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', episodes_to_insert)
 
         if movies_to_insert or episodes_to_insert or updated_any_title:
@@ -1119,11 +1126,12 @@ def process_batch(conn, batch_items, versions, processed):
             for version, enabled in versions.items():
                 if enabled:
                     movie_items.append((
-                        item.get('imdb_id'), item.get('tmdb_id'), normalized_title, 
-                        item.get('year'), item.get('release_date'), 'Wanted', 'movie', 
-                        datetime.now(), version, genres, item.get('runtime'), 
+                        item.get('imdb_id'), item.get('tmdb_id'), normalized_title,
+                        item.get('year'), item.get('release_date'), 'Wanted', 'movie',
+                        datetime.now(), version, genres, item.get('runtime'),
                         item.get('country', '').lower(), item.get('content_source'),
-                        item.get('content_source_detail'), item.get('physical_release_date')
+                        item.get('content_source_detail'), item.get('physical_release_date'),
+                        item.get('source_position')
                     ))
         else:
             for version, enabled in versions.items():
@@ -1138,25 +1146,26 @@ def process_batch(conn, batch_items, versions, processed):
                         datetime.now(), version, item.get('runtime'), item.get('airtime', '19:00'),
                         genres, item.get('country', '').lower(), blacklisted_date,
                         item.get('requested_season', False), item.get('content_source'),
-                        item.get('content_source_detail')
+                        item.get('content_source_detail'), item.get('source_position')
                     ))
     
     if movie_items:
         conn.executemany('''
             INSERT INTO media_items
-            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, 
-             version, genres, runtime, country, content_source, content_source_detail, physical_release_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated,
+             version, genres, runtime, country, content_source, content_source_detail, physical_release_date,
+             source_position)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', movie_items)
         processed['movies'] += len(movie_items)
-    
+
     if episode_items:
         conn.executemany('''
             INSERT INTO media_items
             (imdb_id, tmdb_id, title, year, release_date, state, type, season_number,
              episode_number, episode_title, last_updated, version, runtime, airtime,
              genres, country, blacklisted_date, requested_season, content_source,
-             content_source_detail)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             content_source_detail, source_position)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', episode_items)
         processed['episodes'] += len(episode_items)

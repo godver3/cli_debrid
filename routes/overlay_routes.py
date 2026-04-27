@@ -3076,6 +3076,9 @@ def list_logos():
 @overlay_bp.route('/api/overlays/logos/serve/<path:filepath>', methods=['GET'])
 def serve_logo(filepath):
     """Serve a logo file — user dir first, system fallback."""
+    # Strip leading 'logos/' prefix if present (saved paths sometimes include it)
+    if filepath.startswith('logos/'):
+        filepath = filepath[len('logos/'):]
     parts = Path(filepath).parts
     if '..' in parts:
         abort(400)

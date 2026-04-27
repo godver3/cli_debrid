@@ -323,6 +323,8 @@ class ProgramRunner:
             # --- START EDIT: Add Plex overlay tasks ---
             'task_overlay_sync': 3600, # Run every 1 hour (if overlays enabled)
             'task_overlay_cleanup': 86400, # Run every 24 hours (if overlays enabled)
+            'task_plex_smart_collection_posters': 86400, # Run every 24 hours (if Plex mode)
+            'task_plex_movie_boxsets': 86400, # Run every 24 hours (if Plex mode)
             # --- END EDIT ---
             # 'task_artificial_long_run': 1*60*60, # Run every 2 minutes
             'task_regulate_system_load': 30, # Check system load every 30 seconds
@@ -695,6 +697,33 @@ class ProgramRunner:
                 if task_name in self.enabled_tasks and not is_toggled_on:
                      self.enabled_tasks.remove(task_name)
                      logging.info(f"Disabled '{task_name}' as Debug setting is off.")
+
+        # Enable Plex smart collection poster task if Plex is configured and not Jellyfin symlink mode
+        _fm = get_setting('File Management', 'file_collection_management', '')
+        _ms = get_setting('File Management', 'media_server_type', '')
+        _plex_mode = not (_fm == 'Symlinked/Local' and _ms == 'jellyfin')
+        if _plex_mode:
+            _task_name = 'task_plex_smart_collection_posters'
+            _is_toggled_off = saved_states.get(self._normalize_task_name(_task_name), True) is False
+            if not _is_toggled_off and _task_name not in self.enabled_tasks:
+                self.enabled_tasks.add(_task_name)
+        else:
+            _task_name = 'task_plex_smart_collection_posters'
+            _is_toggled_on = saved_states.get(self._normalize_task_name(_task_name), False) is True
+            if _task_name in self.enabled_tasks and not _is_toggled_on:
+                self.enabled_tasks.remove(_task_name)
+
+        # Enable Plex movie box sets task (same Plex-mode guard)
+        if _plex_mode:
+            _bs_task = 'task_plex_movie_boxsets'
+            _is_toggled_off = saved_states.get(self._normalize_task_name(_bs_task), True) is False
+            if not _is_toggled_off and _bs_task not in self.enabled_tasks:
+                self.enabled_tasks.add(_bs_task)
+        else:
+            _bs_task = 'task_plex_movie_boxsets'
+            _is_toggled_on = saved_states.get(self._normalize_task_name(_bs_task), False) is True
+            if _bs_task in self.enabled_tasks and not _is_toggled_on:
+                self.enabled_tasks.remove(_bs_task)
 
         # Enable overlay tasks if overlays are enabled
         if get_setting('Overlay Settings', 'overlays_enabled', False):
@@ -2190,8 +2219,75 @@ class ProgramRunner:
                     stats_msg += f", list length limited to {list_length_limit}"
                 stats_msg += ")"
                 logging.info(stats_msg)
+
+            # ── Plex Collection sync — runs even when all items are cached ────
+            # Use config 'type' field for matching — source_type is split on '_' which
+            # truncates multi-word types like 'Trakt Lists' to just 'Trakt'
+            _source_config_type = data.get('type', source_type)
+            if _source_config_type in ('MDBList', 'Trakt Lists', 'Adaptive List'):
+                # Always read live settings — cached source_data may be stale if plex_collection
+                # was enabled after startup without a full restart
+                try:
+                    _live_source_data = get_all_settings().get('Content Sources', {}).get(source, {})
+                    _plex_coll_cfg = _live_source_data.get('plex_collection', {})
+                except Exception:
+                    _plex_coll_cfg = data.get('plex_collection', {})
+                if not isinstance(_plex_coll_cfg, dict):
+                    _plex_coll_cfg = {}
+                if _plex_coll_cfg.get('enabled', False):
+                    try:
+                        # Extract ordered (imdb_id, tmdb_id) pairs from the raw fetched list
+                        # Some sources (Adaptive List) may return None imdb_id with tmdb_id fallback
+                        _raw_pairs = []
+                        _plex_media_type = data.get('media_type', 'All')
+                        if isinstance(wanted_content, list) and wanted_content:
+                            if isinstance(wanted_content[0], tuple):
+                                for _batch, _ in wanted_content:
+                                    for _item in _batch:
+                                        _item_mt = _item.get('media_type', '')
+                                        if _plex_media_type not in ('All', '') and _item_mt:
+                                            if _plex_media_type in ('Movies', 'movie') and _item_mt != 'movie':
+                                                continue
+                                            if _plex_media_type in ('Shows', 'tv') and _item_mt not in ('tv', 'episode'):
+                                                continue
+                                        _raw_pairs.append((_item.get('imdb_id'), _item.get('tmdb_id')))
+                            else:
+                                for _item in wanted_content:
+                                    _item_mt = _item.get('media_type', '')
+                                    if _plex_media_type not in ('All', '') and _item_mt:
+                                        if _plex_media_type in ('Movies', 'movie') and _item_mt != 'movie':
+                                            continue
+                                        if _plex_media_type in ('Shows', 'tv') and _item_mt not in ('tv', 'episode'):
+                                            continue
+                                    _raw_pairs.append((_item.get('imdb_id'), _item.get('tmdb_id')))
+                        # Deduplicate preserving order, using imdb_id as key when available else tmdb_id
+                        _seen_keys = set()
+                        ordered_pairs = []
+                        for _imdb, _tmdb in _raw_pairs:
+                            _key = _imdb or _tmdb
+                            if _key and _key not in _seen_keys:
+                                _seen_keys.add(_key)
+                                ordered_pairs.append((_imdb, _tmdb))
+                        ordered_ids = [p[0] for p in ordered_pairs if p[0]]  # IMDb IDs for fingerprint
+
+                        from database.plex_collections import check_and_sync_if_needed
+                        import threading as _threading
+                        _t = _threading.Thread(
+                            target=check_and_sync_if_needed,
+                            args=(source, data),
+                            kwargs={'ordered_imdb_ids': ordered_ids, 'ordered_pairs': ordered_pairs},
+                            daemon=True,
+                            name=f'plex-coll-{source}'
+                        )
+                        _t.start()
+                        logging.info(f"[PlexCollections] Sync thread started for {source} ({len(ordered_pairs)} items in list)")
+                    except Exception as _pce:
+                        logging.error(f"[PlexCollections] Failed to start sync for {source}: {_pce}")
             else:
-                logging.warning(f"No wanted content retrieved from {source}")
+                if not wanted_content:
+                    logging.warning(f"No wanted content retrieved from {source}")
+
+
 
         except Exception as e:
             logging.error(f"Error processing content source {source}: {str(e)}")
@@ -6263,6 +6359,22 @@ class ProgramRunner:
             except Exception as _e:
                 logging.info(f"[OVERLAY_SYNC] malloc_trim skipped: {_e}")
 
+    def task_plex_smart_collection_posters(self):
+        """Apply custom posters to enabled Plex smart collections."""
+        try:
+            from database.plex_smart_collections import apply_smart_collection_posters
+            apply_smart_collection_posters()
+        except Exception as e:
+            logging.error(f"Plex smart collection posters task failed: {e}", exc_info=True)
+
+    def task_plex_movie_boxsets(self):
+        """Sync Plex movie box set collections from TMDB collection data."""
+        try:
+            from database.plex_movie_boxsets import run_plex_movie_boxsets
+            run_plex_movie_boxsets()
+        except Exception as e:
+            logging.error(f"Plex movie box sets task failed: {e}", exc_info=True)
+
     def task_overlay_cleanup(self):
         """Scheduled task to clean up unused posters and overlay cache."""
         try:
@@ -6732,49 +6844,54 @@ def process_overseerr_webhook(data):
 
     if wanted_content_processed:
         # Get the versions for the relevant Overseerr or Agregarr source from settings
-        content_sources = ProgramRunner().get_content_sources(force_refresh=False) # Don't need full refresh usually
-        
+        content_sources = ProgramRunner().get_content_sources(force_refresh=False)
+
         # Determine if this is from Agregarr based on requester name
         is_agregarr = requester_display_name == "Agregarr"
-        
-        # Find the appropriate content source
+
+        from content_checkers.overseerr import _source_allows_requester
+        from database import add_wanted_items
+        from content_checkers.content_source_detail import append_content_source_detail
+
         if is_agregarr:
-            # Look for Agregarr source first
-            source_key = next((source for source, data in content_sources.items()
-                              if source.startswith('Agregarr')), None)
+            # Agregarr: single source, no requester filtering
+            source_key = next((s for s, d in content_sources.items() if s.startswith('Agregarr')), None)
+            matched_sources = [(source_key, content_sources[source_key])] if source_key else []
             source_type = 'Agregarr'
         else:
-            # Look for Overseerr source
-            source_key = next((source for source, data in content_sources.items()
-                              if source.startswith('Overseerr')), None)
+            # Overseerr: match ALL enabled sources whose allowed_requesters includes this requester
             source_type = 'Overseerr'
+            matched_sources = []
+            for s, d in content_sources.items():
+                if not s.startswith('Overseerr'):
+                    continue
+                allowed = d.get('allowed_requesters', ['__all__'])
+                if not allowed:
+                    allowed = ['__all__']
+                if _source_allows_requester(allowed, requester_display_name):
+                    matched_sources.append((s, d))
 
-        versions = {}
-        source_name = f"{source_type.lower()}_webhook" # Default source name
-        if source_key:
-             versions = content_sources[source_key].get('versions', {})
-             source_name = source_key # Use the actual source name if found
-             logging.info(f"Using versions from configured {source_type} source '{source_key}': {versions}")
-        else:
-             logging.warning(f"No enabled {source_type} content source found in settings. Using default versions (empty).")
+        if not matched_sources:
+            logging.warning(f"No enabled {source_type} content source matched requester '{requester_display_name}' for webhook (TMDB ID: {tmdb_id}). Item not added.")
+            return
 
+        all_items_base = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', []) + wanted_content_processed.get('anime', [])
 
-        all_items = wanted_content_processed.get('movies', []) + wanted_content_processed.get('episodes', []) + wanted_content_processed.get('anime', [])
-        if all_items:
-             for item in all_items:
-                 item['content_source'] = source_name # Use determined source name
-                 # Store requester information in content_source_detail
-                 item['content_source_detail'] = requester_display_name
-                 # Store request ID for removal tracking
-                 item['overseerr_request_id'] = request_id
-                 from content_checkers.content_source_detail import append_content_source_detail
-                 item = append_content_source_detail(item, source_type=source_type) # Use determined source type (Overseerr or Agregarr)
+        if not all_items_base:
+            logging.warning(f"Metadata processing for {source_type} webhook (TMDB ID: {tmdb_id}) resulted in no items to add.")
+            return
 
-             from database import add_collected_items, add_wanted_items
-             add_wanted_items(all_items, versions) # Pass the determined versions
-             logging.info(f"Processed {len(all_items)} wanted item(s) from {source_type} webhook (TMDB ID: {tmdb_id}). Requester: {requester_display_name}")
-        else:
-             logging.warning(f"Metadata processing for {source_type} webhook (TMDB ID: {tmdb_id}) resulted in no items to add.")
+        for source_key, source_data in matched_sources:
+            versions = source_data.get('versions', {})
+            import copy
+            items_for_source = copy.deepcopy(all_items_base)
+            for item in items_for_source:
+                item['content_source'] = source_key
+                item['content_source_detail'] = requester_display_name
+                item['overseerr_request_id'] = request_id
+                item = append_content_source_detail(item, source_type=source_type)
+            add_wanted_items(items_for_source, versions, force_granular_versions=True)
+            logging.info(f"Processed {len(items_for_source)} wanted item(s) from {source_type} webhook via source '{source_key}' (TMDB ID: {tmdb_id}). Requester: {requester_display_name}, Versions: {versions}")
 
 def generate_airtime_report():
     from metadata.metadata import _get_local_timezone # Added import here

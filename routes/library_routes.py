@@ -6,7 +6,7 @@ from flask import Blueprint, render_template, jsonify, request, Response
 from flask_login import current_user
 from .models import user_required, onboarding_required, admin_required
 from database.core import get_db_connection
-from utilities.settings import get_setting
+from utilities.settings import get_setting, get_nas_paths
 from debrid import get_debrid_provider
 import logging
 import requests
@@ -44,7 +44,8 @@ def index():
     return render_template('library.html',
                          plex_configured=plex_configured,
                          tmdb_configured=tmdb_configured,
-                         has_admin_permissions=has_admin_permissions)
+                         has_admin_permissions=has_admin_permissions,
+                         nas_paths=get_nas_paths())
 
 @library_bp.route('/plex_image/<path:plex_path>')
 @user_required
@@ -618,6 +619,20 @@ def get_library_data():
             # Collected/Upgrading items with no Plex match (ms_item_id is NULL)
             query += " AND state IN ('Collected', 'Upgrading') AND (ms_item_id IS NULL OR ms_item_id = '')"
             count_query += " AND state IN ('Collected', 'Upgrading') AND (ms_item_id IS NULL OR ms_item_id = '')"
+        elif status_filter == 'nas':
+            # Collected items stored on NAS/network drives (location_on_disk matches configured NAS prefixes)
+            nas_paths = get_nas_paths()
+            if nas_paths:
+                nas_conditions = " OR ".join(["location_on_disk LIKE ?" for _ in nas_paths])
+                query += f" AND state IN ('Collected', 'Upgrading') AND ({nas_conditions})"
+                count_query += f" AND state IN ('Collected', 'Upgrading') AND ({nas_conditions})"
+                for p in nas_paths:
+                    params.append(p.rstrip('/') + '/%')
+                    count_params.append(p.rstrip('/') + '/%')
+            else:
+                # No NAS paths configured — return nothing
+                query += " AND 1=0"
+                count_query += " AND 1=0"
         else:
             # Default to Collected and Partial for unknown filter values
             query += " AND state IN (?, ?)"
@@ -2862,13 +2877,16 @@ def delete_show(imdb_id):
             logging.error(f"[DELETE_SHOW] Errors: {result.get('errors', [])}")
 
             errors_list = result.get('errors', ['Physical cleanup failed'])
-            return jsonify({
+            response_data = {
                 'success': False,
                 'error': errors_list[0] if errors_list else 'Physical cleanup failed',
                 'errors': errors_list,
                 'deleted_count': 0,
                 'failed_count': result.get('failed_count', 0)
-            }), 500
+            }
+            if result.get('plex_not_found'):
+                response_data['plex_not_found'] = True
+            return jsonify(response_data), 500
 
         # NOW handle database (LAST step) - ghostlist OR delete based on setting
         logging.info(f"[DELETE_SHOW] DATABASE LAYER - auto_ghostlist={auto_ghostlist}")
@@ -3213,13 +3231,16 @@ def delete_movie(imdb_id):
             logging.error(f"[DELETE_MOVIE] Errors: {result.get('errors', [])}")
 
             errors_list = result.get('errors', ['Physical cleanup failed'])
-            return jsonify({
+            response_data = {
                 'success': False,
                 'error': errors_list[0] if errors_list else 'Physical cleanup failed',
                 'errors': errors_list,
                 'deleted_count': 0,
                 'failed_count': result.get('failed_count', 0)
-            }), 500
+            }
+            if result.get('plex_not_found'):
+                response_data['plex_not_found'] = True
+            return jsonify(response_data), 500
 
         # Handle database (LAST step) - ghostlist OR delete based on setting
         logging.info(f"[DELETE_MOVIE] DATABASE LAYER - auto_ghostlist={auto_ghostlist}")
@@ -3762,13 +3783,16 @@ def delete_season(imdb_id, season_number):
             logging.error(f"[DELETE_SEASON] Errors: {result.get('errors', [])}")
 
             errors_list = result.get('errors', ['Physical cleanup failed'])
-            return jsonify({
+            response_data = {
                 'success': False,
                 'error': errors_list[0] if errors_list else 'Physical cleanup failed',
                 'errors': errors_list,
                 'deleted_count': 0,
                 'failed_count': result.get('failed_count', 0)
-            }), 500
+            }
+            if result.get('plex_not_found'):
+                response_data['plex_not_found'] = True
+            return jsonify(response_data), 500
 
         # NOW handle database (LAST step) - ghostlist OR delete based on setting
         #logging.info(f"[DELETE_SEASON] DATABASE LAYER - auto_ghostlist={auto_ghostlist}")

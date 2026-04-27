@@ -351,6 +351,20 @@
                     </div>
                 </div>
 
+                <!-- Sub-card: Exclude NAS Items -->
+                <div class="uh-settings-section">
+                    <div class="uh-settings-card-header">
+                        <div>
+                            <div class="uh-settings-subsection-title">Exclude NAS Items</div>
+                            <p class="uh-settings-desc" style="margin:4px 0 0">Skip items whose file path matches a configured NAS path prefix (set in Settings → Advanced Settings → Library Management → NAS / Network Drive). NAS items will not be scanned or listed.</p>
+                        </div>
+                        <label class="uh-settings-toggle">
+                            <input type="checkbox" id="settings-exclude-nas">
+                            <span class="uh-settings-toggle-track"><span class="uh-settings-toggle-thumb"></span></span>
+                        </label>
+                    </div>
+                </div>
+
                 <!-- Sub-card: Excluded Genres -->
                 <div class="uh-settings-section">
                     <div class="uh-settings-subsection-title uh-genre-title">Excluded Genres</div>
@@ -1182,6 +1196,7 @@ let _settings = {
     hide_pack_episodes: false,
     recent_threshold_days: 90,
     excluded_genres: '',
+    exclude_nas_items: false,
 };
 
 async function loadSettings() {
@@ -1246,6 +1261,10 @@ function applySettingsToUI() {
     // Max upgrades
     const maxInp = document.getElementById('settings-max-upgrades');
     if (maxInp) maxInp.value = _settings.max_upgrades_per_run || 10;
+
+    // Exclude NAS items toggle
+    const excludeNasChk = document.getElementById('settings-exclude-nas');
+    if (excludeNasChk) excludeNasChk.checked = !!_settings.exclude_nas_items;
 
     // Excluded genres chips
     const rawGenres = _settings.excluded_genres || '';
@@ -1330,6 +1349,7 @@ async function saveSettings() {
     const recentChk     = document.getElementById('settings-show-recent-only');
     const hidePackChk   = document.getElementById('settings-hide-pack-episodes');
     const recentDaysInp = document.getElementById('settings-recent-days');
+    const excludeNasChk = document.getElementById('settings-exclude-nas');
     const payload = {
         min_improvement_threshold: _settings.min_improvement_threshold,
         scan_limit: _settings.scan_limit,
@@ -1340,6 +1360,7 @@ async function saveSettings() {
         hide_pack_episodes:     hidePackChk  ? hidePackChk.checked  : false,
         recent_threshold_days:  recentDaysInp ? parseInt(recentDaysInp.value) || 90 : 90,
         excluded_genres:        _uhExcludedGenres.join(','),
+        exclude_nas_items:      excludeNasChk ? excludeNasChk.checked : false,
     };
     try {
         const res = await fetch('/upgrade_hub/api/settings', {

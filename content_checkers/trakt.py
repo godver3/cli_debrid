@@ -1475,11 +1475,39 @@ def get_wanted_from_trakt_lists(trakt_list_url: str, versions: Dict[str, bool], 
     if clean_username != username:
         logging.info(f"Cleaned username for list access: '{username}' -> '{clean_username}'")
 
-    # Get list items
-    endpoint = f"/users/{clean_username}/lists/{list_id}/items"
-    list_items = fetch_items_from_trakt(endpoint)
+    # Get all list items with pagination support
+    # Uses X-Pagination-Page-Count header to know total pages
+    headers = get_trakt_headers()
+    all_list_items = []
+    page = 1
+    page_count = 1  # will be updated from response headers
+    import time as _time
 
-    processed_items = process_trakt_items(list_items, unblacklist=unblacklist)
+    while page <= page_count:
+        _trakt_rate_limiter.wait_if_needed(task_priority=_trakt_rate_limiter.current_task_priority)
+        GlobalTraktCoordinator.get_instance().wait_if_needed()
+        url = f"{TRAKT_API_URL}/users/{clean_username}/lists/{list_id}/items?limit={PAGINATION_LIMIT}&page={page}"
+        try:
+            response = requests.get(url, headers=headers, timeout=30)
+            if response.status_code == 200:
+                page_items = response.json()
+                all_list_items.extend(page_items)
+                # Read total page count from headers on first page
+                if page == 1:
+                    page_count = int(response.headers.get('X-Pagination-Page-Count', 1))
+                    total_items = response.headers.get('X-Pagination-Item-Count', '?')
+                    logging.info(f"[Trakt] List {list_id}: {total_items} items across {page_count} pages")
+                if page < page_count:
+                    _time.sleep(PAGINATION_DELAY)
+                page += 1
+            else:
+                logging.error(f"[Trakt] List page {page} returned {response.status_code}")
+                break
+        except Exception as e:
+            logging.error(f"[Trakt] Failed to fetch list page {page}: {e}")
+            break
+
+    processed_items = process_trakt_items(all_list_items, unblacklist=unblacklist)
     logging.info(f"Found {len(processed_items)} items from Trakt list")
     all_wanted_items.append((processed_items, versions))
 

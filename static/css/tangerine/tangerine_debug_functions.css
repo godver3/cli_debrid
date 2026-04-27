@@ -561,7 +561,6 @@ body[data-theme="tangerine"] .debug_items {
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
     padding: 15px;
-    max-height: 300px;
     overflow-y: auto;
     background-color: rgba(255, 255, 255, 0.02);
 }

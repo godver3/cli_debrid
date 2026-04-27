@@ -398,8 +398,17 @@ class DirectAPI:
                     logging.debug(f"get_movie_metadata {imdb_id}: cache HIT")
                     return _build_metadata_dict(item), 'battery'
 
-                # Stale or missing — refresh
+                # Stale or missing — refresh, unless Trakt is in cooldown
                 logging.debug(f"get_movie_metadata {imdb_id}: cache MISS (stale={item is not None})")
+                if item:
+                    try:
+                        from utilities.trakt_coordinator import GlobalTraktCoordinator
+                        from datetime import datetime as _dt
+                        _coord = GlobalTraktCoordinator.get_instance()
+                        if _coord._global_cooldown_until and _dt.now() < _coord._global_cooldown_until:
+                            return _build_metadata_dict(item), 'battery'
+                    except Exception:
+                        pass
                 data = _refresh_movie(imdb_id, session)
                 if data:
                     return data, _get_metadata_source_name()
@@ -477,6 +486,17 @@ class DirectAPI:
                         try:
                             return json.loads(md.value), 'battery'
                         except (json.JSONDecodeError, TypeError):
+                            pass
+
+                    # If stale but Trakt is in cooldown, return stale data rather than blocking
+                    if item and md:
+                        try:
+                            from utilities.trakt_coordinator import GlobalTraktCoordinator
+                            from datetime import datetime as _dt
+                            _coord = GlobalTraktCoordinator.get_instance()
+                            if _coord._global_cooldown_until and _dt.now() < _coord._global_cooldown_until:
+                                return json.loads(md.value), 'battery'
+                        except Exception:
                             pass
 
                 # Refresh to get aliases
@@ -590,10 +610,19 @@ class DirectAPI:
                         md['seasons'] = _apply_lego_masters_us_season_fix(md['seasons'])
                     return md, 'battery'
 
-                # Stale or missing
+                # Stale or missing — refresh, unless Trakt is in cooldown
                 logging.debug(f"get_show_metadata {imdb_id}: cache MISS (stale={item is not None})")
                 # Capture fallback before _refresh_show may expire item via session commit
                 fallback_md = _build_show_metadata_dict(item) if item else None
+                if item:
+                    try:
+                        from utilities.trakt_coordinator import GlobalTraktCoordinator
+                        from datetime import datetime as _dt
+                        _coord = GlobalTraktCoordinator.get_instance()
+                        if _coord._global_cooldown_until and _dt.now() < _coord._global_cooldown_until:
+                            return fallback_md, 'battery'
+                    except Exception:
+                        pass
                 data = _refresh_show(imdb_id, session)
                 if data:
                     if imdb_id == LEGO_MASTERS_US_IMDB_ID and 'seasons' in data:
@@ -674,6 +703,18 @@ class DirectAPI:
 
                 # Capture md.value as plain string before _refresh_show may expire/detach the ORM object
                 md_value = md.value if (item and md) else None
+
+                # If stale but Trakt is in cooldown, return stale data rather than blocking
+                if md_value:
+                    try:
+                        from utilities.trakt_coordinator import GlobalTraktCoordinator
+                        from datetime import datetime as _dt
+                        _coord = GlobalTraktCoordinator.get_instance()
+                        if _coord._global_cooldown_until and _dt.now() < _coord._global_cooldown_until:
+                            return json.loads(md_value), 'battery'
+                    except Exception:
+                        pass
+
                 data = _refresh_show(imdb_id, session)
                 if data and 'aliases' in data:
                     return data['aliases'], _get_metadata_source_name()
