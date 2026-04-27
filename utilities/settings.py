@@ -560,4 +560,24 @@ def ensure_settings_file():
                 save_config(config)
                 logging.info(f"ensure_settings_file: Saved config with new schema defaults to {config_file_path}")
 
+
+def get_nas_paths():
+    """Return the list of configured NAS path prefixes (from Debug.nas_paths).
+    Each entry is stripped and non-empty. Returns [] if none configured."""
+    config = load_config()
+    paths = config.get('Debug', {}).get('nas_paths', [])
+    if isinstance(paths, list):
+        return [p.strip() for p in paths if p and p.strip()]
+    return []
+
+
+def is_nas_path(path, nas_paths):
+    """Return True if the given path starts with any of the configured NAS prefixes."""
+    if not path or not nas_paths:
+        return False
+    for prefix in nas_paths:
+        if path.startswith(prefix):
+            return True
+    return False
+
     

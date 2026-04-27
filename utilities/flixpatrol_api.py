@@ -20,49 +20,49 @@ FLIXPATROL_PLATFORMS = {
         'name': 'Netflix',
         'slug': 'netflix',
         'icon': 'netflix',
-        'region': 'world'
+        'region': 'united-states'
     },
     'disney': {
         'name': 'Disney+',
         'slug': 'disney',
         'icon': 'disney',
-        'region': 'world'
+        'region': 'united-states'
     },
     'amazon': {
         'name': 'Amazon Prime',
         'slug': 'amazon-prime',
         'icon': 'amazon',
-        'region': 'world'
+        'region': 'united-states'
     },
     'hbo': {
         'name': 'Max',
         'slug': 'hbo-max',
         'icon': 'hbo',
-        'region': 'world'
+        'region': 'united-states'
     },
     'apple': {
-        'name': 'Apple TV+',
+        'name': 'Apple TV',  # FlixPatrol uses "Apple TV" not "Apple TV+" in headings
         'slug': 'apple-tv',
         'icon': 'apple',
-        'region': 'world'
+        'region': 'united-states'
     },
     'paramount': {
         'name': 'Paramount+',
         'slug': 'paramount-plus',
         'icon': 'paramount',
-        'region': 'world'
+        'region': 'united-states'
     },
     'hulu': {
         'name': 'Hulu',
         'slug': 'hulu',
         'icon': 'hulu',
-        'region': 'united-states'  # US-only service
+        'region': 'united-states'
     },
     'peacock': {
         'name': 'Peacock',
         'slug': 'peacock',
         'icon': 'peacock',
-        'region': 'united-states'  # US-only service
+        'region': 'united-states'
     }
 }
 
@@ -114,8 +114,8 @@ def _extract_top10_from_section(soup: BeautifulSoup, section_keyword: str) -> Li
     """
     items = []
 
-    # Find the h2 that matches our section
-    for h2 in soup.find_all('h2'):
+    # Find the heading (h2 or h3) that matches our section
+    for h2 in soup.find_all(['h2', 'h3']):
         h2_text = h2.get_text(strip=True)
         if section_keyword in h2_text and 'by country' not in h2_text.lower() and 'by day' not in h2_text.lower():
             # Walk up to find the container with the table
@@ -217,13 +217,11 @@ def fetch_top10(
 
     platform_slug = FLIXPATROL_PLATFORMS[platform]['slug']
     platform_name = FLIXPATROL_PLATFORMS[platform]['name']
-    platform_region = FLIXPATROL_PLATFORMS[platform].get('region', 'world')
+    platform_region = FLIXPATROL_PLATFORMS[platform].get('region', 'united-states')
 
-    # FlixPatrol URL - use region-specific URL for US-only services
-    if platform_region == 'united-states':
-        url = f'https://flixpatrol.com/top10/{platform_slug}/{platform_region}/'
-    else:
-        url = f'https://flixpatrol.com/top10/{platform_slug}/'
+    # Always use region-specific URL (united-states for all platforms)
+    url = f'https://flixpatrol.com/top10/{platform_slug}/{platform_region}/'
+    fallback_url = f'https://flixpatrol.com/top10/{platform_slug}/'
 
     try:
         logging.info(f"[FlixPatrol] Fetching {platform_name} Top 10 from: {url}")
@@ -249,35 +247,46 @@ def fetch_top10(
                 except ValueError:
                     pass
 
-        # For US-only platforms (Hulu, Peacock), use combined extraction
-        if platform_region == 'united-states':
+        # US pages have separate h3 sections: "TOP 10 Movies" and "TOP 10 TV Shows"
+        # Extract movies and shows separately to match original 20-item behaviour
+        if media_type in ['all', 'movie']:
+            movies = _extract_top10_from_section(soup, 'TOP 10 Movies')
+            for movie in movies:
+                movie['media_type'] = 'movie'
+                items.append(movie)
+
+        if media_type in ['all', 'tv']:
+            shows = _extract_top10_from_section(soup, 'TOP 10 TV Shows')
+            for show in shows:
+                show['media_type'] = 'tv'
+                items.append(show)
+
+        # Fallback: if no separate sections found, use combined then global
+        if not items:
             combined_items = _extract_combined_top10(soup, platform_name)
-            for item in combined_items:
-                # US pages don't separate movies/TV, mark as 'unknown' initially
-                # The TMDB enrichment will determine the actual type
-                item['media_type'] = 'unknown'
-                items.append(item)
-        else:
-            # Extract Movies if requested
-            if media_type in ['all', 'movie']:
-                movies = _extract_top10_from_section(soup, 'TOP Movies')
-                for movie in movies:
-                    movie['media_type'] = 'movie'
-                    items.append(movie)
-
-            # Extract TV Shows if requested
-            if media_type in ['all', 'tv']:
-                shows = _extract_top10_from_section(soup, 'TOP TV Shows')
-                for show in shows:
-                    show['media_type'] = 'tv'
-                    items.append(show)
-
-            # Sort by rank (movies first, then shows if both)
-            if media_type == 'all':
-                # Keep movies and shows in their respective rank order
-                pass
+            if combined_items:
+                for item in combined_items:
+                    item['media_type'] = 'unknown'
+                    items.append(item)
             else:
-                items.sort(key=lambda x: x['rank'])
+                logging.info(f"[FlixPatrol] No US results for {platform_name}, falling back to global")
+                try:
+                    fb_resp = requests.get(fallback_url, headers=HEADERS, timeout=15, allow_redirects=True)
+                    fb_resp.raise_for_status()
+                    fb_soup = BeautifulSoup(fb_resp.text, 'html.parser')
+                    if media_type in ['all', 'movie']:
+                        for movie in _extract_top10_from_section(fb_soup, 'TOP Movies'):
+                            movie['media_type'] = 'movie'
+                            items.append(movie)
+                    if media_type in ['all', 'tv']:
+                        for show in _extract_top10_from_section(fb_soup, 'TOP TV Shows'):
+                            show['media_type'] = 'tv'
+                            items.append(show)
+                except Exception as fe:
+                    logging.warning(f"[FlixPatrol] Global fallback failed for {platform_name}: {fe}")
+
+        if media_type != 'all':
+            items.sort(key=lambda x: x['rank'])
 
         logging.info(f"[FlixPatrol] Found {len(items)} items for {platform_name}")
 

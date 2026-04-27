@@ -556,10 +556,12 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                     original_collected_at = COALESCE(original_collected_at, ?),
                                     location_on_disk = ?, upgraded = ?,
                                     resolution = COALESCE(?, resolution),
-                                    size = COALESCE(?, size)
+                                    size = COALESCE(?, size),
+                                    ms_item_id = COALESCE(?, ms_item_id)
                                 WHERE id = ?
                             ''', (new_state, datetime.now(), collected_at, existing_collected_at,
-                                  current_plex_location, is_upgrade, item.get('resolution'), item.get('size_gb'), db_item_id))
+                                  current_plex_location, is_upgrade, item.get('resolution'), item.get('size_gb'),
+                                  item.get('ratingKey'), db_item_id))
 
                             # Queue items for post-processing AFTER transaction commits
                             # This prevents database lock issues when post-processing tries to write to DB
@@ -644,7 +646,8 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                 (existing_resolution is None and new_resolution is not None) or
                                 (not existing_imdb_id and imdb_id) or
                                 (not existing_tmdb_id and tmdb_id) or
-                                (existing_collected_at is None and collected_at is not None)
+                                (existing_collected_at is None and collected_at is not None) or
+                                (not existing_db_item.get('ms_item_id') and item.get('ratingKey'))
                             )
 
                             if should_update:
@@ -663,9 +666,10 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                         imdb_id = COALESCE(NULLIF(imdb_id, ''), ?),
                                         tmdb_id = COALESCE(NULLIF(tmdb_id, ''), ?),
                                         collected_at = COALESCE(collected_at, ?),
-                                        last_updated = ?
+                                        last_updated = ?,
+                                        ms_item_id = COALESCE(ms_item_id, ?)
                                     WHERE id = ?
-                                ''', (current_plex_location, new_resolution, new_size, imdb_id, tmdb_id, collected_at, datetime.now(), db_item_id))
+                                ''', (current_plex_location, new_resolution, new_size, imdb_id, tmdb_id, collected_at, datetime.now(), item.get('ratingKey'), db_item_id))
 
                     else:
                         # --- NEW ITEM INSERT ---
@@ -778,12 +782,12 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                         if item_type == 'movie':
                             conn.execute('''
                                 INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution, physical_release_date, size)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, metadata_updated, version, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution, physical_release_date, size, ms_item_id)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'movie',
-                                datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime'), current_plex_location, False, item.get('country', '').lower(), item.get('resolution'), item.get('physical_release_date'), item.get('size_gb')
+                                datetime.now(), datetime.now(), version, collected_at, collected_at, genres, filename, item.get('runtime'), current_plex_location, False, item.get('country', '').lower(), item.get('resolution'), item.get('physical_release_date'), item.get('size_gb'), item.get('ratingKey')
                             ))
                         else:
                             if imdb_id not in airtime_cache:
@@ -796,13 +800,13 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                             airtime = airtime_cache[imdb_id]
                             cursor = conn.execute('''
                                 INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution, size)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution, size, ms_item_id)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'episode',
                                 item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                                datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime'), current_plex_location, False, item.get('country', '').lower(), item.get('resolution'), item.get('size_gb')
+                                datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime'), current_plex_location, False, item.get('country', '').lower(), item.get('resolution'), item.get('size_gb'), item.get('ratingKey')
                             ))
                         # logging.debug(f"Inserting new item {item_identifier} (from Plex file: {filename}, location: {current_plex_location}) took {time.time() - start_insert_time:.4f} seconds.")
                         logging.info(f"Added new item {item_identifier} (file: {filename}) to collection.")

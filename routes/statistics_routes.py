@@ -1348,17 +1348,18 @@ def move_to_wanted():
         tmdb_id = data.get('tmdb_id')
         season_number = data.get('season_number')
         episode_number = data.get('episode_number')
-        
+        item_id = data.get('item_id')
+
         if not (imdb_id or tmdb_id):
             return jsonify({'success': False, 'error': 'IMDb ID or TMDB ID is required'}), 400
-            
+
         from database import get_db_connection
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Build query based on item type
         if season_number is not None and episode_number is not None:
-            # Episode
+            # Episode — no item_id scoping here since episode rows group all versions together
             query = """
                 UPDATE media_items
                 SET state = 'Wanted',
@@ -1381,8 +1382,31 @@ def move_to_wanted():
                 AND state NOT IN ('Wanted', 'Scraping', 'Adding')
             """
             params = (datetime.now(), imdb_id, tmdb_id, season_number, episode_number)
+        elif item_id:
+            # Movie with specific row ID — only move this exact version
+            query = """
+                UPDATE media_items
+                SET state = 'Wanted',
+                    filled_by_file = NULL,
+                    filled_by_title = NULL,
+                    filled_by_magnet = NULL,
+                    filled_by_torrent_id = NULL,
+                    collected_at = NULL,
+                    last_updated = ?,
+                    disable_not_wanted_check = TRUE,
+                    location_on_disk = NULL,
+                    original_path_for_symlink = NULL,
+                    original_scraped_torrent_title = NULL,
+                    upgrading_from = NULL,
+                    version = TRIM(version, '*'),
+                    upgrading = NULL
+                WHERE id = ?
+                AND type = 'movie'
+                AND state NOT IN ('Wanted', 'Scraping', 'Adding')
+            """
+            params = (datetime.now(), item_id)
         else:
-            # Movie
+            # Movie fallback (no item_id) — move all versions
             query = """
                 UPDATE media_items
                 SET state = 'Wanted',

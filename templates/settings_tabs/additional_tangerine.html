@@ -1,3 +1,106 @@
+<script>
+(function() {
+    // ── Accent color ──────────────────────────────────────────────────────────
+    var accentInput = document.getElementById('smart-poster-accent');
+    var accentLabel = document.getElementById('smart-poster-accent-label');
+    var accentClear = document.getElementById('smart-poster-accent-clear');
+    if (accentInput) {
+        // Init display from current input value
+        var initAccent = accentInput.value;
+        if (initAccent && initAccent !== '#000000') {
+            accentInput.style.opacity = '1';
+            if (accentLabel) accentLabel.textContent = initAccent;
+            if (accentClear) accentClear.style.display = 'inline-block';
+        }
+        accentInput.addEventListener('input', function() {
+            this.style.opacity = '1';
+            if (accentLabel) accentLabel.textContent = this.value;
+            if (accentClear) accentClear.style.display = 'inline-block';
+        });
+    }
+    if (accentClear) {
+        accentClear.addEventListener('click', function() {
+            if (accentInput) { accentInput.value = '#000000'; accentInput.style.opacity = '0.4'; }
+            if (accentLabel) accentLabel.textContent = 'Design default';
+            this.style.display = 'none';
+        });
+    }
+
+    // ── Auto-load collections on page init so checkboxes are always in DOM ──
+    fetch('/settings/api/plex-smart-collections')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.success && d.collections && d.collections.length > 0) {
+                renderSmartCollections(d.collections);
+                document.getElementById('smart-collections-list').style.display = 'block';
+            }
+        }).catch(function() {});
+
+    // ── Load collections button ───────────────────────────────────────────────
+    var loadBtn = document.getElementById('load-smart-collections-btn');
+    if (loadBtn) {
+        loadBtn.addEventListener('click', async function() {
+            this.textContent = 'Loading...';
+            this.disabled = true;
+            try {
+                var resp = await fetch('/settings/api/plex-smart-collections');
+                var data = await resp.json();
+                if (data.success) {
+                    renderCollections(data.collections);
+                    document.getElementById('smart-collections-list').style.display = 'block';
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to load'));
+                }
+            } catch(e) {
+                alert('Error: ' + e);
+            } finally {
+                this.textContent = 'Reload Collections';
+                this.disabled = false;
+            }
+        });
+    }
+
+    // ── Run Now button ────────────────────────────────────────────────────────
+    var runBtn = document.getElementById('run-smart-collections-btn');
+    if (runBtn) {
+        runBtn.addEventListener('click', async function() {
+            this.textContent = 'Running...';
+            this.disabled = true;
+            try {
+                var resp = await fetch('/settings/api/plex-smart-collections/run', {method:'POST'});
+                var data = await resp.json();
+                alert(data.success ? 'Task started.' : 'Error: ' + data.error);
+            } finally {
+                this.textContent = 'Run Now';
+                this.disabled = false;
+            }
+        });
+    }
+
+
+
+    // ── Render collection list ────────────────────────────────────────────────
+    function renderCollections(collections) {
+        var container = document.getElementById('smart-collections-container');
+        if (!container) return;
+        var sections = {};
+        collections.forEach(function(c) {
+            if (!sections[c.section]) sections[c.section] = [];
+            sections[c.section].push(c);
+        });
+        var html = '';
+        Object.keys(sections).forEach(function(section) {
+            html += '<div style="width:100%;margin-top:8px;margin-bottom:2px;color:#888;font-size:0.75em;text-transform:uppercase;">' + section + '</div>';
+            sections[section].forEach(function(c) {
+                html += '<label style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(255,255,255,0.05);border-radius:6px;cursor:pointer;font-size:0.9em;">' +
+                    '<input type="checkbox" class="smart-coll-cb" data-rk="' + c.ratingKey + '" data-title="' + c.title + '" data-section="' + c.section + '" data-type="' + c.type + '"' + (c.enabled ? ' checked' : '') + '>' +
+                    c.title + '</label>';
+            });
+        });
+        container.innerHTML = html;
+    }
+})();
+</script>
 <div class="additional-settings-page">
     <h2 class="additional-settings-title">Additional Settings</h2>
     <p class="additional-settings-subtitle">Configure optional features and customizations</p>
@@ -17,7 +120,7 @@
         <div class="settings-list">
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "UI Settings" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" %}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "UI Settings" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" and section != "Plex Smart Collections" and section != "Plex Movie Box Sets" %}
     <div class="settings-section settings-card">
         <div class="settings-section-header">
             <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1689,6 +1792,439 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 });
+</script>
+
+
+
+<!-- Plex Smart Collection Posters Section -->
+<div class="settings-section settings-card plex-only-section">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Plex Smart Collection Posters</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+<!-- Plex Smart Collection Posters -->
+<div class="settings-form-group plex-only-section">
+    <p class="settings-description" style="margin-bottom:12px;">Apply a custom poster design to Plex's built-in smart collections (genre, network, language collections, etc). Enable the collections below and configure the shared poster design. The task runs every 24 hours — you can also trigger it manually.</p>
+
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <button type="button" id="load-smart-collections-btn" style="padding:8px 16px;background:var(--accent-color,#e87429);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.9em;">Load Collections from Plex</button>
+        <button type="button" id="run-smart-collections-btn" style="padding:8px 16px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#ddd;cursor:pointer;font-size:0.9em;">Run Now</button>
+
+    </div>
+
+    <!-- Collection list (loaded dynamically) -->
+    <div id="smart-collections-list" style="display:none;margin-bottom:16px;">
+        <p class="settings-description" style="margin-bottom:8px;">Check collections to apply the shared poster design below:</p>
+        <div id="smart-collections-container" style="display:flex;flex-wrap:wrap;gap:6px;"></div>
+    </div>
+
+    <!-- Shared Poster Design (mirrors content source poster section) -->
+    <div id="smart-poster-design-section" style="margin-top:16px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.07);">
+        <label class="settings-title">Poster Design:</label>
+        <p class="settings-description" style="margin-bottom:10px;">Select a custom poster for all enabled smart collections. Leave on "None" to use Plex's default.</p>
+        <div class="plex-collection-poster-picker" data-source-id="__smart__"
+             style="display:flex;gap:10px;overflow-x:auto;padding:6px 2px 12px;scrollbar-width:thin;min-height:380px;">
+            <div class="poster-loading-placeholder" style="color:#888;font-size:0.85em;padding:8px;">Loading designs...</div>
+        </div>
+        <input type="hidden" id="content-sources-__smart__-plex_collection-poster_design" name="Plex Smart Collections.poster_design" data-section="Plex Smart Collections" data-key="poster_design" value="{{ settings.get('Plex Smart Collections', {}).get('poster_design', 0) }}">
+    </div>
+
+    <div class="settings-form-group" style="margin-top:12px;">
+        <label class="settings-title">Poster Accent Color:</label>
+        <div style="display:flex;align-items:center;gap:10px;">
+            {% set _sa = settings.get('Plex Smart Collections', {}).get('poster_accent', '') %}
+            <input type="color" id="smart-poster-accent" name="Plex Smart Collections.poster_accent" data-section="Plex Smart Collections" data-key="poster_accent" value="{{ _sa or '#000000' }}"
+                   style="width:44px;height:36px;border:none;background:none;cursor:pointer;border-radius:6px;{% if not _sa %}opacity:0.4;{% endif %}">
+            <span id="smart-poster-accent-label" style="font-size:0.85em;color:#888;">{{ _sa or 'Design default' }}</span>
+            <button type="button" id="smart-poster-accent-clear"
+                    style="display:{% if _sa %}inline-block{% else %}none{% endif %};font-size:0.75em;padding:3px 8px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:4px;color:#aaa;cursor:pointer;">
+                Use default
+            </button>
+        </div>
+        <p class="settings-description">Accent color used throughout the poster design. Leave unset to use the layout's default color.</p>
+    </div>
+
+    <div class="settings-form-group">
+        <label class="settings-title">Card Overlay Opacity: <span id="smart-overlay-op-val">60%</span></label>
+        <input type="range" min="0" max="100" step="5" id="smart-overlay-op" name="Plex Smart Collections.poster_overlay_opacity" data-section="Plex Smart Collections" data-key="poster_overlay_opacity" value="{{ settings.get('Plex Smart Collections', {}).get('poster_overlay_opacity', 60) }}"
+               style="width:100%;accent-color:var(--accent-color,#e87429);"
+               oninput="document.getElementById('smart-overlay-op-val').textContent=this.value+'%'">
+        <p class="settings-description">Dark gradient fade at the bottom of each card inside the poster. Higher = darker fade over the card art.</p>
+    </div>
+
+    <div class="settings-form-group">
+        <label class="settings-title">Accent Glow Opacity: <span id="smart-glow-op-val">80%</span></label>
+        <input type="range" min="0" max="100" step="5" id="smart-glow-op" name="Plex Smart Collections.poster_glow_opacity" data-section="Plex Smart Collections" data-key="poster_glow_opacity" value="{{ settings.get('Plex Smart Collections', {}).get('poster_glow_opacity', 80) }}"
+               style="width:100%;accent-color:var(--accent-color,#e87429);"
+               oninput="document.getElementById('smart-glow-op-val').textContent=this.value+'%'">
+        <p class="settings-description">Intensity of the accent color glow around the edges of the poster background.</p>
+    </div>
+
+    <div class="settings-form-group">
+        <label class="settings-title">Accent Glow Radius: <span id="smart-glow-r-val">55</span></label>
+        <input type="range" min="10" max="200" step="5" id="smart-glow-r" name="Plex Smart Collections.poster_glow_radius" data-section="Plex Smart Collections" data-key="poster_glow_radius" value="{{ settings.get('Plex Smart Collections', {}).get('poster_glow_radius', 55) }}"
+               style="width:100%;accent-color:var(--accent-color,#e87429);"
+               oninput="document.getElementById('smart-glow-r-val').textContent=this.value">
+        <p class="settings-description">How far the accent color glow spreads. Default 55. Higher values spread the color across more of the poster.</p>
+    </div>
+
+    <div class="settings-form-group">
+        <label class="settings-title">Eyebrow Text:</label>
+        <input type="text" id="smart-poster-eyebrow" class="settings-input" name="Plex Smart Collections.poster_eyebrow" data-section="Plex Smart Collections" data-key="poster_eyebrow" value="{{ settings.get('Plex Smart Collections', {}).get('poster_eyebrow', '') }}" placeholder="e.g. TOP PICKS">
+        <p class="settings-description">Small text above the collection title on the poster. Leave blank to hide.</p>
+    </div>
+
+    <div class="settings-form-group">
+        <label class="settings-title">Poster Icon:</label>
+        <button type="button" class="plex-collection-icon-picker-btn" data-source-id="__smart__"
+                style="display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px 14px;cursor:pointer;color:#ddd;font-size:0.9em;">
+            <span class="plex-coll-icon-preview" data-source-id="__smart__"
+                  style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;flex-shrink:0;">
+                {% if settings.get('Plex Smart Collections', {}).get('poster_icon') %}
+                <img src="/api/overlays/logos/serve/{{ settings.get('Plex Smart Collections', {}).get('poster_icon') }}"
+                     style="max-width:28px;max-height:28px;object-fit:contain;" alt="">
+                <svg style="margin-left:4px;opacity:0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                {% else %}
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                {% endif %}
+            </span>
+            <span id="smart-icon-label">{% if settings.get('Plex Smart Collections', {}).get('poster_icon') %}{{ settings.get('Plex Smart Collections', {}).get('poster_icon').split('/')[-1] }}{% else %}Choose icon from library{% endif %}</span>
+        </button>
+        <input type="hidden" id="content-sources-__smart__-plex_collection-poster_icon" name="Plex Smart Collections.poster_icon" data-section="Plex Smart Collections" data-key="poster_icon" value="{{ settings.get('Plex Smart Collections', {}).get('poster_icon', '') }}">
+        <p class="settings-description">Icon shown on the poster. Leave blank to use the source default icon.</p>
+    </div>
+</div>
+
+<script>
+(function() {
+    // Init slider display values from saved settings
+    (function() {
+        var ov = document.getElementById('smart-overlay-op');
+        var go = document.getElementById('smart-glow-op');
+        var gr = document.getElementById('smart-glow-r');
+        if (ov) document.getElementById('smart-overlay-op-val').textContent = ov.value + '%';
+        if (go) document.getElementById('smart-glow-op-val').textContent = go.value + '%';
+        if (gr) document.getElementById('smart-glow-r-val').textContent = gr.value;
+    })();
+
+    var ai = document.getElementById('smart-poster-accent');
+    var al = document.getElementById('smart-poster-accent-label');
+    var ac = document.getElementById('smart-poster-accent-clear');
+    if (ai) {
+        if (ai.value && ai.value !== '#000000') {
+            ai.style.opacity = '1';
+            if (al) al.textContent = ai.value;
+            if (ac) ac.style.display = 'inline-block';
+        }
+        ai.addEventListener('input', function() {
+            this.style.opacity = '1';
+            if (al) al.textContent = this.value;
+            if (ac) ac.style.display = 'inline-block';
+        });
+    }
+    if (ac) {
+        ac.addEventListener('click', function() {
+            if (ai) { ai.value = '#000000'; ai.style.opacity = '0.4'; }
+            if (al) al.textContent = 'Design default';
+            this.style.display = 'none';
+        });
+    }
+
+    var lb = document.getElementById('load-smart-collections-btn');
+    if (lb) {
+        lb.addEventListener('click', async function() {
+            this.textContent = 'Loading...'; this.disabled = true;
+            try {
+                var r = await fetch('/settings/api/plex-smart-collections');
+                var d = await r.json();
+                if (d.success) {
+                    renderSmartCollections(d.collections);
+                    document.getElementById('smart-collections-list').style.display = 'block';
+                } else { alert('Error: ' + (d.error || 'Failed')); }
+            } catch(e) { alert('Error: ' + e); }
+            finally { this.textContent = 'Reload Collections'; this.disabled = false; }
+        });
+    }
+
+    var rb = document.getElementById('run-smart-collections-btn');
+    if (rb) {
+        rb.addEventListener('click', async function() {
+            this.textContent = 'Running...'; this.disabled = true;
+            try {
+                var r = await fetch('/settings/api/plex-smart-collections/run', {method:'POST'});
+                var d = await r.json();
+                alert(d.success ? 'Task started.' : 'Error: ' + d.error);
+            } finally { this.textContent = 'Run Now'; this.disabled = false; }
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        var ms = document.getElementById('save-settings-button');
+        if (ms) {
+            ms.addEventListener('click', function() {
+                var cols = {};
+                document.querySelectorAll('.smart-coll-cb').forEach(function(cb) {
+                    cols[cb.dataset.rk] = {
+                        enabled: cb.checked,
+                        title: cb.dataset.title,
+                        section: cb.dataset.section,
+                        type: cb.dataset.type
+                    };
+                });
+                if (Object.keys(cols).length > 0) {
+                    fetch('/settings/api/plex-smart-collections', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({collections: cols})
+                    }).catch(function() {});
+                }
+            }, true);
+        }
+    });
+
+    function renderSmartCollections(cols) {
+        var c = document.getElementById('smart-collections-container');
+        if (!c) return;
+        var secs = {};
+        cols.forEach(function(x) {
+            if (!secs[x.section]) secs[x.section] = [];
+            secs[x.section].push(x);
+        });
+        var h = '';
+        Object.keys(secs).forEach(function(s) {
+            h += '<div style="width:100%;margin-top:8px;color:#888;font-size:0.75em;text-transform:uppercase;">' + s + '</div>';
+            secs[s].forEach(function(x) {
+                h += '<label style="display:flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(255,255,255,0.05);border-radius:6px;cursor:pointer;font-size:0.9em;">';
+                h += '<input type="checkbox" class="smart-coll-cb"';
+                h += ' data-rk="' + x.ratingKey + '"';
+                h += ' data-title="' + x.title + '"';
+                h += ' data-section="' + x.section + '"';
+                h += ' data-type="' + x.type + '"';
+                if (x.enabled) h += ' checked';
+                h += '>' + x.title + '</label>';
+            });
+        });
+        c.innerHTML = h;
+    }
+})();
+</script>
+    </div>
+</div>
+
+<!-- Plex Movie Box Sets Section -->
+<div class="settings-section settings-card plex-only-section">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Plex Movie Box Sets</h4>
+        </div>
+    </div>
+    <div class="settings-section-content" style="display:none;">
+        <p style="color:#aaa;font-size:0.9em;margin-bottom:15px;">
+            Automatically creates Plex collections for movie box sets using TMDB collection data.
+            Applies TMDB collection posters (or a rendered fallback) and optionally queues missing movies.
+        </p>
+
+        <!-- Enable toggle -->
+        <div class="settings-form-group">
+            <label class="settings-label" for="boxsets-enabled">Enable Plex Movie Box Sets</label>
+            <div class="toggle-switch-wrapper">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="boxsets-enabled"
+                           name="Plex Movie Box Sets.enabled"
+                           data-section="Plex Movie Box Sets" data-key="enabled"
+                           {% if settings.get('Plex Movie Box Sets', {}).get('enabled') %}checked{% endif %}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Dependent controls (shown when enabled) -->
+        <div id="boxsets-dependent-controls" style="{% if not settings.get('Plex Movie Box Sets', {}).get('enabled') %}display:none;{% endif %}">
+
+            <!-- Grab missing movies toggle -->
+            <div class="settings-form-group">
+                <label class="settings-label" for="boxsets-grab-missing">Grab missing movies from box sets</label>
+                <div class="settings-description">Missing movies from box sets will be added to your wanted queue.</div>
+                <div class="toggle-switch-wrapper">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="boxsets-grab-missing"
+                               name="Plex Movie Box Sets.grab_missing"
+                               data-section="Plex Movie Box Sets" data-key="grab_missing"
+                               {% if settings.get('Plex Movie Box Sets', {}).get('grab_missing') %}checked{% endif %}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Version dropdown (shown when grab_missing enabled) -->
+            <div id="boxsets-version-group" class="settings-form-group"
+                 style="{% if not settings.get('Plex Movie Box Sets', {}).get('grab_missing') %}display:none;{% endif %}">
+                <label class="settings-label" for="boxsets-grab-version">Version to use when grabbing missing movies</label>
+                <select id="boxsets-grab-version"
+                        name="Plex Movie Box Sets.grab_version"
+                        data-section="Plex Movie Box Sets" data-key="grab_version"
+                        class="settings-input">
+                    <option value="Default" {% if settings.get('Plex Movie Box Sets', {}).get('grab_version', 'Default') == 'Default' %}selected{% endif %}>Default</option>
+                </select>
+            </div>
+
+            <!-- Collection name pattern -->
+            <div class="settings-form-group">
+                <label class="settings-label" for="boxsets-name-pattern">Collection name pattern</label>
+                <div class="settings-description"><code>{title}</code> is the franchise name (e.g. <em>The Godfather</em>). Examples: <code>{title} Collection</code>, <code>{title} Box Set</code></div>
+                <input type="text" id="boxsets-name-pattern"
+                       name="Plex Movie Box Sets.collection_name_pattern"
+                       data-section="Plex Movie Box Sets" data-key="collection_name_pattern"
+                       class="settings-input"
+                       value="{{ settings.get('Plex Movie Box Sets', {}).get('collection_name_pattern', '{title} Collection') }}"
+                       placeholder="{title} Collection">
+            </div>
+
+            <!-- Minimum movies threshold -->
+            <div class="settings-form-group">
+                <label class="settings-label" for="boxsets-min-movies">Minimum owned movies to create/keep a box set</label>
+                <div class="settings-description">Collections below this threshold will not be created, and existing ones will be automatically removed.</div>
+                <select id="boxsets-min-movies"
+                        name="Plex Movie Box Sets.min_movies"
+                        data-section="Plex Movie Box Sets" data-key="min_movies"
+                        class="settings-select">
+                    <option value="1" {% if settings.get('Plex Movie Box Sets', {}).get('min_movies', 2)|int == 1 %}selected{% endif %}>1</option>
+                    <option value="2" {% if settings.get('Plex Movie Box Sets', {}).get('min_movies', 2)|int == 2 %}selected{% endif %}>2</option>
+                </select>
+            </div>
+
+            <!-- Sort order -->
+            <div class="settings-form-group">
+                <label class="settings-label" for="boxsets-sort-order">Collection sort order</label>
+                <div class="settings-description">How movies are ordered within each box set collection in Plex.</div>
+                <select id="boxsets-sort-order"
+                        name="Plex Movie Box Sets.sort_order"
+                        data-section="Plex Movie Box Sets" data-key="sort_order"
+                        class="settings-select">
+                    {% set _sort = settings.get('Plex Movie Box Sets', {}).get('sort_order', 'release_date_asc') %}
+                    <option value="release_date_asc" {% if _sort == 'release_date_asc' %}selected{% endif %}>Release Date (oldest first)</option>
+                    <option value="title_asc"        {% if _sort == 'title_asc'        %}selected{% endif %}>Title (A → Z)</option>
+                    <option value="custom"           {% if _sort == 'custom'           %}selected{% endif %}>Custom (manual order)</option>
+                </select>
+            </div>
+
+        </div>
+
+        <!-- Status + Run Now -->
+        <div class="settings-form-group" style="margin-top:15px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <button type="button" id="boxsets-run-btn"
+                    class="btn btn-secondary" style="white-space:nowrap;">
+                Run Now
+            </button>
+            <span id="boxsets-status" style="color:#aaa;font-size:0.85em;"></span>
+        </div>
+
+    </div>
+</div>
+
+<script>
+(function() {
+    // Enable/disable dependent controls
+    var enabledCb = document.getElementById('boxsets-enabled');
+    var depControls = document.getElementById('boxsets-dependent-controls');
+    if (enabledCb && depControls) {
+        enabledCb.addEventListener('change', function() {
+            depControls.style.display = this.checked ? '' : 'none';
+        });
+    }
+
+    // Show/hide version dropdown when grab_missing toggled
+    var grabMissingCb = document.getElementById('boxsets-grab-missing');
+    var versionGroup = document.getElementById('boxsets-version-group');
+    if (grabMissingCb && versionGroup) {
+        grabMissingCb.addEventListener('change', function() {
+            versionGroup.style.display = this.checked ? '' : 'none';
+        });
+    }
+
+    // Populate version dropdown from app versions endpoint
+    var versionSelect = document.getElementById('boxsets-grab-version');
+    if (versionSelect) {
+        var savedVersion = '{{ settings.get("Plex Movie Box Sets", {}).get("grab_version", "Default") }}';
+        fetch('/content/versions')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var versions = data.versions || data || [];
+                if (!Array.isArray(versions)) versions = Object.keys(versions);
+                versionSelect.innerHTML = '';
+                versions.forEach(function(v) {
+                    var opt = document.createElement('option');
+                    opt.value = v;
+                    opt.textContent = v;
+                    if (v === savedVersion) opt.selected = true;
+                    versionSelect.appendChild(opt);
+                });
+                if (!versions.includes(savedVersion)) {
+                    var opt = document.createElement('option');
+                    opt.value = savedVersion;
+                    opt.textContent = savedVersion;
+                    opt.selected = true;
+                    versionSelect.insertBefore(opt, versionSelect.firstChild);
+                }
+            })
+            .catch(function() {
+                // Leave Default option if fetch fails
+            });
+    }
+
+    // Fetch and display status
+    function loadBoxSetsStatus() {
+        var statusEl = document.getElementById('boxsets-status');
+        if (!statusEl) return;
+        fetch('/settings/api/plex-boxsets/status')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.success) {
+                    var parts = [];
+                    if (d.last_run) {
+                        var dt = new Date(d.last_run + 'Z');
+                        parts.push('Last run: ' + dt.toLocaleString());
+                    }
+                    if (d.collections_managed > 0) {
+                        parts.push(d.collections_managed + ' collection' + (d.collections_managed !== 1 ? 's' : '') + ' managed');
+                    }
+                    statusEl.textContent = parts.join(' · ') || 'Not yet run';
+                }
+            })
+            .catch(function() {});
+    }
+    loadBoxSetsStatus();
+
+    // Run Now button
+    var runBtn = document.getElementById('boxsets-run-btn');
+    if (runBtn) {
+        runBtn.addEventListener('click', function() {
+            var statusEl = document.getElementById('boxsets-status');
+            runBtn.disabled = true;
+            runBtn.textContent = 'Starting...';
+            fetch('/settings/api/plex-boxsets/run', {method: 'POST'})
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    runBtn.disabled = false;
+                    runBtn.textContent = 'Run Now';
+                    if (statusEl) statusEl.textContent = d.success ? 'Task started — check logs for progress' : ('Error: ' + d.error);
+                })
+                .catch(function(e) {
+                    runBtn.disabled = false;
+                    runBtn.textContent = 'Run Now';
+                    if (statusEl) statusEl.textContent = 'Request failed';
+                });
+        });
+    }
+})();
 </script>
 
         </div>

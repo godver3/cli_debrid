@@ -916,6 +916,30 @@ def get_trakt_friends():
         logging.error(f"Error listing Trakt friends: {str(e)}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@settings_bp.route('/content-sources/overseerr-users')
+def get_overseerr_users():
+    from utilities.settings import get_setting, get_all_settings
+    source_id = request.args.get('source_id', '')
+    try:
+        all_settings = get_all_settings()
+        source_data = all_settings.get('Content Sources', {}).get(source_id, {})
+        url = source_data.get('url', '').rstrip('/')
+        api_key = source_data.get('api_key', '')
+        if not url or not api_key:
+            return jsonify({'success': False, 'error': 'URL or API key not configured', 'users': []})
+        import requests as req
+        resp = req.get(
+            f"{url}/api/v1/user?take=100&skip=0",
+            headers={'X-Api-Key': api_key},
+            timeout=10
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        users = data.get('results', [])
+        return jsonify({'success': True, 'users': users})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e), 'users': []})
+
 @settings_bp.route('/content_sources/add', methods=['POST'])
 @admin_required
 def add_content_source_route():
@@ -1563,8 +1587,43 @@ def update_settings():
 
         # Check for Content Sources changes
         if 'Content Sources' in new_settings:
-            requires_restart = True
-            restart_reasons.append('Content Sources')
+            # Poster-only fields are read live on every sync — no restart needed
+            _POSTER_ONLY_KEYS = {'poster_design', 'poster_accent', 'poster_eyebrow', 'poster_icon',
+                                 'collection_name_movies', 'collection_name_shows'}
+            _old_sources = config.get('Content Sources', {})
+            _new_sources = new_settings['Content Sources']
+            _needs_restart = False
+            for src_id, new_src in _new_sources.items():
+                old_src = _old_sources.get(src_id, {})
+                if not isinstance(new_src, dict) or not isinstance(old_src, dict):
+                    _needs_restart = True
+                    break
+                # Check plex_collection sub-dict
+                old_pc = old_src.get('plex_collection', {}) if isinstance(old_src, dict) else {}
+                new_pc = new_src.get('plex_collection', {}) if isinstance(new_src, dict) else {}
+                # Check non-plex_collection keys
+                old_rest = {k: v for k, v in old_src.items() if k != 'plex_collection'}
+                new_rest = {k: v for k, v in new_src.items() if k != 'plex_collection'}
+                if old_rest != new_rest:
+                    _needs_restart = True
+                    break
+                # Check plex_collection keys — only poster-only keys changed?
+                all_pc_keys = set(old_pc.keys()) | set(new_pc.keys())
+                non_poster_changed = any(
+                    k not in _POSTER_ONLY_KEYS and old_pc.get(k) != new_pc.get(k)
+                    for k in all_pc_keys
+                )
+                if non_poster_changed:
+                    _needs_restart = True
+                    break
+            # Also restart if sources were added or removed
+            if set(_old_sources.keys()) != set(_new_sources.keys()):
+                _needs_restart = True
+            if _needs_restart:
+                requires_restart = True
+                restart_reasons.append('Content Sources')
+            else:
+                logging.info("Content Sources: only poster settings changed — skipping restart")
 
         # Check for Debrid Provider changes
         if 'Debrid Provider' in new_settings:
@@ -1789,8 +1848,18 @@ def update_settings():
                     # Update or add the value
                     current[key] = value
 
+        # Preserve collections dict — managed separately, not via form inputs
+        _existing_colls = config.get('Plex Smart Collections', {}).get('collections', {})
+        if not isinstance(_existing_colls, dict):
+            _existing_colls = {}
+
         # Update the main config object with the new settings
         update_nested_dict(config, new_settings)
+
+        # Restore collections (prevent main save from overwriting with empty dict)
+        if 'Plex Smart Collections' in config:
+            if not isinstance(config['Plex Smart Collections'].get('collections'), dict) or not config['Plex Smart Collections'].get('collections'):
+                config['Plex Smart Collections']['collections'] = _existing_colls
 
         # --- Simplified Staleness Update (if needed, relies on update_nested_dict) ---
         # If 'Staleness Threshold' exists in new_settings, update_nested_dict should handle it.
@@ -1828,6 +1897,16 @@ def update_settings():
         save_config(config)
         logging.info("Main configuration saved successfully.")
 
+        # Clear smart collection poster hash if those settings changed
+        if 'Plex Smart Collections' in new_settings:
+            try:
+                from database.plex_smart_collections import _load_state, _save_state, _migrate_state
+                _sc_state = _migrate_state(_load_state())
+                _sc_state.setdefault('shared', {})['poster_hash'] = ''
+                _save_state(_sc_state)
+            except Exception:
+                pass
+
         # For no changes or UI-only changes, skip cache clearing and reinitialization
         if skip_restart:
             logging.info("Skipping cache clearing and component reinitialization.")
@@ -1841,7 +1920,9 @@ def update_settings():
         # Clear content source cache files
         try:
             from routes.debug_routes import get_cache_files
-            cache_files = get_cache_files()
+            cache_data = get_cache_files()
+            # get_cache_files now returns dict {'content_source': [(filename, label),...], 'other': [...]}
+            cache_files = cache_data.get('content_source', []) if isinstance(cache_data, dict) else cache_data
             if cache_files:
                 db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
                 for filename, _ in cache_files:  # Unpack tuple (filename, display_label)
@@ -3539,4 +3620,245 @@ def add_default_mdblists():
         return jsonify({'success': True, 'message': f'Default MDBList sources added successfully using version: {default_version}'})
     except Exception as e:
         logging.error(f"Error adding default MDBLists: {str(e)}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ── Plex Collection Poster Routes ─────────────────────────────────────────────
+
+@settings_bp.route('/content-sources/collection-poster/previews')
+def get_collection_poster_previews():
+    """Return metadata for all 9 poster design previews (0=default, 1-8=custom)."""
+    try:
+        from database.collection_poster_renderer import DESIGNS, PREVIEW_DIR, generate_preview_images
+    except Exception as e:
+        logging.error(f"[CollectionPoster] Failed to import renderer: {e}")
+        return jsonify({'success': False, 'error': str(e), 'designs': []}), 200
+    try:
+        # Only trigger generation if design previews are missing (not on every call)
+        missing = any(
+            not (PREVIEW_DIR / info['preview']).exists()
+            for did, info in DESIGNS.items() if did > 0
+        )
+        if missing:
+            import threading
+            t = threading.Thread(target=generate_preview_images, daemon=True)
+            t.start()
+        designs = []
+        for design_id, info in DESIGNS.items():
+            preview_file = PREVIEW_DIR / info['preview']
+            designs.append({
+                'id': design_id,
+                'name': info['name'],
+                'preview_url': f"/settings/content-sources/collection-poster/preview/{design_id}",
+                'available': preview_file.exists(),
+            })
+    except Exception as e:
+        logging.error(f"[CollectionPoster] previews route error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e), 'designs': []}), 200
+    return jsonify({'success': True, 'designs': designs})
+
+
+@settings_bp.route('/content-sources/collection-poster/preview/<int:design_id>')
+def serve_collection_poster_preview(design_id):
+    """Serve a poster design preview image."""
+    from flask import send_file
+    from database.collection_poster_renderer import DESIGNS, PREVIEW_DIR, generate_preview_images
+    if design_id not in DESIGNS:
+        return jsonify({'error': 'Invalid design ID'}), 404
+    preview_file = PREVIEW_DIR / DESIGNS[design_id]['preview']
+    if not preview_file.exists() and design_id > 0:
+        # Generate just this one design
+        try:
+            from database.collection_poster_renderer import DESIGN_RENDERERS, SOURCE_ICONS, get_source_icon
+            renderer = DESIGN_RENDERERS.get(design_id)
+            if renderer:
+                img = renderer(
+                    collection_name='My Collection',
+                    eyebrow='COLLECTION',
+                    accent='#E6A800',
+                    icon_path=get_source_icon('Trakt Lists', ''),
+                    movie_thumbs=[None, None, None, None],
+                    source_type='Trakt Lists',
+                )
+                import io
+                buf = io.BytesIO()
+                img.convert('RGB').save(buf, format='JPEG', quality=88)
+                PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+                preview_file.write_bytes(buf.getvalue())
+        except Exception as e:
+            logging.error(f"[CollectionPoster] On-demand preview gen failed for design {design_id}: {e}", exc_info=True)
+    if preview_file.exists():
+        return send_file(str(preview_file), mimetype='image/jpeg')
+    return jsonify({'error': 'Preview not available'}), 404
+
+
+@settings_bp.route('/api/plex-smart-collections', methods=['GET'])
+@admin_required
+def get_plex_smart_collections():
+    """Get all smart collections from Plex with enabled state and shared poster settings."""
+    try:
+        from database.plex_smart_collections import get_all_smart_collections, _load_state, _migrate_state
+        collections = get_all_smart_collections()
+        _psc = load_config().get('Plex Smart Collections', {})
+        saved_colls = _psc.get('collections', {}) if isinstance(_psc, dict) else {}
+        if not isinstance(saved_colls, dict):
+            saved_colls = {}
+        for coll in collections:
+            rk = coll['ratingKey']
+            coll['enabled'] = saved_colls.get(rk, {}).get('enabled', False)
+        return jsonify({'success': True, 'collections': collections})
+    except Exception as e:
+        logging.error(f"Failed to get Plex smart collections: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-smart-collections', methods=['POST'])
+@admin_required
+def save_plex_smart_collections():
+    """Save per-collection enabled state to config.json under Plex Smart Collections.collections."""
+    try:
+        from queues.config_manager import save_config
+        data = request.json or {}
+        config = load_config()
+        if 'Plex Smart Collections' not in config:
+            config['Plex Smart Collections'] = {}
+        existing_colls = config['Plex Smart Collections'].get('collections', {})
+        for rk, cfg in data.get('collections', {}).items():
+            existing_colls[rk] = {
+                'enabled': cfg.get('enabled', False),
+                'title': cfg.get('title', existing_colls.get(rk, {}).get('title', '')),
+                'section': cfg.get('section', existing_colls.get(rk, {}).get('section', '')),
+                'type': cfg.get('type', existing_colls.get(rk, {}).get('type', 'movie')),
+            }
+        config['Plex Smart Collections']['collections'] = existing_colls
+        save_config(config)
+        # Clear cached hash so task re-renders on next run
+        try:
+            from database.plex_smart_collections import _load_state, _save_state, _migrate_state
+            state = _migrate_state(_load_state())
+            state.setdefault('shared', {})['poster_hash'] = ''
+            _save_state(state)
+        except Exception:
+            pass
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Failed to save Plex smart collections: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-smart-collections/settings', methods=['POST'])
+@admin_required
+def save_plex_smart_collection_settings():
+    """Save shared poster design settings to config.json."""
+    try:
+        from queues.config_manager import save_config
+        data = request.json or {}
+        config = load_config()
+        if 'Plex Smart Collections' not in config:
+            config['Plex Smart Collections'] = {}
+        config['Plex Smart Collections'].update({
+            'poster_design': int(data.get('poster_design', 0)),
+            'poster_accent': data.get('poster_accent', ''),
+            'poster_eyebrow': data.get('poster_eyebrow', ''),
+            'poster_icon': data.get('poster_icon', ''),
+            'poster_overlay_opacity': int(data.get('poster_overlay_opacity', 60)),
+            'poster_glow_opacity': int(data.get('poster_glow_opacity', 80)),
+            'poster_glow_radius': int(data.get('poster_glow_radius', 55)),
+        })
+        save_config(config)
+        # Clear cached hash so task re-renders on next run
+        try:
+            from database.plex_smart_collections import _load_state, _save_state, _migrate_state
+            state = _migrate_state(_load_state())
+            state.setdefault('shared', {})['poster_hash'] = ''
+            _save_state(state)
+        except Exception:
+            pass
+        logging.info(f"[SmartCollections] Saved poster settings: design={data.get('poster_design')}")
+        return jsonify({'success': True})
+    except Exception as e:
+        logging.error(f"Failed to save smart collection settings: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-smart-collections/run', methods=['POST'])
+@admin_required
+def run_plex_smart_collections():
+    """Manually trigger the smart collection poster task."""
+    try:
+        import threading
+        from database.plex_smart_collections import apply_smart_collection_posters
+        t = threading.Thread(target=apply_smart_collection_posters, daemon=True)
+        t.start()
+        return jsonify({'success': True, 'message': 'Smart collection poster task started'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-boxsets/status', methods=['GET'])
+@admin_required
+def get_plex_boxsets_status():
+    """Return current box sets state: last run time and number of collections managed."""
+    try:
+        import json, os
+        state_file = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'plex_boxsets_state.json')
+        state = {}
+        try:
+            with open(state_file, 'r') as f:
+                state = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        from utilities.settings import get_setting as _gs
+        return jsonify({
+            'success': True,
+            'last_run': state.get('last_run'),
+            'collections_managed': len(state.get('collection_fingerprints', {})),
+            'enabled': _gs('Plex Movie Box Sets', 'enabled', False),
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-boxsets/run', methods=['POST'])
+@admin_required
+def run_plex_movie_boxsets():
+    """Manually trigger the Plex movie box sets task."""
+    try:
+        import threading
+        from database.plex_movie_boxsets import run_plex_movie_boxsets as _run
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        return jsonify({'success': True, 'message': 'Plex movie box sets task started'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-boxsets/settings', methods=['POST'])
+@admin_required
+def save_plex_boxsets_settings():
+    """Save Plex Movie Box Sets settings."""
+    try:
+        data = request.get_json() or {}
+        config = load_config()
+        if 'Plex Movie Box Sets' not in config:
+            config['Plex Movie Box Sets'] = {}
+        for key in ('enabled', 'grab_missing', 'grab_version', 'collection_name_pattern'):
+            if key in data:
+                config['Plex Movie Box Sets'][key] = data[key]
+        save_config(config)
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/content-sources/collection-poster/regenerate', methods=['POST'])
+def regenerate_collection_poster_previews():
+    """Force regeneration of all poster preview images."""
+    try:
+        from database.collection_poster_renderer import regenerate_all_previews
+        import threading
+        t = threading.Thread(target=regenerate_all_previews, daemon=True)
+        t.start()
+        return jsonify({'success': True, 'message': 'Preview regeneration started'})
+    except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

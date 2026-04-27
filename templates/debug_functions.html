@@ -123,6 +123,16 @@
                         Dry Run (Preview duplicates without deleting)
                     </label>
                 </div>
+                {% if nas_paths %}
+                <div class="form-group" style="margin-top: 10px;">
+                    <label for="remove_dup_nas_filter">NAS / Network Filter:</label>
+                    <select id="remove_dup_nas_filter" name="nas_filter" style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
+                        <option value="all">All items (no NAS filter)</option>
+                        <option value="exclude_nas">Exclude NAS items</option>
+                        <option value="only_nas">Only NAS items</option>
+                    </select>
+                </div>
+                {% endif %}
                 <button type="submit">Find and Remove Duplicates</button>
                 <div id="remove-duplicates-results" class="results-area" style="margin-top: 15px;"></div>
             </form>
@@ -192,6 +202,16 @@
                         Enter comma or pipe-separated patterns. Items with filenames containing any of these patterns will be protected from deletion.
                     </small>
                 </div>
+                {% if nas_paths %}
+                <div class="form-group">
+                    <label for="upgrades_nas_filter">NAS / Network Filter:</label>
+                    <select id="upgrades_nas_filter" name="nas_filter" style="width: 100%; padding: 8px; margin-top: 5px; background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; border-radius: 4px;">
+                        <option value="all">All items (no NAS filter)</option>
+                        <option value="exclude_nas">Exclude NAS items</option>
+                        <option value="only_nas">Only NAS items</option>
+                    </select>
+                </div>
+                {% endif %}
                 <button type="submit">Run Cleanup</button>
                 <button type="button" id="view-upgrades-results-btn" style="display: none; margin-top: 10px;">View Last Results</button>
                 <div id="upgrades-progress" style="display: none; margin-top: 15px;">
@@ -404,34 +424,29 @@
             </form>
         </div>
         <div class="debug_item">
-            <h3>Refresh Release Dates</h3>
-            <form action="{{ url_for('debug.refresh_release_dates_route') }}" method="POST" id="refresh-release-dates-form">
-                <button type="submit">Refresh Release Dates</button>
-            </form>
-        </div>
-        <div class="debug_item">
-            <h3>Manage Cache Files</h3>
-            <form id="manage-cache-files-form">
-                <div id="cache_files_container" class="cache-files-container">
-                    <h4>Select Cache Files:</h4>
-                    <div class="select-all-container">
-                        <button type="button" id="select_all_cache_btn">Select All</button>
-                        <button type="button" id="unselect_all_cache_btn">Unselect All</button>
-                    </div>
-                    <div id="cache_files_list">
-                        {% if cache_files %}
-                            {% for filename, display_label in cache_files %}
-                                <div class="cache-file-item">
-                                    <input type="checkbox" name="selected_files" value="{{ filename }}" id="cache_file_{{ loop.index }}">
-                                    <label for="cache_file_{{ loop.index }}">{{ display_label }}</label>
-                                </div>
-                            {% endfor %}
-                        {% else %}
-                            <p>No cache files found.</p>
-                        {% endif %}
-                    </div>
+            <h3>Version Propagator</h3>
+            <form action="{{ url_for('debug.propagate_version') }}" method="POST" id="version-propagator-form">
+                <div class="form-group">
+                    <label for="media_type">Media Type:</label>
+                    <select id="media_type" name="media_type" required>
+                        <option value="all">All</option>
+                        <option value="movie">Movies Only</option>
+                        <option value="episode">Episodes Only</option>
+                    </select>
                 </div>
-                <button type="submit" class="btn btn-danger">Delete Selected Cache Files</button>
+                <div class="form-group">
+                    <label for="original_version">Original Version:</label>
+                    <select id="original_version" name="original_version" required>
+                        <option value="">Select Version</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="propagated_version">Propagated Version:</label>
+                    <select id="propagated_version" name="propagated_version" required>
+                        <option value="">Select Version</option>
+                    </select>
+                </div>
+                <button type="submit">Propagate Version</button>
             </form>
         </div>
         <div class="debug_item">
@@ -484,32 +499,51 @@
                 <button type="submit">Apply Action</button>
             </form>
         </div>
-        <div class="debug_item">
-            <h3>Version Propagator</h3>
-            <form action="{{ url_for('debug.propagate_version') }}" method="POST" id="version-propagator-form">
-                <div class="form-group">
-                    <label for="media_type">Media Type:</label>
-                    <select id="media_type" name="media_type" required>
-                        <option value="all">All</option>
-                        <option value="movie">Movies Only</option>
-                        <option value="episode">Episodes Only</option>
-                    </select>
+        <div class="debug_item" style="grid-row: span 2;">
+            <h3>Manage Cache Files</h3>
+            <form id="manage-cache-files-form">
+                <div id="cache_files_container" class="cache-files-container">
+                    <h4>Select Cache Files:</h4>
+                    <div class="select-all-container">
+                        <button type="button" id="select_all_cache_btn">Select All</button>
+                        <button type="button" id="unselect_all_cache_btn">Unselect All</button>
+                    </div>
+                    <div id="cache_files_list">
+                        {% if cache_files %}
+                            {% for filename, display_label in cache_files %}
+                                <div class="cache-file-item">
+                                    <input type="checkbox" name="selected_files" value="{{ filename }}" id="cache_file_{{ loop.index }}">
+                                    <label for="cache_file_{{ loop.index }}">{{ display_label }}</label>
+                                </div>
+                            {% endfor %}
+                        {% else %}
+                            <p>No content source cache files found.</p>
+                        {% endif %}
+
+                        {% if other_cache_files %}
+                        <hr style="border-color: #444; margin: 12px 0;">
+                        <p style="font-size: 0.85em; color: #aaa; margin-bottom: 8px;">Other Cache Files:</p>
+                        {% for item in other_cache_files %}
+                            <div class="cache-file-item" {% if not item.exists %}style="opacity: 0.5;"{% endif %}>
+                                <input type="checkbox" name="selected_files" value="{{ item.filename }}"
+                                       id="other_cache_{{ loop.index }}" {% if not item.exists %}disabled{% endif %}>
+                                <label for="other_cache_{{ loop.index }}" title="{{ item.description }}">
+                                    {{ item.label }}{% if not item.exists %} <em style="color:#888;">(not found)</em>{% endif %}
+                                </label>
+                            </div>
+                        {% endfor %}
+                        {% endif %}
+                    </div>
                 </div>
-                <div class="form-group">
-                    <label for="original_version">Original Version:</label>
-                    <select id="original_version" name="original_version" required>
-                        <option value="">Select Version</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="propagated_version">Propagated Version:</label>
-                    <select id="propagated_version" name="propagated_version" required>
-                        <option value="">Select Version</option>
-                    </select>
-                </div>
-                <button type="submit">Propagate Version</button>
+                <button type="submit" class="btn btn-danger">Delete Selected Cache Files</button>
             </form>
-        </div> 
+        </div>
+        <div class="debug_item">
+            <h3>Refresh Release Dates</h3>
+            <form action="{{ url_for('debug.refresh_release_dates_route') }}" method="POST" id="refresh-release-dates-form">
+                <button type="submit">Refresh Release Dates</button>
+            </form>
+        </div>
         <div class="debug_item">
             <h3>Direct Emby/Jellyfin Scan</h3>
             <p class="description">Trigger a full library scan on Emby/Jellyfin and add/update items in the database.</p>
@@ -2897,6 +2931,12 @@ if (document.readyState === 'loading') {
                     const excludePatterns = document.getElementById('exclude_patterns').value.trim();
                     if (excludePatterns) {
                         formData.append('exclude_patterns', excludePatterns);
+                    }
+
+                    // Add NAS filter if the element exists (only rendered when nas_paths configured)
+                    const nasFilterEl = document.getElementById('upgrades_nas_filter');
+                    if (nasFilterEl) {
+                        formData.append('nas_filter', nasFilterEl.value);
                     }
 
                     // Make the request

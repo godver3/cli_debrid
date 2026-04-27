@@ -674,7 +674,8 @@ function handleMoveFileToWanted(fileId) {
 
     const data = {
         imdb_id: movieData.imdb_id,
-        tmdb_id: movieData.tmdb_id
+        tmdb_id: movieData.tmdb_id,
+        item_id: fileId
     };
 
     fetch('/statistics/move_to_wanted', {

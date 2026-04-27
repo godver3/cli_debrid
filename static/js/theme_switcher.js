@@ -121,11 +121,12 @@
 
                 // Check if this theme stylesheet is already loaded
                 let existingThemeLink = document.getElementById(themeId);
+                const hrefWithBust = themePath + '?v=' + Date.now();
                 if (!existingThemeLink) {
                     const themeLink = document.createElement('link');
                     themeLink.id = themeId;
                     themeLink.rel = 'stylesheet';
-                    themeLink.href = themePath;
+                    themeLink.href = hrefWithBust;
                     themeLink.setAttribute('data-theme-css', themeName);
 
                     // Insert the theme stylesheet after the classic one
@@ -134,6 +135,9 @@
                     } else {
                         classicLink.parentNode.appendChild(themeLink);
                     }
+                } else {
+                    // Update href to bust cache on reload
+                    existingThemeLink.href = hrefWithBust;
                 }
             }
         });

@@ -104,17 +104,34 @@
                 </div>
             </div>
         </div>
-        <!-- MDBList dropdown - dynamically shown if MDBList is configured -->
-        <div id="mdblist-tabs" class="mdblist-tabs-container" style="display: none;">
-            <div class="mdblist-dropdown-wrapper">
-                <button type="button" class="tab-btn mdblist-dropdown-trigger" id="mdblist-dropdown-btn">
-                    <span id="mdblist-dropdown-label">Lists</span>
-                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="m6 9 6 6 6-6"/>
-                    </svg>
-                </button>
-                <div id="mdblist-dropdown-menu" class="mdblist-dropdown-menu">
-                    <!-- List options will be dynamically inserted here -->
+        <!-- Right-aligned group: Lists (MDBList) + Personal -->
+        <div class="mdblist-tabs-container" style="gap: 0;">
+            <!-- MDBList dropdown - dynamically shown if MDBList is configured -->
+            <div id="mdblist-tabs" style="display: none;">
+                <div class="mdblist-dropdown-wrapper">
+                    <button type="button" class="tab-btn mdblist-dropdown-trigger" id="mdblist-dropdown-btn">
+                        <span id="mdblist-dropdown-label">Lists</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="m6 9 6 6 6-6"/>
+                        </svg>
+                    </button>
+                    <div id="mdblist-dropdown-menu" class="mdblist-dropdown-menu">
+                        <!-- List options will be dynamically inserted here -->
+                    </div>
+                </div>
+            </div>
+            <!-- Personal dropdown - Trakt special lists + user's personal lists -->
+            <div id="personal-tabs">
+                <div class="mdblist-dropdown-wrapper">
+                    <button type="button" class="tab-btn mdblist-dropdown-trigger" id="personal-dropdown-btn">
+                        <span id="personal-dropdown-label">Personal</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="m6 9 6 6 6-6"/>
+                        </svg>
+                    </button>
+                    <div id="personal-dropdown-menu" class="mdblist-dropdown-menu">
+                        <!-- Populated by JS -->
+                    </div>
                 </div>
             </div>
         </div>
@@ -182,6 +199,7 @@
                                         <option value="primary_release_date">Release Date</option>
                                         <option value="title">Title</option>
                                         <option value="runtime">Runtime</option>
+                                        <option value="none">None (default order)</option>
                                     </select>
                                 </div>
                                 <button type="button" id="sort-order-toggle" class="sort-order-btn" data-order="desc" title="Toggle sort order">
@@ -823,6 +841,14 @@
                         <div class="ui input">
                             <input type="number" id="runtime-max" placeholder="Max" min="0" value="300">
                         </div>
+                    </div>
+                </div>
+
+                <!-- Seasons Max (TV only) -->
+                <div class="filter-group">
+                    <label class="filter-label">Max Seasons (TV shows)</label>
+                    <div class="ui input">
+                        <input type="number" id="seasons-max" placeholder="e.g. 10" min="1" value="">
                     </div>
                 </div>
 

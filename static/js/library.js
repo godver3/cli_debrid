@@ -565,10 +565,10 @@ function createListItem(item) {
         // Plex image - use Plex proxy endpoint
         const plexPath = item.poster_path.substring(5);
         posterUrl = `/library/plex_image${plexPath}`;
-    } else if (item.poster_path && item.poster_path.startsWith('/')) {
+    } else if (item.poster_path && item.poster_path.startsWith('/') && !item.poster_path.startsWith('/static/')) {
         // TMDB image - use TMDB proxy endpoint
         posterUrl = `/scraper/tmdb_image/w92${item.poster_path}`; // Smaller size for list view
-    } else if (item.poster_path) {
+    } else if (item.poster_path && !item.poster_path.startsWith('/static/')) {
         // Full URL or other format - use as-is
         posterUrl = item.poster_path;
     } else if (item.tmdb_id) {
@@ -691,10 +691,10 @@ function createGridCard(item) {
         // Plex image - use Plex proxy endpoint
         const plexPath = item.poster_path.substring(5); // Remove 'plex:' prefix
         posterUrl = `/library/plex_image${plexPath}`;
-    } else if (item.poster_path && item.poster_path.startsWith('/')) {
+    } else if (item.poster_path && item.poster_path.startsWith('/') && !item.poster_path.startsWith('/static/')) {
         // TMDB image - use TMDB proxy endpoint (w185 matches 160px card width)
         posterUrl = `/scraper/tmdb_image/w185${item.poster_path}`;
-    } else if (item.poster_path) {
+    } else if (item.poster_path && !item.poster_path.startsWith('/static/')) {
         // Full URL or other format - use as-is
         posterUrl = item.poster_path;
     } else if (item.tmdb_id) {
@@ -1618,15 +1618,25 @@ async function deleteSelectedItems() {
     let completedCount = 0;
     const totalCount = itemsToDelete.length;
 
+    const allLayers = ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache', 'content_source'];
+    const layersWithoutPlex = allLayers.filter(l => l !== 'media_server');
+
+    const doDelete = async (item, layers) => {
+        const endpoint = item.type === 'movie'
+            ? `/library/delete_movie/${item.imdb_id}`
+            : `/library/delete_show/${item.imdb_id}`;
+        const resp = await fetch(endpoint, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ blacklist: false, layers })
+        });
+        return await resp.json();
+    };
+
     try {
-        // Delete all items in parallel (not one by one)
+        // Phase 1: Delete all items in parallel with full layers
         const deletePromises = itemsToDelete.map(async (item, index) => {
             try {
-                const endpoint = item.type === 'movie'
-                    ? `/library/delete_movie/${item.imdb_id}`
-                    : `/library/delete_show/${item.imdb_id}`;
-
-                // Update progress before starting
                 const progress = Math.round((completedCount / totalCount) * 100);
                 window.updateDeletionLoading(
                     `Processing ${item.title}...`,
@@ -1634,27 +1644,20 @@ async function deleteSelectedItems() {
                     `${completedCount} of ${totalCount} completed`
                 );
 
-                const response = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        blacklist: false,
-                        layers: ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache', 'content_source']
-                    })
-                });
-
-                const result = await response.json();
+                const result = await doDelete(item, allLayers);
 
                 completedCount++;
                 const newProgress = Math.round((completedCount / totalCount) * 100);
                 window.updateDeletionLoading(
-                    `Completed ${item.title}`,
+                    result.plex_not_found ? `Not in Plex: ${item.title}` : `Completed ${item.title}`,
                     newProgress,
                     `${completedCount} of ${totalCount} completed`
                 );
 
                 if (result && result.success) {
                     return { success: true, item, result };
+                } else if (result && result.plex_not_found) {
+                    return { success: false, plexNotFound: true, item, result };
                 } else {
                     return { success: false, item, error: result.error || 'Unknown error', result };
                 }
@@ -1670,11 +1673,80 @@ async function deleteSelectedItems() {
             }
         });
 
-        // Wait for all deletions to complete
+        // Wait for all Phase 1 deletions to complete
         const results = await Promise.all(deletePromises);
 
-        // Count successes and failures
-        results.forEach(r => {
+        console.log('[DELETE] Phase 1 results:', JSON.stringify(results.map(r => ({success: r.success, plexNotFound: r.plexNotFound, title: r.item && r.item.title, error: r.error}))));
+
+        // Separate plex-not-found items from normal results
+        const plexNotFoundItems = results.filter(r => r.plexNotFound);
+        const normalResults = results.filter(r => !r.plexNotFound);
+
+        console.log('[DELETE] plexNotFoundItems:', plexNotFoundItems.length, 'normalResults:', normalResults.length);
+
+        // Phase 2: If any items were not found in Plex, prompt user once for all of them
+        if (plexNotFoundItems.length > 0) {
+            window.hideDeletionLoading();
+
+            console.log('[DELETE] Phase 2: showing CONFIRM popup, window.showPopup:', typeof window.showPopup, 'window.POPUP_TYPES:', window.POPUP_TYPES);
+
+            const titles = plexNotFoundItems.map(r => `<strong>${r.item.title}</strong>`).join('<br>');
+            const itemWord = plexNotFoundItems.length === 1 ? 'item' : 'items';
+            const confirmed = await new Promise((resolve) => {
+                if (window.POPUP_TYPES && window.showPopup) {
+                    window.showPopup({
+                        type: window.POPUP_TYPES.CONFIRM,
+                        title: `${plexNotFoundItems.length} ${itemWord} not found in Plex`,
+                        message: `The following ${itemWord} were not found in Plex (already removed):<br><br>${titles}<br><br>Continue removing from database, debrid and other layers?`,
+                        confirmText: 'Continue',
+                        cancelText: 'Cancel',
+                        onConfirm: () => { console.log('[DELETE] User clicked Continue'); resolve(true); },
+                        onCancel: () => { console.log('[DELETE] User clicked Cancel'); resolve(false); }
+                    });
+                    console.log('[DELETE] showPopup called, waiting for user...');
+                } else {
+                    console.log('[DELETE] Falling back to native confirm dialog');
+                    const titleList = plexNotFoundItems.map(r => r.item.title).join(', ');
+                    resolve(confirm(`"${titleList}" not found in Plex. Continue removing from database and other layers?`));
+                }
+            });
+            console.log('[DELETE] Phase 2 confirmed:', confirmed);
+
+            if (confirmed) {
+                window.showDeletionLoading(deletionTitle, null);
+                // Re-run deletions without media_server layer for these items
+                const retryPromises = plexNotFoundItems.map(async (r) => {
+                    try {
+                        window.updateDeletionLoading(
+                            `Processing ${r.item.title}...`,
+                            Math.round((completedCount / totalCount) * 100),
+                            `${completedCount} of ${totalCount} completed`
+                        );
+                        const retryResult = await doDelete(r.item, layersWithoutPlex);
+                        completedCount++;
+                        if (retryResult && retryResult.success) {
+                            return { success: true, item: r.item, result: retryResult };
+                        } else {
+                            return { success: false, item: r.item, error: retryResult.error || 'Unknown error', result: retryResult };
+                        }
+                    } catch (error) {
+                        completedCount++;
+                        return { success: false, item: r.item, error: error.message };
+                    }
+                });
+                const retryResults = await Promise.all(retryPromises);
+                normalResults.push(...retryResults);
+            } else {
+                // User cancelled — treat as failed
+                plexNotFoundItems.forEach(r => {
+                    normalResults.push({ success: false, item: r.item, error: 'Cancelled — not found in Plex', result: r.result });
+                });
+                window.showDeletionLoading(deletionTitle, null);
+            }
+        }
+
+        // Count successes and failures across all results
+        normalResults.forEach(r => {
             if (r.success) {
                 successCount++;
                 deletionResults.push(r);

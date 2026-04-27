@@ -1350,29 +1350,20 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
                 logger.info(f"[UPGRADE_HUB] Genre filter: skipped {skipped} items "
                             f"(excluded: {', '.join(sorted(excluded_genres))})")
 
-        # ── NAS / non-RD filter ───────────────────────────────────────────────
-        # Build RD mount roots from items that have a torrent ID — those are
-        # definitively RD-sourced. Then exclude items that are NOT on those roots
-        # AND have no torrent ID (i.e. NAS/local files with no RD association).
-        _rd_roots: set = set()
-        for _item in all_collected:
-            if _item.get('filled_by_torrent_id'):
-                _loc = (_item.get('location_on_disk') or '').lstrip('/')
-                _root = _loc.split('/')[0] if _loc else ''
-                if _root:
-                    _rd_roots.add(_root)
-        if _rd_roots:
-            before = len(all_collected)
-            all_collected = [
-                item for item in all_collected
-                if (item.get('location_on_disk') or '').lstrip('/').split('/')[0] in _rd_roots
-                or item.get('filled_by_torrent_id')  # keep torrent items regardless of path
-                or not item.get('location_on_disk')   # keep items with no path set yet
-            ]
-            skipped = before - len(all_collected)
-            if skipped:
-                logger.info(f"[UPGRADE_HUB] NAS filter: skipped {skipped} items "
-                            f"(not on RD mount roots {_rd_roots} and no torrent ID)")
+        # ── NAS exclusion filter ──────────────────────────────────────────────
+        if get_setting('Upgrade Hub', 'exclude_nas_items', False) in (True, 'true', 'True', 1):
+            from utilities.settings import get_nas_paths, is_nas_path
+            nas_paths = get_nas_paths()
+            if nas_paths:
+                before = len(all_collected)
+                all_collected = [
+                    item for item in all_collected
+                    if not is_nas_path(item.get('location_on_disk') or '', nas_paths)
+                ]
+                skipped = before - len(all_collected)
+                if skipped:
+                    logger.info(f"[UPGRADE_HUB] NAS exclusion: skipped {skipped} items "
+                                f"(matched configured NAS path prefixes)")
 
         # Apply scan limit before splitting by type
         if scan_limit and scan_limit > 0 and len(all_collected) > scan_limit:

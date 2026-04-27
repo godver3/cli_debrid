@@ -353,6 +353,15 @@ def migrate_schema():
         if 'ms_content_rating' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN ms_content_rating TEXT')
             logging.info("Added ms_content_rating column.")
+        if 'source_position' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN source_position INTEGER')
+            logging.info("Added source_position column to media_items table.")
+        if 'tmdb_collection_id' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN tmdb_collection_id TEXT')
+            logging.info("Added tmdb_collection_id column to media_items table.")
+        if 'tmdb_collection_name' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN tmdb_collection_name TEXT')
+            logging.info("Added tmdb_collection_name column to media_items table.")
 
         # Migrate data from legacy plex_* columns to ms_* columns (one-time migration)
         # Only runs when plex_rating_key data exists AND ms_item_id is completely unpopulated
@@ -741,6 +750,23 @@ def migrate_schema():
                 cursor.execute('DROP TABLE plex_removal_queue')
                 logging.info("Dropped stale plex_removal_queue (overlay_removal_queue already exists).")
 
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS plex_collection_sync (
+                source_id TEXT PRIMARY KEY,
+                movie_collection_ratingkey TEXT,
+                show_collection_ratingkey TEXT,
+                last_fingerprint TEXT,
+                last_synced_at TEXT
+            )
+        ''')
+
+        # Add sort_option column if missing
+        cursor.execute("PRAGMA table_info(plex_collection_sync)")
+        pcs_cols = [row[1] for row in cursor.fetchall()]
+        if 'sort_option' not in pcs_cols:
+            conn.execute('ALTER TABLE plex_collection_sync ADD COLUMN sort_option TEXT DEFAULT "default"')
+            logging.info("Added sort_option column to plex_collection_sync.")
+
         logging.info("Attempting to commit schema migrations...")
         conn.commit()
         logging.info("Schema migrations committed successfully.")
@@ -891,7 +917,8 @@ def create_tables():
                 verification_failed BOOLEAN DEFAULT FALSE,
                 verification_failure_reason TEXT,
                 plex_labels_last_synced TIMESTAMP,
-                debrid_folder_name TEXT
+                debrid_folder_name TEXT,
+                source_position INTEGER
             )
         ''')
 

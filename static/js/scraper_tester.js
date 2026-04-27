@@ -714,15 +714,36 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 const modWrap = document.createElement('div');
                 modWrap.className = 'st-setting-mod';
-                // Move actual modifiable input into accordion (keep reference)
-                modWrap.appendChild(modEl.cloneNode(true));
 
-                // Sync changes back to the hidden original so getModifiedVersionSettings still works
-                const visibleMod = modWrap.querySelector('[id]');
+                const FILTER_KEYS = ['filter_in', 'filter_out', 'preferred_filter_in', 'preferred_filter_out'];
+                let visibleMod;
+                if (FILTER_KEYS.includes(k)) {
+                    // cloneNode drops onclick handlers — rebuild fresh so Add Item / Remove work
+                    let liveEl;
+                    if (k === 'filter_in' || k === 'filter_out') {
+                        const currentItems = Array.from(modEl.querySelectorAll('.filter-input')).map(i => i.value);
+                        liveEl = createFilterList(k, currentItems, false);
+                    } else {
+                        const currentItems = Array.from(modEl.querySelectorAll('.preferred-filter-item')).map(item => {
+                            const term = item.querySelector('.filter-input').value;
+                            const weight = parseInt(item.querySelector('.filter-weight').value) || 1;
+                            return [term, weight];
+                        });
+                        liveEl = createPreferredFilterList(k, currentItems, false);
+                    }
+                    liveEl.id = modEl.id + '-vis';
+                    modWrap.appendChild(liveEl);
+                    visibleMod = liveEl;
+                } else {
+                    // Non-filter keys: clone is fine (no event listeners needed beyond input/change)
+                    const clone = modEl.cloneNode(true);
+                    clone.id = modEl.id + '-vis';
+                    modWrap.appendChild(clone);
+                    visibleMod = clone;
+                }
+
                 if (visibleMod) {
-                    visibleMod.id = modEl.id + '-vis';
                     const refreshPreview = () => {
-                        // Read from visible (-vis) inputs to get current modified values
                         const liveSettings = {};
                         keysInGroup.forEach(({ k: key }) => {
                             const el = document.getElementById(`scraping-${version}-${key}-vis`)
@@ -734,13 +755,17 @@ document.addEventListener('DOMContentLoaded', function() {
                         if (newPills) preview.innerHTML = newPills;
                     };
                     visibleMod.addEventListener('input', () => {
-                        modEl.value = visibleMod.value;
-                        modEl.checked = visibleMod.checked;
+                        if (!FILTER_KEYS.includes(k)) {
+                            modEl.value = visibleMod.value;
+                            modEl.checked = visibleMod.checked;
+                        }
                         refreshPreview();
                     });
                     visibleMod.addEventListener('change', () => {
-                        modEl.value = visibleMod.value;
-                        if (visibleMod.type === 'checkbox') modEl.checked = visibleMod.checked;
+                        if (!FILTER_KEYS.includes(k)) {
+                            modEl.value = visibleMod.value;
+                            if (visibleMod.type === 'checkbox') modEl.checked = visibleMod.checked;
+                        }
                         refreshPreview();
                         updateSaveButtonState();
                     });
@@ -976,9 +1001,12 @@ document.addEventListener('DOMContentLoaded', function() {
             } else if (input.type === 'select-one') {
                 settings[settingKey] = input.value;
             } else if (settingKey === 'filter_in' || settingKey === 'filter_out') {
-                settings[settingKey] = Array.from(input.querySelectorAll('.filter-input')).map(item => item.value).filter(Boolean);
+                // Prefer the live accordion copy (-vis) which has working Add/Remove handlers
+                const live = document.getElementById(input.id + '-vis') || input;
+                settings[settingKey] = Array.from(live.querySelectorAll('.filter-input')).map(item => item.value).filter(Boolean);
             } else if (settingKey === 'preferred_filter_in' || settingKey === 'preferred_filter_out') {
-                settings[settingKey] = Array.from(input.querySelectorAll('.preferred-filter-item')).map(item => {
+                const live = document.getElementById(input.id + '-vis') || input;
+                settings[settingKey] = Array.from(live.querySelectorAll('.preferred-filter-item')).map(item => {
                     const term = item.querySelector('.filter-input').value;
                     const weight = parseInt(item.querySelector('.filter-weight').value);
                     return term && !isNaN(weight) ? [term, weight] : null;

@@ -947,6 +947,8 @@ def get_task_timings():
         'task_cleanup_debrid',
         'task_upgrade_hub_scan',
         'task_upgrade_hub_auto_queue',
+        'task_plex_smart_collection_posters',
+        'task_plex_movie_boxsets',
     }
 
     tasks_data = {
@@ -1052,7 +1054,7 @@ def get_task_timings():
              if is_content_source:
                  tasks_data['content_sources'][normalized_name] = task_info
              else:
-                 logging.warning(f"Task '{normalized_name}' looks like a content source but key '{source_key}' not found in content_sources map. Categorizing as system.")
+                 logging.debug(f"Task '{normalized_name}' looks like a content source but key '{source_key}' not found in content_sources map. Categorizing as system.")
                  tasks_data['system_tasks'][normalized_name] = task_info
         elif normalized_name in _LIBRARY_TASKS:
             tasks_data['library_tasks'][normalized_name] = task_info
@@ -1198,32 +1200,6 @@ def save_task_toggles():
             with open(toggles_file_path, 'w') as f:
                 json.dump(data_to_save, f, indent=4)
             logging.info(f"Live task toggle states saved to {toggles_file_path}")
-            
-            # Also update the main config file to reflect the current runtime state
-            try:
-                from utilities.settings import get_all_settings, save_config
-                config = get_all_settings()
-                content_sources = config.get('Content Sources', {})
-                config_updated = False
-                
-                for source, data in content_sources.items():
-                    task_name = f'task_{source}_wanted'
-                    normalized_name = runner._normalize_task_name(task_name)
-                    current_enabled = normalized_name in runner.enabled_tasks
-                    
-                    if data.get('enabled') != current_enabled:
-                        data['enabled'] = current_enabled
-                        config_updated = True
-                        logging.info(f"Updated config for {source}: enabled = {current_enabled} (to match runtime state)")
-                
-                if config_updated:
-                    save_config(config)
-                    logging.info("Updated content source enabled states in config file to match runtime state")
-                    
-            except Exception as config_error:
-                logging.error(f"Failed to update config file with runtime enabled states: {config_error}")
-                # Don't fail the entire operation if config update fails
-                
             return jsonify({'success': True, 'message': 'Task toggle states saved successfully based on live program state.'})
         except OSError as e:
              logging.error(f"Error writing task toggles file: {str(e)}")
@@ -1472,7 +1448,7 @@ def _format_task_display_name(task_name, queue_map, content_sources_map):
         # --- END EDIT ---
         else:
             # Fallback if key not found in map (shouldn't happen often if maps are synced)
-             logging.warning(f"Could not find source key '{source_key}' in content_sources_map for display name formatting.")
+             logging.debug(f"Could not find source key '{source_key}' in content_sources_map for display name formatting.")
              # Fallback to generic formatting
              display_name = source_key.replace('_', ' ').strip()
              return ' '.join(word.capitalize() for word in display_name.split()) + " (Source)"
