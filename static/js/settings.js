@@ -246,6 +246,38 @@ export function updateSettings() {
     });
 
 
+    // Handle Plex Smart Collections settings
+    if (!settingsData['Plex Smart Collections']) {
+        settingsData['Plex Smart Collections'] = {};
+    }
+    const plexSmartInputs = document.querySelectorAll('[name^="Plex Smart Collections."]');
+    plexSmartInputs.forEach(input => {
+        const parts = input.name.split('.');
+        const val = input.type === 'checkbox' ? input.checked :
+                    (input.type === 'range' || input.type === 'number') ? parseFloat(input.value) || 0 :
+                    input.value;
+        if (parts.length >= 2) {
+            settingsData['Plex Smart Collections'][parts[1]] = val;
+        }
+    });
+
+    // Handle Plex Movie Box Sets settings
+    if (!settingsData['Plex Movie Box Sets']) {
+        settingsData['Plex Movie Box Sets'] = {};
+    }
+    const plexBoxSetsInputs = document.querySelectorAll('[name^="Plex Movie Box Sets."]');
+    plexBoxSetsInputs.forEach(input => {
+        const parts = input.name.split('.');
+        const key = parts[1];
+        const val = input.type === 'checkbox' ? input.checked :
+                    (input.type === 'range' || input.type === 'number') ? parseFloat(input.value) || 0 :
+                    key === 'min_movies' ? parseInt(input.value, 10) || 2 :
+                    input.value;
+        if (parts.length >= 2) {
+            settingsData['Plex Movie Box Sets'][key] = val;
+        }
+    });
+
     // Ensure UI Settings section exists
     if (!settingsData['UI Settings']) {
         settingsData['UI Settings'] = {};
@@ -356,6 +388,8 @@ export function updateSettings() {
                     const finalKey = fieldPath[fieldPath.length - 1];
                     if (input.type === 'checkbox') {
                         current[finalKey] = input.checked;
+                    } else if (finalKey === 'poster_design') {
+                        current[finalKey] = parseInt(input.value) || 0;
                     } else {
                         current[finalKey] = input.value;
                     }
@@ -477,7 +511,7 @@ export function updateSettings() {
     }
 
     // Remove any scrapers that are not actual scrapers
-    const validScraperTypes = ['Zilean', 'MediaFusion', 'AIOStreams', 'AIOStreams-API', 'Jackett', 'Torrentio', 'Nyaa', 'OldNyaa', 'Prowlarr'];
+    const validScraperTypes = ['Zilean', 'MediaFusion', 'AIOStreams', 'AIOStreams-API', 'Jackett', 'Torrentio', 'Nyaa', 'Prowlarr'];
     if (settingsData['Scrapers'] && typeof settingsData['Scrapers'] === 'object') {
         Object.keys(settingsData['Scrapers']).forEach(key => {
             if (settingsData['Scrapers'][key] && settingsData['Scrapers'][key].type && !validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
@@ -487,7 +521,7 @@ export function updateSettings() {
     }
     
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings', 'AI Assistant'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings', 'AI Assistant', 'Plex Smart Collections', 'Plex Movie Box Sets'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
@@ -992,6 +1026,15 @@ export function updateSettings() {
     } else {
     }
 
+    // Collect NAS paths as array
+    const nasPathInputs = document.querySelectorAll('.nas-path-input');
+    if (nasPathInputs.length > 0) {
+        if (!settingsData['Debug']) settingsData['Debug'] = {};
+        settingsData['Debug']['nas_paths'] = Array.from(nasPathInputs)
+            .map(inp => inp.value.trim())
+            .filter(v => v);
+    }
+
     const animeRenamingUsingAnidb = document.getElementById('scraping-anime_renaming_using_anidb');
     
     if (animeRenamingUsingAnidb) {
@@ -1105,6 +1148,18 @@ export function updateSettings() {
     .then(response => response.json())
     .then(data => {
         console.log("Server response:", data);
+
+        // Save smart collection states AFTER main save completes (avoids race condition)
+        var smartCols = {};
+        document.querySelectorAll('.smart-coll-cb').forEach(function(cb) {
+            smartCols[cb.dataset.rk] = {enabled: cb.checked, title: cb.dataset.title, section: cb.dataset.section, type: cb.dataset.type};
+        });
+        if (Object.keys(smartCols).length > 0) {
+            fetch('/settings/api/plex-smart-collections', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({collections: smartCols})
+            }).catch(function() {});
+        }
 
         if (data.status === 'success') {
             // Determine the success message based on restart requirement
@@ -1429,3 +1484,20 @@ function saveSingleSetting(section, key, value) {
         return false;
     });
 }
+
+function addNasPath() {
+    const container = document.getElementById('nas-paths-container');
+    if (!container) return;
+    const row = document.createElement('div');
+    row.className = 'nas-path-row';
+    row.style.cssText = 'display:flex;gap:8px;margin-bottom:6px;';
+    row.innerHTML = '<input type="text" class="settings-input nas-path-input" data-section="Debug" data-key="nas_paths" placeholder="e.g. /MySamsungNAS_Movies/">' +
+                    '<button type="button" class="btn-danger" onclick="removeNasPath(this)" style="padding:4px 10px;">✕</button>';
+    container.appendChild(row);
+}
+window.addNasPath = addNasPath;
+
+function removeNasPath(btn) {
+    btn.closest('.nas-path-row').remove();
+}
+window.removeNasPath = removeNasPath;

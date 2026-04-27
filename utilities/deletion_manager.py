@@ -2458,8 +2458,11 @@ class DeletionManager:
                 aggregate_result['errors'] = [err for err in aggregate_result['errors']
                                              if 'Plex deletion disabled' not in str(err) and '400 Bad Request' not in str(err)]
             else:
-                # Not found error - this is OK, just log and continue
-                logging.info(f"[DELETE_MULTIPLE] Plex content not found (already deleted or never added) - continuing with other deletion layers")
+                # Not found error — signal the caller to prompt the user before continuing
+                logging.info(f"[DELETE_MULTIPLE] Plex content not found (already deleted or never added) - returning plex_not_found for user confirmation")
+                aggregate_result['success'] = False
+                aggregate_result['plex_not_found'] = True
+                return aggregate_result
 
         # PHASE 0: Deduplicated debrid removal - collect unique torrent IDs and remove each ONCE
         # This prevents removing the same torrent 10+ times when episodes share a torrent pack

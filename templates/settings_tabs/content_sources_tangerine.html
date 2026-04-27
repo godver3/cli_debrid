@@ -58,6 +58,8 @@
         initializeAssignUserButtons();
         initializePlexLabelsFields();
         initializeAdaptiveListButtons();
+        loadOverseerrUsers();
+        updatePlexOnlySections();
 
         const settingsContainer = document.querySelector('.settings-container');
         if (settingsContainer) {
@@ -95,16 +97,37 @@
         });
     }
 
+    // Show/hide Plex-only sections (Plex Labels, Plex Collection)
+    // Visible when: file_collection_management == 'Plex'
+    //            OR file_collection_management == 'Symlinked/Local' AND media_server_type == 'plex'
+    window.currentMediaServerType = "{{ settings.get('File Management', {}).get('media_server_type', '') }}";
+
+    function updatePlexOnlySections() {
+        const fm = window.currentFileManagementModeForSymlinkVisibility || '';
+        const ms = window.currentMediaServerType || '';
+        const show = !(fm === 'Symlinked/Local' && ms === 'jellyfin');
+        document.querySelectorAll('.plex-only-section').forEach(el => {
+            el.style.display = show ? '' : 'none';
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', updatePlexOnlySections);
+
     // Listen for changes from other tabs (specifically required.html for file management type)
     document.addEventListener('settings-changed', function(event) {
         if (event.detail.section === 'File Management' && event.detail.key === 'file_collection_management') {
-            window.currentFileManagementModeForSymlinkVisibility = event.detail.value; // Update global
+            window.currentFileManagementModeForSymlinkVisibility = event.detail.value;
             document.querySelectorAll('.settings-section[data-source-id]').forEach(section => {
                 const sourceId = section.getAttribute('data-source-id');
                 if (sourceId) {
                     updateSymlinkSubfolderVisibility(sourceId, window.currentFileManagementModeForSymlinkVisibility);
                 }
             });
+            updatePlexOnlySections();
+        }
+        if (event.detail.section === 'File Management' && event.detail.key === 'media_server_type') {
+            window.currentMediaServerType = event.detail.value;
+            updatePlexOnlySections();
         }
     });
 
@@ -718,6 +741,310 @@
         // No longer needed - each adaptive list is its own content source
         // and can be deleted using the standard "Delete Source" button
     }
+
+    // ── Overseerr requester checkboxes ────────────────────────────────────
+    function syncSelectFromCheckboxes(sourceId) {
+        const select = document.getElementById('overseerr-requesters-' + sourceId);
+        if (!select) return;
+        const checks = document.querySelectorAll('.overseerr-req-cb[data-source-id="' + sourceId + '"]');
+        Array.from(select.options).forEach(function(opt) { opt.selected = false; });
+        checks.forEach(function(cb) {
+            if (cb.checked) {
+                let opt = select.querySelector('option[value="' + CSS.escape(cb.value) + '"]');
+                if (!opt) {
+                    opt = document.createElement('option');
+                    opt.value = cb.value;
+                    select.appendChild(opt);
+                }
+                opt.selected = true;
+            }
+        });
+    }
+
+    function buildRequesterCheckboxes(sourceId, users, savedValues) {
+        const container = document.getElementById('overseerr-requesters-checks-' + sourceId);
+        const select = document.getElementById('overseerr-requesters-' + sourceId);
+        if (!container || !select) return;
+        container.innerHTML = '';
+
+        const allUsers = [{ value: '__all__', label: 'All users (normal behavior)' }]
+            .concat(users.map(function(u) {
+                const name = u.displayName || u.email || String(u.id);
+                return { value: name, label: name };
+            }));
+
+        select.innerHTML = '';
+        allUsers.forEach(function(u) {
+            const opt = document.createElement('option');
+            opt.value = u.value;
+            select.appendChild(opt);
+        });
+
+        allUsers.forEach(function(u) {
+            const isChecked = savedValues.includes(u.value);
+            const label = document.createElement('label');
+            label.style.cssText = 'display:flex;align-items:center;gap:8px;cursor:pointer;';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.value = u.value;
+            cb.checked = isChecked;
+            cb.className = 'overseerr-req-cb';
+            cb.dataset.sourceId = sourceId;
+            cb.addEventListener('change', function() {
+                if (u.value === '__all__' && cb.checked) {
+                    container.querySelectorAll('.overseerr-req-cb').forEach(function(other) {
+                        if (other.value !== '__all__') other.checked = false;
+                    });
+                }
+                if (u.value !== '__all__' && cb.checked) {
+                    const allCb = container.querySelector('.overseerr-req-cb[value="__all__"]');
+                    if (allCb) allCb.checked = false;
+                }
+                syncSelectFromCheckboxes(sourceId);
+            });
+            const opt = select.querySelector('option[value="' + u.value + '"]');
+            if (opt) opt.selected = isChecked;
+
+            const span = document.createElement('span');
+            span.textContent = u.label;
+            label.appendChild(cb);
+            label.appendChild(span);
+            container.appendChild(label);
+        });
+    }
+
+    function loadOverseerrUsers() {
+        const selects = document.querySelectorAll('.overseerr-requesters-select');
+        selects.forEach(function(select) {
+            const sourceId = select.dataset.sourceId;
+            const statusEl = document.getElementById('overseerr-requesters-status-' + sourceId);
+            const savedValues = Array.from(select.selectedOptions).map(function(o) { return o.value; });
+            const effectiveSaved = savedValues.length > 0 ? savedValues : ['__all__'];
+
+            fetch('/settings/content-sources/overseerr-users?source_id=' + encodeURIComponent(sourceId))
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    const users = (data.success && data.users) ? data.users : [];
+                    buildRequesterCheckboxes(sourceId, users, effectiveSaved);
+                    if (statusEl) {
+                        statusEl.textContent = data.success && users.length > 0
+                            ? users.length + ' user(s) loaded.'
+                            : (data.error ? 'Could not load users: ' + data.error : 'No users found — check URL and API key.');
+                    }
+                })
+                .catch(function(err) {
+                    buildRequesterCheckboxes(sourceId, [], effectiveSaved);
+                    if (statusEl) statusEl.textContent = 'Failed to reach Seerr: ' + err;
+                });
+        });
+    }
+
+    // Fire after the page settings are ready
+    document.addEventListener('DOMContentLoaded', function() {
+        loadOverseerrUsers();
+        loadCollectionPosterPickers();
+        initCollectionIconPickers();
+    });
+    // Also call after a short delay in case the tab content loads after DOMContentLoaded
+    setTimeout(function() {
+        if (document.querySelectorAll('.plex-collection-poster-picker').length > 0) {
+            loadCollectionPosterPickers();
+        }
+    }, 800);
+
+    // ── Plex Collection Poster Picker ─────────────────────────────────────────
+    let _posterDesigns = null;
+
+    async function loadCollectionPosterPickers() {
+        if (!_posterDesigns) {
+            try {
+                const resp = await fetch('/settings/content-sources/collection-poster/previews');
+                const data = await resp.json();
+                _posterDesigns = data.success ? data.designs : [];
+            } catch(e) {
+                console.error('Failed to load poster designs:', e);
+                _posterDesigns = [];
+            }
+        }
+        document.querySelectorAll('.plex-collection-poster-picker').forEach(function(picker) {
+            _renderPosterPicker(picker);
+        });
+    }
+
+    function _renderPosterPicker(picker) {
+        const sourceId = picker.dataset.sourceId;
+        const hidden = document.getElementById(`content-sources-${sourceId}-plex_collection-poster_design`);
+        const currentVal = hidden ? parseInt(hidden.value || '0') : 0;
+        picker.innerHTML = '';
+        (_posterDesigns || []).forEach(function(design) {
+            const wrap = document.createElement('div');
+            wrap.style.cssText = 'flex:0 0 auto; text-align:center; cursor:pointer;';
+            const isSelected = design.id === currentVal;
+            const img = document.createElement('img');
+            img.src = `/settings/content-sources/collection-poster/preview/${design.id}`;
+            img.alt = design.name;
+            img.style.cssText = `
+                width:240px; height:auto; border-radius:10px;
+                border:2px solid ${isSelected ? 'var(--accent-color,#e87429)' : 'rgba(255,255,255,0.1)'};
+                display:block; margin-bottom:4px; transition:border-color 0.2s;
+            `;
+            img.onerror = function() {
+                // Preview not ready yet — retry after 2 seconds (generation may still be in progress)
+                const _img = this;
+                _img.style.background='#1a1a2e';
+                setTimeout(function() {
+                    const src = _img.src;
+                    _img.src = '';
+                    _img.src = src + '?t=' + Date.now();
+                }, 2000);
+            };
+            const label = document.createElement('div');
+            label.textContent = design.name;
+            label.style.cssText = `font-size:0.7em; color:${isSelected ? 'var(--accent-color,#e87429)' : '#aaa'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:244px;`;
+            wrap.appendChild(img);
+            wrap.appendChild(label);
+            wrap.addEventListener('click', function() {
+                if (hidden) hidden.value = design.id;
+                // Update borders
+                picker.querySelectorAll('img').forEach(i => {
+                    i.style.borderColor = 'rgba(255,255,255,0.1)';
+                    i.nextElementSibling.style.color = '#aaa';
+                });
+                img.style.borderColor = 'var(--accent-color,#e87429)';
+                label.style.color = 'var(--accent-color,#e87429)';
+                // Trigger change for save detection
+                if (hidden) hidden.dispatchEvent(new Event('change', {bubbles: true}));
+            });
+            picker.appendChild(wrap);
+        });
+    }
+
+    // ── Plex Collection Icon Picker ───────────────────────────────────────────
+    let _iconPickerTargetSourceId = null;
+
+    function initCollectionIconPickers() {
+        // Inject mini logo picker modal once
+        if (!document.getElementById('plex-coll-logo-modal')) {
+            const modal = document.createElement('div');
+            modal.id = 'plex-coll-logo-modal';
+            modal.style.cssText = 'display:none; position:fixed; inset:0; z-index:9999; background:rgba(0,0,0,0.7); align-items:center; justify-content:center;';
+            modal.innerHTML = `
+                <div style="background:#1a1a2a; border:1px solid rgba(255,255,255,0.1); border-radius:12px; width:min(900px,95vw); max-height:85vh; display:flex; flex-direction:column; overflow:hidden;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.08);">
+                        <span style="font-weight:600; font-size:1em; color:#fff;">Choose Icon</span>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <input type="text" id="plex-coll-logo-search" placeholder="Search logos..." style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:6px; padding:6px 12px; color:#ddd; font-size:0.85em; width:200px;">
+                            <button onclick="document.getElementById('plex-coll-logo-modal').style.display='none'" style="background:none; border:none; color:#888; font-size:1.4em; cursor:pointer; line-height:1;">✕</button>
+                        </div>
+                    </div>
+                    <div style="display:flex; gap:0; flex:1; overflow:hidden;">
+                        <div id="plex-coll-logo-cats" style="width:140px; flex-shrink:0; border-right:1px solid rgba(255,255,255,0.08); overflow-y:auto; padding:8px 0;"></div>
+                        <div id="plex-coll-logo-grid" style="flex:1; overflow-y:auto; padding:16px; display:grid; grid-template-columns:repeat(auto-fill,minmax(80px,1fr)); gap:10px; align-content:start;"></div>
+                    </div>
+                    <div style="padding:12px 20px; border-top:1px solid rgba(255,255,255,0.08); display:flex; justify-content:space-between; align-items:center;">
+                        <button onclick="_clearCollIcon()" style="background:none; border:1px solid rgba(255,0,0,0.3); border-radius:6px; padding:6px 14px; color:#f66; cursor:pointer; font-size:0.85em;">Clear (use default)</button>
+                        <button onclick="document.getElementById('plex-coll-logo-modal').style.display='none'" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); border-radius:6px; padding:6px 14px; color:#ddd; cursor:pointer; font-size:0.85em;">Cancel</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(modal);
+            modal.addEventListener('click', function(e) { if (e.target === modal) modal.style.display='none'; });
+            document.getElementById('plex-coll-logo-search').addEventListener('input', function() { _filterCollLogos(this.value); });
+        }
+
+        document.querySelectorAll('.plex-collection-icon-picker-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                _iconPickerTargetSourceId = btn.dataset.sourceId;
+                _openCollIconPicker();
+            });
+        });
+    }
+
+    let _collLogosCache = null;
+    let _collActiveCat = 'rating';
+
+    async function _openCollIconPicker() {
+        const modal = document.getElementById('plex-coll-logo-modal');
+        modal.style.display = 'flex';
+        if (!_collLogosCache) {
+            document.getElementById('plex-coll-logo-grid').innerHTML = '<div style="color:#888; padding:20px;">Loading...</div>';
+            try {
+                const resp = await fetch('/api/overlays/logos');
+                _collLogosCache = (await resp.json()).categories || [];
+            } catch(e) { _collLogosCache = []; }
+        }
+        _renderCollCats();
+        _renderCollLogos(_collActiveCat);
+    }
+
+    function _renderCollCats() {
+        const el = document.getElementById('plex-coll-logo-cats');
+        el.innerHTML = '';
+        (_collLogosCache || []).forEach(function(cat) {
+            const btn = document.createElement('button');
+            btn.textContent = cat.name;
+            btn.style.cssText = `display:block; width:100%; text-align:left; padding:8px 16px; background:${cat.name===_collActiveCat?'rgba(255,255,255,0.08)':'none'}; border:none; color:${cat.name===_collActiveCat?'#fff':'#aaa'}; cursor:pointer; font-size:0.82em; transition:background 0.15s;`;
+            btn.onclick = function() { _collActiveCat = cat.name; _renderCollCats(); _renderCollLogos(cat.name); };
+            el.appendChild(btn);
+        });
+    }
+
+    function _renderCollLogos(catName, filter) {
+        const grid = document.getElementById('plex-coll-logo-grid');
+        grid.innerHTML = '';
+        const cat = (_collLogosCache || []).find(c => c.name === catName);
+        if (!cat) return;
+        const logos = cat.groups ? cat.groups.flatMap(g => g.logos || []) : (cat.logos || []);
+        logos.filter(l => !filter || l.name.toLowerCase().includes(filter.toLowerCase())).forEach(function(logo) {
+            const wrap = document.createElement('div');
+            wrap.style.cssText = 'text-align:center; cursor:pointer; padding:8px; border-radius:8px; background:rgba(255,255,255,0.03); transition:background 0.15s;';
+            wrap.onmouseover = function() { this.style.background='rgba(255,255,255,0.08)'; };
+            wrap.onmouseout = function() { this.style.background='rgba(255,255,255,0.03)'; };
+            const img = document.createElement('img');
+            img.src = logo.url || `/api/overlays/logos/serve/${logo.path}`;
+            img.style.cssText = 'width:48px; height:48px; object-fit:contain; display:block; margin:0 auto 4px;';
+            img.onerror = function() { this.style.display='none'; };
+            const label = document.createElement('div');
+            label.textContent = logo.name;
+            label.style.cssText = 'font-size:0.65em; color:#888; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+            wrap.appendChild(img); wrap.appendChild(label);
+            wrap.onclick = function() { _selectCollIcon(logo.path || logo.url); };
+            grid.appendChild(wrap);
+        });
+        if (!grid.children.length) grid.innerHTML = '<div style="color:#666; padding:20px; font-size:0.85em;">No logos found</div>';
+    }
+
+    function _filterCollLogos(q) {
+        _renderCollLogos(_collActiveCat, q);
+    }
+
+    function _selectCollIcon(path) {
+        if (!_iconPickerTargetSourceId) return;
+        const hidden = document.getElementById(`content-sources-${_iconPickerTargetSourceId}-plex_collection-poster_icon`);
+        if (hidden) { hidden.value = path; hidden.dispatchEvent(new Event('change', {bubbles:true})); }
+        // Update button preview
+        const btn = document.querySelector(`.plex-collection-icon-picker-btn[data-source-id="${_iconPickerTargetSourceId}"]`);
+        if (btn) {
+            const preview = btn.querySelector('.plex-coll-icon-preview');
+            const label = btn.querySelector('span:last-child');
+            if (preview) preview.innerHTML = `<img src="/api/overlays/logos/serve/${path}" style="max-width:28px;max-height:28px;object-fit:contain;" alt=""><svg style="margin-left:4px;opacity:0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
+            if (label) label.textContent = path.split('/').pop();
+        }
+        document.getElementById('plex-coll-logo-modal').style.display = 'none';
+    }
+
+    function _clearCollIcon() {
+        if (!_iconPickerTargetSourceId) return;
+        const hidden = document.getElementById(`content-sources-${_iconPickerTargetSourceId}-plex_collection-poster_icon`);
+        if (hidden) { hidden.value = ''; hidden.dispatchEvent(new Event('change', {bubbles:true})); }
+        const btn = document.querySelector(`.plex-collection-icon-picker-btn[data-source-id="${_iconPickerTargetSourceId}"]`);
+        if (btn) {
+            const preview = btn.querySelector('.plex-coll-icon-preview');
+            const label = btn.querySelector('span:last-child');
+            if (preview) preview.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`;
+            if (label) label.textContent = 'Choose icon from library';
+        }
+        document.getElementById('plex-coll-logo-modal').style.display = 'none';
+    }
 </script>
 
 <style>
@@ -851,7 +1178,7 @@
                                 {% endif %}
                             </h4>
                         </div>
-                        <span class="content-source-type source-type">{{ config.type }}{% if config.type == 'MDBList' %}/JSON list{% endif %}</span>
+                        <span class="content-source-type source-type">{% if config.type == 'Overseerr' %}Seerr{% elif config.type == 'MDBList' %}MDBList/JSON list{% else %}{{ config.type }}{% endif %}</span>
                         {% if not has_enabled_versions %}
                             <span class="no-versions-warning">
                                 <span class="no-versions-warning-icon">⚠️</span>
@@ -1077,7 +1404,7 @@
                             {% set plex_labels_config = config.get('plex_labels', {}) if config.get('plex_labels', {}) is mapping else {} %}
                             {% set plex_labels_schema = settings_schema['Content Sources'].schema[source_type]['plex_labels'].schema %}
 
-                            <div class="settings-form-group" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
+                            <div class="settings-form-group plex-only-section" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
                                 <h5 style="margin-bottom: 10px; color: #f4f4f4;">Plex Labels Configuration</h5>
                                 <p class="settings-description" style="margin-bottom: 15px;">
                                     Configure automatic Plex label assignment for items from this source. Labels help organize your Plex library and can be used for collections or filtering. More Plex label functions can be found on debug functions page.
@@ -1361,7 +1688,7 @@
                             {% set plex_labels_config = config.get('plex_labels', {}) if config.get('plex_labels', {}) is mapping else {} %}
                             {% set plex_labels_schema = settings_schema['Content Sources'].schema[source_type]['plex_labels'].schema %}
 
-                            <div class="settings-form-group" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
+                            <div class="settings-form-group plex-only-section" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
                                 <h5 style="margin-bottom: 10px; color: #f4f4f4;">Plex Labels Configuration</h5>
                                 <p class="settings-description" style="margin-bottom: 15px;">
                                     Configure automatic Plex label assignment for items from this source. Labels help organize your Plex library and can be used for collections or filtering. More Plex label functions can be found on debug functions page.
@@ -1426,9 +1753,11 @@
                     {% else %}
                         {# --- Render fields using the GENERAL loop for other types --- #}
                         {% for key, value in config.items() %}
-                            {# Skip standard 'type' field #}
-                            {% if key != 'type' %}
-                                <div class="settings-form-group"> {# Ensure each standard field is wrapped #}
+                            {# Skip standard 'type' field and any empty/invalid keys #}
+                            {% if key and key != 'type' %}
+                                {% set _skip = key in ['enabled', 'plex_labels', 'label_mode', 'fixed_label', 'label_template', 'allow_specials', 'unblacklist_on_source_run', 'plex_collection', 'allowed_requesters'] or (key == 'ignore_tags' and config.type == 'Overseerr') %}
+                                {% if not _skip %}
+                                <div class="settings-form-group">
                                     {% if key == 'versions' %}
                                          {# ... versions rendering ... #}
                                          <label class="settings-title">Versions:</label>
@@ -1482,6 +1811,8 @@
                                         {# Skip enabled field - it's handled in Task Manager #}
                                     {% elif key == 'plex_labels' %}
                                         {# Skip plex_labels - it's handled by a dedicated block later #}
+                                    {% elif key == 'plex_collection' %}
+                                        {# Skip plex_collection - it's handled by a dedicated block later #}
                                     {% elif key in ['label_mode', 'fixed_label', 'label_template'] %}
                                         {# Skip plex_labels nested fields - they're part of plex_labels dict #}
                                     {% elif key == 'allow_specials' %}
@@ -1600,9 +1931,38 @@
                                              <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
                                          {% endif %}
                                     {% endif %}
-                                </div> {# End .settings-form-group for general fields #}
+                                </div>
+                                {% endif %} {# End .settings-form-group for general fields #}
                             {% endif %} {# End if key != 'type' #}
                         {% endfor %}
+
+                        {# Requesters — Overseerr only, rendered explicitly so it always appears even if key missing from saved config #}
+                        {% if config.type == 'Overseerr' %}
+                        <div class="settings-form-group">
+                            <label class="settings-title">Requesters:</label>
+                            {% set current_requesters = config.get('allowed_requesters', ['__all__']) %}
+                            {% if not current_requesters %}{% set current_requesters = ['__all__'] %}{% endif %}
+                            <select id="overseerr-requesters-{{ source_id }}"
+                                    name="Content Sources.{{ source_id }}.allowed_requesters"
+                                    multiple
+                                    class="overseerr-requesters-select"
+                                    data-section="Content Sources"
+                                    data-key="{{ source_id }}.allowed_requesters"
+                                    data-source-id="{{ source_id }}"
+                                    style="display:none;">
+                                {% for requester in current_requesters %}
+                                <option value="{{ requester }}" selected>{{ requester }}</option>
+                                {% endfor %}
+                            </select>
+                            <div id="overseerr-requesters-checks-{{ source_id }}"
+                                 class="overseerr-requesters-checks"
+                                 data-source-id="{{ source_id }}"
+                                 style="display:flex;flex-direction:column;gap:6px;margin-top:4px;">
+                            </div>
+                            <p class="settings-description" id="overseerr-requesters-status-{{ source_id }}" style="margin-top:6px;font-style:italic;color:#888;">Loading users from Overseerr...</p>
+                            <p class="settings-description" style="margin-top:4px;">Select which Overseerr users' requests this source should process. <strong>All users (normal behavior)</strong> processes every request. Each user group with a different version preference should have its own content source.</p>
+                        </div>
+                        {% endif %}
 
                         {# Render 'allow_specials' generally if applicable (might be redundant if handled above, but safe) #}
                          {% set source_type = config.type %}
@@ -1649,7 +2009,7 @@
                             {% set plex_labels_config = config.get('plex_labels', {}) if config.get('plex_labels', {}) is mapping else {} %}
                             {% set plex_labels_schema = settings_schema['Content Sources'].schema[source_type]['plex_labels'].schema %}
 
-                            <div class="settings-form-group" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
+                            <div class="settings-form-group plex-only-section" style="border-top: 1px solid #444; padding-top: 15px; margin-top: 15px;">
                                 <h5 style="margin-bottom: 10px; color: #f4f4f4;">Plex Labels Configuration</h5>
                                 <p class="settings-description" style="margin-bottom: 15px;">
                                     Configure automatic Plex label assignment for items from this source. Labels help organize your Plex library and can be used for collections or filtering. More Plex label functions can be found on debug functions page.
@@ -1712,6 +2072,255 @@
                         {% endif %}
 
                     {% endif %}
+
+                        {# Plex Collection block — shown for sources that have plex_collection in schema #}
+                        {% set source_type_pc = config.type %}
+                        {% if settings_schema['Content Sources'].schema is defined and
+                              source_type_pc in settings_schema['Content Sources'].schema and
+                              'plex_collection' in settings_schema['Content Sources'].schema[source_type_pc] %}
+                            {% set plex_coll_config = config.get("plex_collection", {}) %}{% if plex_coll_config is not mapping %}{% set plex_coll_config = {} %}{% endif %}
+                            <div class="settings-form-group plex-only-section" style="border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px; margin-top: 15px;">
+                                <h5 style="margin-bottom: 10px;">Plex Collection</h5>
+                                <p class="settings-description" style="margin-bottom: 15px;">
+                                    Automatically create and maintain a Plex collection that mirrors this source list order.
+                                </p>
+                                <div class="settings-form-group">
+                                    <label class="settings-title">
+                                        <input type="checkbox"
+                                               id="content-sources-{{ source_id }}-plex_collection-enabled"
+                                               name="Content Sources.{{ source_id }}.plex_collection.enabled"
+                                               data-section="Content Sources"
+                                               data-key="{{ source_id }}.plex_collection.enabled"
+                                               {% if plex_coll_config.get('enabled', False) %}checked{% endif %}>
+                                        Enable Plex Collection
+                                    </label>
+                                    <p class="settings-description">Sync this source list as a Plex collection in order</p>
+                                </div>
+                                <div class="settings-form-group">
+                                    <label for="content-sources-{{ source_id }}-plex_collection-collection_name" class="settings-title">Collection Name:</label>
+                                    <input type="text"
+                                           id="content-sources-{{ source_id }}-plex_collection-collection_name"
+                                           name="Content Sources.{{ source_id }}.plex_collection.collection_name"
+                                           value="{{ plex_coll_config.get('collection_name', '') }}"
+                                           class="settings-input"
+                                           data-section="Content Sources"
+                                           data-key="{{ source_id }}.plex_collection.collection_name"
+                                           placeholder="{{ config.get('display_name', source_id) }}">
+                                    <p class="settings-description">Collection name. Defaults to display name. For mixed (Movies+Shows) lists, ' Movies' and ' Shows' are added automatically unless overridden below.</p>
+                                </div>
+                                {% if config.get('media_type', 'All')|lower == 'all' %}
+                                <div class="settings-form-group">
+                                    <label for="content-sources-{{ source_id }}-plex_collection-collection_name_movies" class="settings-title">Movies Collection Name Override:</label>
+                                    <input type="text"
+                                           id="content-sources-{{ source_id }}-plex_collection-collection_name_movies"
+                                           name="Content Sources.{{ source_id }}.plex_collection.collection_name_movies"
+                                           value="{{ plex_coll_config.get('collection_name_movies', '') }}"
+                                           class="settings-input"
+                                           data-section="Content Sources"
+                                           data-key="{{ source_id }}.plex_collection.collection_name_movies"
+                                           placeholder="Leave empty for auto: '{{ config.get('display_name', source_id) }} Movies'">
+                                    <p class="settings-description">Override collection name for movies in a mixed list. Leave empty to use auto-suffix.</p>
+                                </div>
+                                <div class="settings-form-group">
+                                    <label for="content-sources-{{ source_id }}-plex_collection-collection_name_shows" class="settings-title">Shows Collection Name Override:</label>
+                                    <input type="text"
+                                           id="content-sources-{{ source_id }}-plex_collection-collection_name_shows"
+                                           name="Content Sources.{{ source_id }}.plex_collection.collection_name_shows"
+                                           value="{{ plex_coll_config.get('collection_name_shows', '') }}"
+                                           class="settings-input"
+                                           data-section="Content Sources"
+                                           data-key="{{ source_id }}.plex_collection.collection_name_shows"
+                                           placeholder="Leave empty for auto: '{{ config.get('display_name', source_id) }} Shows'">
+                                    <p class="settings-description">Override collection name for shows in a mixed list. Leave empty to use auto-suffix.</p>
+                                </div>
+                                {% endif %}
+                                <div class="settings-form-group">
+                                    <label for="content-sources-{{ source_id }}-plex_collection-sort_prefix" class="settings-title">Sort Prefix:</label>
+                                    <input type="text"
+                                           id="content-sources-{{ source_id }}-plex_collection-sort_prefix"
+                                           name="Content Sources.{{ source_id }}.plex_collection.sort_prefix"
+                                           value="{{ plex_coll_config.get('sort_prefix', '!!!!') }}"
+                                           class="settings-input"
+                                           data-section="Content Sources"
+                                           data-key="{{ source_id }}.plex_collection.sort_prefix"
+                                           placeholder="!"
+                                           style="max-width: 80px;">
+                                    <p class="settings-description">Prefix added to the sort title so the collection appears at the top of Plex's collection list (e.g. <strong>!</strong> gives sort title <strong>!My List</strong>). Leave empty to sort normally.</p>
+                                </div>
+                                <div class="settings-form-group">
+                                    <label for="content-sources-{{ source_id }}-plex_collection-sort_by" class="settings-title">Sort By:</label>
+                                    <select id="content-sources-{{ source_id }}-plex_collection-sort_by"
+                                            name="Content Sources.{{ source_id }}.plex_collection.sort_by"
+                                            class="settings-input"
+                                            data-section="Content Sources"
+                                            data-key="{{ source_id }}.plex_collection.sort_by">
+                                        <option value="default" {% if plex_coll_config.get('sort_by', 'default') == 'default' %}selected{% endif %}>Default (source order)</option>
+                                        <option value="title" {% if plex_coll_config.get('sort_by') == 'title' %}selected{% endif %}>Title</option>
+                                        <option value="year" {% if plex_coll_config.get('sort_by') == 'year' %}selected{% endif %}>Year</option>
+                                        <option value="release_date" {% if plex_coll_config.get('sort_by') == 'release_date' %}selected{% endif %}>Release Date</option>
+                                        <option value="collected_at" {% if plex_coll_config.get('sort_by') == 'collected_at' %}selected{% endif %}>Date Collected</option>
+                                        <option value="runtime" {% if plex_coll_config.get('sort_by') == 'runtime' %}selected{% endif %}>Runtime</option>
+                                        <option value="random" {% if plex_coll_config.get('sort_by') == 'random' %}selected{% endif %}>Randomly (re-shuffles each sync — avoid for large lists)</option>
+                                        {% if config.type == 'Trakt Lists' %}
+                                        <option value="rank" {% if plex_coll_config.get('sort_by') == 'rank' %}selected{% endif %}>Rank</option>
+                                        <option value="added" {% if plex_coll_config.get('sort_by') == 'added' %}selected{% endif %}>Date Added to List</option>
+                                        <option value="released" {% if plex_coll_config.get('sort_by') == 'released' %}selected{% endif %}>Release Date (Trakt)</option>
+                                        <option value="popularity" {% if plex_coll_config.get('sort_by') == 'popularity' %}selected{% endif %}>Popularity</option>
+                                        <option value="percentage" {% if plex_coll_config.get('sort_by') == 'percentage' %}selected{% endif %}>Trakt Percentage</option>
+                                        <option value="votes" {% if plex_coll_config.get('sort_by') == 'votes' %}selected{% endif %}>Votes (VIP)</option>
+                                        <option value="my_rating" {% if plex_coll_config.get('sort_by') == 'my_rating' %}selected{% endif %}>My Rating</option>
+                                        <option value="watched" {% if plex_coll_config.get('sort_by') == 'watched' %}selected{% endif %}>Watched</option>
+                                        <option value="collected" {% if plex_coll_config.get('sort_by') == 'collected' %}selected{% endif %}>Collected</option>
+                                        <option value="imdb_rating" {% if plex_coll_config.get('sort_by') == 'imdb_rating' %}selected{% endif %}>IMDb Rating (VIP)</option>
+                                        <option value="tmdb_rating" {% if plex_coll_config.get('sort_by') == 'tmdb_rating' %}selected{% endif %}>TMDb Rating (VIP)</option>
+                                        <option value="rt_tomatometer" {% if plex_coll_config.get('sort_by') == 'rt_tomatometer' %}selected{% endif %}>RT Tomatometer (VIP)</option>
+                                        <option value="rt_audience" {% if plex_coll_config.get('sort_by') == 'rt_audience' %}selected{% endif %}>RT Audience (VIP)</option>
+                                        <option value="metascore" {% if plex_coll_config.get('sort_by') == 'metascore' %}selected{% endif %}>Metascore (VIP)</option>
+                                        <option value="imdb_votes" {% if plex_coll_config.get('sort_by') == 'imdb_votes' %}selected{% endif %}>IMDb Votes (VIP)</option>
+                                        <option value="tmdb_votes" {% if plex_coll_config.get('sort_by') == 'tmdb_votes' %}selected{% endif %}>TMDb Votes (VIP)</option>
+                                        {% endif %}
+                                    </select>
+                                    <p class="settings-description">Order of items in the Plex collection. "Default" uses the source list order. Trakt sorting is handled server-side. VIP-only sorts fall back to rank for non-VIP accounts.</p>
+                                </div>
+                                <div class="settings-form-group">
+                                    <label for="content-sources-{{ source_id }}-plex_collection-sort_how" class="settings-title">Sort Direction:</label>
+                                    <select id="content-sources-{{ source_id }}-plex_collection-sort_how"
+                                            name="Content Sources.{{ source_id }}.plex_collection.sort_how"
+                                            class="settings-input"
+                                            data-section="Content Sources"
+                                            data-key="{{ source_id }}.plex_collection.sort_how">
+                                        <option value="asc" {% if plex_coll_config.get('sort_how', 'asc') == 'asc' %}selected{% endif %}>Ascending</option>
+                                        <option value="desc" {% if plex_coll_config.get('sort_how', 'asc') == 'desc' %}selected{% endif %}>Descending</option>
+                                    </select>
+                                </div>
+
+                                {# ── Poster Design ── #}
+                                <div class="settings-form-group" style="margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.07);">
+                                    <label class="settings-title">Poster Design:</label>
+                                    <p class="settings-description" style="margin-bottom: 10px;">Select a custom poster for this collection. Click a design to select it. Leave on "None" to use the Plex default poster.</p>
+                                    <div class="plex-collection-poster-picker" data-source-id="{{ source_id }}"
+                                         style="display:flex; gap:10px; overflow-x:auto; padding:6px 2px 12px; scrollbar-width:thin; min-height:380px;">
+                                        {# Designs 0-8 rendered by JS after previews load #}
+                                        <div class="poster-loading-placeholder" style="color:#888; font-size:0.85em; padding:8px;">Loading designs...</div>
+                                    </div>
+                                    <input type="hidden"
+                                           id="content-sources-{{ source_id }}-plex_collection-poster_design"
+                                           name="Content Sources.{{ source_id }}.plex_collection.poster_design"
+                                           data-section="Content Sources"
+                                           data-key="{{ source_id }}.plex_collection.poster_design"
+                                           value="{{ plex_coll_config.get('poster_design', 0) }}">
+                                </div>
+
+                                {# ── Poster Accent Color ── #}
+                                <div class="settings-form-group">
+                                    <label for="content-sources-{{ source_id }}-plex_collection-poster_accent" class="settings-title">Poster Accent Color:</label>
+                                    <div style="display:flex; align-items:center; gap:10px;">
+                                        <input type="color"
+                                               id="content-sources-{{ source_id }}-plex_collection-poster_accent"
+                                               name="Content Sources.{{ source_id }}.plex_collection.poster_accent"
+                                               data-section="Content Sources"
+                                               data-key="{{ source_id }}.plex_collection.poster_accent"
+                                               value="{{ plex_coll_config.get('poster_accent', '') }}"
+                                               style="width:44px; height:36px; border:none; background:none; cursor:pointer; border-radius:6px;{% if not plex_coll_config.get('poster_accent') %} opacity:0.4;{% endif %}">
+                                        <span style="font-size:0.85em; color:#888;">{{ plex_coll_config.get('poster_accent', '') or 'Design default' }}</span>
+                                        {% if plex_coll_config.get('poster_accent') %}
+                                        <button type="button"
+                                                onclick="(function(){var inp=document.getElementById('content-sources-{{ source_id }}-plex_collection-poster_accent'); inp.value=''; inp.dispatchEvent(new Event('input',{bubbles:true})); inp.dispatchEvent(new Event('change',{bubbles:true})); inp.style.opacity='0.4'; inp.nextElementSibling.textContent='Design default'; this.style.display='none';}).call(this)"
+                                                style="font-size:0.75em; padding:3px 8px; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); border-radius:4px; color:#aaa; cursor:pointer;">
+                                            Use default
+                                        </button>
+                                        {% endif %}
+                                    </div>
+                                    <p class="settings-description">Accent color used throughout the poster design. Leave unset to use the layout's default color.</p>
+                                </div>
+
+                                {# ── Poster Card Overlay Opacity ── #}
+                                <div class="settings-form-group">
+                                    <label class="settings-title">Card Overlay Opacity: <span id="overlay-opacity-val-{{ source_id }}">{{ plex_coll_config.get('poster_overlay_opacity', 60) }}%</span></label>
+                                    <input type="range" min="0" max="100" step="5"
+                                           id="content-sources-{{ source_id }}-plex_collection-poster_overlay_opacity"
+                                           name="Content Sources.{{ source_id }}.plex_collection.poster_overlay_opacity"
+                                           data-section="Content Sources"
+                                           data-key="{{ source_id }}.plex_collection.poster_overlay_opacity"
+                                           value="{{ plex_coll_config.get('poster_overlay_opacity', 60) }}"
+                                           style="width:100%; accent-color:var(--accent-color,#e87429);"
+                                           oninput="document.getElementById('overlay-opacity-val-{{ source_id }}').textContent=this.value+'%'">
+                                    <p class="settings-description">Dark gradient fade at the bottom of each movie/show card inside the poster. Higher = darker fade over the card art.</p>
+                                </div>
+
+                                {# ── Poster Accent Glow Opacity ── #}
+                                <div class="settings-form-group">
+                                    <label class="settings-title">Accent Glow Opacity: <span id="glow-opacity-val-{{ source_id }}">{{ plex_coll_config.get('poster_glow_opacity', 80) }}%</span></label>
+                                    <input type="range" min="0" max="100" step="5"
+                                           id="content-sources-{{ source_id }}-plex_collection-poster_glow_opacity"
+                                           name="Content Sources.{{ source_id }}.plex_collection.poster_glow_opacity"
+                                           data-section="Content Sources"
+                                           data-key="{{ source_id }}.plex_collection.poster_glow_opacity"
+                                           value="{{ plex_coll_config.get('poster_glow_opacity', 80) }}"
+                                           style="width:100%; accent-color:var(--accent-color,#e87429);"
+                                           oninput="document.getElementById('glow-opacity-val-{{ source_id }}').textContent=this.value+'%'">
+                                    <p class="settings-description">Intensity of the accent color glow around the edges of the poster background. Higher = more vivid color, lower = more subtle.</p>
+                                </div>
+
+                                {# ── Poster Glow Radius ── #}
+                                <div class="settings-form-group">
+                                    <label class="settings-title">Accent Glow Radius: <span id="glow-radius-val-{{ source_id }}">{{ plex_coll_config.get('poster_glow_radius', 55) }}</span></label>
+                                    <input type="range" min="10" max="200" step="5"
+                                           id="content-sources-{{ source_id }}-plex_collection-poster_glow_radius"
+                                           name="Content Sources.{{ source_id }}.plex_collection.poster_glow_radius"
+                                           data-section="Content Sources"
+                                           data-key="{{ source_id }}.plex_collection.poster_glow_radius"
+                                           value="{{ plex_coll_config.get('poster_glow_radius', 55) }}"
+                                           style="width:100%; accent-color:var(--accent-color,#e87429);"
+                                           oninput="document.getElementById('glow-radius-val-{{ source_id }}').textContent=this.value">
+                                    <p class="settings-description">How far the accent color glow spreads across the poster. Default 55 = tight glow near edges. Higher values (e.g. 150) spread the color across more of the poster.</p>
+                                </div>
+
+                                {# ── Poster Eyebrow Text ── #}
+                                <div class="settings-form-group">
+                                    <label for="content-sources-{{ source_id }}-plex_collection-poster_eyebrow" class="settings-title">Eyebrow Text:</label>
+                                    <input type="text"
+                                           id="content-sources-{{ source_id }}-plex_collection-poster_eyebrow"
+                                           name="Content Sources.{{ source_id }}.plex_collection.poster_eyebrow"
+                                           value="{{ plex_coll_config.get('poster_eyebrow', '') }}"
+                                           class="settings-input"
+                                           data-section="Content Sources"
+                                           data-key="{{ source_id }}.plex_collection.poster_eyebrow"
+                                           placeholder="e.g. PERSONAL COLLECTION (optional)">
+                                    <p class="settings-description">Small text above the collection title. Leave blank to hide.</p>
+                                </div>
+
+                                {# ── Poster Icon ── #}
+                                <div class="settings-form-group">
+                                    <label class="settings-title">Poster Icon:</label>
+                                    <input type="hidden"
+                                           id="content-sources-{{ source_id }}-plex_collection-poster_icon"
+                                           name="Content Sources.{{ source_id }}.plex_collection.poster_icon"
+                                           data-section="Content Sources"
+                                           data-key="{{ source_id }}.plex_collection.poster_icon"
+                                           value="{{ plex_coll_config.get('poster_icon', '') }}">
+                                    <button type="button"
+                                            class="plex-collection-icon-picker-btn"
+                                            data-source-id="{{ source_id }}"
+                                            style="display:flex; align-items:center; gap:10px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:8px 14px; cursor:pointer; color:#ddd; font-size:0.9em; transition:border-color 0.2s;"
+                                            onmouseover="this.style.borderColor='var(--accent-color,#e87429)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.1)'">
+                                        <span class="plex-coll-icon-preview" data-source-id="{{ source_id }}"
+                                              style="display:flex; align-items:center; justify-content:center; width:28px; height:28px; flex-shrink:0;">
+                                            {% if plex_coll_config.get('poster_icon') %}
+                                            <img src="/api/overlays/logos/serve/{{ plex_coll_config.get('poster_icon') }}"
+                                                 style="max-width:28px; max-height:28px; object-fit:contain;" alt="">
+                                            <svg style="margin-left:4px;opacity:0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                                            {% else %}
+                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                                            {% endif %}
+                                        </span>
+                                        <span>{% if plex_coll_config.get('poster_icon') %}{{ plex_coll_config.get('poster_icon').split('/')[-1] }}{% else %}Choose icon from library{% endif %}</span>
+                                    </button>
+                                    <p class="settings-description" style="margin-top:6px;">Icon shown on the poster. Leave blank to use the source default (Trakt / MDBList / CLI icon).</p>
+                                </div>
+                            </div>
+                        {% endif %}
+
                     {# --- END: Conditional Rendering based on Type --- #}
 
                 </div> {# End of settings-section-content #}

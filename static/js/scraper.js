@@ -671,7 +671,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
             }
 
             // Strip asterisks from version for comparison
-            const cleanVersion = version.replace(/\*/g, '');
+            const cleanVersion = version ? version.replace(/\*/g, '') : '';
 
             // Generate version options HTML
             const versionOptionsHTML = versionsToUse.map(v =>

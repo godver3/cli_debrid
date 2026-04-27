@@ -1268,8 +1268,8 @@ def refresh_release_dates():
                         logging.warning(f"Invalid release date format: {new_release_date}. Keeping state as {new_state}")
                         new_state = "Wanted"
                 else:
-                    new_state = "Wanted"
-                    logging.info(f"No valid release dates found, setting state to Wanted")
+                    new_state = "Unreleased"
+                    logging.info(f"No valid release dates found, setting state to Unreleased")
                 
                 new_airtime = None
 

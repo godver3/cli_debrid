@@ -264,6 +264,33 @@ def save_config(config):
                 except Exception as e:
                     logging.error(f"Failed to delete poster cache: {e}")
 
+        # Clear poster hash for any source whose plex_collection poster settings changed
+        try:
+            _POSTER_KEYS = {'poster_design', 'poster_accent', 'poster_eyebrow', 'poster_icon', 'poster_overlay_opacity', 'poster_glow_opacity', 'poster_glow_radius', 'collection_name'}
+            old_sources = previous_config.get('Content Sources', {})
+            new_sources = config.get('Content Sources', {})
+            _state_file = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'plex_collection_state.json')
+            if os.path.exists(_state_file):
+                import json as _json
+                with open(_state_file) as _sf:
+                    _state = _json.load(_sf)
+                _changed = False
+                for src_id, new_src in new_sources.items():
+                    old_src = old_sources.get(src_id, {})
+                    old_pc = old_src.get('plex_collection', {}) if isinstance(old_src, dict) else {}
+                    new_pc = new_src.get('plex_collection', {}) if isinstance(new_src, dict) else {}
+                    if any(old_pc.get(k) != new_pc.get(k) for k in _POSTER_KEYS):
+                        if src_id in _state:
+                            _state[src_id].pop('poster_hash', None)
+                            _state[src_id].pop('poster_has_thumbs', None)
+                            _changed = True
+                            logging.info(f"[PlexCollections] Cleared poster hash for {src_id} due to settings change")
+                if _changed:
+                    with open(_state_file, 'w') as _sf:
+                        _json.dump(_state, _sf, indent=2)
+        except Exception as _e:
+            logging.warning(f"[PlexCollections] Failed to clear poster hashes on save: {_e}")
+
         # Save the new config
         with open(CONFIG_FILE, 'w') as file:
             # Move file pointer to beginning and truncate before writing

@@ -885,6 +885,11 @@ SETTINGS_SCHEMA = {
             "description": "Enable checking and fixing of unmatched or incorrectly matched items in Plex during collection scans",
             "default": True
         },
+        "nas_paths": {
+            "type": "list",
+            "description": "List of path prefixes that identify NAS or network drive locations (e.g. /MySamsungNAS_Movies/). Used to detect and optionally filter NAS items in Debrid Manager and other tools. Falls back to smart detection if not configured.",
+            "default": []
+        },
         "ignore_wanted_queue_throttling": {
             "type": "boolean",
             "description": "Ignore Wanted Queue throttling limits (WANTED_THROTTLE_SCRAPING_SIZE and SCRAPING_QUEUE_MAX_SIZE). Allows Wanted queue to move all eligible items to Scraping regardless of Scraping queue size. USE WITH CAUTION.",
@@ -1122,6 +1127,70 @@ SETTINGS_SCHEMA = {
                     "type": "integer",
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
+                },
+                "plex_collection": {
+                    "type": "dict",
+                    "description": "Configure a Plex collection that mirrors this source list order",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex collection management for this source",
+                            "default": False
+                        },
+                        "collection_name": {
+                            "type": "string",
+                            "description": "Collection name. Defaults to the source display name. For mixed (Movies+Shows) lists, ' Movies' and ' Shows' suffixes are added automatically unless overridden below.",
+                            "default": ""
+                        },
+                        "collection_name_movies": {
+                            "type": "string",
+                            "description": "Override collection name for movies in a mixed list. Leave empty to use auto-suffix.",
+                            "default": ""
+                        },
+                        "collection_name_shows": {
+                            "type": "string",
+                            "description": "Override collection name for shows in a mixed list. Leave empty to use auto-suffix.",
+                            "default": ""
+                        },
+                        "sort_prefix": {
+                            "type": "string",
+                            "description": "Prefix added to the sort title so the collection sorts to the top in Plex (e.g. '!' gives '!My List'). Leave empty to use the collection name as-is.",
+                            "default": "!!!!"
+                        },
+                        "sort_by": {
+                            "type": "string",
+                            "description": "Sort order for items in the Plex collection. Default uses the source list order.",
+                            "default": "default",
+                            "choices": ["default", "title", "year", "release_date", "collected_at", "runtime", "random"]
+                        },
+                        "sort_how": {
+                            "type": "string",
+                            "description": "Sort direction: asc = ascending, desc = descending.",
+                            "default": "asc",
+                            "choices": ["asc", "desc"]
+                        },
+                        "poster_design": {
+                            "type": "integer",
+                            "description": "Collection poster design (0 = Plex default, 1-8 = custom designs).",
+                            "default": 0
+                        },
+                        "poster_accent": {
+                            "type": "string",
+                            "description": "Accent color for the poster (hex, e.g. #E6A800).",
+                            "default": "#E6A800"
+                        },
+                        "poster_eyebrow": {
+                            "type": "string",
+                            "description": "Optional eyebrow text shown above the collection title on the poster. Leave blank to hide.",
+                            "default": ""
+                        },
+                        "poster_icon": {
+                            "type": "string",
+                            "description": "Icon path for the poster (relative to overlay assets logos folder). Leave blank to use source default.",
+                            "default": ""
+                        }
+                    }
                 }
             },
             "Collected": {
@@ -1268,6 +1337,73 @@ SETTINGS_SCHEMA = {
                             "default": ""
                         }
                     }
+                },
+                "plex_collection": {
+                    "type": "dict",
+                    "description": "Configure a Plex collection that mirrors this source list order",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex collection management for this source",
+                            "default": False
+                        },
+                        "collection_name": {
+                            "type": "string",
+                            "description": "Collection name. Defaults to the source display name. For mixed (Movies+Shows) lists, ' Movies' and ' Shows' suffixes are added automatically unless overridden below.",
+                            "default": ""
+                        },
+                        "collection_name_movies": {
+                            "type": "string",
+                            "description": "Override collection name for movies in a mixed list. Leave empty to use auto-suffix.",
+                            "default": ""
+                        },
+                        "collection_name_shows": {
+                            "type": "string",
+                            "description": "Override collection name for shows in a mixed list. Leave empty to use auto-suffix.",
+                            "default": ""
+                        },
+                        "sort_prefix": {
+                            "type": "string",
+                            "description": "Prefix added to the sort title so the collection sorts to the top in Plex (e.g. '!' gives '!My List'). Leave empty to use the collection name as-is.",
+                            "default": "!!!!"
+                        },
+                        "sort_by": {
+                            "type": "string",
+                            "description": "Sort order for items in the Plex collection. Sorting is handled server-side by the Trakt API. VIP-only sorts fall back to rank for non-VIP accounts.",
+                            "default": "default",
+                            "choices": ["default", "rank", "added", "title", "released", "runtime",
+                                        "popularity", "percentage", "random", "votes", "my_rating", "watched", "collected",
+                                        "imdb_rating", "tmdb_rating", "rt_tomatometer", "rt_audience",
+                                        "metascore", "imdb_votes", "tmdb_votes"]
+                        },
+                        "sort_how": {
+                            "type": "string",
+                            "description": "Sort direction: asc = ascending, desc = descending.",
+                            "default": "asc",
+                            "choices": ["asc", "desc"]
+                        },
+                        "poster_design": {
+                            "type": "integer",
+                            "description": "Collection poster design (0 = Plex default, 1-8 = custom designs).",
+                            "default": 0
+                        },
+                        "poster_accent": {
+                            "type": "string",
+                            "description": "Accent color for the poster (hex, e.g. #E6A800).",
+                            "default": "#E6A800"
+                        },
+                        "poster_eyebrow": {
+                            "type": "string",
+                            "description": "Optional eyebrow text shown above the collection title on the poster. Leave blank to hide.",
+                            "default": ""
+                        },
+                        "poster_icon": {
+                            "type": "string",
+                            "description": "Icon path for the poster (relative to overlay assets logos folder). Leave blank to use source default.",
+                            "default": ""
+                        }
+                    }
                 }
             },
             "Trakt Collection": {
@@ -1365,6 +1501,11 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Comma-separated list of Overseerr/Jellyseerr tags. If an item has any of these tags, it will be ignored.",
                     "default": ""
+                },
+                "allowed_requesters": {
+                    "type": "list",
+                    "description": "List of Overseerr usernames whose requests this source should process. Use ['__all__'] to process all users.",
+                    "default": ["__all__"]
                 },
                 "list_length_limit": {
                     "type": "integer",
@@ -1895,6 +2036,70 @@ SETTINGS_SCHEMA = {
                             "default": ""
                         }
                     }
+                },
+                "plex_collection": {
+                    "type": "dict",
+                    "description": "Configure a Plex collection that mirrors this source list order",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex collection management for this source",
+                            "default": False
+                        },
+                        "collection_name": {
+                            "type": "string",
+                            "description": "Collection name. Defaults to the source display name. For mixed (Movies+Shows) lists, ' Movies' and ' Shows' suffixes are added automatically unless overridden below.",
+                            "default": ""
+                        },
+                        "collection_name_movies": {
+                            "type": "string",
+                            "description": "Override collection name for movies in a mixed list. Leave empty to use auto-suffix.",
+                            "default": ""
+                        },
+                        "collection_name_shows": {
+                            "type": "string",
+                            "description": "Override collection name for shows in a mixed list. Leave empty to use auto-suffix.",
+                            "default": ""
+                        },
+                        "sort_prefix": {
+                            "type": "string",
+                            "description": "Prefix added to the sort title so the collection sorts to the top in Plex (e.g. '!' gives '!My List'). Leave empty to use the collection name as-is.",
+                            "default": "!!!!"
+                        },
+                        "sort_by": {
+                            "type": "string",
+                            "description": "Sort order for items in the Plex collection. Default follows the adaptive list's own TMDB sort setting.",
+                            "default": "default",
+                            "choices": ["default", "title", "year", "release_date", "collected_at", "runtime", "random"]
+                        },
+                        "sort_how": {
+                            "type": "string",
+                            "description": "Sort direction: asc = ascending, desc = descending.",
+                            "default": "asc",
+                            "choices": ["asc", "desc"]
+                        },
+                        "poster_design": {
+                            "type": "integer",
+                            "description": "Collection poster design (0 = Plex default, 1-8 = custom designs).",
+                            "default": 0
+                        },
+                        "poster_accent": {
+                            "type": "string",
+                            "description": "Accent color for the poster (hex, e.g. #E6A800).",
+                            "default": "#E6A800"
+                        },
+                        "poster_eyebrow": {
+                            "type": "string",
+                            "description": "Optional eyebrow text shown above the collection title on the poster. Leave blank to hide.",
+                            "default": ""
+                        },
+                        "poster_icon": {
+                            "type": "string",
+                            "description": "Icon path for the poster (relative to overlay assets logos folder). Leave blank to use source default.",
+                            "default": ""
+                        }
+                    }
                 }
             }
         }
@@ -2360,5 +2565,25 @@ SETTINGS_SCHEMA = {
             "description": "Maximum number of shows/movies to process per overlay sync run. Higher values clear backlogs faster but each run takes longer. Default is 200.",
             "default": 200
         }
+    },
+    "Plex Smart Collections": {
+        "tab": "Additional Settings",
+        "poster_design": {"type": "number", "description": "Poster layout design ID (0=Plex Default)", "default": 0},
+        "poster_accent": {"type": "string", "description": "Accent color hex. Leave empty for design default.", "default": ""},
+        "poster_eyebrow": {"type": "string", "description": "Small text above the collection title.", "default": ""},
+        "poster_icon": {"type": "string", "description": "Icon path. Leave empty for source default.", "default": ""},
+        "poster_overlay_opacity": {"type": "number", "description": "Card overlay opacity 0-100.", "default": 60},
+        "poster_glow_opacity": {"type": "number", "description": "Accent glow opacity 0-100.", "default": 80},
+        "poster_glow_radius": {"type": "number", "description": "Accent glow radius 10-200.", "default": 55},
+        "collections": {"type": "dict", "description": "Per-collection enabled states.", "default": {}}
+    },
+    "Plex Movie Box Sets": {
+        "tab": "Additional Settings",
+        "enabled": {"type": "bool", "description": "Enable automatic Plex movie box set collection management.", "default": False},
+        "grab_missing": {"type": "bool", "description": "Add missing movies from box sets to the wanted queue.", "default": False},
+        "grab_version": {"type": "string", "description": "Version/quality to use when grabbing missing movies.", "default": "Default"},
+        "collection_name_pattern": {"type": "string", "description": "Naming pattern for box set collections. {title} = franchise name (e.g. The Godfather).", "default": "{title} Collection"},
+        "min_movies": {"type": "number", "description": "Minimum number of owned movies required to create/keep a box set collection.", "default": 2},
+        "sort_order": {"type": "string", "description": "Sort order for movies within each box set collection.", "default": "release_date_asc"}
     }
 }

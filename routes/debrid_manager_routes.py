@@ -1840,6 +1840,10 @@ def api_reconcile():
                     _rd_root_counts[_loc_root] = _rd_root_counts.get(_loc_root, 0) + 1
         rd_mount_prefixes = {r for r, c in _rd_root_counts.items() if c >= 5}
 
+        # Use configured NAS paths if available; fall back to smart detection via rd_mount_prefixes
+        from utilities.settings import get_nas_paths
+        _configured_nas_paths = get_nas_paths()
+
         not_in_plex  = []
         torrent_gone = []
         lost         = []
@@ -1916,8 +1920,15 @@ def api_reconcile():
                         in_rd = True
 
                 # Detect NAS / non-RD storage
-                _item_root = (row['location_on_disk'] or '').lstrip('/').split('/')[0]
-                is_nas = bool(rd_mount_prefixes and _item_root and _item_root not in rd_mount_prefixes)
+                # Detect NAS / non-RD storage
+                # Primary: use configured NAS path prefixes if available
+                # Fallback: smart detection via rd_mount_prefixes
+                _loc = row['location_on_disk'] or ''
+                if _configured_nas_paths:
+                    is_nas = any(_loc.startswith(p) for p in _configured_nas_paths)
+                else:
+                    _item_root = _loc.lstrip('/').split('/')[0]
+                    is_nas = bool(rd_mount_prefixes and _item_root and _item_root not in rd_mount_prefixes)
                 if is_nas:
                     nas_count += 1
                     nas_items.append(_row_dict(row))

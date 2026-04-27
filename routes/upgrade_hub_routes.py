@@ -225,6 +225,7 @@ _SETTINGS_KEYS = {
     'hide_pack_episodes': bool,
     'recent_threshold_days': int,
     'excluded_genres': str,
+    'exclude_nas_items': bool,
 }
 _SETTINGS_DEFAULTS = {
     'min_improvement_threshold': 0,
@@ -236,6 +237,7 @@ _SETTINGS_DEFAULTS = {
     'hide_pack_episodes': False,
     'recent_threshold_days': 90,
     'excluded_genres': '',
+    'exclude_nas_items': False,
 }
 
 
@@ -253,7 +255,7 @@ def get_settings():
                 settings[key] = int(val or default)
             except (TypeError, ValueError):
                 settings[key] = default
-        elif key in ('auto_scan_enabled', 'auto_queue_enabled', 'show_recent_only', 'hide_pack_episodes'):
+        elif key in ('auto_scan_enabled', 'auto_queue_enabled', 'show_recent_only', 'hide_pack_episodes', 'exclude_nas_items'):
             settings[key] = bool(val) if not isinstance(val, str) else val.lower() == 'true'
         else:
             settings[key] = val
@@ -271,7 +273,7 @@ def save_settings():
         # Normalise scan_limit: None/null → store as empty string so get_setting returns None
         if key == 'scan_limit':
             set_setting('Upgrade Hub', key, '' if value is None else int(value))
-        elif key in ('auto_scan_enabled', 'auto_queue_enabled', 'show_recent_only', 'hide_pack_episodes'):
+        elif key in ('auto_scan_enabled', 'auto_queue_enabled', 'show_recent_only', 'hide_pack_episodes', 'exclude_nas_items'):
             set_setting('Upgrade Hub', key, bool(value))
         else:
             try:
