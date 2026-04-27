@@ -83,52 +83,78 @@ riven_analysis_progress = {}
 
 # --- Helper function to get cache files ---
 def get_cache_files():
-    """Returns a list of tuples (filename, display_label) for content source cache files."""
+    """Returns a dict with content source cache files and other cache files."""
+    db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    user_config_dir = os.environ.get('USER_CONFIG', '/user/config')
+
+    # ── Content source cache files ────────────────────────────────────────────
+    content_source_files = []
     try:
-        db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
-        if not os.path.isdir(db_content_dir):
-            logging.error(f"Cache directory not found: {db_content_dir}")
-            return []
-
-        # Find files matching the pattern
-        pattern = os.path.join(db_content_dir, 'content_source_*.pkl')
-        cache_files = [os.path.basename(f) for f in glob.glob(pattern)]
-
-        # Get content sources settings to map filenames to display names
-        content_sources = get_all_settings().get('Content Sources', {})
-
-        # Create list of (filename, display_label) tuples
-        cache_files_with_labels = []
-        for filename in sorted(cache_files):
-            # Extract source_id from filename: content_source_{source_id}_cache.pkl
-            if filename.startswith('content_source_') and filename.endswith('_cache.pkl'):
-                source_id = filename[15:-10]  # Remove 'content_source_' prefix and '_cache.pkl' suffix
-
-                # Try to find matching content source and get display name
-                display_label = None
-                for source_key, source_config in content_sources.items():
-                    # Check if this source matches the cache file
-                    # The source_id in cache file uses the source_key with '/' replaced by '_'
-                    safe_source_key = source_key.replace('/', '_').replace('\\', '_')
-                    if source_id == safe_source_key or source_id.startswith(safe_source_key + '_'):
-                        if isinstance(source_config, dict):
-                            display_name = source_config.get('display_name', source_key)
-                            display_label = f"{display_name} ({source_id})"
-                            break
-
-                # If no match found, just show the source_id
-                if not display_label:
-                    display_label = f"{source_id} ({source_id})"
-
-                cache_files_with_labels.append((filename, display_label))
-            else:
-                # If filename doesn't match expected pattern, just show filename
-                cache_files_with_labels.append((filename, filename))
-
-        return cache_files_with_labels
+        if os.path.isdir(db_content_dir):
+            pattern = os.path.join(db_content_dir, 'content_source_*.pkl')
+            cache_files = [os.path.basename(f) for f in glob.glob(pattern)]
+            content_sources = get_all_settings().get('Content Sources', {})
+            for filename in sorted(cache_files):
+                if filename.startswith('content_source_') and filename.endswith('_cache.pkl'):
+                    source_id = filename[15:-10]
+                    display_label = None
+                    for source_key, source_config in content_sources.items():
+                        safe_source_key = source_key.replace('/', '_').replace('\\', '_')
+                        if source_id == safe_source_key or source_id.startswith(safe_source_key + '_'):
+                            if isinstance(source_config, dict):
+                                display_name = source_config.get('display_name', source_key)
+                                display_label = f"{display_name} ({source_id})"
+                                break
+                    if not display_label:
+                        display_label = f"{source_id} ({source_id})"
+                    content_source_files.append((filename, display_label))
     except Exception as e:
-        logging.error(f"Error getting cache files: {str(e)}", exc_info=True)
-        return []
+        logging.error(f"Error getting content source cache files: {e}", exc_info=True)
+
+    # ── Other cache files ─────────────────────────────────────────────────────
+    OTHER_CACHE_FILES = [
+        # (filename, base_dir, display_label, description)
+        ('plex_collection_state.json', user_config_dir,
+         'Plex Collection State',
+         'Clears sync state for all Plex collections — forces full re-sync on next trigger'),
+        ('plex_smart_collection_state.json', user_config_dir,
+         'Plex Smart Collection State',
+         'Clears Smart Collection Posters state — forces poster re-apply on next trigger'),
+        ('plex_boxsets_state.json', user_config_dir,
+         'Plex Box Sets State',
+         'Clears Box Sets fingerprints — forces poster re-apply for all box sets on next trigger'),
+        ('trakt_lists_cache.pkl', db_content_dir,
+         'Trakt Lists Cache',
+         'Cached Trakt list data — forces re-fetch from Trakt API'),
+        ('trakt_imdb_id_cache.pkl', db_content_dir,
+         'Trakt IMDb ID Cache',
+         'IMDb↔Trakt ID mappings — re-fetches on next Trakt API call'),
+        ('trakt_watchlist_cache.pkl', db_content_dir,
+         'Trakt Watchlist Cache',
+         'Cached Trakt watchlist — forces re-sync with Trakt'),
+        ('adaptive_list_imdb_cache.pkl', db_content_dir,
+         'Adaptive List IMDb Cache',
+         'Cached IMDb data for Adaptive Lists — forces re-fetch'),
+        ('poster_cache.pkl', db_content_dir,
+         'Poster Cache',
+         'Cached TMDB poster URLs — forces fresh API calls for artwork'),
+        ('failed_upgrades.pkl', db_content_dir,
+         'Failed Upgrades History',
+         'Failed upgrade attempt history — allows retry of previously failed items'),
+    ]
+
+    other_files = []
+    for filename, base_dir, label, desc in OTHER_CACHE_FILES:
+        exists = os.path.exists(os.path.join(base_dir, filename))
+        other_files.append({
+            'filename': filename,
+            'base_dir': base_dir,
+            'label': label,
+            'description': desc,
+            'exists': exists,
+        })
+
+    return {'content_source': content_source_files, 'other': other_files}
 # --- End Helper function ---
 
 def async_get_wanted_content(source):
@@ -234,13 +260,16 @@ def async_get_collected_from_plex(collection_type):
 def debug_functions():
     content_sources = get_all_settings().get('Content Sources', {})
     enabled_sources = {source: data for source, data in content_sources.items() if data.get('enabled', False)}
-    cache_files = get_cache_files()
+    cache_data = get_cache_files()
     environment_mode = os.environ.get('CLI_DEBRID_ENVIRONMENT_MODE', 'full')
+    from utilities.settings import get_nas_paths
     return render_template(
         'debug_functions.html',
         content_sources=enabled_sources,
-        cache_files=cache_files,
-        environment_mode=environment_mode
+        cache_files=cache_data.get('content_source', []),
+        other_cache_files=cache_data.get('other', []),
+        environment_mode=environment_mode,
+        nas_paths=get_nas_paths()
     )
 
 @debug_bp.route('/bulk_delete_by_imdb', methods=['POST'])
@@ -2647,29 +2676,47 @@ def direct_emby_scan():
 @debug_bp.route('/api/delete_cache_files', methods=['POST'])
 @admin_required
 def delete_cache_files_route():
-    """API endpoint to delete selected cache files."""
-    selected_files = request.form.getlist('selected_files') # Get list of filenames from form
+    """API endpoint to delete selected cache files (content source + other cache files)."""
+    selected_files = request.form.getlist('selected_files')
     if not selected_files:
         return jsonify({'success': False, 'error': 'No cache files selected'}), 400
 
     db_content_dir = os.environ.get('USER_DB_CONTENT', '/user/db_content')
+    user_config_dir = os.environ.get('USER_CONFIG', '/user/config')
+
+    # Allowed other cache files with their base directories
+    OTHER_ALLOWED = {
+        'plex_collection_state.json': user_config_dir,
+        'plex_smart_collection_state.json': user_config_dir,
+        'plex_boxsets_state.json': user_config_dir,
+        'trakt_lists_cache.pkl': db_content_dir,
+        'trakt_imdb_id_cache.pkl': db_content_dir,
+        'trakt_watchlist_cache.pkl': db_content_dir,
+        'adaptive_list_imdb_cache.pkl': db_content_dir,
+        'poster_cache.pkl': db_content_dir,
+        'failed_upgrades.pkl': db_content_dir,
+    }
+
     deleted_count = 0
     errors = []
 
     for filename in selected_files:
-        # Basic validation to prevent deleting unintended files
-        if not (filename.startswith('content_source_') and filename.endswith('_cache.pkl')):
+        # Determine file path based on type
+        if filename.startswith('content_source_') and filename.endswith('_cache.pkl'):
+            file_path = os.path.join(db_content_dir, filename)
+        elif filename in OTHER_ALLOWED:
+            file_path = os.path.join(OTHER_ALLOWED[filename], filename)
+        else:
             errors.append(f"Invalid cache filename skipped: {filename}")
             continue
-            
-        file_path = os.path.join(db_content_dir, filename)
+
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
                 deleted_count += 1
                 logging.info(f"Deleted cache file: {file_path}")
             else:
-                logging.warning(f"Cache file not found, skipping deletion: {file_path}")
+                logging.warning(f"Cache file not found, skipping: {file_path}")
         except OSError as e:
             logging.error(f"Error deleting cache file {file_path}: {e}")
             errors.append(f"Failed to delete {filename}: {e.strerror}")
@@ -2680,8 +2727,7 @@ def delete_cache_files_route():
     if not errors:
         return jsonify({'success': True, 'message': f'Successfully deleted {deleted_count} cache file(s).'})
     else:
-        error_message = f'Deleted {deleted_count} cache file(s). Errors encountered: {"; ".join(errors)}'
-        # Return success=True even with partial failures, but include error details
+        error_message = f'Deleted {deleted_count} cache file(s). Errors: {"; ".join(errors)}'
         return jsonify({'success': True, 'message': error_message, 'errors': errors})
 # --- End new route ---
 
@@ -5108,8 +5154,11 @@ def fix_zurg_symlinks():
 def remove_duplicate_items():
     try:
         dry_run = request.form.get('dry_run') == 'on'
-        
+        nas_filter = request.form.get('nas_filter', 'all')  # 'all', 'exclude_nas', 'only_nas'
+
         from database import get_db_connection
+        from utilities.settings import get_nas_paths, is_nas_path
+        nas_paths = get_nas_paths()
         conn = get_db_connection()
         cursor = conn.cursor()
         
@@ -5126,11 +5175,22 @@ def remove_duplicate_items():
             ORDER BY count DESC
         """)
         duplicate_groups = cursor.fetchall()
-        
+
+        # Apply NAS filter to groups if configured
+        if nas_filter != 'all' and nas_paths:
+            filtered_groups = []
+            for group in duplicate_groups:
+                group_is_nas = is_nas_path(group['filled_by_file'] or '', nas_paths)
+                if nas_filter == 'exclude_nas' and not group_is_nas:
+                    filtered_groups.append(group)
+                elif nas_filter == 'only_nas' and group_is_nas:
+                    filtered_groups.append(group)
+            duplicate_groups = filtered_groups
+
         total_duplicates = 0
         items_to_delete = []
         preview = []
-        
+
         for group in duplicate_groups:
             filled_by_file = group['filled_by_file']
             count = group['count']
@@ -5648,6 +5708,25 @@ def cleanup_failed_upgrades():
         version_match = request.form.get('version_match', 'all')  # 'all' or 'same'
         media_type = request.form.get('media_type', 'movie')  # 'movie' or 'show'
         keep_action = request.form.get('keep_action', 'keep_collected')  # 'keep_collected' or 'keep_blacklisted'
+        nas_filter = request.form.get('nas_filter', 'all')  # 'all', 'exclude_nas', 'only_nas'
+
+        from utilities.settings import get_nas_paths, is_nas_path
+        nas_paths = get_nas_paths()
+
+        def _group_is_nas(versions_list):
+            """Return True if any item in the group has a NAS location_on_disk."""
+            return any(is_nas_path(v.get('location_on_disk') or '', nas_paths) for v in versions_list)
+
+        def _skip_for_nas_filter(versions_list):
+            """Return True if this group should be skipped based on the NAS filter setting."""
+            if nas_filter == 'all' or not nas_paths:
+                return False
+            group_is_nas = _group_is_nas(versions_list)
+            if nas_filter == 'exclude_nas' and group_is_nas:
+                return True
+            if nas_filter == 'only_nas' and not group_is_nas:
+                return True
+            return False
 
         # Parse exclude patterns (comma or pipe separated)
         exclude_patterns_raw = request.form.get('exclude_patterns', '').strip()
@@ -5836,6 +5915,10 @@ def cleanup_failed_upgrades():
 
                 # Skip if we don't have multiple versions
                 if len(versions) < 2:
+                    continue
+
+                # Apply NAS filter
+                if _skip_for_nas_filter(versions):
                     continue
 
                 # Load user's configured version settings and helper function for quality scoring
@@ -6438,6 +6521,10 @@ def cleanup_failed_upgrades():
                     logging.warning(f"Skipping {imdb_id} - missing collected or ghostlisted versions (safety check)")
                     continue
 
+                # Apply NAS filter
+                if _skip_for_nas_filter(versions):
+                    continue
+
                 # Determine which versions to delete based on keep_action
                 versions_to_delete = []
                 versions_to_keep = []
@@ -6764,6 +6851,10 @@ def cleanup_failed_upgrades():
             # Safety check: ensure we have both types before proceeding
             if not collected_versions or not blacklisted_versions:
                 logging.warning(f"Skipping {imdb_id} - missing collected or blacklisted versions (safety check)")
+                continue
+
+            # Apply NAS filter
+            if _skip_for_nas_filter(versions):
                 continue
 
             # Determine which versions to delete based on keep_action

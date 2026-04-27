@@ -324,10 +324,10 @@ class ScrapingQueue:
                         pass
                     if item_to_process['release_date'] == 'Unknown':
                         if str(item_id_being_processed) == DEBUG_ITEM_ID:
-                            # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Release date is 'Unknown'. Moving to Wanted.")
+                            # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] Release date is 'Unknown'. Moving to Unreleased.")
                             pass
-                        # logging.info(f"Item {item_identifier} has an unknown release date. Moving back to Wanted queue.")
-                        queue_manager.move_to_wanted(item_to_process, "Scraping")
+                        logging.info(f"Item {item_identifier} has an unknown release date. Moving to Unreleased queue.")
+                        queue_manager.move_to_unreleased(item_to_process, "Scraping")
                         processed_successfully_or_moved = True # Handled by move
                         processed_count += 1
                         # No return here, let finally handle removal check if needed
@@ -356,8 +356,8 @@ class ScrapingQueue:
                         if not processed_successfully_or_moved and not item_to_process.get('early_release', False) and not is_magnet_assigned:
                             release_date_str = item_to_process.get('release_date')
                             if release_date_str == 'Unknown':
-                                logging.info(f"Item {item_identifier} has an unknown release date. Moving back to Wanted queue.")
-                                queue_manager.move_to_wanted(item_to_process, "Scraping")
+                                logging.info(f"Item {item_identifier} has an unknown release date. Moving to Unreleased queue.")
+                                queue_manager.move_to_unreleased(item_to_process, "Scraping")
                                 processed_successfully_or_moved = True
                             else:
                                 release_date = datetime.strptime(release_date_str, '%Y-%m-%d').date()

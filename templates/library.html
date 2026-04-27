@@ -115,6 +115,9 @@
                 <option value="upcoming">Upcoming</option>
                 <option value="upgraded">Upgraded</option>
                 <option value="broken">Broken</option>
+                {% if nas_paths %}
+                <option value="nas">NAS / Network</option>
+                {% endif %}
             </select>
 
             <select id="duplicates-state-filter" class="form-control filter-select" style="display: none;">
@@ -193,7 +196,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
-<script type="module" src="{{ url_for('static', filename='js/deletion_common.js') }}"></script>
-<script src="{{ url_for('static', filename='js/library.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='js/notifications.js') }}?v=2"></script>
+<script type="module" src="{{ url_for('static', filename='js/deletion_common.js') }}?v=2"></script>
+<script src="{{ url_for('static', filename='js/library.js') }}?v=3"></script>
 {% endblock %}

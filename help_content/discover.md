@@ -128,6 +128,13 @@ Click the **Filters** button to open the filter drawer. Filters are organized in
 *   **Movies:** Select quality version(s) and click **Request**.
 *   **TV Shows:** Select version(s), then choose "All Seasons" or specific seasons before requesting.
 
+**Personal Lists (Trakt):**
+
+When Trakt is connected, a **Personal** section appears in the sidebar with two categories:
+
+*   **My Lists** — your personal Trakt lists, fetched on demand and cached for 24 hours. If the list hasn't changed since the last fetch (detected via Trakt's updated_at timestamp), cached results are returned instantly.
+*   **Special Lists** — Trakt-curated charts: Trending, Popular, Favorited, Played, Watched, Collected, Anticipated, Box Office, and Recommendations. Cached for 24 hours using a content hash — only fetches fresh TMDB data when the list content actually changes.
+
 **Adaptive Lists Integration:**
 
 *   Discover filters can be used to create Adaptive Lists in **Settings > Content Sources**.

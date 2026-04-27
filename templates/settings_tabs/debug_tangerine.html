@@ -1,3 +1,24 @@
+<script>
+(function() {
+    // Show/hide plex-only-section elements based on file management + media server type
+    var _fm = "{{ settings.get('File Management', {}).get('file_collection_management', '') }}";
+    var _ms = "{{ settings.get('File Management', {}).get('media_server_type', '') }}";
+    function _updatePlexSections() {
+        var show = !(_fm === 'Symlinked/Local' && _ms === 'jellyfin');
+        document.querySelectorAll('.plex-only-section').forEach(function(el) {
+            el.style.display = show ? '' : 'none';
+        });
+    }
+    document.addEventListener('DOMContentLoaded', _updatePlexSections);
+    document.addEventListener('settings-changed', function(e) {
+        if (e.detail.section === 'File Management') {
+            if (e.detail.key === 'file_collection_management') _fm = e.detail.value;
+            if (e.detail.key === 'media_server_type') _ms = e.detail.value;
+            _updatePlexSections();
+        }
+    });
+})();
+</script>
 <div class="debug-settings-page">
     <h2 class="debug-settings-title">Advanced Settings</h2>
     <p class="debug-settings-subtitle">Configure advanced and debug options</p>
@@ -143,6 +164,24 @@
             </div>
             {% endif %}
         {% endfor %}
+
+        <!-- NAS / Network Drive Paths -->
+        <div class="settings-form-group">
+            <label class="settings-title">NAS / Network Drive Paths:</label>
+            <p class="settings-description">Add path prefixes that identify NAS or network drive locations (e.g. <em>/MySamsungNAS_Movies/</em>). Used to detect and optionally filter NAS items in Debrid Manager and other tools. If none are configured, smart detection is used as a fallback.</p>
+            <div id="nas-paths-container">
+                {% set nas_paths = settings.get('Debug', {}).get('nas_paths', []) %}
+                {% for path in nas_paths %}
+                <div class="nas-path-row" style="display:flex;gap:8px;margin-bottom:6px;">
+                    <input type="text" class="settings-input nas-path-input" value="{{ path }}"
+                           data-section="Debug" data-key="nas_paths"
+                           placeholder="e.g. /MySamsungNAS_Movies/">
+                    <button type="button" class="btn-danger" onclick="removeNasPath(this)" style="padding:4px 10px;">✕</button>
+                </div>
+                {% endfor %}
+            </div>
+            <button type="button" class="btn btn-secondary" onclick="addNasPath()" style="margin-top:6px;">+ Add Path</button>
+        </div>
     </div>
 </div>
 
@@ -203,6 +242,8 @@
             </div>
             {% endif %}
         {% endfor %}
+
+
     </div>
 </div>
 

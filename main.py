@@ -1660,6 +1660,16 @@ def main():
     except Exception as e:
         logging.error(f"Error during statistics summary/cache initialization: {e}")
 
+    # Generate collection poster previews in background (non-blocking)
+    try:
+        import threading as _threading
+        from database.collection_poster_renderer import generate_preview_images as _gen_previews
+        _t = _threading.Thread(target=_gen_previews, daemon=True, name='poster-preview-gen')
+        _t.start()
+        logging.info("Collection poster preview generation started in background.")
+    except Exception as _e:
+        logging.warning(f"Could not start poster preview generation: {_e}")
+
     from utilities.settings import ensure_settings_file, get_setting, set_setting
     # from database import verify_database # No longer needed here
     from database.not_wanted_magnets import validate_not_wanted_entries

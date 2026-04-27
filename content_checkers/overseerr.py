@@ -464,3 +464,16 @@ def remove_from_overseerr_by_tmdb_id(tmdb_id: int, media_type: str, imdb_id: str
             'message': str(e),
             'request_id': None
         }
+
+
+def _source_allows_requester(allowed_requesters, requester_name):
+    """Return True if the source should process requests from this requester.
+
+    allowed_requesters: list of usernames, or ['__all__'] for all users.
+    requester_name: the display name of the requester from the webhook.
+    """
+    if not allowed_requesters:
+        return True
+    if '__all__' in allowed_requesters:
+        return True
+    return requester_name in allowed_requesters
