@@ -2124,9 +2124,28 @@ document.addEventListener('DOMContentLoaded', function() {
                     class="btn btn-secondary" style="white-space:nowrap;">
                 Run Now
             </button>
+            <button type="button" id="boxsets-manage-btn"
+                    class="btn btn-secondary" style="white-space:nowrap;">
+                Manage Posters
+            </button>
             <span id="boxsets-status" style="color:#aaa;font-size:0.85em;"></span>
         </div>
 
+    </div>
+</div>
+
+<!-- Box Sets Manage Posters Modal -->
+<div id="boxsets-manage-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:9999;align-items:flex-start;justify-content:center;padding-top:60px;box-sizing:border-box;">
+    <div style="background:var(--surface-color,#1e1e1e);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:24px;width:90%;max-width:560px;max-height:80vh;display:flex;flex-direction:column;gap:12px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+            <h3 style="margin:0;font-size:1rem;font-weight:600;">Box Set Posters</h3>
+            <button id="boxsets-manage-close" style="background:none;border:none;color:var(--text-color,#fff);font-size:1.4rem;cursor:pointer;line-height:1;">&times;</button>
+        </div>
+        <p style="margin:0;font-size:0.82em;color:#aaa;">Force a collection to reapply its poster on the next run. This only clears the fingerprint — run the task manually or wait for the scheduled run.</p>
+        <input id="boxsets-manage-search" type="text" placeholder="Search collections..." style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:inherit;font-size:0.88em;outline:none;">
+        <div id="boxsets-manage-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px;">
+            <span style="color:#aaa;font-size:0.85em;">Loading...</span>
+        </div>
     </div>
 </div>
 
@@ -2224,6 +2243,89 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
         });
     }
+
+    // Manage Posters modal
+    var manageBtn = document.getElementById('boxsets-manage-btn');
+    var manageModal = document.getElementById('boxsets-manage-modal');
+    var manageClose = document.getElementById('boxsets-manage-close');
+    var manageList = document.getElementById('boxsets-manage-list');
+    var manageSearch = document.getElementById('boxsets-manage-search');
+    var _allCollections = [];
+
+    function renderCollectionRows(filter) {
+        var q = (filter || '').toLowerCase().trim();
+        var filtered = q ? _allCollections.filter(function(c) { return c.name.toLowerCase().includes(q); }) : _allCollections;
+        manageList.innerHTML = '';
+        if (filtered.length === 0) {
+            manageList.innerHTML = '<span style="color:#aaa;font-size:0.85em;">' + (q ? 'No collections match.' : 'No collections found. Run the task first.') + '</span>';
+            return;
+        }
+        filtered.forEach(function(c) {
+            var row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;';
+            var name = document.createElement('span');
+            name.textContent = c.name;
+            name.style.cssText = 'font-size:0.88em;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+            var btn = document.createElement('button');
+            btn.textContent = 'Force reapply';
+            btn.className = 'btn btn-secondary';
+            btn.style.cssText = 'font-size:0.78em;padding:4px 10px;white-space:nowrap;flex-shrink:0;';
+            btn.addEventListener('click', function() {
+                btn.disabled = true;
+                btn.textContent = 'Applying...';
+                fetch('/settings/api/plex-boxsets/reset-collection', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({collection_id: c.id})
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                    if (res.success) {
+                        btn.textContent = 'Applied ✓';
+                        btn.style.color = '#4caf50';
+                    } else {
+                        btn.disabled = false;
+                        btn.textContent = 'Force reapply';
+                        btn.style.color = '';
+                        btn.title = res.message || 'Unknown error';
+                        alert('Failed: ' + (res.message || 'Unknown error'));
+                    }
+                })
+                .catch(function() {
+                    btn.disabled = false;
+                    btn.textContent = 'Force reapply';
+                    btn.style.color = '';
+                    alert('Request failed — check logs');
+                });
+            });
+            row.appendChild(name);
+            row.appendChild(btn);
+            manageList.appendChild(row);
+        });
+    }
+
+    function openManageModal() {
+        manageModal.style.display = 'flex';
+        if (manageSearch) manageSearch.value = '';
+        manageList.innerHTML = '<span style="color:#aaa;font-size:0.85em;">Loading...</span>';
+        fetch('/settings/api/plex-boxsets/status')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                _allCollections = (d.success && d.collections) ? d.collections : [];
+                renderCollectionRows('');
+                if (manageSearch) manageSearch.focus();
+            })
+            .catch(function() {
+                manageList.innerHTML = '<span style="color:#f44336;font-size:0.85em;">Failed to load collections.</span>';
+            });
+    }
+
+    if (manageSearch) {
+        manageSearch.addEventListener('input', function() { renderCollectionRows(this.value); });
+    }
+    if (manageBtn) manageBtn.addEventListener('click', openManageModal);
+    if (manageClose) manageClose.addEventListener('click', function() { manageModal.style.display = 'none'; });
+    if (manageModal) manageModal.addEventListener('click', function(e) { if (e.target === manageModal) manageModal.style.display = 'none'; });
 })();
 </script>
 
