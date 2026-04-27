@@ -455,15 +455,19 @@ def apply_boxset_posters(boxsets: List[dict], plex_map: Dict[str, str],
     )
 
     fingerprints = state.setdefault('collection_fingerprints', {})
+    collection_names = state.setdefault('collection_names', {})
 
     for bs in boxsets:
         coll_id = bs['collection_id']
+        collection_names[coll_id] = bs['display_name']
         collection_rk = plex_map.get(coll_id)
         if not collection_rk:
             continue
 
-        # Fingerprint = hash of sorted owned imdb_ids
-        fp_input = ','.join(sorted(bs['owned_imdb_ids']))
+        # Fingerprint = hash of sorted owned imdb_ids + ms_item_ids
+        # Including ms_item_ids ensures a re-apply when newly collected movies
+        # get their Plex ratingKey populated after a Plex scan
+        fp_input = ','.join(sorted(bs['owned_imdb_ids'])) + '|' + ','.join(sorted(bs['owned_ms_ids']))
         fp = hashlib.md5(fp_input.encode()).hexdigest()
 
         if fingerprints.get(coll_id) == fp:
@@ -737,3 +741,134 @@ def run_plex_movie_boxsets() -> None:
         logger.error(f"[BoxSets] Task failed: {e}", exc_info=True)
         state['last_run'] = datetime.utcnow().isoformat()
         _save_state(state)
+
+
+def reapply_single_collection_poster(collection_id: str) -> dict:
+    """
+    Immediately reapply the poster for one box set collection.
+    Clears its fingerprint, fetches the boxset from DB, and applies the poster.
+    Returns {'success': True/False, 'message': str}.
+    """
+    from utilities.settings import get_setting
+    from database.collection_poster_renderer import (
+        render_collection_poster, upload_collection_poster, fetch_movie_thumbs
+    )
+
+    plex_url = get_setting('Plex', 'url', '').rstrip('/')
+    plex_token = get_setting('Plex', 'token', '')
+    if not plex_url or not plex_token:
+        return {'success': False, 'message': 'Plex URL or token not configured'}
+    if not _get_api_key():
+        return {'success': False, 'message': 'TMDB API key not configured'}
+
+    name_pattern = get_setting('Plex Movie Box Sets', 'collection_name_pattern', '{title} Collection') or '{title} Collection'
+    min_movies = int(get_setting('Plex Movie Box Sets', 'min_movies', 2) or 2)
+    sort_order = get_setting('Plex Movie Box Sets', 'sort_order', 'release_date_asc') or 'release_date_asc'
+
+    try:
+        section_key = _get_movie_section_key(plex_url, plex_token)
+        if not section_key:
+            return {'success': False, 'message': 'No movie library section found in Plex'}
+        machine_id = _get_machine_id(plex_url, plex_token)
+    except Exception as e:
+        return {'success': False, 'message': f'Cannot connect to Plex: {e}'}
+
+    # Query DB for just this collection — avoids iterating all 295 collections with TMDB API calls
+    conn = _get_db()
+    try:
+        row = conn.execute(
+            """SELECT tmdb_collection_id, tmdb_collection_name,
+                      GROUP_CONCAT(imdb_id) as imdb_ids,
+                      GROUP_CONCAT(ms_item_id) as ms_item_ids
+               FROM media_items
+               WHERE type = 'movie'
+                 AND tmdb_collection_id = ?
+                 AND state = 'Collected'
+                 AND ms_item_id IS NOT NULL
+               GROUP BY tmdb_collection_id""",
+            (collection_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not row:
+        return {'success': False, 'message': 'Collection not found — it may be below the minimum movies threshold or have no ms_item_id set yet'}
+
+    owned_imdb_ids = set(i for i in (row['imdb_ids'] or '').split(',') if i)
+    owned_ms_ids = set(i for i in (row['ms_item_ids'] or '').split(',') if i)
+
+    if len(owned_ms_ids) < min_movies:
+        return {'success': False, 'message': f'Collection has only {len(owned_ms_ids)} owned movie(s), below the minimum threshold of {min_movies}'}
+
+    # Fetch just this TMDB collection
+    coll_data = _tmdb_get(f'/collection/{collection_id}')
+    if not coll_data:
+        return {'success': False, 'message': f'Could not fetch TMDB collection {collection_id}'}
+
+    tmdb_name = coll_data.get('name', row['tmdb_collection_name'] or '')
+    if not tmdb_name:
+        return {'success': False, 'message': 'Cannot determine collection name'}
+
+    display_name = _format_collection_name(tmdb_name, name_pattern)
+    poster_path = coll_data.get('poster_path')
+    all_parts = [
+        {'tmdb_id': p.get('id'), 'title': p.get('title', ''), 'release_date': p.get('release_date', '')}
+        for p in coll_data.get('parts', [])
+    ]
+
+    bs = {
+        'collection_id': collection_id,
+        'tmdb_name': tmdb_name,
+        'display_name': display_name,
+        'poster_path': poster_path,
+        'owned_imdb_ids': owned_imdb_ids,
+        'owned_ms_ids': owned_ms_ids,
+        'all_parts': all_parts,
+    }
+
+    # Find/create the Plex collection and get its ratingKey
+    try:
+        collection_rk = _get_or_create_collection(plex_url, plex_token, section_key, bs['display_name'], sort_order)
+    except Exception as e:
+        return {'success': False, 'message': f'Plex collection lookup failed: {e}'}
+
+    # Apply poster
+    try:
+        if bs['poster_path']:
+            img_url = f"{TMDB_IMAGE_BASE}{bs['poster_path']}"
+            resp = requests.get(img_url, timeout=30)
+            if resp.status_code == 200:
+                upload_collection_poster(plex_url, plex_token, collection_rk, resp.content)
+            else:
+                bs['poster_path'] = None  # fall through to renderer
+
+        if not bs['poster_path']:
+            thumbs = fetch_movie_thumbs(plex_url, plex_token, collection_rk, limit=4)
+            poster_bytes = render_collection_poster(
+                design_id=1,
+                collection_name=bs['display_name'],
+                eyebrow='',
+                accent='',
+                icon_override=BOXSET_ICON,
+                source_type='Box Set',
+                movie_thumbs=thumbs,
+            )
+            if not poster_bytes:
+                return {'success': False, 'message': 'Poster render returned None'}
+            upload_collection_poster(plex_url, plex_token, collection_rk, poster_bytes)
+
+    except Exception as e:
+        return {'success': False, 'message': f'Poster apply failed: {e}'}
+
+    # Update fingerprint in state so next full run doesn't re-apply unnecessarily
+    state = _load_state()
+    fingerprints = state.setdefault('collection_fingerprints', {})
+    collection_names = state.setdefault('collection_names', {})
+    fp_input = ','.join(sorted(bs['owned_imdb_ids'])) + '|' + ','.join(sorted(bs['owned_ms_ids']))
+    fingerprints[collection_id] = hashlib.md5(fp_input.encode()).hexdigest()
+    collection_names[collection_id] = bs['display_name']
+    _save_state(state)
+
+    logger.info(f"[BoxSets] Force reapply: '{bs['display_name']}' poster applied successfully")
+    return {'success': True, 'message': f"Poster applied for '{bs['display_name']}'"}
+

@@ -3798,7 +3798,7 @@ def run_plex_smart_collections():
 @settings_bp.route('/api/plex-boxsets/status', methods=['GET'])
 @admin_required
 def get_plex_boxsets_status():
-    """Return current box sets state: last run time and number of collections managed."""
+    """Return current box sets state: last run time, collections managed, and per-collection list."""
     try:
         import json, os
         state_file = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'plex_boxsets_state.json')
@@ -3809,14 +3809,38 @@ def get_plex_boxsets_status():
         except (FileNotFoundError, json.JSONDecodeError):
             pass
         from utilities.settings import get_setting as _gs
+        fingerprints = state.get('collection_fingerprints', {})
+        names = state.get('collection_names', {})
+        collections = [
+            {'id': cid, 'name': names.get(cid, cid)}
+            for cid in fingerprints
+        ]
+        collections.sort(key=lambda x: x['name'].lower())
         return jsonify({
             'success': True,
             'last_run': state.get('last_run'),
-            'collections_managed': len(state.get('collection_fingerprints', {})),
+            'collections_managed': len(fingerprints),
+            'collections': collections,
             'enabled': _gs('Plex Movie Box Sets', 'enabled', False),
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-boxsets/reset-collection', methods=['POST'])
+@admin_required
+def reset_boxset_collection_poster():
+    """Immediately reapply the poster for a single collection."""
+    try:
+        data = request.get_json() or {}
+        coll_id = str(data.get('collection_id', '')).strip()
+        if not coll_id:
+            return jsonify({'success': False, 'error': 'collection_id required'}), 400
+        from database.plex_movie_boxsets import reapply_single_collection_poster
+        result = reapply_single_collection_poster(coll_id)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @settings_bp.route('/api/plex-boxsets/run', methods=['POST'])
