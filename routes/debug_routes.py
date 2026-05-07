@@ -9,6 +9,7 @@ from queues.run_program import (
     run_recent_local_library_scan
 )
 from database.manual_blacklist import add_to_manual_blacklist, remove_from_manual_blacklist, get_manual_blacklist, save_manual_blacklist
+from database.core import add_db_notification
 from utilities.settings import get_all_settings, get_setting, set_setting
 from queues.config_manager import load_config
 import logging
@@ -514,35 +515,37 @@ def manual_blacklist():
     if request.method == 'POST':
         action = request.form.get('action')
         imdb_id = request.form.get('imdb_id')
-        
+
         if not imdb_id:
-            flash('IMDb ID is required', 'error')
-            return redirect(url_for('debug.manual_blacklist'))
+            return jsonify({'success': False, 'error': 'IMDb ID is required'}), 400
 
         blacklist = get_manual_blacklist()
         direct_api = DirectAPI()
-        
+
         if action == 'add':
             try:
                 logging.info(f"Attempting to add IMDb ID '{imdb_id}' to manual blacklist.")
-                # 1. Determine media type — check our own DB first (most reliable),
-                #    fall back to battery API. This prevents shows from being stored
-                #    as 'movie' when the battery DB returns movie data first.
-                from database.core import get_db_connection as _get_db
-                _conn = _get_db()
-                _row = _conn.execute(
-                    "SELECT type FROM media_items WHERE imdb_id=? LIMIT 1", (imdb_id,)
-                ).fetchone()
-                _conn.close()
-                if _row:
-                    actual_media_type = 'tv' if _row[0] == 'episode' else 'movie'
+                # 1. Determine media type — use caller-supplied type if present,
+                #    otherwise check our own DB, then fall back to TMDB API.
+                passed_type = request.form.get('media_type')  # 'movie' or 'episode'
+                if passed_type in ('movie', 'episode'):
+                    actual_media_type = 'tv' if passed_type == 'episode' else 'movie'
                     tmdb_id = None
                 else:
-                    tmdb_id, actual_media_type = get_tmdb_id_and_media_type(imdb_id)
+                    from database.core import get_db_connection as _get_db
+                    _conn = _get_db()
+                    _row = _conn.execute(
+                        "SELECT type FROM media_items WHERE imdb_id=? LIMIT 1", (imdb_id,)
+                    ).fetchone()
+                    _conn.close()
+                    if _row:
+                        actual_media_type = 'tv' if _row[0] == 'episode' else 'movie'
+                        tmdb_id = None
+                    else:
+                        tmdb_id, actual_media_type = get_tmdb_id_and_media_type(imdb_id)
 
                 if not actual_media_type:
-                    flash(f'Could not determine media type for IMDb ID {imdb_id}. Cannot add to blacklist.', 'error')
-                    return redirect(url_for('debug.manual_blacklist'))
+                    return jsonify({'success': False, 'error': f'Could not determine media type for IMDb ID {imdb_id}. Cannot add to blacklist.'}), 400
 
                 # 2. Fetch metadata based on the determined type
                 metadata = None
@@ -558,12 +561,10 @@ def manual_blacklist():
                     try:
                         metadata = json.loads(metadata)
                     except json.JSONDecodeError:
-                        flash(f'Failed to parse metadata for {imdb_id}. Cannot add to blacklist.', 'error')
                         metadata = None
 
                 if not metadata or not isinstance(metadata, dict):
-                    flash(f'Unable to fetch metadata for IMDb ID {imdb_id} (Type: {actual_media_type}). Cannot add to blacklist.', 'error')
-                    return redirect(url_for('debug.manual_blacklist'))
+                    return jsonify({'success': False, 'error': f'Unable to fetch metadata for IMDb ID {imdb_id} (Type: {actual_media_type}). Cannot add to blacklist.'}), 400
 
                 # 3. Determine the media type to store in the blacklist file
                 media_type_to_store = 'episode' if actual_media_type == 'tv' else 'movie'
@@ -576,11 +577,13 @@ def manual_blacklist():
                     title=metadata.get('title', 'Unknown Title'),
                     year=str(metadata.get('year', '')),
                 )
-                flash(f'Successfully added {metadata.get("title", "Item")} ({actual_media_type}) to blacklist as type "{media_type_to_store}"', 'success')
+                msg = f'Successfully added {metadata.get("title", "Item")} ({actual_media_type}) to blacklist as type "{media_type_to_store}"'
+                add_db_notification('Blacklist', msg, 'info')
+                return jsonify({'success': True, 'message': msg})
 
             except Exception as e:
-                flash(f'Error adding to blacklist: {str(e)}', 'error')
                 logging.error(f"Error adding to blacklist: {str(e)}", exc_info=True)
+                return jsonify({'success': False, 'error': f'Error adding to blacklist: {str(e)}'}), 500
 
         elif action == 'update_seasons':
             try:
@@ -610,12 +613,13 @@ def manual_blacklist():
         elif action == 'remove':
             try:
                 remove_from_manual_blacklist(imdb_id)
-                flash('Successfully removed from blacklist', 'success')
+                add_db_notification('Blacklist', f'Removed {imdb_id} from blacklist', 'info')
+                return jsonify({'success': True, 'message': 'Successfully removed from blacklist'})
             except Exception as e:
-                flash(f'Error removing from blacklist: {str(e)}', 'error')
+                logging.error(f"Error removing from blacklist: {str(e)}", exc_info=True)
+                return jsonify({'success': False, 'error': f'Error removing from blacklist: {str(e)}'}), 500
 
-        if action != 'update_seasons':
-             return redirect(url_for('debug.manual_blacklist'))
+        return jsonify({'success': False, 'error': 'Unknown action'}), 400
 
     # --- GET Request Logic ---
     blacklist = get_manual_blacklist()

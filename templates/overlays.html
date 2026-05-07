@@ -13,7 +13,7 @@
                 const link = document.createElement('link');
                 link.id = themeId;
                 link.rel = 'stylesheet';
-                link.href = "{{ url_for('static', filename='css/tangerine/tangerine_overlays.css') }}";
+                link.href = "{{ url_for('static', filename='css/tangerine/tangerine_overlays.css') }}?v=8";
                 link.setAttribute('data-theme-css', 'tangerine');
                 document.head.appendChild(link);
             }
@@ -170,7 +170,7 @@
     content: '';
     position: absolute;
     top: 225px; left: 0; right: 0;
-    height: 75px;
+    height: 92px;
     background: linear-gradient(to top, rgba(0,0,0,0.5), transparent);
     z-index: 5;
     pointer-events: none;
@@ -974,9 +974,9 @@
     <!-- Layouts Tab -->
     <div class="tab-content" id="templates-tab">
         <div class="overlay-controls">
-            <button class="btn btn-success" onclick="createTemplate()">Create Layout</button>
-            <button class="btn btn-primary" onclick="importTemplate()">Import Layout</button>
-            <button class="btn btn-secondary" onclick="loadDefaultLayouts()" title="Import any missing built-in default layouts (Movies, Shows, Seasons)">Load Default Layouts</button>
+            <button class="btn btn-success" onclick="createTemplate()"><i class="fa-solid fa-plus"></i> Create Layout</button>
+            <button class="btn btn-primary" onclick="importTemplate()"><i class="fa-solid fa-file-import"></i> Import Layout</button>
+            <button class="btn btn-secondary" onclick="loadDefaultLayouts()" title="Import any missing built-in default layouts (Movies, Shows, Seasons)"><i class="fa-solid fa-download"></i> Load Default Layouts</button>
         </div>
         <div id="templates-list">
             <div class="loading">Loading layouts...</div>
@@ -1305,9 +1305,8 @@ async function resetFailedStats(e) {
 
 // Load movies
 function _posterSrc(item) {
-    // If overlay is applied and the item is synced to Plex, show the actual applied poster.
-    // Uses the currently-selected Plex poster (download_poster) resized to 300px thumbnail.
-    // Falls back to TMDB on error.
+    // Applied items with a Plex key use the proxy route (disk-cached server-side).
+    // Non-applied items fall back to TMDB poster path or placeholder.
     if (item.overlay_status === 'applied' && item.ms_item_id) {
         return `/api/overlays/poster_applied/${encodeURIComponent(item.ms_item_id)}`;
     }
@@ -1315,13 +1314,18 @@ function _posterSrc(item) {
 }
 
 function _posterAttrs(item, mediaType) {
-    const src = _posterSrc(item);
-    // For applied posters served via the proxy, fall back to TMDB on error
-    const onError = (item.overlay_status === 'applied' && item.ms_item_id)
-        ? ` onerror="this.onerror=null;this.src='${item.poster_path ? `/scraper/tmdb_image/w185${item.poster_path}` : '/static/images/placeholder.png'}'"` : '';
-    const lazy = !item.poster_path && item.imdb_id && item.overlay_status !== 'applied'
+    // Applied poster: lazy-load via IntersectionObserver to avoid firing hundreds
+    // of simultaneous requests when the grid first renders.
+    if (item.overlay_status === 'applied' && item.ms_item_id) {
+        const plexUrl  = `/api/overlays/poster_applied/${encodeURIComponent(item.ms_item_id)}`;
+        const fallback = item.poster_path ? `/scraper/tmdb_image/w185${item.poster_path}` : '/static/images/placeholder.png';
+        return `src="/static/images/placeholder.png" data-lazy-plex="${plexUrl}" data-lazy-fallback="${fallback}"`;
+    }
+    // Non-applied: TMDB path already available, or lazy-fetch via existing mechanism
+    const src = item.poster_path ? `/scraper/tmdb_image/w185${item.poster_path}` : '/static/images/placeholder.png';
+    const lazy = !item.poster_path && item.imdb_id
         ? ` data-lazy-imdb="${item.imdb_id}" data-lazy-type="${mediaType}"` : '';
-    return `src="${src}"${onError}${lazy}`;
+    return `src="${src}"${lazy}`;
 }
 
 // Persists across grid reloads for the lifetime of the page session
@@ -1374,6 +1378,34 @@ function lazyLoadPosters(grid) {
         if (i < imgs.length) setTimeout(nextBatch, DELAY);
     }
     nextBatch();
+}
+
+// IntersectionObserver for applied-poster lazy loading (data-lazy-plex).
+// Fires only when a card scrolls into the viewport, preventing a flood of
+// simultaneous Plex requests when the grid first renders.
+let _plexPosterObserver = null;
+function _initPlexPosterObserver() {
+    if (_plexPosterObserver) return;
+    _plexPosterObserver = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (!entry.isIntersecting) return;
+            const img = entry.target;
+            const url      = img.dataset.lazyPlex;
+            const fallback = img.dataset.lazyFallback || '/static/images/placeholder.png';
+            if (!url) return;
+            _plexPosterObserver.unobserve(img);
+            delete img.dataset.lazyPlex;
+            img.onerror = () => { img.onerror = null; img.src = fallback; };
+            img.src = url;
+        });
+    }, { rootMargin: '200px' });
+}
+
+function _observePlexPosters(grid) {
+    _initPlexPosterObserver();
+    grid.querySelectorAll('img[data-lazy-plex]').forEach(img => {
+        _plexPosterObserver.observe(img);
+    });
 }
 
 function _renderMovieCard(item) {
@@ -1466,6 +1498,7 @@ function _renderGrid(gridId, items, renderFn, searchQuery, statusFilter) {
     }
 
     lazyLoadPosters(grid);
+    _observePlexPosters(grid);
 }
 
 async function loadMovies() {
@@ -1526,18 +1559,20 @@ async function loadTemplates() {
             // Display templates list
             const list = document.getElementById('templates-list');
             list.innerHTML = data.layouts.map(t => `
-                <div class="layout-card" style="border: 1px solid ${t.is_default ? 'rgba(255,107,53,0.5)' : 'rgba(255,255,255,0.1)'}; padding: 15px; margin-bottom: 10px; border-radius: 8px; background: rgba(255,255,255,0.03);">
-                    <h4 style="display:flex;align-items:center;gap:8px;margin:0 0 6px;">
-                        ${t.name}
-                        ${t.is_system ? '<span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:rgba(0,162,199,0.15);border:1px solid rgba(0,162,199,0.4);color:#00a2c7;letter-spacing:0.03em;">Default</span>' : ''}
-                    </h4>
-                    <p>${t.description}</p>
-                    <p><strong>Type:</strong> ${t.media_type} | <strong>Active:</strong> ${t.is_default ? '<span style="color:#ff6b35">Yes</span>' : '<span style="color:#888">No</span>'}</p>
-                    <button class="btn btn-secondary" onclick="editTemplate(${t.id})">Edit</button>
-                    <button class="btn btn-secondary" onclick="toggleActive(${t.id}, ${t.is_default})">${t.is_default ? 'Deactivate' : 'Set Active'}</button>
-                    <button class="btn btn-secondary" onclick="duplicateTemplate(${t.id})">Duplicate</button>
-                    <button class="btn btn-secondary" onclick="exportTemplate(${t.id})">Export</button>
-                    <button class="btn btn-danger" onclick="deleteTemplate(${t.id})">Delete</button>
+                <div class="layout-card${t.is_default ? ' active-layout' : ''}">
+                    <div class="layout-card-hdr">
+                        <span class="layout-name">${t.name}</span>
+                        ${t.is_system ? '<span class="layout-badge badge-default">Default</span>' : ''}
+                        ${t.is_default ? '<span class="layout-badge badge-active">Active</span>' : '<span class="layout-badge badge-inactive">Inactive</span>'}
+                    </div>
+                    <div class="layout-meta">Type: ${t.media_type} &nbsp;|&nbsp; Active: ${t.is_default ? '<span class="yes">Yes</span>' : '<span class="no">No</span>'}</div>
+                    <div class="layout-actions">
+                        <button class="btn btn-ghost btn-sm" onclick="editTemplate(${t.id})"><i class="fa-solid fa-pen"></i> Edit</button>
+                        <button class="btn btn-ghost btn-sm" onclick="toggleActive(${t.id}, ${t.is_default})">${t.is_default ? '<i class="fa-solid fa-toggle-off"></i> Deactivate' : '<i class="fa-solid fa-toggle-on"></i> Set Active'}</button>
+                        <button class="btn btn-ghost btn-sm" onclick="duplicateTemplate(${t.id})"><i class="fa-solid fa-copy"></i> Duplicate</button>
+                        <button class="btn btn-ghost btn-sm" onclick="exportTemplate(${t.id})"><i class="fa-solid fa-file-export"></i> Export</button>
+                        <button class="btn btn-danger btn-sm" onclick="deleteTemplate(${t.id})"><i class="fa-solid fa-trash"></i> Delete</button>
+                    </div>
                 </div>
             `).join('');
 
@@ -1631,7 +1666,7 @@ function _refreshGrids(mediaType) {
 
 async function generateSelected(mediaType) {
     const store = mediaType === 'movie' ? _selectedMovieIds : _selectedShowIds;
-    if (store.size === 0) { alert('Please select at least one item'); return; }
+    if (store.size === 0) { showPopup({ type: 'warning', title: 'Required', message: 'Please select at least one item', autoClose: 4000 }); return; }
     const itemIds = Array.from(store);
     const templateSelector = document.getElementById(`${mediaType === 'movie' ? 'movies' : 'shows'}-layout-selector`);
     const layoutId = templateSelector.value ? parseInt(templateSelector.value) : null;
@@ -1646,7 +1681,7 @@ async function generateSelected(mediaType) {
         const data = await response.json();
         if (!data.success) {
             _hideProgress();
-            alert('Failed to start: ' + (data.error || 'Unknown error'));
+            showPopup({ type: 'error', title: 'Error', message: 'Failed to start: ' + (data.error || 'Unknown error'), autoClose: 5000 });
             return;
         }
         _pollUntilDone(
@@ -1658,14 +1693,14 @@ async function generateSelected(mediaType) {
             s => {
                 _hideProgress();
                 const msg = `Generated ${s.applied} overlay${s.applied !== 1 ? 's' : ''}${s.failed > 0 ? `, ${s.failed} failed` : ''}`;
-                alert(msg);
+                showPopup({ type: 'success', title: 'Success', message: msg, autoClose: 4000 });
                 _refreshGrids(mediaType);
             }
         );
     } catch (error) {
         _hideProgress();
         console.error('Generation failed:', error);
-        alert('Failed to generate overlays');
+        showPopup({ type: 'error', title: 'Error', message: 'Failed to generate overlays', autoClose: 5000 });
     }
 }
 
@@ -1691,69 +1726,91 @@ function selectAll(checkbox, gridId) {
 async function removeSelectedOverlays(mediaType) {
     const store = mediaType === 'movie' ? _selectedMovieIds : _selectedShowIds;
     if (store.size === 0) {
-        alert('Please select items to remove overlays from');
+        showPopup({ type: 'warning', title: 'Required', message: 'Please select items to remove overlays from', autoClose: 4000 });
         return;
     }
-    if (!confirm(`Remove overlays for ${store.size} item${store.size !== 1 ? 's' : ''}? Original posters will be restored.`)) return;
-    const itemIds = Array.from(store);
-
-    _showProgress('Removing overlays…', `Restoring ${itemIds.length} original poster${itemIds.length !== 1 ? 's' : ''}…`);
-    try {
-        const response = await fetch('/api/overlays/cleanup/remove-batch', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({item_ids: itemIds})
-        });
-        const data = await response.json();
-        _hideProgress();
-        alert(`Removed ${data.restored} overlays${data.failed > 0 ? `, ${data.failed} failed` : ''}`);
-        _refreshGrids(mediaType);
-    } catch (error) {
-        _hideProgress();
-        console.error('Removal failed:', error);
-        alert('Failed to remove overlays');
-    }
+    showPopup({
+        type: 'confirm',
+        title: 'Remove Overlays',
+        message: `Remove overlays for ${store.size} item${store.size !== 1 ? 's' : ''}? Original posters will be restored.`,
+        confirmText: 'Remove',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const itemIds = Array.from(store);
+            _showProgress('Removing overlays…', `Restoring ${itemIds.length} original poster${itemIds.length !== 1 ? 's' : ''}…`);
+            try {
+                const response = await fetch('/api/overlays/cleanup/remove-batch', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({item_ids: itemIds})
+                });
+                const data = await response.json();
+                _hideProgress();
+                showPopup({ type: 'success', title: 'Success', message: `Removed ${data.restored} overlays${data.failed > 0 ? `, ${data.failed} failed` : ''}`, autoClose: 4000 });
+                _refreshGrids(mediaType);
+            } catch (error) {
+                _hideProgress();
+                console.error('Removal failed:', error);
+                showPopup({ type: 'error', title: 'Error', message: 'Failed to remove overlays', autoClose: 5000 });
+            }
+        }
+    });
 }
 
 async function removeAllOverlays() {
-    if (!confirm('Remove ALL overlays for both movies and TV shows? This will restore original posters.')) return;
-    if (!confirm('Are you SURE? This cannot be undone.')) return;
-
-    _showProgress('Removing all overlays…', 'Starting — fetching applied items…');
-    try {
-        const response = await fetch('/api/overlays/cleanup/remove-all', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({})
-        });
-        const data = await response.json();
-        if (!data.success) {
-            _hideProgress();
-            alert('Failed: ' + (data.error || 'Unknown error'));
-            return;
+    showPopup({
+        type: 'confirm',
+        title: 'Remove All Overlays',
+        message: 'Remove ALL overlays for both movies and TV shows? This will restore original posters.',
+        confirmText: 'Continue',
+        cancelText: 'Cancel',
+        onConfirm: function() {
+            showPopup({
+                type: 'confirm',
+                title: 'Are You Sure?',
+                message: 'Are you SURE? This cannot be undone.',
+                confirmText: 'Remove All',
+                cancelText: 'Cancel',
+                onConfirm: async function() {
+                    _showProgress('Removing all overlays…', 'Starting — fetching applied items…');
+                    try {
+                        const response = await fetch('/api/overlays/cleanup/remove-all', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({})
+                        });
+                        const data = await response.json();
+                        if (!data.success) {
+                            _hideProgress();
+                            showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (data.error || 'Unknown error'), autoClose: 5000 });
+                            return;
+                        }
+                        if (!data.started) {
+                            _hideProgress();
+                            showPopup({ type: 'info', title: 'Notice', message: 'No applied overlays found', autoClose: 4000 });
+                            return;
+                        }
+                        _pollUntilDone(
+                            '/api/overlays/cleanup/remove-all/status',
+                            s => {
+                                _updateProgressCounter(s.done, s.total,
+                                    [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · '));
+                            },
+                            s => {
+                                _hideProgress();
+                                showPopup({ type: 'success', title: 'Success', message: `Removed ${s.restored} overlay${s.restored !== 1 ? 's' : ''}${s.failed > 0 ? `, ${s.failed} failed` : ''}`, autoClose: 4000 });
+                                _refreshGrids(null);
+                            }
+                        );
+                    } catch (error) {
+                        _hideProgress();
+                        console.error('Remove all failed:', error);
+                        showPopup({ type: 'error', title: 'Error', message: 'Failed to remove overlays', autoClose: 5000 });
+                    }
+                }
+            });
         }
-        if (!data.started) {
-            _hideProgress();
-            alert('No applied overlays found');
-            return;
-        }
-        _pollUntilDone(
-            '/api/overlays/cleanup/remove-all/status',
-            s => {
-                _updateProgressCounter(s.done, s.total,
-                    [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · '));
-            },
-            s => {
-                _hideProgress();
-                alert(`Removed ${s.restored} overlay${s.restored !== 1 ? 's' : ''}${s.failed > 0 ? `, ${s.failed} failed` : ''}`);
-                _refreshGrids(null);
-            }
-        );
-    } catch (error) {
-        _hideProgress();
-        console.error('Remove all failed:', error);
-        alert('Failed to remove overlays');
-    }
+    });
 }
 
 async function cleanupOrphanedBackups(event) {
@@ -1767,13 +1824,13 @@ async function cleanupOrphanedBackups(event) {
         const data = await resp.json();
         if (data.success) {
             const removed = data.orphaned_removed || 0;
-            alert(removed > 0 ? `Removed ${removed} orphaned backup(s)` : 'No orphaned backups found');
+            showPopup({ type: removed > 0 ? 'success' : 'info', title: removed > 0 ? 'Success' : 'Notice', message: removed > 0 ? `Removed ${removed} orphaned backup(s)` : 'No orphaned backups found', autoClose: 4000 });
             loadStats();
         } else {
-            alert('Cleanup failed: ' + (data.message || 'Unknown error'));
+            showPopup({ type: 'error', title: 'Error', message: 'Cleanup failed: ' + (data.message || 'Unknown error'), autoClose: 5000 });
         }
     } catch (e) {
-        alert('Cleanup failed');
+        showPopup({ type: 'error', title: 'Error', message: 'Cleanup failed', autoClose: 5000 });
     } finally {
         btn.innerHTML = originalHTML;
         btn.disabled = false;
@@ -1782,26 +1839,34 @@ async function cleanupOrphanedBackups(event) {
 
 async function deleteAllBackups(event) {
     event.stopPropagation();
-    if (!confirm('Delete ALL backup posters and reset every overlay to pending?\n\nThis cannot be undone. The next sync will re-download fresh posters from your media server and re-apply all overlays from scratch.')) return;
-    const btn = document.getElementById('delete-all-backups-btn');
-    const originalHTML = btn.innerHTML;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-    btn.disabled = true;
-    try {
-        const resp = await fetch('/api/overlays/cleanup/delete-all-backups', {method: 'POST'});
-        const data = await resp.json();
-        if (data.success) {
-            alert(`Deleted ${data.deleted} backup(s). All overlays reset to pending — next sync will start fresh.`);
-            loadStats();
-        } else {
-            alert('Failed: ' + (data.message || 'Unknown error'));
+    showPopup({
+        type: 'confirm',
+        title: 'Delete All Backups',
+        message: 'Delete ALL backup posters and reset every overlay to pending?\n\nThis cannot be undone. The next sync will re-download fresh posters from your media server and re-apply all overlays from scratch.',
+        confirmText: 'Delete All',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const btn = document.getElementById('delete-all-backups-btn');
+            const originalHTML = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            btn.disabled = true;
+            try {
+                const resp = await fetch('/api/overlays/cleanup/delete-all-backups', {method: 'POST'});
+                const data = await resp.json();
+                if (data.success) {
+                    showPopup({ type: 'success', title: 'Success', message: `Deleted ${data.deleted} backup(s). All overlays reset to pending — next sync will start fresh.`, autoClose: 4000 });
+                    loadStats();
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (data.message || 'Unknown error'), autoClose: 5000 });
+                }
+            } catch (e) {
+                showPopup({ type: 'error', title: 'Error', message: 'Failed to delete backups', autoClose: 5000 });
+            } finally {
+                btn.innerHTML = originalHTML;
+                btn.disabled = false;
+            }
         }
-    } catch (e) {
-        alert('Failed to delete backups');
-    } finally {
-        btn.innerHTML = originalHTML;
-        btn.disabled = false;
-    }
+    });
 }
 
 // ── Poster Picker ─────────────────────────────────────────────────────────
@@ -1891,13 +1956,13 @@ async function applyChosenPoster() {
             closePosterPicker();
             _refreshGrids();
         } else {
-            alert('Failed to apply poster: ' + (data.message || data.error || 'Unknown error'));
+            showPopup({ type: 'error', title: 'Error', message: 'Failed to apply poster: ' + (data.message || data.error || 'Unknown error'), autoClose: 5000 });
             btn.disabled = false;
             btn.textContent = 'Apply with Overlay';
             _ppSetLoading(false);
         }
     } catch (e) {
-        alert('Failed to apply poster');
+        showPopup({ type: 'error', title: 'Error', message: 'Failed to apply poster', autoClose: 5000 });
         btn.disabled = false;
         btn.textContent = 'Apply with Overlay';
         _ppSetLoading(false);
@@ -1906,33 +1971,41 @@ async function applyChosenPoster() {
 // ── End Poster Picker ──────────────────────────────────────────────────────
 
 async function regenerateSingleOverlay(itemId, btn) {
-    if (!confirm('Regenerate overlay using the currently-selected library poster?')) return;
-    const originalHTML = btn.innerHTML;
-    btn.innerHTML = '…';
-    btn.disabled = true;
-    try {
-        const response = await fetch(`/api/overlays/generate/regenerate/${itemId}`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({})
-        });
-        const data = await response.json();
-        if (data.success) {
-            btn.innerHTML = '✓';
-            setTimeout(() => { btn.innerHTML = originalHTML; btn.disabled = false; }, 2000);
-            window.moviesLoaded = false; loadMovies();
-            window.showsLoaded = false; loadShows();
-            loadStats();
-        } else {
-            btn.innerHTML = originalHTML;
-            btn.disabled = false;
-            alert('Regenerate failed: ' + (data.message || data.error || 'Unknown error'));
+    showPopup({
+        type: 'confirm',
+        title: 'Regenerate Overlay',
+        message: 'Regenerate overlay using the currently-selected library poster?',
+        confirmText: 'Regenerate',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const originalHTML = btn.innerHTML;
+            btn.innerHTML = '…';
+            btn.disabled = true;
+            try {
+                const response = await fetch(`/api/overlays/generate/regenerate/${itemId}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({})
+                });
+                const data = await response.json();
+                if (data.success) {
+                    btn.innerHTML = '✓';
+                    setTimeout(() => { btn.innerHTML = originalHTML; btn.disabled = false; }, 2000);
+                    window.moviesLoaded = false; loadMovies();
+                    window.showsLoaded = false; loadShows();
+                    loadStats();
+                } else {
+                    btn.innerHTML = originalHTML;
+                    btn.disabled = false;
+                    showPopup({ type: 'error', title: 'Error', message: 'Regenerate failed: ' + (data.message || data.error || 'Unknown error'), autoClose: 5000 });
+                }
+            } catch (error) {
+                btn.innerHTML = originalHTML;
+                btn.disabled = false;
+                showPopup({ type: 'error', title: 'Error', message: 'Failed to regenerate overlay', autoClose: 5000 });
+            }
         }
-    } catch (error) {
-        btn.innerHTML = originalHTML;
-        btn.disabled = false;
-        alert('Failed to regenerate overlay');
-    }
+    });
 }
 
 // Layout management functions
@@ -1947,17 +2020,17 @@ async function loadDefaultLayouts() {
         const data = await response.json();
         if (data.success) {
             if (data.loaded > 0) {
-                alert(`Loaded ${data.loaded} default layout${data.loaded !== 1 ? 's' : ''}.`);
+                showPopup({ type: 'success', title: 'Success', message: `Loaded ${data.loaded} default layout${data.loaded !== 1 ? 's' : ''}.`, autoClose: 4000 });
                 window.templatesLoaded = false;
                 loadTemplates();
             } else {
-                alert('All default layouts are already present — nothing to import.');
+                showPopup({ type: 'info', title: 'Notice', message: 'All default layouts are already present — nothing to import.', autoClose: 4000 });
             }
         } else {
-            alert('Failed to load defaults: ' + (data.error || 'Unknown error'));
+            showPopup({ type: 'error', title: 'Error', message: 'Failed to load defaults: ' + (data.error || 'Unknown error'), autoClose: 5000 });
         }
     } catch (error) {
-        alert('Failed to load default layouts: ' + error.message);
+        showPopup({ type: 'error', title: 'Error', message: 'Failed to load default layouts: ' + error.message, autoClose: 5000 });
     }
 }
 
@@ -1984,14 +2057,14 @@ function importTemplate() {
 
             const data = await response.json();
             if (data.success) {
-                alert('Layout imported successfully!');
+                showPopup({ type: 'success', title: 'Success', message: 'Layout imported successfully!', autoClose: 4000 });
                 loadTemplates(); // Reload templates list
             } else {
-                alert('Failed to import layout: ' + (data.error || 'Unknown error'));
+                showPopup({ type: 'error', title: 'Error', message: 'Failed to import layout: ' + (data.error || 'Unknown error'), autoClose: 5000 });
             }
         } catch (error) {
             console.error('Import failed:', error);
-            alert('Failed to import layout. Please check the file format.');
+            showPopup({ type: 'error', title: 'Error', message: 'Failed to import layout. Please check the file format.', autoClose: 5000 });
         }
     };
 
@@ -2014,10 +2087,10 @@ async function toggleActive(layoutId, currentlyActive) {
         if (data.success) {
             loadTemplates();
         } else {
-            alert('Failed to update: ' + (data.error || 'Unknown error'));
+            showPopup({ type: 'error', title: 'Error', message: 'Failed to update: ' + (data.error || 'Unknown error'), autoClose: 5000 });
         }
     } catch (e) {
-        alert('Failed to update layout');
+        showPopup({ type: 'error', title: 'Error', message: 'Failed to update layout', autoClose: 5000 });
     }
 }
 
@@ -2031,10 +2104,10 @@ async function duplicateTemplate(templateId) {
         if (data.success) {
             loadTemplates();
         } else {
-            alert('Failed to duplicate: ' + (data.error || 'Unknown error'));
+            showPopup({ type: 'error', title: 'Error', message: 'Failed to duplicate: ' + (data.error || 'Unknown error'), autoClose: 5000 });
         }
     } catch (e) {
-        alert('Failed to duplicate layout');
+        showPopup({ type: 'error', title: 'Error', message: 'Failed to duplicate layout', autoClose: 5000 });
     }
 }
 
@@ -2043,7 +2116,7 @@ async function exportTemplate(templateId) {
         const response = await fetch(`/api/overlays/layouts/${templateId}/export`);
         if (!response.ok) {
             const data = await response.json().catch(() => ({}));
-            alert('Failed to export layout: ' + (data.error || response.statusText));
+            showPopup({ type: 'error', title: 'Error', message: 'Failed to export layout: ' + (data.error || response.statusText), autoClose: 5000 });
             return;
         }
         const blob = await response.blob();
@@ -2058,173 +2131,199 @@ async function exportTemplate(templateId) {
         URL.revokeObjectURL(url);
     } catch (error) {
         console.error('Export failed:', error);
-        alert('Failed to export layout');
+        showPopup({ type: 'error', title: 'Error', message: 'Failed to export layout', autoClose: 5000 });
     }
 }
 
 async function deleteTemplate(templateId) {
-    if (!confirm('Are you sure you want to delete this layout?')) {
-        return;
-    }
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Layout',
+        message: 'Are you sure you want to delete this layout?',
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            try {
+                const response = await fetch(`/api/overlays/layouts/${templateId}`, {
+                    method: 'DELETE'
+                });
 
-    try {
-        const response = await fetch(`/api/overlays/layouts/${templateId}`, {
-            method: 'DELETE'
-        });
-
-        const data = await response.json();
-        if (data.success) {
-            alert('Layout deleted successfully');
-            loadTemplates(); // Reload templates list
-        } else {
-            alert('Failed to delete layout: ' + (data.error || 'Unknown error'));
+                const data = await response.json();
+                if (data.success) {
+                    showPopup({ type: 'success', title: 'Success', message: 'Layout deleted successfully', autoClose: 4000 });
+                    loadTemplates(); // Reload templates list
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Failed to delete layout: ' + (data.error || 'Unknown error'), autoClose: 5000 });
+                }
+            } catch (error) {
+                console.error('Delete failed:', error);
+                showPopup({ type: 'error', title: 'Error', message: 'Failed to delete layout', autoClose: 5000 });
+            }
         }
-    } catch (error) {
-        console.error('Delete failed:', error);
-        alert('Failed to delete layout');
-    }
+    });
 }
 
 async function generateAll(mediaType) {
     const templateSelector = document.getElementById(`${mediaType === 'movie' ? 'movies' : 'shows'}-layout-selector`);
     const layoutId = templateSelector.value ? parseInt(templateSelector.value) : null;
 
-    if (!layoutId) { alert('Please select a layout first'); return; }
-    if (!confirm(`Generate overlays for all ${mediaType === 'movie' ? 'movies' : 'TV shows'}?`)) return;
-
-    const label = mediaType === 'movie' ? 'movies' : 'TV shows';
-    _showProgress(`Generating ${label}…`, 'Starting job…');
-    try {
-        const response = await fetch('/api/overlays/generate/all', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({media_type: mediaType, layout_id: layoutId})
-        });
-        const data = await response.json();
-        if (!data.success) {
-            _hideProgress();
-            alert('Failed to start: ' + (data.error || 'Unknown error'));
-            return;
-        }
-        document.getElementById('task-progress-title').textContent = data.label || `Generating ${label}…`;
-        _pollUntilDone(
-            '/api/overlays/generate/status',
-            s => {
-                _updateProgressCounter(s.done, s.total,
-                    [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · '));
-            },
-            s => {
+    if (!layoutId) { showPopup({ type: 'warning', title: 'Required', message: 'Please select a layout first', autoClose: 4000 }); return; }
+    showPopup({
+        type: 'confirm',
+        title: 'Generate Overlays',
+        message: `Generate overlays for all ${mediaType === 'movie' ? 'movies' : 'TV shows'}?`,
+        confirmText: 'Generate',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const label = mediaType === 'movie' ? 'movies' : 'TV shows';
+            _showProgress(`Generating ${label}…`, 'Starting job…');
+            try {
+                const response = await fetch('/api/overlays/generate/all', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({media_type: mediaType, layout_id: layoutId})
+                });
+                const data = await response.json();
+                if (!data.success) {
+                    _hideProgress();
+                    showPopup({ type: 'error', title: 'Error', message: 'Failed to start: ' + (data.error || 'Unknown error'), autoClose: 5000 });
+                    return;
+                }
+                document.getElementById('task-progress-title').textContent = data.label || `Generating ${label}…`;
+                _pollUntilDone(
+                    '/api/overlays/generate/status',
+                    s => {
+                        _updateProgressCounter(s.done, s.total,
+                            [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · '));
+                    },
+                    s => {
+                        _hideProgress();
+                        showPopup({ type: 'success', title: 'Success', message: `Generated ${s.applied} overlay${s.applied !== 1 ? 's' : ''}${s.failed > 0 ? `, ${s.failed} failed` : ''}`, autoClose: 4000 });
+                        _refreshGrids(mediaType);
+                    }
+                );
+            } catch (error) {
                 _hideProgress();
-                alert(`Generated ${s.applied} overlay${s.applied !== 1 ? 's' : ''}${s.failed > 0 ? `, ${s.failed} failed` : ''}`);
-                _refreshGrids(mediaType);
+                console.error('Generate all failed:', error);
+                showPopup({ type: 'error', title: 'Error', message: 'Failed to start generation', autoClose: 5000 });
             }
-        );
-    } catch (error) {
-        _hideProgress();
-        console.error('Generate all failed:', error);
-        alert('Failed to start generation');
-    }
+        }
+    });
 }
 
 async function regenerateLibrary() {
-    if (!confirm('Regenerate ALL overlays for the entire library (movies, shows and seasons)? This will overwrite all existing overlays.')) return;
+    showPopup({
+        type: 'confirm',
+        title: 'Regenerate Library',
+        message: 'Regenerate ALL overlays for the entire library (movies, shows and seasons)? This will overwrite all existing overlays.',
+        confirmText: 'Regenerate',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            // Run movies first, then TV sequentially (can't run in parallel since they share the same job state)
+            const btn = document.getElementById('regenerate-all-btn');
+            btn.disabled = true;
 
-    // Run movies first, then TV sequentially (can't run in parallel since they share the same job state)
-    const btn = document.getElementById('regenerate-all-btn');
-    btn.disabled = true;
+            _showProgress('Regenerating entire library…', 'Starting movies…');
+            try {
+                // Phase 1: movies
+                const movieResp = await fetch('/api/overlays/generate/regenerate-all', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({media_type: 'movie', force: true})
+                });
+                const movieData = await movieResp.json();
+                if (!movieData.success) {
+                    _hideProgress();
+                    showPopup({ type: 'error', title: 'Error', message: 'Failed to start regeneration: ' + (movieData.error || 'Unknown error'), autoClose: 5000 });
+                    btn.disabled = false;
+                    return;
+                }
+                document.getElementById('task-progress-title').textContent = movieData.label || 'Regenerating movies…';
 
-    _showProgress('Regenerating entire library…', 'Starting movies…');
-    try {
-        // Phase 1: movies
-        const movieResp = await fetch('/api/overlays/generate/regenerate-all', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({media_type: 'movie', force: true})
-        });
-        const movieData = await movieResp.json();
-        if (!movieData.success) {
-            _hideProgress();
-            alert('Failed to start regeneration: ' + (movieData.error || 'Unknown error'));
-            btn.disabled = false;
-            return;
+                await new Promise(resolve => {
+                    _pollUntilDone('/api/overlays/generate/status',
+                        s => _updateProgressCounter(s.done, s.total, [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · ')),
+                        resolve
+                    );
+                });
+
+                // Phase 2: TV shows
+                _showProgress('Regenerating TV shows…', 'Starting shows…');
+                const tvResp = await fetch('/api/overlays/generate/regenerate-all', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({media_type: 'tv', force: true})
+                });
+                const tvData = await tvResp.json();
+                if (!tvData.success) {
+                    _hideProgress();
+                    showPopup({ type: 'error', title: 'Error', message: 'Movie regeneration done. Failed to start TV: ' + (tvData.error || 'Unknown error'), autoClose: 5000 });
+                    _refreshGrids(null);
+                    btn.disabled = false;
+                    return;
+                }
+                document.getElementById('task-progress-title').textContent = tvData.label || 'Regenerating TV shows…';
+
+                await new Promise(resolve => {
+                    _pollUntilDone('/api/overlays/generate/status',
+                        s => _updateProgressCounter(s.done, s.total, [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · ')),
+                        resolve
+                    );
+                });
+
+                _hideProgress();
+                showPopup({ type: 'success', title: 'Success', message: 'Regeneration complete for entire library', autoClose: 4000 });
+                _refreshGrids(null);
+            } catch (error) {
+                _hideProgress();
+                console.error('Regenerate library failed:', error);
+                showPopup({ type: 'error', title: 'Error', message: 'Regeneration encountered an error — check logs', autoClose: 5000 });
+            } finally {
+                btn.disabled = false;
+            }
         }
-        document.getElementById('task-progress-title').textContent = movieData.label || 'Regenerating movies…';
-
-        await new Promise(resolve => {
-            _pollUntilDone('/api/overlays/generate/status',
-                s => _updateProgressCounter(s.done, s.total, [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · ')),
-                resolve
-            );
-        });
-
-        // Phase 2: TV shows
-        _showProgress('Regenerating TV shows…', 'Starting shows…');
-        const tvResp = await fetch('/api/overlays/generate/regenerate-all', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({media_type: 'tv', force: true})
-        });
-        const tvData = await tvResp.json();
-        if (!tvData.success) {
-            _hideProgress();
-            alert('Movie regeneration done. Failed to start TV: ' + (tvData.error || 'Unknown error'));
-            _refreshGrids(null);
-            btn.disabled = false;
-            return;
-        }
-        document.getElementById('task-progress-title').textContent = tvData.label || 'Regenerating TV shows…';
-
-        await new Promise(resolve => {
-            _pollUntilDone('/api/overlays/generate/status',
-                s => _updateProgressCounter(s.done, s.total, [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · ')),
-                resolve
-            );
-        });
-
-        _hideProgress();
-        alert('Regeneration complete for entire library');
-        _refreshGrids(null);
-    } catch (error) {
-        _hideProgress();
-        console.error('Regenerate library failed:', error);
-        alert('Regeneration encountered an error — check logs');
-    } finally {
-        btn.disabled = false;
-    }
+    });
 }
 
 async function regenerateAll(mediaType) {
     const templateSelector = document.getElementById(`${mediaType === 'movie' ? 'movies' : 'shows'}-layout-selector`);
     const layoutId = templateSelector.value ? parseInt(templateSelector.value) : null;
 
-    if (!confirm(`Regenerate ALL overlays for ${mediaType === 'movie' ? 'movies' : 'TV shows'}? This will overwrite existing overlays.`)) return;
-
-    _showProgress(`Regenerating ${mediaType === 'movie' ? 'movies' : 'TV shows'}…`, 'Starting job…');
-    try {
-        const response = await fetch('/api/overlays/generate/regenerate-all', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({media_type: mediaType, layout_id: layoutId, force: true})
-        });
-        const data = await response.json();
-        if (!data.success) {
-            _hideProgress();
-            alert('Failed to start: ' + (data.error || 'Unknown error'));
-            return;
-        }
-        document.getElementById('task-progress-title').textContent = data.label || `Regenerating ${mediaType === 'movie' ? 'movies' : 'TV shows'}…`;
-        _pollUntilDone(
-            '/api/overlays/generate/status',
-            s => _updateProgressCounter(s.done, s.total, [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · ')),
-            s => {
+    showPopup({
+        type: 'confirm',
+        title: 'Regenerate All Overlays',
+        message: `Regenerate ALL overlays for ${mediaType === 'movie' ? 'movies' : 'TV shows'}? This will overwrite existing overlays.`,
+        confirmText: 'Regenerate',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            _showProgress(`Regenerating ${mediaType === 'movie' ? 'movies' : 'TV shows'}…`, 'Starting job…');
+            try {
+                const response = await fetch('/api/overlays/generate/regenerate-all', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({media_type: mediaType, layout_id: layoutId, force: true})
+                });
+                const data = await response.json();
+                if (!data.success) {
+                    _hideProgress();
+                    showPopup({ type: 'error', title: 'Error', message: 'Failed to start: ' + (data.error || 'Unknown error'), autoClose: 5000 });
+                    return;
+                }
+                document.getElementById('task-progress-title').textContent = data.label || `Regenerating ${mediaType === 'movie' ? 'movies' : 'TV shows'}…`;
+                _pollUntilDone(
+                    '/api/overlays/generate/status',
+                    s => _updateProgressCounter(s.done, s.total, [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · ')),
+                    s => {
+                        _hideProgress();
+                        showPopup({ type: 'success', title: 'Success', message: `Regenerated ${s.applied} overlay${s.applied !== 1 ? 's' : ''}${s.failed > 0 ? `, ${s.failed} failed` : ''}`, autoClose: 4000 });
+                        _refreshGrids(mediaType);
+                    }
+                );
+            } catch (error) {
                 _hideProgress();
-                alert(`Regenerated ${s.applied} overlay${s.applied !== 1 ? 's' : ''}${s.failed > 0 ? `, ${s.failed} failed` : ''}`);
-                _refreshGrids(mediaType);
+                console.error('Regenerate all failed:', error);
+                showPopup({ type: 'error', title: 'Error', message: 'Failed to start regeneration', autoClose: 5000 });
             }
-        );
-    } catch (error) {
-        _hideProgress();
-        console.error('Regenerate all failed:', error);
-        alert('Failed to start regeneration');
-    }
+        }
+    });
 }
 
 // Load badge stats for the Badges tab preview
@@ -2645,117 +2744,145 @@ async function generateSingleSeason(seasonKey, seasonNumber, btn) {
             await _loadSeasonsIntoModal();
         } else {
             btn.textContent = orig; btn.disabled = false;
-            alert('Failed: ' + (data.message || data.error || 'Unknown error'));
+            showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (data.message || data.error || 'Unknown error'), autoClose: 5000 });
         }
     } catch (e) {
         btn.textContent = orig; btn.disabled = false;
-        alert('Request failed: ' + e);
+        showPopup({ type: 'error', title: 'Error', message: 'Request failed: ' + e, autoClose: 5000 });
     }
 }
 
 async function regenSingleSeason(seasonKey, seasonNumber, btn) {
-    if (!confirm('Regenerate season overlay using current library poster?')) return;
-    const layoutId = _getSeasonsLayoutId();
-    const orig = btn.textContent;
-    btn.disabled = true; btn.textContent = '…';
-    try {
-        const resp = await fetch(
-            `/api/overlays/seasons/${_seasonsShowKey}/${seasonKey}/regenerate`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({season_number: seasonNumber, layout_id: layoutId})
-        });
-        const data = await resp.json();
-        if (data.success) {
-            await _loadSeasonsIntoModal();
-        } else {
-            btn.textContent = orig; btn.disabled = false;
-            alert('Failed: ' + (data.message || data.error || 'Unknown error'));
+    showPopup({
+        type: 'confirm',
+        title: 'Regenerate Season',
+        message: 'Regenerate season overlay using current library poster?',
+        confirmText: 'Regenerate',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const layoutId = _getSeasonsLayoutId();
+            const orig = btn.textContent;
+            btn.disabled = true; btn.textContent = '…';
+            try {
+                const resp = await fetch(
+                    `/api/overlays/seasons/${_seasonsShowKey}/${seasonKey}/regenerate`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({season_number: seasonNumber, layout_id: layoutId})
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    await _loadSeasonsIntoModal();
+                } else {
+                    btn.textContent = orig; btn.disabled = false;
+                    showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (data.message || data.error || 'Unknown error'), autoClose: 5000 });
+                }
+            } catch (e) {
+                btn.textContent = orig; btn.disabled = false;
+                showPopup({ type: 'error', title: 'Error', message: 'Request failed: ' + e, autoClose: 5000 });
+            }
         }
-    } catch (e) {
-        btn.textContent = orig; btn.disabled = false;
-        alert('Request failed: ' + e);
-    }
+    });
 }
 
 async function removeSingleSeason(seasonKey, seasonNumber, btn) {
-    if (!confirm('Remove overlay and restore original season poster?')) return;
-    const orig = btn.textContent;
-    btn.disabled = true; btn.textContent = '…';
-    try {
-        const resp = await fetch(
-            `/api/overlays/seasons/${_seasonsShowKey}/${seasonKey}/remove`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({season_number: seasonNumber})
-        });
-        const data = await resp.json();
-        if (data.success) {
-            await _loadSeasonsIntoModal();
-        } else {
-            btn.textContent = orig; btn.disabled = false;
-            alert('Failed: ' + (data.message || data.error || 'Unknown error'));
+    showPopup({
+        type: 'confirm',
+        title: 'Remove Season Overlay',
+        message: 'Remove overlay and restore original season poster?',
+        confirmText: 'Remove',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const orig = btn.textContent;
+            btn.disabled = true; btn.textContent = '…';
+            try {
+                const resp = await fetch(
+                    `/api/overlays/seasons/${_seasonsShowKey}/${seasonKey}/remove`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({season_number: seasonNumber})
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    await _loadSeasonsIntoModal();
+                } else {
+                    btn.textContent = orig; btn.disabled = false;
+                    showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (data.message || data.error || 'Unknown error'), autoClose: 5000 });
+                }
+            } catch (e) {
+                btn.textContent = orig; btn.disabled = false;
+                showPopup({ type: 'error', title: 'Error', message: 'Request failed: ' + e, autoClose: 5000 });
+            }
         }
-    } catch (e) {
-        btn.textContent = orig; btn.disabled = false;
-        alert('Request failed: ' + e);
-    }
+    });
 }
 
 async function generateAllSeasons() {
     if (!_seasonsShowKey) return;
-    if (!confirm(`Generate season poster overlays for all seasons of "${_seasonsShowTitle}"?`)) return;
-    const layoutId = _getSeasonsLayoutId();
-
-    const btn = document.querySelector('#seasons-modal-controls .btn-success');
-    const orig = btn.textContent; btn.disabled = true; btn.textContent = '…';
-
-    try {
-        const resp = await fetch(`/api/overlays/seasons/${_seasonsShowKey}/generate`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({layout_id: layoutId, force: false})
-        });
-        const data = await resp.json();
-        if (data.success) {
-            alert(`Applied: ${data.applied}, Skipped: ${data.skipped}, Failed: ${data.failed}`);
-            await _loadSeasonsIntoModal();
-        } else {
-            alert('Failed: ' + (data.error || 'Unknown error'));
+    showPopup({
+        type: 'confirm',
+        title: 'Generate Season Overlays',
+        message: `Generate season poster overlays for all seasons of "${_seasonsShowTitle}"?`,
+        confirmText: 'Generate',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const layoutId = _getSeasonsLayoutId();
+            const btn = document.querySelector('#seasons-modal-controls .btn-success');
+            const orig = btn.textContent; btn.disabled = true; btn.textContent = '…';
+            try {
+                const resp = await fetch(`/api/overlays/seasons/${_seasonsShowKey}/generate`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({layout_id: layoutId, force: false})
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    showPopup({ type: 'success', title: 'Success', message: `Applied: ${data.applied}, Skipped: ${data.skipped}, Failed: ${data.failed}`, autoClose: 4000 });
+                    await _loadSeasonsIntoModal();
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (data.error || 'Unknown error'), autoClose: 5000 });
+                }
+            } catch (e) {
+                showPopup({ type: 'error', title: 'Error', message: 'Request failed: ' + e, autoClose: 5000 });
+            } finally {
+                btn.textContent = orig; btn.disabled = false;
+            }
         }
-    } catch (e) {
-        alert('Request failed: ' + e);
-    } finally {
-        btn.textContent = orig; btn.disabled = false;
-    }
+    });
 }
 
 async function regenerateAllSeasons() {
     if (!_seasonsShowKey) return;
-    if (!confirm(`Regenerate ALL season poster overlays for "${_seasonsShowTitle}"? This will overwrite existing season overlays.`)) return;
-    const layoutId = _getSeasonsLayoutId();
-
-    const btn = document.querySelector('#seasons-modal-controls .btn-warning');
-    const orig = btn.textContent; btn.disabled = true; btn.textContent = '…';
-
-    try {
-        const resp = await fetch(`/api/overlays/seasons/${_seasonsShowKey}/generate`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({layout_id: layoutId, force: true})
-        });
-        const data = await resp.json();
-        if (data.success) {
-            alert(`Applied: ${data.applied}, Skipped: ${data.skipped}, Failed: ${data.failed}`);
-            await _loadSeasonsIntoModal();
-        } else {
-            alert('Failed: ' + (data.error || 'Unknown error'));
+    showPopup({
+        type: 'confirm',
+        title: 'Regenerate All Season Overlays',
+        message: `Regenerate ALL season poster overlays for "${_seasonsShowTitle}"? This will overwrite existing season overlays.`,
+        confirmText: 'Regenerate',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const layoutId = _getSeasonsLayoutId();
+            const btn = document.querySelector('#seasons-modal-controls .btn-warning');
+            const orig = btn.textContent; btn.disabled = true; btn.textContent = '…';
+            try {
+                const resp = await fetch(`/api/overlays/seasons/${_seasonsShowKey}/generate`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({layout_id: layoutId, force: true})
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    showPopup({ type: 'success', title: 'Success', message: `Applied: ${data.applied}, Skipped: ${data.skipped}, Failed: ${data.failed}`, autoClose: 4000 });
+                    await _loadSeasonsIntoModal();
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (data.error || 'Unknown error'), autoClose: 5000 });
+                }
+            } catch (e) {
+                showPopup({ type: 'error', title: 'Error', message: 'Request failed: ' + e, autoClose: 5000 });
+            } finally {
+                btn.textContent = orig; btn.disabled = false;
+            }
         }
-    } catch (e) {
-        alert('Request failed: ' + e);
-    } finally {
-        btn.textContent = orig; btn.disabled = false;
-    }
+    });
 }
 
 function _getSeasonsLayoutId() {
@@ -2908,19 +3035,27 @@ window.submitReviewReset = function() {
     if (_reviewSelected.size === 0) return;
     const keys = Array.from(_reviewSelected);
     const msg = `Reset ${keys.length} selected poster(s) to clean TMDB originals?\n\nThis cannot be undone. Overlays will NOT be re-applied automatically.`;
-    if (!confirm(msg)) return;
-    closePosterReviewGrid();
-    // Delegate to overlay_settings_modal.js which owns the progress UI
-    if (typeof window._startSelectiveResetJob === 'function') {
-        // Ensure settings modal is open so progress is visible
-        if (typeof window.openOverlaySettingsModal === 'function') {
-            window.openOverlaySettingsModal().then
-                ? window.openOverlaySettingsModal().then(() => window._startSelectiveResetJob(keys))
-                : (window.openOverlaySettingsModal(), window._startSelectiveResetJob(keys));
-        } else {
-            window._startSelectiveResetJob(keys);
+    showPopup({
+        type: 'confirm',
+        title: 'Reset Posters',
+        message: msg,
+        confirmText: 'Reset',
+        cancelText: 'Cancel',
+        onConfirm: function() {
+            closePosterReviewGrid();
+            // Delegate to overlay_settings_modal.js which owns the progress UI
+            if (typeof window._startSelectiveResetJob === 'function') {
+                // Ensure settings modal is open so progress is visible
+                if (typeof window.openOverlaySettingsModal === 'function') {
+                    window.openOverlaySettingsModal().then
+                        ? window.openOverlaySettingsModal().then(() => window._startSelectiveResetJob(keys))
+                        : (window.openOverlaySettingsModal(), window._startSelectiveResetJob(keys));
+                } else {
+                    window._startSelectiveResetJob(keys);
+                }
+            }
         }
-    }
+    });
 };
 
 function _toggleReviewItem(key) {

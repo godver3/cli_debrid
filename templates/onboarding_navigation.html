@@ -17,6 +17,18 @@
 </div>
 
 <link rel="stylesheet" href="{{ url_for('static', filename='css/onboarding.css') }}">
+<script>
+(function() {
+    var theme = localStorage.getItem('selectedTheme') || document.cookie.replace(/(?:(?:^|.*;\s*)selectedTheme\s*=\s*([^;]*).*$)|^.*$/,'$1') || 'tangerine';
+    if (theme !== 'classic') {
+        var link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = '/static/css/tangerine/tangerine_onboarding.css?v=1';
+        link.setAttribute('data-theme-css', theme);
+        document.head.appendChild(link);
+    }
+})();
+</script>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {

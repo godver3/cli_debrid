@@ -1302,44 +1302,60 @@ function stepUpgradesPerRun(delta) {
 }
 
 async function clearHubQueue() {
-    if (!confirm('Revert all hub-queued Upgrading items back to Collected and clear pre-seeded magnets?')) return;
-    const btn = document.getElementById('btn-clear-hub-queue');
-    if (btn) btn.disabled = true;
-    try {
-        const res = await fetch('/upgrade_hub/api/clear_hub_queue', { method: 'POST' });
-        const data = await res.json();
-        const msg = document.getElementById('settings-save-msg');
-        if (msg) {
-            msg.textContent = data.success ? `Reverted ${data.reverted} item(s) to Collected.` : `Error: ${data.error}`;
-            setTimeout(() => { msg.textContent = ''; }, 4000);
+    showPopup({
+        type: 'confirm',
+        title: 'Clear Hub Queue',
+        message: 'Revert all hub-queued Upgrading items back to Collected and clear pre-seeded magnets?',
+        confirmText: 'Revert',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const btn = document.getElementById('btn-clear-hub-queue');
+            if (btn) btn.disabled = true;
+            try {
+                const res = await fetch('/upgrade_hub/api/clear_hub_queue', { method: 'POST' });
+                const data = await res.json();
+                const msg = document.getElementById('settings-save-msg');
+                if (msg) {
+                    msg.textContent = data.success ? `Reverted ${data.reverted} item(s) to Collected.` : `Error: ${data.error}`;
+                    setTimeout(() => { msg.textContent = ''; }, 4000);
+                }
+            } catch(e) {
+                console.error('clearHubQueue:', e);
+            } finally {
+                if (btn) btn.disabled = false;
+            }
         }
-    } catch(e) {
-        console.error('clearHubQueue:', e);
-    } finally {
-        if (btn) btn.disabled = false;
-    }
+    });
 }
 
 async function runUpgradeCleanup() {
-    if (!confirm('Remove old files and torrents for all completed upgrades?\n\nThis will delete old symlinks/files from disk, remove stale entries from Plex/Jellyfin, and delete old torrents from your debrid account.')) return;
-    const btn = document.getElementById('btn-run-cleanup');
-    const msg = document.getElementById('settings-save-msg');
-    if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
-    try {
-        const res  = await fetch('/upgrade_hub/api/run_cleanup', { method: 'POST' });
-        const data = await res.json();
-        if (msg) {
-            msg.textContent = data.success
-                ? (data.queued ? `Cleanup started for ${data.queued} item(s) in background.` : data.message)
-                : `Error: ${data.error}`;
-            setTimeout(() => { msg.textContent = ''; }, 6000);
+    showPopup({
+        type: 'confirm',
+        title: 'Run Upgrade Cleanup',
+        message: 'Remove old files and torrents for all completed upgrades?\n\nThis will delete old symlinks/files from disk, remove stale entries from Plex/Jellyfin, and delete old torrents from your debrid account.',
+        confirmText: 'Run Cleanup',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const btn = document.getElementById('btn-run-cleanup');
+            const msg = document.getElementById('settings-save-msg');
+            if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
+            try {
+                const res  = await fetch('/upgrade_hub/api/run_cleanup', { method: 'POST' });
+                const data = await res.json();
+                if (msg) {
+                    msg.textContent = data.success
+                        ? (data.queued ? `Cleanup started for ${data.queued} item(s) in background.` : data.message)
+                        : `Error: ${data.error}`;
+                    setTimeout(() => { msg.textContent = ''; }, 6000);
+                }
+            } catch(e) {
+                console.error('runUpgradeCleanup:', e);
+                if (msg) { msg.textContent = 'Request failed'; setTimeout(() => { msg.textContent = ''; }, 4000); }
+            } finally {
+                if (btn) { btn.disabled = false; btn.textContent = 'Run Upgrade Cleanup'; }
+            }
         }
-    } catch(e) {
-        console.error('runUpgradeCleanup:', e);
-        if (msg) { msg.textContent = 'Request failed'; setTimeout(() => { msg.textContent = ''; }, 4000); }
-    } finally {
-        if (btn) { btn.disabled = false; btn.textContent = 'Run Upgrade Cleanup'; }
-    }
+    });
 }
 
 async function saveSettings() {

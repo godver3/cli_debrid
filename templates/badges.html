@@ -671,10 +671,10 @@ function triggerFileUpload(variationId, slug, event) {
                     : 'Badge saved.';
                 showToast(msg);
             } else {
-                alert('Upload failed: ' + (d.error || 'Unknown error'));
+                showPopup({ type: 'error', title: 'Error', message: 'Upload failed: ' + (d.error || 'Unknown error'), autoClose: 5000 });
             }
         } catch(e) {
-            alert('Upload failed: ' + e.message);
+            showPopup({ type: 'error', title: 'Error', message: 'Upload failed: ' + e.message, autoClose: 5000 });
         }
     };
     input.click();
@@ -682,40 +682,56 @@ function triggerFileUpload(variationId, slug, event) {
 
 async function clearAsset(variationId, slug, event) {
     if (event) event.stopPropagation();
-    if (!confirm('Remove this badge asset? The slot will remain but the PNG will be deleted.')) return;
-    try {
-        const r = await fetch(`/api/overlays/badges/variations/${variationId}/asset`, { method: 'DELETE' });
-        const d = await r.json();
-        if (d.success) {
-            loadStats();
-            observedSlugs.delete(slug);
-            loadVariations(slug);
-            refreshTypeCard(slug);
-        } else {
-            alert('Clear failed: ' + (d.error || 'Unknown error'));
+    showPopup({
+        type: 'confirm',
+        title: 'Remove Asset',
+        message: 'Remove this badge asset? The slot will remain but the PNG will be deleted.',
+        confirmText: 'Remove',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            try {
+                const r = await fetch(`/api/overlays/badges/variations/${variationId}/asset`, { method: 'DELETE' });
+                const d = await r.json();
+                if (d.success) {
+                    loadStats();
+                    observedSlugs.delete(slug);
+                    loadVariations(slug);
+                    refreshTypeCard(slug);
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Clear failed: ' + (d.error || 'Unknown error'), autoClose: 5000 });
+                }
+            } catch(e) {
+                showPopup({ type: 'error', title: 'Error', message: 'Clear failed: ' + e.message, autoClose: 5000 });
+            }
         }
-    } catch(e) {
-        alert('Clear failed: ' + e.message);
-    }
+    });
 }
 
 async function deleteVariation(variationId, slug, event) {
     if (event) event.stopPropagation();
-    if (!confirm('Delete this custom variation slot? This cannot be undone.')) return;
-    try {
-        const r = await fetch(`/api/overlays/badges/variations/${variationId}`, { method: 'DELETE' });
-        const d = await r.json();
-        if (d.success) {
-            loadStats();
-            observedSlugs.delete(slug);
-            loadVariations(slug);
-            refreshTypeCard(slug);
-        } else {
-            alert('Delete failed: ' + (d.error || 'Unknown error'));
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Variation',
+        message: 'Delete this custom variation slot? This cannot be undone.',
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            try {
+                const r = await fetch(`/api/overlays/badges/variations/${variationId}`, { method: 'DELETE' });
+                const d = await r.json();
+                if (d.success) {
+                    loadStats();
+                    observedSlugs.delete(slug);
+                    loadVariations(slug);
+                    refreshTypeCard(slug);
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + (d.error || 'Unknown error'), autoClose: 5000 });
+                }
+            } catch(e) {
+                showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + e.message, autoClose: 5000 });
+            }
         }
-    } catch(e) {
-        alert('Delete failed: ' + e.message);
-    }
+    });
 }
 
 // Refresh just the fill indicator for a card header
@@ -757,7 +773,7 @@ async function submitAddVariation() {
     const slug    = document.getElementById('add-variation-slug').value;
     const key     = document.getElementById('new-variation-key').value.trim();
     const name    = document.getElementById('new-variation-name').value.trim();
-    if (!key || !name) { alert('Please fill in both fields.'); return; }
+    if (!key || !name) { showPopup({ type: 'warning', title: 'Required', message: 'Please fill in both fields.', autoClose: 4000 }); return; }
 
     try {
         const r = await fetch(`/api/overlays/badges/types/${slug}/variations`, {
@@ -773,10 +789,10 @@ async function submitAddVariation() {
             refreshTypeCard(slug);
             loadStats();
         } else {
-            alert('Failed: ' + (d.error || 'Unknown error'));
+            showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (d.error || 'Unknown error'), autoClose: 5000 });
         }
     } catch(e) {
-        alert('Failed: ' + e.message);
+        showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + e.message, autoClose: 5000 });
     }
 }
 

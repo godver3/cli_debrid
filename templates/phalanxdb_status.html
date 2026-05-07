@@ -1,177 +1,338 @@
 {% extends "base.html" %}
 
-
-{% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/phalanxdb_status.css') }}">
-{% endblock %}
 {% block title %}PhalanxDB Status{% endblock %}
 
+{% block head %}
+{{ super() }}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/phalanxdb_status.css') }}">
+<style>
+/* ── Tangerine redesign ── */
+*{box-sizing:border-box}
+:root{
+  --px-bg:#111;--px-surface:#1a1a1a;--px-surface2:#222;--px-surface3:#2a2a2a;
+  --px-border:#2d2d2d;--px-border2:#3d3d3d;
+  --px-accent:#e8601c;
+  --px-text:#e0e0e0;--px-text2:#aaa;--px-text3:#555;
+  --px-green:#22c55e;--px-red:#ef4444;--px-yellow:#f59e0b;
+  --px-mono:'JetBrains Mono',monospace;--px-sans:'Inter',sans-serif;
+}
+
+/* Hide tangerine block in classic, hide classic block in tangerine */
+body:not(.tangerine-theme) #pxTng{display:none!important}
+body.tangerine-theme #pxClassic{display:none!important}
+
+.px-wrap{max-width:1100px;margin:0 auto;padding:1.25rem;font-family:var(--px-sans);font-size:13px;color:var(--px-text)}
+.px-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem}
+.px-title{font-size:20px;font-weight:700;border-left:3px solid var(--px-accent);padding-left:10px;color:var(--px-text)}
+.px-section{background:var(--px-surface);border:1px solid var(--px-border);border-radius:9px;padding:16px;margin-bottom:14px}
+.px-section-title{font-size:13px;font-weight:600;color:var(--px-text);display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--px-border)}
+.px-section-title i{color:var(--px-accent);font-size:13px}
+.px-banner{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:7px;font-size:13px;font-weight:500}
+.px-banner.ok{background:#16653418;border:1px solid #166534;color:var(--px-green)}
+.px-banner.err{background:#7f1d1d18;border:1px solid #7f1d1d;color:var(--px-red)}
+.px-banner.warn{background:#78350f18;border:1px solid #78350f;color:var(--px-yellow)}
+.px-banner i{font-size:14px}
+.px-kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.px-kpi{background:var(--px-surface2);border:1px solid var(--px-border);border-radius:7px;padding:13px 14px}
+.px-kpi-label{font-size:10px;color:var(--px-text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px}
+.px-kpi-val{font-size:20px;font-weight:700;font-family:var(--px-mono);color:var(--px-text);line-height:1}
+.px-two-col{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:680px){.px-two-col{grid-template-columns:1fr}}
+.px-info-list{display:flex;flex-direction:column;border:1px solid var(--px-border);border-radius:7px;overflow:hidden}
+.px-info-row{display:flex;align-items:center;justify-content:space-between;padding:9px 13px;border-bottom:1px solid var(--px-border);gap:10px}
+.px-info-row:last-child{border-bottom:none}
+.px-info-row:hover{background:var(--px-surface2)}
+.px-info-key{font-size:12px;color:var(--px-text3)}
+.px-info-val{font-size:12px;font-family:var(--px-mono);color:var(--px-text);text-align:right;word-break:break-all;max-width:65%}
+.px-mem-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.px-mem-card{background:var(--px-surface2);border:1px solid var(--px-border);border-radius:7px;padding:7px;text-align:center}
+.px-mem-label{font-size:10px;color:var(--px-text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px}
+.px-mem-val{font-size:14px;font-weight:700;font-family:var(--px-mono);color:var(--px-text)}
+.px-sub-label{font-size:11px;color:var(--px-text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+.px-hash-form{display:flex;gap:8px;margin-bottom:14px}
+.px-hash-input{flex:1;background:var(--px-surface2);border:1px solid var(--px-border);border-radius:6px;padding:9px 13px;font-size:13px;font-family:var(--px-mono);color:var(--px-text);outline:none;transition:border-color .15s}
+.px-hash-input:focus{border-color:var(--px-accent)}
+.px-hash-input::placeholder{color:var(--px-text3)}
+.px-btn{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:6px;font-family:var(--px-sans);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap;background:transparent;border:1px solid #c2500f;color:#f97316}
+.px-btn:hover{background:#c2500f22}
+.px-btn:disabled{opacity:.5;cursor:not-allowed}
+.px-btn i{font-size:11px}
+.px-hash-result{display:none}
+.px-result-badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:4px;font-size:12px;font-family:var(--px-mono);font-weight:600}
+.px-result-badge.cached{background:#16653418;border:1px solid #166534;color:var(--px-green)}
+.px-result-badge.not-cached{background:#7f1d1d18;border:1px solid #7f1d1d;color:var(--px-red)}
+.px-result-badge.not-found{background:#78350f18;border:1px solid #78350f;color:var(--px-yellow)}
+.px-result-badge.error{background:#7f1d1d18;border:1px solid #7f1d1d;color:var(--px-red)}
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="container mt-4">
+
+<!-- ── Classic theme layout ── -->
+<div id="pxClassic">
+  <div class="container mt-4">
     <h1>PhalanxDB Status</h1>
 
-    <!-- Connection Status -->
     <div class="card">
-        <div class="card-header">
-            <h5 class="mb-0">Connection Status</h5>
-        </div>
-        <div class="card-body">
-            {% if not enabled %}
-                <div class="alert alert-warning">
-                    <i class="fas fa-exclamation-triangle"></i> PhalanxDB service is disabled in your settings
-                </div>
-            {% elif connection_status %}
-                <div class="alert alert-success">
-                    <i class="fas fa-check-circle"></i> Connected to PhalanxDB service
-                </div>
-            {% else %}
-                <div class="alert alert-danger">
-                    <i class="fas fa-times-circle"></i> Not connected to PhalanxDB service
-                </div>
-            {% endif %}
-        </div>
+      <div class="card-header"><h5 class="mb-0">Connection Status</h5></div>
+      <div class="card-body">
+        {% if not enabled %}
+          <div class="alert alert-warning"><i class="fas fa-exclamation-triangle"></i> PhalanxDB service is disabled in your settings</div>
+        {% elif connection_status %}
+          <div class="alert alert-success"><i class="fas fa-check-circle"></i> Connected to PhalanxDB service</div>
+        {% else %}
+          <div class="alert alert-danger"><i class="fas fa-times-circle"></i> Not connected to PhalanxDB service</div>
+        {% endif %}
+      </div>
     </div>
 
     {% if enabled %}
-    <!-- Node Status -->
     <div class="card">
-        <div class="card-header">
-            <h3 class="mb-0">Node Status</h3>
+      <div class="card-header"><h3 class="mb-0">Node Status</h3></div>
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-6">
+            <h4>Node Information</h4>
+            <ul class="list-group network-health">
+              <li class="list-group-item">Node ID: {{ mesh_status.nodeId }}</li>
+              <li class="list-group-item">Database Entries: {{ mesh_status.databaseEntries }}</li>
+              <li class="list-group-item">Last Sync: {{ mesh_status.lastSyncAt }}</li>
+            </ul>
+          </div>
+          <div class="col-md-6">
+            <h4>Memory Usage</h4>
+            <ul class="list-group network-health">
+              <li class="list-group-item">RSS: {{ mesh_status.memory.rss }}</li>
+              <li class="list-group-item">Heap Total: {{ mesh_status.memory.heapTotal }}</li>
+              <li class="list-group-item">Heap Used: {{ mesh_status.memory.heapUsed }}</li>
+              <li class="list-group-item">External: {{ mesh_status.memory.external }}</li>
+            </ul>
+          </div>
         </div>
-        <div class="card-body">
-            <div class="row">
-                <div class="col-md-6">
-                    <h4>Node Information</h4>
-                    <ul class="list-group network-health">
-                        <li class="list-group-item">
-                            Node ID: {{ mesh_status.nodeId }}
-                        </li>
-                        <li class="list-group-item">
-                            Database Entries: {{ mesh_status.databaseEntries }}
-                        </li>
-                        <li class="list-group-item">
-                            Last Sync: {{ mesh_status.lastSyncAt }}
-                        </li>
-                    </ul>
-                </div>
-                <div class="col-md-6">
-                    <h4>Memory Usage</h4>
-                    <ul class="list-group network-health">
-                        <li class="list-group-item">
-                            RSS: {{ mesh_status.memory.rss }}
-                        </li>
-                        <li class="list-group-item">
-                            Heap Total: {{ mesh_status.memory.heapTotal }}
-                        </li>
-                        <li class="list-group-item">
-                            Heap Used: {{ mesh_status.memory.heapUsed }}
-                        </li>
-                        <li class="list-group-item">
-                            External: {{ mesh_status.memory.external }}
-                        </li>
-                    </ul>
-                </div>
-            </div>
-        </div>
+      </div>
     </div>
 
-    <!-- Network Status -->
     <div class="card">
-        <div class="card-header">
-            <h3 class="mb-0">Network Stats</h3>
+      <div class="card-header"><h3 class="mb-0">Network Stats</h3></div>
+      <div class="card-body">
+        <div class="row">
+          <div class="col-md-12">
+            <ul class="list-group network-health">
+              <li class="list-group-item">Active Connections: {{ mesh_status.connectionsActive }}</li>
+            </ul>
+          </div>
         </div>
-        <div class="card-body">
-            <div class="row">
-                <div class="col-md-12">
-                    <ul class="list-group network-health">
-                        <li class="list-group-item">
-                            Active Connections: {{ mesh_status.connectionsActive }}
-                        </li>
-                    </ul>
-                </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="mb-0">Hash Tester</h3></div>
+      <div class="card-body">
+        <div class="row">
+          <div class="col-12">
+            <form id="classicHashForm" class="mb-4">
+              <div class="input-group">
+                <input type="text" id="classicHashInput" class="form-control" placeholder="Enter hash to test" style="background-color:#2c2c2c;color:#f4f4f4;border:1px solid #444;">
+                <button type="submit" class="btn btn-primary">Test Hash</button>
+              </div>
+            </form>
+            <div id="classicHashResult" style="display:none;">
+              <ul class="list-group network-health">
+                <li class="list-group-item" id="classicHashStatus"></li>
+                <li class="list-group-item" id="classicHashTimestamp"></li>
+                <li class="list-group-item" id="classicHashExpiry"></li>
+              </ul>
             </div>
+          </div>
         </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ── Tangerine theme layout ── -->
+<div id="pxTng">
+  <div class="px-wrap">
+
+    <div class="px-hdr">
+      <div class="px-title">PhalanxDB Status</div>
+    </div>
+
+    <!-- Connection Status -->
+    <div class="px-section">
+      <div class="px-section-title"><i class="fas fa-network-wired"></i> Connection Status</div>
+      {% if not enabled %}
+        <div class="px-banner warn"><i class="fas fa-exclamation-triangle"></i> PhalanxDB service is disabled in your settings</div>
+      {% elif connection_status %}
+        <div class="px-banner ok"><i class="fas fa-check-circle"></i> Connected to PhalanxDB service</div>
+      {% else %}
+        <div class="px-banner err"><i class="fas fa-times-circle"></i> Not connected to PhalanxDB service</div>
+      {% endif %}
+    </div>
+
+    {% if enabled %}
+
+    <!-- Overview KPIs -->
+    <div class="px-section">
+      <div class="px-section-title"><i class="fas fa-chart-simple"></i> Overview</div>
+      <div class="px-kpi-grid">
+        <div class="px-kpi">
+          <div class="px-kpi-label">Database Entries</div>
+          <div class="px-kpi-val">{{ mesh_status.databaseEntries }}</div>
+        </div>
+        <div class="px-kpi">
+          <div class="px-kpi-label">Active Connections</div>
+          <div class="px-kpi-val">{{ mesh_status.connectionsActive }}</div>
+        </div>
+        <div class="px-kpi">
+          <div class="px-kpi-label">Syncs Sent</div>
+          <div class="px-kpi-val">{{ mesh_status.syncsSent }}</div>
+        </div>
+        <div class="px-kpi">
+          <div class="px-kpi-label">Syncs Received</div>
+          <div class="px-kpi-val">{{ mesh_status.syncsReceived }}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Node + Memory -->
+    <div class="px-section">
+      <div class="px-section-title"><i class="fas fa-server"></i> Node Status</div>
+      <div class="px-two-col">
+        <div>
+          <div class="px-sub-label">Node Information</div>
+          <div class="px-info-list">
+            <div class="px-info-row">
+              <div class="px-info-key">Node ID</div>
+              <div class="px-info-val">{{ mesh_status.nodeId }}</div>
+            </div>
+            <div class="px-info-row">
+              <div class="px-info-key">Last Sync</div>
+              <div class="px-info-val">{{ mesh_status.lastSyncAt }}</div>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="px-sub-label">Memory Usage</div>
+          <div class="px-mem-grid">
+            <div class="px-mem-card">
+              <div class="px-mem-label">RSS</div>
+              <div class="px-mem-val">{{ mesh_status.memory.rss }}</div>
+            </div>
+            <div class="px-mem-card">
+              <div class="px-mem-label">Heap Total</div>
+              <div class="px-mem-val">{{ mesh_status.memory.heapTotal }}</div>
+            </div>
+            <div class="px-mem-card">
+              <div class="px-mem-label">Heap Used</div>
+              <div class="px-mem-val">{{ mesh_status.memory.heapUsed }}</div>
+            </div>
+            <div class="px-mem-card">
+              <div class="px-mem-label">External</div>
+              <div class="px-mem-val">{{ mesh_status.memory.external }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Hash Tester -->
-    <div class="card">
-        <div class="card-header">
-            <h3 class="mb-0">Hash Tester</h3>
+    <div class="px-section">
+      <div class="px-section-title"><i class="fas fa-magnifying-glass"></i> Hash Tester</div>
+      <form id="tngHashForm">
+        <div class="px-hash-form">
+          <input type="text" id="tngHashInput" class="px-hash-input" placeholder="Enter hash to test…">
+          <button type="submit" class="px-btn" id="tngHashBtn">
+            <i class="fas fa-search"></i> Test Hash
+          </button>
         </div>
-        <div class="card-body">
-            <div class="row">
-                <div class="col-12">
-                    <form id="hashTesterForm" class="mb-4">
-                        <div class="input-group">
-                            <input type="text" id="hashInput" class="form-control" placeholder="Enter hash to test" style="background-color: #2c2c2c; color: #f4f4f4; border: 1px solid #444;">
-                            <button type="submit" class="btn btn-primary">Test Hash</button>
-                        </div>
-                    </form>
-                    <div id="hashResult" style="display: none;">
-                        <ul class="list-group network-health">
-                            <li class="list-group-item" id="hashStatus"></li>
-                            <li class="list-group-item" id="hashTimestamp"></li>
-                            <li class="list-group-item" id="hashExpiry"></li>
-                        </ul>
-                    </div>
-                </div>
-            </div>
+      </form>
+      <div class="px-hash-result" id="tngHashResult">
+        <div class="px-info-list">
+          <div class="px-info-row">
+            <div class="px-info-key">Status</div>
+            <div class="px-info-val" id="tngHashStatus"></div>
+          </div>
+          <div class="px-info-row" id="tngHashTsRow" style="display:none">
+            <div class="px-info-key">Last Modified</div>
+            <div class="px-info-val" id="tngHashTs"></div>
+          </div>
+          <div class="px-info-row" id="tngHashExRow" style="display:none">
+            <div class="px-info-key">Expires</div>
+            <div class="px-info-val" id="tngHashEx"></div>
+          </div>
         </div>
+      </div>
     </div>
+
     {% endif %}
+  </div>
 </div>
 
 <script>
-const hashTesterForm = document.getElementById('hashTesterForm');
-if (hashTesterForm) hashTesterForm.addEventListener('submit', async function(e) {
-    e.preventDefault();
-    
-    const hashInput = document.getElementById('hashInput');
-    const resultDiv = document.getElementById('hashResult');
-    const statusEl = document.getElementById('hashStatus');
-    const timestampEl = document.getElementById('hashTimestamp');
-    const expiryEl = document.getElementById('hashExpiry');
-    
-    // Clear previous results
-    resultDiv.style.display = 'none';
-    
+(function() {
+  async function submitHash(inputId, btnId, resultId, statusId, tsRowId, tsId, exRowId, exId) {
+    var input  = document.getElementById(inputId);
+    var btn    = document.getElementById(btnId);
+    var result = document.getElementById(resultId);
+    var statusEl = document.getElementById(statusId);
+    var tsRow  = document.getElementById(tsRowId);
+    var tsEl   = document.getElementById(tsId);
+    var exRow  = document.getElementById(exRowId);
+    var exEl   = document.getElementById(exId);
+
+    if (!input || !btn) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Testing…';
+    if (result) result.style.display = 'none';
+    if (tsRow)  tsRow.style.display  = 'none';
+    if (exRow)  exRow.style.display  = 'none';
+
     try {
-        const response = await fetch('/database/phalanxdb/test_hash', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            body: new URLSearchParams({
-                'hash': hashInput.value
-            })
-        });
-        
-        const data = await response.json();
-        
-        if (data.error) {
-            throw new Error(data.error);
-        }
-        
-        resultDiv.style.display = 'block';
-        
-        if (data.status === 'not_found') {
-            statusEl.innerHTML = `<span class="text-warning">Status: Not Found in Database</span>`;
-            timestampEl.style.display = 'none';
-            expiryEl.style.display = 'none';
-        } else {
-            const result = data.data;
-            statusEl.innerHTML = `Status: <span class="${result.is_cached ? 'text-success' : 'text-danger'}">${result.is_cached ? 'Cached' : 'Not Cached'}</span>`;
-            timestampEl.innerHTML = `Last Modified: ${result.timestamp || 'N/A'}`;
-            expiryEl.innerHTML = `Expires: ${result.expiry || 'N/A'}`;
-            timestampEl.style.display = 'block';
-            expiryEl.style.display = 'block';
-        }
-    } catch (error) {
-        resultDiv.style.display = 'block';
-        statusEl.innerHTML = `<span class="text-danger">Error: ${error.message}</span>`;
-        timestampEl.style.display = 'none';
-        expiryEl.style.display = 'none';
+      var res  = await fetch('/database/phalanxdb/test_hash', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ hash: input.value })
+      });
+      var data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      if (result) result.style.display = 'block';
+
+      if (data.status === 'not_found') {
+        if (statusEl) statusEl.innerHTML = '<span class="px-result-badge not-found"><i class="fas fa-circle-question"></i> Not Found in Database</span>';
+      } else {
+        var r = data.data;
+        if (statusEl) statusEl.innerHTML = r.is_cached
+          ? '<span class="px-result-badge cached"><i class="fas fa-circle-check"></i> Cached</span>'
+          : '<span class="px-result-badge not-cached"><i class="fas fa-circle-xmark"></i> Not Cached</span>';
+        if (r.timestamp && tsEl) { tsEl.textContent = r.timestamp; if (tsRow) tsRow.style.display = 'flex'; }
+        if (r.expiry    && exEl) { exEl.textContent = r.expiry;    if (exRow) exRow.style.display = 'flex'; }
+      }
+    } catch(err) {
+      if (result)   result.style.display = 'block';
+      if (statusEl) statusEl.innerHTML = '<span class="px-result-badge error"><i class="fas fa-triangle-exclamation"></i> Error: ' + err.message + '</span>';
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = inputId.startsWith('tng') ? '<i class="fas fa-search"></i> Test Hash' : 'Test Hash';
     }
-});
+  }
+
+  // Classic form
+  var classicForm = document.getElementById('classicHashForm');
+  if (classicForm) classicForm.addEventListener('submit', function(e) {
+    e.preventDefault();
+    submitHash('classicHashInput','classicHashForm','classicHashResult','classicHashStatus','classicHashTimestamp','classicHashTimestamp','classicHashExpiry','classicHashExpiry');
+  });
+
+  // Tangerine form
+  var tngForm = document.getElementById('tngHashForm');
+  if (tngForm) tngForm.addEventListener('submit', function(e) {
+    e.preventDefault();
+    submitHash('tngHashInput','tngHashBtn','tngHashResult','tngHashStatus','tngHashTsRow','tngHashTs','tngHashExRow','tngHashEx');
+  });
+})();
 </script>
-{% endblock %} 
+{% endblock %}

@@ -1157,7 +1157,8 @@ def show_detail_data(media_id):
                 location_on_disk,
                 ghostlisted,
                 size,
-                manual_replace
+                manual_replace,
+                ms_item_id
             FROM media_items
             WHERE {id_field} = ? AND type = 'episode' AND (ghostlisted = 0 OR ghostlisted IS NULL)
             ORDER BY season_number ASC, episode_number ASC
@@ -1211,7 +1212,8 @@ def show_detail_data(media_id):
                 'location_on_disk': ep['location_on_disk'],
                 'ghostlisted': ep['ghostlisted'],
                 'size': ep['size'],
-                'manual_replace': bool(ep['manual_replace'])
+                'manual_replace': bool(ep['manual_replace']),
+                'ms_item_id': ep['ms_item_id']
             }
 
             seasons[season_num]['episodes'].append(episode_data)
@@ -2661,6 +2663,26 @@ def delete_items():
                     auto_ghostlisted = True
                     logging.info(f"[DELETE_ITEMS] Ghostlisted {updated_count} item(s)")
 
+                    # Also add each unique imdb_id to manual blacklist
+                    try:
+                        from database.manual_blacklist import add_to_manual_blacklist
+                        seen_imdb = {}
+                        for item in items:
+                            iid = item.get('imdb_id')
+                            if iid and iid not in seen_imdb:
+                                seen_imdb[iid] = item
+                        for iid, item in seen_imdb.items():
+                            media_type = 'episode' if item.get('type') == 'episode' else 'movie'
+                            add_to_manual_blacklist(
+                                imdb_id=iid,
+                                media_type=media_type,
+                                title=item.get('title', ''),
+                                year=str(item.get('year', ''))
+                            )
+                            logging.info(f"[DELETE_ITEMS] Added {iid} to manual blacklist")
+                    except Exception as mb_err:
+                        logging.warning(f"[DELETE_ITEMS] Could not add to manual blacklist: {mb_err}")
+
                 except Exception as e:
                     logging.error(f"[DELETE_ITEMS] Failed to ghostlist: {e}")
                     if conn:
@@ -2919,6 +2941,20 @@ def delete_show(imdb_id):
                 auto_ghostlisted = True
                 logging.info(f"[DELETE_SHOW] Ghostlisted {updated_count} episodes for show {imdb_id} - ghostlisted=1, state=Blacklisted")
 
+                # Also add to manual blacklist to block future episodes
+                try:
+                    from database.manual_blacklist import add_to_manual_blacklist
+                    first_ep = episodes[0]
+                    add_to_manual_blacklist(
+                        imdb_id=imdb_id,
+                        media_type='episode',
+                        title=first_ep.get('title', ''),
+                        year=str(first_ep.get('year', ''))
+                    )
+                    logging.info(f"[DELETE_SHOW] Added {imdb_id} to manual blacklist")
+                except Exception as mb_err:
+                    logging.warning(f"[DELETE_SHOW] Could not add to manual blacklist: {mb_err}")
+
             except sqlite3.OperationalError as e:
                 # Rollback and check for database lock
                 if conn:
@@ -3136,7 +3172,7 @@ def delete_movie(imdb_id):
         # Get ALL movie files from database (movies can have multiple files/versions)
         conn = get_db_connection()
         movie_query = """
-            SELECT id, title, tmdb_id, imdb_id, type
+            SELECT id, title, year, tmdb_id, imdb_id, type
             FROM media_items
             WHERE (tmdb_id = ? OR imdb_id = ?) AND type = 'movie'
         """
@@ -3270,6 +3306,19 @@ def delete_movie(imdb_id):
 
                 auto_ghostlisted = True
                 logging.info(f"[DELETE_MOVIE] Ghostlisted movie {imdb_id} - ghostlisted=1, state=Blacklisted")
+
+                # Also add to manual blacklist to prevent re-addition
+                try:
+                    from database.manual_blacklist import add_to_manual_blacklist
+                    add_to_manual_blacklist(
+                        imdb_id=imdb_id,
+                        media_type='movie',
+                        title=movie.get('title', ''),
+                        year=str(movie.get('year', ''))
+                    )
+                    logging.info(f"[DELETE_MOVIE] Added {imdb_id} to manual blacklist")
+                except Exception as mb_err:
+                    logging.warning(f"[DELETE_MOVIE] Could not add to manual blacklist: {mb_err}")
 
             except Exception as e:
                 logging.error(f"[DELETE_MOVIE] Failed to ghostlist: {e}")
@@ -4428,7 +4477,8 @@ def movie_detail_data(media_id):
                 version,
                 ghostlisted,
                 size,
-                manual_replace
+                manual_replace,
+                ms_item_id
             FROM media_items
             WHERE {id_field} = ? AND type = 'movie'
             ORDER BY
@@ -4534,7 +4584,8 @@ def movie_detail_data(media_id):
                 'version': file_row['version'],
                 'ghostlisted': file_row['ghostlisted'],
                 'size': file_row['size'],
-                'manual_replace': bool(file_row['manual_replace'])
+                'manual_replace': bool(file_row['manual_replace']),
+                'ms_item_id': file_row['ms_item_id']
             })
 
         # Fetch poster and backdrop URLs from cache, fallback to TMDB if not cached

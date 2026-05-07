@@ -127,13 +127,20 @@ function selectElement(elementId) {
 function deleteSelectedElement() {
     if (!selectedElement) return;
 
-    if (confirm('Delete this element?')) {
-        elements = elements.filter(el => el.id !== selectedElement.id);
-        selectedElement = null;
-        document.getElementById('element-properties').style.display = 'none';
-        updateElementsList();
-        generatePreview();
-    }
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Element',
+        message: 'Delete this element?',
+        confirmText: 'Confirm',
+        cancelText: 'Cancel',
+        onConfirm: function() {
+            elements = elements.filter(el => el.id !== selectedElement.id);
+            selectedElement = null;
+            document.getElementById('element-properties').style.display = 'none';
+            updateElementsList();
+            generatePreview();
+        }
+    });
 }
 
 function updateElementsList() {
@@ -427,12 +434,12 @@ function saveTemplate() {
     const isActive = document.getElementById('template-active').checked;
 
     if (!name) {
-        alert('Please enter a template name');
+        showPopup({ type: 'warning', title: 'Required', message: 'Please enter a template name', autoClose: 4000 });
         return;
     }
 
     if (elements.length === 0) {
-        alert('Please add at least one element');
+        showPopup({ type: 'warning', title: 'Required', message: 'Please add at least one element', autoClose: 4000 });
         return;
     }
 
@@ -483,31 +490,41 @@ function saveTemplate() {
     .then(response => response.json())
     .then(data => {
         if (data.success) {
-            alert('Template saved successfully!');
-            // Optionally redirect to overlays page
-            if (confirm('Go to overlay management page?')) {
-                window.location.href = '/overlays';
-            }
+            showPopup({
+                type: 'confirm',
+                title: 'Success',
+                message: 'Template saved successfully! Go to overlay management page?',
+                confirmText: 'Confirm',
+                cancelText: 'Cancel',
+                onConfirm: function() { window.location.href = '/overlays'; }
+            });
         } else {
-            alert('Failed to save template: ' + data.error);
+            showPopup({ type: 'error', title: 'Error', message: 'Failed to save template: ' + data.error, autoClose: 4000 });
         }
     })
     .catch(error => {
-        alert('Error saving template: ' + error);
+        showPopup({ type: 'error', title: 'Error', message: 'Error saving template: ' + error, autoClose: 4000 });
     });
 }
 
 function clearCanvas() {
-    if (confirm('Clear all elements?')) {
-        elements = [];
-        selectedElement = null;
-        updateElementsList();
-        generatePreview();
-        document.getElementById('element-properties').style.display = 'none';
-    }
+    showPopup({
+        type: 'confirm',
+        title: 'Clear Canvas',
+        message: 'Clear all elements?',
+        confirmText: 'Confirm',
+        cancelText: 'Cancel',
+        onConfirm: function() {
+            elements = [];
+            selectedElement = null;
+            updateElementsList();
+            generatePreview();
+            document.getElementById('element-properties').style.display = 'none';
+        }
+    });
 }
 
 function browseAssets() {
     // TODO: Implement asset browser modal
-    alert('Asset browser not yet implemented. Enter path manually (e.g., /resolution/2160p_hdr.png)');
+    showPopup({ type: 'info', title: 'Notice', message: 'Asset browser not yet implemented. Enter path manually (e.g., /resolution/2160p_hdr.png)', autoClose: 4000 });
 }

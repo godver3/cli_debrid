@@ -140,23 +140,6 @@ select option:checked {
    Main Page Titles - Orange Gradient Text
    All main page titles (h1, h2)
    ======================================== */
-main > h1::before,
-main > h2::before,
-.container > h1::before,
-.container > h2::before,
-[class*="-container"] > h1::before,
-[class*="-container"] > h2::before,
-.content > h1::before,
-.content > h2::before,
-body > h1::before,
-body > h2::before,
-.manage-users > h2::before {
-    content: '';
-    width: 4px;
-    height: 33px;
-    background: linear-gradient(180deg, #e17c52 0%, #f7931e 100%);
-    border-radius: 2px;
-}
 
 main > h1,
 main > h2,
@@ -226,8 +209,8 @@ body > h2,
     top: 0;
     bottom: 0;
     width: 4px;
-    background: linear-gradient(135deg, #e17c52 0%, #f7931e 100%);
-    border-radius: 2px;
+    border-left: 3px solid #e8601c;
+    padding-left: 10px;
 }
 
 /* Exclude content sources settings title from the ::before bar */
@@ -1302,9 +1285,10 @@ tr:hover {
     .button-text {
         display: inline;
         margin-left: 8px;
-        font-size: 14px;
+        font-size: 12px;
+        font-weight: 600;
         white-space: nowrap;
-        color: white;
+        color: #e0e0e0;
     }
 
     /* Hide button text for release notes button */
@@ -1446,7 +1430,13 @@ main {
     max-width: 800px;
     width: 90%;
     max-height: 85vh;
-    overflow-y: auto;
+    overflow: hidden;
+    flex-direction: column;
+}
+
+.release-notes-popup[style*="display: block"],
+.release-notes-popup[style*="display:block"] {
+    display: flex !important;
 }
 
 .release-notes-overlay {
@@ -1468,6 +1458,7 @@ main {
     margin-bottom: 20px;
     padding-bottom: 15px;
     border-bottom: 1px solid #333;
+    flex-shrink: 0;
 }
 
 .release-notes-title {
@@ -1494,6 +1485,10 @@ main {
 .release-notes-content {
     color: #e0e0e0;
     line-height: 1.8;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    padding-right: 4px;
 }
 
 .release-notes-content h4 {
@@ -1506,7 +1501,7 @@ main {
 }
 
 .release-notes-content h3 {
-    color: #888;
+    color: #e8601c !important;
     font-size: 1em;
     font-weight: normal;
     margin: 5px 0 0 0;
@@ -1528,22 +1523,20 @@ main {
 }
 
 /* Custom scrollbar for release notes */
-.release-notes-popup::-webkit-scrollbar {
-    width: 10px;
+.release-notes-content::-webkit-scrollbar {
+    width: 6px;
 }
 
-.release-notes-popup::-webkit-scrollbar-track {
-    background: #1a1a1a;
-    border-radius: 12px;
+.release-notes-content::-webkit-scrollbar-track {
+    background: transparent;
 }
 
-.release-notes-popup::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 12px;
-    border: 2px solid #1a1a1a;
+.release-notes-content::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 3px;
 }
 
-.release-notes-popup::-webkit-scrollbar-thumb:hover {
+.release-notes-content::-webkit-scrollbar-thumb:hover {
     background: #555;
 }
 

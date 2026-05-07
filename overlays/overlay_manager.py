@@ -286,6 +286,9 @@ class OverlayManager:
                         backup_file.unlink()
                         self.logger.info(
                             f"Deleted backup for {ms_item_id} to force fresh poster fetch")
+                    _meta_file_fresh = backup_file.with_suffix('.meta')
+                    if _meta_file_fresh.exists():
+                        _meta_file_fresh.unlink()
                     # Clear any stale TMDB poster URL from the in-memory/disk cache so the
                     # re-fetch honours the English language filter.
                     try:
@@ -326,6 +329,14 @@ class OverlayManager:
                                         plex_rating_key,
                                         self.renderer.image_to_bytes(plex_poster))
                                     poster_image = plex_poster
+                                    # User-selected Plex poster — never textless
+                                    try:
+                                        import json as _json
+                                        _user_meta = backup_file.with_suffix('.meta')
+                                        with open(str(_user_meta), 'w') as _mf:
+                                            _json.dump({'textless': False}, _mf)
+                                    except Exception:
+                                        pass
                         except Exception as _chk_err:
                             self.logger.warning(
                                 f"Could not check Plex poster change for {plex_rating_key}: "
@@ -336,6 +347,35 @@ class OverlayManager:
                             poster_image = _PILImage.open(_BytesIO(_f.read()))
                             poster_image.load()
                         self.logger.info(f"Using original backup poster for {plex_rating_key}")
+                        # Restore the textless flag from the companion .meta file saved
+                        # alongside the backup when it was first downloaded.
+                        # Falls back to the DB value for backups created before .meta existed.
+                        _meta_file = backup_file.with_suffix('.meta')
+                        try:
+                            import json as _json
+                            with open(str(_meta_file), 'r') as _mf:
+                                _meta = _json.load(_mf)
+                            poster_image._cli_textless = bool(_meta.get('textless', False))
+                        except FileNotFoundError:
+                            # No .meta file — legacy backup. Check the DB for the last known value.
+                            try:
+                                _db_conn = _get_db_connection()
+                                _db_row = _db_conn.execute(
+                                    'SELECT textless_poster_used FROM media_overlay_state WHERE media_item_id = ?',
+                                    (media_item_id,)
+                                ).fetchone()
+                                _db_conn.close()
+                                poster_image._cli_textless = bool(_db_row[0]) if (_db_row and _db_row[0]) else False
+                                # Write the .meta file now so future loads don't need the DB
+                                try:
+                                    with open(str(_meta_file), 'w') as _mf:
+                                        _json.dump({'textless': poster_image._cli_textless}, _mf)
+                                except Exception:
+                                    pass
+                            except Exception:
+                                poster_image._cli_textless = False
+                        except Exception:
+                            poster_image._cli_textless = False
                 else:
                     # No backup — fetch a clean original from TMDB.
                     # Always prefer TMDB: if the overlay was previously applied, Plex's current
@@ -355,6 +395,14 @@ class OverlayManager:
                     original_bytes = self.renderer.image_to_bytes(poster_image)
                     backup_mgr.backup_poster(ms_item_id, original_bytes)
                     self.logger.info(f"Saved original poster backup for {ms_item_id}")
+                    # Write companion .meta file so the textless flag survives restarts.
+                    try:
+                        import json as _json
+                        _meta_path = backup_mgr.backup_dir / f"{ms_item_id}_original.meta"
+                        with open(str(_meta_path), 'w') as _mf:
+                            _json.dump({'textless': bool(getattr(poster_image, '_cli_textless', False))}, _mf)
+                    except Exception as _me:
+                        self.logger.debug(f"Could not write poster meta for {ms_item_id}: {_me}")
             except Exception as e:
                 self.logger.warning(f"Failed to manage poster backup for {plex_rating_key}: {e}")
                 # Fall back to downloading normally if backup management fails
@@ -453,6 +501,13 @@ class OverlayManager:
                                           'Poster upload failed')
                 return result
 
+            # Invalidate the thumbnail cache so the overlay page shows the new poster
+            try:
+                from routes.overlay_routes import invalidate_poster_thumb_cache
+                invalidate_poster_thumb_cache(plex_rating_key)
+            except Exception:
+                pass
+
             # Store quality hash so future runs can detect upgrades (reuse _best_data)
             quality_hash = self._quality_hash_for_item(item, _best_data) or ''
 
@@ -487,6 +542,7 @@ class OverlayManager:
                 layout_hash=layout_hash,
                 content_hash=content_hash,
                 plex_upload_hash=_upload_sha1,
+                textless_poster_used=media_info.get('textless_poster_used', False),
             )
 
             result['success'] = True
@@ -1872,12 +1928,30 @@ class OverlayManager:
 
                 from utilities.settings import load_config as _lc_tmdb_pre
                 _textless_pre = _lc_tmdb_pre().get('Overlay Settings', {}).get('textless_posters', False)
-                _cache_key = f"{tmdb_id}_textless" if _textless_pre else tmdb_id
 
-                cached_url = (
-                    (get_cached_poster_url(imdb_id, media_type) if imdb_id else None)
-                    or (get_cached_poster_url(_cache_key, media_type) if tmdb_id else None)
-                )
+                # In textless mode use a dedicated cache key so standard (non-textless)
+                # URLs stored under imdb_id or tmdb_id don't collide with the textless URL.
+                # _from_cache_textless tracks whether the returned URL came from the textless key.
+                _cache_key = f"{tmdb_id}_textless" if _textless_pre else tmdb_id
+                cached_url = None
+                _from_cache_textless = False
+
+                if _textless_pre:
+                    # Only look up the textless-specific key — don't fall back to the imdb_id
+                    # key which may hold a non-textless URL from a prior standard-mode run.
+                    if tmdb_id:
+                        cached_url = get_cached_poster_url(_cache_key, media_type)
+                        if cached_url:
+                            _from_cache_textless = True
+                else:
+                    cached_url = (
+                        (get_cached_poster_url(imdb_id, media_type) if imdb_id else None)
+                        or (get_cached_poster_url(tmdb_id, media_type) if tmdb_id else None)
+                    )
+
+                # _is_textless_poster is set when we do a fresh TMDB API call; it records
+                # whether the chosen poster genuinely has no baked-in title (iso_639_1=null).
+                _is_textless_poster = None
 
                 # Cache miss — fetch directly from TMDB API.
                 # When textless_posters is enabled: prefer iso_639_1=null (no baked-in title)
@@ -1935,8 +2009,7 @@ class OverlayManager:
                                 f"https://image.tmdb.org/t/p/w300"
                                 f"{_chosen['file_path']}"
                             )
-                            # Track whether a genuinely textless poster was found
-                            # iso_639_1 = null means no baked-in title text
+                            # iso_639_1=null means no baked-in title text
                             _is_textless_poster = (_chosen.get('iso_639_1') is None)
                             # Use a separate cache key for textless posters so the
                             # standard cache (used by library/stats pages) is not polluted
@@ -1957,20 +2030,20 @@ class OverlayManager:
                 resp = _requests.get(tmdb_img_url, timeout=15)
                 resp.raise_for_status()
                 img = _Image.open(BytesIO(resp.content))
-                # Attach textless flag so generate_overlay_for_item can pass it to media_info.
-                # When served from cache, _is_textless_poster was set during the API call that
-                # populated the cache. Re-derive it: if the cached URL was stored under the
-                # textless cache key AND textless mode is on, treat it as textless.
-                if '_is_textless_poster' in dir():
+                # Determine the textless flag for this image:
+                # - Fresh API call: use the actual iso_639_1 result (_is_textless_poster)
+                # - Cache hit via textless key: the URL was originally chosen as the best
+                #   null-language poster, so treat it as textless
+                # - Cache hit via standard key (non-textless mode): not textless
+                if _is_textless_poster is not None:
                     img._cli_textless = _is_textless_poster
-                elif _textless_pre and cached_url:
-                    # Cache hit in textless mode — the cached URL was chosen as the best
-                    # textless (null-language) poster when it was first stored. Treat as textless.
+                elif _from_cache_textless:
                     img._cli_textless = True
                 else:
                     img._cli_textless = False
                 self.logger.info(
-                    f"Using TMDB poster for {item.get('title', plex_rating_key)} ({tmdb_img_url})")
+                    f"Using TMDB poster for {item.get('title', plex_rating_key)} "
+                    f"(textless={img._cli_textless}, {tmdb_img_url})")
                 return img
             except Exception as e:
                 self.logger.warning(f"TMDB poster download failed for {plex_rating_key}: {e}")
@@ -1997,17 +2070,43 @@ class OverlayManager:
     def _fetch_clearlogo_url(self, tmdb_id: Optional[str], item_type: str) -> Optional[str]:
         """Fetch the best English PNG clearlogo URL from TMDB for the given item.
 
+        Results are cached in poster_cache.pkl under key '{tmdb_id}_clearlogo_{mtype}'
+        for 7 days (same TTL as poster URLs).  A sentinel value of '' is cached when
+        TMDB has no logo so we don't re-query on every run.
+
         Returns a full https://image.tmdb.org URL or None if unavailable.
         """
         if not tmdb_id:
             return None
         try:
+            from routes.poster_cache import CACHE_EXPIRY_DAYS as _ttl_days
+            from datetime import datetime as _dt, timedelta as _td
+            import routes.poster_cache as _pcmod
+            _pcmod._ensure_loaded()
+
+            _mtype = 'tv' if item_type in ('episode', 'tv', 'show') else 'movie'
+            _cache_key = f"{tmdb_id}_clearlogo_{_mtype}"
+
+            # --- cache read ---
+            # We store (url_or_sentinel, timestamp) tuples directly so we can distinguish
+            # '' (cached no-logo) from None (cache miss).
+            # Access internals via module reference so the live dict/lock are always used.
+            with _pcmod._cache_lock:
+                _cached_item = _pcmod._cache.get(_cache_key)
+            if _cached_item is not None:
+                _cached_url, _cached_ts = _cached_item
+                if _dt.now() - _cached_ts < _td(days=_ttl_days):
+                    # '' means TMDB confirmed no logo for this item
+                    return _cached_url if _cached_url else None
+
+            # --- cache miss: fetch from TMDB ---
             from utilities.settings import get_setting as _gs
             import requests as _req
             _api_key = _gs('TMDB', 'api_key', default='')
             if not _api_key:
                 return None
-            _mtype = 'tv' if item_type == 'episode' else 'movie'
+
+            _result_url = None
             for _lang in ('en', 'en,null'):
                 _resp = _req.get(
                     f"https://api.themoviedb.org/3/{_mtype}/{tmdb_id}/images"
@@ -2023,7 +2122,18 @@ class OverlayManager:
                 if _candidates:
                     _candidates.sort(key=lambda l: l.get('vote_average', 0), reverse=True)
                     _path = _candidates[0]['file_path']
-                    return f"https://image.tmdb.org/t/p/original{_path}"
+                    _result_url = f"https://image.tmdb.org/t/p/original{_path}"
+                    break
+
+            # Cache the result (url string) or '' sentinel if no logo found.
+            # This prevents re-querying TMDB for items without a clearlogo on every run.
+            _store_val = _result_url if _result_url else ''
+            with _pcmod._cache_lock:
+                _pcmod._cache[_cache_key] = (_store_val, _dt.now())
+                _pcmod._cache_dirty = True
+
+            return _result_url
+
         except Exception as _e:
             self.logger.debug(f"Clearlogo fetch failed for tmdb_id={tmdb_id}: {_e}")
         return None
@@ -2055,10 +2165,11 @@ class OverlayManager:
     def _update_overlay_state(self, media_item_id: int, status: str, reason: str = None,
                              poster_hash: str = None, metadata_hash: str = None,
                              layout_hash: str = None, content_hash: str = None,
-                             plex_upload_hash: str = None):
+                             plex_upload_hash: str = None, textless_poster_used: bool = None):
         """Update or insert overlay state in database (single ON CONFLICT upsert)."""
         import time as _time
         last_exc = None
+        _textless_int = (1 if textless_poster_used else 0) if textless_poster_used is not None else None
         for _attempt in range(5):
             try:
                 conn = _get_db_connection()
@@ -2066,12 +2177,12 @@ class OverlayManager:
                     INSERT INTO media_overlay_state
                         (media_item_id, status, reason,
                          last_poster_hash, last_metadata_hash, last_layout_hash, last_content_hash,
-                         last_plex_upload_hash,
+                         last_plex_upload_hash, textless_poster_used,
                          overlay_applied_at, last_retry, retry_count,
                          created_at, updated_at)
                     VALUES (?, ?, ?,
                             ?, ?, ?, ?,
-                            ?,
+                            ?, ?,
                             CASE WHEN ? = 'applied' THEN CURRENT_TIMESTAMP ELSE NULL END,
                             CASE WHEN ? = 'failed'  THEN CURRENT_TIMESTAMP ELSE NULL END,
                             CASE WHEN ? IN ('failed', 'analyzing') THEN 1 ELSE 0 END,
@@ -2084,6 +2195,7 @@ class OverlayManager:
                         last_layout_hash      = COALESCE(excluded.last_layout_hash,      last_layout_hash),
                         last_content_hash     = COALESCE(excluded.last_content_hash,     last_content_hash),
                         last_plex_upload_hash = COALESCE(excluded.last_plex_upload_hash, last_plex_upload_hash),
+                        textless_poster_used  = COALESCE(excluded.textless_poster_used,  textless_poster_used),
                         overlay_applied_at = CASE WHEN excluded.status = 'applied'
                                                   THEN CURRENT_TIMESTAMP
                                                   ELSE overlay_applied_at END,
@@ -2096,7 +2208,7 @@ class OverlayManager:
                         updated_at         = CURRENT_TIMESTAMP
                 ''', (media_item_id, status, reason,
                       poster_hash, metadata_hash, layout_hash, content_hash,
-                      plex_upload_hash,
+                      plex_upload_hash, _textless_int,
                       status, status, status))
                 conn.commit()
                 conn.close()
@@ -2894,6 +3006,13 @@ class OverlayManager:
                     show_plex_rating_key, season_plex_rating_key, season_number,
                     'failed', 'Upload failed')
                 return result
+
+            # Invalidate season thumbnail cache so the overlay page shows the new poster
+            try:
+                from routes.overlay_routes import invalidate_season_thumb_cache
+                invalidate_season_thumb_cache(season_plex_rating_key)
+            except Exception:
+                pass
 
             # ── Store quality hash ────────────────────────────────────────
             quality_hash = ''

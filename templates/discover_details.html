@@ -81,6 +81,44 @@
     .cast-section.collapsed .cast-grid {
         display: none;
     }
+    /* Cast strip below links — horizontal row with names, no header/collapse */
+    .cast-inline {
+        margin-top: 0.75rem;
+    }
+    .cast-inline .cast-grid {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        gap: 0.25rem;
+        margin-top: 0;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+        align-items: flex-start;
+    }
+    .cast-inline .cast-grid::-webkit-scrollbar {
+        display: none;
+    }
+    .cast-inline .cast-card {
+        flex: 0 0 auto;
+        width: 75px;
+        text-align: center;
+    }
+    .cast-inline .cast-photo {
+        width: 60px;
+        height: 60px;
+        margin: 0 auto 0.25rem;
+    }
+    .cast-inline .cast-name {
+        font-size: 0.65rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: rgba(255,255,255,0.8);
+    }
+    .cast-inline .cast-character {
+        display: none;
+    }
 </style>
 {% endblock %}
 
@@ -208,26 +246,19 @@
                                     <img src="{{ url_for('static', filename='images/trakt.png') }}" alt="Trakt" class="link-icon">
                                     Trakt
                                 </a>
-                                <button id="btn-trailer" class="link-btn" style="display: none;" title="Watch Trailer">                                    
+                                <button id="btn-trailer" class="link-btn" style="display: none;" title="Watch Trailer">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
                                         <polygon points="5 3 19 12 5 21 5 3"></polygon>
                                     </svg>
                                     <span class="trailer-text">Trailer</span>
                                 </button>
                             </div>
+                            <!-- Cast strip: below links, no header/collapse -->
+                            <div id="cast-section" class="cast-section cast-inline" style="display: none;">
+                                <div id="cast-grid" class="cast-grid"></div>
+                            </div>
                         </div>
                     </div>
-                </div>
-
-                <!-- Cast Section (for TV shows and movies) - Collapsible -->
-                <div id="cast-section" class="cast-section" style="display: none;">
-                    <div class="cast-header" id="cast-header">
-                        <h3>Cast</h3>
-                        <svg class="cast-toggle-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <polyline points="6 9 12 15 18 9"></polyline>
-                        </svg>
-                    </div>
-                    <div id="cast-grid" class="cast-grid"></div>
                 </div>
 
                 <!-- Seasons & Episodes Section (for TV shows only) - using library_show style -->
@@ -325,13 +356,14 @@
         <!-- Version Selection Modal for Request -->
         <div id="versionModal" class="version-modal">
             <div class="version-modal-content">
-                <h3>Select Versions</h3>
-                <div id="versionCheckboxes">
-                    <!-- Version checkboxes will be dynamically inserted here -->
+                <div class="dialog-body">
+                    <div id="versionCheckboxes">
+                        <!-- Dynamically populated by JS -->
+                    </div>
                 </div>
-                <div class="version-modal-buttons">
-                    <button id="confirmVersions">Request</button>
-                    <button id="cancelVersions">Cancel</button>
+                <div class="dialog-footer">
+                    <button id="confirmVersions" class="vm-btn vm-btn-accent"><i class="fa-solid fa-paper-plane"></i> Request</button>
+                    <button id="cancelVersions" class="vm-btn vm-btn-ghost"><i class="fa-solid fa-xmark"></i> Cancel</button>
                 </div>
             </div>
         </div>

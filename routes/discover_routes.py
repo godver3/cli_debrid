@@ -21,12 +21,15 @@ from utilities.mdblist_api import (
     is_mdblist_configured,
     fetch_mdblist_top_lists,
     fetch_list_items,
+    get_user_lists as get_mdblist_user_lists,
+    fetch_custom_list_items,
     test_api_connection as test_mdblist_connection,
     CURATED_LISTS
 )
 from utilities.flixpatrol_api import (
     get_available_platforms as get_flixpatrol_platforms,
     fetch_top10 as fetch_flixpatrol_top10,
+    fetch_top10_weekly as fetch_flixpatrol_top10_weekly,
     get_title_ids_from_flixpatrol
 )
 from routes.models import user_required
@@ -42,6 +45,59 @@ _trakt_lists_cache = {
 _TRAKT_LISTS_INDEX_TTL  = timedelta(minutes=10)   # how long to cache the list-of-lists
 _TRAKT_MYLIST_TTL       = timedelta(hours=24)      # max age before force-refresh regardless
 _TRAKT_SPECIAL_TTL      = timedelta(hours=24)      # hard TTL for special lists (trending etc.)
+
+# ── MDBList personal list cache ───────────────────────────────────────────────
+_mdblist_personal_cache_lock = threading.Lock()
+_mdblist_personal_cache = {}   # 'index': {'data': [...], 'expires': datetime}
+                               # '<list_id>': {'data': [...], 'expires': datetime}
+_MDBLIST_PERSONAL_INDEX_TTL = timedelta(minutes=10)
+_MDBLIST_PERSONAL_ITEMS_TTL = timedelta(hours=6)
+_MDBLIST_PERSONAL_FILE_CACHE = os.path.join(os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'mdblist_personal_cache.json')
+
+def _load_mdblist_personal_file_cache():
+    """Seed _mdblist_personal_cache from disk on startup."""
+    try:
+        if not os.path.exists(_MDBLIST_PERSONAL_FILE_CACHE):
+            return
+        with open(_MDBLIST_PERSONAL_FILE_CACHE, 'r', encoding='utf-8') as f:
+            stored = json.load(f)
+        loaded = 0
+        with _mdblist_personal_cache_lock:
+            for key, entry in stored.items():
+                if key == 'index':
+                    continue  # Don't restore index; re-fetch on first request
+                try:
+                    expires = datetime.fromisoformat(entry.get('expires', ''))
+                except Exception:
+                    continue
+                _mdblist_personal_cache[key] = {
+                    'data': entry['data'],
+                    'expires': expires,
+                }
+                loaded += 1
+        if loaded:
+            logging.info(f"[MDBList Personal] Loaded {loaded} list entries from file cache")
+    except Exception as e:
+        logging.warning(f"[MDBList Personal] Could not load file cache: {e}")
+
+def _save_mdblist_personal_file_cache():
+    """Persist personal list item entries to disk."""
+    try:
+        with _mdblist_personal_cache_lock:
+            to_store = {
+                key: {'data': entry['data'], 'expires': entry['expires'].isoformat()}
+                for key, entry in _mdblist_personal_cache.items()
+                if key != 'index'
+            }
+        os.makedirs(os.path.dirname(_MDBLIST_PERSONAL_FILE_CACHE), exist_ok=True)
+        tmp = _MDBLIST_PERSONAL_FILE_CACHE + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(to_store, f)
+        os.replace(tmp, _MDBLIST_PERSONAL_FILE_CACHE)
+    except Exception as e:
+        logging.warning(f"[MDBList Personal] Could not save file cache: {e}")
+
+_load_mdblist_personal_file_cache()
 
 # ── Trakt mylist file cache ────────────────────────────────────────────────────
 # Persists mylist results across restarts so a large list doesn't need re-fetching.
@@ -107,10 +163,11 @@ _trending_cache = {}
 _TRENDING_TTL = timedelta(hours=1)
 
 # ── FlixPatrol top10 cache ─────────────────────────────────────────────────────
-# Keyed by '<platform>:<media_type>'
+# Today keyed by '<platform>:<media_type>', weekly by 'weekly:<platform>:<media_type>'
 _flixpatrol_cache_lock = threading.Lock()
 _flixpatrol_cache = {}
 _FLIXPATROL_TTL = timedelta(hours=6)
+_FLIXPATROL_WEEKLY_TTL = timedelta(hours=24)
 
 # Path to store filter presets - uses USER_CONFIG environment variable
 PRESETS_FILE = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'discover_presets.json')
@@ -862,6 +919,76 @@ def trending():
         logging.error(f"Discover trending error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
+_tmdb_shows_cache_lock = threading.Lock()
+_tmdb_shows_cache = {}
+_TMDB_SHOWS_TTL = timedelta(hours=6)
+
+
+@discover_bp.route('/api/tmdb/shows/<list_type>')
+@user_required
+def tmdb_shows(list_type):
+    """
+    Fetch TMDB show lists: popular, top_rated, airing_today, trending.
+    Returns enriched results matching the discover card format.
+    """
+    VALID_TYPES = {
+        'popular':      'tv/popular',
+        'top_rated':    'tv/top_rated',
+        'airing_today': 'tv/airing_today',
+        'trending':     'trending/tv/week',
+    }
+    if list_type not in VALID_TYPES:
+        return jsonify({'error': f'Unknown list type: {list_type}'}), 400
+
+    tmdb_api_key = get_setting('TMDB', 'api_key', '')
+    if not tmdb_api_key:
+        return jsonify({'error': 'TMDB API key not configured'}), 400
+
+    with _tmdb_shows_cache_lock:
+        entry = _tmdb_shows_cache.get(list_type)
+    if entry and datetime.now() < entry['expires']:
+        return jsonify({**entry['data'], 'cached': True})
+
+    try:
+        endpoint = VALID_TYPES[list_type]
+        results = []
+        for page in range(1, 3):  # 2 pages = up to 40 results
+            url = f"https://api.themoviedb.org/3/{endpoint}?api_key={tmdb_api_key}&language=en-US&page={page}"
+            r = requests.get(url, timeout=10)
+            if not r.ok:
+                break
+            for item in r.json().get('results', []):
+                results.append({
+                    'id': item['id'],
+                    'title': item.get('name') or item.get('title', ''),
+                    'name': item.get('name') or item.get('title', ''),
+                    'overview': item.get('overview', ''),
+                    'poster_path': item.get('poster_path'),
+                    'backdrop_path': item.get('backdrop_path'),
+                    'release_date': item.get('first_air_date', ''),
+                    'first_air_date': item.get('first_air_date', ''),
+                    'vote_average': item.get('vote_average', 0),
+                    'vote_count': item.get('vote_count', 0),
+                    'media_type': 'tv',
+                    'genre_ids': item.get('genre_ids', []),
+                    'original_language': item.get('original_language', ''),
+                    'origin_country': item.get('origin_country', []),
+                    'popularity': item.get('popularity', 0),
+                })
+
+        add_db_status_and_episode_info(results, use_battery=False)
+
+        response_data = {'success': True, 'results': results, 'total_results': len(results), 'list_type': list_type}
+        with _tmdb_shows_cache_lock:
+            _tmdb_shows_cache[list_type] = {'data': response_data, 'expires': datetime.now() + _TMDB_SHOWS_TTL}
+
+        return jsonify(response_data)
+
+    except Exception as e:
+        logging.error(f"TMDB shows {list_type} error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @discover_bp.route('/api/recommendations')
 @user_required
 def recommendations():
@@ -1074,6 +1201,31 @@ def get_keyword(keyword_id):
     except Exception as e:
         logging.error(f"Get keyword error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
+
+
+@discover_bp.route('/api/keywords/<string:media_type>/<int:tmdb_id>')
+@user_required
+def get_item_keywords(media_type, tmdb_id):
+    """
+    Fetch TMDB keyword IDs for a specific movie or TV show.
+    Used by the discover page to support keyword filtering in list mode.
+    """
+    try:
+        tmdb_api_key = get_setting('TMDB', 'api_key', '')
+        if not tmdb_api_key:
+            return jsonify({'keywords': []}), 200
+
+        endpoint = 'tv' if media_type == 'tv' else 'movie'
+        url = f"https://api.themoviedb.org/3/{endpoint}/{tmdb_id}/keywords?api_key={tmdb_api_key}"
+        response = requests.get(url, timeout=8)
+        response.raise_for_status()
+        data = response.json()
+        keywords = data.get('keywords') or data.get('results') or []
+        return jsonify({'keywords': [{'id': k['id'], 'name': k.get('name', '')} for k in keywords if isinstance(k, dict)]})
+
+    except Exception as e:
+        logging.debug(f"Item keywords fetch error for {media_type}/{tmdb_id}: {e}")
+        return jsonify({'keywords': []}), 200
 
 
 @discover_bp.route('/api/certifications')
@@ -2848,6 +3000,168 @@ def mdblist_list_items(list_key):
 
 
 # =============================================================================
+# MDBList Personal Lists API (Requires API Key)
+# =============================================================================
+
+@discover_bp.route('/api/mdblist/personal-lists')
+@user_required
+def mdblist_personal_lists():
+    """Return the user's personal MDBList lists, cached for 10 minutes."""
+    try:
+        with _mdblist_personal_cache_lock:
+            entry = _mdblist_personal_cache.get('index')
+            if entry and datetime.now() < entry['expires']:
+                return jsonify({'success': True, 'lists': entry['data'], 'cached': True})
+
+        if not is_mdblist_configured():
+            return jsonify({'success': False, 'lists': [], 'error': 'MDBList API key not configured'})
+
+        result = get_mdblist_user_lists()
+        if 'error' in result and not result.get('lists'):
+            return jsonify({'success': False, 'lists': [], 'error': result['error']})
+
+        # MDBList returns a separate entry per mediatype for mixed lists — deduplicate by slug,
+        # keeping the entry with the highest item count (which covers both types).
+        seen_slugs = {}
+        for lst in result.get('lists', []):
+            slug = lst.get('slug', '')
+            if slug not in seen_slugs or lst.get('items_count', 0) > seen_slugs[slug].get('items_count', 0):
+                seen_slugs[slug] = lst
+        lists = list(seen_slugs.values())
+        with _mdblist_personal_cache_lock:
+            _mdblist_personal_cache['index'] = {
+                'data': lists,
+                'expires': datetime.now() + _MDBLIST_PERSONAL_INDEX_TTL,
+            }
+        return jsonify({'success': True, 'lists': lists})
+    except Exception as e:
+        logging.error(f"[MDBList Personal] Failed to fetch personal lists: {e}")
+        with _mdblist_personal_cache_lock:
+            entry = _mdblist_personal_cache.get('index')
+            if entry:
+                return jsonify({'success': True, 'lists': entry['data'], 'cached': True, 'stale': True})
+        return jsonify({'success': False, 'lists': [], 'error': str(e)}), 500
+
+
+@discover_bp.route('/api/mdblist/personal-list/<list_id>')
+@user_required
+def mdblist_personal_list_items(list_id):
+    """Fetch items from a user's personal MDBList list by ID, enriched with TMDB data."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    try:
+        cache_key = str(list_id)
+
+        with _mdblist_personal_cache_lock:
+            entry = _mdblist_personal_cache.get(cache_key)
+            if entry and datetime.now() < entry['expires'] and entry['data']:
+                return jsonify({'success': True, 'results': entry['data'], 'total_results': len(entry['data']), 'cached': True})
+            elif entry and not entry['data']:
+                # Evict empty cache entry so we re-fetch with correct endpoint
+                del _mdblist_personal_cache[cache_key]
+
+        # Look up slug + username from the index cache
+        slug = None
+        username = None
+        with _mdblist_personal_cache_lock:
+            index_entry = _mdblist_personal_cache.get('index')
+            if index_entry:
+                for lst in index_entry.get('data', []):
+                    if str(lst.get('id')) == str(list_id):
+                        slug = lst.get('slug')
+                        username = lst.get('username')
+                        break
+
+        logging.info(f"[MDBList Personal] Fetching list_id={list_id} slug={slug} username={username}")
+        result = fetch_custom_list_items(list_id, limit=100, username=username, slug=slug)
+        logging.info(f"[MDBList Personal] fetch_custom_list_items returned: success={result.get('success')}, items={len(result.get('items', []))}, error={result.get('error')}")
+        if 'error' in result and not result.get('items'):
+            return jsonify({'success': False, 'results': [], 'error': result.get('error', 'Unknown error')}), 400
+
+        items = result.get('items', [])
+
+        tmdb_api_key = get_setting('TMDB', 'api_key', '')
+        enriched_items = []
+
+        if tmdb_api_key and items:
+            tmdb_ids = [str(i['tmdb_id']) for i in items if i.get('tmdb_id')]
+            db_statuses = get_cached_db_statuses(tmdb_ids) if tmdb_ids else {}
+
+            def enrich_item(item, idx):
+                tmdb_id = item.get('tmdb_id')
+                if not tmdb_id:
+                    return None
+                media_type = item.get('media_type', 'movie')
+                endpoint = 'tv' if media_type == 'tv' else 'movie'
+                try:
+                    r = requests.get(
+                        f'https://api.themoviedb.org/3/{endpoint}/{tmdb_id}?api_key={tmdb_api_key}&language=en-US',
+                        timeout=8
+                    )
+                    if r.ok:
+                        d = r.json()
+                        return {
+                            'id': tmdb_id,
+                            'title': d.get('title') or d.get('name', ''),
+                            'name': d.get('name') or d.get('title', ''),
+                            'overview': d.get('overview', ''),
+                            'poster_path': d.get('poster_path'),
+                            'backdrop_path': d.get('backdrop_path'),
+                            'release_date': d.get('release_date', ''),
+                            'first_air_date': d.get('first_air_date', ''),
+                            'vote_average': d.get('vote_average', 0),
+                            'vote_count': d.get('vote_count', 0),
+                            'media_type': media_type,
+                            'genre_ids': [g['id'] for g in d.get('genres', [])],
+                            'original_language': d.get('original_language', ''),
+                            'db_status': db_statuses.get(str(tmdb_id), 'missing'),
+                            'rank': item.get('rank', idx + 1),
+                            '_idx': idx,
+                        }
+                except Exception:
+                    pass
+                return {
+                    'id': tmdb_id,
+                    'title': item.get('title', 'Unknown'),
+                    'media_type': media_type,
+                    'db_status': db_statuses.get(str(tmdb_id), 'missing'),
+                    'rank': item.get('rank', idx + 1),
+                    '_idx': idx,
+                }
+
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = {executor.submit(enrich_item, item, idx): idx for idx, item in enumerate(items)}
+                results_map = {}
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    try:
+                        enriched = future.result()
+                        if enriched:
+                            results_map[idx] = enriched
+                    except Exception as e:
+                        logging.warning(f"Error enriching MDBList personal list item: {e}")
+
+            enriched_items = [results_map[k] for k in sorted(results_map.keys())]
+            for item in enriched_items:
+                item.pop('_idx', None)
+
+        if enriched_items:  # Don't cache empty results — likely upstream API error
+            with _mdblist_personal_cache_lock:
+                _mdblist_personal_cache[cache_key] = {
+                    'data': enriched_items,
+                    'expires': datetime.now() + _MDBLIST_PERSONAL_ITEMS_TTL,
+                }
+            _save_mdblist_personal_file_cache()
+
+        logging.info(f"[MDBList Personal] Returning {len(enriched_items)} enriched items for list_id={list_id}")
+        return jsonify({'success': True, 'results': enriched_items, 'total_results': len(enriched_items)})
+
+    except Exception as e:
+        logging.error(f"[MDBList Personal] Error fetching list {list_id}: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+# =============================================================================
 # FlixPatrol Integration API (No API Key Required)
 # =============================================================================
 
@@ -3361,6 +3675,121 @@ def flixpatrol_top10(platform):
     except Exception as e:
         logging.error(f"Error fetching FlixPatrol Top 10 for {platform}: {e}")
         return jsonify({'error': str(e)}), 500
+
+
+@discover_bp.route('/api/flixpatrol/top10/<platform>/weekly')
+@user_required
+def flixpatrol_top10_weekly(platform):
+    """
+    Get weekly aggregated Top 10 from FlixPatrol (last 7 days, scored by rank).
+    Cached for 24 hours since the data changes daily at most.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    try:
+        media_type_filter = request.args.get('type', 'all')
+
+        fp_cache_key = f'weekly:{platform}:{media_type_filter}'
+        with _flixpatrol_cache_lock:
+            fp_entry = _flixpatrol_cache.get(fp_cache_key)
+        if fp_entry and datetime.now() < fp_entry['expires']:
+            logging.debug(f"[FlixPatrol Weekly] Serving from cache ({fp_cache_key})")
+            return jsonify({**fp_entry['data'], 'cached': True})
+
+        result = fetch_flixpatrol_top10_weekly(platform, media_type=media_type_filter)
+
+        if 'error' in result:
+            return jsonify(result), 400
+
+        items = result.get('items', [])
+        tmdb_api_key = get_setting('TMDB', 'api_key', '')
+        enriched_items = []
+
+        if tmdb_api_key and items:
+            def enrich_item(item):
+                title = item.get('title', '')
+                media_type = item.get('media_type', 'movie')
+                rank = item.get('rank')
+                flixpatrol_url = item.get('flixpatrol_url')
+                tmdb_id = None
+                try:
+                    search_types = ['movie', 'tv'] if media_type == 'unknown' else [media_type if media_type == 'tv' else 'movie']
+                    for search_type in search_types:
+                        sr = requests.get(
+                            f"https://api.themoviedb.org/3/search/{search_type}?api_key={tmdb_api_key}&query={requests.utils.quote(title)}&page=1",
+                            timeout=5)
+                        if sr.ok and sr.json().get('results'):
+                            tmdb_id = sr.json()['results'][0]['id']
+                            media_type = search_type
+                            break
+                except Exception:
+                    pass
+                if not tmdb_id:
+                    return {'id': None, 'title': title, 'media_type': media_type, 'rank': rank, 'db_status': 'unknown', 'flixpatrol_url': flixpatrol_url}
+                try:
+                    ep = 'tv' if media_type == 'tv' else 'movie'
+                    dr = requests.get(f"https://api.themoviedb.org/3/{ep}/{tmdb_id}?api_key={tmdb_api_key}&language=en-US", timeout=5)
+                    if dr.ok:
+                        d = dr.json()
+                        return {
+                            'id': tmdb_id,
+                            'title': d.get('title') or d.get('name'),
+                            'overview': d.get('overview', ''),
+                            'poster_path': d.get('poster_path'),
+                            'backdrop_path': d.get('backdrop_path'),
+                            'release_date': d.get('release_date') or d.get('first_air_date', ''),
+                            'vote_average': d.get('vote_average', 0),
+                            'vote_count': d.get('vote_count', 0),
+                            'media_type': media_type,
+                            'genre_ids': [g['id'] for g in d.get('genres', [])],
+                            'original_language': d.get('original_language', ''),
+                            'origin_country': d.get('origin_country', []),
+                            'company_ids': [c['id'] for c in d.get('production_companies', [])],
+                            'rank': rank,
+                            'flixpatrol_url': flixpatrol_url,
+                            '_tmdb_id': tmdb_id,
+                        }
+                except Exception:
+                    pass
+                return {'id': tmdb_id, 'title': title, 'media_type': media_type, 'db_status': 'unknown', 'rank': rank, 'flixpatrol_url': flixpatrol_url, '_tmdb_id': tmdb_id}
+
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                future_to_idx = {executor.submit(enrich_item, item): idx for idx, item in enumerate(items)}
+                results_map = {}
+                for future in as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    try:
+                        results_map[idx] = future.result()
+                    except Exception as e:
+                        logging.warning(f"Error enriching weekly FlixPatrol item: {e}")
+            enriched_items = [results_map[k] for k in sorted(results_map.keys())]
+            for item in enriched_items:
+                if '_tmdb_id' in item and not item.get('id'):
+                    item['id'] = item['_tmdb_id']
+                item.pop('_tmdb_id', None)
+            add_db_status_and_episode_info(enriched_items, use_battery=False)
+
+        response_data = {
+            'success': True,
+            'platform': result.get('platform'),
+            'platform_name': result.get('platform_name'),
+            'period': 'weekly',
+            'date': result.get('date'),
+            'results': enriched_items,
+            'total_results': len(enriched_items),
+        }
+        with _flixpatrol_cache_lock:
+            _flixpatrol_cache[fp_cache_key] = {
+                'data': response_data,
+                'expires': datetime.now() + _FLIXPATROL_WEEKLY_TTL,
+            }
+        return jsonify(response_data)
+
+    except Exception as e:
+        logging.error(f"Error fetching FlixPatrol weekly Top 10 for {platform}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @discover_bp.route('/addmedia')
 @user_required
 def addmedia():

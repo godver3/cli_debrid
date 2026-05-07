@@ -1,27 +1,118 @@
 {% extends "base.html" %}
 
-
 {% block head %}
 <script>
-    // Dynamically load the correct CSS based on theme cookie
     (function() {
         const theme = document.cookie.split('; ').find(row => row.startsWith('selectedTheme='))?.split('=')[1] || 'classic';
         const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_symlink_tools.css' : 'css/symlink_tools.css';
         const link = document.createElement('link');
         link.rel = 'stylesheet';
-        // Add cache-busting parameter based on theme to force reload when theme changes
         link.href = '{{ url_for("static", filename="") }}' + cssFile + '?v=' + theme + '_' + Date.now();
         document.head.appendChild(link);
     })();
 </script>
+<style>
+/* ── Tangerine symlink tools redesign ── */
+body:not(.tangerine-theme) #stTng{display:none!important}
+body.tangerine-theme #stClassic{display:none!important}
+
+:root{
+  --st-surface:#1a1a1a;--st-surface2:#222;--st-surface3:#2a2a2a;
+  --st-border:#2d2d2d;--st-border2:#3d3d3d;
+  --st-accent:#e8601c;
+  --st-text:#e0e0e0;--st-text2:#aaa;--st-text3:#555;
+  --st-green:#22c55e;--st-red:#ef4444;--st-yellow:#f59e0b;
+  --st-mono:'JetBrains Mono',monospace;--st-sans:'Inter',sans-serif;
+}
+.st-wrap{max-width:1000px;margin:0 auto;padding:1.25rem;font-family:var(--st-sans);font-size:13px;color:var(--st-text)}
+.st-hdr{margin-bottom:1.25rem}
+.st-title{font-size:20px;font-weight:700;border-left:3px solid var(--st-accent);padding-left:10px;color:var(--st-text);margin-bottom:6px}
+.st-desc{font-size:12px;color:var(--st-text3);padding-left:13px}
+.st-section{background:var(--st-surface);border:1px solid var(--st-border);border-radius:9px;padding:16px;margin-bottom:14px}
+.st-section-title{font-size:13px;font-weight:600;color:var(--st-text);display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--st-border)}
+.st-section-title i{color:var(--st-accent);font-size:13px}
+
+/* Settings info */
+.st-settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:600px){.st-settings-grid{grid-template-columns:1fr}}
+.st-setting-card{background:var(--st-surface2);border:1px solid var(--st-border);border-radius:7px;padding:12px 14px}
+.st-setting-label{font-size:10px;color:var(--st-text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px}
+.st-setting-val{font-size:12px;font-family:var(--st-mono);color:var(--st-text)}
+
+/* Form elements */
+.st-form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}
+@media(max-width:600px){.st-form-row{grid-template-columns:1fr}}
+.st-form-group{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
+.st-form-group:last-child{margin-bottom:0}
+.st-label{font-size:11px;color:var(--st-text2);font-weight:500}
+.st-label .req{color:var(--st-accent)}
+.st-input,.st-select{background:#222;border:1px solid #3d3d3d;border-radius:4px;padding:6px 9px;font-size:12px;font-family:var(--st-mono);color:#e0e0e0;outline:none;transition:border-color .15s;width:100%;height:32px}
+.st-input:focus,.st-select:focus{border-color:var(--st-accent)}
+.st-input::placeholder{color:#555;font-size:12px}
+.st-select option{background:var(--st-surface2)}
+
+/* File input group */
+.st-file-group{display:flex;gap:8px}
+.st-file-group .st-input{flex:1}
+
+/* Buttons */
+.st-btn{display:inline-flex;align-items:center;gap:6px;padding:0 14px;height:32px;border-radius:6px;font-family:var(--st-sans);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap;background:transparent}
+.st-btn i{font-size:11px}
+.st-btn-primary{border:1px solid var(--st-accent);color:var(--st-accent)}
+.st-btn-primary:hover{background:#e8601c22}
+.st-btn-secondary{border:1px solid var(--st-border2);color:var(--st-text2)}
+.st-btn-secondary:hover{border-color:var(--st-text2);background:rgba(255,255,255,.04)}
+.st-btn:disabled{opacity:.45;cursor:not-allowed}
+
+/* Validation message */
+.st-validation{font-size:11px;font-family:var(--st-mono);margin-top:4px;padding:5px 10px;border-radius:4px;display:none}
+.st-validation.valid{display:block;background:#16653418;border:1px solid #166534;color:var(--st-green)}
+.st-validation.invalid{display:block;background:#7f1d1d18;border:1px solid #7f1d1d;color:var(--st-red)}
+
+/* Preview box */
+.st-preview-box{background:var(--st-surface2);border:1px solid var(--st-border);border-radius:7px;padding:12px 14px;margin-top:10px;font-size:12px;font-family:var(--st-mono);color:var(--st-text3)}
+.st-preview-box .st-path{color:var(--st-accent);word-break:break-all}
+.st-preview-box .st-exists{color:var(--st-yellow);margin-top:6px;font-size:11px}
+.st-preview-box .st-error{color:var(--st-red)}
+
+/* Form actions */
+.st-form-actions{display:flex;gap:8px;flex-wrap:wrap;padding-top:4px}
+
+/* File browser modal */
+.st-modal{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center}
+.st-modal-box{background:var(--st-surface);border:1px solid var(--st-border2);border-radius:10px;width:min(700px,94vw);max-height:80vh;display:flex;flex-direction:column;overflow:hidden}
+.st-modal-hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--st-border);flex-shrink:0}
+.st-modal-title{font-size:14px;font-weight:600;color:var(--st-text);display:flex;align-items:center;gap:8px}
+.st-modal-title i{color:var(--st-accent)}
+.st-modal-close{background:none;border:none;color:var(--st-text3);font-size:18px;cursor:pointer;padding:2px 6px;border-radius:4px;line-height:1}
+.st-modal-close:hover{color:var(--st-text);background:rgba(255,255,255,.06)}
+.st-modal-nav{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--st-border);flex-shrink:0;flex-wrap:wrap}
+.st-current-path{font-size:11px;font-family:var(--st-mono);color:var(--st-text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}
+.st-file-list{flex:1;overflow-y:auto;padding:8px}
+.st-file-list::-webkit-scrollbar{width:4px}
+.st-file-list::-webkit-scrollbar-thumb{background:var(--st-border2);border-radius:2px}
+.st-file-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;cursor:pointer;border:1px solid transparent}
+.st-file-item:hover{background:var(--st-surface2);border-color:var(--st-border)}
+.st-file-item.selected{background:rgba(232,96,28,.1);border-color:var(--st-accent)}
+.st-file-item-icon{font-size:15px;flex-shrink:0;width:20px;text-align:center}
+.st-file-item-name{font-size:12px;font-family:var(--st-mono);color:var(--st-text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st-file-item-name.media{color:var(--st-accent)}
+.st-file-item-details{font-size:10px;color:var(--st-text3);font-family:var(--st-mono);white-space:nowrap;flex-shrink:0}
+.st-modal-footer{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--st-border);flex-shrink:0;justify-content:flex-end}
+.st-file-msg{padding:16px;text-align:center;font-size:12px;color:var(--st-text3)}
+</style>
 {% endblock %}
+
 {% block title %}Symlink Tools{% endblock %}
 
 {% block content %}
+
+<!-- ── Classic layout ── -->
+<div id="stClassic">
 <div class="container">
     <h1>Symlink Tools</h1>
     <p class="description">
-        Manually create symlinks for media files when metadata is incorrect or missing. 
+        Manually create symlinks for media files when metadata is incorrect or missing.
         This tool allows you to select a media file and create a symlink following your configured naming templates.
     </p>
 
@@ -45,7 +136,7 @@
             <div class="form-group">
                 <label for="source_file">Source File Path *</label>
                 <div class="file-input-group">
-                    <input type="text" id="source_file" name="source_file" required 
+                    <input type="text" id="source_file" name="source_file" required
                            placeholder="/path/to/your/media/file.mkv">
                     <button type="button" id="browseFilesBtn" class="btn-secondary">Browse Files</button>
                     <button type="button" id="validateFileBtn" class="btn-secondary">Validate File</button>
@@ -54,7 +145,6 @@
             </div>
         </div>
 
-        <!-- File Browser Modal -->
         <div id="fileBrowserModal" class="modal" style="display: none;">
             <div class="modal-content file-browser-modal">
                 <div class="modal-header">
@@ -92,7 +182,6 @@
                     <input type="number" id="year" name="year" required min="1900" max="2030" placeholder="2024">
                 </div>
             </div>
-
             <div class="form-row">
                 <div class="form-group">
                     <label for="media_type">Media Type</label>
@@ -110,7 +199,6 @@
                     </select>
                 </div>
             </div>
-
             <div class="form-row">
                 <div class="form-group">
                     <label for="imdb_id">IMDb ID</label>
@@ -121,7 +209,6 @@
                     <input type="text" id="tmdb_id" name="tmdb_id" placeholder="12345">
                 </div>
             </div>
-
             <div class="form-group">
                 <label for="content_source">Content Source</label>
                 <select id="content_source" name="content_source">
@@ -165,9 +252,167 @@
         </div>
     </form>
 </div>
+</div>
+
+<!-- ── Tangerine layout ── -->
+<div id="stTng">
+<div class="st-wrap">
+
+  <div class="st-hdr">
+    <div class="st-title">Symlink Tools</div>
+    <div class="st-desc">Manually create symlinks for media files when metadata is incorrect or missing.</div>
+  </div>
+
+  <!-- Current Settings -->
+  <div class="st-section">
+    <div class="st-section-title"><i class="fas fa-folder-tree"></i> Current Settings</div>
+    <div class="st-settings-grid">
+      <div class="st-setting-card">
+        <div class="st-setting-label">Symlinked Files Path</div>
+        <div class="st-setting-val">{{ symlinked_files_path or 'Not configured' }}</div>
+      </div>
+      <div class="st-setting-card">
+        <div class="st-setting-label">Original Files Path</div>
+        <div class="st-setting-val">{{ original_files_path or 'Not configured' }}</div>
+      </div>
+    </div>
+  </div>
+
+  <form id="tngSymlinkForm" method="POST">
+
+    <!-- File Selection -->
+    <div class="st-section">
+      <div class="st-section-title"><i class="fas fa-file-video"></i> File Selection</div>
+      <div class="st-form-group">
+        <label class="st-label">Source File Path <span class="req">*</span></label>
+        <div class="st-file-group">
+          <input type="text" id="tngSourceFile" name="source_file" required class="st-input" placeholder="/path/to/your/media/file.mkv">
+          <button type="button" id="tngBrowseBtn" class="st-btn st-btn-secondary"><i class="fas fa-folder-open"></i> Browse</button>
+          <button type="button" id="tngValidateBtn" class="st-btn st-btn-secondary"><i class="fas fa-check"></i> Validate</button>
+        </div>
+        <div id="tngFileValidation" class="st-validation"></div>
+      </div>
+    </div>
+
+    <!-- Media Information -->
+    <div class="st-section">
+      <div class="st-section-title"><i class="fas fa-film"></i> Media Information</div>
+
+      <div class="st-form-row">
+        <div class="st-form-group">
+          <label class="st-label">Title <span class="req">*</span></label>
+          <input type="text" id="tngTitle" name="title" required class="st-input" placeholder="Movie / Show Title">
+        </div>
+        <div class="st-form-group">
+          <label class="st-label">Year <span class="req">*</span></label>
+          <input type="number" id="tngYear" name="year" required class="st-input" min="1900" max="2030" placeholder="2024">
+        </div>
+      </div>
+
+      <div class="st-form-row">
+        <div class="st-form-group">
+          <label class="st-label">Media Type</label>
+          <select id="tngMediaType" name="media_type" class="st-select">
+            <option value="movie">Movie</option>
+            <option value="episode">TV Episode</option>
+          </select>
+        </div>
+        <div class="st-form-group">
+          <label class="st-label">Version</label>
+          <select id="tngVersion" name="version" class="st-select">
+            {% for version in version_choices %}
+            <option value="{{ version }}">{{ version }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="st-form-row">
+        <div class="st-form-group">
+          <label class="st-label">IMDb ID</label>
+          <input type="text" id="tngImdbId" name="imdb_id" class="st-input" placeholder="tt1234567">
+        </div>
+        <div class="st-form-group">
+          <label class="st-label">TMDB ID</label>
+          <input type="text" id="tngTmdbId" name="tmdb_id" class="st-input" placeholder="12345">
+        </div>
+      </div>
+
+      <div class="st-form-group">
+        <label class="st-label">Content Source</label>
+        <select id="tngContentSource" name="content_source" class="st-select">
+          <option value="">None</option>
+          {% for source in content_source_choices %}
+          <option value="{{ source }}">{{ source }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <!-- Episode Information -->
+    <div class="st-section" id="tngEpisodeSection" style="display:none">
+      <div class="st-section-title"><i class="fas fa-tv"></i> Episode Information</div>
+      <div class="st-form-row">
+        <div class="st-form-group">
+          <label class="st-label">Season Number <span class="req">*</span></label>
+          <input type="number" id="tngSeason" name="season_number" class="st-input" min="0" placeholder="1">
+        </div>
+        <div class="st-form-group">
+          <label class="st-label">Episode Number <span class="req">*</span></label>
+          <input type="number" id="tngEpisode" name="episode_number" class="st-input" min="1" placeholder="1">
+        </div>
+      </div>
+      <div class="st-form-group">
+        <label class="st-label">Episode Title</label>
+        <input type="text" id="tngEpisodeTitle" name="episode_title" class="st-input" placeholder="Episode Title">
+      </div>
+    </div>
+
+    <!-- Preview -->
+    <div class="st-section">
+      <div class="st-section-title"><i class="fas fa-eye"></i> Preview</div>
+      <button type="button" id="tngPreviewBtn" class="st-btn st-btn-secondary"><i class="fas fa-magnifying-glass"></i> Preview Symlink Path</button>
+      <div id="tngPathPreview" class="st-preview-box" style="margin-top:10px">
+        Click "Preview Symlink Path" to see the generated path based on your settings.
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="st-form-actions">
+      <button type="submit" class="st-btn st-btn-primary"><i class="fas fa-link"></i> Create Symlink</button>
+      <button type="reset" class="st-btn st-btn-secondary"><i class="fas fa-rotate-left"></i> Reset Form</button>
+    </div>
+
+  </form>
+
+  <!-- File Browser Modal -->
+  <div id="tngFileBrowser" class="st-modal" style="display:none">
+    <div class="st-modal-box">
+      <div class="st-modal-hdr">
+        <div class="st-modal-title"><i class="fas fa-folder-open"></i> File Browser</div>
+        <button class="st-modal-close" id="tngCloseModal">&times;</button>
+      </div>
+      <div class="st-modal-nav">
+        <button class="st-btn st-btn-secondary" id="tngGoUp" disabled><i class="fas fa-arrow-up"></i> Up</button>
+        <button class="st-btn st-btn-secondary" id="tngGoHome"><i class="fas fa-house"></i> Home</button>
+        <span class="st-current-path" id="tngCurrentPath">/</span>
+      </div>
+      <div class="st-file-list" id="tngFileList">
+        <div class="st-file-msg">Loading…</div>
+      </div>
+      <div class="st-modal-footer">
+        <button class="st-btn st-btn-secondary" id="tngCancelFile">Cancel</button>
+        <button class="st-btn st-btn-primary" id="tngSelectFile" disabled><i class="fas fa-check"></i> Select File</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    // ── Classic theme JS ────────────────────────────────────────────
     const mediaTypeSelect = document.getElementById('media_type');
     const episodeFields = document.getElementById('episodeFields');
     const seasonNumberInput = document.getElementById('season_number');
@@ -177,8 +422,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const sourceFileInput = document.getElementById('source_file');
     const fileValidation = document.getElementById('fileValidation');
     const pathPreview = document.getElementById('pathPreview');
-    
-    // File browser elements
     const browseFilesBtn = document.getElementById('browseFilesBtn');
     const fileBrowserModal = document.getElementById('fileBrowserModal');
     const closeFileBrowser = document.getElementById('closeFileBrowser');
@@ -188,14 +431,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const fileList = document.getElementById('fileList');
     const selectFileBtn = document.getElementById('selectFileBtn');
     const cancelFileBtn = document.getElementById('cancelFileBtn');
-    
-    // File browser state
+
     let currentDirectory = '/';
     let selectedFile = null;
     const mediaExtensions = ['.mkv', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.webm', '.m4v', '.ts', '.mts', '.m2ts'];
 
-    // Toggle episode fields based on media type
-    mediaTypeSelect.addEventListener('change', function() {
+    if (mediaTypeSelect) mediaTypeSelect.addEventListener('change', function() {
         if (this.value === 'episode') {
             episodeFields.style.display = 'block';
             seasonNumberInput.required = true;
@@ -207,32 +448,17 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Validate file button
-    validateFileBtn.addEventListener('click', function() {
+    if (validateFileBtn) validateFileBtn.addEventListener('click', function() {
         const filePath = sourceFileInput.value.trim();
-        if (!filePath) {
-            showValidation('Please enter a file path', false);
-            return;
-        }
-
+        if (!filePath) { showValidation('Please enter a file path', false); return; }
         fetch('/symlink_tools/api/validate-file', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ file_path: filePath })
-        })
-        .then(response => response.json())
-        .then(data => {
-            showValidation(data.message, data.valid);
-        })
-        .catch(error => {
-            showValidation('Error validating file: ' + error.message, false);
-        });
+        }).then(r => r.json()).then(data => showValidation(data.message, data.valid))
+          .catch(e => showValidation('Error: ' + e.message, false));
     });
 
-    // Preview path button
-    previewPathBtn.addEventListener('click', function() {
+    if (previewPathBtn) previewPathBtn.addEventListener('click', function() {
         const formData = {
             title: document.getElementById('title').value,
             year: document.getElementById('year').value,
@@ -241,196 +467,223 @@ document.addEventListener('DOMContentLoaded', function() {
             content_source: document.getElementById('content_source').value,
             imdb_id: document.getElementById('imdb_id').value,
             tmdb_id: document.getElementById('tmdb_id').value,
-            filename: document.getElementById('source_file').value ? 
-                     document.getElementById('source_file').value.split('/').pop() : '',
+            filename: sourceFileInput.value ? sourceFileInput.value.split('/').pop() : '',
             season_number: document.getElementById('season_number').value,
             episode_number: document.getElementById('episode_number').value,
             episode_title: document.getElementById('episode_title').value
         };
-
         fetch('/symlink_tools/api/preview-path', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(formData)
-        })
-        .then(response => response.json())
-        .then(data => {
+        }).then(r => r.json()).then(data => {
             if (data.success) {
                 pathPreview.innerHTML = `<div class="path">${data.path}</div>`;
-                if (data.exists) {
-                    pathPreview.innerHTML += `<div class="exists">⚠️ This symlink already exists</div>`;
-                }
+                if (data.exists) pathPreview.innerHTML += `<div class="exists">⚠️ This symlink already exists</div>`;
             } else {
-                pathPreview.innerHTML = `<div style="color: #dc3545;">${data.message}</div>`;
+                pathPreview.innerHTML = `<div style="color:#dc3545">${data.message}</div>`;
             }
-        })
-        .catch(error => {
-            pathPreview.innerHTML = `<div style="color: #dc3545;">Error previewing path: ${error.message}</div>`;
-        });
+        }).catch(e => { pathPreview.innerHTML = `<div style="color:#dc3545">Error: ${e.message}</div>`; });
     });
 
-    function showValidation(message, isValid) {
-        fileValidation.textContent = message;
+    function showValidation(msg, isValid) {
+        if (!fileValidation) return;
+        fileValidation.textContent = msg;
         fileValidation.className = 'validation-message ' + (isValid ? 'valid' : 'invalid');
     }
 
-    // Auto-validate file when input changes
-    let validationTimeout;
-    sourceFileInput.addEventListener('input', function() {
-        clearTimeout(validationTimeout);
-        validationTimeout = setTimeout(() => {
-            if (this.value.trim()) {
-                validateFileBtn.click();
-            } else {
-                fileValidation.textContent = '';
-                fileValidation.className = 'validation-message';
-            }
-        }, 500);
-    });
-
-    // File Browser Event Handlers
-    browseFilesBtn.addEventListener('click', function() {
-        fileBrowserModal.style.display = 'block';
-        loadDirectory('/');
-    });
-
-    closeFileBrowser.addEventListener('click', function() {
-        fileBrowserModal.style.display = 'none';
-    });
-
-    cancelFileBtn.addEventListener('click', function() {
-        fileBrowserModal.style.display = 'none';
-    });
-
-    goUpBtn.addEventListener('click', function() {
-        if (currentDirectory !== '/') {
-            const parentDir = currentDirectory.split('/').slice(0, -1).join('/') || '/';
-            loadDirectory(parentDir);
-        }
-    });
-
-    goHomeBtn.addEventListener('click', function() {
-        loadDirectory('/');
-    });
-
-    selectFileBtn.addEventListener('click', function() {
-        if (selectedFile) {
-            sourceFileInput.value = selectedFile;
-            fileBrowserModal.style.display = 'none';
-            // Auto-validate the selected file
-            validateFileBtn.click();
-        }
-    });
-
-    // Close modal when clicking outside
-    window.addEventListener('click', function(event) {
-        if (event.target === fileBrowserModal) {
-            fileBrowserModal.style.display = 'none';
-        }
-    });
-
-    function loadDirectory(path) {
-        currentDirectory = path;
-        currentPath.textContent = path;
-        goUpBtn.disabled = path === '/';
-        
-        fileList.innerHTML = '<div class="loading">Loading...</div>';
-        
-        fetch('/symlink_tools/api/browse-files', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ path: path })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                displayFiles(data.items);
-            } else {
-                fileList.innerHTML = `<div class="error-message">${data.message}</div>`;
-            }
-        })
-        .catch(error => {
-            fileList.innerHTML = `<div class="error-message">Error loading directory: ${error.message}</div>`;
+    if (sourceFileInput) {
+        let vt;
+        sourceFileInput.addEventListener('input', function() {
+            clearTimeout(vt);
+            vt = setTimeout(() => { if (this.value.trim()) validateFileBtn.click(); else { fileValidation.textContent = ''; fileValidation.className = 'validation-message'; } }, 500);
         });
     }
 
-    function displayFiles(items) {
-        if (items.length === 0) {
-            fileList.innerHTML = '<div class="loading">Directory is empty</div>';
-            return;
-        }
+    if (browseFilesBtn) browseFilesBtn.addEventListener('click', () => { fileBrowserModal.style.display = 'block'; loadDir('/'); });
+    if (closeFileBrowser) closeFileBrowser.addEventListener('click', () => { fileBrowserModal.style.display = 'none'; });
+    if (cancelFileBtn) cancelFileBtn.addEventListener('click', () => { fileBrowserModal.style.display = 'none'; });
+    if (goUpBtn) goUpBtn.addEventListener('click', () => { if (currentDirectory !== '/') { const p = currentDirectory.split('/').slice(0,-1).join('/') || '/'; loadDir(p); } });
+    if (goHomeBtn) goHomeBtn.addEventListener('click', () => loadDir('/'));
+    if (selectFileBtn) selectFileBtn.addEventListener('click', () => { if (selectedFile) { sourceFileInput.value = selectedFile; fileBrowserModal.style.display = 'none'; validateFileBtn.click(); } });
+    window.addEventListener('click', e => { if (e.target === fileBrowserModal) fileBrowserModal.style.display = 'none'; });
 
+    function loadDir(path) {
+        currentDirectory = path;
+        if (currentPath) currentPath.textContent = path;
+        if (goUpBtn) goUpBtn.disabled = path === '/';
+        if (fileList) fileList.innerHTML = '<div class="loading">Loading...</div>';
+        fetch('/symlink_tools/api/browse-files', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path })
+        }).then(r => r.json()).then(data => {
+            if (data.success) displayClassicFiles(data.items);
+            else if (fileList) fileList.innerHTML = `<div class="error-message">${data.message}</div>`;
+        }).catch(e => { if (fileList) fileList.innerHTML = `<div class="error-message">Error: ${e.message}</div>`; });
+    }
+
+    function displayClassicFiles(items) {
+        if (!fileList) return;
+        if (!items.length) { fileList.innerHTML = '<div class="loading">Directory is empty</div>'; return; }
         fileList.innerHTML = '';
-        
         items.forEach(item => {
-            const fileItem = document.createElement('div');
-            fileItem.className = 'file-item';
-            fileItem.dataset.path = item.path;
-            
-            const icon = document.createElement('div');
-            icon.className = 'file-item-icon';
-            icon.textContent = item.is_dir ? '📁' : '📄';
-            
-            const info = document.createElement('div');
-            info.className = 'file-item-info';
-            
-            const name = document.createElement('div');
-            name.className = 'file-item-name';
-            name.textContent = item.name;
-            
-            // Highlight media files
-            if (!item.is_dir) {
-                const ext = item.name.toLowerCase().substring(item.name.lastIndexOf('.'));
-                if (mediaExtensions.includes(ext)) {
-                    name.classList.add('media-extensions');
-                }
-            }
-            
-            const details = document.createElement('div');
-            details.className = 'file-item-details';
-            
-            if (item.is_dir) {
-                details.textContent = 'Directory';
+            const el = document.createElement('div');
+            el.className = 'file-item'; el.dataset.path = item.path;
+            const icon = document.createElement('div'); icon.className = 'file-item-icon'; icon.textContent = item.is_dir ? '📁' : '📄';
+            const info = document.createElement('div'); info.className = 'file-item-info';
+            const name = document.createElement('div'); name.className = 'file-item-name'; name.textContent = item.name;
+            if (!item.is_dir) { const ext = item.name.toLowerCase().substring(item.name.lastIndexOf('.')); if (mediaExtensions.includes(ext)) name.classList.add('media-extensions'); }
+            const details = document.createElement('div'); details.className = 'file-item-details';
+            details.textContent = item.is_dir ? 'Directory' : formatSize(item.size) + ' • ' + new Date(item.modified).toLocaleDateString();
+            info.appendChild(name); info.appendChild(details); el.appendChild(icon); el.appendChild(info);
+            el.addEventListener('click', () => {
+                if (item.is_dir) { loadDir(item.path); }
+                else { document.querySelectorAll('.file-item').forEach(f => f.classList.remove('selected')); el.classList.add('selected'); selectedFile = item.path; if (selectFileBtn) selectFileBtn.disabled = false; }
+            });
+            fileList.appendChild(el);
+        });
+    }
+
+    function formatSize(bytes) {
+        if (bytes === null || bytes === undefined) return 'Unknown';
+        if (bytes === 0) return '0 B';
+        const s = ['B','KB','MB','GB','TB'], i = Math.floor(Math.log(bytes) / Math.log(1024));
+        return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + s[i];
+    }
+
+    // ── Tangerine theme JS ──────────────────────────────────────────
+    const tngMediaType   = document.getElementById('tngMediaType');
+    const tngEpSection   = document.getElementById('tngEpisodeSection');
+    const tngSeason      = document.getElementById('tngSeason');
+    const tngEpisode     = document.getElementById('tngEpisode');
+    const tngSourceFile  = document.getElementById('tngSourceFile');
+    const tngValidation  = document.getElementById('tngFileValidation');
+    const tngValidateBtn = document.getElementById('tngValidateBtn');
+    const tngPreviewBtn  = document.getElementById('tngPreviewBtn');
+    const tngPathPreview = document.getElementById('tngPathPreview');
+    const tngBrowseBtn   = document.getElementById('tngBrowseBtn');
+    const tngModal       = document.getElementById('tngFileBrowser');
+    const tngCloseModal  = document.getElementById('tngCloseModal');
+    const tngGoUp        = document.getElementById('tngGoUp');
+    const tngGoHome      = document.getElementById('tngGoHome');
+    const tngCurrentPath = document.getElementById('tngCurrentPath');
+    const tngFileList    = document.getElementById('tngFileList');
+    const tngSelectFile  = document.getElementById('tngSelectFile');
+    const tngCancelFile  = document.getElementById('tngCancelFile');
+
+    let tngDir = '/';
+    let tngSelected = null;
+
+    if (tngMediaType) tngMediaType.addEventListener('change', function() {
+        const isEp = this.value === 'episode';
+        tngEpSection.style.display = isEp ? '' : 'none';
+        if (tngSeason) tngSeason.required = isEp;
+        if (tngEpisode) tngEpisode.required = isEp;
+    });
+
+    function tngShowValidation(msg, ok) {
+        if (!tngValidation) return;
+        tngValidation.textContent = msg;
+        tngValidation.className = 'st-validation ' + (ok ? 'valid' : 'invalid');
+    }
+
+    function tngValidateFile(path) {
+        if (!path) { tngShowValidation('Please enter a file path', false); return; }
+        fetch('/symlink_tools/api/validate-file', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_path: path })
+        }).then(r => r.json()).then(d => tngShowValidation(d.message, d.valid))
+          .catch(e => tngShowValidation('Error: ' + e.message, false));
+    }
+
+    if (tngValidateBtn) tngValidateBtn.addEventListener('click', () => tngValidateFile(tngSourceFile.value.trim()));
+    if (tngSourceFile) {
+        let vt2;
+        tngSourceFile.addEventListener('input', function() {
+            clearTimeout(vt2);
+            vt2 = setTimeout(() => { if (this.value.trim()) tngValidateFile(this.value.trim()); else tngValidation.className = 'st-validation'; }, 500);
+        });
+    }
+
+    if (tngPreviewBtn) tngPreviewBtn.addEventListener('click', function() {
+        const formData = {
+            title: document.getElementById('tngTitle').value,
+            year: document.getElementById('tngYear').value,
+            media_type: document.getElementById('tngMediaType').value,
+            version: document.getElementById('tngVersion').value,
+            content_source: document.getElementById('tngContentSource').value,
+            imdb_id: document.getElementById('tngImdbId').value,
+            tmdb_id: document.getElementById('tngTmdbId').value,
+            filename: tngSourceFile.value ? tngSourceFile.value.split('/').pop() : '',
+            season_number: document.getElementById('tngSeason').value,
+            episode_number: document.getElementById('tngEpisode').value,
+            episode_title: document.getElementById('tngEpisodeTitle') ? document.getElementById('tngEpisodeTitle').value : ''
+        };
+        fetch('/symlink_tools/api/preview-path', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(formData)
+        }).then(r => r.json()).then(data => {
+            if (data.success) {
+                tngPathPreview.innerHTML = '<div class="st-path">' + data.path + '</div>';
+                if (data.exists) tngPathPreview.innerHTML += '<div class="st-exists"><i class="fas fa-triangle-exclamation"></i> This symlink already exists</div>';
             } else {
-                const size = formatFileSize(item.size);
-                const modified = new Date(item.modified).toLocaleDateString();
-                details.textContent = `${size} • Modified: ${modified}`;
+                tngPathPreview.innerHTML = '<div class="st-error">' + data.message + '</div>';
             }
-            
-            info.appendChild(name);
-            info.appendChild(details);
-            fileItem.appendChild(icon);
-            fileItem.appendChild(info);
-            
-            fileItem.addEventListener('click', function() {
-                if (item.is_dir) {
-                    loadDirectory(item.path);
-                } else {
-                    // Select file
-                    document.querySelectorAll('.file-item').forEach(fi => fi.classList.remove('selected'));
-                    fileItem.classList.add('selected');
-                    selectedFile = item.path;
-                    selectFileBtn.disabled = false;
+        }).catch(e => { tngPathPreview.innerHTML = '<div class="st-error">Error: ' + e.message + '</div>'; });
+    });
+
+    function tngLoadDir(path) {
+        tngDir = path;
+        if (tngCurrentPath) tngCurrentPath.textContent = path;
+        if (tngGoUp) tngGoUp.disabled = path === '/';
+        if (tngFileList) tngFileList.innerHTML = '<div class="st-file-msg">Loading…</div>';
+        fetch('/symlink_tools/api/browse-files', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path })
+        }).then(r => r.json()).then(data => {
+            if (data.success) tngDisplayFiles(data.items);
+            else if (tngFileList) tngFileList.innerHTML = '<div class="st-file-msg">' + data.message + '</div>';
+        }).catch(e => { if (tngFileList) tngFileList.innerHTML = '<div class="st-file-msg">Error: ' + e.message + '</div>'; });
+    }
+
+    function tngDisplayFiles(items) {
+        if (!tngFileList) return;
+        if (!items.length) { tngFileList.innerHTML = '<div class="st-file-msg">Directory is empty</div>'; return; }
+        tngFileList.innerHTML = '';
+        items.forEach(item => {
+            const el = document.createElement('div');
+            el.className = 'st-file-item';
+            const ext = item.name.toLowerCase().substring(item.name.lastIndexOf('.'));
+            const isMedia = !item.is_dir && mediaExtensions.includes(ext);
+            el.innerHTML =
+                '<div class="st-file-item-icon">' + (item.is_dir ? '<i class="fas fa-folder" style="color:#f59e0b"></i>' : '<i class="fas fa-file' + (isMedia ? '-video" style="color:var(--st-accent)"' : '"') + '></i>') + '</div>' +
+                '<div class="st-file-item-name' + (isMedia ? ' media' : '') + '">' + item.name + '</div>' +
+                '<div class="st-file-item-details">' + (item.is_dir ? 'Directory' : formatSize(item.size) + ' · ' + new Date(item.modified).toLocaleDateString()) + '</div>';
+            el.addEventListener('click', () => {
+                if (item.is_dir) { tngLoadDir(item.path); }
+                else {
+                    document.querySelectorAll('.st-file-item').forEach(f => f.classList.remove('selected'));
+                    el.classList.add('selected');
+                    tngSelected = item.path;
+                    if (tngSelectFile) tngSelectFile.disabled = false;
                 }
             });
-            
-            fileList.appendChild(fileItem);
+            tngFileList.appendChild(el);
         });
     }
 
-    function formatFileSize(bytes) {
-        if (bytes === null || bytes === undefined) return 'Unknown size';
-        
-        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-        if (bytes === 0) return '0 B';
-        
-        const i = Math.floor(Math.log(bytes) / Math.log(1024));
-        return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
-    }
+    if (tngBrowseBtn) tngBrowseBtn.addEventListener('click', () => { tngModal.style.display = 'flex'; tngLoadDir('/'); });
+    if (tngCloseModal) tngCloseModal.addEventListener('click', () => { tngModal.style.display = 'none'; });
+    if (tngCancelFile) tngCancelFile.addEventListener('click', () => { tngModal.style.display = 'none'; });
+    if (tngGoUp) tngGoUp.addEventListener('click', () => { const p = tngDir.split('/').slice(0,-1).join('/') || '/'; tngLoadDir(p); });
+    if (tngGoHome) tngGoHome.addEventListener('click', () => tngLoadDir('/'));
+    if (tngSelectFile) tngSelectFile.addEventListener('click', () => {
+        if (tngSelected && tngSourceFile) {
+            tngSourceFile.value = tngSelected;
+            tngModal.style.display = 'none';
+            tngValidateFile(tngSelected);
+        }
+    });
+    window.addEventListener('click', e => { if (e.target === tngModal) tngModal.style.display = 'none'; });
 });
 </script>
 {% endblock %}

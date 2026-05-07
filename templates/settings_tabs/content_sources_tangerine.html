@@ -1379,6 +1379,39 @@
                             <p class="settings-description">Maximum number of items to process from this source. Set to 0 for no limit.</p>
                         </div>
 
+                        {# Seasons Per Show #}
+                        {% set key = 'seasons_per_show' %}
+                        {% set value = config.get(key, 0) %}
+                        <div class="settings-form-group">
+                            <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">Seasons Per TV Show:</label>
+                            <input type="number" id="content-sources-{{ source_id }}-{{ key }}"
+                                   name="Content Sources.{{ source_id }}.{{ key }}"
+                                   value="{{ value }}"
+                                   class="settings-input"
+                                   data-section="Content Sources"
+                                   data-key="{{ source_id }}.{{ key }}"
+                                   min="0"
+                                   placeholder="0 = all seasons">
+                            <p class="settings-description">Limit each TV show to this many seasons. Set to 0 for all seasons. Use Season Grab Order below to control which seasons are selected.</p>
+                        </div>
+
+                        {# Season Grab Order #}
+                        {% set key = 'season_grab_order' %}
+                        {% set value = config.get(key, 'first') %}
+                        <div class="settings-form-group">
+                            <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">Season Grab Order:</label>
+                            <select id="content-sources-{{ source_id }}-{{ key }}"
+                                    name="Content Sources.{{ source_id }}.{{ key }}"
+                                    class="settings-input"
+                                    data-section="Content Sources"
+                                    data-key="{{ source_id }}.{{ key }}">
+                                <option value="first" {% if value == 'first' %}selected{% endif %}>First seasons</option>
+                                <option value="latest" {% if value == 'latest' %}selected{% endif %}>Latest seasons</option>
+                                <option value="recent" {% if value == 'recent' %}selected{% endif %}>Most recently aired</option>
+                            </select>
+                            <p class="settings-description">Choose which seasons to grab when Seasons Per TV Show is limited: First (oldest), Latest (newest by number), or Most recently aired (by air date).</p>
+                        </div>
+
                         {# Custom Symlink Subfolder #}
                         {% set key = 'custom_symlink_subfolder' %}
                         {% set value = config.get(key, '') %}
@@ -1755,7 +1788,7 @@
                         {% for key, value in config.items() %}
                             {# Skip standard 'type' field and any empty/invalid keys #}
                             {% if key and key != 'type' %}
-                                {% set _skip = key in ['enabled', 'plex_labels', 'label_mode', 'fixed_label', 'label_template', 'allow_specials', 'unblacklist_on_source_run', 'plex_collection', 'allowed_requesters'] or (key == 'ignore_tags' and config.type == 'Overseerr') %}
+                                {% set _skip = key in ['enabled', 'plex_labels', 'label_mode', 'fixed_label', 'label_template', 'allow_specials', 'unblacklist_on_source_run', 'plex_collection', 'allowed_requesters', 'seasons_per_show', 'season_grab_order'] or (key == 'ignore_tags' and config.type == 'Overseerr') %}
                                 {% if not _skip %}
                                 <div class="settings-form-group">
                                     {% if key == 'versions' %}

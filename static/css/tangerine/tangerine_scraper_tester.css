@@ -406,11 +406,11 @@ label {
 
 .settings-input {
     width: 100%;
-    padding: 8px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #fff;
-    border-radius: 12px;
+    padding: 7px 10px;
+    background: #2a2a2a;
+    border: 1px solid #3d3d3d;
+    color: #e0e0e0;
+    border-radius: 6px;
 }
 
 input[type="checkbox"].settings-input {
@@ -598,11 +598,11 @@ input[type="checkbox"].settings-input {
 
 .settings-value, .settings-input {
     width: 100%;
-    padding: 8px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #fff;
-    border-radius: 12px;
+    padding: 7px 10px;
+    background: #2a2a2a;
+    border: 1px solid #3d3d3d;
+    color: #e0e0e0;
+    border-radius: 6px;
 }
 
 .settings-value {
@@ -864,3 +864,175 @@ button#new-search-button  {
 .result-only-in-original { border-left: 3px solid #f44336 !important; }
 .result-rank-improved { color: #4caf50; font-size: 0.75em; margin-left: 4px; }
 .result-rank-dropped { color: #f44336; font-size: 0.75em; margin-left: 4px; }
+
+/* ══ Tangerine formula overrides ══════════════════════════════════════════ */
+
+/* Neutralise old unscoped ::before gradient bar */
+body.tangerine-theme .scraper-tester-container > h1::before {
+    content: none;
+    display: none;
+}
+
+/* Page h1 */
+body.tangerine-theme .scraper-tester-container > h1 {
+    font-size: 20px;
+    font-weight: 700;
+    border-left: 3px solid #e8601c;
+    padding-left: 10px;
+    color: #e0e0e0;
+    display: block;
+    margin-top: 0;
+    margin-bottom: 16px;
+    padding-bottom: 0;
+}
+
+/* Neutralise global h3::before that adds a second bar */
+body.tangerine-theme .scraper-tester-container .results-column > h3::before,
+body.tangerine-theme .scraper-tester-container .results-header-row h3::before {
+    content: none;
+    display: none;
+}
+
+/* Sub-headers: h3 (Original Results, Adjusted Results), h4 (Score Breakdown) */
+body.tangerine-theme .scraper-tester-container .results-column > h3,
+body.tangerine-theme .scraper-tester-container .results-header-row h3,
+body.tangerine-theme .scraper-tester-container .score-breakdown-header h4 {
+    color: #e0e0e0;
+    font-size: 0.95em;
+    font-weight: 600;
+    border-left: 3px solid #e8601c;
+    padding: 10px 8px 10px 10px;
+    margin: 0;
+    background: none;
+    backdrop-filter: none;
+}
+
+/* Inputs & selects — uniform formula */
+body.tangerine-theme .scraper-tester-container input[type="text"],
+body.tangerine-theme .scraper-tester-container input[type="number"],
+body.tangerine-theme .scraper-tester-container select,
+body.tangerine-theme .scraper-tester-container .settings-input,
+body.tangerine-theme .scraper-tester-container .filter-input,
+body.tangerine-theme .scraper-tester-container .filter-weight {
+    background: #2a2a2a !important;
+    border: 1px solid #3d3d3d !important;
+    border-radius: 6px !important;
+    color: #e0e0e0 !important;
+    padding: 7px 10px !important;
+    height: auto !important;
+    box-sizing: border-box !important;
+    font-family: inherit !important;
+    font-size: 13px !important;
+    transition: border-color .15s !important;
+}
+
+body.tangerine-theme .scraper-tester-container input[type="text"]:focus,
+body.tangerine-theme .scraper-tester-container input[type="number"]:focus,
+body.tangerine-theme .scraper-tester-container select:focus,
+body.tangerine-theme .scraper-tester-container .settings-input:focus,
+body.tangerine-theme .scraper-tester-container .filter-input:focus,
+body.tangerine-theme .scraper-tester-container .filter-weight:focus {
+    outline: none !important;
+    border-color: #e8601c !important;
+}
+
+body.tangerine-theme .scraper-tester-container input[type="text"]:hover,
+body.tangerine-theme .scraper-tester-container input[type="number"]:hover,
+body.tangerine-theme .scraper-tester-container select:hover,
+body.tangerine-theme .scraper-tester-container .settings-input:hover {
+    border-color: #555 !important;
+}
+
+body.tangerine-theme .scraper-tester-container select {
+    -webkit-appearance: auto !important;
+    -moz-appearance: auto !important;
+    appearance: auto !important;
+    cursor: pointer !important;
+}
+
+/* Full-width only for standalone inputs */
+body.tangerine-theme .scraper-tester-container #search-input,
+body.tangerine-theme .scraper-tester-container #version-select,
+body.tangerine-theme .scraper-tester-container #season-select,
+body.tangerine-theme .scraper-tester-container #episode-select {
+    width: 100% !important;
+}
+
+/* Filter row inputs keep their flex sizing */
+body.tangerine-theme .scraper-tester-container .filter-input {
+    flex: 1 !important;
+    width: auto !important;
+    padding: 6px 10px !important;
+}
+body.tangerine-theme .scraper-tester-container .filter-weight {
+    width: 120px !important;
+    flex: none !important;
+    padding: 6px 8px !important;
+}
+
+/* Primary action buttons: Search, Run Scrape, Save, add-filter */
+body.tangerine-theme .scraper-tester-container #search-button,
+body.tangerine-theme .scraper-tester-container #run-scrape-button,
+body.tangerine-theme .scraper-tester-container #save-settings-visible-button,
+body.tangerine-theme .scraper-tester-container #save-modified-version-button,
+body.tangerine-theme .scraper-tester-container .add-filter-item {
+    background: #ff6b35 !important;
+    border: none !important;
+    border-radius: 8px !important;
+    color: #fff !important;
+    font-weight: 600 !important;
+    font-size: 0.875rem !important;
+    cursor: pointer !important;
+    padding: 10px 37px !important;
+    transition: background 0.2s ease !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+body.tangerine-theme .scraper-tester-container #search-button:hover,
+body.tangerine-theme .scraper-tester-container #run-scrape-button:hover,
+body.tangerine-theme .scraper-tester-container #save-settings-visible-button:hover,
+body.tangerine-theme .scraper-tester-container #save-modified-version-button:hover,
+body.tangerine-theme .scraper-tester-container .add-filter-item:hover {
+    background: #f7931e !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+body.tangerine-theme .scraper-tester-container .add-filter-item {
+    padding: 6px 37px !important;
+}
+
+/* Secondary button: Back to results */
+body.tangerine-theme .scraper-tester-container #new-search-button {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 8px !important;
+    color: #e0e0e0 !important;
+    font-weight: 500 !important;
+    font-size: 0.875rem !important;
+    cursor: pointer !important;
+    transition: background 0.2s ease !important;
+    transform: none !important;
+    box-shadow: none !important;
+    padding: 8px 14px !important;
+    margin-top: 0 !important;
+}
+
+body.tangerine-theme .scraper-tester-container #new-search-button:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* Remove-filter button stays red, same radius/no transform */
+body.tangerine-theme .scraper-tester-container .remove-filter-item {
+    border-radius: 8px;
+    transform: none !important;
+    box-shadow: none !important;
+    transition: background 0.2s ease;
+}
+body.tangerine-theme .scraper-tester-container .remove-filter-item:hover {
+    transform: none !important;
+    box-shadow: none !important;
+}

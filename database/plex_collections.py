@@ -999,6 +999,7 @@ def sync_collection_for_source(source_id: str, source_data: dict, ordered_imdb_i
                         show_thumbs_for_coll = fetch_movie_thumbs(plex_url, plex_token, show_rk, limit=4, tmdb_map=tmdb_map) if show_rk else [None]*4
                         targets.append((show_rk, show_coll_name, show_thumbs_for_coll))
 
+                    _plex_upload_hashes = {}
                     for _rk, _coll_name, _thumbs in targets:
                         _poster_bytes = render_collection_poster(
                             design_id=poster_design,
@@ -1013,13 +1014,16 @@ def sync_collection_for_source(source_id: str, source_data: dict, ordered_imdb_i
                             glow_radius=poster_glow_radius,
                         )
                         if _poster_bytes:
-                            upload_collection_poster(plex_url, plex_token, _rk, _poster_bytes)
-                            any_uploaded = True
+                            _upload_hash = upload_collection_poster(plex_url, plex_token, _rk, _poster_bytes)
+                            if _upload_hash:
+                                _plex_upload_hashes[_rk] = _upload_hash
+                                any_uploaded = True
 
                     if any_uploaded:
                         _update_source_state(source_id, {
                             'poster_hash': new_poster_hash,
                             'poster_has_thumbs': has_real_thumbs,
+                            'plex_upload_hashes': _plex_upload_hashes,
                         })
                         logger.info(f"[PlexCollections] Poster applied for {source_id} (has_thumbs={has_real_thumbs})")
                     else:

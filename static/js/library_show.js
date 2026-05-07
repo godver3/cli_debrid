@@ -88,14 +88,18 @@ async function loadShowData() {
 
     try {
 
-        // Fetch show data and broken files in parallel
-        const [showResponse, brokenResponse] = await Promise.all([
+        // Fetch show data, broken files, and settings in parallel
+        const [showResponse, brokenResponse, configResponse] = await Promise.all([
             fetch(`/library/show/${mediaId}/data`),
-            fetch('/library/check_broken_files', { method: 'POST' })
+            fetch('/library/check_broken_files', { method: 'POST' }),
+            fetch('/settings/api/config')
         ]);
 
         const data = await showResponse.json();
         const brokenData = await brokenResponse.json();
+        const configData = configResponse.ok ? await configResponse.json() : {};
+        const lm = configData['Library Manager'] || {};
+        window._hideSeasonZero = lm.hide_season_zero !== undefined ? lm.hide_season_zero : true;
 
         // Store broken files in Set for fast lookup
         if (brokenData.success && brokenData.broken_files) {
@@ -394,6 +398,21 @@ function renderShowHeader(show) {
     const progressPercText = document.getElementById('progress-percent');
     if (progressPercText) {
         progressPercText.textContent = `(${progressPercent}% complete)`;
+        // Gradient: red(249,67,67) → yellow(255,215,97) at 50% → green(84,255,141) at 100%
+        const p = Math.max(0, Math.min(100, progressPercent));
+        let r, g, b;
+        if (p <= 50) {
+            const t = p / 50;
+            r = Math.round(249 + (255 - 249) * t);
+            g = Math.round(67 + (215 - 67) * t);
+            b = Math.round(67 + (97 - 67) * t);
+        } else {
+            const t = (p - 50) / 50;
+            r = Math.round(255 + (84 - 255) * t);
+            g = Math.round(215 + (255 - 215) * t);
+            b = Math.round(97 + (141 - 97) * t);
+        }
+        progressPercText.style.color = `rgb(${r}, ${g}, ${b})`;
     }
 
     const progressFill = document.getElementById('progress-fill');
@@ -404,7 +423,7 @@ function renderShowHeader(show) {
     // Update details row
     const qualityValue = document.getElementById('quality-value');
     if (qualityValue && show.version) {
-        qualityValue.textContent = show.version;
+        qualityValue.textContent = show.version.replace(/\*/g, '');
     }
 
     const pathValue = document.getElementById('path-value');
@@ -586,6 +605,10 @@ function renderSeasons(seasons) {
     tabsNav.innerHTML = '';
     tabsContent.innerHTML = '';
 
+    if (window._hideSeasonZero) {
+        seasons = seasons.filter(s => s.season_number !== 0);
+    }
+
     // Count unique episodes, not files
     let totalEpisodes = 0;
     let collectedEpisodes = 0;
@@ -749,14 +772,41 @@ function createSeasonPanel(season, isActive) {
     seasonHeader.className = 'season-panel-header';
     const phantomIndicator = isPhantomSeason ? '<span style="color: rgba(239, 68, 68, 0.8); font-style: italic; font-size: 0.875rem; margin-left: 0.5rem;">(Missing Season)</span>' : '';
     const pendingBadge = hasPendingReplace ? '<span class="replace-pending-badge">Replacement Pending</span>' : '';
+    const magnetSeasonSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(270deg)"><path d="M21 18.5V20.5C21 21.3284 20.3284 22 19.5 22H17H13C7.47715 22 3 17.5228 3 12C3 6.47715 7.47715 2 13 2H17H19.5C20.3284 2 21 2.67157 21 3.5V5.5C21 6.32843 20.3284 7 19.5 7H17H13C10.2386 7 8 9.23858 8 12C8 14.7614 10.2386 17 13 17H17H19.5C20.3284 17 21 17.6716 21 18.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path opacity="0.5" d="M17 2V7M17 17V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const magnetSeasonBtnHtml = `
+        <button class="magnet-assign-episode-btn refresh-btn magnet-season-btn" type="button" title="Assign magnet for Season ${season.season_number}">
+            ${magnetSeasonSvg}
+        </button>
+    `;
+
     seasonHeader.innerHTML = `
         <h3>Season ${season.season_number}${phantomIndicator}${pendingBadge}</h3>
         <div class="season-action-buttons">
+            ${magnetSeasonBtnHtml}
             ${replaceButtonHtml}
             ${deleteButtonHtml}
         </div>
     `;
     panel.appendChild(seasonHeader);
+
+    // Magnet season button handler
+    const magnetSeasonBtn = seasonHeader.querySelector('.magnet-season-btn');
+    if (magnetSeasonBtn) {
+        magnetSeasonBtn.addEventListener('click', function() {
+            const params = new URLSearchParams({
+                prefill_title: showData.title || '',
+                prefill_year: showData.year || '',
+                prefill_type: 'show',
+                prefill_selection: 'seasons',
+                prefill_seasons: String(season.season_number),
+            });
+            if (showData.imdb_id) params.set('prefill_id', showData.imdb_id);
+            else if (showData.tmdb_id) params.set('prefill_id', String(showData.tmdb_id));
+            const seasonVersion = (showData.version || '').replace(/\*/g, '').trim();
+            if (seasonVersion) params.set('prefill_version', seasonVersion);
+            window.location.href = `/magnet/assign_magnet?${params.toString()}`;
+        });
+    }
 
     // Attach button handlers if buttons exist (not for phantom seasons)
     if (hasAdminPermissions && !isPhantomSeason) {
@@ -995,11 +1045,24 @@ function createEpisodeRow(episodes, seasonNumber) {
     // Episode metadata
     let metaParts = [];
 
+    // Check if any episode entry is broken (Collected/Upgrading but missing from Plex)
+    const brokenPlexEps = new Set(
+        episodes
+            .filter(ep => (ep.state === 'Collected' || ep.state === 'Upgrading') && !ep.ms_item_id)
+            .map(ep => ep.filled_by_file || ep.location_basename || '')
+            .filter(Boolean)
+    );
+    const isPlexBroken = brokenPlexEps.size > 0;
+
+    if (isPlexBroken) {
+        metaParts.push(`<span class="episode-broken-badge" title="Collected/Upgrading but missing from Plex (no ms_item_id)">Broken</span>`);
+    }
+
     // Show only the highest quality version
     if (episodes.length > 0) {
         const highestQualityEp = getHighestQualityEpisode(episodes);
         if (highestQualityEp.version) {
-            metaParts.push(`<span class="episode-version">${escapeHtml(highestQualityEp.version)}</span>`);
+            metaParts.push(`<span class="episode-version">${escapeHtml(highestQualityEp.version.replace(/\*/g, ''))}</span>`);
         }
         // Add largest size badge if available (in case of multiple files per episode)
         const largestSize = Math.max(...episodes.map(ep => ep.size || 0));
@@ -1045,7 +1108,7 @@ function createEpisodeRow(episodes, seasonNumber) {
         return ep.location_basename && brokenFiles.has(ep.location_basename);
     });
 
-    // Broken file icon
+    // Broken file icon (unplayable)
     let brokenIcon = '';
     if (isBroken) {
         brokenIcon = `
@@ -1054,6 +1117,7 @@ function createEpisodeRow(episodes, seasonNumber) {
             </svg>
         `;
     }
+
 
     // Check permissions for conditional button rendering
     const hasAdminPermissions = document.getElementById('has_admin_permissions')?.value === 'True';
@@ -1083,6 +1147,16 @@ function createEpisodeRow(episodes, seasonNumber) {
                 <path d="M12 15V3"></path>
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                 <path d="m7 10 5 5 5-5"></path>
+            </svg>
+        </button>
+    `;
+
+    // Magnet assign icon
+    const magnetIcon = `
+        <button class="magnet-assign-episode-btn refresh-btn" type="button" title="Assign magnet for this episode">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(270deg)">
+                <path d="M21 18.5V20.5C21 21.3284 20.3284 22 19.5 22H17H13C7.47715 22 3 17.5228 3 12C3 6.47715 7.47715 2 13 2H17H19.5C20.3284 2 21 2.67157 21 3.5V5.5C21 6.32843 20.3284 7 19.5 7H17H13C10.2386 7 8 9.23858 8 12C8 14.7614 10.2386 17 13 17H17H19.5C20.3284 17 21 17.6716 21 18.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path opacity="0.5" d="M17 2V7M17 17V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
         </button>
     `;
@@ -1162,7 +1236,11 @@ function createEpisodeRow(episodes, seasonNumber) {
                     </svg>
                 </button>
                 <div class="episode-files">
-                    ${files.map(file => `<div class="episode-file" title="${escapeHtml(file)}">${escapeHtml(file)}</div>`).join('')}
+                    ${episodes.filter(ep => ep.filled_by_file || ep.location_basename).map(ep => {
+                        const fname = ep.filled_by_file || ep.location_basename || '';
+                        const epBroken = (ep.state === 'Collected' || ep.state === 'Upgrading') && !ep.ms_item_id;
+                        return `<div class="episode-file" title="${escapeHtml(fname)}">${escapeHtml(fname)}${epBroken ? `<span style="margin-left:6px;font-size:0.72em;padding:1px 5px;border-radius:4px;background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);" title="Missing from Plex">Broken</span>` : ''}</div>`;
+                    }).join('')}
                 </div>
             </div>
         ` : `
@@ -1178,6 +1256,7 @@ function createEpisodeRow(episodes, seasonNumber) {
             ${brokenIcon}
             ${searchIcon}
             ${refreshIcon}
+            ${magnetIcon}
             ${deleteIcon}
             ${filesButtonHtml}
         `;
@@ -1202,9 +1281,29 @@ function createEpisodeRow(episodes, seasonNumber) {
     }
 
     // Add event listener for refresh button
-    const refreshBtn = row.querySelector('.refresh-btn');
+    const refreshBtn = row.querySelector('.refresh-btn:not(.magnet-assign-episode-btn)');
     if (refreshBtn) {
         refreshBtn.addEventListener('click', handleRefreshClick);
+    }
+
+    // Add event listener for magnet assign button
+    const magnetBtn = row.querySelector('.magnet-assign-episode-btn');
+    if (magnetBtn) {
+        magnetBtn.addEventListener('click', function() {
+            const params = new URLSearchParams({
+                prefill_title: showData.title || '',
+                prefill_year: showData.year || '',
+                prefill_type: 'show',
+                prefill_selection: 'episode',
+                prefill_seasons: String(seasonNumber),
+                prefill_episode: String(firstEp.episode_number || 0),
+            });
+            if (showData.imdb_id) params.set('prefill_id', showData.imdb_id);
+            else if (showData.tmdb_id) params.set('prefill_id', String(showData.tmdb_id));
+            const epVersion = (getHighestQualityEpisode(episodes).version || '').replace(/\*/g, '').trim();
+            if (epVersion) params.set('prefill_version', epVersion);
+            window.location.href = `/magnet/assign_magnet?${params.toString()}`;
+        });
     }
 
     // Add event listener for delete button
@@ -1220,6 +1319,14 @@ function createEpisodeRow(episodes, seasonNumber) {
 
         toggleBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            const isOpening = !filesPanel.classList.contains('open');
+            if (isOpening) {
+                const btnRect = toggleBtn.getBoundingClientRect();
+                filesPanel.style.top = (btnRect.top + btnRect.height / 2) + 'px';
+                filesPanel.style.left = 'auto';
+                const panelWidth = filesPanel.offsetWidth || 400;
+                filesPanel.style.right = (window.innerWidth - btnRect.right - panelWidth * 0.2) + 'px';
+            }
             filesPanel.classList.toggle('open');
             toggleBtn.classList.toggle('active');
         });
@@ -1287,7 +1394,7 @@ async function handleSearchEpisode(event) {
     if (!showData) return;
 
     const btn = event.currentTarget;
-    const version = showData.version || 'Default';
+    const version = (showData.version || 'Default').replace(/\*/g, '');
     const season = parseInt(btn.dataset.season);
     const episode = parseInt(btn.dataset.episode);
 
@@ -1430,7 +1537,7 @@ async function handleSeasonPacks() {
     if (!showData) return;
 
     // Use the version from showData metadata, or 'Default' if not available
-    const version = showData.version || 'Default';
+    const version = (showData.version || 'Default').replace(/\*/g, '');
 
     // Get the currently active season tab
     const activeTab = document.querySelector('.season-tab.active');
@@ -1477,7 +1584,7 @@ async function handleReplaceSeason(event) {
     }
 
     // Open the same torrent picker as Season Pack for the target season
-    const version = showData.version || 'Default';
+    const version = (showData.version || 'Default').replace(/\*/g, '');
     const genres = showData.genres ?
         (typeof showData.genres === 'string' ? showData.genres.split(',').map(g => g.trim()) : showData.genres)
         : [];
@@ -1631,15 +1738,7 @@ async function handleDeleteShow(event) {
     }
 
     // Custom deletion with progress tracking
-    if (!skipConfirmation) {
-        const action = showData && showData.auto_ghostlist_enabled ? 'ghostlist' : 'delete';
-        const actionUpper = action === 'ghostlist' ? 'ghostlist' : 'delete';
-        const canUndo = action === 'ghostlist' ? 'Ghostlisted items can be recovered.' : 'This action cannot be undone.';
-        const confirmed = confirm(`This will ${actionUpper} ALL episodes of "${showData.title}". ${canUndo}`);
-        if (!confirmed) {
-            return;
-        }
-    }
+    const proceedWithDelete = async () => {
 
     // Simulate progress updates
     const steps = [
@@ -1784,6 +1883,24 @@ async function handleDeleteShow(event) {
             autoClose: 5000
         });
     }
+
+    }; // end proceedWithDelete
+
+    if (!skipConfirmation) {
+        const action = showData && showData.auto_ghostlist_enabled ? 'ghostlist' : 'delete';
+        const actionUpper = action === 'ghostlist' ? 'ghostlist' : 'delete';
+        const canUndo = action === 'ghostlist' ? 'Ghostlisted items can be recovered.' : 'This action cannot be undone.';
+        showPopup({
+            type: 'confirm',
+            title: 'Confirm Deletion',
+            message: `This will ${actionUpper} ALL episodes of "${showData.title}". ${canUndo}`,
+            confirmText: actionUpper.charAt(0).toUpperCase() + actionUpper.slice(1),
+            cancelText: 'Cancel',
+            onConfirm: proceedWithDelete
+        });
+    } else {
+        proceedWithDelete();
+    }
 }
 
 /**
@@ -1837,10 +1954,13 @@ async function handleDeleteSeason(event) {
     }
 
     // Confirm deletion - season deletion always uses delete (not ghostlist)
-    const confirmed = confirm(`This will delete all ${episodeCount} episodes in ${seasonTitle}. This action cannot be undone.`);
-    if (!confirmed) {
-        return;
-    }
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Season',
+        message: `This will delete all ${episodeCount} episodes in ${seasonTitle}. This action cannot be undone.`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
 
     // Progress steps for season deletion (no content source removal)
     const steps = [
@@ -1984,6 +2104,9 @@ async function handleDeleteSeason(event) {
             autoClose: 5000
         });
     }
+
+        } // end onConfirm
+    }); // end showPopup
 }
 
 /**
@@ -2058,7 +2181,7 @@ function showFileSelectionPopup(files, episodeTitle) {
                     </div>
                     <div class="file-selection-actions">
                         <button class="file-selection-btn file-selection-cancel">Cancel</button>
-                        <button class="file-selection-btn file-selection-delete">Delete</button>
+                        <button class="file-selection-btn file-selection-delete">Delete Selected</button>
                     </div>
                 </div>
             </div>
@@ -2204,12 +2327,21 @@ async function handleDeleteEpisode(event) {
             }
         } else {
             // Single file - episode deletion always uses delete (not ghostlist)
-            const confirmed = confirm(`Delete ${episodeTitle}?\n\nThis action cannot be undone.`);
-            if (!confirmed) return;
-
-            selectedItemIds = episodeFiles.map(f => f.id);
+            showPopup({
+                type: 'confirm',
+                title: 'Delete Episode',
+                message: `Delete ${episodeTitle}?\n\nThis action cannot be undone.`,
+                confirmText: 'Delete',
+                cancelText: 'Cancel',
+                onConfirm: async function() {
+                    selectedItemIds = episodeFiles.map(f => f.id);
+                    await proceedWithEpisodeDelete();
+                }
+            });
+            return;
         }
 
+        async function proceedWithEpisodeDelete() {
         // Progress steps (no content source removal)
         const steps = [
             'Removing from database...',
@@ -2229,6 +2361,8 @@ async function handleDeleteEpisode(event) {
             if (progressInterval) clearInterval(progressInterval);
             if (continueButtonTimeout) clearTimeout(continueButtonTimeout);
         };
+
+        try {
 
         // Show loading box
         showDeletionLoading(`Deleting ${episodeTitle}`, cleanup);
@@ -2324,15 +2458,22 @@ async function handleDeleteEpisode(event) {
         } else {
             throw new Error(result.error || 'Failed to delete episode');
         }
+        } catch (error) {
+            cleanup();
+            hideDeletionLoading();
+            console.error('Error deleting episode:', error);
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                message: `Error deleting episode: ${error.message}`,
+                autoClose: 5000
+            });
+        }
+        } // end proceedWithEpisodeDelete
+
+        // Multi-file path: proceed directly
+        await proceedWithEpisodeDelete();
     } catch (error) {
-        cleanup();
-        hideDeletionLoading();
-        console.error('Error deleting episode:', error);
-        showPopup({
-            type: POPUP_TYPES.ERROR,
-            message: `Error deleting episode: ${error.message}`,
-            autoClose: 5000
-        });
+        console.error('Error in handleDeleteEpisode:', error);
     }
 }
 

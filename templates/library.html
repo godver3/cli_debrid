@@ -7,7 +7,7 @@
 <script>
     document.addEventListener('DOMContentLoaded', function() {
         const theme = getCurrentTheme();
-        const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_library.css' : 'css/library.css';
+        const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_library.css?v=2' : 'css/library.css';
         const link = document.createElement('link');
         link.rel = 'stylesheet';
         link.href = '{{ url_for("static", filename="") }}' + cssFile;

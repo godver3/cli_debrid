@@ -206,7 +206,7 @@
         } else if (typeof window.showNotification === 'function') {
             window.showNotification(message, type);
         } else {
-            alert(message);
+            showPopup({ type: 'info', title: 'Notice', message: message, autoClose: 4000 });
         }
     }
 
@@ -234,8 +234,15 @@
             '• cli_debrid overlays will NOT be re-applied automatically\n' +
             '  — use Generate All on the overlay page when ready\n\n' +
             'Continue?';
-        if (!confirm(msg)) return;
-        _startResetJob(null);
+        showPopup({
+            type: 'confirm',
+            title: 'Reset All Posters',
+            message: msg,
+            confirmText: 'Confirm',
+            cancelText: 'Cancel',
+            onConfirm: function() { _startResetJob(null); }
+        });
+        return;
     };
 
     window.cancelPosterReset = async function() {

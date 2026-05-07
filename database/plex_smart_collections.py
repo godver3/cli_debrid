@@ -199,6 +199,73 @@ def apply_smart_collection_posters() -> None:
         _save_state(state)
 
 
+def reapply_single_collection_poster(rating_key: str) -> dict:
+    """Immediately reapply the poster for one smart collection."""
+    from utilities.settings import get_all_settings as _gas
+    _psc = _gas().get('Plex Smart Collections', {})
+    colls = _psc.get('collections', {}) if isinstance(_psc, dict) else {}
+    cfg = colls.get(rating_key) if isinstance(colls, dict) else None
+    if not cfg or not isinstance(cfg, dict):
+        return {'success': False, 'message': f'Collection rk={rating_key} not found in config'}
+    if not cfg.get('enabled', False):
+        return {'success': False, 'message': 'Collection is not enabled'}
+
+    plex_url = get_setting('Plex', 'url', '').rstrip('/')
+    plex_token = get_setting('Plex', 'token', '')
+    if not plex_url or not plex_token:
+        return {'success': False, 'message': 'Plex URL or token not configured'}
+
+    design_id = int(get_setting('Plex Smart Collections', 'poster_design', 0))
+    if design_id == 0:
+        return {'success': False, 'message': 'No poster design configured'}
+
+    from database.collection_poster_renderer import (
+        render_collection_poster, upload_collection_poster,
+        fetch_movie_thumbs, DESIGNS
+    )
+
+    accent = get_setting('Plex Smart Collections', 'poster_accent', '').strip()
+    if not accent or accent.lower() in ('#000000', '000000'):
+        accent = DESIGNS.get(design_id, {}).get('default_accent', '#E6A800') or '#E6A800'
+    eyebrow         = get_setting('Plex Smart Collections', 'poster_eyebrow', '') or ''
+    icon_override   = get_setting('Plex Smart Collections', 'poster_icon', '') or ''
+    overlay_opacity = int(get_setting('Plex Smart Collections', 'poster_overlay_opacity', 60))
+    glow_opacity    = int(get_setting('Plex Smart Collections', 'poster_glow_opacity', 80))
+    glow_radius     = int(get_setting('Plex Smart Collections', 'poster_glow_radius', 55))
+
+    collection_name = cfg.get('title', '')
+    source_type = 'Trakt Lists' if cfg.get('type') == 'show' else 'MDBList'
+
+    try:
+        thumbs = fetch_movie_thumbs(plex_url, plex_token, rating_key, limit=4)
+        poster_bytes = render_collection_poster(
+            design_id=design_id,
+            collection_name=collection_name,
+            eyebrow=eyebrow,
+            accent=accent,
+            icon_override=icon_override,
+            source_type=source_type,
+            movie_thumbs=thumbs,
+            overlay_opacity=overlay_opacity,
+            glow_opacity=glow_opacity,
+            glow_radius=glow_radius,
+        )
+        if not poster_bytes:
+            return {'success': False, 'message': 'Poster render returned None'}
+        upload_hash = upload_collection_poster(plex_url, plex_token, rating_key, poster_bytes)
+        if not upload_hash:
+            return {'success': False, 'message': 'Poster upload failed'}
+        # Force re-render on next task run by clearing shared hash
+        state = _migrate_state(_load_state())
+        state.setdefault('shared', {})['poster_hash'] = ''
+        _save_state(state)
+        logger.info(f"[SmartCollections] Force-reapplied poster for '{collection_name}' (rk={rating_key})")
+        return {'success': True, 'message': f"Poster applied for '{collection_name}'"}
+    except Exception as e:
+        logger.error(f"[SmartCollections] reapply_single failed for rk={rating_key}: {e}", exc_info=True)
+        return {'success': False, 'message': str(e)}
+
+
 def cleanup_uploaded_posters() -> int:
     """Delete non-selected uploaded posters from managed smart collections."""
     import requests

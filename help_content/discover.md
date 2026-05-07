@@ -10,8 +10,8 @@ This page allows you to browse and discover movies and shows using TMDB data, wi
 **View Modes:**
 
 *   **Search Results:** Shows items matching your search query and active filters.
-*   **FlixPatrol Top 10:** Displays top 10 charts from major streaming platforms (Netflix, Disney+, Amazon, HBO, Apple TV+, Paramount+, Hulu, Peacock).
-*   **MDBList:** Browse curated movie and TV collections from MDBList (requires MDBList API key).
+*   **FlixPatrol Top 10:** Displays top 10 charts from major streaming platforms (Netflix, Disney+, Amazon, HBO, Apple TV+, Paramount+, Hulu, Peacock). Supports **weekly aggregation mode** with 7-day scoring — automatically falls back to global charts when regional data is unavailable.
+*   **MDBList:** Browse curated movie and TV collections from MDBList (requires MDBList API key). Includes 40+ built-in curated sources covering streaming originals, franchise collections, and certification-based lists.
 
 **Search:**
 
@@ -127,6 +127,20 @@ Click the **Filters** button to open the filter drawer. Filters are organized in
 *   Click the add button on any item to open the version selection modal.
 *   **Movies:** Select quality version(s) and click **Request**.
 *   **TV Shows:** Select version(s), then choose "All Seasons" or specific seasons before requesting.
+
+**TV Show Detail Page:**
+
+When viewing a TV show's detail page, the following is shown for each season:
+
+*   Per-season collection progress (e.g. `7 / 10 episodes collected`)
+*   Per-episode status indicators — collected, wanted, missing, or unreleased
+*   File counts per episode where files exist
+
+**Magnet Assign (TV Shows):**
+
+*   Each season header and episode row in the show detail page includes an orange **magnet icon** button.
+*   Clicking it opens the Magnet Assign page pre-filled with the correct show, season, episode, and version — no manual selection needed.
+*   Use this to manually assign a magnet link or torrent file when the scraper can't find one automatically.
 
 **Personal Lists (Trakt):**
 

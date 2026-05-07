@@ -466,6 +466,18 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                             lookup_id = _get_existing_item_id_collected(conn, imdb_id, tmdb_id, item_type, item)
                             if lookup_id:
                                 pending_secondary_labels.append((lookup_id, new_source, new_detail))
+                                # Write source+detail to content_sources so secondary-source label
+                                # re-processing can find it (add_label_to_item only writes source, no detail)
+                                try:
+                                    from utilities.plex_label_manager import parse_content_sources, serialize_content_sources
+                                    cs_row = conn.execute('SELECT content_sources FROM media_items WHERE id = ?', (lookup_id,)).fetchone()
+                                    cs_list = parse_content_sources(cs_row['content_sources'] if cs_row else None)
+                                    if not any(s['source'] == new_source for s in cs_list):
+                                        cs_list.append({'source': new_source, 'detail': new_detail, 'added_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')})
+                                        conn.execute('UPDATE media_items SET content_sources = ? WHERE id = ?',
+                                                     (serialize_content_sources(cs_list), lookup_id))
+                                except Exception as _cs_err:
+                                    logging.warning(f"Failed to write content_sources for collected item {lookup_id}: {_cs_err}")
                                 if item.get('source_position') is not None:
                                     conn.execute(
                                         "UPDATE media_items SET source_position=? WHERE id=?",

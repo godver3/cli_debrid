@@ -648,6 +648,13 @@ function initializeHelpModal() {
         // Override inline display:none (used to prevent FOUC)
         helpOverlay.style.display = 'block';
         helpModalBox.style.display = 'flex';
+        // Tangerine: ensure modal is centered (overflow:hidden on body can offset fixed elements)
+        if (document.body.classList.contains('tangerine-theme')) {
+            helpModalBox.style.position = 'fixed';
+            helpModalBox.style.left = '50%';
+            helpModalBox.style.top = '50%';
+            helpModalBox.style.transform = 'translate(-50%, -50%)';
+        }
 
         // Add the 'visible' class to show modal elements
         helpOverlay.classList.add('visible');
@@ -666,6 +673,10 @@ function initializeHelpModal() {
         // Reset inline display style
         helpOverlay.style.display = '';
         helpModalBox.style.display = '';
+        helpModalBox.style.position = '';
+        helpModalBox.style.left = '';
+        helpModalBox.style.top = '';
+        helpModalBox.style.transform = '';
     }
 
     // Fetch content function remains the same

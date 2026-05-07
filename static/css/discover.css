@@ -2375,102 +2375,69 @@ select#discoverEpisodeView {
    ========================================================================== */
 
 /* Request Icon - Bottom Right Corner Triangle */
-.result-item .request-icon {
-    position: absolute;
-    bottom: -6px;
-    right: -1px;
-    z-index: 10;
-    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1),
-                background-color var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
-    width: 0;
-    height: 0;
-    border-style: solid;
-    border-width: 0 0 40px 40px;
-    border-color: transparent transparent #007bff transparent;
-    background-color: transparent !important;
-    border-bottom-right-radius: 8px;
-    transform-origin: bottom right;
-    transform: none !important;
-    display: flex;
-    align-items: flex-end;
-    justify-content: flex-end;
-    cursor: pointer;
-    opacity: 0;
-    pointer-events: none;
+/* Action button bar inside hover overlay */
+/* Hover action bar — pinned to bottom of poster via inline style */
+.hover-action-btn {
+    width: 38px !important;
+    height: 38px !important;
+    min-width: 38px !important;
+    min-height: 38px !important;
+    border-radius: 10px !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    background: rgba(20, 20, 20, 0.75) !important;
+    color: rgba(255, 255, 255, 0.75) !important;
+    cursor: pointer !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 0 !important;
+    flex-shrink: 0 !important;
+    box-sizing: border-box !important;
+    transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease, color 0.18s ease, box-shadow 0.18s ease !important;
+    backdrop-filter: blur(4px);
 }
 
-.result-item .request-icon::after {
-    content: "+";
-    position: absolute;
-    bottom: -30px;
-    right: 5px;
-    color: white;
-    font-size: 18px;
-    font-weight: bold;
-    line-height: 1;
+.hover-action-btn:hover {
+    transform: scale(1.12) !important;
+    cursor: pointer !important;
 }
 
-/* Tester Icon - Bottom Left Corner Triangle */
-.result-item .tester-icon {
-    position: absolute;
-    bottom: -6px;
-    left: -1px;
-    z-index: 10;
-    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1),
-                background-color var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
-    width: 0;
-    height: 0;
-    border-style: solid;
-    border-width: 40px 0 0 40px;
-    border-color: transparent transparent transparent #007bff;
-    background-color: transparent !important;
-    border-bottom-left-radius: 8px;
-    transform-origin: bottom left;
-    transform: none !important;
-    display: flex;
-    align-items: flex-end;
-    justify-content: flex-start;
-    cursor: pointer;
-    opacity: 0;
-    pointer-events: none;
+.hover-action-btn svg {
+    width: 16px !important;
+    height: 16px !important;
+    min-width: 16px !important;
+    min-height: 16px !important;
+    display: block !important;
+    pointer-events: none !important;
+    flex-shrink: 0;
 }
 
-.result-item .tester-icon::after {
-    content: "⚙";
-    position: absolute;
-    bottom: 8px;
-    left: -35px;
-    color: white;
-    font-size: 18px;
-    font-weight: bold;
-    line-height: 1;
-    scale: 0.7;
+.hover-action-btn.request-icon { color: #4ade80 !important; border-color: rgba(74, 222, 128, 0.3) !important; }
+.hover-action-btn.request-icon:hover {
+    background: rgba(74, 222, 128, 0.2) !important;
+    border-color: #4ade80 !important;
+    box-shadow: 0 0 12px rgba(74, 222, 128, 0.4) !important;
 }
 
-/* Show icons on hover */
-.result-item:hover .request-icon,
-.result-item:hover .tester-icon {
-    opacity: 1;
-    pointer-events: auto;
+.hover-action-btn.tester-icon { color: #fbbf24 !important; border-color: rgba(251, 191, 36, 0.3) !important; }
+.hover-action-btn.tester-icon:hover {
+    background: rgba(251, 191, 36, 0.2) !important;
+    border-color: #fbbf24 !important;
+    box-shadow: 0 0 12px rgba(251, 191, 36, 0.4) !important;
 }
 
-/* Hover state for icons */
-.result-item .request-icon:hover {
-    transform: scale(1) !important;
-    border-color: transparent transparent #2980b9 transparent;
-    background-color: transparent !important;
+.hover-action-btn.magnet-assign-icon { color: #c084fc !important; border-color: rgba(192, 132, 252, 0.3) !important; }
+.hover-action-btn.magnet-assign-icon:hover {
+    background: rgba(192, 132, 252, 0.2) !important;
+    border-color: #c084fc !important;
+    box-shadow: 0 0 12px rgba(192, 132, 252, 0.4) !important;
 }
 
-.result-item .tester-icon:hover {
-    transform: none !important;
-    border-color: transparent transparent transparent #2980b9;
-    background-color: transparent !important;
-}
-
-/* Hide SVG icons (we use ::after pseudo-elements instead) */
-.result-item .request-icon svg,
-.result-item .tester-icon svg {
-    display: none;
+.hover-action-btn.blacklist-icon { color: #f87171 !important; border-color: rgba(248, 113, 113, 0.3) !important; }
+.hover-action-btn.blacklist-icon:hover {
+    background: rgba(248, 113, 113, 0.2) !important;
+    border-color: #f87171 !important;
+    box-shadow: 0 0 12px rgba(248, 113, 113, 0.4) !important;
 }
 
 /* ==========================================================================
@@ -3783,6 +3750,43 @@ select#discoverEpisodeView {
     margin: 0;
     font-size: 1.125rem;
     font-weight: 600;
+}
+
+/* Magnet assign button — season header only */
+.magnet-assign-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.4rem;
+    background: transparent;
+    border: 1px solid rgba(255, 145, 102, 0.3);
+    border-radius: 0.375rem;
+    color: #ff9166;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.magnet-assign-btn:hover {
+    background: rgba(255, 145, 102, 0.15);
+    border-color: rgba(255, 145, 102, 0.6);
+}
+
+.magnet-assign-btn svg {
+    width: 15px;
+    height: 15px;
+    display: block;
+}
+
+/* Magnet assign button — episode rows (inherits search-episode-btn sizing) */
+.magnet-assign-episode-btn {
+    color: #ff9166 !important;
+    border-color: rgba(255, 145, 102, 0.3) !important;
+}
+
+.magnet-assign-episode-btn:hover {
+    background: rgba(255, 145, 102, 0.15) !important;
+    border-color: rgba(255, 145, 102, 0.5) !important;
 }
 
 /* ==========================================================================

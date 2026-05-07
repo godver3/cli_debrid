@@ -2,6 +2,9 @@
 
 
 {% block head %}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/statistics.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/scraper.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/scraper-mobile.css') }}">
@@ -17,6 +20,27 @@
         .uptime-desktop { display: none; }
         .uptime-mobile { display: inline; }
     }
+
+    /* Panel scrollbars — override tangerine_base.css global rules */
+    .stats-box.recently-aired ul::-webkit-scrollbar,
+    .stats-box.airing-soon ul::-webkit-scrollbar,
+    .stats-box.upcoming-releases ul::-webkit-scrollbar,
+    .stats-cards-container::-webkit-scrollbar { width: 3px !important; }
+
+    .stats-box.recently-aired ul::-webkit-scrollbar-track,
+    .stats-box.airing-soon ul::-webkit-scrollbar-track,
+    .stats-box.upcoming-releases ul::-webkit-scrollbar-track,
+    .stats-cards-container::-webkit-scrollbar-track { background: transparent !important; border: none !important; }
+
+    .stats-box.recently-aired ul::-webkit-scrollbar-thumb,
+    .stats-box.airing-soon ul::-webkit-scrollbar-thumb,
+    .stats-box.upcoming-releases ul::-webkit-scrollbar-thumb,
+    .stats-cards-container::-webkit-scrollbar-thumb { background: #3d3d3d !important; border-radius: 0 !important; border: none !important; }
+
+    .stats-box.recently-aired ul::-webkit-scrollbar-button,
+    .stats-box.airing-soon ul::-webkit-scrollbar-button,
+    .stats-box.upcoming-releases ul::-webkit-scrollbar-button,
+    .stats-cards-container::-webkit-scrollbar-button { display: none !important; width: 0 !important; height: 0 !important; }
 </style>
 {% endblock %}
 {% block title %}Home{% endblock %}
@@ -54,63 +78,76 @@
 
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        // Check if on mobile
+        // On mobile, always force compact list view regardless of server-side setting
         if (window.innerWidth <= 768) {
-            // Add compact-view class to statistics-wrapper
             document.querySelector('.statistics-wrapper').classList.add('compact-view');
+            // If server rendered poster cards (non-compact), re-render as list via JS
+            const hasPosters = document.querySelector('.stats-cards-container .stats-poster-container');
+            if (hasPosters) {
+                // Trigger a data refresh so JS re-renders cards as file-details list
+                setTimeout(function() {
+                    if (typeof refreshStats === 'function') refreshStats();
+                }, 100);
+            }
         }
     });
 </script>
 
 <div class="statistics-wrapper {% if compact_view %}compact-view{% endif %}">
     <div class="toggle-container" id="toggle_container">
+      <div class="topbar-inner">
         {% if not limited_env %}
-        <div class="toggle-item">
-            <span class="toggle-label"><i class="fas fa-hdd"></i> Library:</span>
-            <span id="library-size-display">{{ stats.total_library_size | default('Click Refresh') }}</span>
-            <button id="refresh-library-size-btn" class="refresh-btn" title="Refresh Library Size">
-                 <i class="fas fa-sync-alt"></i>
-            </button>
+        <div class="tb-pill">
+            <i class="fas fa-server" style="color:var(--st-accent)"></i>
+            <span class="tb-label">Library:</span>
+            <span class="tb-val" id="library-size-display">{{ stats.total_library_size | default('Click Refresh') }}</span>
+            <button id="refresh-library-size-btn" class="tb-refresh" title="Refresh Library Size"><i class="fas fa-rotate"></i></button>
         </div>
-        {% endif %}
-        {% if not limited_env %}
-        <div class="toggle-item">
-            <span class="toggle-label"><i class="fas fa-globe"></i> {{ stats.timezone }}</span>
+        <div class="tb-sep"></div>
+        <div class="tb-pill">
+            <i class="fas fa-globe" style="color:var(--st-blue)"></i>
+            <span class="tb-val">{{ stats.timezone }}</span>
         </div>
-        {% endif %}
-        {% if not limited_env %}
-        <div class="toggle-item">
-            <span class="toggle-label"><i class="fas fa-crown"></i> Sub:</span>
-            <span id="subscription-days-toggle" class="{% if stats.subscription_status and stats.subscription_status.days_remaining is not none and stats.subscription_status.days_remaining < 10 %}critical{% endif %}">{% if stats.subscription_status and stats.subscription_status.days_remaining is not none %}{{ stats.subscription_status.days_remaining }} days{% else %}N/A{% endif %}</span>
+        <div class="tb-break"></div>
+        <div class="tb-pill">
+            <i class="fas fa-crown" style="color:var(--st-yellow)"></i>
+            <span class="tb-label">Sub:</span>
+            <span class="tb-val {% if stats.subscription_status and stats.subscription_status.days_remaining is not none and stats.subscription_status.days_remaining < 10 %}critical{% endif %}" id="subscription-days-toggle">{% if stats.subscription_status and stats.subscription_status.days_remaining is not none %}{{ stats.subscription_status.days_remaining }} days{% else %}N/A{% endif %}</span>
         </div>
+        <div class="tb-sep"></div>
         {% endif %}
-        <div class="toggle-item">
-            <span class="toggle-label">24h</span>
+        <div class="tb-toggle-wrap">
+            <span class="tb-label">24h</span>
             <label class="toggle-switch">
                 <input type="checkbox" id="time-format-toggle">
                 <span class="toggle-slider"></span>
             </label>
         </div>
-        <div class="toggle-item" id="compact_toggle">
-            <span class="toggle-label">Compact</span>
+        <div class="tb-toggle-wrap" id="compact_toggle">
+            <span class="tb-label">Compact</span>
             <label class="toggle-switch">
                 <input type="checkbox" id="compact-toggle">
                 <span class="toggle-slider"></span>
             </label>
         </div>
-        <div class="toggle-item">
-            <span class="toggle-label"><i class="fas fa-palette"></i> Theme:</span>
+        <div class="tb-sep"></div>
+        <div class="tb-theme">
+            <i class="fas fa-palette" style="color:var(--st-accent);font-size:11px"></i>
+            <span class="tb-label hide-mobile-text">Theme:</span>
+            <div class="tb-swatch"></div>
             <select id="theme-selector" class="theme-selector">
                 <option value="classic">Classic</option>
                 <option value="tangerine">Tangerine</option>
             </select>
         </div>
-        <div class="toggle-item search-box-item" id="stats-search-box" style="display: none;">
-            <form id="stats-search-form" class="stats-search-form">
-                <i class="fas fa-search stats-search-icon"></i>
+        <div class="tb-break"></div>
+        <div class="tb-search" id="stats-search-box" style="display: none;">
+            <i class="fas fa-magnifying-glass tb-search-icon"></i>
+            <form id="stats-search-form">
                 <input type="text" id="stats-search-input" placeholder="Search or enter IMDb/TMDB ID..." class="stats-search-input">
             </form>
         </div>
+      </div>
     </div>
 
     <script>
@@ -127,7 +164,7 @@
                 const currentTheme = localStorage.getItem('selectedTheme') || 'classic';
                 const searchBox = document.getElementById('stats-search-box');
                 if (searchBox) {
-                    searchBox.style.display = currentTheme === 'tangerine' ? 'flex' : 'none';
+                    searchBox.style.display = currentTheme === 'tangerine' ? 'block' : 'none';
                 }
             }
 
@@ -423,7 +460,7 @@
                         data-season="${item.season_number}"
                         data-episode="${item.episode_number}">
                         <span class="show-title">${item.title}</span>
-                        <span class="air-time">${item.formatted_datetime}</span>
+                        <span class="air-time${item.formatted_datetime.startsWith('Today') ? ' today' : ''}">${item.formatted_datetime}</span>
                     </li>
                 `).join('');
             }
@@ -439,7 +476,7 @@
                         data-tmdb-id="${release.tmdb_ids && release.tmdb_ids.length > 0 ? release.tmdb_ids : ''}"
                         data-imdb-id="${release.imdb_ids && release.imdb_ids.length > 0 ? release.imdb_ids : ''}">
                         <span class="titles">${release.titles}</span>
-                        <span class="release-date">${release.formatted_date}</span>
+                        <span class="release-date${release.is_soon ? ' soon' : ''}">${release.formatted_date}</span>
                     </li>
                 `).join('');
             }
@@ -450,14 +487,16 @@
                 console.log('Updating recently added movies');
                 console.log('Recently added movies data:', JSON.stringify(data.recently_added.movies, null, 2));
                 recentMoviesContainer.innerHTML = data.recently_added.movies.map(movie => {
-                    console.log('Processing movie:', movie);
                     const collectedAt = movie.formatted_collected_at || movie.formatted_date || 'Unknown';
+                    const sizeStr = movie.formatted_size ? ` <span style="color:#e17c52;">•</span> Size: ${movie.formatted_size}` : '';
+                    const meta = `Version: ${movie.version}${sizeStr} <span style="color:#e17c52;">•</span> ${collectedAt}`;
+                    const isCompact = document.querySelector('.statistics-wrapper').classList.contains('compact-view');
                     return `
                     <div class="stats-card">
-                        ${document.querySelector('.statistics-wrapper').classList.contains('compact-view') ? `
+                        ${isCompact ? `
                             <div class="file-details">
                                 <span class="title">${movie.title} (${movie.year})</span>
-                                <span class="metadata">Version: ${movie.version} - ${collectedAt}</span>
+                                <span class="metadata">${meta}</span>
                                 <span class="filename">${movie.filled_by_file}</span>
                             </div>
                         ` : `
@@ -465,7 +504,7 @@
                                 <img src="${movie.poster_url}" alt="${movie.title} poster" class="poster" loading="lazy">
                                 <div class="stats-poster-hover">
                                     <span class="title">${movie.title} (${movie.year})</span>
-                                    <span class="metadata">Version: ${movie.version} - ${collectedAt}</span>
+                                    <span class="metadata">${meta}</span>
                                     <span class="filename">${movie.filled_by_file}</span>
                                 </div>
                             </div>
@@ -481,22 +520,26 @@
                 console.log('Updating recently added shows');
                 console.log('Recently added shows data:', JSON.stringify(data.recently_added.shows, null, 2));
                 recentShowsContainer.innerHTML = data.recently_added.shows.map(show => {
-                    console.log('Processing show:', show);
                     const collectedAt = show.formatted_collected_at || show.formatted_date || 'Unknown';
+                    const epStr = (show.season_number && show.episode_number) ? `S${String(show.season_number).padStart(2,'0')}E${String(show.episode_number).padStart(2,'0')} <span style="color:#e17c52;">•</span> ` : '';
+                    const sizeStr = show.formatted_size ? ` <span style="color:#e17c52;">•</span> Size: ${show.formatted_size}` : '';
+                    const verStr = show.version ? `Version: ${show.version}${sizeStr} <span style="color:#e17c52;">•</span> ` : '';
+                    const meta = `${epStr}${verStr}${collectedAt}`;
+                    const isCompact = document.querySelector('.statistics-wrapper').classList.contains('compact-view');
                     return `
                     <div class="stats-card">
-                        ${document.querySelector('.statistics-wrapper').classList.contains('compact-view') ? `
+                        ${isCompact ? `
                             <div class="file-details">
-                                <span class="title">${show.title}</span>
-                                <span class="metadata">${show.season_number && show.episode_number ? `S${String(show.season_number).padStart(2, '0')}E${String(show.episode_number).padStart(2, '0')}` : ''}${show.year ? ` (${show.year})` : ''}${show.version ? ` - Version: ${show.version}` : ''} - ${collectedAt}</span>
+                                <span class="title">${show.title}${show.year ? ` (${show.year})` : ''}</span>
+                                <span class="metadata">${meta}</span>
                                 <span class="filename">${show.filled_by_file}</span>
                             </div>
                         ` : `
                             <div class="stats-poster-container">
                                 <img src="${show.poster_url}" alt="${show.title} poster" class="poster" loading="lazy">
                                 <div class="stats-poster-hover">
-                                    <span class="title">${show.title}</span>
-                                    <span class="metadata">${show.season_number && show.episode_number ? `S${String(show.season_number).padStart(2, '0')}E${String(show.episode_number).padStart(2, '0')}` : ''}${show.year ? ` (${show.year})` : ''}${show.version ? ` - Version: ${show.version}` : ''} - ${collectedAt}</span>
+                                    <span class="title">${show.title}${show.year ? ` (${show.year})` : ''}</span>
+                                    <span class="metadata">${meta}</span>
                                     <span class="filename">${show.filled_by_file}</span>
                                 </div>
                             </div>
@@ -563,6 +606,10 @@
             
             // Reattach click event listeners for external links modal after updating content
             reattachExternalLinksListeners();
+
+            // Re-apply quality badges to newly rendered cards
+            document.querySelectorAll('.stats-card[data-badges-applied]').forEach(c => c.removeAttribute('data-badges-applied'));
+            setTimeout(applyQualityBadges, 100);
 
             // Update subscription days in toggle bar, if present
             try {
@@ -686,7 +733,7 @@
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('Error moving item to Wanted state: ' + error.message);
+                showPopup({ type: 'error', title: 'Error', message: 'Error moving item to Wanted state: ' + error.message, autoClose: 5000 });
                 btn.disabled = false;
             });
         }
@@ -736,7 +783,7 @@
                 );
             } else {
                 console.error('[Statistics] selectMedia function not found - scraper.js may not be loaded');
-                alert('Error: Search functionality not available');
+                showPopup({ type: 'error', title: 'Error', message: 'Error: Search functionality not available', autoClose: 5000 });
             }
         }
 
@@ -771,7 +818,7 @@
             })
             .catch(error => {
                 console.error('Error:', error);
-                alert('Error moving item to Wanted state: ' + error.message);
+                showPopup({ type: 'error', title: 'Error', message: 'Error moving item to Wanted state: ' + error.message, autoClose: 5000 });
                 btn.disabled = false;
             });
         }
@@ -869,7 +916,7 @@
                         </div>
                         <div class="stat-text-content">
                             <div class="stat-label">Movies</div>
-                            <div class="stat-number">{{ stats.total_movies }}</div>
+                            <div class="stat-number">{{ "{:,}".format(stats.total_movies | int) }}</div>
                         </div>
                     </div>
                     <!-- <div class="stat-badges">
@@ -884,7 +931,7 @@
                         </div>
                         <div class="stat-text-content">
                             <div class="stat-label">Shows</div>
-                            <div class="stat-number">{{ stats.total_shows }}</div>
+                            <div class="stat-number">{{ "{:,}".format(stats.total_shows | int) }}</div>
                         </div>
                     </div>
                     <!-- <div class="stat-badges">
@@ -895,16 +942,16 @@
                 <div class="stat-item">
                     <div class="stat-content">
                         <div class="stat-icon">
-                            <i class="fas fa-video"></i>
+                            <i class="fas fa-clapperboard"></i>
                         </div>
                         <div class="stat-text-content">
                             <div class="stat-label">Episodes</div>
-                            <div class="stat-number">{{ stats.total_episodes }}</div>
+                            <div class="stat-number">{{ "{:,}".format(stats.total_episodes | int) }}</div>
                         </div>
                     </div>
                 </div>
                 {% if not limited_env %}
-                <div class="stat-item stat-item-clickable" onclick="window.location.href='/debrid_manager/?tab=active'">
+                <div class="stat-item stat-item-clickable status-{{ stats.active_downloads_data.status }}" id="kpi-active" onclick="window.location.href='/debrid_manager/?tab=active'">
                     <div class="stat-content">
                         <div class="stat-icon">
                             <i class="fas fa-download"></i>
@@ -936,7 +983,7 @@
                     </div> -->
                 </div>
                 {% endif %}
-                <div class="stat-item stat-item-clickable" onclick="window.location.href='/performance/dashboard'">
+                <div class="stat-item stat-item-clickable" id="kpi-uptime" onclick="window.location.href='/performance/dashboard'">
                     <div class="stat-content">
                         <div class="stat-icon">
                             <i class="fas fa-clock"></i>
@@ -1021,7 +1068,7 @@
                             {# Uncollected episodes: show search button only #}
                             {# Checking_upgrade episodes: show both search and move-to-wanted buttons #}
                             {# Collected episodes: show old rescrape button only #}            
-                            {% set show_move_to_wanted = item.display_status == 'checking_upgrade' %}
+                            {% set show_move_to_wanted = false %}
                             {% set show_rescrape = item.display_status == 'collected' %}
                             {% set show_search_button = item.display_status == 'uncollected' or item.display_status == 'checking_upgrade' %}
 
@@ -1037,11 +1084,7 @@
                                     data-season="{{ item.season_number }}"
                                     data-episode="{{ item.episode_number }}"
                                     title="Move back to Wanted state">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M12 15V3"></path>
-                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                                    <path d="m7 10 5 5 5-5"></path>
-                                </svg>
+                                <i class="fas fa-rotate"></i>
                             </button>
                             {% endif %}
                         </div>
@@ -1089,7 +1132,7 @@
                         data-in-library="true"
                         data-media-type="episode">
                         <span class="show-title">{{ item.title }}</span>
-                        <span class="air-time">{{ item.formatted_datetime }}</span>
+                        <span class="air-time{% if item.formatted_datetime.startswith('Today') %} today{% endif %}">{{ item.formatted_datetime }}</span>
                     </li>
                     {% endfor %}
                 </ul>
@@ -1110,7 +1153,7 @@
                         data-in-library="false"
                         data-media-type="movie">
                         <span class="titles">{{ release.titles }}</span>
-                        <span class="release-date">{{ release.formatted_date }}</span>
+                        <span class="release-date{% if release.is_soon %} soon{% endif %}">{{ release.formatted_date }}</span>
                     </li>
                     {% endfor %}
                 </ul>
@@ -1499,6 +1542,7 @@
         let refreshTimer = null;
         
         // Function to refresh stats without full page reload
+        window.refreshStats = refreshStats;
         function refreshStats() {
             console.log('Attempting to refresh stats...');
             
@@ -1686,8 +1730,8 @@ function applyQualityBadges() {
 
     console.log('Applying quality badges...');
 
-    // Find all filename elements in both views (compact and poster)
-    const filenameElements = document.querySelectorAll('.file-details .filename, .stats-poster-hover .filename');
+    // Find filename elements — file-details first so card dedup doesn't skip them
+    const filenameElements = document.querySelectorAll('.file-details .filename');
     console.log('Found filename elements:', filenameElements.length);
 
     // Group by parent card to handle upgraded items with From/To
