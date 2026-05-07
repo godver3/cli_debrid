@@ -38,45 +38,32 @@ document.addEventListener('DOMContentLoaded', function() {
             Loading.hide();
 
             if (response.ok && data.success) {
-                if (showPopup) {
-                    showPopup({
-                        type: POPUP_TYPES.SUCCESS,
-                        title: 'Assignment Successful',
-                        message: data.message || `Successfully assigned ${data.added_count || 0} item(s).`,
-                        autoClose: 4000,
-                        onConfirm: () => { window.location.href = "{{ url_for('magnet.assign_magnet') }}"; }
-                    });
-                    setTimeout(() => { window.location.href = "{{ url_for('magnet.assign_magnet') }}"; }, 4000);
-                } else {
-                    alert(data.message || 'Assignment Successful!');
-                    window.location.href = "{{ url_for('magnet.assign_magnet') }}";
-                }
+                showPopup({
+                    type: POPUP_TYPES.SUCCESS,
+                    title: 'Assignment Successful',
+                    message: data.message || `Successfully assigned ${data.added_count || 0} item(s).`,
+                    autoClose: 4000,
+                    onConfirm: () => { window.location.href = "{{ url_for('magnet.assign_magnet') }}"; }
+                });
+                setTimeout(() => { window.location.href = "{{ url_for('magnet.assign_magnet') }}"; }, 4000);
             } else {
-                if (showPopup) {
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        title: 'Assignment Failed',
-                        message: data.error || 'An error occurred during assignment.',
-                        autoClose: 5000
-                    });
-                } else {
-                    alert("Error: " + (data.error || 'Assignment failed.'));
-                }
+                showPopup({
+                    type: POPUP_TYPES.ERROR,
+                    title: 'Assignment Failed',
+                    message: data.error || 'An error occurred during assignment.',
+                    autoClose: 5000
+                });
                 submitButton.disabled = false; // Re-enable button on failure
             }
         } catch (error) {
             Loading.hide();
             console.error('Error submitting assignment:', error);
-            if (showPopup) {
-                showPopup({
-                    type: POPUP_TYPES.ERROR,
-                    title: 'Submission Error',
-                    message: 'A network or unexpected error occurred.',
-                    autoClose: 5000
-                });
-            } else {
-                alert('An unexpected network error occurred.');
-            }
+            showPopup({
+                type: POPUP_TYPES.ERROR,
+                title: 'Submission Error',
+                message: 'A network or unexpected error occurred.',
+                autoClose: 5000
+            });
             submitButton.disabled = false; // Re-enable button on error
         }
     });

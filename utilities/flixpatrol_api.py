@@ -9,7 +9,8 @@ Based on the implementation from Agregarr project.
 import logging
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 import re
 
@@ -304,6 +305,101 @@ def fetch_top10(
     except Exception as e:
         logging.error(f"[FlixPatrol] Error parsing {platform_name} Top 10: {e}")
         return {'error': f'Error parsing FlixPatrol data: {str(e)}', 'items': []}
+
+
+def _fetch_single_day(platform_slug: str, platform_region: str, date_str: str) -> List[Dict]:
+    """Fetch raw items for one day's FlixPatrol page. Returns [] on failure."""
+    url = f'https://flixpatrol.com/top10/{platform_slug}/{platform_region}/{date_str}/'
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=15, allow_redirects=True)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        items = []
+        for movie in _extract_top10_from_section(soup, 'TOP 10 Movies'):
+            movie['media_type'] = 'movie'
+            items.append(movie)
+        for show in _extract_top10_from_section(soup, 'TOP 10 TV Shows'):
+            show['media_type'] = 'tv'
+            items.append(show)
+        if not items:
+            for item in _extract_combined_top10(soup, ''):
+                item['media_type'] = 'unknown'
+                items.append(item)
+        return items
+    except Exception as e:
+        logging.debug(f"[FlixPatrol] Weekly day {date_str} fetch failed: {e}")
+        return []
+
+
+def fetch_top10_weekly(platform: str, media_type: str = 'all') -> Dict[str, Any]:
+    """
+    Aggregate the last 7 days of FlixPatrol daily Top 10 into a weekly ranking.
+
+    Scoring: rank 1 = 10 pts, rank 2 = 9 pts … rank 10 = 1 pt per day.
+    Items are deduplicated by flixpatrol_id and sorted by total score descending.
+    The top 20 items (10 movies + 10 shows, or 20 combined) are returned.
+    """
+    if platform not in FLIXPATROL_PLATFORMS:
+        return {'error': f'Unknown platform: {platform}', 'items': []}
+
+    platform_slug = FLIXPATROL_PLATFORMS[platform]['slug']
+    platform_name = FLIXPATROL_PLATFORMS[platform]['name']
+    platform_region = FLIXPATROL_PLATFORMS[platform].get('region', 'united-states')
+
+    # Build date strings for the past 7 days (yesterday back 6 more days)
+    today = datetime.now()
+    dates = [(today - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(1, 8)]
+
+    logging.info(f"[FlixPatrol] Weekly fetch for {platform_name}: {dates[0]} → {dates[-1]}")
+
+    # Fetch all days in parallel
+    scores: Dict[str, Dict] = {}  # keyed by flixpatrol_id
+    with ThreadPoolExecutor(max_workers=7) as ex:
+        futures = {ex.submit(_fetch_single_day, platform_slug, platform_region, d): d for d in dates}
+        for future in as_completed(futures):
+            day_items = future.result()
+            for item in day_items:
+                fp_id = item.get('flixpatrol_id')
+                if not fp_id:
+                    continue
+                mt = item.get('media_type', 'unknown')
+                pts = max(0, 11 - item.get('rank', 11))
+                if fp_id not in scores:
+                    scores[fp_id] = {**item, 'score': 0, 'days': 0}
+                scores[fp_id]['score'] += pts
+                scores[fp_id]['days'] += 1
+
+    # Split into movies/shows, sort by weekly score descending — no cap, all unique titles
+    movies = sorted([v for v in scores.values() if v['media_type'] == 'movie'],
+                    key=lambda x: x['score'], reverse=True)
+    shows = sorted([v for v in scores.values() if v['media_type'] == 'tv'],
+                   key=lambda x: x['score'], reverse=True)
+    combined = sorted([v for v in scores.values() if v['media_type'] == 'unknown'],
+                      key=lambda x: x['score'], reverse=True)
+
+    # Reassign ranks within each group
+    all_items = []
+    if movies or shows:
+        if media_type in ('all', 'movie'):
+            for rank, item in enumerate(movies, 1):
+                all_items.append({**item, 'rank': rank})
+        if media_type in ('all', 'tv'):
+            for rank, item in enumerate(shows, 1):
+                all_items.append({**item, 'rank': rank})
+    else:
+        for rank, item in enumerate(combined, 1):
+            all_items.append({**item, 'rank': rank})
+
+    logging.info(f"[FlixPatrol] Weekly {platform_name}: {len(all_items)} items from {len(scores)} unique titles")
+
+    return {
+        'success': True,
+        'platform': platform,
+        'platform_name': platform_name,
+        'period': 'weekly',
+        'date': f"{dates[-1]} to {dates[0]}",
+        'items': all_items,
+    }
 
 
 def get_title_ids_from_flixpatrol(flixpatrol_id: str) -> Optional[Dict[str, Any]]:

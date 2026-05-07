@@ -6,14 +6,12 @@
     {{ super() }}
     <meta http-equiv="refresh" content="300">
     <script>
-        // Dynamically load the correct CSS based on theme cookie
         (function() {
-            const theme = document.cookie.split('; ').find(row => row.startsWith('selectedTheme='))?.split('=')[1] || 'classic';
-            const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_scraper_tester.css' : 'css/scraper_tester.css';
-            const link = document.createElement('link');
+            var theme = localStorage.getItem('selectedTheme') || 'tangerine';
+            var cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_scraper_tester.css?v=17' : 'css/scraper_tester.css';
+            var link = document.createElement('link');
             link.rel = 'stylesheet';
-            // Add cache-busting parameter based on theme to force reload when theme changes
-            link.href = '{{ url_for("static", filename="") }}' + cssFile + '?v=' + theme + '_' + Date.now();
+            link.href = '{{ url_for("static", filename="") }}' + cssFile;
             document.head.appendChild(link);
         })();
     </script>

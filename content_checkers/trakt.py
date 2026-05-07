@@ -93,10 +93,12 @@ def is_cache_entry_valid(cache_entry, imdb_id, current_state=None):
         if not trakt_id:
             return False
 
-        # Rule 2: If state is "Unreleased", cache for 1 day only
+        # Rule 2: If state is "Unreleased", cache Trakt ID for 7 days.
+        # Trakt IDs are permanent and never reassigned; only release dates shift.
+        # 1-day TTL caused ~400 API calls every 24h for 197 unreleased items.
         if current_state == 'Unreleased':
-            if age_days > 1:
-                logging.debug(f"Cache expired for {imdb_id}: Unreleased item older than 1 day")
+            if age_days > 7:
+                logging.debug(f"Cache expired for {imdb_id}: Unreleased item older than 7 days")
                 return False
             return True
 
@@ -193,65 +195,78 @@ class TraktRateLimiter:
 
         Args:
             task_priority: 'high' for critical tasks, 'normal' for others
+
+        All sleeps happen OUTSIDE the lock so that concurrent callers are not
+        serialized behind a sleeping thread. Each phase snapshots the values it
+        needs under the lock, releases, sleeps, then re-acquires to record.
         """
         if not self.enabled:
             return
 
+        # --- Phase 1: Cooldown check ---
+        # Snapshot the remaining cooldown under the lock; sleep outside it.
+        with self.lock:
+            now = time.time()
+            cooldown_wait = max(0.0, self.cooldown_until - now) if now < self.cooldown_until else 0.0
+
+        if cooldown_wait > 0:
+            logging.warning(
+                f"Cooldown active ({task_priority} priority): "
+                f"waiting {cooldown_wait:.1f}s before making Trakt request"
+            )
+            time.sleep(cooldown_wait)
+
+        # --- Phase 2: Per-request delay + budget/rate checks ---
+        # Compute all required waits under the lock, sleep outside it.
         with self.lock:
             now = time.time()
 
-            # Phase 2.2: Check if we're in cooldown period (429 cooldown applies to ALL tasks)
-            if now < self.cooldown_until:
-                remaining_cooldown = self.cooldown_until - now
-                logging.warning(f"Cooldown active ({task_priority} priority): waiting {remaining_cooldown:.1f}s before making Trakt request")
-                time.sleep(remaining_cooldown)
-                now = time.time()
-                # Reset cooldown after waiting
+            # If we slept out a cooldown, reset it now
+            if cooldown_wait > 0:
                 self.cooldown_until = 0
                 self._reset_adaptive_scaling()
 
-            # Phase 1.3 & 2.2: Apply adaptive per-request delay with scaling
-            effective_delay = self.per_request_delay * self.adaptive_scaling_factor
-            effective_delay = min(effective_delay, self.max_per_request_delay)
+            # Adaptive per-request delay
+            effective_delay = min(
+                self.per_request_delay * self.adaptive_scaling_factor,
+                self.max_per_request_delay
+            )
+            per_request_wait = max(0.0, effective_delay - (now - self.last_request_time))
 
-            time_since_last = now - self.last_request_time
-            if time_since_last < effective_delay:
-                delay = effective_delay - time_since_last
-                time.sleep(delay)
-                now = time.time()
-
-            # Remove requests older than the window
+            # Prune stale entries
             self.request_times = [t for t in self.request_times if now - t < self.window_seconds]
-
-            # Phase 2.1: Global API budget tracking
             current_usage = len(self.request_times)
             budget_percentage = current_usage / self.requests_per_window
 
+            budget_wait = 0.0
             if budget_percentage >= self.budget_pause_threshold and task_priority != 'high':
-                # Pause non-critical tasks when budget is nearly exhausted
                 oldest_in_window = self.request_times[0]
-                wait_time = self.window_seconds - (now - oldest_in_window) + 1
+                budget_wait = self.window_seconds - (now - oldest_in_window) + 1
                 logging.warning(
-                    f"API budget nearly exhausted ({current_usage}/{self.requests_per_window} = {budget_percentage:.1%}). "
-                    f"Pausing non-critical task for {wait_time:.1f}s"
+                    f"API budget nearly exhausted ({current_usage}/{self.requests_per_window} "
+                    f"= {budget_percentage:.1%}). Pausing non-critical task for {budget_wait:.1f}s"
                 )
-                time.sleep(wait_time)
-                now = time.time()
-                self.request_times = [t for t in self.request_times if now - t < self.window_seconds]
             elif budget_percentage >= self.budget_warning_threshold:
                 logging.info(f"API budget at {budget_percentage:.1%} ({current_usage}/{self.requests_per_window})")
 
-            if len(self.request_times) >= self.requests_per_window:
-                # Calculate how long to wait
+            rate_wait = 0.0
+            if current_usage >= self.requests_per_window:
                 oldest_in_window = self.request_times[0]
-                wait_time = self.window_seconds - (now - oldest_in_window) + 1
-                logging.warning(f"Trakt rate limit approaching ({len(self.request_times)}/{self.requests_per_window}). Waiting {wait_time:.1f}s")
-                time.sleep(wait_time)
-                # Clear old requests after waiting
-                now = time.time()
-                self.request_times = [t for t in self.request_times if now - t < self.window_seconds]
+                rate_wait = self.window_seconds - (now - oldest_in_window) + 1
+                logging.warning(
+                    f"Trakt rate limit approaching ({current_usage}/{self.requests_per_window}). "
+                    f"Waiting {rate_wait:.1f}s"
+                )
 
-            # Record this request
+        total_wait = max(per_request_wait, budget_wait, rate_wait)
+        if total_wait > 0:
+            time.sleep(total_wait)
+
+        # --- Phase 3: Record the request ---
+        # Re-acquire lock to append the timestamp atomically.
+        with self.lock:
+            now = time.time()
+            self.request_times = [t for t in self.request_times if now - t < self.window_seconds]
             self.request_times.append(now)
             self.last_request_time = now
 

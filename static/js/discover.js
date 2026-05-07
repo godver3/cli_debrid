@@ -11,7 +11,7 @@ window.discoverState = {
     currentTab: 'trending',
     searchTerm: '',
     mediaType: 'all',
-    sortBy: 'popularity.desc',
+    sortBy: 'none',
     sortOrder: 'desc',
     page: 1,
     hasMore: true,
@@ -27,7 +27,7 @@ window.discoverState = {
     filters: {
         // Search & Sort
         searchQuery: '',
-        sortBy: 'popularity',
+        sortBy: 'none',
         sortOrder: 'desc',
         
         // Basic Filters
@@ -87,6 +87,8 @@ let searchInput, searchClearBtn, filterToggleBtn, filterDrawer, filterOverlay, f
 let tabButtons, resultsGrid, loadingState, emptyState, errorState, pagination;
 let ratingSlider, ratingDisplay, yearFromInput, yearToInput, genresContainer;
 let loadMoreBtn;
+const _listKeywordCache = {}; // tmdbId_mediaType -> array of keyword IDs
+let _filterFetchController = null; // AbortController for in-flight filter fetches
 // Category grids for trending rows
 let trendingContent, searchResults, moviesGrid, showsGrid, animeGrid;
 // Recommendations
@@ -96,6 +98,8 @@ let recommendationsContent, recMoviesGrid, recShowsGrid;
  * Save current filter state to localStorage
  */
 function saveFiltersToStorage() {
+    // Don't persist state when editing an adaptive list — it would overwrite the user's saved session
+    if (window.adaptiveListEditMode) return;
     try {
         const state = window.discoverState;
         const filtersToSave = {
@@ -184,12 +188,15 @@ function clearSavedFilters() {
     localStorage.removeItem('discoverSidebarLists');
     localStorage.removeItem('discoverFlixPatrol');
     localStorage.removeItem('discoverMDBList');
+    localStorage.removeItem('discoverPersonal');
 }
 
 /**
  * Save sidebar lists selection to localStorage
  */
 function saveSidebarListsToStorage() {
+    // Don't persist state when editing an adaptive list — it would overwrite the user's saved session
+    if (window.adaptiveListEditMode) return;
     try {
         const listsToSave = window.sidebarListsState.selectedLists;
         localStorage.setItem('discoverSidebarLists', JSON.stringify(listsToSave));
@@ -349,11 +356,14 @@ document.addEventListener('DOMContentLoaded', async function() {
             window.history.replaceState({}, document.title, cleanUrl);
         }
     } else {
-   // Check for saved FlixPatrol or MDBList selections
+   // Check for saved FlixPatrol, MDBList, sidebar list, or personal list selections
         const savedFlixPatrol = localStorage.getItem('discoverFlixPatrol');
         const savedMDBList = localStorage.getItem('discoverMDBList');
-        
-        if (savedFlixPatrol || savedMDBList || hasRestoredFilters) {
+        const savedSidebarLists = localStorage.getItem('discoverSidebarLists');
+        const savedPersonal = localStorage.getItem('discoverPersonal');
+        const hasSavedSidebarLists = savedSidebarLists && JSON.parse(savedSidebarLists).length > 0;
+
+        if (savedFlixPatrol || savedMDBList || savedPersonal || hasRestoredFilters || hasSavedSidebarLists || isAdaptiveListEntry) {
             // Hide trending, show search results area immediately
             const trendingContent = document.getElementById('trending-content');
             const searchResults = document.getElementById('search-results');
@@ -363,6 +373,8 @@ document.addEventListener('DOMContentLoaded', async function() {
             // Only load trending if nothing is saved
             loadTrending();
         }
+        // Always sync tab active state after init, regardless of which path was taken
+        updateTabState();
     }
 });
 
@@ -523,6 +535,7 @@ function bindEvents() {
     // Tab navigation
     tabButtons.forEach(btn => {
         btn.addEventListener('click', function() {
+            if (this.classList.contains('flixpatrol-dropdown-trigger') || this.classList.contains('mdblist-dropdown-trigger')) return;
             const tab = this.dataset.tab;
             switchTab(tab);
         });
@@ -743,11 +756,25 @@ function initializeSemanticUI() {
         loadCertifications(watchRegionSelect.value);
     }
 
-    // Initialize all chips input containers with include/exclude support
-    initializeChipsInput('genres', state.filters.selectedGenres, state.filters.excludedGenres, () => updateActiveFilters());
-    initializeChipsInput('language', state.filters.selectedLanguages, state.filters.excludedLanguages, () => updateActiveFilters());
-    initializeChipsInput('country', state.filters.selectedCountries, state.filters.excludedCountries, () => updateActiveFilters());
-    initializeChipsInput('provider', state.filters.selectedProviders, state.filters.excludedProviders, () => updateActiveFilters());
+    // Initialize all chips input containers with include/exclude support.
+    // Pass getter functions so the handlers always read the live arrays from state.filters
+    // even after clearAllFilters() replaces the entire state.filters object.
+    initializeChipsInput('genres',
+        () => window.discoverState.filters.selectedGenres,
+        () => window.discoverState.filters.excludedGenres,
+        () => updateActiveFilters());
+    initializeChipsInput('language',
+        () => window.discoverState.filters.selectedLanguages,
+        () => window.discoverState.filters.excludedLanguages,
+        () => updateActiveFilters());
+    initializeChipsInput('country',
+        () => window.discoverState.filters.selectedCountries,
+        () => window.discoverState.filters.excludedCountries,
+        () => updateActiveFilters());
+    initializeChipsInput('provider',
+        () => window.discoverState.filters.selectedProviders,
+        () => window.discoverState.filters.excludedProviders,
+        () => updateActiveFilters());
     loadProviders(state.filters.watchRegion || 'US');
     initializeNetworkFilter();
 
@@ -1024,9 +1051,12 @@ function toggleKeyword(keywordId, keywordName, action, dropdownItem, chipsWrappe
         dropdownItem.classList.add('excluded');
     }
 
-    // Re-render chips
+    // Re-render chips and re-apply filters (needed for list mode client-side keyword filtering)
     renderKeywordChips(chipsWrapper);
     updateActiveFilters();
+    if (window.discoverState.listModeActive) {
+        applyAdvancedFilters(false);
+    }
 }
 
 /**
@@ -1048,6 +1078,7 @@ function renderKeywordChips(chipsWrapper) {
             if (idx > -1) state.filters.selectedKeywords.splice(idx, 1);
             renderKeywordChips(chipsWrapper);
             updateActiveFilters();
+            applyAdvancedFilters(false);
         });
         chipsWrapper.appendChild(chip);
     });
@@ -1064,6 +1095,7 @@ function renderKeywordChips(chipsWrapper) {
             if (idx > -1) state.filters.excludedKeywords.splice(idx, 1);
             renderKeywordChips(chipsWrapper);
             updateActiveFilters();
+            applyAdvancedFilters(false);
         });
         chipsWrapper.appendChild(chip);
     });
@@ -1276,7 +1308,7 @@ function renderCompanyChips(chipsWrapper) {
 /**
  * Initialize MDBlist-style chips input with include/exclude support
  */
-function initializeChipsInput(name, includeArray, excludeArray, onChange) {
+function initializeChipsInput(name, includeArrayOrGetter, excludeArrayOrGetter, onChange) {
     const container = document.getElementById(`${name}-container`);
     if (!container) {
         console.warn(`[Discover] Chips container not found: ${name}-container`);
@@ -1293,6 +1325,16 @@ function initializeChipsInput(name, includeArray, excludeArray, onChange) {
         console.warn(`[Discover] Missing elements for ${name}:`, { chipsWrapper: !!chipsWrapper, searchInput: !!searchInput, dropdown: !!dropdown });
         return;
     }
+
+    // Support both direct array refs (legacy) and getter functions.
+    // Getter functions are preferred: they always return the live array from state.filters
+    // even after clearAllFilters() replaces the entire state.filters object.
+    const getInclude = typeof includeArrayOrGetter === 'function'
+        ? includeArrayOrGetter
+        : () => includeArrayOrGetter;
+    const getExclude = typeof excludeArrayOrGetter === 'function'
+        ? excludeArrayOrGetter
+        : () => excludeArrayOrGetter;
 
     console.log(`[Discover] Initializing chips input: ${name}`);
 
@@ -1346,6 +1388,10 @@ function initializeChipsInput(name, includeArray, excludeArray, onChange) {
         if (value === 'match_all') return;
 
         e.stopPropagation();
+
+        // Always read the live arrays via getters so stale closure refs are never used
+        const includeArray = getInclude();
+        const excludeArray = getExclude();
 
         // Determine action: exclude button = exclude, otherwise include (button or item click)
         const isExclude = excludeBtn && !container.classList.contains('include-only');
@@ -2143,151 +2189,10 @@ function clearProductionCompanyFilter() {
  * Clear all filters
  */
 function clearAllFilters() {
-    const state = window.discoverState;
-
-    // Clear active preset tracking — user is explicitly resetting filters
-    activePresetId = null;
-    activePresetName = null;
-    presetDirty = false;
-    updatePresetButtonState();
-    const presetSelect = document.getElementById('preset-select');
-    if (presetSelect) presetSelect.value = '';
-    saveActivePresetToStorage();
-
- // Set flag to prevent saving during clear
-    state.isClearing = true;
-    
-    // Reset restoration flag to prevent any filter restoration
-    state.hasRestoredFilters = false;
-    
-    // Cancel any pending live filter timeout to prevent automatic filter application
-    if (window.liveFilterTimeout) {
-        clearTimeout(window.liveFilterTimeout);
-        window.liveFilterTimeout = null;
-    }
-
-    // Reset all filter values (including excluded arrays)
-    state.filters = {
-        searchQuery: '',
-        sortBy: 'popularity',
-        sortOrder: 'desc',
-        mediaType: 'all',
-        yearFrom: '',
-        yearTo: '',
-        releasedWithin: '',
-        upcomingDays: '',
-        tmdbRatingMin: 0,
-        tmdbRatingMax: 10,
-        imdbRatingMin: 0,
-        imdbRatingMax: 10,
-        tmdbVotesMin: 0,
-        imdbVotesMin: 0,
-        selectedGenres: [],
-        excludedGenres: [],
-        selectedLanguages: [],
-        excludedLanguages: [],
-        selectedCountries: [],
-        excludedCountries: [],
-        certificationMin: '',
-        certificationMax: '',
-        selectedProviders: [],
-        excludedProviders: [],
-        watchRegion: 'US',
-        selectedNetworks: [],
-        excludedNetworks: [],
-        networkCache: {},
-        selectedCompanies: [],
-        excludedCompanies: [],
-        companyCache: {},
-        selectedKeywords: [],
-        excludedKeywords: [],
-        keywordCache: {},
-        runtimeMin: 0,
-        runtimeMax: 300,
-        seasonsMax: 0,
-        activeFilters: []
-    };
-
-    // Clear saved filters from localStorage BEFORE updating UI
-    clearSavedFilters();
-    
-    // Clear sidebar lists selection
-    if (window.sidebarListsState) {
-        window.sidebarListsState.selectedLists = [];
-        window.sidebarListsState.rawResults = [];
-        renderSidebarListChips();
-        
-        // Clear dropdown visual state
-        const dropdown = document.getElementById('lists-dropdown');
-        if (dropdown) {
-            dropdown.querySelectorAll('.included').forEach(item => {
-                item.classList.remove('included');
-            });
-        }
-        
-        // Re-enable all filters
-        updateFilterAvailability();
-    }
-
-    // Reset UI elements
-    clearSearch();
-    clearYearFilter();
-    clearReleasedFilter();
-    clearUpcomingFilter();
-    clearTmdbRatingFilter();
-    clearRuntimeFilter();
-
-    // Clear all chips inputs
-    clearChipsInput('genres');
-    clearChipsInput('language');
-    clearChipsInput('country');
-    clearChipsInput('provider');
-    clearChipsInput('network');
-    clearChipsInput('company');
-
-    // Reset watch region select
-    const watchRegionSelect = document.getElementById('watch-region');
-    if (watchRegionSelect) {
-        watchRegionSelect.value = 'US';
-    }
-
-    // Reset sort select
-    if (state.sortBySelect) {
-        state.sortBySelect.value = 'popularity';
-    }
-
-    // Reset sort order toggle
-    if (state.sortOrderToggle) {
-        state.sortOrderToggle.setAttribute('data-order', 'desc');
-        const descIcon = state.sortOrderToggle.querySelector('.sort-icon-desc');
-        const ascIcon = state.sortOrderToggle.querySelector('.sort-icon-asc');
-        if (descIcon) descIcon.style.display = 'block';
-        if (ascIcon) ascIcon.style.display = 'none';
-    }
-
-    updateActiveFilters();
-
-    // Apply default filters (keep sidebar open)
-    applyAdvancedFilters(false);
-
-    // Clear search input
-    if (searchInput) {
-        searchInput.value = '';
-    }
-    if (searchClearBtn) {
-        searchClearBtn.style.display = 'none';
-    }
-    state.searchTerm = '';
-
-    // Return to trending view (all filters are cleared)
-    if (trendingContent) trendingContent.style.display = 'block';
-    if (searchResults) searchResults.style.display = 'none';
-
-    // Reload trending content
-    loadTrending();
-    
-     // Clear the flag
-    state.isClearing = false;
+    // Close the filter drawer first
+    if (typeof closeFilters === 'function') closeFilters();
+    // Delegate to the full clear implementation
+    clearFiltersAndReload();
 }
 
 /**
@@ -2298,6 +2203,15 @@ function applyAdvancedFilters(closeDrawer = true) {
     const state = window.discoverState;
     const listsState = window.sidebarListsState;
     const currentTab = state.currentTab;
+
+    // In adaptive list edit/create mode: only allow client-side list re-filtering, no server fetches.
+    if (window.adaptiveListEditMode) {
+        if (state.listModeActive && listsState.rawResults && listsState.rawResults.length > 0) {
+            filterAndRenderListResults();
+        }
+        if (closeDrawer) closeFilters();
+        return;
+    }
 
     // For tabs that show list content, re-fetch (respects mediaType) then client-side filter.
     // MDBList and FlixPatrol re-call their loaders so mediaType is sent to the API.
@@ -2312,7 +2226,7 @@ function applyAdvancedFilters(closeDrawer = true) {
         if (trendingContent) trendingContent.style.display = 'none';
         if (searchResults) searchResults.style.display = 'block';
         if (closeDrawer && typeof closeFilters === 'function') closeFilters();
-        loadFlixPatrolContent(window.flixpatrolState.currentPlatform.id);
+        loadFlixPatrolContent(window.flixpatrolState.currentPlatform.id, window.flixpatrolState.currentPeriod || 'today');
         return;
     }
     if (currentTab === 'personal' && window.personalState && window.personalState.currentSelection) {
@@ -2345,31 +2259,14 @@ function applyAdvancedFilters(closeDrawer = true) {
         closeFilters();
     }
 
-    // If sidebar lists are selected, re-filter the raw results client-side instead of doing API search
-    if (listsState.selectedLists && listsState.selectedLists.length > 0 && listsState.rawResults.length > 0) {
-        console.log('[Discover] Re-filtering list results with current filters');
-
-        const filteredResults = filterListResults(listsState.rawResults);
-
-        if (resultsGrid) {
-            resultsGrid.innerHTML = '';
+    // If sidebar lists are selected, never fall through to the TMDB discover API path.
+    // • rawResults populated → re-filter client-side now
+    // • rawResults empty (fetch in-flight) → bail; loadAllSelectedLists will apply current
+    //   filters via filterAndRenderListResults() once data arrives
+    if (listsState.selectedLists && listsState.selectedLists.length > 0) {
+        if (listsState.rawResults.length > 0) {
+            filterAndRenderListResults();
         }
-
-        if (filteredResults && filteredResults.length > 0) {
-            renderResults(filteredResults);
-            hideError();
-            hideEmpty();
-            updateResultsInfo({
-                total_results: filteredResults.length,
-                page: 1,
-                total_pages: 1
-            });
-        } else {
-            showEmpty();
-        }
-
-        updatePagination();
-        clearLoadingFlag();
         return;  // Don't proceed to TMDB API search
     }
 
@@ -2452,10 +2349,18 @@ function applyAdvancedFilters(closeDrawer = true) {
 async function fetchAdvancedFilterResults(params) {
     const isInitialLoad = window.discoverState.page === 1;
     window.discoverState.listModeActive = false;
+
+    // Cancel any in-flight filter request before starting a new one
+    if (_filterFetchController) {
+        _filterFetchController.abort();
+    }
+    _filterFetchController = new AbortController();
+    const signal = _filterFetchController.signal;
+
     try {
         setLoadingFlag();
 
-        const response = await fetch(`/discover/api/filter?${params}`);
+        const response = await fetch(`/discover/api/filter?${params}`, { signal });
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -2492,6 +2397,7 @@ async function fetchAdvancedFilterResults(params) {
         }, 100);
 
     } catch (error) {
+        if (error.name === 'AbortError') return; // superseded by a newer request
         console.error('[Discover] Advanced filter error:', error);
         showError();
     } finally {
@@ -2576,12 +2482,14 @@ async function searchContent(query) {
  * Load trending content into category rows (Movies, Shows, Anime)
  */
 async function loadTrending() {
+    // Don't override if list mode is active (sidebar lists take priority)
+    if (window.discoverState.listModeActive) return;
+
     // Show tab content regardless, even if already loaded
     if (trendingContent) trendingContent.style.display = 'block';
     if (searchResults) searchResults.style.display = 'none';
     if (recommendationsContent) recommendationsContent.style.display = 'none';
     window.discoverState.currentTab = 'trending';
-    window.discoverState.listModeActive = false;
     updateTabState();
 
     if (_trendingLoaded) return;
@@ -3375,6 +3283,9 @@ function triggerLiveFiltering() {
     // Skip if live filtering is disabled
     if (!state.liveFilterEnabled) return;
 
+    // In adaptive list edit/create mode, skip entirely — applyAdvancedFilters handles list re-filtering directly
+    if (window.adaptiveListEditMode) return;
+
     // Check if any non-default filters are active (excluding sort which always has a value)
     const f = state.filters;
     const hasActiveFilters =
@@ -3411,12 +3322,18 @@ function triggerLiveFiltering() {
         clearTimeout(window.liveFilterTimeout);
     }
 
-    // If lists are selected, re-filter the list results instead of doing TMDB search
-    if (listsState && listsState.selectedLists && listsState.selectedLists.length > 0 && listsState.rawResults.length > 0) {
-        // Debounce the list filtering (500ms delay)
-        window.liveFilterTimeout = setTimeout(() => {
-            filterAndRenderListResults();
-        }, 500);
+    // If lists are selected, never fall through to the TMDB discover API path.
+    // • rawResults already populated → re-filter client-side immediately
+    // • rawResults empty (list fetch in-flight) → bail out; loadAllSelectedLists will call
+    //   filterAndRenderListResults() once the data arrives, picking up current filter state.
+    if (listsState && listsState.selectedLists && listsState.selectedLists.length > 0) {
+        if (listsState.rawResults.length > 0) {
+            // Debounce the list filtering (500ms delay)
+            window.liveFilterTimeout = setTimeout(() => {
+                filterAndRenderListResults();
+            }, 500);
+        }
+        // Either way, do not proceed to TMDB API search
         return;
     }
 
@@ -3558,6 +3475,11 @@ function switchTab(tab) {
     // Clear list mode when switching to non-list tabs so TMDB pagination works
     if (tab === 'trending' || tab === 'recommendations') {
         window.discoverState.listModeActive = false;
+        // Clear personal/list selections so refresh stays on this tab
+        localStorage.removeItem('discoverPersonal');
+        localStorage.removeItem('discoverMDBList');
+        localStorage.removeItem('discoverFlixPatrol');
+        if (window.personalState) { window.personalState.currentSelection = null; }
     }
 
     // Update UI
@@ -3638,6 +3560,14 @@ function toggleFilterSection(section) {
  * Clear all filters and reload trending content
  */
 function clearFiltersAndReload() {
+    // If clearing while in adaptive list edit mode, exit edit mode and clean the URL
+    if (window.adaptiveListEditMode) {
+        window.adaptiveListEditMode = null;
+        if (window.history.replaceState) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+    }
+
     // Clear active preset tracking
     activePresetId = null;
     activePresetName = null;
@@ -3645,6 +3575,7 @@ function clearFiltersAndReload() {
     updatePresetButtonState();
     const presetSelectEl = document.getElementById('preset-select');
     if (presetSelectEl) presetSelectEl.value = '';
+    if (typeof saveActivePresetToStorage === 'function') saveActivePresetToStorage();
 
     // Clear saved filters from localStorage FIRST
     clearSavedFilters();
@@ -3702,8 +3633,26 @@ function clearFiltersAndReload() {
         runtimeMin: 0,
         runtimeMax: 300,
         seasonsMax: 0,
+        titleFilter: '',
         activeFilters: []
     };
+
+    // Clear sidebar lists selection and list mode flag
+    state.listModeActive = false;
+    if (window.sidebarListsState) {
+        window.sidebarListsState.selectedLists = [];
+        window.sidebarListsState.rawResults = [];
+        if (typeof clearSavedSidebarLists === 'function') clearSavedSidebarLists();
+        renderSidebarListChips();
+        const listsDropdown = document.getElementById('lists-dropdown');
+        if (listsDropdown) {
+            listsDropdown.querySelectorAll('.included').forEach(item => item.classList.remove('included'));
+        }
+        updateFilterAvailability();
+    }
+
+    // Clear keyword ID cache
+    Object.keys(_listKeywordCache).forEach(k => delete _listKeywordCache[k]);
 
     // Reset UI elements
     resetFilterUI();
@@ -3735,7 +3684,7 @@ function clearFiltersAndReload() {
 
     // Reload trending
     loadTrending();
-    
+
     // Clear the flag
     state.isClearing = false;
 }
@@ -3747,7 +3696,7 @@ function resetFilterUI() {
     const state = window.discoverState;
 
     // Reset sort dropdown
-    if (state.sortByDropdown) state.sortByDropdown.value = 'popularity';
+    if (state.sortByDropdown) state.sortByDropdown.value = 'none';
 
     // Reset sort order toggle
     const sortOrderToggle = document.getElementById('sort-order-toggle');
@@ -3771,12 +3720,32 @@ function resetFilterUI() {
     // Reset other inputs
     if (state.releasedWithinInput) state.releasedWithinInput.value = '';
     if (state.upcomingDaysInput) state.upcomingDaysInput.value = '';
-    if (state.tmdbRatingMinInput) state.tmdbRatingMinInput.value = '0';
-    if (state.tmdbRatingMaxInput) state.tmdbRatingMaxInput.value = '10';
-    if (state.tmdbVotesMinInput) state.tmdbVotesMinInput.value = '0';
+    if (state.tmdbRatingMinInput) { state.tmdbRatingMinInput.value = '0'; state.tmdbRatingMinInput.dispatchEvent(new Event('input')); }
+    if (state.tmdbRatingMaxInput) { state.tmdbRatingMaxInput.value = '10'; state.tmdbRatingMaxInput.dispatchEvent(new Event('input')); }
+    if (state.tmdbVotesMinInput) { state.tmdbVotesMinInput.value = '0'; state.tmdbVotesMinInput.dispatchEvent(new Event('input')); }
+    if (state.imdbRatingMinInput) { state.imdbRatingMinInput.value = '0'; state.imdbRatingMinInput.dispatchEvent(new Event('input')); }
+    if (state.imdbRatingMaxInput) { state.imdbRatingMaxInput.value = '10'; state.imdbRatingMaxInput.dispatchEvent(new Event('input')); }
+    if (state.imdbVotesMinInput) { state.imdbVotesMinInput.value = '0'; state.imdbVotesMinInput.dispatchEvent(new Event('input')); }
     if (state.runtimeMinInput) state.runtimeMinInput.value = '0';
     if (state.runtimeMaxInput) state.runtimeMaxInput.value = '300';
     if (state.seasonsMaxInput) state.seasonsMaxInput.value = '';
+
+    // Reset certification selects
+    const certMinSel = document.getElementById('certification-min-select');
+    if (certMinSel) certMinSel.value = '';
+    const certMaxSel = document.getElementById('certification-max-select');
+    if (certMaxSel) certMaxSel.value = '';
+
+    // Reset title filter
+    const titleFilterEl = document.getElementById('title-filter');
+    if (titleFilterEl) titleFilterEl.value = '';
+    state.filters.titleFilter = '';
+
+    // Reset company and network search inputs
+    const companySrch = document.getElementById('company-search');
+    if (companySrch) companySrch.value = '';
+    const networkSrch = document.getElementById('network-search');
+    if (networkSrch) networkSrch.value = '';
 
     // Clear all chips and dropdown states
     ['genres', 'keyword', 'language', 'country', 'provider', 'network', 'company'].forEach(type => {
@@ -4068,6 +4037,7 @@ function filterValidResults(results) {
  * Render results
  */
 function renderResults(results) {
+    if (!resultsGrid) resultsGrid = document.getElementById('results-grid');
     if (!resultsGrid) return;
 
     // Store raw results for re-rendering when display options change
@@ -4292,16 +4262,22 @@ function createResultItemHTML(item) {
                     </span>
                 </div>
                 <p class="result-overview">${overview}</p>
+                <!-- Action buttons row -->
+                <div class="hover-action-bar" style="display:flex!important;flex-direction:row!important;flex-wrap:nowrap!important;gap:6px;align-items:center;justify-content:center;width:100%;position:absolute;bottom:8px;left:0;padding:0 8px;box-sizing:border-box;z-index:10">
+                    <button class="hover-action-btn request-icon" title="Request this content" style="width:32px;height:32px;min-width:32px;min-height:32px;border-radius:8px;border:1px solid rgba(74,222,128,0.35);background:rgba(10,10,10,0.7);color:#4ade80;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;flex-shrink:0;box-sizing:border-box;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="display:block;flex-shrink:0;pointer-events:none"><path d="M10 1H6V6L1 6V10H6V15H10V10H15V6L10 6V1Z" fill="currentColor"></path></svg>
+                    </button>
+                    ${hasAdminPermissions ? `<button class="hover-action-btn tester-icon" title="Test this content" style="width:32px;height:32px;min-width:32px;min-height:32px;border-radius:8px;border:1px solid rgba(251,191,36,0.35);background:rgba(10,10,10,0.7);color:#fbbf24;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;flex-shrink:0;box-sizing:border-box;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="display:block;flex-shrink:0;pointer-events:none"><path d="M9.74872 2.49415L18.1594 7.31987M9.74872 2.49415L8.91283 2M9.74872 2.49415L6.19982 8.61981M18.1594 7.31987L15.902 11.2163M18.1594 7.31987L19 7.80374M15.902 11.2163L14.1886 14.1738M15.902 11.2163L13.344 9.74451M14.1886 14.1738L12.5511 17.0003M14.1886 14.1738L9.98568 11.7556M12.5511 17.0003L11.0558 19.5813C9.7158 21.8942 6.74803 22.6867 4.42709 21.3513C2.10615 20.0159 1.31093 17.0584 2.65093 14.7455L3.95184 12.5M12.5511 17.0003L9.93838 15.4971" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path><path d="M22 14.9166C22 16.0672 21.1046 16.9999 20 16.9999C18.8954 16.9999 18 16.0672 18 14.9166C18 14.1967 18.783 13.2358 19.3691 12.6174C19.7161 12.2512 20.2839 12.2512 20.6309 12.6174C21.217 13.2358 22 14.1967 22 14.9166Z" stroke="currentColor" stroke-width="1.5"></path></svg>
+                    </button>` : ''}
+                    <button class="hover-action-btn magnet-assign-icon" title="Assign magnet" style="width:32px;height:32px;min-width:32px;min-height:32px;border-radius:8px;border:1px solid rgba(192,132,252,0.35);background:rgba(10,10,10,0.7);color:#c084fc;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;flex-shrink:0;box-sizing:border-box;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="display:block;flex-shrink:0;pointer-events:none;transform:rotate(270deg)"><path d="M21 18.5V20.5C21 21.3284 20.3284 22 19.5 22H17H13C7.47715 22 3 17.5228 3 12C3 6.47715 7.47715 2 13 2H17H19.5C20.3284 2 21 2.67157 21 3.5V5.5C21 6.32843 20.3284 7 19.5 7H17H13C10.2386 7 8 9.23858 8 12C8 14.7614 10.2386 17 13 17H17H19.5C20.3284 17 21 17.6716 21 18.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path><path opacity="0.5" d="M17 2V7M17 17V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                    </button>
+                    <button class="hover-action-btn blacklist-icon" title="Add to manual blacklist" style="width:32px;height:32px;min-width:32px;min-height:32px;border-radius:8px;border:1px solid rgba(248,113,113,0.35);background:rgba(10,10,10,0.7);color:#f87171;display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;flex-shrink:0;box-sizing:border-box;transition:transform 0.15s ease,box-shadow 0.15s ease,background 0.15s ease">
+                        <svg width="14" height="14" viewBox="0 -0.5 17 17" style="display:block;flex-shrink:0;pointer-events:none"><path d="M9.016,0.06 C4.616,0.06 1.047,3.629 1.047,8.029 C1.047,12.429 4.615,15.998 9.016,15.998 C13.418,15.998 16.985,12.429 16.985,8.029 C16.985,3.629 13.418,0.06 9.016,0.06 L9.016,0.06 Z M3.049,8.028 C3.049,4.739 5.726,2.062 9.016,2.062 C10.37,2.062 11.616,2.52 12.618,3.283 L4.271,11.631 C3.508,10.629 3.049,9.381 3.049,8.028 L3.049,8.028 Z M9.016,13.994 C7.731,13.994 6.544,13.583 5.569,12.889 L13.878,4.58 C14.571,5.555 14.982,6.743 14.982,8.028 C14.981,11.317 12.306,13.994 9.016,13.994 L9.016,13.994 Z" fill="currentColor"></path></svg>
+                    </button>
+                </div>
             </div>
-            <!-- Request icon - bottom right corner -->
-            <div class="request-icon" title="Request this content">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <circle cx="12" cy="12" r="10"></circle>
-                    <line x1="12" y1="8" x2="12" y2="16"></line>
-                    <line x1="8" y1="12" x2="16" y2="12"></line>
-                </svg>
-            </div>
-            ${testerIconHtml}
         </div>
     `;
 }
@@ -4400,15 +4376,38 @@ function bindResultEvents() {
             window.location.href = targetPath;
         });
 
-        // Add click handlers for request and tester icons
+        // Hover scale + inset glow effect on action buttons
+        const btnGlowColors = {
+            'request-icon':      'rgba(74,222,128,0.45)',
+            'tester-icon':       'rgba(251,191,36,0.45)',
+            'magnet-assign-icon':'rgba(192,132,252,0.45)',
+            'blacklist-icon':    'rgba(248,113,113,0.45)',
+        };
+        item.querySelectorAll('.hover-action-btn').forEach(btn => {
+            const colorClass = Object.keys(btnGlowColors).find(c => btn.classList.contains(c));
+            const glow = btnGlowColors[colorClass] || 'rgba(255,255,255,0.2)';
+            btn.addEventListener('mouseenter', () => {
+                btn.style.transform = 'scale(1.13)';
+                btn.style.boxShadow = `inset 0 0 10px ${glow}, 0 0 8px ${glow}`;
+                btn.style.background = `rgba(10,10,10,0.85)`;
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.transform = '';
+                btn.style.boxShadow = '';
+                btn.style.background = 'rgba(10,10,10,0.7)';
+            });
+        });
+
+        // Add click handlers for action buttons
         const requestIcon = item.querySelector('.request-icon');
         const testerIcon = item.querySelector('.tester-icon');
+        const magnetIcon = item.querySelector('.magnet-assign-icon');
+        const blacklistIcon = item.querySelector('.blacklist-icon');
 
         if (requestIcon && resultItem) {
             requestIcon.addEventListener('click', function(e) {
-                e.stopPropagation(); // Prevent card click
+                e.stopPropagation();
                 e.preventDefault();
-
                 const content = {
                     id: resultItem.id,
                     title: resultItem.title || resultItem.name || 'Unknown',
@@ -4419,25 +4418,90 @@ function bindResultEvents() {
                     backdrop: resultItem.backdrop_path || '',
                     overview: resultItem.overview || ''
                 };
-
                 showVersionModal(content);
             });
         }
 
         if (testerIcon && resultItem) {
             testerIcon.addEventListener('click', function(e) {
-                e.stopPropagation(); // Prevent card click
+                e.stopPropagation();
                 e.preventDefault();
-
-                // Redirect directly to scraper_tester page with URL parameters
                 const params = new URLSearchParams({
                     title: resultItem.title || resultItem.name || 'Unknown',
                     id: resultItem.id,
                     year: (resultItem.release_date || resultItem.first_air_date || '').substring(0, 4) || '',
                     media_type: type
                 });
-
                 window.location.href = `/scraper/scraper_tester?${params.toString()}`;
+            });
+        }
+
+        if (magnetIcon && resultItem) {
+            magnetIcon.addEventListener('click', async function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                const title = resultItem.title || resultItem.name || 'Unknown';
+                const year = (resultItem.release_date || resultItem.first_air_date || '').substring(0, 4) || '';
+                let imdbId = resultItem.imdb_id || resultItem.external_ids?.imdb_id || null;
+                if (!imdbId) {
+                    try {
+                        const res = await fetch(`/discover/api/details/${resultItem.id}?type=${type}`);
+                        const data = await res.json();
+                        imdbId = data.imdb_id || null;
+                    } catch(err) {}
+                }
+                const params = new URLSearchParams({
+                    prefill_title: title,
+                    prefill_year: year,
+                    prefill_type: type === 'movie' ? 'movie' : 'show'
+                });
+                if (imdbId) params.set('prefill_id', imdbId);
+                window.location.href = `/magnet/assign_magnet?${params.toString()}`;
+            });
+        }
+
+        if (blacklistIcon && resultItem) {
+            blacklistIcon.addEventListener('click', async function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                const title = resultItem.title || resultItem.name || 'Unknown';
+                // Try imdb_id on item first, otherwise fetch from details API
+                let imdbId = resultItem.imdb_id || resultItem.external_ids?.imdb_id || null;
+                if (!imdbId) {
+                    try {
+                        const detailRes = await fetch(`/discover/api/details/${resultItem.id}?type=${type}`);
+                        const detailData = await detailRes.json();
+                        imdbId = detailData.imdb_id || null;
+                    } catch(err) {}
+                }
+                if (!imdbId) {
+                    showPopup({ type: 'warning', title: 'Required', message: `Cannot blacklist "${title}": no IMDb ID found for this item.` });
+                    return;
+                }
+                showPopup({
+                    type: 'confirm',
+                    title: 'Confirm Blacklist',
+                    message: `Add "${title}" (${imdbId}) to manual blacklist?`,
+                    onConfirm: async function() {
+                        try {
+                            const itemMediaType = resultItem.media_type || type;
+                            const fd = new FormData();
+                            fd.append('action', 'add');
+                            fd.append('imdb_id', imdbId);
+                            fd.append('media_type', itemMediaType === 'tv' ? 'episode' : 'movie');
+                            const res = await fetch('/debug/manual_blacklist', { method: 'POST', body: fd });
+                            if (res.ok) {
+                                blacklistIcon.style.color = '#22c55e';
+                                blacklistIcon.title = 'Added to blacklist';
+                            } else {
+                                showPopup({ type: 'error', title: 'Error', message: 'Failed to add to blacklist. Please try again.' });
+                            }
+                        } catch(err) {
+                            showPopup({ type: 'error', title: 'Error', message: 'Error adding to blacklist.' });
+                        }
+                    }
+                });
+                return;
             });
         }
     });
@@ -4627,11 +4691,13 @@ function updatePagination() {
     }
 
     // Only show "No more results" message when we've reached the end
-    if (!window.discoverState.hasMore && window.discoverState.page > 1) {
-        pagination.style.display = 'flex';
-        pagination.innerHTML = '<div class="end-of-results">No more results</div>';
-    } else {
-        pagination.style.display = 'none';
+    if (pagination) {
+        if (!window.discoverState.hasMore && window.discoverState.page > 1) {
+            pagination.style.display = 'flex';
+            pagination.innerHTML = '<div class="end-of-results">No more results</div>';
+        } else {
+            pagination.style.display = 'none';
+        }
     }
 }
 
@@ -4820,13 +4886,9 @@ async function filterContent() {
 // =============================================================================
 
 /**
- * Adaptive List state for edit mode
+ * Adaptive List state for edit mode — null when not editing, object when active
  */
-window.adaptiveListEditMode = {
-    isEditing: false,
-    editIndex: null,
-    sourceId: null
-};
+window.adaptiveListEditMode = null;
 
 /**
  * Initialize adaptive list functionality
@@ -4879,11 +4941,14 @@ function checkEditMode() {
         // Edit existing adaptive list - editSourceId is now the full source_id like "Adaptive List_1"
         loadAdaptiveListForEdit(editSourceId);
     } else if (mode === 'create_adaptive_list') {
-        // Create new adaptive list mode
+        // Create new adaptive list mode — set flag first so saves are blocked
         window.adaptiveListEditMode = {
             isEditing: false,
             sourceId: null  // Will be assigned when saved
         };
+
+        // Ensure localStorage is clean — nothing from this session should persist
+        clearSavedFilters();
 
         // Show notification
         showNotification('Configure your filters, then click "Save as Adaptive List" to save.', 'info');
@@ -4908,11 +4973,14 @@ async function loadAdaptiveListForEdit(sourceId) {
 
         const data = await response.json();
         if (data.success && data.list) {
-            // Set edit mode
+            // Set edit mode FIRST so all subsequent saves are blocked
             window.adaptiveListEditMode = {
                 isEditing: true,
                 sourceId: sourceId
             };
+
+            // Ensure localStorage is clean — nothing from this edit session should persist
+            clearSavedFilters();
 
             // Store the list name for later
             window.adaptiveListEditMode.originalName = data.list.name;
@@ -5325,7 +5393,7 @@ function openAdaptiveListModal() {
     }
 
     // Update modal for edit mode vs create mode
-    if (window.adaptiveListEditMode.isEditing) {
+    if (window.adaptiveListEditMode && window.adaptiveListEditMode.isEditing) {
         modalTitle.textContent = 'Update Adaptive List';
         saveText.textContent = 'Update Adaptive List';
         nameInput.value = window.adaptiveListEditMode.originalName || '';
@@ -6287,6 +6355,13 @@ async function loadFilterPreset(presetId) {
             // Update active filters display
             updateActiveFilters();
 
+            // Cancel any live filter timeout triggered by updateActiveFilters above,
+            // since we're about to call applyAdvancedFilters directly.
+            if (window.liveFilterTimeout) {
+                clearTimeout(window.liveFilterTimeout);
+                window.liveFilterTimeout = null;
+            }
+
             showNotification(`Preset "${data.preset.name}" loaded!`, 'success');
 
             // Auto-apply filters to refresh results (keep sidebar open)
@@ -7025,41 +7100,44 @@ async function deleteSelectedPreset() {
 
     const presetName = presetSelect.options[presetSelect.selectedIndex]?.textContent || 'this preset';
 
-    if (!confirm(`Are you sure you want to delete "${presetName}"?`)) {
-        return;
-    }
+    showPopup({
+        type: 'confirm',
+        title: 'Confirm Delete',
+        message: `Are you sure you want to delete "${presetName}"?`,
+        onConfirm: async function() {
+            try {
+                const response = await fetch(`/discover/api/presets/${presetId}`, {
+                    method: 'DELETE'
+                });
 
-    try {
-        const response = await fetch(`/discover/api/presets/${presetId}`, {
-            method: 'DELETE'
-        });
+                const data = await response.json();
 
-        const data = await response.json();
+                if (data.success) {
+                    showNotification(`Preset "${presetName}" deleted!`, 'success');
 
-        if (data.success) {
-            showNotification(`Preset "${presetName}" deleted!`, 'success');
+                    // If the deleted preset was the active one, clear active preset state
+                    if (presetId === activePresetId) {
+                        activePresetId = null;
+                        activePresetName = null;
+                        presetDirty = false;
+                        updatePresetButtonState();
+                    }
 
-            // If the deleted preset was the active one, clear active preset state
-            if (presetId === activePresetId) {
-                activePresetId = null;
-                activePresetName = null;
-                presetDirty = false;
-                updatePresetButtonState();
+                    // Refresh the dropdown
+                    await loadPresetsIntoDropdown();
+
+                    // Disable delete button
+                    const deleteBtn = document.getElementById('delete-preset-btn');
+                    if (deleteBtn) deleteBtn.disabled = true;
+                } else {
+                    throw new Error(data.error || 'Failed to delete preset');
+                }
+            } catch (error) {
+                console.error('[Presets] Delete error:', error);
+                showNotification(error.message || 'Failed to delete preset', 'error');
             }
-
-            // Refresh the dropdown
-            await loadPresetsIntoDropdown();
-
-            // Disable delete button
-            const deleteBtn = document.getElementById('delete-preset-btn');
-            if (deleteBtn) deleteBtn.disabled = true;
-        } else {
-            throw new Error(data.error || 'Failed to delete preset');
         }
-    } catch (error) {
-        console.error('[Presets] Delete error:', error);
-        showNotification(error.message || 'Failed to delete preset', 'error');
-    }
+    });
 }
 
 // Initialize filter presets when DOM is ready
@@ -7122,15 +7200,23 @@ async function loadMDBListOptions() {
         const data = await response.json();
 
         if (data.success && data.lists) {
-            window.mdblistState.availableLists = data.lists;
-            populateMDBListDropdown(data.lists);
-            
+            // Append static TMDB show lists
+            const tmdbShowLists = [
+                { key: 'tmdb_shows_popular',      name: 'TMDB Popular Shows',      icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'popular' },
+                { key: 'tmdb_shows_top_rated',    name: 'TMDB Top Rated Shows',    icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'top_rated' },
+                { key: 'tmdb_shows_airing_today', name: 'TMDB Airing Today',       icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'airing_today' },
+                { key: 'tmdb_shows_trending',     name: 'TMDB Trending Shows',     icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'trending' },
+            ];
+            const allLists = [...data.lists, ...tmdbShowLists];
+            window.mdblistState.availableLists = allLists;
+            populateMDBListDropdown(allLists);
+
             // Restore saved selection
             const saved = localStorage.getItem('discoverMDBList');
             if (saved) {
                 try {
                     const savedList = JSON.parse(saved);
-                    const list = data.lists.find(l => l.key === savedList.key);
+                    const list = allLists.find(l => l.key === savedList.key);
                     if (list) {
                         await selectMDBList(list);
                     }
@@ -7159,11 +7245,12 @@ function populateMDBListDropdown(lists) {
         'streaming': 'Streaming Top Lists',
         'originals': 'Streaming Originals',
         'curated': 'Curated Collections',
+        'tmdb_shows': 'TMDB Shows',
         'other': 'Other'
     };
 
     // Define category order
-    const categoryOrder = ['mdblist', 'streaming', 'originals', 'curated', 'other'];
+    const categoryOrder = ['mdblist', 'streaming', 'originals', 'curated', 'tmdb_shows', 'other'];
 
     // Group lists by category
     const grouped = {};
@@ -7206,6 +7293,21 @@ function showMDBListDropdown() {
     }
 }
 
+function closeAllDropdowns(except) {
+    [
+        { btn: 'mdblist-dropdown-btn', menu: 'mdblist-dropdown-menu' },
+        { btn: 'personal-dropdown-btn', menu: 'personal-dropdown-menu' },
+        { btn: 'flixpatrol-dropdown-btn', menu: 'flixpatrol-dropdown-menu' }
+    ].forEach(({ btn, menu }) => {
+        const b = document.getElementById(btn);
+        const m = document.getElementById(menu);
+        if (b && m && b !== except) {
+            m.classList.remove('open');
+            b.classList.remove('open');
+        }
+    });
+}
+
 /**
  * Bind MDBList dropdown events
  */
@@ -7214,20 +7316,26 @@ function bindMDBListEvents() {
     const dropdownMenu = document.getElementById('mdblist-dropdown-menu');
 
     if (dropdownBtn && dropdownMenu) {
-        // Toggle dropdown on button click
         dropdownBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             const isOpen = dropdownMenu.classList.toggle('open');
             dropdownBtn.classList.toggle('open', isOpen);
-            dropdownBtn.classList.toggle('active', isOpen);
+            if (isOpen) {
+                closeAllDropdowns(dropdownBtn);
+                if (window.innerWidth <= 768) {
+                    const rect = dropdownBtn.getBoundingClientRect();
+                    dropdownMenu.style.top = (rect.bottom + 8) + 'px';
+                    const menuWidth = dropdownMenu.offsetWidth || 200;
+                    const left = Math.min(rect.left, window.innerWidth - menuWidth - 8);
+                    dropdownMenu.style.left = Math.max(8, left) + 'px';
+                }
+            }
         });
 
-        // Close dropdown when clicking outside
         document.addEventListener('click', (e) => {
             if (!dropdownBtn.contains(e.target) && !dropdownMenu.contains(e.target)) {
                 dropdownMenu.classList.remove('open');
                 dropdownBtn.classList.remove('open');
-                dropdownBtn.classList.remove('active');
             }
         });
     }
@@ -7238,10 +7346,12 @@ function bindMDBListEvents() {
  */
 async function selectMDBList(list) {
     window.mdblistState.currentList = list;
-    
-    // Save selection to localStorage and clear FlixPatrol
-    localStorage.setItem('discoverMDBList', JSON.stringify({key: list.key, name: list.name}));
-    localStorage.removeItem('discoverFlixPatrol');
+
+    // Save selection to localStorage and clear FlixPatrol (skip in adaptive list edit mode)
+    if (!window.adaptiveListEditMode) {
+        localStorage.setItem('discoverMDBList', JSON.stringify({key: list.key, name: list.name}));
+        localStorage.removeItem('discoverFlixPatrol');
+    }
 
     // Update dropdown label
     const label = document.getElementById('mdblist-dropdown-label');
@@ -7299,7 +7409,15 @@ async function loadMDBListContent(listKey) {
 
     try {
         const mediaType = window.discoverState.filters.mediaType || 'all';
-        const response = await fetch(`/discover/api/mdblist/list/${listKey}?type=${mediaType}&limit=40`);
+
+        // TMDB show lists use a different endpoint
+        const currentList = window.mdblistState.currentList;
+        let response;
+        if (currentList && currentList.source === 'tmdb_shows') {
+            response = await fetch(`/discover/api/tmdb/shows/${currentList.listType}`);
+        } else {
+            response = await fetch(`/discover/api/mdblist/list/${listKey}?type=${mediaType}&limit=40`);
+        }
         const data = await response.json();
 
         if (data.success && data.results) {
@@ -7308,18 +7426,7 @@ async function loadMDBListContent(listKey) {
             window.sidebarListsState.listSource = 'mdblist';
             window.sidebarListsState.listId = listKey;
 
-            const filtered = filterListResults(data.results);
-            renderResults(filtered);
-
-            // Update pagination info
-            window.discoverState.hasMore = false; // MDBList doesn't paginate the same way
-
-            // Update results info display
-            updateResultsInfo({
-                total_results: filtered.length,
-                page: 1,
-                total_pages: 1
-            });
+            await applyListFiltersAndRender(data.results);
         } else{
             console.error('[MDBList] API Error:', data.error);
             if (data.error && data.error.includes('API key not configured')) {
@@ -7371,6 +7478,7 @@ document.addEventListener('DOMContentLoaded', function() {
 window.flixpatrolState = {
     platforms: [],
     currentPlatform: null,
+    currentPeriod: 'today',
     isLoading: false
 };
 
@@ -7395,7 +7503,7 @@ async function initFlixPatrol() {
                     const savedPlatform = JSON.parse(saved);
                     const platform = data.platforms.find(p => p.id === savedPlatform.id);
                     if (platform) {
-                        await selectFlixPatrolPlatform(platform);
+                        await selectFlixPatrolPlatform(platform, savedPlatform.period || 'today');
                     }
                 } catch (e) {
                     console.error('[FlixPatrol] Failed to restore selection:', e);
@@ -7408,7 +7516,7 @@ async function initFlixPatrol() {
 }
 
 /**
- * Populate the FlixPatrol dropdown menu with available platforms
+ * Populate the FlixPatrol dropdown menu with available platforms (Today + Weekly)
  */
 function populateFlixPatrolDropdown(platforms) {
     const dropdown = document.getElementById('flixpatrol-dropdown-menu');
@@ -7416,22 +7524,41 @@ function populateFlixPatrolDropdown(platforms) {
 
     dropdown.innerHTML = '';
 
-    // Add header
-    const header = document.createElement('div');
-    header.className = 'flixpatrol-dropdown-header';
-    header.textContent = 'Streaming Top 10';
-    dropdown.appendChild(header);
+    // Today section
+    const todayHeader = document.createElement('div');
+    todayHeader.className = 'flixpatrol-dropdown-header';
+    todayHeader.textContent = 'Today Top 10';
+    dropdown.appendChild(todayHeader);
 
-    // Add platform items
     platforms.forEach(platform => {
         const item = document.createElement('div');
         item.className = 'flixpatrol-dropdown-item';
         item.dataset.platformId = platform.id;
+        item.dataset.period = 'today';
         item.innerHTML = `
             <span class="platform-icon platform-${platform.icon}"></span>
             <span class="platform-name">${platform.name}</span>
         `;
-        item.addEventListener('click', () => selectFlixPatrolPlatform(platform));
+        item.addEventListener('click', () => selectFlixPatrolPlatform(platform, 'today'));
+        dropdown.appendChild(item);
+    });
+
+    // Weekly section
+    const weeklyHeader = document.createElement('div');
+    weeklyHeader.className = 'flixpatrol-dropdown-header';
+    weeklyHeader.textContent = 'Weekly Top 10';
+    dropdown.appendChild(weeklyHeader);
+
+    platforms.forEach(platform => {
+        const item = document.createElement('div');
+        item.className = 'flixpatrol-dropdown-item';
+        item.dataset.platformId = platform.id;
+        item.dataset.period = 'weekly';
+        item.innerHTML = `
+            <span class="platform-icon platform-${platform.icon}"></span>
+            <span class="platform-name">${platform.name}</span>
+        `;
+        item.addEventListener('click', () => selectFlixPatrolPlatform(platform, 'weekly'));
         dropdown.appendChild(item);
     });
 }
@@ -7444,20 +7571,26 @@ function bindFlixPatrolEvents() {
     const dropdownMenu = document.getElementById('flixpatrol-dropdown-menu');
 
     if (dropdownBtn && dropdownMenu) {
-        // Toggle dropdown on button click
         dropdownBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             const isOpen = dropdownMenu.classList.toggle('open');
             dropdownBtn.classList.toggle('open', isOpen);
-            dropdownBtn.classList.toggle('active', isOpen);
+            if (isOpen) {
+                closeAllDropdowns(dropdownBtn);
+                if (window.innerWidth <= 768) {
+                    const rect = dropdownBtn.getBoundingClientRect();
+                    dropdownMenu.style.top = (rect.bottom + 8) + 'px';
+                    const menuWidth = dropdownMenu.offsetWidth || 200;
+                    const left = Math.min(rect.left, window.innerWidth - menuWidth - 8);
+                    dropdownMenu.style.left = Math.max(8, left) + 'px';
+                }
+            }
         });
 
-        // Close dropdown when clicking outside
         document.addEventListener('click', (e) => {
             if (!dropdownBtn.contains(e.target) && !dropdownMenu.contains(e.target)) {
                 dropdownMenu.classList.remove('open');
                 dropdownBtn.classList.remove('open');
-                dropdownBtn.classList.remove('active');
             }
         });
     }
@@ -7466,17 +7599,18 @@ function bindFlixPatrolEvents() {
 /**
  * Select a FlixPatrol platform and load its Top 10 content
  */
-async function selectFlixPatrolPlatform(platform) {
+async function selectFlixPatrolPlatform(platform, period = 'today') {
     window.flixpatrolState.currentPlatform = platform;
-    
+    window.flixpatrolState.currentPeriod = period;
+
     // Save selection to localStorage and clear MDBList
-    localStorage.setItem('discoverFlixPatrol', JSON.stringify({id: platform.id, name: platform.name}));
+    localStorage.setItem('discoverFlixPatrol', JSON.stringify({id: platform.id, name: platform.name, period}));
     localStorage.removeItem('discoverMDBList');
 
     // Update dropdown label
     const label = document.getElementById('flixpatrol-dropdown-label');
     if (label) {
-        label.textContent = platform.name + ' Top 10';
+        label.textContent = platform.name + (period === 'weekly' ? ' Weekly Top 10' : ' Top 10');
     }
 
     // Close dropdown
@@ -7509,13 +7643,13 @@ async function selectFlixPatrolPlatform(platform) {
     if (searchResults) searchResults.style.display = 'block';
 
     // Load the platform's Top 10 content
-    await loadFlixPatrolContent(platform.id);
+    await loadFlixPatrolContent(platform.id, period);
 }
 
 /**
  * Load Top 10 content from selected FlixPatrol platform
  */
-async function loadFlixPatrolContent(platformId) {
+async function loadFlixPatrolContent(platformId, period = 'today') {
     if (window.flixpatrolState.isLoading) return;
 
     window.discoverState.listModeActive = true;
@@ -7529,7 +7663,10 @@ async function loadFlixPatrolContent(platformId) {
 
     try {
         const mediaType = window.discoverState.filters.mediaType || 'all';
-        const response = await fetch(`/discover/api/flixpatrol/top10/${platformId}?type=${mediaType}`);
+        const baseUrl = period === 'weekly'
+            ? `/discover/api/flixpatrol/top10/${platformId}/weekly`
+            : `/discover/api/flixpatrol/top10/${platformId}`;
+        const response = await fetch(`${baseUrl}?type=${mediaType}`);
         const data = await response.json();
 
         if (data.success && data.results) {
@@ -7538,18 +7675,7 @@ async function loadFlixPatrolContent(platformId) {
             window.sidebarListsState.listSource = 'flixpatrol';
             window.sidebarListsState.listId = platformId;
 
-            const filtered = filterListResults(data.results);
-            renderResults(filtered);
-
-            // Update pagination info
-            window.discoverState.hasMore = false; // Top 10 doesn't paginate
-
-            // Update results info display
-            updateResultsInfo({
-                total_results: filtered.length,
-                page: 1,
-                total_pages: 1
-            });
+            await applyListFiltersAndRender(data.results);
         } else {
             console.error('[FlixPatrol] API Error:', data.error);
             showError(data.error || 'Failed to load Top 10');
@@ -7568,6 +7694,7 @@ async function loadFlixPatrolContent(platformId) {
  */
 function resetFlixPatrolSelection() {
     window.flixpatrolState.currentPlatform = null;
+    window.flixpatrolState.currentPeriod = 'today';
 
     const label = document.getElementById('flixpatrol-dropdown-label');
     if (label) {
@@ -7599,6 +7726,7 @@ window.sidebarListsState = {
     selectedLists: [],  // Array of {source, listId, listName}
     flixpatrolPlatforms: [],
     mdblistLists: [],
+    mdblistPersonalLists: [],
     traktSpecialLists: [],
     traktMyLists: [],
     rawResults: [],  // Store merged raw list results for client-side filtering
@@ -7701,7 +7829,13 @@ async function loadSidebarListsData() {
         const mdbResponse = await fetch('/discover/api/mdblist/lists');
         if (mdbResponse.ok) {
             const mdbData = await mdbResponse.json();
-            window.sidebarListsState.mdblistLists = mdbData.lists || [];
+            const tmdbShowLists = [
+                { key: 'tmdb_shows_popular',      name: 'TMDB Popular Shows',   icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'popular' },
+                { key: 'tmdb_shows_top_rated',    name: 'TMDB Top Rated Shows', icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'top_rated' },
+                { key: 'tmdb_shows_airing_today', name: 'TMDB Airing Today',    icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'airing_today' },
+                { key: 'tmdb_shows_trending',     name: 'TMDB Trending Shows',  icon: 'tmdb', category: 'tmdb_shows', source: 'tmdb_shows', listType: 'trending' },
+            ];
+            window.sidebarListsState.mdblistLists = [...(mdbData.lists || []), ...tmdbShowLists];
         }
 
         // Load Trakt special lists (static, always available)
@@ -7725,6 +7859,17 @@ async function loadSidebarListsData() {
                 const traktData = await traktResp.json();
                 if (traktData.success) {
                     window.sidebarListsState.traktMyLists = traktData.lists || [];
+                }
+            }
+        } catch (_e) {}
+
+        // Load MDBList Personal Lists (user-specific, requires API key)
+        try {
+            const mdbPersonalResp = await fetch('/discover/api/mdblist/personal-lists');
+            if (mdbPersonalResp.ok) {
+                const mdbPersonalData = await mdbPersonalResp.json();
+                if (mdbPersonalData.success) {
+                    window.sidebarListsState.mdblistPersonalLists = mdbPersonalData.lists || [];
                 }
             }
         } catch (_e) {}
@@ -7795,11 +7940,12 @@ function populateSidebarListsDropdown() {
             'mdblist': 'MDBList Popular',
             'streaming': 'Streaming Top Lists',
             'originals': 'Streaming Originals',
-            'curated': 'Curated Collections'
+            'curated': 'Curated Collections',
+            'tmdb_shows': 'TMDB Shows',
         };
 
         // Order categories
-        const categoryOrder = ['mdblist', 'streaming', 'originals', 'curated'];
+        const categoryOrder = ['mdblist', 'streaming', 'originals', 'curated', 'tmdb_shows'];
 
         categoryOrder.forEach(catKey => {
             if (categories[catKey] && categories[catKey].length > 0) {
@@ -7809,19 +7955,20 @@ function populateSidebarListsDropdown() {
                 dropdown.appendChild(catHeader);
 
                 categories[catKey].forEach(list => {
+                    const itemSource = list.source || 'mdblist';
                     const item = document.createElement('div');
                     item.className = 'chips-dropdown-item';
-                    item.dataset.value = `mdblist:${list.key}`;
-                    item.dataset.source = 'mdblist';
+                    item.dataset.value = `${itemSource}:${list.key}`;
+                    item.dataset.source = itemSource;
                     item.dataset.listId = list.key;
                     item.dataset.name = list.name;
-                    
+
                     // Check if already selected
-                    const isSelected = state.selectedLists.some(l => l.source === 'mdblist' && l.listId === list.key);
+                    const isSelected = state.selectedLists.some(l => l.source === itemSource && l.listId === list.key);
                     if (isSelected) item.classList.add('included');
-                    
+
                     item.innerHTML = `<span class="list-icon">${getPlatformIcon(list.icon)}</span> ${list.name}`;
-                    item.addEventListener('click', () => toggleSidebarList(item, 'mdblist', list.key, list.name));
+                    item.addEventListener('click', () => toggleSidebarList(item, itemSource, list.key, list.name));
                     dropdown.appendChild(item);
                 });
             }
@@ -7876,8 +8023,33 @@ function populateSidebarListsDropdown() {
         });
     }
 
+    // Add Personal — MDBList Lists
+    if (state.mdblistPersonalLists.length > 0) {
+        const mdbPersonalHeader = document.createElement('div');
+        mdbPersonalHeader.className = 'chips-dropdown-header';
+        mdbPersonalHeader.textContent = 'Personal — MDBList';
+        dropdown.appendChild(mdbPersonalHeader);
+
+        state.mdblistPersonalLists.forEach(list => {
+            const item = document.createElement('div');
+            item.className = 'chips-dropdown-item';
+            item.dataset.value = `mdblist-personal:${list.id}`;
+            item.dataset.source = 'mdblist-personal';
+            item.dataset.listId = String(list.id);
+            item.dataset.name = list.name;
+
+            const isSelected = state.selectedLists.some(l => l.source === 'mdblist-personal' && l.listId === String(list.id));
+            if (isSelected) item.classList.add('included');
+
+            item.innerHTML = `<span class="list-icon">${getPlatformIcon('mdblist')}</span> ${list.name}`;
+            item.addEventListener('click', () => toggleSidebarList(item, 'mdblist-personal', String(list.id), list.name));
+            dropdown.appendChild(item);
+        });
+    }
+
     // If no lists loaded at all
     if (state.flixpatrolPlatforms.length === 0 && state.mdblistLists.length === 0 &&
+        state.mdblistPersonalLists.length === 0 &&
         state.traktSpecialLists.length === 0 && state.traktMyLists.length === 0) {
         const empty = document.createElement('div');
         empty.className = 'chips-dropdown-empty';
@@ -7903,6 +8075,7 @@ function getPlatformIcon(iconName) {
         'bbc':           `${base}/network/color/BBC.png`,
         'discovery':     `${base}/network/color/discovery+.png`,
         'mdblist':       `${base}/rating/MDBList.png`,
+        'tmdb':          `${base}/rating/TMDb.png`,
         'rottentomatoes':`${base}/rating/RT-Crit-Fresh.png`,
         'metacritic':    `${base}/rating/Metacritic.png`,
         'commonsense':   `${base}/rating/common_sense.png`,
@@ -7935,8 +8108,11 @@ function selectSidebarList(source, listId, listName) {
     // Update filter availability based on list selection
     updateFilterAvailability();
 
-    // Update active filters display
+    // Update active filters display — suppress live filtering here: rawResults is still empty
+    // and the list load below will populate it and render correctly on its own.
+    window.discoverState.isClearing = true;
     updateActiveFilters();
+    window.discoverState.isClearing = false;
 
     // Save lists selection to localStorage
     saveSidebarListsToStorage();
@@ -7970,8 +8146,11 @@ function toggleSidebarList(itemElement, source, listId, listName) {
     // Update filter availability based on list selection
     updateFilterAvailability();
 
-    // Update active filters display
+    // Update active filters display — suppress live filtering here: rawResults is still empty
+    // and the list load below will populate it and render correctly on its own.
+    window.discoverState.isClearing = true;
     updateActiveFilters();
+    window.discoverState.isClearing = false;
 
     // Save lists selection to localStorage
     saveSidebarListsToStorage();
@@ -8127,12 +8306,16 @@ async function loadAllSelectedLists() {
         return;
     }
     
-    // Show search results area, hide trending
+    // Show search results area, hide trending — clear grid immediately so old results
+    // don't flash while the new list fetch is in-flight
     const trendingContent = document.getElementById('trending-content');
     const searchResults = document.getElementById('search-results');
     if (trendingContent) trendingContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
-    
+    window.discoverState.listModeActive = true;
+    const _earlyGrid = document.getElementById('results-grid');
+    if (_earlyGrid) _earlyGrid.innerHTML = '';
+
     // Reset page
     state.page = 1;
     state.autoLoadCount = 0;
@@ -8166,6 +8349,16 @@ async function loadAllSelectedLists() {
                     const response = await fetch(`/discover/api/trakt/mylist/${list.listId}?type=${mediaType}`);
                     if (!response.ok) throw new Error(`Failed to load ${list.listName}`);
                     data = await response.json();
+                } else if (list.source === 'mdblist-personal') {
+                    const response = await fetch(`/discover/api/mdblist/personal-list/${list.listId}`);
+                    if (!response.ok) throw new Error(`Failed to load ${list.listName}`);
+                    data = await response.json();
+                } else if (list.source === 'tmdb_shows') {
+                    const listMeta = window.sidebarListsState.mdblistLists.find(l => l.key === list.listId);
+                    const listType = listMeta ? listMeta.listType : list.listId.replace('tmdb_shows_', '');
+                    const response = await fetch(`/discover/api/tmdb/shows/${listType}`);
+                    if (!response.ok) throw new Error(`Failed to load ${list.listName}`);
+                    data = await response.json();
                 }
 
                 // Add results, avoiding duplicates
@@ -8188,8 +8381,8 @@ async function loadAllSelectedLists() {
         listsState.rawResults = allResults;
 
         // Apply filters and render
-        filterAndRenderListResults();
-        
+        await filterAndRenderListResults();
+
     } catch (error) {
         console.error('[Lists] Load error:', error);
         showNotification('Failed to load lists', 'error');
@@ -8264,8 +8457,14 @@ async function loadSavedLists(listPairs) {
         } else if (source === 'trakt-mylist') {
             const mylist = state.traktMyLists.find(l => l.slug === listId);
             listName = mylist ? mylist.name : listId;
+        } else if (source === 'mdblist-personal') {
+            const personal = state.mdblistPersonalLists.find(l => String(l.id) === listId);
+            listName = personal ? personal.name : `MDBList ${listId}`;
+        } else if (source === 'tmdb_shows') {
+            const tmdbList = state.mdblistLists.find(l => l.key === listId && l.source === 'tmdb_shows');
+            listName = tmdbList ? tmdbList.name : listId;
         }
-        
+
         if (listName) {
             state.selectedLists.push({ source, listId, listName });
         }
@@ -8303,10 +8502,12 @@ async function loadSidebarListContent(source, listId) {
     listsState.listSource = source;
     listsState.listId = listId;
     
-    // Show search results area, hide trending
+    // Show search results area, hide trending — clear grid immediately so old results
+    // don't flash while the new list fetch is in-flight
     if (trendingContent) trendingContent.style.display = 'none';
     if (searchResults) searchResults.style.display = 'block';
-    
+    if (resultsGrid) resultsGrid.innerHTML = '';
+
     // Reset page
     state.page = 1;
     state.autoLoadCount = 0;
@@ -8403,10 +8604,17 @@ function applySidebarListFilter(listValue) {
 /**
  * Filter and render list results (helper function)
  */
-function filterAndRenderListResults() {
+async function filterAndRenderListResults() {
     const state = window.discoverState;
     const listsState = window.sidebarListsState;
     const resultsGrid = document.getElementById('results-grid');
+    const filters = state.filters;
+    const hasKeywordFilter = (filters.selectedKeywords && filters.selectedKeywords.length > 0) ||
+                              (filters.excludedKeywords && filters.excludedKeywords.length > 0);
+
+    if (hasKeywordFilter) {
+        await prefetchKeywordsForItems(listsState.rawResults);
+    }
 
     // Apply current filters to list results
     const filteredResults = filterListResults(listsState.rawResults);
@@ -8415,26 +8623,64 @@ function filterAndRenderListResults() {
     if (resultsGrid) {
         resultsGrid.innerHTML = '';
     }
-    
+
     if (filteredResults && filteredResults.length > 0) {
         renderResults(filteredResults);
         hideError();
         hideEmpty();
-        
-        // Update results info display
-        updateResultsInfo({
-            total_results: filteredResults.length,
-            page: 1,
-            total_pages: 1
-        });
+        updateResultsInfo({ total_results: filteredResults.length, page: 1, total_pages: 1 });
     } else {
-        // No results after filtering
         showEmpty();
     }
-    
-    // Disable pagination/auto-load for list results (they're all loaded at once)
+
     state.hasMore = false;
     updatePagination();
+}
+
+/**
+ * Filter, (optionally prefetch keywords), render and update info for a list result set.
+ * Use this everywhere a list fetch ends and needs to be rendered.
+ */
+async function applyListFiltersAndRender(results) {
+    const filters = window.discoverState.filters;
+    const hasKeywordFilter = (filters.selectedKeywords && filters.selectedKeywords.length > 0) ||
+                              (filters.excludedKeywords && filters.excludedKeywords.length > 0);
+    if (hasKeywordFilter) {
+        await prefetchKeywordsForItems(results);
+    }
+    const filtered = filterListResults(results);
+    renderResults(filtered);
+    window.discoverState.hasMore = false;
+    updateResultsInfo({ total_results: filtered.length, page: 1, total_pages: 1 });
+    updatePagination();
+}
+
+/**
+ * Prefetch TMDB keyword IDs for a list of items (for keyword filtering in list mode).
+ * Populates _listKeywordCache. Returns a promise that resolves when done.
+ */
+async function prefetchKeywordsForItems(items) {
+    const uncached = items.filter(item => {
+        const key = `${item.id}_${item.media_type || 'movie'}`;
+        return item.id && !(key in _listKeywordCache);
+    });
+    if (!uncached.length) return;
+
+    await Promise.all(uncached.map(async item => {
+        const key = `${item.id}_${item.media_type || 'movie'}`;
+        const endpoint = item.media_type === 'tv' ? 'tv' : 'movie';
+        try {
+            const r = await fetch(`/discover/api/keywords/${endpoint}/${item.id}`);
+            if (r.ok) {
+                const data = await r.json();
+                _listKeywordCache[key] = (data.keywords || data.results || []).map(k => k.id);
+            } else {
+                _listKeywordCache[key] = [];
+            }
+        } catch (e) {
+            _listKeywordCache[key] = [];
+        }
+    }));
 }
 
 /**
@@ -8444,7 +8690,7 @@ function filterAndRenderListResults() {
  */
 function filterListResults(results) {
     if (!results || results.length === 0) return [];
-    
+
     const state = window.discoverState;
     const filters = state.filters;
 
@@ -8607,13 +8853,32 @@ function filterListResults(results) {
             const itemCompanies = item.company_ids || [];
             // Only filter if item has company data
             if (itemCompanies.length > 0) {
-                const hasExcludedCompany = filters.excludedCompanies.some(companyId => 
+                const hasExcludedCompany = filters.excludedCompanies.some(companyId =>
                     itemCompanies.includes(parseInt(companyId))
                 );
                 if (hasExcludedCompany) return false;
             }
         }
-        
+
+        // Keyword filters — use pre-fetched cache populated by prefetchKeywordsForItems
+        const hasKeywordFilter = (filters.selectedKeywords && filters.selectedKeywords.length > 0) ||
+                                 (filters.excludedKeywords && filters.excludedKeywords.length > 0);
+        if (hasKeywordFilter) {
+            const cacheKey = `${item.id}_${item.media_type || 'movie'}`;
+            const itemKeywords = _listKeywordCache[cacheKey];
+            if (itemKeywords !== undefined) {
+                if (filters.excludedKeywords && filters.excludedKeywords.length > 0) {
+                    const excIds = filters.excludedKeywords.map(k => parseInt(k));
+                    if (excIds.some(k => itemKeywords.includes(k))) return false;
+                }
+                if (filters.selectedKeywords && filters.selectedKeywords.length > 0) {
+                    const incIds = filters.selectedKeywords.map(k => parseInt(k));
+                    if (!incIds.some(k => itemKeywords.includes(k))) return false;
+                }
+            }
+            // If not yet cached, allow item through (will be correct after prefetch re-renders)
+        }
+
         return true;
     });
 
@@ -8722,24 +8987,34 @@ function showScrapeVersionModal(content) {
 
     versionRadios.innerHTML = '';
 
-    availableVersions.forEach((version, index) => {
-        const div = document.createElement('div');
-        div.className = 'version-checkbox';
-        div.innerHTML = `
-            <input type="radio" id="scrape-version-${version}" name="scrape-versions" value="${version}" ${index === 0 ? 'checked' : ''}>
-            <label for="scrape-version-${version}">${version}</label>
-        `;
-        versionRadios.appendChild(div);
-    });
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dialog-title';
+    titleEl.textContent = 'Select Version to Scrape';
+    versionRadios.appendChild(titleEl);
 
-    // Add 'No Version' option
-    const noVersionDiv = document.createElement('div');
-    noVersionDiv.className = 'version-checkbox';
-    noVersionDiv.innerHTML = `
-        <input type="radio" id="scrape-version-No Version" name="scrape-versions" value="No Version">
-        <label for="scrape-version-No Version">No Version</label>
-    `;
-    versionRadios.appendChild(noVersionDiv);
+    const subEl = document.createElement('div');
+    subEl.className = 'dialog-sub';
+    const icon = content.mediaType === 'tv' ? 'fa-tv' : 'fa-film';
+    subEl.innerHTML = `<i class="fa-solid ${icon}"></i> ${content.title}${content.year ? ' (' + content.year + ')' : ''}`;
+    versionRadios.appendChild(subEl);
+
+    const verLabel = document.createElement('div');
+    verLabel.className = 'section-label';
+    verLabel.textContent = 'Version';
+    versionRadios.appendChild(verLabel);
+
+    const allVersions = [...availableVersions, 'No Version'];
+    allVersions.forEach((version, index) => {
+        const row = document.createElement('div');
+        row.className = 'option-row' + (index === 0 ? ' selected' : '');
+        row.dataset.value = version;
+        row.innerHTML = `<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">${version}</span>`;
+        row.addEventListener('click', () => {
+            versionRadios.querySelectorAll('.option-row').forEach(r => r.classList.remove('selected'));
+            row.classList.add('selected');
+        });
+        versionRadios.appendChild(row);
+    });
 
     document.body.classList.add('modal-open');
     modal.style.display = 'flex';
@@ -8751,85 +9026,76 @@ function showVersionModal(content) {
     const modal = document.getElementById('versionModal');
     const versionCheckboxes = document.getElementById('versionCheckboxes');
 
-    // Clear existing checkboxes
     versionCheckboxes.innerHTML = '';
 
-    // If this is a TV show, add options for whole show or seasons
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dialog-title';
+    titleEl.textContent = 'Select Versions to Request';
+    versionCheckboxes.appendChild(titleEl);
+
+    const subEl = document.createElement('div');
+    subEl.className = 'dialog-sub';
+    const icon = content.mediaType === 'tv' ? 'fa-tv' : 'fa-film';
+    subEl.innerHTML = `<i class="fa-solid ${icon}"></i> ${content.title}${content.year ? ' (' + content.year + ')' : ''}`;
+    versionCheckboxes.appendChild(subEl);
+
     if (content.mediaType === 'tv') {
-        // Add a heading for show selection
-        const showSelectionHeader = document.createElement('div');
-        showSelectionHeader.className = 'version-section-header';
-        showSelectionHeader.innerHTML = '<h4>Select Request Type:</h4>';
-        versionCheckboxes.appendChild(showSelectionHeader);
+        const typeLabel = document.createElement('div');
+        typeLabel.className = 'section-label';
+        typeLabel.textContent = 'Request Type';
+        versionCheckboxes.appendChild(typeLabel);
 
-        // Add radio buttons for selection type
-        const selectionTypeContainer = document.createElement('div');
-        selectionTypeContainer.className = 'selection-type-container';
-        selectionTypeContainer.innerHTML = `
-            <div class="selection-type-option">
-                <input type="radio" id="whole-show" name="selection-type" value="whole-show" checked>
-                <label for="whole-show">Whole Show</label>
-            </div>
-            <div class="selection-type-option">
-                <input type="radio" id="specific-seasons" name="selection-type" value="specific-seasons">
-                <label for="specific-seasons">Specific Seasons</label>
-            </div>
-        `;
-        versionCheckboxes.appendChild(selectionTypeContainer);
+        const wholeRow = document.createElement('div');
+        wholeRow.className = 'option-row selected';
+        wholeRow.id = 'opt-whole-show';
+        wholeRow.dataset.value = 'whole-show';
+        wholeRow.innerHTML = '<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">Whole Show</span>';
+        versionCheckboxes.appendChild(wholeRow);
 
-        // Container for season selection (initially hidden)
+        const seasonsRow = document.createElement('div');
+        seasonsRow.className = 'option-row';
+        seasonsRow.dataset.value = 'specific-seasons';
+        seasonsRow.innerHTML = '<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">Specific Seasons</span>';
+        versionCheckboxes.appendChild(seasonsRow);
+
         const seasonSelectionContainer = document.createElement('div');
-        seasonSelectionContainer.className = 'season-selection-container';
         seasonSelectionContainer.id = 'season-selection-container';
         seasonSelectionContainer.style.display = 'none';
-        seasonSelectionContainer.innerHTML = '<p>Loading seasons...</p>';
         versionCheckboxes.appendChild(seasonSelectionContainer);
 
-        // Add handlers for radio buttons
-        const wholeShowRadio = selectionTypeContainer.querySelector('#whole-show');
-        const specificSeasonsRadio = selectionTypeContainer.querySelector('#specific-seasons');
-
-        wholeShowRadio.addEventListener('change', function() {
-            if (this.checked) {
-                document.getElementById('season-selection-container').style.display = 'none';
-            }
-        });
-
-        specificSeasonsRadio.addEventListener('change', function() {
-            if (this.checked) {
-                document.getElementById('season-selection-container').style.display = 'block';
-                // Fetch seasons if not already loaded
-                if (document.getElementById('season-selection-container').innerHTML === '<p>Loading seasons...</p>') {
+        const toggleTypeRow = (selectedRow) => {
+            [wholeRow, seasonsRow].forEach(r => r.classList.remove('selected'));
+            selectedRow.classList.add('selected');
+            if (selectedRow === seasonsRow) {
+                seasonSelectionContainer.style.display = 'block';
+                if (!seasonSelectionContainer.dataset.loaded) {
                     fetchShowSeasons(content.id);
                 }
+            } else {
+                seasonSelectionContainer.style.display = 'none';
             }
-        });
+        };
+        wholeRow.addEventListener('click', () => toggleTypeRow(wholeRow));
+        seasonsRow.addEventListener('click', () => toggleTypeRow(seasonsRow));
 
-        // Add a separator
-        const separator = document.createElement('hr');
-        versionCheckboxes.appendChild(separator);
+        const divider = document.createElement('div');
+        divider.className = 'vm-divider';
+        versionCheckboxes.appendChild(divider);
     }
 
-    // Add a heading for version selection
-    const versionHeader = document.createElement('div');
-    versionHeader.className = 'version-section-header';
-    versionHeader.innerHTML = '<h4>Select Versions:</h4>';
-    versionCheckboxes.appendChild(versionHeader);
+    const verLabel = document.createElement('div');
+    verLabel.className = 'section-label';
+    verLabel.textContent = 'Version';
+    versionCheckboxes.appendChild(verLabel);
 
-    // Create checkboxes for each version
     availableVersions.forEach(version => {
-        const div = document.createElement('div');
-        div.className = 'version-checkbox';
-        div.innerHTML = `
-            <input type="checkbox" id="request-version-${version}" name="versions" value="${version}">
-            <label for="request-version-${version}">${version}</label>
-        `;
-        versionCheckboxes.appendChild(div);
-
-        // If there's only one version available, auto-select it
-        if (availableVersions.length === 1) {
-            div.querySelector('input[type="checkbox"]').checked = true;
-        }
+        const row = document.createElement('div');
+        row.className = 'option-row' + (availableVersions.length === 1 ? ' checked' : '');
+        row.dataset.value = version;
+        row.dataset.type = 'version';
+        row.innerHTML = `<div class="custom-cb"></div><span class="option-label">${version}</span>`;
+        row.addEventListener('click', () => row.classList.toggle('checked'));
+        versionCheckboxes.appendChild(row);
     });
 
     document.body.classList.add('modal-open');
@@ -8838,58 +9104,40 @@ function showVersionModal(content) {
 
 // Function to fetch show seasons from the server
 async function fetchShowSeasons(tmdbId) {
+    const seasonContainer = document.getElementById('season-selection-container');
+    seasonContainer.innerHTML = '<p style="padding:8px;opacity:0.6;">Loading seasons...</p>';
     try {
-        console.log(`Fetching seasons for TMDB ID: ${tmdbId}`);
-        const response = await fetch(`/content/show_seasons?tmdb_id=${tmdbId}`, {
-            method: 'GET'
-        });
-
-        console.log(`Show seasons fetch response status: ${response.status}`);
-
+        const response = await fetch(`/content/show_seasons?tmdb_id=${tmdbId}`, { method: 'GET' });
         const data = await response.json();
-        console.log('Show seasons API response:', data);
 
         if (data.success && data.seasons && data.seasons.length > 0) {
-            // Update the season selection container
-            const seasonContainer = document.getElementById('season-selection-container');
-            seasonContainer.innerHTML = '<div class="seasons-list"></div>';
-            const seasonsList = seasonContainer.querySelector('.seasons-list');
-
-            // Sort seasons in numerical order
+            seasonContainer.innerHTML = '';
+            seasonContainer.dataset.loaded = '1';
             const seasons = data.seasons.sort((a, b) => a - b);
-            console.log(`Found ${seasons.length} seasons:`, seasons);
-
-            // Create checkbox for each season
             seasons.forEach(season => {
-                const seasonDiv = document.createElement('div');
-                seasonDiv.className = 'season-checkbox';
-                seasonDiv.innerHTML = `
-                    <input type="checkbox" id="season-${season}" name="seasons" value="${season}">
-                    <label for="season-${season}">Season ${season}</label>
-                `;
-                seasonsList.appendChild(seasonDiv);
+                const row = document.createElement('div');
+                row.className = 'option-row';
+                row.dataset.value = season;
+                row.innerHTML = `<div class="custom-cb"></div><span class="option-label">Season ${season}</span>`;
+                row.addEventListener('click', () => row.classList.toggle('checked'));
+                seasonContainer.appendChild(row);
             });
         } else {
-            console.warn('No seasons found or invalid response format:', data);
-            let errorMessage = 'Could not load seasons. Please try again or request the whole show.';
-            if (data.error) {
-                console.error('API error message:', data.error);
-                errorMessage = `Error: ${data.error}`;
-            }
-            document.getElementById('season-selection-container').innerHTML = `<p>${errorMessage}</p>`;
+            const msg = data.error ? `Error: ${data.error}` : 'Could not load seasons. Please try again or request the whole show.';
+            seasonContainer.innerHTML = `<p style="padding:8px;opacity:0.6;">${msg}</p>`;
         }
     } catch (error) {
         console.error('Error fetching show seasons:', error);
-        document.getElementById('season-selection-container').innerHTML =
-            '<p>Error loading seasons. Please try again later.</p>';
+        seasonContainer.innerHTML = '<p style="padding:8px;opacity:0.6;">Error loading seasons. Please try again later.</p>';
     }
 }
 
 // Handle scrape version confirmation
 async function handleScrapeVersionConfirm() {
-    const selectedVersion = document.querySelector('#scrapeVersionRadios input[name="scrape-versions"]:checked')?.value;
+    const selectedRow = document.querySelector('#scrapeVersionRadios .option-row.selected');
+    const selectedVersion = selectedRow ? selectedRow.dataset.value : undefined;
     if (selectedVersion === undefined) {
-        alert('Please select a version.');
+        showPopup({ type: 'warning', title: 'Required', message: 'Please select a version.' });
         return;
     }
 
@@ -8918,36 +9166,28 @@ async function handleScrapeVersionConfirm() {
 
 // Handle version confirm for requests
 async function handleVersionConfirm() {
-    const versionCheckboxes = document.querySelectorAll('#versionCheckboxes input[name="versions"]:checked');
-    const selectedVersions = Array.from(versionCheckboxes).map(cb => cb.value);
+    const selectedVersions = Array.from(document.querySelectorAll('#versionCheckboxes .option-row.checked[data-type="version"]'))
+        .map(row => row.dataset.value);
 
     if (selectedVersions.length === 0) {
-        alert('Please select at least one version');
+        showPopup({ type: 'warning', title: 'Required', message: 'Please select at least one version' });
         return;
     }
 
-    // Check if this is a TV show
     if (selectedContent.mediaType === 'tv') {
-        // Check if the whole-show radio button exists
-        const wholeShowRadio = document.querySelector('#whole-show');
+        const wholeShowRow = document.getElementById('opt-whole-show');
+        const wholeShowSelected = wholeShowRow ? wholeShowRow.classList.contains('selected') : true;
 
-        // If the radio buttons exist, process the selection
-        if (wholeShowRadio) {
-            const wholeShowSelected = wholeShowRadio.checked;
+        if (!wholeShowSelected) {
+            const selectedSeasons = Array.from(document.querySelectorAll('#season-selection-container .option-row.checked'))
+                .map(row => parseInt(row.dataset.value));
 
-            if (!wholeShowSelected) {
-                // Get selected seasons
-                const seasonCheckboxes = document.querySelectorAll('#versionCheckboxes input[name="seasons"]:checked');
-                const selectedSeasons = Array.from(seasonCheckboxes).map(cb => parseInt(cb.value));
-
-                if (selectedSeasons.length === 0) {
-                    alert('Please select at least one season or choose "Whole Show"');
-                    return;
-                }
-
-                // Add seasons to selectedContent
-                selectedContent.seasons = selectedSeasons;
+            if (selectedSeasons.length === 0) {
+                showPopup({ type: 'warning', title: 'Required', message: 'Please select at least one season or choose "Whole Show"' });
+                return;
             }
+
+            selectedContent.seasons = selectedSeasons;
         }
     }
 
@@ -8983,14 +9223,14 @@ async function requestContent(content, selectedVersions) {
         hideLoadingMessage();
 
         if (result.success) {
-            alert(`Successfully requested ${content.title}`);
+            showPopup({ type: 'success', title: 'Success', message: `Successfully requested ${content.title}` });
         } else {
-            alert(result.error || 'Failed to request content');
+            showPopup({ type: 'error', title: 'Error', message: result.error || 'Failed to request content' });
         }
     } catch (error) {
         hideLoadingMessage();
         console.error('Error requesting content:', error);
-        alert('An error occurred while requesting content');
+        showPopup({ type: 'error', title: 'Error', message: 'An error occurred while requesting content' });
     }
 }
 
@@ -9069,7 +9309,7 @@ const PERSONAL_SPECIAL_LISTS = [
     { key: 'boxoffice',     name: 'Box Office' },
 ];
 
-function populatePersonalDropdown(myLists) {
+function populatePersonalDropdown(myLists, mdblistPersonalLists) {
     const menu = document.getElementById('personal-dropdown-menu');
     if (!menu) return;
     menu.innerHTML = '';
@@ -9089,11 +9329,11 @@ function populatePersonalDropdown(myLists) {
         menu.appendChild(item);
     });
 
-    // My Lists group — only if we have any
+    // Trakt My Lists group — only if we have any
     if (myLists && myLists.length > 0) {
         const myHeader = document.createElement('div');
         myHeader.className = 'mdblist-dropdown-header';
-        myHeader.textContent = 'My Lists';
+        myHeader.textContent = 'Trakt — My Lists';
         menu.appendChild(myHeader);
 
         myLists.forEach(list => {
@@ -9105,11 +9345,28 @@ function populatePersonalDropdown(myLists) {
             menu.appendChild(item);
         });
     }
+
+    // MDBList Personal Lists group — only if we have any
+    if (mdblistPersonalLists && mdblistPersonalLists.length > 0) {
+        const mdbHeader = document.createElement('div');
+        mdbHeader.className = 'mdblist-dropdown-header';
+        mdbHeader.textContent = 'MDBList — My Lists';
+        menu.appendChild(mdbHeader);
+
+        mdblistPersonalLists.forEach(list => {
+            const item = document.createElement('div');
+            item.className = 'mdblist-dropdown-item';
+            item.dataset.mdblistId = list.id;
+            item.innerHTML = `<span class="list-name">${list.name}</span>`;
+            item.addEventListener('click', () => selectPersonalList({ type: 'mdblist-personal', key: String(list.id), name: list.name }));
+            menu.appendChild(item);
+        });
+    }
 }
 
 async function initPersonal() {
     // Populate Special Lists immediately (static)
-    populatePersonalDropdown([]);
+    populatePersonalDropdown([], []);
     bindPersonalEvents();
 
     // Restore saved selection
@@ -9117,22 +9374,45 @@ async function initPersonal() {
     if (saved) {
         try {
             const sel = JSON.parse(saved);
-            // Defer until after page init so grid is ready
-            setTimeout(() => selectPersonalList(sel, true), 0);
-        } catch (e) {}
+            // Validate the saved object has required fields
+            if (sel && sel.type && sel.key && sel.name) {
+                // Defer until after page init so grid is ready
+                setTimeout(() => selectPersonalList(sel, true), 0);
+            } else {
+                localStorage.removeItem('discoverPersonal');
+            }
+        } catch (e) {
+            localStorage.removeItem('discoverPersonal');
+        }
     }
 }
 
 async function loadPersonalMyLists() {
     if (window.personalState.myListsLoaded) return;
     try {
-        const resp = await fetch('/discover/api/trakt/lists');
-        const data = await resp.json();
-        if (data.success && data.lists) {
-            window.personalState.myLists = data.lists;
-            window.personalState.myListsLoaded = true;
-            populatePersonalDropdown(data.lists);
+        const [traktResp, mdbResp] = await Promise.allSettled([
+            fetch('/discover/api/trakt/lists'),
+            fetch('/discover/api/mdblist/personal-lists'),
+        ]);
+
+        if (traktResp.status === 'fulfilled' && traktResp.value.ok) {
+            const data = await traktResp.value.json();
+            if (data.success && data.lists) {
+                window.personalState.myLists = data.lists;
+            }
         }
+
+        let mdblistPersonalLists = [];
+        if (mdbResp.status === 'fulfilled' && mdbResp.value.ok) {
+            const data = await mdbResp.value.json();
+            if (data.success && data.lists) {
+                mdblistPersonalLists = data.lists;
+                window.personalState.mdblistPersonalLists = mdblistPersonalLists;
+            }
+        }
+
+        window.personalState.myListsLoaded = true;
+        populatePersonalDropdown(window.personalState.myLists || [], mdblistPersonalLists);
     } catch (e) {
         console.error('[Personal] Failed to load my lists:', e);
     }
@@ -9180,6 +9460,7 @@ async function loadPersonalContent() {
     const sel = window.personalState.currentSelection;
     if (!sel || window.personalState.isLoading) return;
 
+    if (!resultsGrid) resultsGrid = document.getElementById('results-grid');
     window.discoverState.listModeActive = true;
     window.personalState.isLoading = true;
     setLoadingFlag();
@@ -9190,6 +9471,8 @@ async function loadPersonalContent() {
         let url;
         if (sel.type === 'special') {
             url = `/discover/api/trakt/special/${sel.key}?type=${mediaType}`;
+        } else if (sel.type === 'mdblist-personal') {
+            url = `/discover/api/mdblist/personal-list/${sel.key}`;
         } else {
             url = `/discover/api/trakt/mylist/${sel.key}?type=${mediaType}`;
         }
@@ -9203,10 +9486,7 @@ async function loadPersonalContent() {
             window.sidebarListsState.listSource = 'personal';
             window.sidebarListsState.listId = sel.key;
 
-            const filtered = filterListResults(data.results);
-            renderResults(filtered);
-            window.discoverState.hasMore = false;
-            updateResultsInfo({ total_results: filtered.length, page: 1, total_pages: 1 });
+            await applyListFiltersAndRender(data.results);
         } else {
             showError(data.error || 'Failed to load personal list');
         }
@@ -9227,14 +9507,18 @@ function bindPersonalEvents() {
     btn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const isOpen = menu.classList.contains('open');
-        // Close all other dropdowns first
-        document.querySelectorAll('.mdblist-dropdown-menu').forEach(m => m.classList.remove('open'));
-        document.querySelectorAll('.mdblist-dropdown-trigger').forEach(b => b.classList.remove('open'));
+        closeAllDropdowns(btn);
 
         if (!isOpen) {
             menu.classList.add('open');
             btn.classList.add('open');
-            // Lazy-load My Lists on first open
+            if (window.innerWidth <= 768) {
+                const rect = btn.getBoundingClientRect();
+                menu.style.top = (rect.bottom + 8) + 'px';
+                const menuWidth = menu.offsetWidth || 200;
+                const left = Math.min(rect.left, window.innerWidth - menuWidth - 8);
+                menu.style.left = Math.max(8, left) + 'px';
+            }
             await loadPersonalMyLists();
         }
     });
@@ -9248,5 +9532,7 @@ function bindPersonalEvents() {
 }
 
 // Init on page load
-initPersonal();
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(initPersonal, 150);
+});
 

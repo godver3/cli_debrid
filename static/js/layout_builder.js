@@ -1264,18 +1264,26 @@ function selectBadge(id) {
 
 function deleteSelectedBadge() {
     if (selectedBadgeId === null) return;
-    if (!confirm('Delete this badge?')) return;
-    badges = badges.filter(b => b.id !== selectedBadgeId);
-    selectedBadgeId = null;
-    document.getElementById('badge-properties').style.display = 'none';
-    document.getElementById('smart-badge-properties').style.display = 'none';
-    document.getElementById('designed-badge-properties').style.display = 'none';
-    document.getElementById('panel-properties').style.display = 'none';
-    const _tlp = document.getElementById('title-logo-properties');
-    if (_tlp) _tlp.style.display = 'none';
-    document.getElementById('no-selection-message').style.display = 'block';
-    updateBadgesList();
-    renderCanvas();
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Badge',
+        message: 'Delete this badge?',
+        confirmText: 'Confirm',
+        cancelText: 'Cancel',
+        onConfirm: function() {
+            badges = badges.filter(b => b.id !== selectedBadgeId);
+            selectedBadgeId = null;
+            document.getElementById('badge-properties').style.display = 'none';
+            document.getElementById('smart-badge-properties').style.display = 'none';
+            document.getElementById('designed-badge-properties').style.display = 'none';
+            document.getElementById('panel-properties').style.display = 'none';
+            const _tlp = document.getElementById('title-logo-properties');
+            if (_tlp) _tlp.style.display = 'none';
+            document.getElementById('no-selection-message').style.display = 'block';
+            updateBadgesList();
+            renderCanvas();
+        }
+    });
 }
 
 function duplicateSelectedBadge() {
@@ -1293,15 +1301,23 @@ function duplicateSelectedBadge() {
 }
 
 function deleteBadgeById(id) {
-    if (!confirm('Delete this badge?')) return;
-    badges = badges.filter(b => b.id !== id);
-    if (selectedBadgeId === id) {
-        selectedBadgeId = null;
-        document.getElementById('badge-properties').style.display = 'none';
-        document.getElementById('no-selection-message').style.display = 'block';
-    }
-    updateBadgesList();
-    renderCanvas();
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Badge',
+        message: 'Delete this badge?',
+        confirmText: 'Confirm',
+        cancelText: 'Cancel',
+        onConfirm: function() {
+            badges = badges.filter(b => b.id !== id);
+            if (selectedBadgeId === id) {
+                selectedBadgeId = null;
+                document.getElementById('badge-properties').style.display = 'none';
+                document.getElementById('no-selection-message').style.display = 'block';
+            }
+            updateBadgesList();
+            renderCanvas();
+        }
+    });
 }
 
 let _dragSrcIdx = null;
@@ -5060,13 +5076,21 @@ function loadLayoutFromUrl() {
 
 function clearCanvas() {
     if (badges.length === 0) return;
-    if (!confirm('Clear all badges?')) return;
-    badges = [];
-    selectedBadgeId = null;
-    document.getElementById('badge-properties').style.display = 'none';
-    document.getElementById('no-selection-message').style.display = 'block';
-    updateBadgesList();
-    renderCanvas();
+    showPopup({
+        type: 'confirm',
+        title: 'Clear All Badges',
+        message: 'Clear all badges?',
+        confirmText: 'Confirm',
+        cancelText: 'Cancel',
+        onConfirm: function() {
+            badges = [];
+            selectedBadgeId = null;
+            document.getElementById('badge-properties').style.display = 'none';
+            document.getElementById('no-selection-message').style.display = 'block';
+            updateBadgesList();
+            renderCanvas();
+        }
+    });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -5254,11 +5278,11 @@ async function handleLogoUpload(fileInput) {
             await _loadLogoLibrary(_logoActiveTab !== 'all' ? cat : null);
         } else {
             grid.innerHTML = prevHTML;
-            alert('Upload failed: ' + (data.error || 'unknown error'));
+            showPopup({ type: 'error', title: 'Error', message: 'Upload failed: ' + (data.error || 'unknown error'), autoClose: 4000 });
         }
     } catch (e) {
         grid.innerHTML = prevHTML;
-        alert('Upload failed: ' + e.message);
+        showPopup({ type: 'error', title: 'Error', message: 'Upload failed: ' + e.message, autoClose: 4000 });
     }
     fileInput.value = '';
 }

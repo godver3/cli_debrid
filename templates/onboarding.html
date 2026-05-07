@@ -2,6 +2,18 @@
 {% block title %}Onboarding{% endblock %}
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/onboarding.css') }}">
+<script>
+(function() {
+    var theme = localStorage.getItem('selectedTheme') || document.cookie.replace(/(?:(?:^|.*;\s*)selectedTheme\s*=\s*([^;]*).*$)|^.*$/,'$1') || 'tangerine';
+    if (theme !== 'classic') {
+        var link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = '/static/css/tangerine/tangerine_onboarding.css?v=1';
+        link.setAttribute('data-theme-css', theme);
+        document.head.appendChild(link);
+    }
+})();
+</script>
 <div class="onboarding-container">
     <h1 class="onboarding-title">Welcome to the Onboarding Process</h1>
     <p class="onboarding-text">Let's get you set up with the basics to start using the application.</p>

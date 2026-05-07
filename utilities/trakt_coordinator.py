@@ -57,20 +57,23 @@ class GlobalTraktCoordinator:
         Returns:
             float: Number of seconds waited (0 if no wait needed)
         """
+        # Snapshot the wait duration inside the lock, then sleep outside it.
+        # Previously the sleep happened inside `with self._lock`, which blocked
+        # ALL callers for the full cooldown duration instead of each waiting independently.
         with self._lock:
             if self._global_cooldown_until is None:
                 return 0
-
             now = datetime.now()
             if now < self._global_cooldown_until:
                 wait_seconds = (self._global_cooldown_until - now).total_seconds()
-                logging.info(f"⏸️ Trakt API cooldown active, waiting {wait_seconds:.1f}s...")
-                time.sleep(wait_seconds)
-                return wait_seconds
             else:
-                # Cooldown expired, clear it
                 self._global_cooldown_until = None
                 return 0
+
+        if wait_seconds > 0:
+            logging.info(f"⏸️ Trakt API cooldown active, waiting {wait_seconds:.1f}s...")
+            time.sleep(wait_seconds)
+        return wait_seconds
 
     def get_cooldown_status(self):
         """

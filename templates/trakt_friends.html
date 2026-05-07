@@ -2,48 +2,125 @@
 
 {% block title %}Manage Friend's Trakt Accounts{% endblock %}
 
-{% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/inline.css') }}">
-{% endblock %}
-
 {% block content %}
-<div class="trakt-friends-container">
-    <h1>Manage Friend's Trakt Accounts</h1>
-    
-    <div class="friend-auth-section">
-        <h2>Add a Friend's Trakt Account</h2>
-        <p>Add your friend's Trakt account to use their watchlist as a content source.</p>
-        
-        <form class="friend-auth-form" id="friend-auth-form">
-            <input type="text" id="client-id" name="client_id" placeholder="Trakt Client ID (required)" required />
-            <input type="text" id="client-secret" name="client_secret" placeholder="Trakt Client Secret (required)" required />
-            <button type="submit" id="start-auth-btn">Start Authorization</button>
-        </form>
-        
-        <div class="auth-code-display" id="auth-code-display">
-            <p>Please ask your friend to visit:</p>
-            <p class="url"><a id="verification-url" href="#" target="_blank"></a></p>
-            <p>And enter this code:</p>
-            <p class="code" id="user-code"></p>
-            <p>This code will expire in <span id="expires-in">0</span> minutes.</p>
-            <div class="auth-status pending" id="auth-status">
-                Waiting for authorization...
-            </div>
-        </div>
+<style>
+*{box-sizing:border-box}
+:root{
+  --tf-bg:#111;--tf-surface:#1a1a1a;--tf-surface2:#222;--tf-surface3:#2a2a2a;
+  --tf-border:#333;--tf-border2:#3d3d3d;--tf-accent:#e8601c;
+  --tf-text:#e0e0e0;--tf-text2:#aaa;--tf-text3:#666;
+  --tf-green:#22c55e;--tf-red:#ef4444;--tf-blue:#3b82f6;--tf-yellow:#f59e0b;
+  --tf-sans:'Inter',system-ui,sans-serif;
+}
+
+.tf-wrap{max-width:860px;margin:0 auto;padding:1.5rem 1.25rem;font-family:var(--tf-sans);font-size:13px;color:var(--tf-text)}
+
+.tf-page-title{font-size:20px;font-weight:700;color:var(--tf-text);border-left:3px solid var(--tf-accent);padding-left:10px;margin-bottom:1.5rem}
+
+/* Cards */
+.tf-card{background:var(--tf-surface);border:1px solid var(--tf-border);border-radius:8px;padding:1.25rem;margin-bottom:1.25rem}
+
+/* Section headings */
+.tf-section-title{font-size:14px;font-weight:600;color:var(--tf-text2);text-transform:uppercase;letter-spacing:.05em;margin:0 0 .25rem}
+.tf-section-desc{font-size:13px;color:var(--tf-text2);margin:0 0 1rem;line-height:1.5}
+
+/* Form */
+.tf-form{display:flex;flex-direction:column;gap:10px}
+.tf-input{background:var(--tf-surface2);border:1px solid var(--tf-border2);color:var(--tf-text);border-radius:6px !important;padding:7px 11px !important;font-size:13px !important;font-family:var(--tf-sans);width:100%;transition:border-color .15s}
+.tf-input:focus{border-color:var(--tf-accent);outline:none}
+.tf-input::placeholder{color:var(--tf-text3);font-size:13px !important}
+
+/* Buttons */
+.tf-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:6px;font-family:var(--tf-sans);font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;border:none;white-space:nowrap}
+.tf-btn-primary{background:var(--tf-accent);color:#fff}
+.tf-btn-primary:hover{background:#cc5218}
+.tf-btn-secondary{background:transparent;border:1px solid var(--tf-border2);color:var(--tf-text2)}
+.tf-btn-secondary:hover{border-color:var(--tf-text2);color:var(--tf-text)}
+.tf-btn-danger{background:transparent;border:1px solid #7f1d1d;color:var(--tf-red)}
+.tf-btn-danger:hover{background:#7f1d1d22;border-color:var(--tf-red)}
+
+/* Auth code display */
+.tf-auth-display{display:none;margin-top:1rem;padding:1rem;background:var(--tf-surface2);border:1px solid var(--tf-border2);border-radius:6px}
+.tf-auth-display p{margin:0 0 .5rem;font-size:13px;color:var(--tf-text2)}
+.tf-auth-display p:last-child{margin-bottom:0}
+
+.tf-auth-url a{color:var(--tf-accent);text-decoration:none;word-break:break-all}
+.tf-auth-url a:hover{text-decoration:underline}
+
+.tf-auth-code{display:inline-block;background:var(--tf-surface3);border:1px solid var(--tf-border2);border-radius:4px;padding:4px 10px;font-family:monospace;font-size:16px;font-weight:700;color:var(--tf-yellow);letter-spacing:.1em}
+
+.tf-auth-status{display:inline-flex;align-items:center;gap:7px;margin-top:.75rem;padding:7px 12px;border-radius:5px;font-size:12px;font-weight:500}
+.tf-auth-status.pending{background:#1e3a5f22;border:1px solid #1e3a5f;color:#60a5fa}
+.tf-auth-status.success{background:#14532d22;border:1px solid #14532d;color:var(--tf-green)}
+.tf-auth-status.error{background:#450a0a22;border:1px solid #7f1d1d;color:var(--tf-red)}
+
+/* Friends list */
+.tf-friends-list{display:flex;flex-direction:column;gap:10px}
+
+.tf-no-friends{font-size:13px;color:var(--tf-text3);padding:.5rem 0}
+
+/* Friend item — created by JS */
+.friend-item{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;background:var(--tf-surface2);border:1px solid var(--tf-border2);border-radius:6px;padding:12px 14px}
+.friend-item:hover{border-color:var(--tf-border)}
+
+.friend-info{flex:1;min-width:0}
+.friend-info h3{font-size:14px;font-weight:600;color:var(--tf-text);margin:0 0 4px}
+.friend-info p{font-size:12px;color:var(--tf-text2);margin:0 0 2px;font-family:monospace}
+.friend-info p:last-child{margin-bottom:0}
+
+.friend-actions{display:flex;align-items:center;gap:8px;flex-shrink:0}
+
+.refresh-token-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:5px;font-family:var(--tf-sans);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;background:transparent;border:1px solid var(--tf-border2);color:var(--tf-text2)}
+.refresh-token-btn:hover{border-color:var(--tf-text2);color:var(--tf-text)}
+
+.delete-auth-btn{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:5px;font-family:var(--tf-sans);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;background:transparent;border:1px solid #7f1d1d;color:var(--tf-red)}
+.delete-auth-btn:hover{background:#7f1d1d22;border-color:var(--tf-red)}
+
+@media(max-width:560px){
+  .friend-item{flex-direction:column}
+  .friend-actions{width:100%}
+  .refresh-token-btn,.delete-auth-btn{flex:1;justify-content:center}
+}
+</style>
+
+<div class="tf-wrap">
+  <div class="tf-page-title">Manage Friend's Trakt Accounts</div>
+
+  <!-- Add a Friend -->
+  <div class="tf-card">
+    <div class="tf-section-title">Add a Friend's Trakt Account</div>
+    <p class="tf-section-desc">Add your friend's Trakt account to use their watchlist as a content source.</p>
+
+    <form class="tf-form" id="friend-auth-form">
+      <input class="tf-input" type="text" id="client-id" name="client_id" placeholder="Trakt Client ID (required)" required />
+      <input class="tf-input" type="text" id="client-secret" name="client_secret" placeholder="Trakt Client Secret (required)" required />
+      <div>
+        <button type="submit" class="tf-btn tf-btn-primary" id="start-auth-btn">Start Authorization</button>
+      </div>
+    </form>
+
+    <div class="tf-auth-display" id="auth-code-display">
+      <p>Please ask your friend to visit:</p>
+      <p class="tf-auth-url"><a id="verification-url" href="#" target="_blank"></a></p>
+      <p>And enter this code:</p>
+      <p><span class="tf-auth-code" id="user-code"></span></p>
+      <p>This code will expire in <span id="expires-in">0</span> minutes.</p>
+      <div class="tf-auth-status pending" id="auth-status">Waiting for authorization...</div>
     </div>
-    
-    <div class="friend-list" id="friend-list">
-        <h2>Authorized Friends</h2>
-        <div id="friends-container">
-            <!-- Friend items will be added here dynamically -->
-            <p id="no-friends-message">No friends authorized yet.</p>
-        </div>
+  </div>
+
+  <!-- Authorized Friends -->
+  <div class="tf-card">
+    <div class="tf-section-title" style="margin-bottom:1rem">Authorized Friends</div>
+    <div class="tf-friends-list" id="friends-container">
+      <p class="tf-no-friends" id="no-friends-message">No friends authorized yet.</p>
     </div>
+  </div>
 </div>
 
 <script type="module">
     import { showPopup, POPUP_TYPES } from '/static/js/notifications.js';
-    
+
     document.addEventListener('DOMContentLoaded', function() {
         const friendAuthForm = document.getElementById('friend-auth-form');
         const authCodeDisplay = document.getElementById('auth-code-display');
@@ -53,26 +130,26 @@
         const authStatusElement = document.getElementById('auth-status');
         const friendsContainer = document.getElementById('friends-container');
         const noFriendsMessage = document.getElementById('no-friends-message');
-        
+
         let currentAuthId = null;
         let checkAuthInterval = null;
         let expiresInMinutes = 0;
         let countdownInterval = null;
-        
+
         // Load authorized friends on page load
         loadAuthorizedFriends();
-        
+
         // Handle friend authorization form submission
         friendAuthForm.addEventListener('submit', function(event) {
             event.preventDefault();
-            
+
             const clientId = document.getElementById('client-id').value;
             const clientSecret = document.getElementById('client-secret').value;
-            
+
             const formData = new FormData();
             formData.append('client_id', clientId);
             formData.append('client_secret', clientSecret);
-            
+
             fetch('/trakt_friends/authorize', {
                 method: 'POST',
                 body: formData
@@ -87,16 +164,16 @@
                     verificationUrlElement.href = data.verification_url;
                     expiresInMinutes = Math.floor(data.expires_in / 60);
                     expiresInElement.textContent = expiresInMinutes;
-                    
+
                     // Set the current auth ID
                     currentAuthId = data.auth_id;
-                    
+
                     // Start checking auth status
                     if (checkAuthInterval) {
                         clearInterval(checkAuthInterval);
                     }
                     checkAuthInterval = setInterval(() => checkAuthStatus(currentAuthId), 5000);
-                    
+
                     // Start countdown
                     if (countdownInterval) {
                         clearInterval(countdownInterval);
@@ -108,7 +185,7 @@
                             clearInterval(countdownInterval);
                             clearInterval(checkAuthInterval);
                             authStatusElement.textContent = 'Authorization expired. Please try again.';
-                            authStatusElement.className = 'auth-status error';
+                            authStatusElement.className = 'tf-auth-status error';
                         }
                     }, 60000);
                 } else {
@@ -131,7 +208,7 @@
                 });
             });
         });
-        
+
         function checkAuthStatus(authId) {
             fetch(`/trakt_friends/check_auth/${authId}`)
             .then(response => response.json())
@@ -141,16 +218,16 @@
                         // Authorization successful
                         clearInterval(checkAuthInterval);
                         clearInterval(countdownInterval);
-                        
+
                         authStatusElement.textContent = 'Authorization successful!';
-                        authStatusElement.className = 'auth-status success';
-                        
+                        authStatusElement.className = 'tf-auth-status success';
+
                         showPopup({
                             type: POPUP_TYPES.SUCCESS,
                             title: 'Authorization Successful',
                             message: `${data.friend_name}'s Trakt account has been successfully authorized.`
                         });
-                        
+
                         // Reload the friends list
                         loadAuthorizedFriends();
                     }
@@ -158,11 +235,11 @@
                     // Error occurred
                     clearInterval(checkAuthInterval);
                     clearInterval(countdownInterval);
-                    
+
                     if (data.status === 'expired') {
                         authStatusElement.textContent = 'Authorization code expired. Please try again.';
-                        authStatusElement.className = 'auth-status error';
-                        
+                        authStatusElement.className = 'tf-auth-status error';
+
                         showPopup({
                             type: POPUP_TYPES.ERROR,
                             title: 'Authorization Expired',
@@ -170,8 +247,8 @@
                         });
                     } else {
                         authStatusElement.textContent = 'Authorization failed: ' + data.error;
-                        authStatusElement.className = 'auth-status error';
-                        
+                        authStatusElement.className = 'tf-auth-status error';
+
                         showPopup({
                             type: POPUP_TYPES.ERROR,
                             title: 'Authorization Failed',
@@ -189,14 +266,14 @@
                 });
             });
         }
-        
+
         function loadAuthorizedFriends() {
             fetch('/trakt_friends/list')
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
                     friendsContainer.innerHTML = '';
-                    
+
                     if (data.friends.length === 0) {
                         friendsContainer.appendChild(noFriendsMessage);
                     } else {
@@ -213,50 +290,50 @@
                 console.error('Error:', error);
             });
         }
-        
+
         function createFriendElement(friend) {
             const friendItem = document.createElement('div');
             friendItem.className = 'friend-item';
-            
+
             const friendInfo = document.createElement('div');
             friendInfo.className = 'friend-info';
-            
+
             const friendName = document.createElement('h3');
             friendName.textContent = friend.friend_name;
-            
+
             const username = document.createElement('p');
             username.textContent = `Trakt Username: ${friend.username}`;
-            
+
             const expiresAt = document.createElement('p');
             const expiryDate = new Date(friend.expires_at * 1000);
             expiresAt.textContent = `Token expires: ${expiryDate.toLocaleString()}`;
-            
+
             friendInfo.appendChild(friendName);
             friendInfo.appendChild(username);
             friendInfo.appendChild(expiresAt);
-            
+
             const friendActions = document.createElement('div');
             friendActions.className = 'friend-actions';
-            
+
             const refreshTokenBtn = document.createElement('button');
             refreshTokenBtn.className = 'refresh-token-btn';
             refreshTokenBtn.textContent = 'Refresh Token';
             refreshTokenBtn.addEventListener('click', () => refreshToken(friend.auth_id));
-            
+
             const deleteAuthBtn = document.createElement('button');
             deleteAuthBtn.className = 'delete-auth-btn';
             deleteAuthBtn.textContent = 'Delete';
             deleteAuthBtn.addEventListener('click', () => deleteAuth(friend.auth_id));
-            
+
             friendActions.appendChild(refreshTokenBtn);
             friendActions.appendChild(deleteAuthBtn);
-            
+
             friendItem.appendChild(friendInfo);
             friendItem.appendChild(friendActions);
-            
+
             return friendItem;
         }
-        
+
         function refreshToken(authId) {
             fetch(`/trakt_friends/refresh_token/${authId}`, {
                 method: 'POST'
@@ -290,7 +367,7 @@
                 });
             });
         }
-        
+
         function deleteAuth(authId) {
             showPopup({
                 type: POPUP_TYPES.CONFIRM,

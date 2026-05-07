@@ -49,10 +49,10 @@
                     renderCollections(data.collections);
                     document.getElementById('smart-collections-list').style.display = 'block';
                 } else {
-                    alert('Error: ' + (data.error || 'Failed to load'));
+                    showPopup({ type: 'error', title: 'Error', message: 'Error: ' + (data.error || 'Failed to load'), autoClose: 5000 });
                 }
             } catch(e) {
-                alert('Error: ' + e);
+                showPopup({ type: 'error', title: 'Error', message: 'Error: ' + e, autoClose: 5000 });
             } finally {
                 this.textContent = 'Reload Collections';
                 this.disabled = false;
@@ -69,7 +69,7 @@
             try {
                 var resp = await fetch('/settings/api/plex-smart-collections/run', {method:'POST'});
                 var data = await resp.json();
-                alert(data.success ? 'Task started.' : 'Error: ' + data.error);
+                showPopup({ type: data.success ? 'success' : 'error', title: data.success ? 'Success' : 'Error', message: data.success ? 'Task started.' : 'Error: ' + data.error, autoClose: data.success ? 4000 : 5000 });
             } finally {
                 this.textContent = 'Run Now';
                 this.disabled = false;
@@ -544,6 +544,15 @@
                 <p class="settings-description">Remove items from content sources (Trakt, Overseerr, etc.) during deletion. Enable when ghostlist OFF (prevents re-addition, slower). Disable when ghostlist ON (faster, ghostlist already prevents re-addition).</p>
             </div>
 
+            <!-- Hide Season 0 -->
+            <div class="settings-form-group">
+                <label for="additional-hide_season_zero" class="settings-title">Hide Season 0:</label>
+                <input type="checkbox" id="additional-hide_season_zero" name="Library Manager.hide_season_zero"
+                       data-section="Library Manager" data-key="hide_season_zero"
+                       {% if settings.get('Library Manager', {}).get('hide_season_zero', True) %}checked{% endif %}>
+                <p class="settings-description">Hide Season 0 (Specials) tab and its episodes from the TV show page.</p>
+            </div>
+
             <!-- Clear Cache Button -->
             <div class="settings-form-group">
                 <label class="settings-title">Clear Artwork Cache:</label>
@@ -670,14 +679,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     apiKeyInput.value = data.api_key;
                     apiKeyInput.type = 'text';
                     document.getElementById('bazarr-show-key').textContent = 'Hide';
-                    alert('New API key generated! Remember to save settings and update your Bazarr configuration.');
+                    showPopup({ type: 'success', title: 'Success', message: 'New API key generated! Remember to save settings and update your Bazarr configuration.', autoClose: 4000 });
                 } else {
-                    alert('Failed to generate API key');
+                    showPopup({ type: 'error', title: 'Error', message: 'Failed to generate API key', autoClose: 5000 });
                 }
             })
             .catch(error => {
                 console.error('Error generating API key:', error);
-                alert('Error generating API key. Check console for details.');
+                showPopup({ type: 'error', title: 'Error', message: 'Error generating API key. Check console for details.', autoClose: 5000 });
             });
         });
     }
@@ -694,10 +703,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     setTimeout(() => { copyKeyBtn.textContent = originalText; }, 2000);
                 }).catch(err => {
                     console.error('Failed to copy:', err);
-                    alert('Failed to copy to clipboard');
+                    showPopup({ type: 'error', title: 'Error', message: 'Failed to copy to clipboard', autoClose: 5000 });
                 });
             } else {
-                alert('No API key to copy. Generate one first.');
+                showPopup({ type: 'warning', title: 'Required', message: 'No API key to copy. Generate one first.', autoClose: 4000 });
             }
         });
     }
@@ -1769,26 +1778,33 @@ document.addEventListener('DOMContentLoaded', function() {
     const clearCacheBtn = document.getElementById('clear-library-cache-btn');
     if (clearCacheBtn) {
         clearCacheBtn.addEventListener('click', function() {
-            if (confirm('Are you sure you want to clear the artwork cache? All posters and backdrops will be re-downloaded from the primary source on next library load.')) {
-                fetch('/library/clear_cache', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        alert('Cache cleared successfully! Artwork will be refreshed on next library load.');
-                    } else {
-                        alert('Failed to clear cache: ' + (data.error || 'Unknown error'));
-                    }
-                })
-                .catch(error => {
-                    console.error('Error clearing cache:', error);
-                    alert('Error clearing cache. Check console for details.');
-                });
-            }
+            showPopup({
+                type: 'confirm',
+                title: 'Clear Artwork Cache',
+                message: 'Are you sure you want to clear the artwork cache? All posters and backdrops will be re-downloaded from the primary source on next library load.',
+                confirmText: 'Clear Cache',
+                cancelText: 'Cancel',
+                onConfirm: function() {
+                    fetch('/library/clear_cache', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showPopup({ type: 'success', title: 'Success', message: 'Cache cleared successfully! Artwork will be refreshed on next library load.', autoClose: 4000 });
+                        } else {
+                            showPopup({ type: 'error', title: 'Error', message: 'Failed to clear cache: ' + (data.error || 'Unknown error'), autoClose: 5000 });
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error clearing cache:', error);
+                        showPopup({ type: 'error', title: 'Error', message: 'Error clearing cache. Check console for details.', autoClose: 5000 });
+                    });
+                }
+            });
         });
     }
 });
@@ -1814,7 +1830,23 @@ document.addEventListener('DOMContentLoaded', function() {
     <div style="display:flex;gap:8px;margin-bottom:12px;">
         <button type="button" id="load-smart-collections-btn" style="padding:8px 16px;background:var(--accent-color,#e87429);border:none;border-radius:6px;color:#fff;cursor:pointer;font-size:0.9em;">Load Collections from Plex</button>
         <button type="button" id="run-smart-collections-btn" style="padding:8px 16px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#ddd;cursor:pointer;font-size:0.9em;">Run Now</button>
+        <button type="button" id="smartcoll-manage-btn" style="padding:8px 16px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:6px;color:#ddd;cursor:pointer;font-size:0.9em;">Manage Posters</button>
 
+    </div>
+
+    <!-- Smart Collections Manage Posters Modal -->
+    <div id="smartcoll-manage-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:9999;align-items:flex-start;justify-content:center;padding-top:60px;box-sizing:border-box;">
+        <div style="background:var(--surface-color,#1e1e1e);border:1px solid rgba(255,255,255,0.1);border-radius:12px;padding:24px;width:90%;max-width:560px;max-height:80vh;display:flex;flex-direction:column;gap:12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+                <h3 style="margin:0;font-size:1rem;font-weight:600;">Smart Collection Posters</h3>
+                <button id="smartcoll-manage-close" style="background:none;border:none;color:var(--text-color,#fff);font-size:1.4rem;cursor:pointer;line-height:1;">&times;</button>
+            </div>
+            <p style="margin:0;font-size:0.82em;color:#aaa;">Force reapply the poster for an individual enabled smart collection immediately.</p>
+            <input id="smartcoll-manage-search" type="text" placeholder="Search collections..." style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:rgba(255,255,255,0.06);color:inherit;font-size:0.88em;outline:none;">
+            <div id="smartcoll-manage-list" style="overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:6px;">
+                <span style="color:#aaa;font-size:0.85em;">Loading...</span>
+            </div>
+        </div>
     </div>
 
     <!-- Collection list (loaded dynamically) -->
@@ -1945,8 +1977,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (d.success) {
                     renderSmartCollections(d.collections);
                     document.getElementById('smart-collections-list').style.display = 'block';
-                } else { alert('Error: ' + (d.error || 'Failed')); }
-            } catch(e) { alert('Error: ' + e); }
+                } else { showPopup({ type: 'error', title: 'Error', message: 'Error: ' + (d.error || 'Failed'), autoClose: 5000 }); }
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Error: ' + e, autoClose: 5000 }); }
             finally { this.textContent = 'Reload Collections'; this.disabled = false; }
         });
     }
@@ -1958,7 +1990,7 @@ document.addEventListener('DOMContentLoaded', function() {
             try {
                 var r = await fetch('/settings/api/plex-smart-collections/run', {method:'POST'});
                 var d = await r.json();
-                alert(d.success ? 'Task started.' : 'Error: ' + d.error);
+                showPopup({ type: d.success ? 'success' : 'error', title: d.success ? 'Success' : 'Error', message: d.success ? 'Task started.' : 'Error: ' + d.error, autoClose: d.success ? 4000 : 5000 });
             } finally { this.textContent = 'Run Now'; this.disabled = false; }
         });
     }
@@ -2244,6 +2276,88 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
+    // Smart Collections — Manage Posters modal
+    (function() {
+        var scBtn    = document.getElementById('smartcoll-manage-btn');
+        var scModal  = document.getElementById('smartcoll-manage-modal');
+        var scClose  = document.getElementById('smartcoll-manage-close');
+        var scList   = document.getElementById('smartcoll-manage-list');
+        var scSearch = document.getElementById('smartcoll-manage-search');
+        var _scColls = [];
+
+        function scRenderRows(filter) {
+            var q = (filter || '').toLowerCase().trim();
+            var filtered = q ? _scColls.filter(function(c) { return c.name.toLowerCase().includes(q); }) : _scColls;
+            scList.innerHTML = '';
+            if (filtered.length === 0) {
+                scList.innerHTML = '<span style="color:#aaa;font-size:0.85em;">' + (q ? 'No collections match.' : 'No enabled collections found. Enable collections and run the task first.') + '</span>';
+                return;
+            }
+            filtered.forEach(function(c) {
+                var row = document.createElement('div');
+                row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;background:rgba(255,255,255,0.04);border-radius:6px;';
+                var name = document.createElement('span');
+                name.textContent = c.name;
+                name.style.cssText = 'font-size:0.88em;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+                var btn = document.createElement('button');
+                btn.textContent = 'Force reapply';
+                btn.className = 'btn btn-secondary';
+                btn.style.cssText = 'font-size:0.78em;padding:4px 10px;white-space:nowrap;flex-shrink:0;';
+                btn.addEventListener('click', function() {
+                    btn.disabled = true;
+                    btn.textContent = 'Applying...';
+                    fetch('/settings/api/plex-smart-collections/reset-collection', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({collection_id: c.id})
+                    })
+                    .then(function(r) { return r.json(); })
+                    .then(function(res) {
+                        if (res.success) {
+                            btn.textContent = 'Applied ✓';
+                            btn.style.color = '#4caf50';
+                        } else {
+                            btn.disabled = false;
+                            btn.textContent = 'Force reapply';
+                            btn.style.color = '';
+                            showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (res.message || 'Unknown error'), autoClose: 5000 });
+                        }
+                    })
+                    .catch(function() {
+                        btn.disabled = false;
+                        btn.textContent = 'Force reapply';
+                        btn.style.color = '';
+                        showPopup({ type: 'error', title: 'Error', message: 'Request failed — check logs', autoClose: 5000 });
+                    });
+                });
+                row.appendChild(name);
+                row.appendChild(btn);
+                scList.appendChild(row);
+            });
+        }
+
+        function scOpenModal() {
+            scModal.style.display = 'flex';
+            if (scSearch) scSearch.value = '';
+            scList.innerHTML = '<span style="color:#aaa;font-size:0.85em;">Loading...</span>';
+            fetch('/settings/api/plex-smart-collections/status')
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    _scColls = (d.success && d.collections) ? d.collections : [];
+                    scRenderRows('');
+                    if (scSearch) scSearch.focus();
+                })
+                .catch(function() {
+                    scList.innerHTML = '<span style="color:#f44336;font-size:0.85em;">Failed to load collections.</span>';
+                });
+        }
+
+        if (scSearch) scSearch.addEventListener('input', function() { scRenderRows(this.value); });
+        if (scBtn)    scBtn.addEventListener('click', scOpenModal);
+        if (scClose)  scClose.addEventListener('click', function() { scModal.style.display = 'none'; });
+        if (scModal)  scModal.addEventListener('click', function(e) { if (e.target === scModal) scModal.style.display = 'none'; });
+    })();
+
     // Manage Posters modal
     var manageBtn = document.getElementById('boxsets-manage-btn');
     var manageModal = document.getElementById('boxsets-manage-modal');
@@ -2288,14 +2402,14 @@ document.addEventListener('DOMContentLoaded', function() {
                         btn.textContent = 'Force reapply';
                         btn.style.color = '';
                         btn.title = res.message || 'Unknown error';
-                        alert('Failed: ' + (res.message || 'Unknown error'));
+                        showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (res.message || 'Unknown error'), autoClose: 5000 });
                     }
                 })
                 .catch(function() {
                     btn.disabled = false;
                     btn.textContent = 'Force reapply';
                     btn.style.color = '';
-                    alert('Request failed — check logs');
+                    showPopup({ type: 'error', title: 'Error', message: 'Request failed — check logs', autoClose: 5000 });
                 });
             });
             row.appendChild(name);

@@ -1,57 +1,125 @@
 {% extends "base.html" %}
 
-{% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/inline.css') }}">
-{% endblock %}
 {% block title %}Collect User Plex Tokens{% endblock %}
 
 {% block content %}
-<div class="token-collection-container">
-    <h2>Collect User Plex Tokens</h2>
+<style>
+*{box-sizing:border-box}
+:root{
+  --utc-bg:#111;--utc-surface:#1a1a1a;--utc-surface2:#222;--utc-surface3:#2a2a2a;
+  --utc-border:#333;--utc-border2:#3d3d3d;--utc-accent:#e8601c;
+  --utc-text:#e0e0e0;--utc-text2:#aaa;--utc-text3:#666;
+  --utc-green:#22c55e;--utc-red:#ef4444;--utc-blue:#3b82f6;--utc-yellow:#f59e0b;
+  --utc-sans:'Inter',system-ui,sans-serif;
+}
 
-    <div class="instructions">
-        <h4>How to Use:</h4>
-        <ol>
-            <li>Click "Generate User Login Link".</li>
-            <li>Copy the generated <strong>Code</strong> or the full <strong>Link</strong>.</li>
-            <li>Send the Code or Link to the Plex user you want to authorize (e.g., via Discord, Email).</li>
-            <li>Instruct the user to visit the link (or go to <code>plex.tv/link</code> and enter the code) and sign in to their Plex account to grant access.</li>
-            <li>This page will automatically check if the user has completed the authorization.</li>
-            <li>Once authorized, the user's Plex username will appear in the "Stored Tokens" list below.</li>
-        </ol>
-        <p class="warning"><strong>Security Warning:</strong> User tokens are stored in a local JSON file. While convenient, this is less secure than encrypted storage. Ensure your server's file system is properly secured.</p>
+.utc-wrap{max-width:800px;margin:0 auto;padding:1.5rem 1.25rem;font-family:var(--utc-sans);font-size:13px;color:var(--utc-text)}
+
+.utc-page-title{font-size:20px;font-weight:700;color:var(--utc-text);border-left:3px solid var(--utc-accent);padding-left:10px;margin-bottom:1.5rem}
+
+/* Cards */
+.utc-card{background:var(--utc-surface);border:1px solid var(--utc-border);border-radius:8px;padding:1.25rem;margin-bottom:1.25rem}
+
+/* Section headings */
+.utc-section-title{font-size:14px;font-weight:600;color:var(--utc-text2);text-transform:uppercase;letter-spacing:.05em;margin:0 0 1rem}
+
+/* Instructions */
+.utc-instructions ol{margin:0 0 .75rem;padding-left:1.4rem;color:var(--utc-text2);line-height:1.75}
+.utc-instructions li{margin-bottom:.25rem}
+.utc-instructions code{background:var(--utc-surface3);border:1px solid var(--utc-border2);border-radius:4px;padding:2px 6px;font-family:monospace;color:var(--utc-yellow);font-size:12px}
+
+.utc-warning{display:flex;gap:10px;align-items:flex-start;background:#2d1a0022;border:1px solid #78350f;border-radius:6px;padding:10px 13px;margin-top:.75rem;font-size:12px;color:#fbbf24;line-height:1.5}
+.utc-warning-icon{flex-shrink:0;font-size:14px;margin-top:1px}
+
+/* Buttons */
+.utc-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:6px;font-family:var(--utc-sans);font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;border:none;white-space:nowrap}
+.utc-btn-primary{background:var(--utc-accent);color:#fff}
+.utc-btn-primary:hover{background:#cc5218}
+.utc-btn-primary:disabled{opacity:.5;cursor:not-allowed}
+
+/* Auth details panel */
+.utc-auth-details{display:none;margin-top:1rem;padding:1rem;background:var(--utc-surface2);border:1px solid var(--utc-border2);border-radius:6px}
+.utc-auth-details p{margin:0 0 .5rem;font-size:13px;color:var(--utc-text2)}
+.utc-auth-details p:last-child{margin-bottom:0}
+
+.utc-code-badge{display:inline-block;background:var(--utc-surface3);border:1px solid var(--utc-border2);border-radius:4px;padding:3px 10px;font-family:monospace;font-size:15px;font-weight:700;color:var(--utc-yellow);letter-spacing:.08em}
+
+.utc-auth-link a{color:var(--utc-accent);text-decoration:none;word-break:break-all;font-family:monospace;font-size:12px}
+.utc-auth-link a:hover{text-decoration:underline}
+
+.utc-polling-status{margin-top:.75rem;padding:7px 12px;border-radius:5px;font-size:12px;font-weight:500;background:#1e3a5f22;border:1px solid #1e3a5f;color:#60a5fa}
+
+/* Alert banners */
+.utc-alert{display:none;margin-top:.75rem;padding:8px 12px;border-radius:5px;font-size:12px;font-weight:500}
+.utc-alert-danger{background:#450a0a22;border:1px solid #7f1d1d;color:var(--utc-red)}
+.utc-alert-success{background:#14532d22;border:1px solid #14532d;color:var(--utc-green)}
+
+/* Stored tokens */
+.utc-token-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
+.utc-token-list li{display:flex;align-items:center;justify-content:space-between;gap:1rem;background:var(--utc-surface2);border:1px solid var(--utc-border2);border-radius:6px;padding:9px 13px;font-size:13px;color:var(--utc-text)}
+.utc-token-list li:hover{border-color:var(--utc-border)}
+.utc-token-list li span{font-family:monospace;font-weight:500}
+
+.btn-delete{display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:5px;font-family:var(--utc-sans);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;background:transparent;border:1px solid #7f1d1d;color:var(--utc-red)}
+.btn-delete:hover{background:#7f1d1d22;border-color:var(--utc-red)}
+
+.utc-no-tokens{font-size:13px;color:var(--utc-text3);padding:.25rem 0}
+</style>
+
+<div class="utc-wrap">
+  <div class="utc-page-title">Collect User Plex Tokens</div>
+
+  <!-- Instructions -->
+  <div class="utc-card utc-instructions">
+    <div class="utc-section-title">How to Use</div>
+    <ol>
+      <li>Click "Generate User Login Link".</li>
+      <li>Copy the generated <strong>Code</strong> or the full <strong>Link</strong>.</li>
+      <li>Send the Code or Link to the Plex user you want to authorize (e.g., via Discord, Email).</li>
+      <li>Instruct the user to visit the link (or go to <code>plex.tv/link</code> and enter the code) and sign in to their Plex account to grant access.</li>
+      <li>This page will automatically check if the user has completed the authorization.</li>
+      <li>Once authorized, the user's Plex username will appear in the "Stored Tokens" list below.</li>
+    </ol>
+    <div class="utc-warning">
+      <span class="utc-warning-icon">&#9888;</span>
+      <span><strong>Security Warning:</strong> User tokens are stored in a local JSON file. While convenient, this is less secure than encrypted storage. Ensure your server's file system is properly secured.</span>
+    </div>
+  </div>
+
+  <!-- Generate section -->
+  <div class="utc-card">
+    <div class="utc-section-title">Generate Login Link</div>
+    <button id="generate-btn" class="utc-btn utc-btn-primary">Generate User Login Link</button>
+
+    <div id="auth-details" class="utc-auth-details">
+      <p>Send this code to the user:</p>
+      <p>Code: <span class="utc-code-badge" id="plex-code"></span></p>
+      <p style="margin-top:.5rem">Or, send this direct link:</p>
+      <p class="utc-auth-link"><a id="plex-link" href="#" target="_blank"></a></p>
+      <div id="polling-status" class="utc-polling-status">Waiting for user to authorize... (Do not close this page)</div>
     </div>
 
-    <div class="generate-section">
-        <button id="generate-btn" class="btn btn-primary">Generate User Login Link</button>
-        <div id="auth-details">
-            <p>Send this code to the user:</p>
-            <p>Code: <code id="plex-code"></code></p>
-            <p>Or, send this direct link:</p>
-            <p><a id="plex-link" href="#" target="_blank"></a></p>
-            <div id="polling-status">Waiting for user to authorize... (Do not close this page)</div>
-        </div>
-         <div id="auth-error" class="alert alert-danger" style="display: none; margin-top: 15px;"></div>
-         <div id="auth-success" class="alert alert-success" style="display: none; margin-top: 15px;"></div>
-    </div>
+    <div id="auth-error" class="utc-alert utc-alert-danger"></div>
+    <div id="auth-success" class="utc-alert utc-alert-success"></div>
+  </div>
 
-    <div class="stored-tokens-section">
-        <h4>Stored User Tokens</h4>
-        <ul id="stored-tokens-list" class="stored-tokens-list">
-            {% if stored_usernames %}
-                {% for username in stored_usernames %}
-                <li data-username="{{ username }}">
-                    <span>{{ username }}</span>
-                    <button class="btn-delete" data-username="{{ username }}">Delete</button>
-                </li>
-                {% endfor %}
-            {% endif %}
-        </ul>
-        <p id="no-tokens-message" {% if stored_usernames %}style="display: none;"{% endif %}>
-            No user tokens have been stored yet.
-        </p>
-    </div>
-
+  <!-- Stored tokens -->
+  <div class="utc-card">
+    <div class="utc-section-title">Stored User Tokens</div>
+    <ul id="stored-tokens-list" class="utc-token-list">
+      {% if stored_usernames %}
+        {% for username in stored_usernames %}
+        <li data-username="{{ username }}">
+          <span>{{ username }}</span>
+          <button class="btn-delete" data-username="{{ username }}">Delete</button>
+        </li>
+        {% endfor %}
+      {% endif %}
+    </ul>
+    <p id="no-tokens-message" class="utc-no-tokens" {% if stored_usernames %}style="display:none"{% endif %}>
+      No user tokens have been stored yet.
+    </p>
+  </div>
 </div>
 
 <script type="module">

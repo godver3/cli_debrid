@@ -345,14 +345,25 @@ def build_boxset_list(name_pattern: str, min_movies: int = 2) -> List[dict]:
         coll_data = _tmdb_get(f'/collection/{coll_id}')
         time.sleep(0.25)
 
-        if not coll_data:
-            logger.warning(f"[BoxSets] Could not fetch TMDB collection {coll_id} ('{tmdb_name}'), skipping")
-            continue
+        if coll_data:
+            # Use TMDB's authoritative name if we have it
+            tmdb_name = coll_data.get('name', tmdb_name)
+            poster_path = coll_data.get('poster_path')  # e.g. "/abc123.jpg" or None
+            all_parts = [
+                {
+                    'tmdb_id': p.get('id'),
+                    'title': p.get('title', ''),
+                    'release_date': p.get('release_date', ''),
+                }
+                for p in coll_data.get('parts', [])
+            ]
+        else:
+            # TMDB doesn't have this collection — build from DB data and use rendered poster
+            logger.warning(f"[BoxSets] Could not fetch TMDB collection {coll_id} ('{tmdb_name}'), using DB name and rendered poster")
+            poster_path = None
+            all_parts = []
 
-        # Use TMDB's authoritative name if we have it
-        tmdb_name = coll_data.get('name', tmdb_name)
-
-        # If TMDB has no collection name, fall back to the earliest released owned movie's title
+        # If we still have no collection name, fall back to the earliest released owned movie's title
         if not tmdb_name:
             conn_fb = _get_db()
             try:
@@ -377,15 +388,6 @@ def build_boxset_list(name_pattern: str, min_movies: int = 2) -> List[dict]:
             continue
 
         display_name = _format_collection_name(tmdb_name, name_pattern)
-        poster_path = coll_data.get('poster_path')  # e.g. "/abc123.jpg" or None
-        all_parts = [
-            {
-                'tmdb_id': p.get('id'),
-                'title': p.get('title', ''),
-                'release_date': p.get('release_date', ''),
-            }
-            for p in coll_data.get('parts', [])
-        ]
 
         boxsets.append({
             'collection_id': coll_id,
@@ -456,6 +458,8 @@ def apply_boxset_posters(boxsets: List[dict], plex_map: Dict[str, str],
 
     fingerprints = state.setdefault('collection_fingerprints', {})
     collection_names = state.setdefault('collection_names', {})
+    collection_ratingkeys = state.setdefault('collection_ratingkeys', {})
+    collection_poster_hashes = state.setdefault('collection_poster_hashes', {})
 
     for bs in boxsets:
         coll_id = bs['collection_id']
@@ -481,9 +485,15 @@ def apply_boxset_posters(boxsets: List[dict], plex_map: Dict[str, str],
                 resp = requests.get(img_url, timeout=30)
                 if resp.status_code == 200:
                     poster_bytes = resp.content
-                    upload_collection_poster(plex_url, token, collection_rk, poster_bytes)
-                    logger.info(f"[BoxSets] '{bs['display_name']}': TMDB poster applied")
-                    fingerprints[coll_id] = fp
+                    upload_hash = upload_collection_poster(plex_url, token, collection_rk, poster_bytes)
+                    if upload_hash:
+                        logger.info(f"[BoxSets] '{bs['display_name']}': TMDB poster applied")
+                        fingerprints[coll_id] = fp
+                        collection_ratingkeys[coll_id] = collection_rk
+                        collection_poster_hashes[coll_id] = upload_hash
+                    else:
+                        logger.warning(f"[BoxSets] '{bs['display_name']}': TMDB poster upload failed")
+                        bs['poster_path'] = None  # Fall through to rendered poster
                 else:
                     logger.warning(f"[BoxSets] '{bs['display_name']}': TMDB poster download failed ({resp.status_code}), falling back to renderer")
                     bs['poster_path'] = None  # Fall through to rendered poster
@@ -501,9 +511,14 @@ def apply_boxset_posters(boxsets: List[dict], plex_map: Dict[str, str],
                     movie_thumbs=thumbs,
                 )
                 if poster_bytes:
-                    upload_collection_poster(plex_url, token, collection_rk, poster_bytes)
-                    logger.info(f"[BoxSets] '{bs['display_name']}': rendered fallback poster applied")
-                    fingerprints[coll_id] = fp
+                    upload_hash = upload_collection_poster(plex_url, token, collection_rk, poster_bytes)
+                    if upload_hash:
+                        logger.info(f"[BoxSets] '{bs['display_name']}': rendered fallback poster applied")
+                        fingerprints[coll_id] = fp
+                        collection_ratingkeys[coll_id] = collection_rk
+                        collection_poster_hashes[coll_id] = upload_hash
+                    else:
+                        logger.warning(f"[BoxSets] '{bs['display_name']}': rendered fallback poster upload failed")
                 else:
                     logger.warning(f"[BoxSets] '{bs['display_name']}': poster render returned None")
 

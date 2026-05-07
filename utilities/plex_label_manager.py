@@ -168,6 +168,9 @@ def sanitize_label(label: str) -> str:
     # Trim and limit length
     sanitized = sanitized.strip('_')[:50]
 
+    if not sanitized:
+        logging.warning(f"sanitize_label: input '{label}' produced an empty label after sanitization — label will be skipped")
+
     return sanitized
 
 
@@ -321,7 +324,24 @@ def add_label_to_item(item_id: int, label: str, source_name: str, apply_to_plex:
 
         # Update content_sources list if source not already tracked
         if source_name not in [src['source'] for src in content_sources]:
-            content_sources.append({'source': source_name, 'added_at': time.strftime('%Y-%m-%d %H:%M:%S')})
+            # Include detail so secondary-source label processing can use it without a separate backfill
+            cs_entry: Dict[str, Any] = {'source': source_name, 'added_at': time.strftime('%Y-%m-%d %H:%M:%S')}
+            try:
+                src_label_cfg = get_label_config_for_source(source_name) or {}
+                src_mode = src_label_cfg.get('label_mode', 'list_name')
+                if src_mode == 'list_name':
+                    from utilities.settings import get_all_settings as _gas
+                    _src_cfg = _gas().get('Content Sources', {}).get(source_name, {})
+                    detail_val = _src_cfg.get('display_name') or ''
+                elif src_mode == 'fixed':
+                    detail_val = src_label_cfg.get('fixed_label') or ''
+                else:
+                    detail_val = ''
+                if detail_val:
+                    cs_entry['detail'] = detail_val
+            except Exception:
+                pass  # Detail is best-effort; absence is handled gracefully by callers
+            content_sources.append(cs_entry)
             logging.debug(f"Added source '{source_name}' to content_sources for item {item_id}")
 
         # Serialize and write to DB.
@@ -719,20 +739,24 @@ def get_labels_for_item(item_id: int) -> Dict[str, List[str]]:
 
 def is_plex_labels_enabled_anywhere() -> bool:
     """
-    Check if Plex labels are enabled in at least one content source
+    Check if Plex labels are enabled in at least one content source or in AI Assistant.
 
     Returns:
-        True if any content source has Plex labels enabled, False otherwise
+        True if any content source or AI Assistant has Plex labels enabled, False otherwise
     """
     try:
         from utilities.settings import get_all_settings
         settings = get_all_settings()
         content_sources = settings.get('Content Sources', {})
 
-        return any(
-            source.get('plex_labels', {}).get('enabled', False)
-            for source in content_sources.values()
-        )
+        if any(source.get('plex_labels', {}).get('enabled', False) for source in content_sources.values()):
+            return True
+
+        # Also check AI Assistant plex_labels
+        if settings.get('AI Assistant', {}).get('plex_labels', {}).get('enabled', False):
+            return True
+
+        return False
     except Exception as e:
         logging.error(f"Error checking if Plex labels enabled: {e}", exc_info=True)
         return False
@@ -828,9 +852,9 @@ def determine_labels_for_item(item: Dict[str, Any]) -> List[str]:
         return []
 
     labels = []
-    label_mode = label_config.get('label_mode', 'requester')  # 'requester', 'fixed', 'list_name'
+    label_mode = label_config.get('label_mode', 'list_name')  # 'requester', 'fixed', 'list_name'
 
-    logging.info(f"DEBUG determine_labels: source={content_source}, mode={label_mode}, detail={repr(content_source_detail)}")
+    logging.debug(f"determine_labels: source={content_source}, mode={label_mode}, detail={repr(content_source_detail)}")
 
     if label_mode == 'requester' and content_source_detail:
         # Use requester name as label (for Overseerr)
@@ -948,9 +972,17 @@ def apply_labels_for_item(item: Dict[str, Any]) -> int:
             src_name = src_entry.get('source')
             src_detail = src_entry.get('detail')
 
-            # Skip: no detail (legacy entry), same as primary source (already handled), or unknown
-            if not src_detail or src_name == content_source or src_detail.lower() == 'unknown':
+            # Skip same-as-primary (already handled above)
+            if src_name == content_source:
                 continue
+
+            # For requester-mode sources detail is the label itself — skip if missing/unknown
+            # For list_name/fixed sources the label comes from config, so detail is not required
+            src_label_config = get_label_config_for_source(src_name) or {}
+            src_label_mode = src_label_config.get('label_mode', 'requester')
+            if src_label_mode == 'requester':
+                if not src_detail or src_detail.lower() == 'unknown':
+                    continue
 
             temp_item = {'content_source': src_name, 'content_source_detail': src_detail}
             secondary_labels = determine_labels_for_item(temp_item)
@@ -1339,13 +1371,22 @@ def backfill_content_source_detail() -> Dict[str, Any]:
         logging.info(f"Overseerr: {api_queries} unique TMDB IDs queried (one API call per show/movie, all episodes updated together)")
         logging.info(f"Skipped {skipped_no_config} items (source not in config), {skipped_no_labels} items (Plex labels not enabled)")
 
+        # Phase: backfill missing 'detail' on secondary content_sources entries
+        # add_label_to_item writes entries without 'detail'; fix that retroactively
+        # so apply_labels_for_item secondary-source processing can use them.
+        # Only applies to list_name/fixed sources where detail = display_name from config.
+        cs_detail_fixed = _backfill_secondary_content_sources_detail(settings)
+        if cs_detail_fixed:
+            logging.info(f"Backfilled detail on {cs_detail_fixed} secondary content_sources entries")
+
         return {
             'success': True,
             'total_updated': total_updated,
             'by_source': updated_by_source,
             'skipped_no_config': skipped_no_config,
             'skipped_no_labels': skipped_no_labels,
-            'api_queries': api_queries
+            'api_queries': api_queries,
+            'secondary_sources_detail_fixed': cs_detail_fixed
         }
 
     except Exception as e:
@@ -1359,6 +1400,74 @@ def backfill_content_source_detail() -> Dict[str, Any]:
             'success': False,
             'error': str(e)
         }
+
+
+def _backfill_secondary_content_sources_detail(all_settings: dict) -> int:
+    """
+    For each item whose content_sources list contains a secondary source entry
+    without a 'detail' field, fill in the detail value from that source's config
+    (display_name for list_name, fixed_label for fixed mode).
+
+    This fixes entries written by add_label_to_item (which omits detail) so
+    apply_labels_for_item's secondary-source path can process them correctly.
+
+    Returns count of entries updated.
+    """
+    content_sources_cfg = all_settings.get('Content Sources', {})
+
+    # Build map: source_id -> detail value (only list_name and fixed modes)
+    source_detail_map = {}
+    for src_id, src_cfg in content_sources_cfg.items():
+        pl = src_cfg.get('plex_labels', {})
+        if not isinstance(pl, dict) or not pl.get('enabled'):
+            continue
+        mode = pl.get('label_mode', 'requester')
+        if mode == 'list_name':
+            detail = src_cfg.get('display_name') or ''
+        elif mode == 'fixed':
+            detail = pl.get('fixed_label') or ''
+        else:
+            continue  # requester mode — detail is dynamic, skip
+        if detail:
+            source_detail_map[src_id] = detail
+
+    if not source_detail_map:
+        return 0
+
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, content_sources FROM media_items "
+            "WHERE content_sources IS NOT NULL AND content_sources != '[]' AND content_sources != 'null' "
+            "AND state IN ('Collected', 'Upgrading')"
+        ).fetchall()
+
+        updated = 0
+        for row in rows:
+            try:
+                cs_list = parse_content_sources(row['content_sources'])
+                changed = False
+                for entry in cs_list:
+                    src = entry.get('source')
+                    if src in source_detail_map and 'detail' not in entry:
+                        entry['detail'] = source_detail_map[src]
+                        changed = True
+                if changed:
+                    conn.execute(
+                        'UPDATE media_items SET content_sources = ?, plex_labels_last_synced = NULL WHERE id = ?',
+                        (serialize_content_sources(cs_list), row['id'])
+                    )
+                    updated += 1
+            except Exception:
+                pass
+
+        conn.commit()
+        return updated
+    except Exception as e:
+        logging.error(f"Error in _backfill_secondary_content_sources_detail: {e}", exc_info=True)
+        return 0
+    finally:
+        conn.close()
 
 
 def regenerate_labels_from_backfilled_details(incremental: bool = False, days_back: int = 7) -> Dict[str, Any]:
@@ -1565,12 +1674,27 @@ def regenerate_labels_from_backfilled_details(incremental: bool = False, days_ba
         logging.info(f"Regeneration complete{mode_suffix}: {regenerated_count} DB rows updated, {synced_count} items synced to Plex")
         logging.info(f"Skipped {skipped_no_labels} items (Plex labels not enabled)")
 
+        # Cross-source membership pass: for items that exist under multiple content_source
+        # rows in the DB (same imdb_id/tmdb_id, different content_source), populate
+        # content_sources (plural) with all sources that claim that item.
+        cs_populated = populate_cross_source_memberships(settings)
+        if cs_populated:
+            logging.info(f"Populated cross-source memberships for {cs_populated} item(s)")
+
+        # Secondary-source pass: apply labels for sources recorded in content_sources (plural)
+        # that differ from the item's primary content_source.
+        # Runs after populate_cross_source_memberships so newly added entries are included.
+        secondary_applied = _apply_secondary_source_labels(settings)
+        if secondary_applied:
+            logging.info(f"Applied {secondary_applied} secondary-source label(s) to items")
+
         return {
             'success': True,
             'total_regenerated': regenerated_count,
             'unique_items': items_processed,
             'synced_to_plex': synced_count,
             'skipped_no_labels': skipped_no_labels,
+            'secondary_labels_applied': secondary_applied,
             'mode': mode_desc,
             'message': f'Regenerated {regenerated_count} DB rows, synced {synced_count} to Plex ({items_processed} unique TMDB IDs){mode_suffix}'
         }
@@ -1586,6 +1710,338 @@ def regenerate_labels_from_backfilled_details(incremental: bool = False, days_ba
             'success': False,
             'error': str(e)
         }
+
+def _fetch_live_imdb_ids_for_source(src_id: str, src_cfg: dict, all_settings: dict) -> Dict[str, Set[str]]:
+    """
+    Fetch the full live imdb_id/tmdb_id set for a content source by calling its API.
+
+    Returns a dict with two sets:
+        {
+            'movie_imdb_ids': set of imdb_id strings for movies,
+            'show_tmdb_ids':  set of tmdb_id strings for shows (show-level, not episode),
+            'show_imdb_ids':  set of imdb_id strings for shows (fallback when tmdb_id missing),
+        }
+    Returns None if the source type is not supported or the fetch fails.
+    """
+    src_type = src_cfg.get('type', '')
+    versions = {'Default': True}  # dummy — we only need IDs, not versions
+
+    movie_imdb_ids: Set[str] = set()
+    show_tmdb_ids: Set[str] = set()
+    show_imdb_ids: Set[str] = set()
+
+    def _ingest(items):
+        for item in items:
+            media_type = item.get('media_type', '')
+            imdb_id = item.get('imdb_id') or ''
+            tmdb_id = str(item.get('tmdb_id', '') or '')
+            if media_type == 'movie':
+                if imdb_id:
+                    movie_imdb_ids.add(imdb_id)
+            elif media_type in ('tv', 'show', 'episode'):
+                if tmdb_id:
+                    show_tmdb_ids.add(tmdb_id)
+                elif imdb_id:
+                    show_imdb_ids.add(imdb_id)
+
+    try:
+        if src_type == 'Trakt Lists':
+            from content_checkers.trakt import get_wanted_from_trakt_lists
+            list_urls = src_cfg.get('trakt_lists', '')
+            if isinstance(list_urls, str):
+                list_urls = [u.strip() for u in list_urls.split(',') if u.strip()]
+            for url in list_urls:
+                results = get_wanted_from_trakt_lists(url, versions)
+                for items, _ in results:
+                    _ingest(items)
+
+        elif src_type == 'Trakt Collection':
+            from content_checkers.trakt import get_wanted_from_trakt_collection
+            results = get_wanted_from_trakt_collection(versions)
+            for items, _ in results:
+                _ingest(items)
+
+        elif src_type == 'Special Trakt Lists':
+            from content_checkers.trakt import get_wanted_from_special_trakt_lists
+            results = get_wanted_from_special_trakt_lists(src_cfg, versions)
+            for items, _ in results:
+                _ingest(items)
+
+        elif src_type == 'My Plex Watchlist':
+            from content_checkers.plex_watchlist import get_wanted_from_plex_watchlist
+            results = get_wanted_from_plex_watchlist(versions)
+            for items, _ in results:
+                _ingest(items)
+
+        elif src_type == 'Other Plex Watchlist':
+            from content_checkers.plex_watchlist import get_wanted_from_other_plex_watchlist
+            username = src_cfg.get('username', '')
+            token = src_cfg.get('token', '')
+            if username and token:
+                # Signature: (username, token, versions) — no src_id prefix
+                results = get_wanted_from_other_plex_watchlist(username, token, versions)
+                for items, _ in results:
+                    _ingest(items)
+
+        elif src_type == 'Adaptive List':
+            from content_checkers.adaptive_list import get_wanted_from_adaptive_list
+            results = get_wanted_from_adaptive_list(src_cfg, versions)
+            for items, _ in results:
+                _ingest(items)
+
+        elif src_type == 'MDBList':
+            from content_checkers.mdb_list import get_wanted_from_mdblists
+            # Schema key is 'urls', not 'mdblist_urls' or 'url'
+            mdblist_url = src_cfg.get('urls', '')
+            if mdblist_url:
+                results = get_wanted_from_mdblists(mdblist_url, versions)
+                for items, _ in results:
+                    _ingest(items)
+
+        elif src_type == 'Trakt Watchlist':
+            from content_checkers.trakt import get_wanted_from_trakt_watchlist
+            results = get_wanted_from_trakt_watchlist(versions)
+            for items, _ in results:
+                _ingest(items)
+
+        elif src_type == 'Friends Trakt Watchlist':
+            from content_checkers.trakt import get_wanted_from_friend_trakt_watchlist
+            results = get_wanted_from_friend_trakt_watchlist(src_cfg, versions)
+            for items, _ in results:
+                _ingest(items)
+
+        elif src_type == 'My Plex RSS Watchlist':
+            from content_checkers.plex_rss_watchlist import get_wanted_from_plex_rss
+            rss_url = src_cfg.get('url', '')
+            if rss_url:
+                results = get_wanted_from_plex_rss(rss_url, versions)
+                for items, _ in results:
+                    _ingest(items)
+
+        elif src_type == 'My Friends Plex RSS Watchlist':
+            from content_checkers.plex_rss_watchlist import get_wanted_from_friends_plex_rss
+            rss_url = src_cfg.get('url', '')
+            if rss_url:
+                results = get_wanted_from_friends_plex_rss(rss_url, versions)
+                for items, _ in results:
+                    _ingest(items)
+
+        else:
+            # Unsupported type (Overseerr/Agregarr are requester-mode, handled elsewhere)
+            return None
+
+    except Exception as e:
+        logging.warning(f"[populate_cross_source_memberships] Failed to fetch live list for {src_id} ({src_type}): {e}")
+        return None
+
+    logging.info(f"[populate_cross_source_memberships] {src_id}: fetched {len(movie_imdb_ids)} movies, {len(show_tmdb_ids)} shows (tmdb), {len(show_imdb_ids)} shows (imdb) from live API")
+    return {'movie_imdb_ids': movie_imdb_ids, 'show_tmdb_ids': show_tmdb_ids, 'show_imdb_ids': show_imdb_ids}
+
+
+def populate_cross_source_memberships(all_settings: dict) -> int:
+    """
+    For each enabled list_name/fixed content source, fetch the full live item list
+    from the source's API, then find all Collected items in the DB that belong to that
+    source but whose primary content_source is different. For each such item, append
+    this source to their content_sources list (with source, detail, added_at) if not
+    already present.
+
+    Movies matched by imdb_id. Shows/episodes matched at show level by tmdb_id
+    (with imdb_id as fallback), updating all collected episodes for that show.
+
+    Safe to run multiple times — deduplicates before appending.
+    Returns count of items updated.
+    """
+    content_sources_cfg = all_settings.get('Content Sources', {})
+
+    # Build map of eligible sources: src_id -> (detail, src_cfg)
+    eligible = {}
+    for src_id, src_cfg in content_sources_cfg.items():
+        pl = src_cfg.get('plex_labels', {})
+        if not isinstance(pl, dict) or not pl.get('enabled'):
+            continue
+        mode = pl.get('label_mode', 'requester')
+        if mode == 'list_name':
+            detail = src_cfg.get('display_name') or ''
+        elif mode == 'fixed':
+            detail = pl.get('fixed_label') or ''
+        else:
+            continue  # requester — skip
+        if detail:
+            eligible[src_id] = (detail, src_cfg)
+
+    if not eligible:
+        return 0
+
+    conn = get_db_connection()
+    total_updated = 0
+    try:
+        for src_id, (detail, src_cfg) in eligible.items():
+            ids = _fetch_live_imdb_ids_for_source(src_id, src_cfg, all_settings)
+            if ids is None:
+                # Unsupported source type — fall back to DB-only membership (original behaviour)
+                ids = {'movie_imdb_ids': set(), 'show_tmdb_ids': set(), 'show_imdb_ids': set()}
+                db_movie_rows = conn.execute(
+                    "SELECT DISTINCT imdb_id FROM media_items "
+                    "WHERE content_source = ? AND state IN ('Collected', 'Upgrading') "
+                    "AND imdb_id IS NOT NULL AND type = 'movie'",
+                    (src_id,)
+                ).fetchall()
+                ids['movie_imdb_ids'] = {r['imdb_id'] for r in db_movie_rows if r['imdb_id']}
+
+                db_show_rows = conn.execute(
+                    "SELECT DISTINCT tmdb_id FROM media_items "
+                    "WHERE content_source = ? AND state IN ('Collected', 'Upgrading') "
+                    "AND tmdb_id IS NOT NULL AND type = 'episode'",
+                    (src_id,)
+                ).fetchall()
+                ids['show_tmdb_ids'] = {str(r['tmdb_id']) for r in db_show_rows if r['tmdb_id']}
+
+            now_ts = time.strftime('%Y-%m-%d %H:%M:%S')
+            # SQLite default SQLITE_MAX_VARIABLE_NUMBER is 999; chunk to stay safe
+            _CHUNK = 900
+
+            def _apply_gap_rows(gap_rows):
+                nonlocal total_updated
+                for row in gap_rows:
+                    cs_list = parse_content_sources(row['content_sources'])
+                    if any(s['source'] == src_id for s in cs_list):
+                        continue
+                    cs_list.append({'source': src_id, 'detail': detail, 'added_at': now_ts})
+                    conn.execute(
+                        'UPDATE media_items SET content_sources = ?, plex_labels_last_synced = NULL WHERE id = ?',
+                        (serialize_content_sources(cs_list), row['id'])
+                    )
+                    total_updated += 1
+
+            # --- Movies: match by imdb_id, chunked to avoid SQLite variable limit ---
+            movie_ids_list = list(ids['movie_imdb_ids'])
+            for i in range(0, max(len(movie_ids_list), 1), _CHUNK):
+                chunk = movie_ids_list[i:i + _CHUNK]
+                if not chunk:
+                    break
+                placeholders = ','.join('?' * len(chunk))
+                gap_rows = conn.execute(
+                    f"SELECT id, content_sources FROM media_items "
+                    f"WHERE imdb_id IN ({placeholders}) "
+                    f"AND content_source != ? "
+                    f"AND state IN ('Collected', 'Upgrading') "
+                    f"AND type = 'movie'",
+                    chunk + [src_id]
+                ).fetchall()
+                _apply_gap_rows(gap_rows)
+
+            # --- Shows/Episodes: match at show level by tmdb_id, then imdb_id fallback ---
+            show_queries = []
+            if ids['show_tmdb_ids']:
+                show_queries.append(('tmdb_id', list(ids['show_tmdb_ids'])))
+            if ids['show_imdb_ids']:
+                show_queries.append(('imdb_id', list(ids['show_imdb_ids'])))
+
+            for id_field, id_values in show_queries:
+                for i in range(0, max(len(id_values), 1), _CHUNK):
+                    chunk = id_values[i:i + _CHUNK]
+                    if not chunk:
+                        break
+                    placeholders = ','.join('?' * len(chunk))
+                    gap_ep_rows = conn.execute(
+                        f"SELECT id, content_sources FROM media_items "
+                        f"WHERE {id_field} IN ({placeholders}) "
+                        f"AND content_source != ? "
+                        f"AND state IN ('Collected', 'Upgrading') "
+                        f"AND type = 'episode'",
+                        chunk + [src_id]
+                    ).fetchall()
+                    _apply_gap_rows(gap_ep_rows)
+
+        conn.commit()
+        logging.info(f"[populate_cross_source_memberships] Updated {total_updated} items across {len(eligible)} sources")
+        return total_updated
+
+    except Exception as e:
+        logging.error(f"Error in populate_cross_source_memberships: {e}", exc_info=True)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return 0
+    finally:
+        conn.close()
+
+
+def _apply_secondary_source_labels(all_settings: dict) -> int:
+    """
+    For every Collected item that has secondary sources in content_sources (plural),
+    apply labels for those secondary sources if not already present.
+
+    This covers the gap where an item was collected via source A before source B had
+    plex_labels configured — source B's label was never applied because add_wanted_items
+    only fires when a source actively encounters an already-collected item.
+
+    Returns count of labels applied.
+    """
+    content_sources_cfg = all_settings.get('Content Sources', {})
+
+    # Only process sources that have plex_labels enabled
+    enabled_sources = {
+        src_id for src_id, src_cfg in content_sources_cfg.items()
+        if isinstance(src_cfg.get('plex_labels'), dict) and src_cfg['plex_labels'].get('enabled')
+    }
+    if not enabled_sources:
+        return 0
+
+    conn = get_db_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id, title, content_source, content_sources, plex_labels FROM media_items "
+            "WHERE state IN ('Collected', 'Upgrading') "
+            "AND content_sources IS NOT NULL AND content_sources != '[]' AND content_sources != 'null'"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    applied = 0
+    for row in rows:
+        try:
+            cs_list = parse_content_sources(row['content_sources'])
+            existing_labels = parse_plex_labels(row['plex_labels'])
+            primary = row['content_source']
+
+            for entry in cs_list:
+                src_name = entry.get('source')
+                src_detail = entry.get('detail')
+
+                if not src_name or src_name == primary or src_name not in enabled_sources:
+                    continue
+
+                # Get label config for this secondary source
+                src_label_config = get_label_config_for_source(src_name) or {}
+                src_label_mode = src_label_config.get('label_mode', 'requester')
+
+                # Requester mode needs detail; list_name/fixed get label from config
+                if src_label_mode == 'requester':
+                    if not src_detail or src_detail.lower() == 'unknown':
+                        continue
+
+                temp_item = {'content_source': src_name, 'content_source_detail': src_detail}
+                labels = determine_labels_for_item(temp_item)
+
+                for label in labels:
+                    # Skip if already applied from this source
+                    if label in existing_labels and src_name in existing_labels[label].get('sources', []):
+                        continue
+                    try:
+                        success = add_label_to_item(row['id'], label, src_name, apply_to_plex=True)
+                        if success:
+                            applied += 1
+                            logging.info(f"Secondary-source label '{label}' from '{src_name}' applied to '{row['title']}'")
+                    except Exception as e:
+                        logging.warning(f"Failed applying secondary label '{label}' from '{src_name}' to item {row['id']}: {e}")
+        except Exception as e:
+            logging.warning(f"Error processing secondary sources for item {row['id']}: {e}")
+
+    return applied
+
 
 def backfill_missing_labels() -> Dict[str, Any]:
     """

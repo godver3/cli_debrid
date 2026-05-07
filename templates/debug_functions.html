@@ -5,6 +5,880 @@
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/debug_functions.css') }}">
 
+<style>
+/* ── Tangerine debug — show/hide ── */
+body.tangerine-theme .debug-container { display: none !important; }
+body:not(.tangerine-theme) #tngDebug { display: none !important; }
+
+/* ── Tangerine debug styles ── */
+#tngDebug {
+  --bg:#111;--surface:#1a1a1a;--surface2:#222;--surface3:#2a2a2a;
+  --border:#2d2d2d;--border2:#3d3d3d;
+  --accent:#e8601c;--accent-h:#f07030;
+  --text:#e0e0e0;--text2:#aaa;--text3:#555;
+  --green:#22c55e;--red:#ef4444;--blue:#3b82f6;--yellow:#f59e0b;
+  --sans:'Inter',sans-serif;
+  max-width:1300px;margin:0 auto;padding:1.25rem;font-family:var(--sans);font-size:13px;color:var(--text);
+}
+/* Page title */
+#tngDebug .tdb-title{font-size:20px;font-weight:700;border-left:3px solid var(--accent);padding-left:10px;margin-bottom:1.25rem;color:var(--text)}
+#tngDebug .tdb-warn{background:#1a1200;border:1px solid #7c5c00;border-radius:6px;padding:10px 14px;font-size:12px;color:#f59e0b;margin-bottom:1.25rem;display:flex;align-items:center;gap:8px}
+
+/* Toolbar */
+#tngDebug .toolbar{display:flex;align-items:center;gap:10px;margin-bottom:1.25rem;flex-wrap:wrap}
+#tngDebug .tabs{display:flex;background:var(--surface2);border-radius:6px;padding:3px;gap:2px;flex-wrap:nowrap;overflow-x:auto}
+#tngDebug .tab{padding:5px 14px;border-radius:4px;font-size:13px;font-weight:900;cursor:pointer;color:var(--text3);border:1px solid transparent;background:none;font-family:var(--sans);transition:all .15s;white-space:nowrap}
+#tngDebug .tab.active{background:var(--surface);color:var(--text);border-color:var(--border2)}
+#tngDebug .tab:not(.active):hover{color:var(--text2)}
+#tngDebug .search-wrap{position:relative;flex:1;max-width:240px;min-width:160px;margin-left:auto}
+#tngDebug .search-icon{position:absolute;left:9px;top:50%;transform:translateY(-50%);color:var(--text3);pointer-events:none}
+#tngDebug .search-icon svg{width:12px;height:12px}
+#tngDebug .search-input{width:100%;background:var(--surface2);border:1px solid var(--border2);color:var(--text);border-radius:5px;padding:6px 10px 6px 28px;font-size:12px;font-family:var(--sans);transition:border-color .15s;outline:none;-webkit-appearance:none}
+#tngDebug .search-input:focus{border-color:var(--accent)}
+#tngDebug .search-input::placeholder{color:var(--text3)}
+
+/* Tab panels */
+#tngDebug .tdb-panel{display:none}
+#tngDebug .tdb-panel.active{display:block}
+
+/* Grid */
+#tngDebug .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px}
+/* Plex Labels card spans exactly 2 columns */
+#tngDebug .grid .card[data-title="plex labels management"]{grid-column:span 2}
+/* card-title row: keep title left, push help button to the right */
+#tngDebug .grid .card[data-title="plex labels management"] .card-title{
+  display:flex;align-items:center;gap:10px;
+}
+#tngDebug .grid .card[data-title="plex labels management"] .plex-labels-help-btn{
+  margin-left:auto;
+}
+/* Help button */
+#tngDebug .plex-labels-help-btn{
+  background:var(--accent);color:#fff;border:none;border-radius:5px;
+  padding:5px 10px;font-size:12px;font-weight:600;cursor:pointer;
+  display:inline-flex;align-items:center;gap:5px;font-family:var(--sans);flex-shrink:0;
+}
+#tngDebug .plex-labels-help-btn:hover{background:var(--accent-h)}
+/* Manage Cache Files card spans 3 rows */
+#tngDebug .grid .card[data-title="manage cache files"]{grid-row:span 3}
+
+/* Card */
+#tngDebug .card{background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:18px;display:flex;flex-direction:column;gap:12px;transition:border-color .2s}
+#tngDebug .card:hover{border-color:var(--border2)}
+#tngDebug .card-title{font-size:14px;font-weight:600;color:var(--text);border-left:3px solid var(--accent);padding-left:10px;line-height:1.3}
+#tngDebug .card-desc{font-size:12px;color:var(--text3);line-height:1.6}
+
+/* Form elements */
+#tngDebug .field{display:flex;flex-direction:column;gap:5px}
+#tngDebug .field-label{font-size:11px;color:var(--text3);font-weight:500}
+#tngDebug .fselect,#tngDebug .finput{background:var(--surface2);border:1px solid var(--border2);color:var(--text);border-radius:5px;padding:7px 10px;font-size:12px;font-family:var(--sans);width:100%;transition:border-color .15s;appearance:none;-webkit-appearance:none;outline:none;box-sizing:border-box}
+#tngDebug .fselect{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5l3 3 3-3' stroke='%23555' stroke-width='1.5' fill='none'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;padding-right:28px;cursor:pointer}
+#tngDebug .finput:focus,#tngDebug .fselect:focus{border-color:var(--accent)}
+#tngDebug #task_select[size]:not([size="1"]){background-image:none !important;padding-right:10px !important;overflow-y:hidden !important;overflow-x:hidden !important;}
+#tngDebug .finput::placeholder{color:var(--text3)}
+
+/* Checkbox */
+#tngDebug .check-row{display:grid;grid-template-columns:16px 1fr;align-items:start;gap:8px;cursor:pointer;font-size:12px;color:var(--text2);line-height:1.5}
+#tngDebug .check-row input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;flex-shrink:0;margin-top:2px;cursor:pointer}
+/* inline tags inside check-row text column must not break layout */
+#tngDebug .check-row strong,#tngDebug .check-row em,#tngDebug .check-row span{display:inline !important;font-size:inherit !important;color:inherit !important;}
+
+/* Buttons */
+#tngDebug .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:5px 14px;border-radius:6px;font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;border:none}
+#tngDebug .btn svg{width:13px;height:13px;flex-shrink:0}
+#tngDebug .btn i{font-size:12px;flex-shrink:0}
+#tngDebug .btn-orange{background:var(--accent);color:#fff}
+#tngDebug .btn-orange:hover{background:var(--accent-h)}
+#tngDebug .btn-outline-orange{background:transparent;border:1px solid #c2500f;color:#f97316}
+#tngDebug .btn-outline-orange:hover{background:#c2500f22;border-color:#f97316}
+#tngDebug .btn-outline-red{background:transparent;border:1px solid #7f1d1d;color:var(--red)}
+#tngDebug .btn-outline-red:hover{background:#7f1d1d22;border-color:var(--red)}
+#tngDebug .btn-outline-blue{background:transparent;border:1px solid #1e40af;color:#60a5fa}
+#tngDebug .btn-outline-blue:hover{background:#1e40af22;border-color:#60a5fa}
+#tngDebug .btn-sm{width:auto;padding:6px 12px;font-size:12px;font-weight:500}
+
+/* Stats box */
+#tngDebug .stats-box{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:14px 16px;display:grid;grid-template-columns:1fr 1fr;gap:12px 20px}
+#tngDebug .stat-label{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:4px}
+#tngDebug .stat-val{font-size:20px;font-weight:700;color:var(--accent);font-family:monospace;letter-spacing:.5px}
+/* Symlink verification stats */
+#tngDebug .verification-stats{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:14px 16px;display:grid;grid-template-columns:1fr 1fr;gap:12px 20px}
+#tngDebug .stats-item{display:flex;flex-direction:column;gap:4px}
+#tngDebug .stats-label{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-weight:600}
+#tngDebug .stats-value{font-size:20px;font-weight:700;color:var(--accent);font-family:monospace;letter-spacing:.5px}
+
+/* Status badge */
+#tngDebug .status-badge{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:5px;font-size:12px;font-weight:600}
+#tngDebug .badge-green{background:#14532d;color:#4ade80}
+#tngDebug .badge-red{background:#7f1d1d;color:#fca5a5}
+#tngDebug .badge-orange{background:#7c2d12;color:#fb923c}
+
+/* Token card */
+#tngDebug .token-card{background:var(--surface2);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+#tngDebug .token-card-hdr{padding:5px 12px;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);color:var(--text)}
+#tngDebug .token-card-body{padding:10px 12px;display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--text2)}
+#tngDebug .token-detail-label{color:var(--text2)}
+#tngDebug .token-username strong{color:var(--text);font-weight:600}
+#tngDebug .token-username{color:var(--text2) !important;border-bottom:none !important;padding:0 !important;}
+#tngDebug .token-sep{border:none !important;border-top:1px solid var(--border) !important;margin:4px 0 !important;padding:0 !important;}
+#tngDebug .token-code{background:var(--surface3);border:1px solid var(--border2);border-radius:4px;padding:6px 10px;font-size:11px;font-family:monospace;color:var(--text2)}
+
+/* Rate limit */
+#tngDebug .rl-item{padding:10px 0;border-bottom:1px solid var(--border)}
+#tngDebug .rl-item:last-child{border-bottom:none}
+#tngDebug .rl-domain{font-size:12px;font-weight:500;color:var(--text);margin-bottom:5px}
+#tngDebug .rl-bar-row{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+#tngDebug .rl-bar-bg{flex:1;height:4px;background:var(--surface3);border-radius:2px;overflow:hidden}
+#tngDebug .rl-bar-fill{height:100%;border-radius:2px;transition:width .3s}
+#tngDebug .rl-bar-fill.low{background:var(--green)}
+#tngDebug .rl-bar-fill.mid{background:var(--yellow)}
+#tngDebug .rl-bar-fill.high{background:var(--red)}
+#tngDebug .rl-text{font-size:10px;color:var(--text3);font-family:monospace;white-space:nowrap}
+
+/* Checklist */
+#tngDebug .check-list{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:6px;overflow-y:auto}
+#tngDebug .check-list::-webkit-scrollbar{width:4px}
+#tngDebug .check-list::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+/* check-list inside cache-files-container loses its own bg/border (parent already has them) */
+#tngDebug .cache-files-container .check-list{background:none;border:none;border-radius:0;padding:0;margin:0}
+#tngDebug .check-section-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:4px 0 2px;border-top:1px solid var(--border);margin-top:4px}
+#tngDebug .check-section-label:first-child{border-top:none;margin-top:0}
+
+/* Empty state */
+#tngDebug .empty-state{font-size:12px;color:var(--text3);padding:8px 0;font-style:italic}
+
+/* ── Classic element resets inside tangerine cards ── */
+
+/* debug_item: strip the classic box, become a transparent flex column */
+#tngDebug .card .debug_item{
+  background:none !important;border:none !important;padding:0 !important;margin:0 !important;
+  box-shadow:none !important;border-radius:0 !important;overflow:visible !important;
+  display:flex !important;flex-direction:column !important;gap:12px !important;
+  font-size:13px;color:var(--text);font-family:var(--sans);
+}
+#tngDebug .card .debug_item::before,
+#tngDebug .card .debug_item::after{
+  display:none !important;content:none !important;background:none !important;
+}
+
+/* forms inside cards: flex column with 12px between fields/buttons/checkboxes */
+#tngDebug .card form{
+  display:flex !important;flex-direction:column !important;gap:12px !important;
+  margin:0 !important;padding:0 !important;
+}
+/* form-group / .field: tight 5px label→input gap */
+#tngDebug .card .form-group,
+#tngDebug .card .field{
+  display:flex !important;flex-direction:column !important;gap:5px !important;
+  margin:0 !important;padding:0 !important;
+}
+
+/* Labels: field-label style */
+#tngDebug .card label:not(.check-row){
+  font-size:12px !important;color:var(--text2) !important;font-weight:500 !important;
+  font-family:var(--sans) !important;margin:0 !important;padding:0 !important;
+  background:none !important;border:none !important;display:block !important;
+}
+
+/* Inline hint/note text */
+#tngDebug .card small,
+#tngDebug .card .hint,
+#tngDebug .card .note{
+  font-size:12px !important;color:var(--text3) !important;line-height:1.5 !important;
+  font-family:var(--sans) !important;margin:0 !important;
+}
+
+/* Bare <p> tags used for result output or spacing — match card-desc */
+#tngDebug .card p:not(.description){
+  font-size:12px !important;color:var(--text2) !important;line-height:1.6 !important;
+  margin:0 !important;font-family:var(--sans) !important;
+}
+
+/* <h4> section headers inside cards (Plex labels, queue sections etc.) */
+#tngDebug .card h4{
+  font-size:12px !important;font-weight:600 !important;color:var(--text2) !important;
+  margin:0 !important;padding:0 !important;border:none !important;
+  font-family:var(--sans) !important;
+}
+
+/* Results / progress areas — hidden when empty, shown by JS when populated */
+#tngDebug .card .results-area,
+#tngDebug .card .progress-area{
+  background:var(--surface2) !important;border:1px solid var(--border) !important;
+  border-radius:5px !important;padding:10px !important;
+  font-size:12px !important;color:var(--text2) !important;
+  font-family:var(--sans) !important;line-height:1.6 !important;
+  margin:0 !important;
+}
+#tngDebug .card .results-area:empty,
+#tngDebug .card .progress-area:empty{ display:none !important; }
+/* Result/status divs not classed as results-area — hide when empty */
+#tngDebug #restoreResults:empty,
+#tngDebug #cleanupResults:empty,
+#tngDebug #cleanup-watchlist-result:empty,
+#tngDebug #reset-battery-show-cache-result:empty{ display:none !important; }
+#tngDebug #restoreResults,#tngDebug #cleanupResults,
+#tngDebug #cleanup-watchlist-result,#tngDebug #reset-battery-show-cache-result{
+  background:var(--surface2);border:1px solid var(--border);border-radius:5px;
+  padding:10px;font-size:12px;color:var(--text2);font-family:var(--sans);line-height:1.6;
+}
+#tngDebug .card .queue-items-container,
+#tngDebug .card .cache-files-container,
+#tngDebug .card .verification-queue-container{
+  background:var(--surface2) !important;border:1px solid var(--border) !important;
+  border-radius:5px !important;padding:10px !important;
+  font-size:12px !important;color:var(--text2) !important;
+  font-family:var(--sans) !important;line-height:1.6 !important;
+  margin:0 !important;
+}
+
+/* Dividers */
+#tngDebug .card hr{border:none !important;border-top:1px solid var(--border) !important;/*margin:0 !important;*/}
+
+/* Select-all row */
+#tngDebug .card .select-all-container{display:flex !important;gap:6px !important;margin:0 !important;}
+
+/* Cache files header + select-all outside the list box */
+#tngDebug .tng-cache-header{font-size:12px;font-weight:500;color:var(--text2);margin:0 !important;}
+#tngDebug .tng-cache-selall{display:flex;gap:6px;}
+#tngDebug .tng-cache-selall .btn{flex:1}
+/* cache-file-item checkboxes — same as check-row */
+#tngDebug .card .cache-file-item{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text2);line-height:1.5}
+#tngDebug .card .cache-file-item input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;flex-shrink:0;margin-top:2px;cursor:pointer}
+#tngDebug .card .cache-file-item label{font-size:12px !important;color:var(--text2) !important;font-weight:400 !important;cursor:pointer}
+
+/* Plex labels sub-sections — reset classic padding/bg */
+#tngDebug .card .label-items{display:flex !important;flex-direction:column !important;gap:8px !important;padding:0 !important;background:none !important;border-radius:0 !important;}
+#tngDebug .card .tng-label-bot h4{display:none !important;}
+#tngDebug #orphaned-cleanup-btn{display:none !important;}
+#tngDebug .card .label-items h4{font-size:11px;font-weight:600;color:var(--text2);margin:0 !important;padding:0 !important;}
+#tngDebug .tng-labels-bot-row{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;border-top:1px solid var(--border2);padding-top:12px;margin-top:4px}
+#tngDebug .card .label-items>.description,#tngDebug .card .label-items>p{display:none !important;}
+/* result/status divs inside label-items — allow p/li/ul inside them to show */
+#tngDebug .card .label-items [id$="-results"] p,
+#tngDebug .card .label-items [id$="-results"] li,
+#tngDebug .card .label-items [id$="-results"] ul,
+#tngDebug .card .label-items [id$="-preview"] p,
+#tngDebug .card .label-items [id$="-preview"] li,
+#tngDebug .card .label-items [id$="-preview"] ul,
+#tngDebug .card .label-items [id$="-status"] p,
+#tngDebug .card .label-items [id$="-status"] li,
+#tngDebug .card .label-items [id$="-status"] ul{display:revert !important;}
+#tngDebug .card .label-items [id$="-results"]:not(:empty),
+#tngDebug .card .label-items [id$="-preview"]:not(:empty),
+#tngDebug .card .label-items [id$="-status"]:not(:empty){display:block !important;font-size:12px;color:var(--text2);margin-top:4px;}
+/* Plex Labels inner grid — 3 columns */
+#tngDebug .tng-labels-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+
+/* Queue/cache inner container boxes */
+#tngDebug .card .queue-items-container,
+#tngDebug .card .cache-files-container{
+  background:var(--surface2) !important;border:1px solid var(--border) !important;
+  border-radius:6px !important;padding:10px !important;
+  display:flex !important;flex-direction:column !important;gap:8px !important;
+  margin:0 !important;
+}
+#tngDebug .card #queue_items{font-size:12px;color:var(--text3)}
+
+/* ── Rate limit — bars injected by transformRateLimitContent() ── */
+#tngDebug #rate-limit-loading{font-size:12px;color:var(--text3);font-style:italic}
+#tngDebug .rl-domain-header{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px}
+#tngDebug #rate-limit-content{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px}
+#tngDebug #rate-limit-content h4{display:none !important;}
+#tngDebug .domain-rate-limit{padding:8px 0;border-bottom:1px solid var(--border)}
+#tngDebug .domain-rate-limit:last-child{border-bottom:none;padding-bottom:0}
+#tngDebug .domain-rate-limit h5,#tngDebug .rl-domain{font-size:12px;font-weight:500;color:var(--text);margin:0 0 5px;font-family:var(--sans)}
+
+/* ── Plex tokens — token-card per user ── */
+#tngDebug .token-status-container{display:flex;flex-direction:column;gap:8px}
+#tngDebug .token-status{background:var(--surface2);border:1px solid var(--border);border-radius:6px;overflow:hidden}
+#tngDebug .token-user{padding:10px 12px;font-size:13px;font-weight:600;border-bottom:1px solid var(--border);color:var(--text)}
+#tngDebug .token-details{padding:12px;display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--text2)}
+#tngDebug .token-validity{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:5px;font-size:12px;font-weight:600;width:fit-content}
+#tngDebug .token-validity.valid{background:#14532d;color:#4ade80}
+#tngDebug .token-validity.invalid{background:#7f1d1d;color:#fca5a5}
+#tngDebug .token-expiry,#tngDebug .token-last-refresh{font-size:12px !important;color:var(--text2) !important;border-bottom:none !important;padding:0 !important;}
+#tngDebug .token-last-checked{font-size:11px !important;color:var(--text3) !important;border-bottom:none !important;padding:0 !important;}
+#tngDebug .token-access,#tngDebug .token-refresh{font-size:11px !important;font-family:monospace !important;color:var(--text2) !important;background:var(--surface2) !important;border:1px solid var(--border2) !important;border-radius:4px !important;padding:6px 10px !important;margin:0 !important;}
+
+/* ── Trakt token — status-badge + token-code ── */
+#tngDebug #trakt-token-status .token-details{padding:0;background:none;border:none;gap:6px}
+#tngDebug #trakt-token-status .token-details > div{font-size:12px;color:var(--text)}
+#tngDebug .token-access,#tngDebug .token-refresh{
+  background:var(--surface3);border:1px solid var(--border2);border-radius:4px;
+  padding:6px 10px;font-size:11px;font-family:monospace;color:var(--text2);display:block
+}
+
+/* select option colors */
+#tngDebug select option{background:var(--surface2);color:var(--text)}
+
+/* Toast */
+#tngDebug-toast{position:fixed;bottom:1.25rem;right:1.25rem;background:var(--surface);border:1px solid var(--border2);border-radius:7px;padding:9px 14px;font-size:12px;color:var(--text);z-index:999;opacity:0;transform:translateY(6px);transition:all .2s;pointer-events:none;display:flex;align-items:center;gap:7px;--surface:#1a1a1a;--border2:#3d3d3d;--text:#e0e0e0}
+#tngDebug-toast.show{opacity:1;transform:translateY(0)}
+#tngDebug-toast .toast-dot{width:6px;height:6px;border-radius:50%}
+
+@media(max-width:800px){
+  #tngDebug .grid{grid-template-columns:1fr !important}
+  #tngDebug .grid .card{grid-column:1 !important;grid-row:auto !important}
+  #tngDebug .tng-labels-grid{grid-template-columns:1fr !important}
+  #tngDebug .tng-labels-bot-row{grid-template-columns:1fr !important}
+}
+</style>
+
+<!-- ── Tangerine Debug Functions ── -->
+<div id="tngDebug">
+  <div class="tdb-title">Debug Functions</div>
+
+  {% if environment_mode != 'full' %}
+  <div class="tdb-warn">
+    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:15px;height:15px;flex-shrink:0"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+    You are currently in a restricted environment mode. Avoid adjusting the Debug Functions content.
+  </div>
+  {% endif %}
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="tabs" id="tdbTabs">
+      <button class="tab active" data-cat="all">All</button>
+      <button class="tab" data-cat="database">Database</button>
+      <button class="tab" data-cat="library">Library</button>
+      <button class="tab" data-cat="symlink">Symlink</button>
+      <button class="tab" data-cat="monitoring">Monitoring</button>
+    </div>
+    <div class="search-wrap">
+      <span class="search-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4"/><path d="M11 11l3 3"/></svg></span>
+      <input class="search-input" type="text" placeholder="Filter functions…" id="tdbSearch">
+    </div>
+  </div>
+
+  <!-- Single grid — all cards live here; tabs filter by data-cat -->
+  <div class="grid" id="tdbMainGrid"></div>
+</div>
+
+<div id="tngDebug-toast"><span class="toast-dot" id="tdbToastDot"></span><span id="tdbToastMsg"></span></div>
+
+<script>
+(function() {
+  /*
+   * Tangerine debug skin — MOVE strategy (single grid, tab filtering).
+   *
+   * All .debug_item nodes are moved (not cloned) into .card wrappers inside a
+   * single #tdbMainGrid.  Tabs filter by toggling card visibility via data-cat.
+   * No cloning → no duplicate IDs, no dead event-listeners.
+   */
+
+  const CARD_CATS = {
+    'Bulk Delete from Database':'database',
+    'Delete Battery Database Files':'database',
+    'Reset Battery Show Status Cache':'database',
+    'Delete Database':'database',
+    'Run Task Manually':'database',
+    'Test Plex Item Lookup':'database',
+    'Fix Missing IMDb ID':'database',
+    'Remove Duplicate Database Items':'database',
+    'Restore Database from Backup':'database',
+    'Clean Up Old Database Files':'database',
+    'Manage Duplicate Versions':'database',
+    'Fix Episode Numbers':'database',
+    'Get Collected from Library (Plex)':'library',
+    'Cleanup My Plex Watchlist and Other Plex Watchlists':'library',
+    'Get Wanted Content':'library',
+    'Version Propagator':'library',
+    'Bulk Queue Actions':'library',
+    'Manage Cache Files':'library',
+    'Refresh Release Dates':'library',
+    'Direct Emby/Jellyfin Scan':'library',
+    'Move Item ID to Upgrading':'library',
+    'Plex Labels Management':'library',
+    'Symlink Verification Queue':'symlink',
+    'Convert Library to Symlinks':'symlink',
+    'Symlink Library Recovery':'symlink',
+    'Riven Symlink Library Recovery':'symlink',
+    'Fix Zurg Symlinks':'symlink',
+    'Modify Symlink Base Paths':'symlink',
+    'Resync Symlinks with New Settings':'symlink',
+    'Rclone Mount to Symlinks':'symlink',
+    'Current Rate Limit State':'monitoring',
+    'Plex Token Status':'monitoring',
+    'Personal Trakt Token Status':'monitoring',
+    'Torrent Tracking':'monitoring',
+    'Send Test Notification':'monitoring',
+    'Download Logs':'monitoring',
+    'API Summary':'monitoring',
+    'Real Time API':'monitoring',
+  };
+
+  /*
+   * Button map: text (lowercased, trimmed) → { cls, icon }
+   * Matches the redesign file exactly.
+   */
+  const BTN_MAP = {
+    'delete':                      { cls:'btn-outline-red',     icon:'fa-solid fa-trash' },
+    'delete battery db files':     { cls:'btn-outline-red',     icon:'fa-solid fa-database' },
+    'reset show cache':            { cls:'btn-outline-orange',  icon:'fa-solid fa-rotate' },
+    'delete database':             { cls:'btn-outline-red',     icon:'fa-solid fa-bomb' },
+    'run task':                    { cls:'btn-orange',          icon:'fa-solid fa-play' },
+    'test lookup':                 { cls:'btn-outline-blue',    icon:'fa-solid fa-magnifying-glass' },
+    'scan for old databases':      { cls:'btn-outline-orange',  icon:'fa-solid fa-magnifying-glass' },
+    'load available backups':      { cls:'btn-outline-orange',  icon:'fa-solid fa-folder-open' },
+    'run cleanup':                 { cls:'btn-orange',          icon:'' },
+    'fix episode numbers':         { cls:'btn-orange',          icon:'fa-solid fa-list-ol' },
+    'get plex collected':          { cls:'btn-orange',          icon:'' },
+    'run':                         { cls:'btn-orange',          icon:'' },
+    'get wanted':                  { cls:'btn-orange',          icon:'' },
+    'propagate version':           { cls:'btn-orange',          icon:'' },
+    'apply action':                { cls:'btn-orange',          icon:'' },
+    'delete selected cache files': { cls:'btn-outline-red',     icon:'fa-solid fa-trash-can' },
+    'refresh release dates':       { cls:'btn-orange',          icon:'fa-solid fa-calendar-days' },
+    'run emby/jellyfin scan':      { cls:'btn-orange',          icon:'' },
+    'move to upgrading':           { cls:'btn-outline-orange',  icon:'' },
+    'manage manual blacklist':     { cls:'btn-outline-red',     icon:'' },
+    'add to blacklist':            { cls:'btn-outline-red',     icon:'' },
+    'search':                      { cls:'btn-orange',          icon:'fa-solid fa-magnifying-glass' },
+    'preview':                     { cls:'btn-outline-orange',  icon:'fa-solid fa-eye' },
+    'apply labels':                { cls:'btn-orange',          icon:'' },
+    'remove label':                { cls:'btn-outline-red',     icon:'' },
+    'find orphaned labels':        { cls:'btn-outline-orange',  icon:'fa-solid fa-magnifying-glass' },
+    'cleanup':                     { cls:'btn-outline-red',     icon:'' },
+    'sync all labels':             { cls:'btn-outline-orange',  icon:'fa-solid fa-rotate' },
+    'backfill resolution':         { cls:'btn-outline-orange',  icon:'' },
+    'refresh queue':               { cls:'btn-outline-orange',  icon:'fa-solid fa-rotate' },
+    'verification scan':           { cls:'btn-orange',          icon:'' },
+    'convert to symlinks':         { cls:'btn-outline-red',     icon:'fa-solid fa-link' },
+    'recover symlink library':     { cls:'btn-orange',          icon:'' },
+    'recover riven library':       { cls:'btn-orange',          icon:'' },
+    'fix zurg symlinks':           { cls:'btn-outline-orange',  icon:'' },
+    'update base paths':           { cls:'btn-outline-orange',  icon:'' },
+    'resync symlinks':             { cls:'btn-outline-orange',  icon:'fa-solid fa-rotate' },
+    'refresh rate limits':         { cls:'btn-outline-orange',  icon:'fa-solid fa-rotate' },
+    'refresh tokens':              { cls:'btn-orange',          icon:'fa-solid fa-rotate' },
+    'refresh status':              { cls:'btn-outline-orange',  icon:'fa-solid fa-rotate' },
+    'view torrent history':        { cls:'btn-outline-blue',    icon:'fa-solid fa-clock-rotate-left' },
+    'download logs':               { cls:'btn-outline-blue',    icon:'fa-solid fa-download' },
+    'send test notification':      { cls:'btn-outline-orange',  icon:'fa-solid fa-bell' },
+    'select all':                  { cls:'btn-outline-orange btn-sm', icon:'' },
+    'unselect all':                { cls:'btn-outline-orange btn-sm', icon:'' },
+  };
+
+  /* Apply redesign classes to a live element in-place (no cloning). */
+  function restyleItem(item) {
+    item.querySelectorAll('.form-group').forEach(n => {
+      n.className = 'field';
+      const lbl = n.querySelector(':scope > label');
+      if (lbl && !lbl.querySelector('input[type=checkbox]')) lbl.className = 'field-label';
+    });
+    item.querySelectorAll('input[type=text],input[type=number],input[type=password],input[type=email]').forEach(n => {
+      n.className = 'finput';
+    });
+    item.querySelectorAll('select').forEach(n => {
+      n.className = n.multiple ? 'fselect fselect-multi' : 'fselect';
+    });
+    item.querySelectorAll('label').forEach(n => {
+      if (n.querySelector('input[type=checkbox]')) n.className = 'check-row';
+    });
+    item.querySelectorAll('button, a.btn').forEach(n => {
+      if (n.classList.contains('episode-modal-close') || n.classList.contains('plex-labels-help-btn')) return;
+
+      const txt = n.textContent.trim().toLowerCase();
+      const map = BTN_MAP[txt];
+
+      if (map) {
+        n.className = 'btn ' + map.cls;
+        if (map.icon && !n.querySelector('i')) {
+          const ic = document.createElement('i');
+          ic.className = map.icon;
+          n.prepend(ic);
+        }
+      } else {
+        const c = n.className || '';
+        if (/btn-danger/.test(c))                     n.className = 'btn btn-outline-red';
+        else if (/btn-warning/.test(c))               n.className = 'btn btn-outline-orange';
+        else if (/btn-info|btn-primary/.test(c))      n.className = 'btn btn-outline-blue';
+        else if (/btn-secondary|btn-outline/.test(c)) n.className = 'btn btn-outline-orange';
+        else                                           n.className = 'btn btn-orange';
+      }
+    });
+
+    /* ── Bulk Queue Actions: queue-items-container inner layout ── */
+    const qContainer = item.querySelector('#queue_items_container.queue-items-container');
+    if (qContainer) {
+      /* Restyle the h4 header */
+      const qh4 = qContainer.querySelector('h4');
+      if (qh4) { qh4.style.cssText = 'font-size:12px;font-weight:500;color:var(--text2);margin-bottom:8px'; }
+      /* Select-all buttons get flex:1 */
+      const selCont = qContainer.querySelector('.select-all-container');
+      if (selCont) {
+        selCont.style.cssText = 'display:flex;gap:6px;margin-bottom:8px';
+        selCont.querySelectorAll('button').forEach(b => {
+          b.className = 'btn btn-outline-orange btn-sm';
+          b.style.flex = '1';
+        });
+      }
+    }
+
+    /* ── Manage Cache Files: redesign layout ── */
+    const cacheForm = item.querySelector('#manage-cache-files-form');
+    const cacheFilesContainer = item.querySelector('#cache_files_container.cache-files-container');
+    if (cacheFilesContainer && cacheForm) {
+      /* Pull h4 and select-all OUT of the container, place them above it on the form */
+      const cfh4 = cacheFilesContainer.querySelector('h4');
+      const cfSelCont = cacheFilesContainer.querySelector('.select-all-container');
+
+      if (cfh4) {
+        cfh4.className = 'tng-cache-header';
+        cacheForm.insertBefore(cfh4, cacheFilesContainer);
+      }
+      if (cfSelCont) {
+        cfSelCont.className = 'tng-cache-selall';
+        cfSelCont.querySelectorAll('button').forEach(b => {
+          b.className = 'btn btn-outline-orange';
+        });
+        cacheForm.insertBefore(cfSelCont, cacheFilesContainer);
+      }
+
+      /* Turn container into just the check-list box */
+      cacheFilesContainer.className = 'check-list';
+      cacheFilesContainer.removeAttribute('style');
+
+      const cfList = cacheFilesContainer.querySelector('#cache_files_list');
+      if (cfList) {
+        /* Add "Adaptive Lists" label before the first item */
+        const firstItem = cfList.querySelector('.cache-file-item');
+        if (firstItem) {
+          const firstLabel = document.createElement('div');
+          firstLabel.className = 'check-section-label';
+          firstLabel.textContent = 'Content Sources';
+          cfList.insertBefore(firstLabel, firstItem);
+        }
+
+        /* hr + next <p> → check-section-label */
+        cfList.querySelectorAll('hr').forEach(hr => {
+          const next = hr.nextElementSibling;
+          const div = document.createElement('div');
+          div.className = 'check-section-label';
+          if (next && next.tagName === 'P') {
+            div.textContent = next.textContent.replace(':', '').trim();
+            cfList.insertBefore(div, hr);
+            hr.remove();
+            next.remove();
+          } else {
+            div.textContent = 'Other Cache Files';
+            cfList.insertBefore(div, hr);
+            hr.remove();
+          }
+        });
+
+        /* cache-file-item → check-row label */
+        cfList.querySelectorAll('.cache-file-item').forEach(n => {
+          const inp = n.querySelector('input[type=checkbox]');
+          const lbl = n.querySelector('label');
+          if (inp && lbl) {
+            const row = document.createElement('label');
+            row.className = 'check-row';
+            row.setAttribute('for', inp.id || '');
+            if (n.style.opacity) row.style.opacity = n.style.opacity;
+            row.appendChild(inp);
+            row.appendChild(document.createTextNode(' ' + lbl.textContent.trim()));
+            n.replaceWith(row);
+          }
+        });
+
+        /* Flatten: move cfList children directly into cacheFilesContainer */
+        while (cfList.firstChild) cacheFilesContainer.appendChild(cfList.firstChild);
+        cfList.remove();
+      }
+    }
+
+    /* ── Plex Labels Management: CSS-only 2-col grid, all sections kept intact ── */
+    const labelsOuterGrid = item.querySelector('[style*="grid-template-columns"][style*="auto-fit"]');
+    if (labelsOuterGrid) {
+      /* Replace outer grid style with our class — no DOM surgery */
+      labelsOuterGrid.className = 'tng-labels-grid';
+      labelsOuterGrid.removeAttribute('style');
+
+      const botRow = document.createElement('div');
+      botRow.className = 'tng-labels-bot-row';
+
+      /* snapshot before any DOM moves */
+      const labelSections = Array.from(labelsOuterGrid.querySelectorAll('.label-items'));
+      labelSections.forEach(s => {
+        /* restyle buttons in-place — no DOM removal, all onclick handlers preserved */
+        s.querySelectorAll('button').forEach(btn => {
+          const t = btn.textContent.trim().toLowerCase();
+          if (/search/.test(t))             btn.className = 'btn btn-orange';
+          else if (/preview/.test(t))       btn.className = 'btn btn-outline-orange';
+          else if (/apply labels/.test(t))  btn.className = 'btn btn-orange';
+          else if (/remove label/.test(t))  btn.className = 'btn btn-outline-red';
+          else if (/find orphaned/.test(t)) btn.className = 'btn btn-outline-orange';
+          else if (/cleanup/.test(t))       btn.className = 'btn btn-outline-red';
+          else if (/sync all/.test(t))      btn.className = 'btn btn-outline-orange';
+          else if (/backfill/.test(t))      btn.className = 'btn btn-outline-orange';
+          else                              btn.className = 'btn btn-orange';
+          btn.removeAttribute('style');
+        });
+        /* hide empty result/status divs */
+        s.querySelectorAll('div[id$="-preview"],div[id$="-results"],div[id$="-status"]').forEach(d => {
+          if (!d.textContent.trim()) d.style.display = 'none';
+        });
+        /* move bottom 3 sections into botRow */
+        const h = (s.querySelector('h4') || {}).textContent || '';
+        if (/orphaned|sync|backfill/i.test(h)) {
+          s.classList.add('tng-label-bot');
+          botRow.appendChild(s);
+        }
+      });
+
+      if (botRow.children.length > 0) labelsOuterGrid.appendChild(botRow);
+    }
+
+    /* ── Fallback select-all-container (for any not caught above) ── */
+    item.querySelectorAll('.select-all-container').forEach(n => {
+      if (!n.style.cssText) {
+        n.style.cssText = 'display:flex;gap:6px';
+        n.querySelectorAll('button').forEach(b => { b.className = 'btn btn-outline-orange btn-sm'; });
+      }
+    });
+
+    /* Strip remaining inline styles — CSS gap handles spacing */
+    item.querySelectorAll('[style]').forEach(n => {
+      const s = n.getAttribute('style') || '';
+      const isHidden = /display\s*:\s*none/.test(s);
+      const isProtected =
+        n.classList.contains('results-area') || n.classList.contains('progress-area') ||
+        n.classList.contains('queue-items-container') || n.classList.contains('cache-files-container') ||
+        n.classList.contains('verification-queue-container') || n.classList.contains('select-all-container') ||
+        n.classList.contains('tng-cache-selall') ||
+        n.id === 'target_queue_container' || n.id === 'rate-limit-content' ||
+        n.id === 'bulk-apply-preview' || n.id === 'bulk-remove-preview' ||
+        n.id === 'orphaned-labels-results' || n.id === 'sync-labels-status' ||
+        n.id === 'backfill-resolution-status' || n.id === 'label-search-results' ||
+        n.id === 'queue_items_container' || n.id === 'restoreResults' || n.id === 'cleanupResults' ||
+        n.id === 'cleanup-watchlist-result' || n.id === 'reset-battery-show-cache-result' ||
+        n.id === 'remove-duplicates-results' || n.id === 'fix-imdb-results' || n.id === 'test-lookup-results' ||
+        n.id === 'fix-zurg-results' || n.id === 'modify-symlink-results' || n.id === 'resync-symlinks-results' ||
+        n.id === 'rclone-scan-progress' || n.id === 'convert-to-symlinks-progress' ||
+        n.id === 'upgrades-progress' || n.id === 'episode-fix-progress' ||
+        (n.style.display === 'grid') ||
+        (n.tagName === 'BUTTON' && n.style.fontSize === '11px') ||
+        n.classList.contains('label-items');
+      if (isHidden) { n.style.cssText = 'display:none'; return; }
+      if (!isProtected) n.removeAttribute('style');
+    });
+  }
+
+  function buildCards() {
+    const mainGrid = document.getElementById('tdbMainGrid');
+    if (!mainGrid) return;
+
+    /* Snapshot the list before we start moving nodes */
+    const items = Array.from(document.querySelectorAll('.debug_item'));
+
+    const SKIP_CARDS = new Set(['Manual Blacklist', 'Refresh Release Dates', 'Torrent Tracking']);
+
+    items.forEach(item => {
+      const h3 = item.querySelector('h3');
+      if (!h3) return;
+      const title = h3.textContent.trim();
+      if (SKIP_CARDS.has(title)) return;
+      const cat = CARD_CATS[title] || 'database';
+
+      const descEl = item.querySelector('p.description');
+      let descHtml = '';
+      if (descEl) { descHtml = `<div class="card-desc">${descEl.innerHTML}</div>`; descEl.remove(); }
+
+      h3.style.display = 'none';
+
+      /* For Plex Labels: extract help button to place in card-title row */
+      const helpBtn = item.querySelector('.plex-labels-help-btn');
+
+      restyleItem(item);
+
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.dataset.cat = cat;
+      card.dataset.title = title.toLowerCase();
+      const titleDiv = document.createElement('div');
+      titleDiv.className = 'card-title';
+      titleDiv.textContent = title;
+      if (helpBtn) titleDiv.appendChild(helpBtn);
+      card.appendChild(titleDiv);
+      if (descHtml) card.insertAdjacentHTML('beforeend', descHtml);
+      card.appendChild(item); /* MOVE — preserves event listeners */
+      mainGrid.appendChild(card);
+    });
+  }
+
+  let currentCat = 'all';
+  let currentQ = '';
+
+  function applyFilter() {
+    document.querySelectorAll('#tdbMainGrid .card').forEach(card => {
+      const catMatch = currentCat === 'all' || card.dataset.cat === currentCat;
+      const qMatch = !currentQ || card.dataset.title.includes(currentQ) || card.textContent.toLowerCase().includes(currentQ);
+      card.style.display = (catMatch && qMatch) ? '' : 'none';
+    });
+  }
+
+  function tdbSetTab(btn) {
+    document.querySelectorAll('#tngDebug .tab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    currentCat = btn.dataset.cat || 'all';
+    localStorage.setItem('tdbCat', currentCat);
+    applyFilter();
+  }
+
+  /* ── Post-render transformers for JS-injected monitoring content ── */
+
+  /*
+   * Rate Limit: The classic JS populates #rate-limit-content with .domain-rate-limit items.
+   * Each item has an h5 (domain name) and <p> tags like "5-minute: X / Y requests".
+   * Transform to: domain header (.rl-domain) + bar rows (.rl-bar-row) inside .rl-item wrappers.
+   * Also ensure the "Rate Limits by Domain:" header exists above the box.
+   */
+  function transformRateLimitContent(rlContentEl) {
+    /* Add the domain header label above the box if missing */
+    const rlInfo = rlContentEl.parentElement;
+    if (rlInfo && !rlInfo.querySelector('.rl-domain-header')) {
+      const hdr = document.createElement('div');
+      hdr.className = 'rl-domain-header';
+      hdr.style.cssText = 'font-size:12px;font-weight:600;color:var(--text2);margin-bottom:4px';
+      hdr.textContent = 'Rate Limits by Domain:';
+      rlInfo.insertBefore(hdr, rlContentEl);
+    }
+
+    rlContentEl.querySelectorAll('.domain-rate-limit').forEach(domainItem => {
+      /* Add rl-item class for border-bottom styling */
+      domainItem.classList.add('rl-item');
+
+      /* h5 → .rl-domain */
+      const h5 = domainItem.querySelector('h5');
+      if (h5 && !h5.classList.contains('rl-domain')) {
+        h5.className = 'rl-domain';
+      }
+
+      /* p tags with "5-minute: X / Y" or "hourly: X / Y" → bar rows */
+      domainItem.querySelectorAll('p').forEach(p => {
+        if (p.classList.contains('rl-bar-row')) return; /* already transformed */
+        const m = p.textContent.match(/([\w\-]+):\s*(\d+)\s*\/\s*(\d+)/);
+        if (!m) return;
+        const label = m[1] === '5-minute' ? '5-min' : 'Hourly';
+        const count = parseInt(m[2]), limit = parseInt(m[3]);
+        const pct = limit > 0 ? Math.min(100, Math.round(count / limit * 100)) : 0;
+        const cls = pct < 30 ? 'low' : pct < 70 ? 'mid' : 'high';
+        const row = document.createElement('div');
+        row.className = 'rl-bar-row';
+        row.innerHTML = `<span style="font-size:10px;color:var(--text3);width:36px;flex-shrink:0;font-family:var(--sans)">${label}</span>` +
+          `<div class="rl-bar-bg"><div class="rl-bar-fill ${cls}" style="width:${pct}%"></div></div>` +
+          `<span class="rl-text">${count} / ${limit}</span>`;
+        p.replaceWith(row);
+      });
+    });
+  }
+
+  /*
+   * Plex Token Status: classic JS injects .token-status blocks into .token-status-container.
+   * Each has .token-user (username), .token-details (validity, expiry etc).
+   * Transform .token-status → .token-card with .token-card-hdr and .token-card-body.
+   * Transform .token-validity.valid/invalid → status-badge badge-green/badge-red.
+   */
+  function transformPlexTokenContent(container) {
+    container.querySelectorAll('.token-status').forEach(ts => {
+      if (ts.classList.contains('token-card')) return; /* already done */
+
+      const userEl = ts.querySelector('.token-user');
+      const detailsEl = ts.querySelector('.token-details');
+      if (!userEl || !detailsEl) return;
+
+      ts.classList.add('token-card');
+      userEl.className = 'token-card-hdr';
+      detailsEl.className = 'token-card-body';
+
+      /* .token-validity → status-badge */
+      const validity = detailsEl.querySelector('.token-validity');
+      if (validity) {
+        const isValid = validity.classList.contains('valid');
+        validity.className = 'status-badge ' + (isValid ? 'badge-green' : 'badge-red');
+        validity.style.cssText = '';
+      }
+    });
+  }
+
+  /*
+   * Trakt Token Status: classic JS injects into #trakt-token-status .token-status-container.
+   * Has .token-validity, .token-access, .token-refresh divs.
+   * Transform: validity → status-badge, access/refresh → token-code.
+   */
+  function transformTraktTokenContent(container) {
+    const validity = container.querySelector('.token-validity');
+    if (validity && !validity.classList.contains('status-badge')) {
+      const isValid = validity.classList.contains('valid');
+      validity.className = 'status-badge ' + (isValid ? 'badge-green' : 'badge-orange');
+      validity.style.cssText = '';
+    }
+    container.querySelectorAll('.token-access,.token-refresh').forEach(el => {
+      if (!el.classList.contains('token-code')) el.className += ' token-code';
+      el.style.cssText = '';
+    });
+    /* Wrap all sibling divs with text in a flex column */
+    const details = container.querySelector('.token-details');
+    if (details && !details.classList.contains('tng-styled')) {
+      details.classList.add('tng-styled');
+      details.style.cssText = 'display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--text2)';
+      details.querySelectorAll('[style]').forEach(n => {
+        if (!n.classList.contains('token-code') && !n.classList.contains('status-badge') && n.tagName !== 'SPAN') n.removeAttribute('style');
+      });
+    }
+  }
+
+  function attachMonitoringObservers() {
+    const rlContent = document.getElementById('rate-limit-content');
+    if (rlContent) {
+      new MutationObserver(() => transformRateLimitContent(rlContent))
+        .observe(rlContent, { childList: true, subtree: true });
+      /* Run immediately in case content already loaded */
+      if (rlContent.children.length > 0) transformRateLimitContent(rlContent);
+    }
+
+    /* Plex token: observe the container inside #plex-token-status */
+    const plexContainer = document.querySelector('#plex-token-status .token-status-container');
+    if (plexContainer) {
+      new MutationObserver(() => transformPlexTokenContent(plexContainer))
+        .observe(plexContainer, { childList: true, subtree: true });
+      if (plexContainer.children.length > 0) transformPlexTokenContent(plexContainer);
+    }
+
+    const traktContainer = document.querySelector('#trakt-token-status .token-status-container');
+    if (traktContainer) {
+      new MutationObserver(() => transformTraktTokenContent(traktContainer))
+        .observe(traktContainer, { childList: true, subtree: true });
+      if (traktContainer.children.length > 0) transformTraktTokenContent(traktContainer);
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    if (!document.body.classList.contains('tangerine-theme')) return;
+
+    buildCards();
+    attachMonitoringObservers();
+
+    /* Restore saved tab */
+    const saved = localStorage.getItem('tdbCat');
+    if (saved && saved !== 'all') {
+      const btn = document.querySelector(`#tngDebug .tab[data-cat="${saved}"]`);
+      if (btn) tdbSetTab(btn);
+    }
+
+    document.querySelectorAll('#tngDebug .tab').forEach(btn => {
+      btn.addEventListener('click', () => tdbSetTab(btn));
+    });
+    document.getElementById('tdbSearch').addEventListener('input', function(e) {
+      currentQ = e.target.value.trim().toLowerCase();
+      applyFilter();
+    });
+  });
+})();
+</script>
+
 <div class="toast-container" style="display: none !important;"></div>
 
 <div class="debug-container">    
@@ -31,7 +905,7 @@
             <form action="{{ url_for('debug.bulk_delete_by_imdb') }}" method="POST" id="bulk-delete-form">
                 <div class="form-group">
                     <label for="imdb_id">IMDB or TMDB ID:</label>
-                    <input type="text" id="imdb_id" name="imdb_id" required>
+                    <input type="text" id="imdb_id" name="imdb_id" placeholder="e.g. tt1234567 or 98080" required>
                 </div>
                 <button type="submit">Delete</button>
             </form>
@@ -55,7 +929,7 @@
             <form action="{{ url_for('debug.delete_database') }}" method="POST" id="delete-database-form">
                 <div class="form-group">
                     <label for="confirm_delete">Type DELETE to confirm:</label>
-                    <input type="text" id="confirm_delete" name="confirm_delete" required>
+                    <input type="text" id="confirm_delete" name="confirm_delete" placeholder="DELETE" required>
                 </div>
                 <div class="form-group">
                     <label>
@@ -71,7 +945,8 @@
             <form id="run-task-form">
                 <div class="form-group">
                     <label for="task_select">Select Task:</label>
-                    <select id="task_select" name="task_name">
+                    <input type="text" id="task_select_filter" class="finput" placeholder="Filter tasks..." autocomplete="off">
+                    <select id="task_select" name="task_name" size="1">
                         <!-- Options will be populated dynamically -->
                     </select>
                 </div>
@@ -146,7 +1021,7 @@
             <div class="form-group" style="margin: 15px 0;">
                 <label>
                     <input type="checkbox" id="backupBeforeRestore" checked>
-                    Backup current database before restore (Safety backup will be created as <code>media_items_pre_restore_TIMESTAMP.db</code>)
+                    Backup current database before restore (Safety backup will be created as media_items_pre_restore_TIMESTAMP.db)
                 </label>
             </div>
             <div id="restoreResults" style="margin-top: 15px;"></div>
@@ -247,7 +1122,7 @@
                 <div class="form-group">
                     <label>
                         <input type="checkbox" id="remove_duplicates" name="remove_duplicates">
-                        <strong>Remove Bug-Created Duplicates</strong> (same torrent ID, wrong episode numbers)
+                        Remove Bug-Created Duplicates (same torrent ID, wrong episode numbers)
                     </label>
                 </div>
                 <button type="submit">Fix Episode Numbers</button>
@@ -571,7 +1446,7 @@
             <div style="position: relative;">
                 <h3>Plex Labels Management</h3>
                 <button onclick="showPlexLabelsHelp()" class="plex-labels-help-btn" data-tooltip="View comprehensive help about Plex Labels">
-                    <i class="fas fa-question-circle"></i> Help
+                    <i class="fas fa-question-circle"></i>
                 </button>
             </div>
             <p class="description">
@@ -585,7 +1460,7 @@
                     <p class="description" style="margin-bottom: 10px;">
                         Search for items that have a specific Plex label applied.
                     </p>
-                    <input type="text" id="label-search-input" placeholder="Enter label name">
+                    <input type="text" id="label-search-input" class="finput" placeholder="Enter label name">
                     <button type="button" onclick="searchItemsByLabel()" class="btn"
                             style="padding: 8px 16px; width: 100%;">Search</button>
                     <div id="label-search-results" style="margin-top: 15px; max-height: 300px; overflow-y: auto;"></div>
@@ -597,7 +1472,7 @@
                     <p class="description" style="margin-bottom: 10px;">
                         Apply Plex labels to all existing items from a specific content source. This is useful for retroactively labeling content that was added before labels were configured.
                     </p>
-                    <select id="bulk-apply-source">
+                    <select id="bulk-apply-source" class="fselect">
                         <option value="">Select a content source...</option>
                     </select>
                     <button type="button" onclick="previewBulkApply()" class="btn"
@@ -613,7 +1488,7 @@
                     <p class="description" style="margin-bottom: 10px;">
                         Remove a specific label from all items in the database and Plex.
                     </p>
-                    <input type="text" id="bulk-remove-label-input" placeholder="Enter label name to remove">
+                    <input type="text" id="bulk-remove-label-input" class="finput" placeholder="Enter label name to remove">
                     <button type="button" onclick="previewBulkRemove()" class="btn"
                             style="padding: 8px 16px; width: 100%; margin-bottom: 5px;">Preview</button>
                     <button type="button" onclick="executeBulkRemove()" class="btn"
@@ -721,6 +1596,18 @@
             </form>
         </div>
         -->
+        <div class="debug_item" id="api-summary-card">
+            <h3>API Summary</h3>
+            <p class="description">API call counts grouped by domain and time period.</p>
+            <div id="api-summary-preview"></div>
+            <button id="api-summary-open-btn" class="btn">View Full Summary</button>
+        </div>
+        <div class="debug_item" id="realtime-api-card">
+            <h3>Real Time API</h3>
+            <p class="description">Most recent API calls from the log.</p>
+            <div id="realtime-api-preview"></div>
+            <button id="realtime-api-open-btn" class="btn">View All Calls</button>
+        </div>
         </div>
     </div>
 </div>
@@ -1599,6 +2486,41 @@ if (document.readyState === 'loading') {
                     });
                 }
             })
+            .then(() => {
+                const filter = document.getElementById('task_select_filter');
+                const sel = document.getElementById('task_select');
+                if (!filter || !sel) return;
+                const allOptions = Array.from(sel.options).map(o => ({ value: o.value, text: o.textContent }));
+                filter.addEventListener('input', function() {
+                    const q = this.value.trim().toLowerCase();
+                    sel.innerHTML = '';
+                    const matches = q ? allOptions.filter(o => o.text.toLowerCase().includes(q)) : allOptions;
+                    matches.forEach(o => {
+                        const opt = document.createElement('option');
+                        opt.value = o.value;
+                        opt.textContent = o.text;
+                        sel.appendChild(opt);
+                    });
+                    const newSize = q && matches.length > 0 ? matches.length : 1;
+                    sel.size = newSize;
+                    sel.style.backgroundImage = newSize > 1 ? 'none' : '';
+                    sel.style.paddingRight = newSize > 1 ? '10px' : '';
+                    sel.style.overflowY = newSize > 1 ? 'hidden' : '';
+                });
+                function collapseSelect() {
+                    sel.size = 1;
+                    sel.style.backgroundImage = '';
+                    sel.style.paddingRight = '';
+                    sel.style.overflowY = '';
+                }
+                filter.addEventListener('blur', function() {
+                    setTimeout(collapseSelect, 150);
+                });
+                sel.addEventListener('change', function() {
+                    collapseSelect();
+                    filter.value = '';
+                });
+            })
             .catch(error => console.error('Error fetching available tasks:', error));
 
         // Add event listener for the run task form
@@ -1892,8 +2814,10 @@ if (document.readyState === 'loading') {
                         <span class="token-validity ${status.valid ? 'valid' : 'invalid'}">
                             ${status.valid ? 'Valid' : 'Invalid'}
                         </span>
-                        ${status.username ? `<span class="token-username">Plex Username: ${status.username}</span>` : ''}
+                        <hr class="token-sep">
+                        ${status.username ? `<span class="token-username"><span class="token-detail-label">Plex Username:</span> <strong>${status.username}</strong></span>` : ''}
                         <span class="token-expiry">${expiresText}</span>
+                        <hr class="token-sep">
                         <span class="token-last-checked">${lastCheckedText}</span>
                     </div>
                 `;
@@ -1977,25 +2901,23 @@ if (document.readyState === 'loading') {
                     </div>`;
 
             if (expiresAt) {
-                const timeUntilExpiry = Math.floor((expiresAt - now) / (1000 * 60 * 60)); // hours
+                const timeUntilExpiry = Math.floor((expiresAt - now) / (1000 * 60 * 60));
                 html += `
                     <div class="token-expiry">
-                        Expires: ${expiresAt.toLocaleString()}
-                        (in ${timeUntilExpiry} hours)
+                        Expires: <span style="color:var(--text)">${expiresAt.toLocaleString()}</span> <span style="color:var(--text3)">(in ${timeUntilExpiry} hours)</span>
                     </div>`;
             }
 
             if (lastRefresh) {
-                const timeSinceRefresh = Math.floor((now - lastRefresh) / (1000 * 60)); // minutes
+                const timeSinceRefresh = Math.floor((now - lastRefresh) / (1000 * 60));
                 const hoursAgo = Math.floor(timeSinceRefresh / 60);
                 const minutesAgo = timeSinceRefresh % 60;
-                const timeAgoText = hoursAgo > 0 ? 
-                    `${hoursAgo} hours ${minutesAgo} minutes ago` : 
+                const timeAgoText = hoursAgo > 0 ?
+                    `${hoursAgo} hours ${minutesAgo} minutes ago` :
                     `${minutesAgo} minutes ago`;
                 html += `
                     <div class="token-last-refresh">
-                        Last Refreshed: ${lastRefresh.toLocaleString()}
-                        (${timeAgoText})
+                        Last Refreshed: <span style="color:var(--text)">${lastRefresh.toLocaleString()}</span> <span style="color:var(--text3)">(${timeAgoText})</span>
                     </div>`;
             }
 
@@ -2173,12 +3095,11 @@ if (document.readyState === 'loading') {
         fetchVerificationQueue();
 
         // --- Cache File Management Logic ---
-        const cacheFilesList = document.getElementById('cache_files_list');
         const selectAllCacheBtn = document.getElementById('select_all_cache_btn');
         const unselectAllCacheBtn = document.getElementById('unselect_all_cache_btn');
         const manageCacheFilesForm = document.getElementById('manage-cache-files-form');
 
-        if (cacheFilesList && selectAllCacheBtn && unselectAllCacheBtn) {
+        if (selectAllCacheBtn && unselectAllCacheBtn) {
             selectAllCacheBtn.addEventListener('click', function() {
                 toggleAllCacheCheckboxes(true);
             });
@@ -2189,8 +3110,8 @@ if (document.readyState === 'loading') {
         }
 
         function toggleAllCacheCheckboxes(checked) {
-            if (!cacheFilesList) return;
-            const checkboxes = cacheFilesList.querySelectorAll('input[type="checkbox"]');
+            if (!manageCacheFilesForm) return;
+            const checkboxes = manageCacheFilesForm.querySelectorAll('input[type="checkbox"]');
             checkboxes.forEach(checkbox => {
                 checkbox.checked = checked;
             });
@@ -2199,8 +3120,7 @@ if (document.readyState === 'loading') {
         if (manageCacheFilesForm) {
             manageCacheFilesForm.addEventListener('submit', function(e) {
                 e.preventDefault();
-                if (!cacheFilesList) return;
-                const selectedCheckboxes = cacheFilesList.querySelectorAll('input[name="selected_files"]:checked');
+                const selectedCheckboxes = manageCacheFilesForm.querySelectorAll('input[name="selected_files"]:checked');
                 
                 if (selectedCheckboxes.length === 0) {
                     showPopup({
@@ -2636,7 +3556,7 @@ if (document.readyState === 'loading') {
         // --- Cleanup Results Modal Functions ---
         let lastCleanupResults = null;
 
-        function showCleanupResultsModal(resultsHtml, title = 'Cleanup Results') {
+        window.showCleanupResultsModal = function showCleanupResultsModal(resultsHtml, title = 'Cleanup Results') {
             const modal = document.getElementById('cleanup-results-modal');
             const modalBody = document.getElementById('cleanup-modal-body');
             const modalTitle = document.getElementById('cleanup-modal-title');
@@ -2647,7 +3567,7 @@ if (document.readyState === 'loading') {
             document.body.style.overflow = 'hidden'; // Prevent background scrolling
         }
 
-        function closeCleanupResultsModal() {
+        window.closeCleanupResultsModal = function closeCleanupResultsModal() {
             const modal = document.getElementById('cleanup-results-modal');
             modal.style.display = 'none';
             document.body.style.overflow = ''; // Restore scrolling
@@ -2805,7 +3725,7 @@ if (document.readyState === 'loading') {
                                     data.torrent_duplicates.forEach(dup => {
                                         const correctEps = dup.correct_ids.length > 0 ? `${dup.correct_ids.length} episodes (IDs: ${dup.correct_ids.join(', ')})` : 'None found';
                                         const wrongEps = dup.wrong_ids.length > 0 ? `${dup.wrong_ids.length} episodes (IDs: ${dup.wrong_ids.join(', ')})` : 'None found';
-                                        const status = data.deleted_count > 0 ? '<span style="color: green;">✓ Deleted</span>' : '<span style="color: orange;">Found</span>';
+                                        const status = data.deleted_count > 0 ? '<span style="color:#22c55e;font-weight:600;">✓ Deleted</span>' : '<span style="color:#f59e0b;font-weight:600;">Found</span>';
 
                                         resultsHtml += `<tr>
                                             <td>${dup.torrent_id}</td>
@@ -3031,24 +3951,21 @@ if (document.readyState === 'loading') {
                                 let resultsHtml = '<div class="episode-results-summary">';
                                 const mediaLabel = mediaType === 'show' ? 'shows' : 'movies';
 
-                                // Compact horizontal summary section with responsive layout
-                                resultsHtml += `<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 15px 20px; padding: 12px; background: rgba(255, 255, 255, 0.03); border-radius: 4px; margin-bottom: 15px; font-size: 0.95em;">`;
+                                // Compact horizontal summary section
+                                const statLabel = `color:#aaa;font-size:12px;`;
+                                const statVal = `color:#e0e0e0;font-weight:600;font-size:12px;`;
+                                const divider = `<div style="width:1px;height:16px;background:#333;"></div>`;
+                                resultsHtml += `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding:10px 14px;background:#222;border:1px solid #333;border-radius:6px;margin-bottom:14px;">`;
 
-                                // Groups found
-                                resultsHtml += `<div style="flex: 0 0 auto;"><strong>${data.total_movies} Groups Found</strong></div>`;
-                                resultsHtml += `<div style="border-left: 1px solid #444; height: 20px;"></div>`;
-
-                                // Stats in horizontal row
-                                resultsHtml += `<div style="flex: 0 0 auto;"><strong>${data.dry_run ? 'Would Delete' : 'Deleted'}:</strong> ${data.total_deleted}</div>`;
+                                resultsHtml += `<span style="${statVal}">${data.total_movies} Groups Found</span>${divider}`;
+                                resultsHtml += `<span style="${statLabel}">${data.dry_run ? 'Would Delete' : 'Deleted'}:</span><span style="${statVal}">${data.total_deleted}</span>`;
 
                                 if (data.total_excluded && data.total_excluded > 0) {
-                                    resultsHtml += `<div style="flex: 0 0 auto;"><strong>🛡️ Excluded:</strong> ${data.total_excluded}</div>`;
+                                    resultsHtml += `${divider}<span style="${statLabel}">Excluded:</span><span style="color:#22c55e;font-weight:600;font-size:12px;">${data.total_excluded}</span>`;
                                 }
 
-                                resultsHtml += `<div style="flex: 0 0 auto;"><strong>Keep:</strong> ${data.total_movies}</div>`;
-                                resultsHtml += `<div style="border-left: 1px solid #444; height: 20px;"></div>`;
+                                resultsHtml += `${divider}<span style="${statLabel}">Keep:</span><span style="${statVal}">${data.total_movies}</span>${divider}`;
 
-                                // Action details
                                 let actionText = 'Keep collected, delete blacklisted';
                                 if (data.keep_action === 'keep_blacklisted') {
                                     actionText = 'Keep blacklisted, delete collected';
@@ -3059,11 +3976,9 @@ if (document.readyState === 'loading') {
                                 } else if (data.keep_action === 'keep_best_quality') {
                                     actionText = 'Keep best quality';
                                 }
-                                resultsHtml += `<div style="flex: 0 0 auto;"><strong>Action:</strong> ${actionText}</div>`;
-
-                                resultsHtml += `<div style="flex: 0 0 auto;"><strong>Version:</strong> ${data.version_match === 'all' ? 'Any' : 'Same only'}</div>`;
-
-                                resultsHtml += `<div style="flex: 0 0 auto;"><strong>Time:</strong> ${data.elapsed_time}s</div>`;
+                                resultsHtml += `<span style="${statLabel}">Action:</span><span style="${statVal}">${actionText}</span>${divider}`;
+                                resultsHtml += `<span style="${statLabel}">Version:</span><span style="${statVal}">${data.version_match === 'all' ? 'Any' : 'Same only'}</span>${divider}`;
+                                resultsHtml += `<span style="${statLabel}">Time:</span><span style="${statVal}">${data.elapsed_time}s</span>`;
 
                                 resultsHtml += `</div>`; // Close horizontal stats
 
@@ -3071,24 +3986,26 @@ if (document.readyState === 'loading') {
                                 function getPaginationHTML(page, totalPages) {
                                     if (totalPages <= 1) return '';
 
-                                    let paginationHtml = `<div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; margin: 15px 0; padding: 10px; background: rgba(255, 255, 255, 0.05); border-radius: 4px;">`;
+                                    const btnStyle = `padding:6px 14px;background:#2a2a2a;border:1px solid #3d3d3d;color:#e0e0e0;border-radius:5px;cursor:pointer;font-size:12px;font-family:inherit`;
+                                    const btnDisabledStyle = `padding:6px 14px;background:#1a1a1a;border:1px solid #2a2a2a;color:#555;border-radius:5px;cursor:not-allowed;font-size:12px;font-family:inherit`;
+                                    let paginationHtml = `<div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px;margin:15px 0;padding:10px;background:#222;border:1px solid #2a2a2a;border-radius:6px;">`;
 
                                     // Previous button
-                                    paginationHtml += `<button onclick="renderFailedUpgradesPage(${Math.max(1, page - 1)})" style="padding: 8px 12px; min-width: 80px;" ${page === 1 ? 'disabled' : ''}>Previous</button>`;
+                                    paginationHtml += `<button onclick="renderFailedUpgradesPage(${Math.max(1, page - 1)})" style="${page === 1 ? btnDisabledStyle : btnStyle}" ${page === 1 ? 'disabled' : ''}>Previous</button>`;
 
                                     // Page info and go to page input
-                                    paginationHtml += `<div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;">`;
-                                    paginationHtml += `<span>Page ${page} of ${totalPages}</span>`;
-                                    paginationHtml += `<span style="color: #666;">|</span>`;
-                                    paginationHtml += `<label style="display: flex; align-items: center; gap: 5px;">`;
-                                    paginationHtml += `<span style="white-space: nowrap;">Go to:</span>`;
-                                    paginationHtml += `<input type="number" id="gotoPageInput_${page}" min="1" max="${totalPages}" placeholder="${page}" style="width: 60px; padding: 6px; text-align: center; background: #1a1a1a; border: 1px solid #444; color: white; border-radius: 3px;">`;
-                                    paginationHtml += `<button onclick="const input = document.getElementById('gotoPageInput_${page}'); const pageNum = parseInt(input.value); if (pageNum >= 1 && pageNum <= ${totalPages}) renderFailedUpgradesPage(pageNum);" style="padding: 6px 10px;">Go</button>`;
+                                    paginationHtml += `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;">`;
+                                    paginationHtml += `<span style="color:#aaa;font-size:12px;">Page ${page} of ${totalPages}</span>`;
+                                    paginationHtml += `<span style="color:#444;">|</span>`;
+                                    paginationHtml += `<label style="display:flex;align-items:center;gap:5px;">`;
+                                    paginationHtml += `<span style="white-space:nowrap;font-size:12px;color:#aaa;">Go to:</span>`;
+                                    paginationHtml += `<input type="number" id="gotoPageInput_${page}" min="1" max="${totalPages}" placeholder="${page}" style="width:54px;padding:5px 8px;text-align:center;background:#2a2a2a;border:1px solid #3d3d3d;color:#e0e0e0;border-radius:5px;font-size:12px;">`;
+                                    paginationHtml += `<button onclick="const input = document.getElementById('gotoPageInput_${page}'); const pageNum = parseInt(input.value); if (pageNum >= 1 && pageNum <= ${totalPages}) renderFailedUpgradesPage(pageNum);" style="${btnStyle}">Go</button>`;
                                     paginationHtml += `</label>`;
                                     paginationHtml += `</div>`;
 
                                     // Next button
-                                    paginationHtml += `<button onclick="renderFailedUpgradesPage(${Math.min(totalPages, page + 1)})" style="padding: 8px 12px; min-width: 80px;" ${page === totalPages ? 'disabled' : ''}>Next</button>`;
+                                    paginationHtml += `<button onclick="renderFailedUpgradesPage(${Math.min(totalPages, page + 1)})" style="${page === totalPages ? btnDisabledStyle : btnStyle}" ${page === totalPages ? 'disabled' : ''}>Next</button>`;
 
                                     paginationHtml += `</div>`;
                                     return paginationHtml;
@@ -3105,17 +4022,16 @@ if (document.readyState === 'loading') {
                                     resultsHtml += `<div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; flex-wrap: wrap; margin-bottom: 10px;">`;
 
                                     // Left side: Heading and description
-                                    resultsHtml += `<div style="flex: 1 1 auto; min-width: 300px;">`;
-                                    resultsHtml += `<h4 style="margin: 0 0 5px 0;">Duplicate Groups (showing ${startIdx + 1}-${endIdx} of ${totalGroups}${displaySuffix}):</h4>`;
-                                    resultsHtml += `<p style="font-size: 0.9em; color: #888; margin: 0;"><em>Each row shows one duplicate group with items to keep (✓) and items to delete (✗).</em></p>`;
+                                    resultsHtml += `<div style="flex:1 1 auto;min-width:260px;">`;
+                                    resultsHtml += `<div style="font-size:12px;font-weight:700;color:#e8601c;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;">Duplicate Groups (showing ${startIdx + 1}-${endIdx} of ${totalGroups}${displaySuffix}):</div>`;
+                                    resultsHtml += `<div style="font-size:11px;color:#666;font-style:italic;">Each row shows one duplicate group with items to keep (✓) and items to delete (✗).</div>`;
                                     resultsHtml += `</div>`;
 
-                                    // Right side: Excluded toggle if there are excluded items
                                     if (data.total_excluded && data.total_excluded > 0) {
-                                        resultsHtml += `<label style="flex: 0 0 auto; display: flex; align-items: center; cursor: pointer; user-select: none; background: rgba(76, 175, 80, 0.15); padding: 6px 12px; border-radius: 3px; align-self: center;">`;
+                                        resultsHtml += `<label style="flex:0 0 auto;display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);padding:5px 11px;border-radius:5px;align-self:center;">`;
                                         const checkedAttr = showExcluded ? 'checked' : '';
-                                        resultsHtml += `<input type="checkbox" id="toggleExcludedItems" ${checkedAttr} style="margin-right: 8px; width: 16px; height: 16px; cursor: pointer;">`;
-                                        resultsHtml += `<span style="font-weight: 500; white-space: nowrap;">Show Excluded (${data.total_excluded})</span>`;
+                                        resultsHtml += `<input type="checkbox" id="toggleExcludedItems" ${checkedAttr} style="cursor:pointer;">`;
+                                        resultsHtml += `<span style="font-size:12px;color:#22c55e;font-weight:500;white-space:nowrap;">Show Excluded (${data.total_excluded})</span>`;
                                         resultsHtml += `</label>`;
                                     }
 
@@ -3124,49 +4040,48 @@ if (document.readyState === 'loading') {
                                     // Add pagination at top
                                     resultsHtml += getPaginationHTML(page, totalPages);
 
-                                    resultsHtml += `<table style="width: 100%; margin-top: 10px; border-collapse: collapse; font-size: 0.9em;">`;
-                                    resultsHtml += `<thead><tr style="background: #2a2a2a;"><th style="padding: 8px; text-align: left;">Group #</th><th style="padding: 8px; text-align: left;">Keep (✓)</th><th style="padding: 8px; text-align: left;">Delete (✗)</th></tr></thead><tbody>`;
+                                    resultsHtml += `<table style="width:100%;margin-top:10px;border-collapse:collapse;font-size:12px;">`;
+                                    resultsHtml += `<thead><tr><th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#aaa;border-bottom:1px solid #333;background:#222;">Group #</th><th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#22c55e;border-bottom:1px solid #333;background:#222;">Keep (✓)</th><th style="padding:8px 10px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:#ef4444;border-bottom:1px solid #333;background:#222;">Delete (✗)</th></tr></thead><tbody>`;
 
                                     pageGroups.forEach((group, idx) => {
                                         const groupNum = startIdx + idx + 1;
 
-                                        resultsHtml += `<tr class="duplicate-row" style="border-bottom: 1px solid #333;">`;
-                                        resultsHtml += `<td style="padding: 8px; vertical-align: top;"><strong>${groupNum}</strong></td>`;
+                                        resultsHtml += `<tr style="border-bottom:1px solid #2a2a2a;">`;
+                                        resultsHtml += `<td style="padding:8px 10px;vertical-align:top;color:#aaa;font-weight:600;">${groupNum}</td>`;
 
                                         // Keep items column
-                                        resultsHtml += `<td style="padding: 8px; border-left: 2px solid #4CAF50; background: rgba(76, 175, 80, 0.1);">`;
+                                        resultsHtml += `<td style="padding:8px 10px;border-left:2px solid rgba(34,197,94,.4);background:rgba(34,197,94,.04);vertical-align:top;">`;
                                         group.keep_items.forEach(item => {
                                             const episode = item.season_number ? ` S${item.season_number}E${item.episode_number}` : '';
                                             const scoreDisplay = item.current_score !== undefined && item.current_score !== 'N/A' ? ` | Score: ${typeof item.current_score === 'number' ? item.current_score.toFixed(1) : item.current_score}` : '';
                                             const ghostlistedStatus = item.ghostlisted !== undefined ? (item.ghostlisted ? 'True' : 'False') : 'N/A';
                                             const fileLocation = item.location && item.location !== 'N/A' ? item.location : 'No file location';
-                                            resultsHtml += `<div style="margin-bottom: 8px;"><strong>${item.title}${episode}</strong><br>`;
-                                            resultsHtml += `<small>ID: ${item.id} | State: ${item.state} | Version: ${item.version} | Ghostlisted: ${ghostlistedStatus}${scoreDisplay}</small><br>`;
-                                            resultsHtml += `<small style="color: #aaa; font-size: 0.85em; word-break: break-all;">File: ${fileLocation}</small></div>`;
+                                            resultsHtml += `<div style="margin-bottom:8px;"><span style="font-weight:600;color:#e0e0e0;">${item.title}${episode}</span><br>`;
+                                            resultsHtml += `<span style="color:#aaa;font-size:11px;">ID: ${item.id} | State: ${item.state} | Version: ${item.version} | Ghostlisted: ${ghostlistedStatus}${scoreDisplay}</span><br>`;
+                                            resultsHtml += `<span style="color:#666;font-size:11px;font-family:monospace;word-break:break-all;">File: ${fileLocation}</span></div>`;
                                         });
                                         resultsHtml += `</td>`;
 
                                         // Delete items column
-                                        resultsHtml += `<td style="padding: 8px; border-left: 2px solid #f44336; background: rgba(244, 67, 54, 0.1);">`;
+                                        resultsHtml += `<td style="padding:8px 10px;border-left:2px solid rgba(239,68,68,.4);background:rgba(239,68,68,.04);vertical-align:top;">`;
                                         group.delete_items.forEach(item => {
                                             const episode = item.season_number ? ` S${item.season_number}E${item.episode_number}` : '';
                                             const scoreDisplay = item.current_score !== undefined && item.current_score !== 'N/A' ? ` | Score: ${typeof item.current_score === 'number' ? item.current_score.toFixed(1) : item.current_score}` : '';
                                             const ghostlistedStatus = item.ghostlisted !== undefined ? (item.ghostlisted ? 'True' : 'False') : 'N/A';
                                             const fileLocation = item.location && item.location !== 'N/A' ? item.location : 'No file location';
 
-                                            // Check if item is excluded (green background) or deleted (red background)
                                             const isExcluded = item.action === 'excluded';
-                                            const itemStyle = isExcluded ? 'background: rgba(76, 175, 80, 0.2); padding: 8px; border-radius: 4px; border-left: 3px solid #4CAF50;' : '';
+                                            const itemStyle = isExcluded ? 'background:rgba(34,197,94,.08);padding:7px 9px;border-radius:4px;border-left:2px solid rgba(34,197,94,.4);' : '';
                                             const statusText = isExcluded ? `🛡️ Excluded from deletion (pattern: ${item.excluded_pattern})` : '';
                                             const excludedClass = isExcluded ? ' excluded-item' : '';
 
-                                            resultsHtml += `<div class="duplicate-item${excludedClass}" style="margin-bottom: 8px; ${itemStyle}">`;
+                                            resultsHtml += `<div class="duplicate-item${excludedClass}" style="margin-bottom:8px;${itemStyle}">`;
                                             if (isExcluded) {
-                                                resultsHtml += `<div style="color: #4CAF50; font-weight: bold; margin-bottom: 4px; font-size: 0.9em;">${statusText}</div>`;
+                                                resultsHtml += `<div style="color:#22c55e;font-weight:600;margin-bottom:4px;font-size:11px;">${statusText}</div>`;
                                             }
-                                            resultsHtml += `<strong>${item.title}${episode}</strong><br>`;
-                                            resultsHtml += `<small>ID: ${item.id} | State: ${item.state} | Version: ${item.version} | Ghostlisted: ${ghostlistedStatus}${scoreDisplay}</small><br>`;
-                                            resultsHtml += `<small style="color: #aaa; font-size: 0.85em; word-break: break-all;">File: ${fileLocation}</small></div>`;
+                                            resultsHtml += `<span style="font-weight:600;color:#e0e0e0;">${item.title}${episode}</span><br>`;
+                                            resultsHtml += `<span style="color:#aaa;font-size:11px;">ID: ${item.id} | State: ${item.state} | Version: ${item.version} | Ghostlisted: ${ghostlistedStatus}${scoreDisplay}</span><br>`;
+                                            resultsHtml += `<span style="color:#666;font-size:11px;font-family:monospace;word-break:break-all;">File: ${fileLocation}</span></div>`;
                                         });
                                         resultsHtml += `</td>`;
                                         resultsHtml += `</tr>`;
@@ -3362,18 +4277,19 @@ if (document.readyState === 'loading') {
                                         const pageGroups = data.preview.slice(startIdx, endIdx);
 
                                         resultsHtml += `<h4>Duplicate Groups (showing ${startIdx + 1}-${endIdx} of ${totalGroups}):</h4>`;
-                                        resultsHtml += '<table class="preview-results-table" style="width: 100%; border-collapse: collapse; margin-top: 10px;"><thead><tr style="background-color: #2a2a2a;"><th style="padding: 8px; text-align: left;">File</th><th style="padding: 8px; text-align: left;">Count</th><th style="padding: 8px; text-align: left;">Keep Item</th><th style="padding: 8px; text-align: left;">Delete Items</th></tr></thead><tbody>';
+                                        const thS = `padding:8px 10px;text-align:left;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid #333;background:#222;`;
+                                        resultsHtml += `<table style="width:100%;border-collapse:collapse;margin-top:10px;font-size:12px;"><thead><tr><th style="${thS}color:#aaa;">File</th><th style="${thS}color:#aaa;text-align:center;">Count</th><th style="${thS}color:#22c55e;">Keep Item</th><th style="${thS}color:#ef4444;">Delete Items</th></tr></thead><tbody>`;
                                         pageGroups.forEach(group => {
                                             const keepGhostlisted = group.keep_item.ghostlisted ? 'True' : 'False';
                                             const keepTorrentId = group.keep_item.torrent_id || 'N/A';
                                             resultsHtml += `<tr>
-                                                <td style="border-bottom: 1px solid #333; padding: 8px; word-break: break-all; max-width: 200px;">${group.filled_by_file}</td>
-                                                <td style="border-bottom: 1px solid #333; padding: 8px; text-align: center;">${group.count}</td>
-                                                <td style="border-bottom: 1px solid #333; padding: 8px;"><strong>${group.keep_item.title}</strong><br><small>ID: ${group.keep_item.id} | State: ${group.keep_item.state} | Ghostlisted: ${keepGhostlisted}<br>Torrent ID: ${keepTorrentId}</small></td>
-                                                <td style="border-bottom: 1px solid #333; padding: 8px;">${group.delete_items.map(item => {
+                                                <td style="border-bottom:1px solid #2a2a2a;padding:8px 10px;word-break:break-all;max-width:200px;font-family:monospace;font-size:11px;color:#888;">${group.filled_by_file}</td>
+                                                <td style="border-bottom:1px solid #2a2a2a;padding:8px 10px;text-align:center;color:#e8601c;font-weight:700;">${group.count}</td>
+                                                <td style="border-bottom:1px solid #2a2a2a;padding:8px 10px;border-left:2px solid rgba(34,197,94,.4);background:rgba(34,197,94,.04);"><span style="font-weight:600;color:#e0e0e0;">${group.keep_item.title}</span><br><span style="color:#aaa;font-size:11px;">ID: ${group.keep_item.id} | State: ${group.keep_item.state} | Ghostlisted: ${keepGhostlisted}<br>Torrent ID: ${keepTorrentId}</span></td>
+                                                <td style="border-bottom:1px solid #2a2a2a;padding:8px 10px;border-left:2px solid rgba(239,68,68,.4);background:rgba(239,68,68,.04);">${group.delete_items.map(item => {
                                                     const ghostlisted = item.ghostlisted ? 'True' : 'False';
                                                     const torrentId = item.torrent_id || 'N/A';
-                                                    return `<div style="margin-bottom: 5px;"><strong>${item.title}</strong><br><small>ID: ${item.id} | State: ${item.state} | Ghostlisted: ${ghostlisted}<br>Torrent ID: ${torrentId}</small></div>`;
+                                                    return `<div style="margin-bottom:6px;"><span style="font-weight:600;color:#e0e0e0;">${item.title}</span><br><span style="color:#aaa;font-size:11px;">ID: ${item.id} | State: ${item.state} | Ghostlisted: ${ghostlisted}<br>Torrent ID: ${torrentId}</span></div>`;
                                                 }).join('')}</td>
                                             </tr>`;
                                         });
@@ -3381,10 +4297,12 @@ if (document.readyState === 'loading') {
 
                                         // Pagination controls
                                         if (totalPages > 1) {
-                                            resultsHtml += `<div style="margin-top: 15px; text-align: center;">`;
-                                            resultsHtml += `<button onclick="renderDuplicatesPage(${Math.max(1, page - 1)})" style="padding: 5px 10px; margin: 0 5px;" ${page === 1 ? 'disabled' : ''}>Previous</button>`;
-                                            resultsHtml += `<span style="margin: 0 10px;">Page ${page} of ${totalPages}</span>`;
-                                            resultsHtml += `<button onclick="renderDuplicatesPage(${Math.min(totalPages, page + 1)})" style="padding: 5px 10px; margin: 0 5px;" ${page === totalPages ? 'disabled' : ''}>Next</button>`;
+                                            const pb = `padding:6px 14px;background:#2a2a2a;border:1px solid #3d3d3d;color:#e0e0e0;border-radius:5px;cursor:pointer;font-size:12px;font-family:inherit`;
+                                            const pbd = `padding:6px 14px;background:#1a1a1a;border:1px solid #2a2a2a;color:#555;border-radius:5px;cursor:not-allowed;font-size:12px;font-family:inherit`;
+                                            resultsHtml += `<div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-top:14px;padding:10px;background:#222;border:1px solid #2a2a2a;border-radius:6px;">`;
+                                            resultsHtml += `<button onclick="renderDuplicatesPage(${Math.max(1, page - 1)})" style="${page === 1 ? pbd : pb}" ${page === 1 ? 'disabled' : ''}>Previous</button>`;
+                                            resultsHtml += `<span style="color:#aaa;font-size:12px;">Page ${page} of ${totalPages}</span>`;
+                                            resultsHtml += `<button onclick="renderDuplicatesPage(${Math.min(totalPages, page + 1)})" style="${page === totalPages ? pbd : pb}" ${page === totalPages ? 'disabled' : ''}>Next</button>`;
                                             resultsHtml += `</div>`;
                                         }
                                     } else if (data.duplicate_groups === 0) {
@@ -3474,13 +4392,14 @@ if (document.readyState === 'loading') {
         fetch(`/debug/plex-labels/search?label=${encodeURIComponent(label)}`)
             .then(response => response.json())
             .then(data => {
+                resultsDiv.innerHTML = '';
                 if (data.success && data.items && data.items.length > 0) {
-                    let html = `<p style="color: #4ecdc4;">Found ${data.items.length} item(s) with label "${label}":</p><ul style="margin-top: 10px;">`;
+                    let html = `<p style="color: #4ecdc4; margin-bottom: 10px;">Found ${data.items.length} item(s) with label "<strong>${label}</strong>":</p><ul style="margin:0;padding-left:20px;">`;
                     data.items.forEach(item => {
-                        html += `<li style="padding: 5px 0;">${item.title} (${item.type}, ID: ${item.id})</li>`;
+                        html += `<li style="padding: 4px 0;">${item.title} <span style="color:var(--text3)">(${item.type}, ID: ${item.id})</span></li>`;
                     });
                     html += '</ul>';
-                    resultsDiv.innerHTML = html;
+                    showCleanupResultsModal(html, `Label Search: "${label}"`);
                 } else {
                     resultsDiv.innerHTML = `<p style="color: #ffd93d;">No items found with label "${label}"</p>`;
                 }
@@ -3719,11 +4638,12 @@ if (document.readyState === 'loading') {
         const resultsDiv = document.getElementById('orphaned-labels-results');
         const cleanupBtn = document.getElementById('orphaned-cleanup-btn');
 
-        resultsDiv.innerHTML = '<p>Searching for orphaned labels and unconfigured sources...</p>';
+        resultsDiv.innerHTML = '<p>Searching...</p>';
 
         fetch('/debug/plex-labels/find-orphaned')
             .then(response => response.json())
             .then(data => {
+                resultsDiv.innerHTML = '';
                 if (data.success) {
                     const hasOrphanedLabels = data.orphaned_labels && data.orphaned_labels.length > 0;
                     const hasOrphanedSources = data.orphaned_sources && data.orphaned_sources.length > 0;
@@ -3731,41 +4651,40 @@ if (document.readyState === 'loading') {
                     if (hasOrphanedLabels || hasOrphanedSources) {
                         let html = '';
 
-                        // Show orphaned labels (Type 1)
                         if (hasOrphanedLabels) {
-                            html += `<p style="color: #ffd93d; font-weight: bold; margin-top: 10px;">Orphaned Labels (${data.labels_count}):</p>`;
-                            html += `<p style="font-size: 0.9em; margin-bottom: 10px;">Labels from sources no longer in config</p>`;
-                            html += '<ul style="margin-top: 5px; padding-left: 25px;">';
+                            html += `<p style="color:#ffd93d;font-weight:bold;margin:0 0 6px;">Orphaned Labels (${data.labels_count})</p>`;
+                            html += `<p style="font-size:0.9em;color:var(--text3);margin:0 0 8px;">Labels from sources no longer in config</p>`;
+                            html += '<ul style="margin:0 0 16px;padding-left:20px;">';
                             data.orphaned_labels.forEach(label => {
-                                html += `<li style="padding: 5px 0;">${label.label} (${label.item_count} items)</li>`;
+                                html += `<li style="padding:3px 0;">${label.label} <span style="color:var(--text3)">(${label.item_count} items)</span></li>`;
                             });
                             html += '</ul>';
                         }
 
-                        // Show unconfigured sources (Type 2)
                         if (hasOrphanedSources) {
-                            html += `<p style="color: #ff6b6b; font-weight: bold; margin-top: 15px;">Unconfigured Sources (${data.sources_count}):</p>`;
-                            html += `<p style="font-size: 0.9em; margin-bottom: 10px;">Items from sources not in config</p>`;
-                            html += '<ul style="margin-top: 5px; padding-left: 25px;">';
+                            html += `<p style="color:#ff6b6b;font-weight:bold;margin:0 0 6px;">Unconfigured Sources (${data.sources_count})</p>`;
+                            html += `<p style="font-size:0.9em;color:var(--text3);margin:0 0 8px;">Items from sources not in config</p>`;
+                            html += '<ul style="margin:0;padding-left:20px;">';
                             data.orphaned_sources.forEach(source => {
-                                html += `<li style="padding: 5px 0;">${source.source} (${source.item_count} items)</li>`;
+                                html += `<li style="padding:3px 0;">${source.source} <span style="color:var(--text3)">(${source.item_count} items)</span></li>`;
                             });
                             html += '</ul>';
                         }
 
-                        resultsDiv.innerHTML = html;
+                        html += `<div style="margin-top:16px;border-top:1px solid var(--border2);padding-top:12px;"><button onclick="closeCleanupResultsModal();cleanupOrphanedLabels();" style="width:100%;padding:7px 14px;background:#dc3545;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">Cleanup</button></div>`;
+                        showCleanupResultsModal(html, 'Orphaned Label Cleanup');
                         cleanupBtn.disabled = false;
                     } else {
-                        resultsDiv.innerHTML = '<p style="color: #4ecdc4;">No orphaned labels or unconfigured sources found!</p>';
+                        resultsDiv.innerHTML = '<p style="color:#4ecdc4;">No orphaned labels or unconfigured sources found!</p>';
                         cleanupBtn.disabled = true;
                     }
                 } else {
-                    resultsDiv.innerHTML = `<p style="color: #ff6b6b;">${data.message || 'Error finding orphaned items'}</p>`;
+                    resultsDiv.innerHTML = `<p style="color:#ff6b6b;">${data.message || 'Error finding orphaned items'}</p>`;
                     cleanupBtn.disabled = true;
                 }
             })
             .catch(error => {
-                resultsDiv.innerHTML = `<p style="color: #ff6b6b;">Error: ${error.message}</p>`;
+                resultsDiv.innerHTML = `<p style="color:#ff6b6b;">Error: ${error.message}</p>`;
                 cleanupBtn.disabled = true;
             });
     }
@@ -4229,77 +5148,84 @@ if (document.readyState === 'loading') {
 
     async function confirmRestore() {
         if (!selectedBackupPath) {
-            alert('Please select a backup to restore.');
+            showPopup({ type: 'warning', title: 'Required', message: 'Please select a backup to restore.', autoClose: 4000 });
             return;
         }
 
         const createBackup = document.getElementById('backupBeforeRestore').checked;
 
-        const confirmMsg = `⚠️ WARNING: DATABASE RESTORATION ⚠️\n\n` +
-            `You are about to restore from:\n${selectedBackupFilename}\n\n` +
-            `IMPORTANT:\n` +
-            `• The container will RESTART automatically\n` +
-            (createBackup ? `• Your current database will be backed up as a safety copy\n` : `• Your current database will NOT be backed up\n`) +
-            `• All current data will be replaced with the backup\n` +
-            `• This action cannot be undone\n\n` +
-            `Are you ABSOLUTELY SURE you want to proceed?`;
+        const backupLine = createBackup
+            ? `<li>Your current database will be backed up as a safety copy</li>`
+            : `<li><strong>Your current database will NOT be backed up</strong></li>`;
 
-        if (!confirm(confirmMsg)) {
-            return;
-        }
+        showPopup({
+            type: POPUP_TYPES.CONFIRM,
+            title: '⚠️ Database Restoration',
+            message: `
+                <p>You are about to restore from:</p>
+                <p><code>${selectedBackupFilename}</code></p>
+                <p><strong>Important:</strong></p>
+                <ul style="list-style:disc;padding-left:1.2em;margin:8px 0;">
+                    <li>The container will <strong>RESTART</strong> automatically</li>
+                    ${backupLine}
+                    <li>All current data will be replaced with the backup</li>
+                    <li>This action cannot be undone</li>
+                </ul>
+                <p>Are you absolutely sure you want to proceed?</p>
+            `,
+            confirmText: 'Restore',
+            cancelText: 'Cancel',
+            onConfirm: async () => {
+                const resultsDiv = document.getElementById('restoreResults');
+                resultsDiv.innerHTML = '<div class="alert alert-warning"><strong>Requesting restore...</strong></div>';
 
-        const resultsDiv = document.getElementById('restoreResults');
-        resultsDiv.innerHTML = '<div class="alert alert-warning"><strong>Requesting restore...</strong></div>';
+                try {
+                    const response = await fetch('/debug/api/request_database_restore', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            backup_path: selectedBackupPath,
+                            create_safety_backup: createBackup
+                        })
+                    });
 
-        try {
-            const response = await fetch('/debug/api/request_database_restore', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    backup_path: selectedBackupPath,
-                    create_safety_backup: createBackup
-                })
-            });
+                    const data = await response.json();
 
-            const data = await response.json();
+                    if (data.success) {
+                        // Show countdown and auto-refresh
+                        let countdown = 60;
+                        resultsDiv.innerHTML = `
+                            <div class="alert alert-success">
+                                <h5><i class="fas fa-check-circle"></i> Restore Request Created</h5>
+                                <p><strong>The container is restarting...</strong></p>
+                                <p>Database will be restored from: <code>${selectedBackupFilename}</code></p>
+                                <p style="font-size: 1.2em; margin-top: 15px;">
+                                    <i class="fas fa-sync fa-spin"></i> Auto-refreshing in <strong id="countdown">${countdown}</strong> seconds...
+                                </p>
+                                <p style="font-size: 0.9em; opacity: 0.8; margin-top: 10px;">
+                                    <em>You can also refresh manually if the app is ready sooner.</em>
+                                </p>
+                            </div>
+                        `;
 
-            if (data.success) {
-                // Show countdown and auto-refresh
-                let countdown = 60;
-                resultsDiv.innerHTML = `
-                    <div class="alert alert-success">
-                        <h5><i class="fas fa-check-circle"></i> Restore Request Created</h5>
-                        <p><strong>The container is restarting...</strong></p>
-                        <p>Database will be restored from: <code>${selectedBackupFilename}</code></p>
-                        <p style="font-size: 1.2em; margin-top: 15px;">
-                            <i class="fas fa-sync fa-spin"></i> Auto-refreshing in <strong id="countdown">${countdown}</strong> seconds...
-                        </p>
-                        <p style="font-size: 0.9em; opacity: 0.8; margin-top: 10px;">
-                            <em>You can also refresh manually if the app is ready sooner.</em>
-                        </p>
-                    </div>
-                `;
-
-                // Countdown timer with auto-refresh
-                const countdownInterval = setInterval(() => {
-                    countdown--;
-                    const countdownEl = document.getElementById('countdown');
-                    if (countdownEl) {
-                        countdownEl.textContent = countdown;
+                        // Countdown timer with auto-refresh
+                        const countdownInterval = setInterval(() => {
+                            countdown--;
+                            const countdownEl = document.getElementById('countdown');
+                            if (countdownEl) countdownEl.textContent = countdown;
+                            if (countdown <= 0) {
+                                clearInterval(countdownInterval);
+                                location.reload();
+                            }
+                        }, 1000);
+                    } else {
+                        resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${data.error}</div>`;
                     }
-
-                    if (countdown <= 0) {
-                        clearInterval(countdownInterval);
-                        location.reload();
-                    }
-                }, 1000);
-            } else {
-                resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${data.error}</div>`;
+                } catch (error) {
+                    resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${error.message}</div>`;
+                }
             }
-
-        } catch (error) {
-            resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${error.message}</div>`;
-        }
+        });
     }
     // --- End Backup Restoration Functions ---
 
@@ -4484,73 +5410,75 @@ if (document.readyState === 'loading') {
         const allPaths = [...backupPaths, ...contentPaths];
 
         if (allPaths.length === 0) {
-            alert('Please select at least one file to delete.');
+            showPopup({ type: 'warning', title: 'Required', message: 'Please select at least one file to delete.', autoClose: 4000 });
             return;
         }
 
+        const doDelete = async () => {
+            const resultsDiv = document.getElementById('cleanupResults');
+            resultsDiv.innerHTML = `<div class="alert alert-warning"><strong>${dryRun ? 'Running dry run...' : 'Deleting files...'}</strong></div>`;
+
+            try {
+                const response = await fetch('/debug/api/delete_old_databases', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        file_paths: allPaths,
+                        dry_run: dryRun
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    let html = `
+                        <div class="alert alert-${dryRun ? 'info' : 'success'}">
+                            <h5><i class="fas fa-check-circle"></i> ${dryRun ? 'Dry Run Complete' : 'Deletion Complete'}</h5>
+                            <p><strong>Deleted:</strong> ${data.deleted_count} files (${data.total_size_freed_mb.toFixed(2)} MB freed)</p>
+                            <p><strong>Skipped:</strong> ${data.skipped_count} files</p>
+                        </div>
+                    `;
+
+                    if (data.deleted.length > 0) {
+                        html += '<h6>Deleted Files:</h6><ul>';
+                        data.deleted.forEach(file => { html += `<li><code>${file}</code></li>`; });
+                        html += '</ul>';
+                    }
+
+                    if (data.skipped.length > 0) {
+                        html += '<h6>Skipped Files:</h6><ul>';
+                        data.skipped.forEach(item => { html += `<li><code>${item.file}</code> - ${item.reason}</li>`; });
+                        html += '</ul>';
+                    }
+
+                    if (!dryRun) {
+                        html += '<button class="btn btn-primary mt-3" onclick="scanOldDatabases()">Scan Again</button>';
+                    }
+
+                    resultsDiv.innerHTML = html;
+                } else {
+                    resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${data.error}</div>`;
+                }
+            } catch (error) {
+                resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${error.message}</div>`;
+            }
+        };
+
         if (!dryRun) {
-            const confirmMsg = `⚠️ WARNING: FILE DELETION ⚠️\n\n` +
-                `You are about to DELETE ${allPaths.length} database files.\n\n` +
-                `This action CANNOT be undone!\n\n` +
-                `Are you sure you want to proceed?`;
-
-            if (!confirm(confirmMsg)) {
-                return;
-            }
-        }
-
-        const resultsDiv = document.getElementById('cleanupResults');
-        resultsDiv.innerHTML = `<div class="alert alert-warning"><strong>${dryRun ? 'Running dry run...' : 'Deleting files...'}</strong></div>`;
-
-        try {
-            const response = await fetch('/debug/api/delete_old_databases', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    file_paths: allPaths,
-                    dry_run: dryRun
-                })
+            showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                title: '⚠️ File Deletion',
+                message: `
+                    <p>You are about to <strong>permanently delete ${allPaths.length} database file${allPaths.length !== 1 ? 's' : ''}</strong>.</p>
+                    <p>This action <strong>cannot be undone</strong>.</p>
+                    <p>Are you sure you want to proceed?</p>
+                `,
+                confirmText: 'Delete',
+                cancelText: 'Cancel',
+                onConfirm: doDelete
             });
-
-            const data = await response.json();
-
-            if (data.success) {
-                let html = `
-                    <div class="alert alert-${dryRun ? 'info' : 'success'}">
-                        <h5><i class="fas fa-check-circle"></i> ${dryRun ? 'Dry Run Complete' : 'Deletion Complete'}</h5>
-                        <p><strong>Deleted:</strong> ${data.deleted_count} files (${data.total_size_freed_mb.toFixed(2)} MB freed)</p>
-                        <p><strong>Skipped:</strong> ${data.skipped_count} files</p>
-                    </div>
-                `;
-
-                if (data.deleted.length > 0) {
-                    html += '<h6>Deleted Files:</h6><ul>';
-                    data.deleted.forEach(file => {
-                        html += `<li><code>${file}</code></li>`;
-                    });
-                    html += '</ul>';
-                }
-
-                if (data.skipped.length > 0) {
-                    html += '<h6>Skipped Files:</h6><ul>';
-                    data.skipped.forEach(item => {
-                        html += `<li><code>${item.file}</code> - ${item.reason}</li>`;
-                    });
-                    html += '</ul>';
-                }
-
-                if (!dryRun) {
-                    html += '<button class="btn btn-primary mt-3" onclick="scanOldDatabases()">Scan Again</button>';
-                }
-
-                resultsDiv.innerHTML = html;
-
-            } else {
-                resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${data.error}</div>`;
-            }
-
-        } catch (error) {
-            resultsDiv.innerHTML = `<div class="alert alert-danger"><strong>Error:</strong> ${error.message}</div>`;
+        } else {
+            doDelete();
         }
     }
     // --- End Database Cleanup Functions ---
@@ -4636,20 +5564,20 @@ if (document.readyState === 'loading') {
 
     .episode-modal-content {
         position: relative;
-        background: var(--card-bg, #1a1a1a);
-        border: 1px solid var(--border-color, #333);
+        background: #1a1a1a;
+        border: 1px solid #333;
         border-radius: 8px;
         width: 90%;
         max-width: 1200px;
         max-height: 85vh;
         display: flex;
         flex-direction: column;
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        box-shadow: 0 10px 40px rgba(0,0,0,.6);
     }
 
     .episode-modal-header {
-        padding: 20px 24px;
-        border-bottom: 1px solid var(--border-color, #333);
+        padding: 14px 18px;
+        border-bottom: 1px solid #333;
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -4658,103 +5586,104 @@ if (document.readyState === 'loading') {
 
     .episode-modal-header h2 {
         margin: 0;
-        font-size: 20px;
-        color: var(--text-primary, #fff);
+        font-size: 16px;
+        font-weight: 700;
+        color: #e0e0e0;
+        border-left: 3px solid #e8601c;
+        padding-left: 10px;
     }
 
     .episode-modal-close {
         background: none;
         border: none;
-        font-size: 32px;
-        color: var(--text-secondary, #999);
+        font-size: 24px;
+        color: #aaa;
         cursor: pointer;
         padding: 0;
-        width: 32px;
-        height: 32px;
+        width: 28px;
+        height: 28px;
         display: flex;
         align-items: center;
         justify-content: center;
         border-radius: 4px;
-        transition: all 0.2s;
+        line-height: 1;
+        transition: color .15s;
     }
 
-    .episode-modal-close:hover {
-        background: rgba(255, 255, 255, 0.1);
-        color: var(--text-primary, #fff);
-    }
+    .episode-modal-close:hover { color: #e0e0e0; }
 
     .episode-modal-body {
-        padding: 24px;
+        padding: 18px;
         overflow-y: auto;
         flex: 1;
+        font-family: 'Inter', system-ui, sans-serif;
+        font-size: 13px;
+        color: #e0e0e0;
     }
 
-    /* Custom scrollbar for modal */
-    .episode-modal-body::-webkit-scrollbar {
-        width: 10px;
-    }
-
-    .episode-modal-body::-webkit-scrollbar-track {
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 5px;
-    }
-
-    .episode-modal-body::-webkit-scrollbar-thumb {
-        background: rgba(255, 255, 255, 0.2);
-        border-radius: 5px;
-    }
-
-    .episode-modal-body::-webkit-scrollbar-thumb:hover {
-        background: rgba(255, 255, 255, 0.3);
-    }
+    .episode-modal-body::-webkit-scrollbar { width: 6px; }
+    .episode-modal-body::-webkit-scrollbar-track { background: #1a1a1a; }
+    .episode-modal-body::-webkit-scrollbar-thumb { background: #3d3d3d; border-radius: 3px; }
+    .episode-modal-body::-webkit-scrollbar-thumb:hover { background: #555; }
 
     /* Results summary styling */
     .episode-results-summary {
-        background: rgba(78, 205, 196, 0.1);
-        border: 1px solid rgba(78, 205, 196, 0.3);
+        background: #222;
+        border: 1px solid #333;
         border-radius: 6px;
-        padding: 16px;
-        margin-bottom: 24px;
+        padding: 14px 16px;
+        margin-bottom: 18px;
     }
 
     .episode-results-summary h4 {
-        margin: 0 0 12px 0;
-        color: #4ecdc4;
-        font-size: 16px;
+        margin: 0 0 10px;
+        color: #e8601c;
+        font-size: 13px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .05em;
     }
 
     .episode-results-summary p {
-        margin: 6px 0;
-        font-size: 14px;
+        margin: 5px 0;
+        font-size: 13px;
+        color: #aaa;
     }
+
+    .episode-results-summary p strong { color: #e0e0e0; }
 
     /* Table styling in modal */
     .episode-modal-body table {
         width: 100%;
         border-collapse: collapse;
-        margin-top: 12px;
-        font-size: 13px;
+        margin-top: 10px;
+        font-size: 12px;
     }
 
     .episode-modal-body table th {
-        background: rgba(255, 255, 255, 0.05);
-        padding: 12px;
+        background: #222;
+        padding: 8px 10px;
         text-align: left;
+        font-size: 11px;
         font-weight: 600;
-        border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        color: #aaa;
+        border-bottom: 1px solid #333;
         position: sticky;
-        top: 0;
+        top: -18px;
         z-index: 10;
+        box-shadow: 0 1px 0 #333;
     }
 
     .episode-modal-body table td {
-        padding: 10px 12px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        padding: 8px 10px;
+        border-bottom: 1px solid #2a2a2a;
+        color: #e0e0e0;
+        vertical-align: top;
     }
 
-    .episode-modal-body table tr:hover {
-        background: rgba(255, 255, 255, 0.03);
-    }
+    .episode-modal-body table tr:hover td { background: rgba(255,255,255,.02); }
 
     .episode-modal-body .title-cell {
         max-width: 250px;
@@ -4764,23 +5693,26 @@ if (document.readyState === 'loading') {
 
     .episode-modal-body .path-cell {
         font-family: monospace;
-        font-size: 12px;
+        font-size: 11px;
         max-width: 350px;
         overflow: hidden;
         text-overflow: ellipsis;
-        color: var(--text-secondary, #999);
+        color: #888;
     }
 
     .episode-modal-body h4 {
-        margin: 24px 0 12px 0;
-        color: var(--accent-color, #4ecdc4);
-        font-size: 16px;
+        margin: 18px 0 10px;
+        color: #e8601c;
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .05em;
     }
 
     .episode-modal-body .info-text {
-        color: var(--text-secondary, #999);
-        font-size: 13px;
-        margin-bottom: 12px;
+        color: #666;
+        font-size: 12px;
+        margin-bottom: 10px;
     }
 
     /* Episode progress bar pulse animation - matches plex labels style */
@@ -4818,5 +5750,214 @@ if (document.readyState === 'loading') {
         cursor: pointer;
     }
 </style>
+
+<!-- API Summary Modal -->
+<div id="api-summary-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;padding:1rem;padding-top:calc(1rem + 30px)">
+  <div style="width:100%;max-width:900px;max-height:90vh;background:#1a1a1a;border:1px solid #333;border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #333;flex-shrink:0">
+      <div style="font-size:15px;font-weight:700;color:#e0e0e0;border-left:3px solid #e8601c;padding-left:10px">API Summary</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <select id="api-summary-timeframe" style="background:#222;border:1px solid #3d3d3d;color:#e0e0e0;border-radius:5px;padding:5px 10px;font-size:12px;cursor:pointer">
+          <option value="hour">By Hour</option>
+          <option value="day" selected>By Day</option>
+          <option value="month">By Month</option>
+        </select>
+        <button id="api-summary-close" style="background:transparent;border:none;color:#aaa;font-size:20px;cursor:pointer;line-height:1">&times;</button>
+      </div>
+    </div>
+    <div id="api-summary-modal-body" style="padding:18px;font-family:'Inter',sans-serif;font-size:13px;color:#e0e0e0;overflow-y:auto;flex:1"></div>
+  </div>
+</div>
+
+<!-- Real Time API Modal -->
+<div id="realtime-api-modal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;padding:1rem;padding-top:calc(1rem + 30px)">
+  <div style="width:100%;max-width:1000px;max-height:90vh;background:#1a1a1a;border:1px solid #333;border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid #333;flex-shrink:0">
+      <div style="font-size:15px;font-weight:700;color:#e0e0e0;border-left:3px solid #e8601c;padding-left:10px">Real Time API Calls</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <select id="realtime-api-filter" style="background:#222;border:1px solid #3d3d3d;color:#e0e0e0;border-radius:5px;padding:5px 10px;font-size:12px;cursor:pointer">
+          <option value="">All Domains</option>
+        </select>
+        <button id="realtime-api-refresh" style="background:#e8601c;color:#fff;border:none;border-radius:5px;padding:5px 12px;font-size:12px;cursor:pointer">Refresh</button>
+        <button id="realtime-api-close" style="background:transparent;border:none;color:#aaa;font-size:20px;cursor:pointer;line-height:1">&times;</button>
+      </div>
+    </div>
+    <div id="realtime-api-modal-body" style="padding:18px;font-family:'Inter',sans-serif;font-size:13px;color:#e0e0e0;overflow-y:auto;flex:1"></div>
+  </div>
+</div>
+
+<script>
+(function() {
+  /* ── Shared helpers ── */
+  function mkTable(headers, rows, colStyles) {
+    const thStyle = 'padding:7px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#aaa;font-weight:600;border-bottom:1px solid #333;white-space:nowrap';
+    const tdStyle = 'padding:7px 10px;border-bottom:1px solid #2a2a2a;color:#e0e0e0;font-size:12px';
+    let h = headers.map((h,i) => `<th style="${thStyle}${colStyles&&colStyles[i]?';'+colStyles[i]:''}">${h}</th>`).join('');
+    let r = rows.map(cells =>
+      '<tr>' + cells.map((c,i) => `<td style="${tdStyle}${colStyles&&colStyles[i]?';'+colStyles[i]:''}">${c}</td>`).join('') + '</tr>'
+    ).join('');
+    return `<table style="width:100%;border-collapse:collapse">${h?'<thead><tr>'+h+'</tr></thead>':''}${r?'<tbody>'+r+'</tbody>':''}</table>`;
+  }
+
+  function loading(el) { el.innerHTML = '<div style="color:#666;font-size:12px;padding:8px 0">Loading…</div>'; }
+  function errMsg(el, e) { el.innerHTML = `<div style="color:#ef4444;font-size:12px;padding:8px 0">Error: ${e}</div>`; }
+
+  /* ── API Summary ── */
+  function loadApiSummary(timeframe, targetEl) {
+    loading(targetEl);
+    fetch(`/api_call_summary/api/summary?time_frame=${timeframe}`)
+      .then(r => r.json())
+      .then(data => {
+        const periods = Object.entries(data.periods || {}).sort((a,b) => b[0].localeCompare(a[0]));
+        if (!periods.length) { targetEl.innerHTML = '<div style="color:#666;font-size:12px">No data available.</div>'; return; }
+        const domains = data.domains || [];
+        const rows = periods.map(([period, info]) => {
+          const byDomain = info.by_domain || {};
+          const top = domains
+            .map(d => [d, byDomain[d] || 0])
+            .sort((a,b) => b[1]-a[1])
+            .slice(0, 3)
+            .filter(([,v]) => v > 0)
+            .map(([d,v]) => `<span style="color:#aaa">${d}</span> <span style="color:#e8601c;font-weight:600">${v}</span>`)
+            .join(' &nbsp;·&nbsp; ');
+          return [period, `<span style="color:#e8601c;font-weight:700">${info.total}</span>`, top || '<span style="color:#555">—</span>'];
+        });
+        targetEl.innerHTML = mkTable(['Period','Total','Top Domains'], rows);
+      })
+      .catch(e => errMsg(targetEl, e.message));
+  }
+
+  function loadApiSummaryPreview() {
+    fetch('/api_call_summary/api/summary?time_frame=hour')
+      .then(r => r.json())
+      .then(data => {
+        const el = document.getElementById('api-summary-preview');
+        if (!el) return;
+        const periods = Object.entries(data.periods || {}).sort((a,b) => b[0].localeCompare(a[0])).slice(0, 3);
+        if (!periods.length) { el.innerHTML = '<div style="color:#666;font-size:12px;margin-bottom:8px">No data.</div>'; return; }
+        const rows = periods.map(([period, info]) => {
+          const topDomains = Object.entries(info.by_domain || {})
+            .sort((a,b) => b[1]-a[1]).slice(0, 3)
+            .map(([d,c]) => `<span style="color:#e8601c">${d}</span> <span style="color:#e0e0e0;font-weight:700">${c}</span>`)
+            .join(' <span style="color:#444">·</span> ');
+          return [
+            `<span style="color:#aaa;font-family:monospace;font-size:11px">${period}</span>`,
+            `<span style="color:#e8601c;font-weight:700">${info.total}</span>`,
+            `<span style="font-size:11px">${topDomains}</span>`
+          ];
+        });
+        el.innerHTML = mkTable(['Period','Total','Top Domains'], rows);
+      })
+      .catch(e => {
+        const el = document.getElementById('api-summary-preview');
+        if (el) el.innerHTML = '<div style="color:#666;font-size:12px;margin-bottom:8px">Could not load preview.</div>';
+      });
+  }
+
+  /* ── Real Time API ── */
+  function renderRealtimeCalls(calls, targetEl, filterDomain) {
+    const filtered = filterDomain ? calls.filter(c => c.domain === filterDomain) : calls;
+    if (!filtered.length) { targetEl.innerHTML = '<div style="color:#666;font-size:12px">No calls found.</div>'; return; }
+    const rows = filtered.map(c => [
+      `<span style="color:#aaa;font-family:monospace;font-size:11px">${c.timestamp}</span>`,
+      `<span style="color:#3b82f6;font-weight:600">${c.method}</span>`,
+      `<span style="color:#e8601c">${c.domain}</span>`,
+      `<span style="color:#e0e0e0;font-family:monospace;font-size:11px;word-break:break-all">${c.endpoint}</span>`
+    ]);
+    targetEl.innerHTML = mkTable(['Time','Method','Domain','Endpoint'], rows);
+  }
+
+  function loadRealtimePreview() {
+    fetch('/api_call_summary/api/latest_calls')
+      .then(r => r.json())
+      .then(calls => {
+        const el = document.getElementById('realtime-api-preview');
+        if (!el) return;
+        if (!calls.length) { el.innerHTML = '<div style="color:#666;font-size:12px;margin-bottom:8px">No calls logged.</div>'; return; }
+        const rows = calls.slice(0, 5).map(c => [
+          `<span style="color:#aaa;font-family:monospace;font-size:11px">${c.timestamp}</span>`,
+          `<span style="color:#3b82f6;font-weight:600">${c.method}</span>`,
+          `<span style="color:#e8601c">${c.domain}</span>`
+        ]);
+        el.innerHTML = mkTable(['Time','Method','Domain'], rows) + '<div style="color:#666;font-size:11px;margin-top:4px">Last 5 calls shown</div>';
+      })
+      .catch(e => {
+        const el = document.getElementById('realtime-api-preview');
+        if (el) el.innerHTML = '<div style="color:#666;font-size:12px;margin-bottom:8px">Could not load preview.</div>';
+      });
+  }
+
+  /* ── Modal wiring ── */
+  let _realtimeCalls = [];
+
+  function openApiSummary() {
+    const modal = document.getElementById('api-summary-modal');
+    const body = document.getElementById('api-summary-modal-body');
+    const tf = document.getElementById('api-summary-timeframe');
+    modal.style.display = 'flex';
+    loadApiSummary(tf.value, body);
+    tf.onchange = () => loadApiSummary(tf.value, body);
+  }
+
+  function openRealtimeApi() {
+    const modal = document.getElementById('realtime-api-modal');
+    const body = document.getElementById('realtime-api-modal-body');
+    const filterSel = document.getElementById('realtime-api-filter');
+    modal.style.display = 'flex';
+    loading(body);
+    fetch('/api_call_summary/api/latest_calls')
+      .then(r => r.json())
+      .then(calls => {
+        _realtimeCalls = calls;
+        // Populate domain filter
+        const domains = [...new Set(calls.map(c => c.domain))].sort();
+        filterSel.innerHTML = '<option value="">All Domains</option>' +
+          domains.map(d => `<option value="${d}">${d}</option>`).join('');
+        renderRealtimeCalls(calls, body, '');
+        filterSel.onchange = () => renderRealtimeCalls(_realtimeCalls, body, filterSel.value);
+      })
+      .catch(e => errMsg(body, e.message));
+  }
+
+  document.addEventListener('DOMContentLoaded', function() {
+    // Delay previews until after buildCards() has moved elements into the tangerine grid
+    setTimeout(function() {
+      loadApiSummaryPreview();
+      loadRealtimePreview();
+    }, 200);
+
+    // Open buttons
+    const apiSumBtn = document.getElementById('api-summary-open-btn');
+    const rtBtn = document.getElementById('realtime-api-open-btn');
+    if (apiSumBtn) apiSumBtn.addEventListener('click', openApiSummary);
+    if (rtBtn) rtBtn.addEventListener('click', openRealtimeApi);
+
+    // Close buttons
+    document.getElementById('api-summary-close').addEventListener('click', () => {
+      document.getElementById('api-summary-modal').style.display = 'none';
+    });
+    document.getElementById('realtime-api-close').addEventListener('click', () => {
+      document.getElementById('realtime-api-modal').style.display = 'none';
+    });
+    document.getElementById('realtime-api-refresh').addEventListener('click', () => {
+      const body = document.getElementById('realtime-api-modal-body');
+      const filterSel = document.getElementById('realtime-api-filter');
+      loading(body);
+      fetch('/api_call_summary/api/latest_calls')
+        .then(r => r.json())
+        .then(calls => { _realtimeCalls = calls; renderRealtimeCalls(calls, body, filterSel.value); })
+        .catch(e => errMsg(body, e.message));
+    });
+
+    // Close on backdrop click
+    document.getElementById('api-summary-modal').addEventListener('click', function(e) {
+      if (e.target === this) this.style.display = 'none';
+    });
+    document.getElementById('realtime-api-modal').addEventListener('click', function(e) {
+      if (e.target === this) this.style.display = 'none';
+    });
+  });
+})();
+</script>
 
 {% endblock %}
