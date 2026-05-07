@@ -1993,8 +1993,9 @@ class ProgramRunner:
                             for item_dict_raw in items_to_process_raw:
                                 item_dict_processed = item_dict_raw.copy()
                                 item_dict_processed['versions'] = versions_to_inject # Use the converted dict
+                                item_dict_processed['content_source'] = source  # Needed by metadata.py for seasons_per_show lookup
                                 items_to_process.append(item_dict_processed)
-                            
+
                             from metadata.metadata import process_metadata
                             processed_items = process_metadata(items_to_process)
                             if processed_items:
@@ -2107,7 +2108,8 @@ class ProgramRunner:
                         for item_dict_raw in items_to_process_raw:
                             item_dict_processed = item_dict_raw.copy()
                             # Use the CONVERTED source-level versions_dict here
-                            item_dict_processed['versions'] = versions_dict 
+                            item_dict_processed['versions'] = versions_dict
+                            item_dict_processed['content_source'] = source  # Needed by metadata.py for seasons_per_show lookup
                             items_to_process.append(item_dict_processed)
 
                         from metadata.metadata import process_metadata
@@ -3898,7 +3900,7 @@ class ProgramRunner:
 
     def task_refresh_plex_tokens(self):
         logging.info("Performing periodic Plex token validation")
-        from utilities.plex_functions import validate_plex_tokens
+        from content_checkers.plex_watchlist import validate_plex_tokens
         token_status = validate_plex_tokens()
         for username, status in token_status.items():
             if not status['valid']:

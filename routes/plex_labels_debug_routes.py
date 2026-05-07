@@ -94,16 +94,24 @@ def bulk_apply_preview():
         if not label_config:
             return jsonify({'success': False, 'message': 'No label configuration found for this source'}), 400
 
-        # Count items from this source in Collected state
+        # Count items from this source in Collected state —
+        # primary source OR listed in content_sources JSON
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
         cursor.execute('''
-            SELECT COUNT(*) as count
+            SELECT COUNT(DISTINCT id) as count
             FROM media_items
-            WHERE content_source = ?
-            AND state = 'Collected'
-        ''', (source_id,))
+            WHERE state = 'Collected'
+              AND (ghostlisted IS NULL OR ghostlisted != 1)
+              AND (
+                content_source = ?
+                OR EXISTS (
+                    SELECT 1 FROM json_each(content_sources) e
+                    WHERE json_extract(e.value, '$.source') = ?
+                )
+              )
+        ''', (source_id, source_id))
 
         count = cursor.fetchone()[0]
         cursor.close()
@@ -161,17 +169,24 @@ def bulk_apply():
 
         logging.info(f"bulk_apply: Starting bulk label application for source_id: {source_id}")
 
-        # Get items from this source in Collected state
+        # Get items from this source in Collected state —
+        # primary source OR listed in content_sources JSON
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
         cursor.execute('''
-            SELECT id, title, type, content_source, content_source_detail
+            SELECT DISTINCT id, title, type, content_source, content_source_detail, content_sources
             FROM media_items
-            WHERE content_source = ?
-            AND state = 'Collected'
-        ''', (source_id,))
+            WHERE state = 'Collected'
+              AND (
+                content_source = ?
+                OR EXISTS (
+                    SELECT 1 FROM json_each(content_sources) e
+                    WHERE json_extract(e.value, '$.source') = ?
+                )
+              )
+        ''', (source_id, source_id))
 
         items = cursor.fetchall()
         cursor.close()
@@ -185,6 +200,12 @@ def bulk_apply():
         failed_items = []
         for row in items:
             item = dict(row)
+            # For items where source_id is secondary, temporarily treat it as primary
+            # so apply_labels_for_item applies that source's label
+            if item.get('content_source') != source_id:
+                item = dict(item)
+                item['content_source'] = source_id
+                item['content_source_detail'] = None
             try:
                 labels_applied = apply_labels_for_item(item)
                 if labels_applied > 0:
@@ -244,17 +265,23 @@ def bulk_apply_stream():
                 yield f"data: {json.dumps({'error': 'source_id is required'})}\n\n"
                 return
 
-            # Get items from this source
+            # Get items from this source — primary source OR listed in content_sources JSON
             conn = sqlite3.connect(DB_PATH)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
             cursor.execute('''
-                SELECT id, title, type, content_source, content_source_detail
+                SELECT DISTINCT id, title, type, content_source, content_source_detail, content_sources
                 FROM media_items
-                WHERE content_source = ?
-                AND state = 'Collected'
-            ''', (source_id,))
+                WHERE state = 'Collected'
+                  AND (
+                    content_source = ?
+                    OR EXISTS (
+                        SELECT 1 FROM json_each(content_sources) e
+                        WHERE json_extract(e.value, '$.source') = ?
+                    )
+                  )
+            ''', (source_id, source_id))
 
             items = cursor.fetchall()
             cursor.close()
@@ -273,6 +300,11 @@ def bulk_apply_stream():
 
             for index, row in enumerate(items, 1):
                 item = dict(row)
+                # For items where source_id is secondary, treat it as primary for this apply
+                if item.get('content_source') != source_id:
+                    item = dict(item)
+                    item['content_source'] = source_id
+                    item['content_source_detail'] = None
 
                 try:
                     labels_applied = apply_labels_for_item(item)
@@ -365,22 +397,18 @@ def bulk_remove_stream():
 
             sanitized_label = sanitize_label(label)
 
-            # Get items with this label
+            # Get items with this label using DB-level json_each filtering
             conn = sqlite3.connect(DB_PATH)
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
             cursor.execute('''
-                SELECT id, title, plex_labels
-                FROM media_items
-                WHERE plex_labels IS NOT NULL
-            ''')
+                SELECT DISTINCT m.id, m.title, m.plex_labels
+                FROM media_items m, json_each(m.plex_labels) je
+                WHERE m.plex_labels IS NOT NULL AND je.key = ?
+            ''', (sanitized_label,))
 
-            items_to_remove = []
-            for row in cursor.fetchall():
-                plex_labels = parse_plex_labels(row['plex_labels'])
-                if sanitized_label in plex_labels:
-                    items_to_remove.append(dict(row))
+            items_to_remove = [dict(row) for row in cursor.fetchall()]
 
             cursor.close()
             conn.close()
@@ -752,31 +780,14 @@ def bulk_remove_preview():
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
 
-        # Count items with this label
+        # Count items with this label using DB-level json_each filtering
         cursor.execute('''
-            SELECT COUNT(*) as count
-            FROM media_items
-            WHERE plex_labels IS NOT NULL
-        ''')
+            SELECT COUNT(DISTINCT m.id)
+            FROM media_items m, json_each(m.plex_labels) je
+            WHERE m.plex_labels IS NOT NULL AND je.key = ?
+        ''', (sanitized_label,))
 
-        total = cursor.fetchone()[0]
-        cursor.close()
-
-        # Count matching items
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            SELECT id, plex_labels
-            FROM media_items
-            WHERE plex_labels IS NOT NULL
-        ''')
-
-        count = 0
-        for row in cursor.fetchall():
-            plex_labels = parse_plex_labels(row['plex_labels'])
-            if sanitized_label in plex_labels:
-                count += 1
+        count = cursor.fetchone()[0]
 
         cursor.close()
         conn.close()
@@ -817,17 +828,14 @@ def bulk_remove():
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
 
+        # Get items with this label using DB-level json_each filtering
         cursor.execute('''
-            SELECT id, plex_labels
-            FROM media_items
-            WHERE plex_labels IS NOT NULL
-        ''')
+            SELECT DISTINCT m.id
+            FROM media_items m, json_each(m.plex_labels) je
+            WHERE m.plex_labels IS NOT NULL AND je.key = ?
+        ''', (sanitized_label,))
 
-        items_to_remove = []
-        for row in cursor.fetchall():
-            plex_labels = parse_plex_labels(row['plex_labels'])
-            if sanitized_label in plex_labels:
-                items_to_remove.append(row['id'])
+        items_to_remove = [row['id'] for row in cursor.fetchall()]
 
         cursor.close()
         conn.close()

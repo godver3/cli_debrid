@@ -1972,15 +1972,31 @@ def update_settings():
                     if was_program_running:
                         try:
                             # Stop the program first
-                            from routes.program_operation_routes import stop_program, _execute_start_program
+                            from routes.program_operation_routes import stop_program, _execute_start_program, _program_op_lock
                             logging.info("Stopping program before restart...")
                             stop_result = stop_program()
                             if stop_result.get("status") != "success":
                                 logging.warning(f"Stop returned non-success: {stop_result.get('message', 'Unknown')}")
 
-                            # Wait a moment for clean shutdown
+                            # Wait for stop_program to fully release _program_op_lock before
+                            # calling _execute_start_program. stop_program holds the lock during
+                            # scheduler.shutdown(wait=True), which can block for many seconds if
+                            # a Trakt job is mid-sleep. A fixed 2s sleep was too short; poll instead.
                             import time
-                            time.sleep(2)
+                            _lock_wait = 0.0
+                            _poll = 0.5
+                            _max_lock_wait = 60.0
+                            while _program_op_lock.locked() and _lock_wait < _max_lock_wait:
+                                time.sleep(_poll)
+                                _lock_wait += _poll
+                            if _program_op_lock.locked():
+                                logging.error(
+                                    f"_program_op_lock still held after {_max_lock_wait:.0f}s — "
+                                    "restart aborted; please start the program manually."
+                                )
+                                return
+                            if _lock_wait > 1.0:
+                                logging.info(f"Waited {_lock_wait:.1f}s for program_op_lock to free before restart")
 
                             # Start the program
                             logging.info("Starting program after settings change...")
@@ -3793,6 +3809,43 @@ def run_plex_smart_collections():
         return jsonify({'success': True, 'message': 'Smart collection poster task started'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-smart-collections/status', methods=['GET'])
+@admin_required
+def get_plex_smart_collections_status():
+    """Return enabled smart collections list for the Manage Posters modal."""
+    try:
+        from utilities.settings import get_all_settings as _gas
+        _psc = _gas().get('Plex Smart Collections', {})
+        colls = _psc.get('collections', {}) if isinstance(_psc, dict) else {}
+        if not isinstance(colls, dict):
+            colls = {}
+        collections = [
+            {'id': rk, 'name': cfg.get('title', rk)}
+            for rk, cfg in colls.items()
+            if isinstance(cfg, dict) and cfg.get('enabled', False)
+        ]
+        collections.sort(key=lambda x: x['name'].lower())
+        return jsonify({'success': True, 'collections': collections})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-smart-collections/reset-collection', methods=['POST'])
+@admin_required
+def reset_smart_collection_poster():
+    """Immediately reapply the poster for a single smart collection."""
+    try:
+        data = request.get_json() or {}
+        rk = str(data.get('collection_id', '')).strip()
+        if not rk:
+            return jsonify({'success': False, 'error': 'collection_id required'}), 400
+        from database.plex_smart_collections import reapply_single_collection_poster
+        result = reapply_single_collection_poster(rk)
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @settings_bp.route('/api/plex-boxsets/status', methods=['GET'])

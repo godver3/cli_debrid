@@ -56,6 +56,9 @@
     <!-- Async load Font Awesome to prevent render blocking -->
     <link rel="preload" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" as="style" onload="this.onload=null;this.rel='stylesheet'">
     <noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css"></noscript>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <style>
         /* Add font-display swap to Font Awesome to prevent FOIT */
         @font-face {
@@ -85,8 +88,10 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_ai_butler.css') }}">
     {% endif %}
 
+    <!-- Tangerine nav CSS loaded early to prevent FOUC; theme_switcher.js re-appends it last so it overrides tangerine_base.css -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_mobile_nav.css') }}?v=34">
     <!-- Load theme switcher early to prevent FOUC -->
-    <script src="{{ url_for('static', filename='js/theme_switcher.js') }}?v=2"></script>
+    <script src="{{ url_for('static', filename='js/theme_switcher.js') }}?v=34"></script>
     <script>
         // Mark page as ready to show after theme is applied
         if (document.readyState === 'loading') {
@@ -775,6 +780,653 @@
         };
     </script>
 
+    <!-- Tangerine Nav Redesign (hidden on classic via CSS) -->
+    <div class="st-nav-wrap" style="display:none">
+        <nav class="st-nav">
+            <!-- Left: brand + welcome -->
+            <div class="st-nav-left">
+                <a class="st-nav-brand" href="{{ url_for('root.root') }}">
+                    <div class="st-nav-brand-icon">
+                        <img src="{{ url_for('static', filename=logo_path) }}" alt="cli_debrid">
+                    </div>
+                    <div>
+                        <div class="st-nav-brand-name">cli_debrid</div>
+                        <div class="st-nav-brand-ver">v{{ get_version_with_branch() }}</div>
+                    </div>
+                </a>
+                {% if current_user.is_authenticated and not is_onboarding %}
+                <span class="st-nav-welcome">Welcome, <span>{{ current_user.username }}</span></span>
+                {% endif %}
+            </div>
+
+            <!-- Center: desktop dropdown links -->
+            {% if not is_onboarding %}
+            <div class="st-nav-links">
+                {% set show_full_menu = not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') %}
+                {% set show_limited_menu = is_user_system_enabled() and current_user.is_authenticated and current_user.role != 'admin' %}
+
+                {% if show_full_menu or show_limited_menu %}
+                <!-- Main -->
+                <div class="st-nav-item" id="st-dd-main">
+                    <button class="st-nav-btn" onclick="stToggleDD('st-dd-main')">Main <i class="fa-solid fa-chevron-down st-arr"></i></button>
+                    <div class="st-nav-dropdown">
+                        <a class="st-nav-dd-item" href="{{ url_for('root.root') }}"><i class="fa-solid fa-house"></i> Home</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('discover.index') }}"><i class="fa-solid fa-plus"></i> Discover</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('library.index') }}"><i class="fa-solid fa-film"></i> Library</a>
+                        <div class="st-nav-dd-sep"></div>
+                        <a class="st-nav-dd-item" href="{{ url_for('queues.index') }}"><i class="fa-solid fa-bars"></i> Queues</a>
+                        {% if show_full_menu %}
+                        <a class="st-nav-dd-item" href="{{ url_for('program_operation.task_timings') }}"><i class="fa-solid fa-list-check"></i> Task Manager</a>
+                        {% endif %}
+                        <a class="st-nav-dd-item" href="{{ url_for('statistics.calendar_view') }}"><i class="fa-solid fa-calendar"></i> Calendar</a>
+                        <div class="st-nav-dd-sep"></div>
+                        <a class="st-nav-dd-item" href="https://godver3.github.io/cli_docs/" target="_blank"><i class="fa-solid fa-book"></i> Docs</a>
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if show_full_menu %}
+                <!-- System -->
+                <div class="st-nav-item" id="st-dd-system">
+                    <button class="st-nav-btn" onclick="stToggleDD('st-dd-system')">System <i class="fa-solid fa-chevron-down st-arr"></i></button>
+                    <div class="st-nav-dropdown">
+                        <a class="st-nav-dd-item" href="{{ url_for('logs.logs') }}"><i class="fa-solid fa-scroll"></i> Logs</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('settings.index') }}"><i class="fa-solid fa-gear"></i> Settings</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('database.index') }}"><i class="fa-solid fa-database"></i> Database</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('database.phalanxdb_status') }}"><i class="fa-solid fa-server"></i> Phalanx DB</a>
+                        <div class="st-nav-dd-sep"></div>
+                        <a class="st-nav-dd-item" href="{{ url_for('performance.performance_dashboard') }}"><i class="fa-solid fa-chart-line"></i> Performance Dashboard</a>
+                        {% if not is_limited_environment() %}
+                        <a class="st-nav-dd-item" href="{{ url_for('debrid_manager.index') }}"><i class="fa-solid fa-cloud-arrow-down"></i> Debrid Manager</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('upgrade_hub.index') }}"><i class="fa-solid fa-arrow-up"></i> Upgrade Hub</a>
+                        {% endif %}
+                        <a class="st-nav-dd-item" href="{{ url_for('connections.index') }}"><i class="fa-solid fa-plug"></i> Connections</a>
+                    </div>
+                </div>
+
+                <!-- Tools -->
+                <div class="st-nav-item" id="st-dd-tools">
+                    <button class="st-nav-btn" onclick="stToggleDD('st-dd-tools')">Tools <i class="fa-solid fa-chevron-down st-arr"></i></button>
+                    <div class="st-nav-dropdown">
+                        <a class="st-nav-dd-item" href="{{ url_for('scraper.scraper_tester') }}"><i class="fa-solid fa-flask"></i> Tester</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('debug.debug_functions') }}"><i class="fa-solid fa-bug"></i> Debug</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('database.reverse_parser') }}"><i class="fa-solid fa-rotate"></i> R. Parser</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('magnet.assign_magnet') }}"><i class="fa-solid fa-arrow-right-arrow-left"></i> M. Assign</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('debug.manual_blacklist') }}"><i class="fa-solid fa-ban"></i> M. Blacklist</a>
+                        <div class="st-nav-dd-sep"></div>
+                        <a class="st-nav-dd-item" href="{{ url_for('trakt_friends.manage_friends') }}"><i class="fa-solid fa-users"></i> Trakt Friends</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('user_token.collect_tokens_page') }}"><i class="fa-solid fa-key"></i> Plex User Token M.</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('symlink_tools.index') }}"><i class="fa-solid fa-link"></i> Symlink Tools</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('metadata.metadata_debug') }}"><i class="fa-solid fa-tags"></i> Metadata Debug</a>
+                        <a class="st-nav-dd-item" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i> Overlays</a>
+                    </div>
+                </div>
+
+                <!-- Users -->
+                <div class="st-nav-item" id="st-dd-users">
+                    <button class="st-nav-btn" onclick="stToggleDD('st-dd-users')">Users <i class="fa-solid fa-chevron-down st-arr"></i></button>
+                    <div class="st-nav-dropdown">
+                        <a class="st-nav-dd-item" href="{{ url_for('user_management.manage_users') }}"><i class="fa-solid fa-user-gear"></i> Manage Users</a>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <!-- Right: actions + hamburger -->
+            <div class="st-nav-actions">
+                {% if not is_onboarding %}
+                {% if not is_user_system_enabled() or (current_user.is_authenticated) %}
+                <button class="st-nav-task-btn no-tasks" id="stNavTaskBtn" title="Running tasks" onclick="stShowTicker()">
+                    <i class="fa-solid fa-list-check"></i>
+                    <div class="st-task-dot"></div>
+                </button>
+                {% endif %}
+                {% if is_user_system_enabled() %}
+                    {% if current_user.is_authenticated %}
+                    <button class="st-nav-icon-btn" id="st_notifications_button" title="Notifications" data-tooltip="global.notificationsButton">
+                        <i class="fas fa-bell"></i>
+                        <span class="st-notif-count" id="st_notif_count" style="display:none;"></span>
+                    </button>
+                    <button class="st-nav-icon-btn" id="st_releaseNotesButton" title="Release Notes" data-tooltip="global.releaseNotesButton">
+                        <i class="fas fa-file-alt"></i>
+                    </button>
+                    {% if current_user.role == 'admin' %}
+                        {% set program_status = get_program_status() %}
+                        <button id="st_programControlButton" class="st-nav-act-btn {% if program_status == 'Running' %}st-btn-stop{% elif program_status in ['Starting', 'Stopping'] %}st-btn-starting{% else %}st-btn-start{% endif %}" data-status="{{ program_status }}" {% if program_status in ['Starting', 'Stopping'] %}disabled{% endif %}>
+                            <i class="fas {% if program_status == 'Running' %}fa-stop{% elif program_status in ['Starting', 'Stopping'] %}fa-spinner fa-spin{% else %}fa-play{% endif %}"></i>
+                            <span>{% if program_status == 'Running' %}Stop{% elif program_status == 'Starting' %}Starting…{% elif program_status == 'Stopping' %}Stopping…{% else %}Start{% endif %}</span>
+                        </button>
+                    {% endif %}
+                    <button class="st-nav-act-btn st-btn-logout" id="st_logout_button">
+                        <i class="fa-solid fa-right-from-bracket"></i><span>Logout</span>
+                    </button>
+                    {% endif %}
+                {% else %}
+                    <button class="st-nav-icon-btn" id="st_notifications_button" title="Notifications" data-tooltip="global.notificationsButton">
+                        <i class="fas fa-bell"></i>
+                        <span class="st-notif-count" id="st_notif_count" style="display:none;"></span>
+                    </button>
+                    <button class="st-nav-icon-btn" id="st_releaseNotesButton" title="Release Notes" data-tooltip="global.releaseNotesButton">
+                        <i class="fas fa-file-alt"></i>
+                    </button>
+                    {% set program_status = get_program_status() %}
+                    <button id="st_programControlButton" class="st-nav-act-btn {% if program_status == 'Running' %}st-btn-stop{% elif program_status in ['Starting', 'Stopping'] %}st-btn-starting{% else %}st-btn-start{% endif %}" data-status="{{ program_status }}" {% if program_status in ['Starting', 'Stopping'] %}disabled{% endif %}>
+                        <i class="fas {% if program_status == 'Running' %}fa-stop{% elif program_status in ['Starting', 'Stopping'] %}fa-spinner fa-spin{% else %}fa-play{% endif %}"></i>
+                        <span>{% if program_status == 'Running' %}Stop{% elif program_status == 'Starting' %}Starting…{% elif program_status == 'Stopping' %}Stopping…{% else %}Start{% endif %}</span>
+                    </button>
+                {% endif %}
+                {% if not is_onboarding %}
+                <button class="st-nav-hamburger" onclick="stToggleDrawer()" title="Menu"><i class="fa-solid fa-bars"></i></button>
+                {% endif %}
+                {% endif %}
+            </div>
+        </nav>
+
+        <!-- Task Ticker Bar -->
+        {% if not is_onboarding %}
+        <div class="st-task-ticker" id="stTaskTicker">
+            <div class="st-task-ticker-pill">
+                <div class="st-task-ticker-dot"></div>
+                <span class="st-task-ticker-name" id="stTickerName">Loading...</span>
+                <span class="st-task-ticker-status" id="stTickerStatus"></span>
+            </div>
+            <div class="st-task-ticker-expand" id="stTickerExpandBtn" title="Task Monitor" onclick="stToggleTaskMonitor()">
+                <i class="fa-solid fa-chevron-down"></i>
+            </div>
+        </div>
+
+        <!-- Task Monitor Panel -->
+        <div class="st-task-monitor" id="stTaskMonitor">
+            <div class="st-tm-hdr">
+                <span class="st-tm-title"><i class="fa-solid fa-list-check" style="color:var(--st-accent,#e8601c);margin-right:7px;font-size:11px"></i>Task Monitor</span>
+                <button class="st-tm-close" onclick="stToggleTaskMonitor()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="st-tm-scroll" id="stTmScroll">
+                <div class="st-tm-empty">Loading tasks...</div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Mobile side drawer -->
+        {% if not is_onboarding %}
+        <div class="st-nav-drawer" id="st-nav-drawer" onclick="stCloseDrawer(event)">
+            <div class="st-nav-drawer-inner">
+                <!-- Search -->
+                <div class="st-nav-drawer-search">
+                    <div class="st-nav-drawer-search-wrap">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input type="text" id="stNavSearch" placeholder="Search or enter IMDb/TMDB ID..." autocomplete="off">
+                    </div>
+                </div>
+                <div class="st-nav-drawer-scroll">
+                    {% set show_full_menu = not is_user_system_enabled() or (current_user.is_authenticated and current_user.role == 'admin') %}
+                    {% set show_limited_menu = is_user_system_enabled() and current_user.is_authenticated and current_user.role != 'admin' %}
+
+                    {% if show_full_menu or show_limited_menu %}
+                    <!-- Main -->
+                    <div class="st-nav-acc-section open" id="st-acc-main">
+                        <div class="st-nav-acc-hdr" onclick="stToggleAcc('st-acc-main')">
+                            Main <i class="fa-solid fa-chevron-down st-acc-arr"></i>
+                        </div>
+                        <div class="st-nav-acc-body">
+                            <a class="st-nav-mob-item" href="{{ url_for('root.root') }}"><i class="fa-solid fa-house"></i> Home</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('discover.index') }}"><i class="fa-solid fa-plus"></i> Discover</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('library.index') }}"><i class="fa-solid fa-film"></i> Library</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('queues.index') }}"><i class="fa-solid fa-bars"></i> Queues</a>
+                            {% if show_full_menu %}
+                            <a class="st-nav-mob-item" href="{{ url_for('program_operation.task_timings') }}"><i class="fa-solid fa-list-check"></i> Task Manager</a>
+                            {% endif %}
+                            <a class="st-nav-mob-item" href="{{ url_for('statistics.calendar_view') }}"><i class="fa-solid fa-calendar"></i> Calendar</a>
+                            <a class="st-nav-mob-item" href="https://godver3.github.io/cli_docs/" target="_blank"><i class="fa-solid fa-book"></i> Docs</a>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if show_full_menu %}
+                    <!-- System -->
+                    <div class="st-nav-acc-section" id="st-acc-system">
+                        <div class="st-nav-acc-hdr" onclick="stToggleAcc('st-acc-system')">
+                            System <i class="fa-solid fa-chevron-down st-acc-arr"></i>
+                        </div>
+                        <div class="st-nav-acc-body">
+                            <a class="st-nav-mob-item" href="{{ url_for('logs.logs') }}"><i class="fa-solid fa-scroll"></i> Logs</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('settings.index') }}"><i class="fa-solid fa-gear"></i> Settings</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('database.index') }}"><i class="fa-solid fa-database"></i> Database</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('database.phalanxdb_status') }}"><i class="fa-solid fa-server"></i> Phalanx DB</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('performance.performance_dashboard') }}"><i class="fa-solid fa-chart-line"></i> Performance Dashboard</a>
+                            {% if not is_limited_environment() %}
+                            <a class="st-nav-mob-item" href="{{ url_for('debrid_manager.index') }}"><i class="fa-solid fa-cloud-arrow-down"></i> Debrid Manager</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('upgrade_hub.index') }}"><i class="fa-solid fa-arrow-up"></i> Upgrade Hub</a>
+                            {% endif %}
+                            <a class="st-nav-mob-item" href="{{ url_for('connections.index') }}"><i class="fa-solid fa-plug"></i> Connections</a>
+                        </div>
+                    </div>
+
+                    <!-- Tools -->
+                    <div class="st-nav-acc-section" id="st-acc-tools">
+                        <div class="st-nav-acc-hdr" onclick="stToggleAcc('st-acc-tools')">
+                            Tools <i class="fa-solid fa-chevron-down st-acc-arr"></i>
+                        </div>
+                        <div class="st-nav-acc-body">
+                            <a class="st-nav-mob-item" href="{{ url_for('scraper.scraper_tester') }}"><i class="fa-solid fa-flask"></i> Tester</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('debug.debug_functions') }}"><i class="fa-solid fa-bug"></i> Debug</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('database.reverse_parser') }}"><i class="fa-solid fa-rotate"></i> R. Parser</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('magnet.assign_magnet') }}"><i class="fa-solid fa-arrow-right-arrow-left"></i> M. Assign</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('debug.manual_blacklist') }}"><i class="fa-solid fa-ban"></i> M. Blacklist</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('trakt_friends.manage_friends') }}"><i class="fa-solid fa-users"></i> Trakt Friends</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('user_token.collect_tokens_page') }}"><i class="fa-solid fa-key"></i> Plex User Token M.</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('symlink_tools.index') }}"><i class="fa-solid fa-link"></i> Symlink Tools</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('metadata.metadata_debug') }}"><i class="fa-solid fa-tags"></i> Metadata Debug</a>
+                            <a class="st-nav-mob-item" href="{{ url_for('overlay_page.overlays_page') }}"><i class="fa-solid fa-layer-group"></i> Overlays</a>
+                        </div>
+                    </div>
+
+                    <!-- Users -->
+                    <div class="st-nav-acc-section" id="st-acc-users">
+                        <div class="st-nav-acc-hdr" onclick="stToggleAcc('st-acc-users')">
+                            Users <i class="fa-solid fa-chevron-down st-acc-arr"></i>
+                        </div>
+                        <div class="st-nav-acc-body">
+                            <a class="st-nav-mob-item" href="{{ url_for('user_management.manage_users') }}"><i class="fa-solid fa-user-gear"></i> Manage Users</a>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <!-- Footer actions in drawer -->
+                <div class="st-nav-mob-actions">
+                    {% if is_user_system_enabled() %}
+                        {% if current_user.is_authenticated %}
+                        <button class="st-nav-act-btn st-btn-logout" onclick="document.getElementById('st_logout_button').click()">
+                            <i class="fa-solid fa-right-from-bracket"></i> Logout
+                        </button>
+                        {% if current_user.role == 'admin' %}
+                            {% set program_status = get_program_status() %}
+                            <button class="st-nav-act-btn {% if program_status == 'Running' %}st-btn-stop{% else %}st-btn-start{% endif %}" onclick="document.getElementById('st_programControlButton').click()">
+                                <i class="fas {% if program_status == 'Running' %}fa-stop{% else %}fa-play{% endif %}"></i>
+                                {% if program_status == 'Running' %}Stop{% else %}Start{% endif %}
+                            </button>
+                        {% endif %}
+                        {% endif %}
+                    {% else %}
+                        {% set program_status = get_program_status() %}
+                        <button class="st-nav-act-btn {% if program_status == 'Running' %}st-btn-stop{% else %}st-btn-start{% endif %}" onclick="document.getElementById('st_programControlButton').click()">
+                            <i class="fas {% if program_status == 'Running' %}fa-stop{% else %}fa-play{% endif %}"></i>
+                            {% if program_status == 'Running' %}Stop{% else %}Start{% endif %}
+                        </button>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- FAB group: AI Butler + Help (tangerine only) -->
+        {% if not is_onboarding %}
+        <div class="st-fab-group" id="stFabGroup">
+            {% if ai_butler_enabled %}
+            <button class="st-fab st-fab-ai" id="stFabAI" title="AI Assistant">
+                <i class="fa-solid fa-robot"></i>
+                <span class="st-fab-tooltip">AI Assistant</span>
+            </button>
+            {% endif %}
+            <button class="st-fab st-fab-help" id="stFabHelp" title="Help">
+                <i class="fa-solid fa-question"></i>
+                <span class="st-fab-tooltip">Help</span>
+            </button>
+        </div>
+        {% endif %}
+
+        <script>
+        // Reset scroll to top on page load for tangerine theme (sticky nav gets cut off by browser scroll restore)
+        if (localStorage.getItem('selectedTheme') === 'tangerine') {
+            if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+            window.scrollTo(0, 0);
+        }
+        // Tangerine nav JS (prefixed st_ to avoid conflicts)
+        function stToggleDD(id) {
+            document.querySelectorAll('.st-nav-item.open').forEach(function(el) {
+                if (el.id !== id) el.classList.remove('open');
+            });
+            var el = document.getElementById(id);
+            if (el) el.classList.toggle('open');
+        }
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.st-nav-item')) {
+                document.querySelectorAll('.st-nav-item.open').forEach(function(el) { el.classList.remove('open'); });
+            }
+        });
+        function stToggleDrawer() {
+            var d = document.getElementById('st-nav-drawer');
+            if (d) d.classList.toggle('open');
+        }
+        function stCloseDrawer(e) {
+            if (!e.target.closest('.st-nav-drawer-inner')) {
+                var d = document.getElementById('st-nav-drawer');
+                if (d) d.classList.remove('open');
+            }
+        }
+        function stToggleAcc(id) {
+            var sec = document.getElementById(id);
+            if (sec) sec.classList.toggle('open');
+        }
+        // Wire st_ buttons to the original hidden buttons (for program_controls.js compatibility)
+        document.addEventListener('DOMContentLoaded', function() {
+            // Sync notifications button
+            var stNotifBtn = document.getElementById('st_notifications_button');
+            var origNotifBtn = document.getElementById('notifications_button');
+            if (stNotifBtn && origNotifBtn) {
+                stNotifBtn.addEventListener('click', function() { origNotifBtn.click(); });
+                // Mirror has-notifications class from ALL #notifications_button elements
+                var allOrigNotifBtns = document.querySelectorAll('#notifications_button');
+                var stNotifCount = document.getElementById('st_notif_count');
+                function syncNotifIndicator() {
+                    var hasIt = Array.from(allOrigNotifBtns).some(function(b) { return b.classList.contains('has-notifications'); });
+                    stNotifBtn.classList.toggle('has-notifications', hasIt);
+                    if (stNotifCount) {
+                        var count = document.querySelectorAll('.notification.unread').length;
+                        if (count > 0) {
+                            stNotifCount.textContent = count > 99 ? '99+' : count;
+                            stNotifCount.style.display = '';
+                        } else {
+                            stNotifCount.style.display = 'none';
+                        }
+                    }
+                }
+                allOrigNotifBtns.forEach(function(btn) {
+                    new MutationObserver(syncNotifIndicator).observe(btn, { attributes: true, attributeFilter: ['class'] });
+                });
+                // Fallback poll every 500ms in case observer misses initial set
+                setInterval(syncNotifIndicator, 500);
+            }
+            // Sync release notes button
+            var stRelBtn = document.getElementById('st_releaseNotesButton');
+            var origRelBtn = document.getElementById('releaseNotesButton');
+            if (stRelBtn && origRelBtn) {
+                stRelBtn.addEventListener('click', function() { origRelBtn.click(); });
+            }
+            // Sync logout button
+            var stLogoutBtn = document.getElementById('st_logout_button');
+            var origLogoutBtn = document.getElementById('logout_button');
+            if (stLogoutBtn && origLogoutBtn) {
+                stLogoutBtn.addEventListener('click', function() { origLogoutBtn.click(); });
+            }
+            // Sync program control button
+            var stProgBtn = document.getElementById('st_programControlButton');
+            var origProgBtn = document.getElementById('programControlButton');
+            if (stProgBtn && origProgBtn) {
+                stProgBtn.addEventListener('click', function() { origProgBtn.click(); });
+                // Mirror status updates from original to st_ button
+                var observer = new MutationObserver(function() {
+                    stProgBtn.className = origProgBtn.className.replace(/\bicon-button\b/g, 'st-nav-act-btn')
+                        .replace(/\bstop-program\b/g, 'st-btn-stop')
+                        .replace(/\bstart-program\b/g, 'st-btn-start')
+                        .replace(/\bstarting-program\b/g, 'st-btn-starting')
+                        .replace(/\bstopping-program\b/g, 'st-btn-stopping');
+                    stProgBtn.disabled = origProgBtn.disabled;
+                    stProgBtn.innerHTML = origProgBtn.innerHTML;
+                });
+                observer.observe(origProgBtn, { attributes: true, childList: true, subtree: true });
+            }
+            // Drawer search wires to existing nav search form
+            var stSearch = document.getElementById('stNavSearch');
+            var origSearch = document.getElementById('navSearch');
+            if (stSearch && origSearch) {
+                stSearch.addEventListener('input', function() { origSearch.value = stSearch.value; });
+                stSearch.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        origSearch.value = stSearch.value;
+                        document.getElementById('nav-search-form').dispatchEvent(new Event('submit'));
+                    }
+                });
+            }
+
+            // Active page highlighting + section auto-expand in mobile drawer
+            (function() {
+                var drawer = document.getElementById('st-nav-drawer');
+                if (!drawer) return;
+
+                var currentPath = window.location.pathname;
+                var allItems = drawer.querySelectorAll('.st-nav-mob-item');
+                var matchedSection = null;
+
+                allItems.forEach(function(item) {
+                    var href = item.getAttribute('href');
+                    if (!href) return;
+                    var linkPath;
+                    try { linkPath = new URL(href, window.location.origin).pathname; } catch(e) { return; }
+                    if (linkPath === currentPath) {
+                        item.classList.add('active');
+                        var section = item.closest('.st-nav-acc-section');
+                        if (section) {
+                            section.classList.add('open');
+                            matchedSection = section.id;
+                        }
+                    }
+                });
+
+                // If we found the active page, save it; otherwise restore from localStorage
+                if (matchedSection) {
+                    try { localStorage.setItem('st-nav-expanded', matchedSection); } catch(e) {}
+                } else {
+                    try {
+                        var saved = localStorage.getItem('st-nav-expanded');
+                        if (saved) {
+                            var sec = document.getElementById(saved);
+                            if (sec) sec.classList.add('open');
+                        }
+                    } catch(e) {}
+                }
+
+                // Save section when user manually opens one
+                var origStToggleAcc = window.stToggleAcc;
+                window.stToggleAcc = function(id) {
+                    origStToggleAcc(id);
+                    var sec = document.getElementById(id);
+                    if (sec && sec.classList.contains('open')) {
+                        try { localStorage.setItem('st-nav-expanded', id); } catch(e) {}
+                    }
+                };
+            })();
+
+            // ── FAB: AI Butler + Help auto-hide ──────────────
+            (function() {
+                var fabGroup = document.getElementById('stFabGroup');
+                if (!fabGroup) return;
+                var fabHideTimer;
+                function stFabShow() {
+                    fabGroup.classList.add('fab-visible');
+                    clearTimeout(fabHideTimer);
+                    fabHideTimer = setTimeout(function() { fabGroup.classList.remove('fab-visible'); }, 3000);
+                }
+                document.addEventListener('mousemove', stFabShow);
+                document.addEventListener('touchstart', stFabShow);
+                document.addEventListener('keydown', stFabShow);
+                fabGroup.addEventListener('mouseenter', function() {
+                    clearTimeout(fabHideTimer);
+                    fabGroup.classList.add('fab-visible');
+                });
+                fabGroup.addEventListener('mouseleave', function() {
+                    fabHideTimer = setTimeout(function() { fabGroup.classList.remove('fab-visible'); }, 1500);
+                });
+                // Wire AI FAB to existing AI butler toggle
+                var fabAI = document.getElementById('stFabAI');
+                var origAI = document.getElementById('ai-butler-toggle');
+                if (fabAI && origAI) {
+                    fabAI.addEventListener('click', function() { origAI.click(); });
+                }
+                // Wire Help FAB to existing help button
+                var fabHelp = document.getElementById('stFabHelp');
+                var origHelp = document.getElementById('helpButton');
+                if (fabHelp && origHelp) {
+                    fabHelp.addEventListener('click', function() { origHelp.click(); });
+                }
+            })();
+
+            // ── Task Ticker + Monitor ────────────────────────
+            (function() {
+                var tickerEl = document.getElementById('stTaskTicker');
+                var monitorEl = document.getElementById('stTaskMonitor');
+                var expandBtn = document.getElementById('stTickerExpandBtn');
+                var tickerName = document.getElementById('stTickerName');
+                var tickerStatus = document.getElementById('stTickerStatus');
+                var tmScroll = document.getElementById('stTmScroll');
+                var navTaskBtn = document.getElementById('stNavTaskBtn');
+                if (!tickerEl) return;
+
+                var monitorOpen = false;
+                var tickerHideTimer;
+
+                // Translate #taskList DOM (task-item/task-list-header) → st-tm-* HTML
+                function stBuildMonitorHTML() {
+                    var origTaskList = document.getElementById('taskList');
+                    if (!origTaskList || !origTaskList.children.length) return '<div class="st-tm-empty">Loading tasks…</div>';
+                    var html = '';
+                    var nodes = origTaskList.children;
+                    for (var i = 0; i < nodes.length; i++) {
+                        var node = nodes[i];
+                        if (node.classList.contains('task-list-header')) {
+                            html += '<div class="st-tm-section">' + node.textContent + '</div>';
+                        } else if (node.classList.contains('task-item')) {
+                            var isRunning = node.classList.contains('running');
+                            var nameEl = node.querySelector('.task-name');
+                            var timingEls = node.querySelectorAll('.task-timing span');
+                            var sub = timingEls[0] ? timingEls[0].textContent : '';
+                            var badge = timingEls[1] ? timingEls[1].textContent : '';
+                            html += '<div class="st-tm-task' + (isRunning ? ' running' : '') + '">' +
+                                '<div class="st-tm-task-name">' + (nameEl ? nameEl.textContent : '') + '</div>' +
+                                '<div class="st-tm-task-meta">' +
+                                '<span class="st-tm-task-sub">' + sub + '</span>' +
+                                '<span class="st-tm-task-badge ' + (isRunning ? 'st-tm-badge-running' : 'st-tm-badge-sched') + '">' + badge + '</span>' +
+                                '</div></div>';
+                        } else if (node.classList.contains('no-tasks') || node.classList.contains('error') || node.classList.contains('loading')) {
+                            html += '<div class="st-tm-empty">' + node.textContent + '</div>';
+                        }
+                    }
+                    return html || '<div class="st-tm-empty">No tasks</div>';
+                }
+
+                // Called whenever #currentTaskDisplay or #taskList changes
+                function stSyncFromDisplay() {
+                    var origDisplay = document.getElementById('currentTaskDisplay');
+                    if (!origDisplay) return;
+                    var nameEl = origDisplay.querySelector('.current-task-name');
+                    var timeEl = origDisplay.querySelector('.current-task-time');
+                    var isRunning = origDisplay.classList.contains('running');
+                    var name = nameEl ? nameEl.textContent.trim() : '';
+                    var time = timeEl ? timeEl.textContent.trim() : '';
+
+                    // Update ticker pill text
+                    if (tickerName) tickerName.textContent = name || 'Loading…';
+                    if (tickerStatus) tickerStatus.textContent = time;
+
+                    // Show/hide pulsing dot on nav btn
+                    if (navTaskBtn) {
+                        navTaskBtn.classList.toggle('no-tasks', !isRunning);
+                    }
+
+                    // Auto-show ticker when a task is running
+                    if (isRunning && name) {
+                        tickerEl.classList.add('visible');
+                        clearTimeout(tickerHideTimer);
+                    }
+
+                    // Refresh monitor panel if open
+                    if (monitorOpen && tmScroll) {
+                        tmScroll.innerHTML = stBuildMonitorHTML();
+                    }
+                }
+
+                // Observe #currentTaskDisplay for class/text changes
+                var origDisplay = document.getElementById('currentTaskDisplay');
+                if (origDisplay) {
+                    new MutationObserver(stSyncFromDisplay).observe(origDisplay, { attributes: true, childList: true, subtree: true, characterData: true });
+                }
+                // Observe #taskList for content changes (re-render monitor)
+                var origTaskList = document.getElementById('taskList');
+                if (origTaskList) {
+                    new MutationObserver(function() {
+                        if (monitorOpen && tmScroll) tmScroll.innerHTML = stBuildMonitorHTML();
+                    }).observe(origTaskList, { childList: true, subtree: true });
+                }
+
+                // Nav task btn — toggle ticker
+                window.stShowTicker = function() {
+                    if (tickerEl.classList.contains('visible') && !monitorOpen) {
+                        tickerEl.classList.remove('visible');
+                        return;
+                    }
+                    tickerEl.classList.add('visible');
+                    clearTimeout(tickerHideTimer);
+                    tickerHideTimer = setTimeout(function() {
+                        if (!monitorOpen) tickerEl.classList.remove('visible');
+                    }, 8000);
+                };
+
+                // Expand/collapse monitor
+                window.stToggleTaskMonitor = function() {
+                    if (!monitorEl) return;
+                    monitorOpen = !monitorOpen;
+                    monitorEl.classList.toggle('open', monitorOpen);
+                    if (expandBtn) expandBtn.classList.toggle('open', monitorOpen);
+                    if (monitorOpen) {
+                        clearTimeout(tickerHideTimer);
+                        tickerEl.classList.add('visible');
+                        if (tmScroll) tmScroll.innerHTML = stBuildMonitorHTML();
+                    } else {
+                        var d = document.getElementById('currentTaskDisplay');
+                        if (!d || !d.classList.contains('running')) {
+                            tickerHideTimer = setTimeout(function() { tickerEl.classList.remove('visible'); }, 4000);
+                        }
+                    }
+                };
+
+                // Close monitor on outside click
+                document.addEventListener('click', function(e) {
+                    if (!monitorOpen) return;
+                    if (!e.target.closest('#stTaskMonitor') &&
+                        !e.target.closest('#stTaskTicker') &&
+                        !e.target.closest('#stNavTaskBtn')) {
+                        monitorOpen = false;
+                        monitorEl.classList.remove('open');
+                        if (expandBtn) expandBtn.classList.remove('open');
+                        var d = document.getElementById('currentTaskDisplay');
+                        if (!d || !d.classList.contains('running')) {
+                            tickerHideTimer = setTimeout(function() { tickerEl.classList.remove('visible'); }, 4000);
+                        }
+                    }
+                });
+
+                // Run once immediately in case task_monitor.js already populated the DOM
+                stSyncFromDisplay();
+
+                // Replace "Interval:" with "Intvl:" in task display — tangerine only
+                (function() {
+                    function shortenInterval(root) {
+                        if (!document.body.classList.contains('tangerine-theme')) return;
+                        root.querySelectorAll('.task-timing span, .current-task-time').forEach(function(el) {
+                            if (el.textContent.includes('Interval:')) {
+                                el.textContent = el.textContent.replace(/Interval:/g, 'Intvl:');
+                            }
+                        });
+                    }
+                    var taskListEl = document.getElementById('taskList');
+                    var taskDisplayEl = document.getElementById('currentTaskDisplay');
+                    [taskListEl, taskDisplayEl].forEach(function(el) {
+                        if (!el) return;
+                        shortenInterval(el);
+                        new MutationObserver(function() { shortenInterval(el); })
+                            .observe(el, { childList: true, subtree: true, characterData: true });
+                    });
+                })();
+            })();
+
+        });
+        </script>
+    </div>
+    <!-- End Tangerine Nav Redesign -->
+
     <header>
         <div class="header-content">
             <a href="{{ url_for('root.root') }}" style="text-decoration: none; color: inherit; display: flex; align-items: center;">
@@ -852,9 +1504,7 @@
                         ('database.phalanxdb_status', 'Phalanx DB'),
                         ('performance.performance_dashboard', 'Performance Dashboard')] +
                         ([] if is_limited_environment() or (is_user_system_enabled() and not (current_user.is_authenticated and current_user.role == 'admin')) else [('debrid_manager.index', 'Debrid Manager'), ('upgrade_hub.index', 'Upgrade Hub')]) + [
-                        ('connections.index', 'Connections'),
-                        ('api_summary.index', 'API Summary'),
-                        ('real_time_api.index', 'Real Time API')
+                        ('connections.index', 'Connections')
                     ],
                     'Tools': [
                         ('scraper.scraper_tester', 'Tester'),
@@ -1241,6 +1891,14 @@
                         Remove From Content Sources
                     </label>
                     <p class="library-setting-description">Remove items from content sources (Trakt lists, Overseerr requests, Plex Watchlist, etc.) during deletion. When enabled, the app will remove items from these sources to prevent them from being automatically re-added, but this makes deletion slower. When disabled, deletion is faster but the item might be re-added if it's still on your lists. <strong>Tip:</strong> Enable this when ghostlist mode is OFF. Disable this when ghostlist mode is ON (since ghostlist already prevents re-addition, and disabling makes deletion much faster).</p>
+                </div>
+
+                <div class="library-setting-group">
+                    <label for="hideSeasonZero">
+                        <input type="checkbox" id="hideSeasonZero" class="library-setting-checkbox">
+                        Hide Season 0
+                    </label>
+                    <p class="library-setting-description">Hide Season 0 (Specials) tab and its episodes from the TV show page.</p>
                 </div>
 
                 <div class="library-setting-group">

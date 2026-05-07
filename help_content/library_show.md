@@ -5,7 +5,7 @@ This page displays detailed information about a specific TV show in your library
 **Configuration:**
 
 *   **Artwork Display:** This page requires a **TMDB API key** to display posters and backdrop images.
-*   **Ghostlist Mode** Add shows and movies to the ghostlist to prevent them from being re-added. When enabled, deleting content will mark it as ghosted in the database. When disabled, deleted content can be re-added by dynamic content sources.
+*   **Ghostlist Mode** Add shows and movies to the ghostlist to prevent them from being re-added. When enabled, deleting content will mark it as ghosted in the database. When disabled, deleted content can be re-added by dynamic content sources. **Note:** Ghostlisting an item also automatically adds it to the Manual Blacklist by IMDb ID, providing an extra layer of protection against re-downloading.
 *   **Remove From Content Sources** Controls whether deleted items are removed from your content sources (Trakt lists, Overseerr requests, Plex Watchlist, etc.) during deletion. When enabled, the app will remove items from these sources to prevent them from being automatically re-added, but this makes deletion slower. When disabled, deletion is faster but the item might be re-added if it's still on your lists. **Tip:** Enable this when ghostlist mode is OFF. Disable this when ghostlist mode is ON (since ghostlist already prevents re-addition, and disabling makes deletion much faster).
 *   **Clear Artwork Cache** Clears artwork cache if you want to rebuild cache.
 *   Configure these in: **Settings → Additional Settings → Library Manager** or **Settings cog icon in Library section**
@@ -44,6 +44,7 @@ The page displays all seasons and their episodes organized in collapsible panels
     *   **Delete Season 🗑️:** **Always permanently deletes** the entire season and all its episodes, regardless of ghostlist mode setting.
         *   Use this to free up space by removing a specific season you no longer want.
         *   Confirmation prompt: "This will delete all X episodes in Season Y. This action cannot be undone."
+    *   **Assign Magnet 🧲:** Opens the Magnet Assign page pre-filled with this show and season (and version). Use this to manually assign a season pack magnet or torrent file.
 
 **Episode Information:**
 
@@ -65,6 +66,7 @@ Each episode in a season displays:
 
 *   **Search for episode 🔍:** You can manually scrape the episode and select torrent.
 *   **Move to wanted <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14m-7-7 7-7 7 7"/></svg>:** moves episode to wanted state to be re-scraped.
+*   **Assign Magnet 🧲:** Opens the Magnet Assign page pre-filled with this show, episode, and version. Use this to manually assign a magnet link or torrent file when the scraper can't find one automatically.
 *   **Delete Episode 🗑️:** **Always permanently deletes** the specific episode, regardless of ghostlist mode setting.
     *   Confirmation prompt: "Delete [Episode Title]? This action cannot be undone."
 

@@ -6,61 +6,66 @@
     .log-container {
         width: 100%;
         height: calc(100vh - 95px);
-        /* width: 95vw; */
-        /* max-width: 1200px; */
-        /* height: calc(100vh - 200px); */
-        /* margin: 20px auto; */
         overflow: hidden;
         display: flex;
         flex-direction: column;
-        background-color: #0f0700;
+        background-color: #111;
         position: relative;
     }
 
     .log-controls {
-        padding: 5px 25px;
-        background-color: #141414;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 7px 14px;
+        background-color: #1a1a1a;
+        border-bottom: 1px solid #2d2d2d;
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         white-space: nowrap;
         flex-wrap: nowrap;
+        flex-shrink: 0;
     }
 
-    #log-level-filter {
-        padding: 0.75rem 1rem;
-        background: rgba(255, 255, 255, 0.05);
+    #log-level-filter,
+    #log-lines-select {
+        padding: 0 9px;
+        height: 30px;
+        background: #222;
         color: #e0e0e0;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
-        transition: all 0.3s ease;
+        border: 1px solid #3d3d3d;
+        border-radius: 4px;
+        font-size: 12px;
+        font-family: 'JetBrains Mono', monospace;
+        outline: none;
+        transition: border-color .15s;
+        cursor: pointer;
     }
 
     #log-level-filter:focus,
-    #log-level-filter:hover {
-        outline: none;
-        background: rgba(255, 255, 255, 0.08);
-        border-color: rgba(255, 107, 53, 0.5);
-        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+    #log-level-filter:hover,
+    #log-lines-select:focus,
+    #log-lines-select:hover {
+        border-color: #e8601c;
     }
 
     #log-search {
-        padding: 0.75rem 1rem;
-        background: rgba(255, 255, 255, 0.05);
+        padding: 0 9px;
+        height: 30px;
+        background: #222;
         color: #e0e0e0;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 12px;
-        transition: all 0.3s ease;
+        border: 1px solid #3d3d3d;
+        border-radius: 4px;
+        font-size: 12px;
+        font-family: 'JetBrains Mono', monospace;
+        outline: none;
+        transition: border-color .15s;
         min-width: 200px;
     }
 
+    #log-search::placeholder { color: #555; }
+
     #log-search:focus,
     #log-search:hover {
-        outline: none;
-        background: rgba(255, 255, 255, 0.08);
-        border-color: rgba(255, 107, 53, 0.5);
-        box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+        border-color: #e8601c;
     }
 
     /* ── Chip filter bar (tangerine) ─────────────────────────────────── */
@@ -214,42 +219,31 @@
     }
 
     /* Custom scrollbar styles for log entries */
-    #log-entries::-webkit-scrollbar {
-        width: 12px;
-    }
-
-    #log-entries::-webkit-scrollbar-track {
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 10px;
-    }
-
-    #log-entries::-webkit-scrollbar-thumb {
-        background: #666;
-        border-radius: 10px;
-    }
-
-    #log-entries::-webkit-scrollbar-thumb:hover {
-        background: #888;
-    }
+    #log-entries::-webkit-scrollbar { width: 6px; }
+    #log-entries::-webkit-scrollbar-track { background: #1a1a1a; }
+    #log-entries::-webkit-scrollbar-thumb { background: #3d3d3d; border-radius: 3px; }
+    #log-entries::-webkit-scrollbar-thumb:hover { background: #e8601c; }
 
     /* For Firefox */
     #log-entries {
         scrollbar-width: thin;
-        scrollbar-color: #666 #333;
+        scrollbar-color: #3d3d3d #1a1a1a;
     }
 
     #pause-indicator {
         position: absolute;
-        top: 5px;
-        right: 10%;
-        background-color: rgba(255, 255, 255, 0.05);
-        color: #e0e0e0;
-        padding: 5px 10px;
-        border-radius: 10px;
-        font-size: 0.9em;
+        top: 46px;
+        right: 14px;
+        background: #1a1a1a;
+        border: 1px solid #3d3d3d;
+        color: #f59e0b;
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-family: 'JetBrains Mono', monospace;
         display: none;
         z-index: 10;
-        opacity: 0.7;
+        opacity: 0.9;
         animation: flash-opacity 2s ease-in-out infinite;
     }
 
@@ -274,28 +268,30 @@
     }
 
     #share-logs-btn {
-        padding: 0.75rem 1rem;
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
-        color: white;
-        border: none;
-        border-radius: 12px;
+        padding: 0 14px;
+        height: 30px;
+        background: transparent;
+        color: #f97316;
+        border: 1px solid #c2500f;
+        border-radius: 4px;
         cursor: pointer;
-        transition: all 0.3s ease;
-        min-width: 120px;
+        transition: all .15s;
+        min-width: 100px;
         position: relative;
-        font-weight: 600;
+        font-size: 12px;
+        font-weight: 500;
+        font-family: 'Inter', sans-serif;
+        white-space: nowrap;
     }
 
     #share-logs-btn:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 24px rgba(255, 107, 53, 0.3);
+        background: #c2500f22;
+        border-color: #f97316;
     }
 
     #share-logs-btn:disabled {
-        background: rgba(255, 255, 255, 0.1);
+        opacity: .5;
         cursor: not-allowed;
-        transform: none;
-        box-shadow: none;
     }
 
     .share-progress {
@@ -308,41 +304,42 @@
     }
 
     #share-url {
-        color: #3498db;
+        color: #60a5fa;
         text-decoration: none;
-        font-family: monospace;
-        padding: 5px 10px;
-        background-color: #2c3e50;
-        border-radius: 10px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        padding: 4px 10px;
+        background: #1e40af22;
+        border: 1px solid #1e40af;
+        border-radius: 4px;
         display: none;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 300px;
+        max-width: 280px;
     }
 
     #share-url:hover {
-        background-color: #34495e;
+        background: #1e40af44;
         text-decoration: underline;
     }
 
     #copy-url-btn {
         background: none;
         border: none;
-        color: #3498db;
+        color: #60a5fa;
         cursor: pointer;
-        padding: 5px;
+        padding: 4px;
         display: none;
-        transition: color 0.2s;
+        transition: color .15s;
+        line-height: 1;
     }
 
-    #copy-url-btn:hover {
-        color: #2980b9;
-    }
+    #copy-url-btn:hover { color: #93c5fd; }
 
     #copy-url-btn svg {
-        width: 16px;
-        height: 16px;
+        width: 15px;
+        height: 15px;
         vertical-align: middle;
     }
 
@@ -403,26 +400,27 @@
     /* Add styles for the bottom button */
     .bottom-button {
         position: absolute;
-        top: 5px;
-        right: 90px;
-        padding: 5px 10px;
-        background-color: rgba(255, 255, 255, 0.05);
+        top: 46px;
+        right: 160px;
+        padding: 4px 12px;
+        background: #1a1a1a;
         color: #e0e0e0;
-        border: 1px solid rgba(255, 255, 255, 0.15);
-        border-radius: 10px;
+        border: 1px solid #3d3d3d;
+        border-radius: 4px;
+        font-size: 11px;
+        font-family: 'JetBrains Mono', monospace;
         cursor: pointer;
         z-index: 100;
-        display: none;  /* Hidden by default, shown when not at bottom */
+        display: none;
+        transition: border-color .15s;
     }
 
     .bottom-button:hover {
-        background-color: rgba(255, 255, 255, 0.08);
+        border-color: #e8601c;
+        color: #e8601c;
     }
 
-    /* Show bottom button when not at bottom */
-    .bottom-button.visible {
-        display: block;
-    }
+    .bottom-button.visible { display: block; }
     /* Mobile-specific adjustments */
     @media screen and (max-width: 768px) {
         .log-container {

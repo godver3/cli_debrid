@@ -309,7 +309,7 @@ function renderMovieHeader(movie) {
     // Update details row
     const qualityValue = document.getElementById('quality-value');
     if (qualityValue && movie.version) {
-        qualityValue.textContent = movie.version;
+        qualityValue.textContent = movie.version.replace(/\*/g, '');
     }
 
     const pathValue = document.getElementById('path-value');
@@ -506,6 +506,7 @@ function createFileRow(file, rowNumber, movie) {
     const isBlacklisted = file.state === 'Blacklisted';
     const isUnreleased = file.state === 'Unreleased';
     const isWanted = file.state === 'Wanted';
+    const isMissingFromPlex = (isCollected || isUpgrading) && !file.ms_item_id;
 
     let statusIcon = '';
     if (isCollected) {
@@ -536,7 +537,7 @@ function createFileRow(file, rowNumber, movie) {
     const titleText = movie.title + (movie.year && !titleAlreadyHasYearFile ? ` (${movie.year})` : '');
     const qualityTags = extractQualityTags(file.basename || file.filename || '');
     const tags = qualityTags.map(tag => createQualityBadge(tag)).join('');
-    const version = file.version || 'Default';
+    const version = (file.version || 'Default').replace(/\*/g, '');
 
     // Determine status label and value
     let statusLabel, statusValue;
@@ -560,6 +561,7 @@ function createFileRow(file, rowNumber, movie) {
             <div class="release-tags">${tags}</div>
         </div>
         <div class="movie-file-meta">
+            ${isMissingFromPlex ? `<span class="episode-broken-badge" title="Collected/Upgrading but missing from Plex (no ms_item_id)">Broken</span>` : ''}
             <span class="file-version">${version}</span>
             ${sizeText ? `<span class="file-version">${sizeText}</span>` : ''}
             <span>•</span>
@@ -819,7 +821,7 @@ function formatDate(dateInput) {
 async function handleSearchMovie() {
     if (!movieData) return;
 
-    const version = movieData.version || 'Default';
+    const version = (movieData.version || 'Default').replace(/\*/g, '');
 
     // Call selectMedia to search for this movie
     // Convert genres string to array if needed for auto-select
@@ -885,7 +887,7 @@ async function handleFilePacks() {
     if (!movieData) return;
 
     // Use the version from movieData metadata, or 'Default' if not available
-    const version = movieData.version || 'Default';
+    const version = (movieData.version || 'Default').replace(/\*/g, '');
 
     // Get the currently active file tab
     const activeTab = document.querySelector('.file-tab.active');
@@ -1000,38 +1002,39 @@ function showVersionModal(versions) {
         return;
     }
 
-    // Clear existing checkboxes
+    // Build new dialog structure
     versionCheckboxes.innerHTML = '';
 
-    // Add heading
-    const header = document.createElement('div');
-    header.className = 'version-section-header';
+    // Title
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dialog-title';
+    titleEl.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(titleEl);
+
+    // Subtitle pill with requesting info
     const requestTitleHasYear = movieData.year && movieData.title.trim().endsWith(`(${movieData.year})`);
-    header.innerHTML = `<h4>Requesting: ${movieData.title}${movieData.year && !requestTitleHasYear ? ` (${movieData.year})` : ''}</h4>`;
-    versionCheckboxes.appendChild(header);
+    const subEl = document.createElement('div');
+    subEl.className = 'dialog-sub';
+    subEl.innerHTML = `<i class="fa-solid fa-film"></i> Requesting: ${movieData.title}${movieData.year && !requestTitleHasYear ? ` (${movieData.year})` : ''}`;
+    versionCheckboxes.appendChild(subEl);
 
-    const separator = document.createElement('hr');
-    versionCheckboxes.appendChild(separator);
+    // Section label
+    const labelEl = document.createElement('div');
+    labelEl.className = 'section-label';
+    labelEl.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(labelEl);
 
-    const versionHeader = document.createElement('div');
-    versionHeader.className = 'version-section-header';
-    versionHeader.innerHTML = '<h4>Select Versions:</h4>';
-    versionCheckboxes.appendChild(versionHeader);
-
-    // Create checkboxes for each version
+    // Create option rows for each version
     versions.forEach(version => {
-        const div = document.createElement('div');
-        div.className = 'version-checkbox';
-        div.innerHTML = `
-            <input type="checkbox" id="version-${version}" name="versions" value="${version}">
-            <label for="version-${version}">${version}</label>
-        `;
-        versionCheckboxes.appendChild(div);
+        const row = document.createElement('div');
+        row.className = 'option-row';
+        row.dataset.value = version;
+        row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">${version}</span>`;
+        row.addEventListener('click', () => row.classList.toggle('checked'));
+        versionCheckboxes.appendChild(row);
 
         // Auto-select if only one version
-        if (versions.length === 1) {
-            div.querySelector('input[type="checkbox"]').checked = true;
-        }
+        if (versions.length === 1) row.classList.add('checked');
     });
 
     // Show modal
@@ -1042,8 +1045,8 @@ function showVersionModal(versions) {
     const cancelBtn = document.getElementById('cancelVersions');
 
     const handleConfirm = async () => {
-        const selectedVersions = Array.from(document.querySelectorAll('#versionCheckboxes input[type="checkbox"]:checked'))
-            .map(cb => cb.value);
+        const selectedVersions = Array.from(document.querySelectorAll('#versionCheckboxes .option-row.checked'))
+            .map(row => row.dataset.value);
 
         if (selectedVersions.length === 0) {
             showPopup({
@@ -1192,10 +1195,13 @@ async function handleDeleteMovie(event) {
     // Custom deletion with progress tracking
     const action = movieData && movieData.auto_ghostlist_enabled ? 'ghostlist' : 'delete';
     const canUndo = action === 'ghostlist' ? 'Ghostlisted items can be recovered.' : 'This action cannot be undone.';
-    const confirmed = confirm(`This will ${action} ALL videos of "${movieData.title}". ${canUndo}`);
-    if (!confirmed) {
-        return;
-    }
+    showPopup({
+        type: 'confirm',
+        title: 'Confirm Deletion',
+        message: `This will ${action} ALL videos of "${movieData.title}". ${canUndo}`,
+        confirmText: action.charAt(0).toUpperCase() + action.slice(1),
+        cancelText: 'Cancel',
+        onConfirm: async function() {
 
     // Simulate progress updates
     const steps = [
@@ -1340,6 +1346,9 @@ async function handleDeleteMovie(event) {
             autoClose: 5000
         });
     }
+
+        } // end onConfirm
+    }); // end showPopup
 }
 
 /**
@@ -1388,10 +1397,16 @@ async function handleDeleteSingleFile(event) {
     }
 
     // Individual file deletion always uses delete (not ghostlist)
-    const confirmed = confirm('Delete this file?\n\nThis action cannot be undone.');
-    if (!confirmed) return;
-
-    await deleteMovieFilesByIds([fileId]);
+    showPopup({
+        type: 'confirm',
+        title: 'Delete File',
+        message: 'Delete this file?\n\nThis action cannot be undone.',
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            await deleteMovieFilesByIds([fileId]);
+        }
+    });
 }
 
 /**
@@ -1602,31 +1617,45 @@ async function handleDeleteFile(event) {
             }
         } else {
             // Fallback
-            if (!confirm(`Delete all ${videoCount} videos in file ${fileNumber}? This cannot be undone.`)) {
-                return;
-            }
+            showPopup({
+                type: 'confirm',
+                title: 'Delete File',
+                message: `Delete all ${videoCount} videos in file ${fileNumber}? This cannot be undone.`,
+                confirmText: 'Delete',
+                cancelText: 'Cancel',
+                onConfirm: async function() {
+                    try {
+                        const response = await fetch(`/library/delete_file/${imdbId}/${fileNumber}`, {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                blacklist: false,
+                                layers: ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache']
+                            })
+                        });
 
-            const response = await fetch(`/library/delete_file/${imdbId}/${fileNumber}`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    blacklist: false,
-                    layers: ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache']
-                })
+                        const result = await response.json();
+
+                        if (result.success) {
+                            moviePopup({
+                                type: window.POPUP_TYPES.SUCCESS,
+                                message: result.message || 'File deleted successfully',
+                                autoClose: 3000
+                            });
+                            setTimeout(() => loadMovieData(), 1500);
+                        } else {
+                            throw new Error(result.error || 'Failed to delete file');
+                        }
+                    } catch (error) {
+                        if (window.DEBUG) console.error('Error deleting file:', error);
+                        moviePopup({
+                            type: window.POPUP_TYPES.ERROR,
+                            message: `Error deleting file: ${error.message}`,
+                            autoClose: 5000
+                        });
+                    }
+                }
             });
-
-            const result = await response.json();
-
-            if (result.success) {
-                moviePopup({
-                    type: window.POPUP_TYPES.SUCCESS,
-                    message: result.message || 'File deleted successfully',
-                    autoClose: 3000
-                });
-                setTimeout(() => loadMovieData(), 1500);
-            } else {
-                throw new Error(result.error || 'Failed to delete file');
-            }
         }
     } catch (error) {
         if (window.DEBUG) console.error('Error deleting file:', error);

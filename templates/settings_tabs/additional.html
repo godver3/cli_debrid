@@ -414,6 +414,15 @@
                 <p class="settings-description">Remove items from content sources (Trakt, Overseerr, etc.) during deletion. Enable when ghostlist OFF (prevents re-addition, slower). Disable when ghostlist ON (faster, ghostlist already prevents re-addition).</p>
             </div>
 
+            <!-- Hide Season 0 -->
+            <div class="settings-form-group">
+                <label for="additional-hide_season_zero" class="settings-title">Hide Season 0:</label>
+                <input type="checkbox" id="additional-hide_season_zero" name="Library Manager.hide_season_zero"
+                       data-section="Library Manager" data-key="hide_season_zero"
+                       {% if settings.get('Library Manager', {}).get('hide_season_zero', True) %}checked{% endif %}>
+                <p class="settings-description">Hide Season 0 (Specials) tab and its episodes from the TV show page.</p>
+            </div>
+
             <!-- Clear Cache Button -->
             <div class="settings-form-group">
                 <label class="settings-title">Clear Artwork Cache:</label>
@@ -539,14 +548,14 @@ document.addEventListener('DOMContentLoaded', function() {
                     apiKeyInput.value = data.api_key;
                     apiKeyInput.type = 'text';
                     document.getElementById('bazarr-show-key').textContent = 'Hide';
-                    alert('New API key generated! Remember to save settings and update your Bazarr configuration.');
+                    showPopup({ type: 'success', title: 'Success', message: 'New API key generated! Remember to save settings and update your Bazarr configuration.', autoClose: 4000 });
                 } else {
-                    alert('Failed to generate API key');
+                    showPopup({ type: 'error', title: 'Error', message: 'Failed to generate API key', autoClose: 5000 });
                 }
             })
             .catch(error => {
                 console.error('Error generating API key:', error);
-                alert('Error generating API key. Check console for details.');
+                showPopup({ type: 'error', title: 'Error', message: 'Error generating API key. Check console for details.', autoClose: 5000 });
             });
         });
     }
@@ -563,10 +572,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     setTimeout(() => { copyKeyBtn.textContent = originalText; }, 2000);
                 }).catch(err => {
                     console.error('Failed to copy:', err);
-                    alert('Failed to copy to clipboard');
+                    showPopup({ type: 'error', title: 'Error', message: 'Failed to copy to clipboard', autoClose: 5000 });
                 });
             } else {
-                alert('No API key to copy. Generate one first.');
+                showPopup({ type: 'warning', title: 'Required', message: 'No API key to copy. Generate one first.', autoClose: 4000 });
             }
         });
     }
@@ -1618,26 +1627,33 @@ document.addEventListener('DOMContentLoaded', function() {
     const clearCacheBtn = document.getElementById('clear-library-cache-btn');
     if (clearCacheBtn) {
         clearCacheBtn.addEventListener('click', function() {
-            if (confirm('Are you sure you want to clear the artwork cache? All posters and backdrops will be re-downloaded from the primary source on next library load.')) {
-                fetch('/library/clear_cache', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        alert('Cache cleared successfully! Artwork will be refreshed on next library load.');
-                    } else {
-                        alert('Failed to clear cache: ' + (data.error || 'Unknown error'));
-                    }
-                })
-                .catch(error => {
-                    console.error('Error clearing cache:', error);
-                    alert('Error clearing cache. Check console for details.');
-                });
-            }
+            showPopup({
+                type: 'confirm',
+                title: 'Clear Artwork Cache',
+                message: 'Are you sure you want to clear the artwork cache? All posters and backdrops will be re-downloaded from the primary source on next library load.',
+                confirmText: 'Clear Cache',
+                cancelText: 'Cancel',
+                onConfirm: function() {
+                    fetch('/library/clear_cache', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            showPopup({ type: 'success', title: 'Success', message: 'Cache cleared successfully! Artwork will be refreshed on next library load.', autoClose: 4000 });
+                        } else {
+                            showPopup({ type: 'error', title: 'Error', message: 'Failed to clear cache: ' + (data.error || 'Unknown error'), autoClose: 5000 });
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error clearing cache:', error);
+                        showPopup({ type: 'error', title: 'Error', message: 'Error clearing cache. Check console for details.', autoClose: 5000 });
+                    });
+                }
+            });
         });
     }
 });

@@ -1420,61 +1420,77 @@ document.getElementById('select-all').addEventListener('change', function() {
 
 // single delete
 async function deleteTorrent(id, btn) {
-    if (!confirm('Delete this torrent from your debrid account?')) return;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="dm-spinner"></span>';
-    try {
-        const r = await fetch(`/debrid_manager/api/torrent/${id}`, { method: 'DELETE' });
-        const data = await r.json();
-        if (data.success) {
-            btn.closest('tr').remove();
-            _activeTorrents = _activeTorrents.filter(t => t.id !== id);
-            updateBatchBtn();
-        } else {
-            btn.disabled = false;
-            btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>';
-            alert('Delete failed: ' + (data.error || 'unknown error'));
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Torrent',
+        message: 'Delete this torrent from your debrid account?',
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="dm-spinner"></span>';
+            try {
+                const r = await fetch(`/debrid_manager/api/torrent/${id}`, { method: 'DELETE' });
+                const data = await r.json();
+                if (data.success) {
+                    btn.closest('tr').remove();
+                    _activeTorrents = _activeTorrents.filter(t => t.id !== id);
+                    updateBatchBtn();
+                } else {
+                    btn.disabled = false;
+                    btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>';
+                    showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + (data.error || 'unknown error'), autoClose: 5000 });
+                }
+            } catch(e) {
+                btn.disabled = false;
+                showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + e.message, autoClose: 5000 });
+            }
         }
-    } catch(e) {
-        btn.disabled = false;
-        alert('Delete failed: ' + e.message);
-    }
+    });
 }
 
 // batch delete
 document.getElementById('batch-delete-btn').addEventListener('click', async function() {
     const ids = [...document.querySelectorAll('#active-tbody .row-check:checked')].map(cb => cb.dataset.id);
     if (!ids.length) return;
-    if (!confirm(`Delete ${ids.length} torrent(s) from your debrid account?`)) return;
+    const _btn = this;
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Torrents',
+        message: `Delete ${ids.length} torrent(s) from your debrid account?`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            _btn.disabled = true;
+            _btn.innerHTML = '<span class="dm-spinner"></span> Deleting…';
 
-    this.disabled = true;
-    this.innerHTML = '<span class="dm-spinner"></span> Deleting…';
-
-    try {
-        const r = await fetch('/debrid_manager/api/torrent/batch-delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ids }),
-        });
-        const data = await r.json();
-        if (data.success) {
-            data.deleted.forEach(id => {
-                const row = document.querySelector(`#active-tbody tr[data-id="${id}"]`);
-                if (row) row.remove();
-            });
-            _activeTorrents = _activeTorrents.filter(t => !data.deleted.includes(t.id));
-            if (data.failed.length) {
-                alert(`${data.deleted.length} deleted. ${data.failed.length} failed.`);
+            try {
+                const r = await fetch('/debrid_manager/api/torrent/batch-delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids }),
+                });
+                const data = await r.json();
+                if (data.success) {
+                    data.deleted.forEach(id => {
+                        const row = document.querySelector(`#active-tbody tr[data-id="${id}"]`);
+                        if (row) row.remove();
+                    });
+                    _activeTorrents = _activeTorrents.filter(t => !data.deleted.includes(t.id));
+                    if (data.failed.length) {
+                        showPopup({ type: 'warning', title: 'Notice', message: `${data.deleted.length} deleted. ${data.failed.length} failed.`, autoClose: 4000 });
+                    }
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Batch delete failed: ' + (data.error || 'unknown'), autoClose: 5000 });
+                }
+            } catch(e) {
+                showPopup({ type: 'error', title: 'Error', message: 'Batch delete failed: ' + e.message, autoClose: 5000 });
             }
-        } else {
-            alert('Batch delete failed: ' + (data.error || 'unknown'));
-        }
-    } catch(e) {
-        alert('Batch delete failed: ' + e.message);
-    }
 
-    this.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg> Delete Selected (<span id="selected-count">0</span>)';
-    updateBatchBtn();
+            _btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg> Delete Selected (<span id="selected-count">0</span>)';
+            updateBatchBtn();
+        }
+    });
 });
 
 // ── HISTORY TAB ────────────────────────────────────────────────────────────
@@ -2098,14 +2114,14 @@ async function _loadPlexTrash(force) {
             _plexTrashBtn.classList.remove('active');
             _plexTrashBtn.textContent = 'Plex Trash';
             if (_plexTrashRescanBtn) _plexTrashRescanBtn.style.display = 'none';
-            alert('Failed to load Plex trash: ' + (data.error || 'unknown'));
+            showPopup({ type: 'error', title: 'Error', message: 'Failed to load Plex trash: ' + (data.error || 'unknown'), autoClose: 5000 });
         }
     } catch(e) {
         _libPlexTrash = false;
         _plexTrashBtn.classList.remove('active');
         _plexTrashBtn.textContent = 'Plex Trash';
         if (_plexTrashRescanBtn) _plexTrashRescanBtn.style.display = 'none';
-        alert('Failed: ' + e.message);
+        showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + e.message, autoClose: 5000 });
     }
     _plexTrashBtn.disabled = false;
     if (_plexTrashRescanBtn) _plexTrashRescanBtn.disabled = false;
@@ -2177,43 +2193,60 @@ document.getElementById('lib-delete-dupes-btn').addEventListener('click', async 
         copies.slice(1).forEach(t => toDelete.push(t.id));
     });
     if (!toDelete.length) return;
-    if (!confirm(`Delete ${toDelete.length} duplicate torrent(s)? The newest copy of each hash will be kept.`)) return;
-    this.disabled = true; this.innerHTML = '<span class="dm-spinner"></span> Deleting…';
-    try {
-        const r = await fetch('/debrid_manager/api/torrent/batch-delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:toDelete}) });
-        const data = await r.json();
-        if (data.success) {
-            _libAll = _libAll.filter(t => !data.deleted.includes(t.id));
-            data.deleted.forEach(id => _libSelected.delete(id));
-            buildHashCounts(); updateDupesBtn(); applyLibFilters();
-            if (data.failed.length) alert(`${data.deleted.length} deleted. ${data.failed.length} failed.`);
-        } else { alert('Failed: ' + (data.error || 'unknown')); }
-    } catch(e) { alert('Failed: ' + e.message); }
-    this.disabled = false;
+    const _btn = this;
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Duplicates',
+        message: `Delete ${toDelete.length} duplicate torrent(s)? The newest copy of each hash will be kept.`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            _btn.disabled = true; _btn.innerHTML = '<span class="dm-spinner"></span> Deleting…';
+            try {
+                const r = await fetch('/debrid_manager/api/torrent/batch-delete', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:toDelete}) });
+                const data = await r.json();
+                if (data.success) {
+                    _libAll = _libAll.filter(t => !data.deleted.includes(t.id));
+                    data.deleted.forEach(id => _libSelected.delete(id));
+                    buildHashCounts(); updateDupesBtn(); applyLibFilters();
+                    if (data.failed.length) showPopup({ type: 'warning', title: 'Notice', message: `${data.deleted.length} deleted. ${data.failed.length} failed.`, autoClose: 4000 });
+                } else { showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + (data.error || 'unknown'), autoClose: 5000 }); }
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + e.message, autoClose: 5000 }); }
+            _btn.disabled = false;
+        }
+    });
 });
 
 async function libDeleteTorrent(id, btn) {
-    if (!confirm('Delete this torrent from your debrid account?')) return;
-    btn.disabled = true; btn.innerHTML = '<span class="dm-spinner"></span>';
-    try {
-        const r = await fetch(`/debrid_manager/api/torrent/${id}`, { method: 'DELETE' });
-        const data = await r.json();
-        if (data.success) {
-            btn.closest('tr').remove();
-            _libAll = _libAll.filter(t => t.id !== id);
-            _libFiltered = _libFiltered.filter(t => t.id !== id);
-            _libSelected.delete(id);
-            buildHashCounts(); updateDupesBtn(); updateLibFilterInfo(); updateLibBatchBtn(); updateSelectBar();
-        } else {
-            btn.disabled = false;
-            btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>';
-            alert('Delete failed: ' + (data.error || 'unknown'));
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Torrent',
+        message: 'Delete this torrent from your debrid account?',
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            btn.disabled = true; btn.innerHTML = '<span class="dm-spinner"></span>';
+            try {
+                const r = await fetch(`/debrid_manager/api/torrent/${id}`, { method: 'DELETE' });
+                const data = await r.json();
+                if (data.success) {
+                    btn.closest('tr').remove();
+                    _libAll = _libAll.filter(t => t.id !== id);
+                    _libFiltered = _libFiltered.filter(t => t.id !== id);
+                    _libSelected.delete(id);
+                    buildHashCounts(); updateDupesBtn(); updateLibFilterInfo(); updateLibBatchBtn(); updateSelectBar();
+                } else {
+                    btn.disabled = false;
+                    btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>';
+                    showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + (data.error || 'unknown'), autoClose: 5000 });
+                }
+            } catch(e) { btn.disabled = false; showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + e.message, autoClose: 5000 }); }
         }
-    } catch(e) { btn.disabled = false; alert('Delete failed: ' + e.message); }
+    });
 }
 
 async function libReinsertTorrent(id, hash, filename) {
-    if (!hash) { alert('No hash available for this torrent.'); return; }
+    if (!hash) { showPopup({ type: 'warning', title: 'Required', message: 'No hash available for this torrent.', autoClose: 4000 }); return; }
     const btn = event.currentTarget;
     const origHtml = btn.innerHTML;
     btn.disabled = true; btn.innerHTML = '<span class="dm-spinner"></span>';
@@ -2229,9 +2262,9 @@ async function libReinsertTorrent(id, hash, filename) {
             setTimeout(() => { btn.disabled = false; btn.innerHTML = origHtml; }, 2000);
         } else {
             btn.disabled = false; btn.innerHTML = origHtml;
-            alert('Reinsert failed: ' + (data.error || 'unknown'));
+            showPopup({ type: 'error', title: 'Error', message: 'Reinsert failed: ' + (data.error || 'unknown'), autoClose: 5000 });
         }
-    } catch(e) { btn.disabled = false; btn.innerHTML = origHtml; alert('Reinsert failed: ' + e.message); }
+    } catch(e) { btn.disabled = false; btn.innerHTML = origHtml; showPopup({ type: 'error', title: 'Error', message: 'Reinsert failed: ' + e.message, autoClose: 5000 }); }
 }
 
 // ── Library torrent detail modal ─────────────────────────────────────────────
@@ -2394,28 +2427,36 @@ function libOpenDupes(type, key, currentId) {
 }
 
 async function libDupeDelete(id, btn, type, key) {
-    if (!confirm('Delete this torrent from your debrid account?')) return;
-    const origHtml = btn.innerHTML;
-    btn.disabled = true; btn.innerHTML = '<span class="dm-spinner"></span>';
-    try {
-        const r = await fetch(`/debrid_manager/api/torrent/${id}`, { method: 'DELETE' });
-        const data = await r.json();
-        if (data.success) {
-            _libAll = _libAll.filter(t => t.id !== id);
-            _libFiltered = _libFiltered.filter(t => t.id !== id);
-            _libSelected.delete(id);
-            buildHashCounts(); updateDupesBtn(); updateLibFilterInfo(); updateLibBatchBtn(); updateSelectBar();
-            // Refresh the dupes modal with updated data — close if no more dupes
-            const remaining = type === 'hash'
-                ? _libAll.filter(t => t.hash === key)
-                : _libAll.filter(t => _titleKey(t) === key);
-            if (remaining.length < 2) { libCloseDupes(); applyLibFilters(); }
-            else { libOpenDupes(type, key, null); applyLibFilters(); }
-        } else {
-            btn.disabled = false; btn.innerHTML = origHtml;
-            alert('Delete failed: ' + (data.error || 'unknown'));
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Torrent',
+        message: 'Delete this torrent from your debrid account?',
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const origHtml = btn.innerHTML;
+            btn.disabled = true; btn.innerHTML = '<span class="dm-spinner"></span>';
+            try {
+                const r = await fetch(`/debrid_manager/api/torrent/${id}`, { method: 'DELETE' });
+                const data = await r.json();
+                if (data.success) {
+                    _libAll = _libAll.filter(t => t.id !== id);
+                    _libFiltered = _libFiltered.filter(t => t.id !== id);
+                    _libSelected.delete(id);
+                    buildHashCounts(); updateDupesBtn(); updateLibFilterInfo(); updateLibBatchBtn(); updateSelectBar();
+                    // Refresh the dupes modal with updated data — close if no more dupes
+                    const remaining = type === 'hash'
+                        ? _libAll.filter(t => t.hash === key)
+                        : _libAll.filter(t => _titleKey(t) === key);
+                    if (remaining.length < 2) { libCloseDupes(); applyLibFilters(); }
+                    else { libOpenDupes(type, key, null); applyLibFilters(); }
+                } else {
+                    btn.disabled = false; btn.innerHTML = origHtml;
+                    showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + (data.error || 'unknown'), autoClose: 5000 });
+                }
+            } catch(e) { btn.disabled = false; btn.innerHTML = origHtml; showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + e.message, autoClose: 5000 }); }
         }
-    } catch(e) { btn.disabled = false; btn.innerHTML = origHtml; alert('Delete failed: ' + e.message); }
+    });
 }
 
 function libCloseDupes() {
@@ -2428,27 +2469,36 @@ document.getElementById('lib-dupes-overlay').addEventListener('click', libCloseD
 document.getElementById('lib-batch-delete-btn').addEventListener('click', async function() {
     const ids = [..._libSelected];
     if (!ids.length) return;
-    if (!confirm(`Delete ${ids.length} torrent(s)?`)) return;
-    this.disabled = true;
-    this.innerHTML = '<span class="dm-spinner"></span> Deleting…';
-    try {
-        const r = await fetch('/debrid_manager/api/torrent/batch-delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ids }),
-        });
-        const data = await r.json();
-        if (data.success) {
-            const deleted = new Set(data.deleted);
-            _libAll = _libAll.filter(t => !deleted.has(t.id));
-            _libFiltered = _libFiltered.filter(t => !deleted.has(t.id));
-            deleted.forEach(id => _libSelected.delete(id));
-            buildHashCounts(); updateDupesBtn(); updateLibFilterInfo(); renderLibPage();
-            if (data.failed.length) alert(`${data.deleted.length} deleted. ${data.failed.length} failed.`);
-        } else { alert('Batch delete failed: ' + (data.error || 'unknown')); }
-    } catch(e) { alert('Batch delete failed: ' + e.message); }
-    this.innerHTML = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg> Delete Selected (<span id="lib-selected-count">${_libSelected.size}</span>)`;
-    this.disabled = _libSelected.size === 0;
+    const _btn = this;
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Torrents',
+        message: `Delete ${ids.length} torrent(s)?`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            _btn.disabled = true;
+            _btn.innerHTML = '<span class="dm-spinner"></span> Deleting…';
+            try {
+                const r = await fetch('/debrid_manager/api/torrent/batch-delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids }),
+                });
+                const data = await r.json();
+                if (data.success) {
+                    const deleted = new Set(data.deleted);
+                    _libAll = _libAll.filter(t => !deleted.has(t.id));
+                    _libFiltered = _libFiltered.filter(t => !deleted.has(t.id));
+                    deleted.forEach(id => _libSelected.delete(id));
+                    buildHashCounts(); updateDupesBtn(); updateLibFilterInfo(); renderLibPage();
+                    if (data.failed.length) showPopup({ type: 'warning', title: 'Notice', message: `${data.deleted.length} deleted. ${data.failed.length} failed.`, autoClose: 4000 });
+                } else { showPopup({ type: 'error', title: 'Error', message: 'Batch delete failed: ' + (data.error || 'unknown'), autoClose: 5000 }); }
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Batch delete failed: ' + e.message, autoClose: 5000 }); }
+            _btn.innerHTML = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg> Delete Selected (<span id="lib-selected-count">${_libSelected.size}</span>)`;
+            _btn.disabled = _libSelected.size === 0;
+        }
+    });
 });
 
 document.getElementById('lib-batch-reinsert-btn').addEventListener('click', async function() {
@@ -2457,31 +2507,40 @@ document.getElementById('lib-batch-reinsert-btn').addEventListener('click', asyn
         return t ? { id: t.id, hash: t.hash || '', filename: t.filename || '' } : null;
     }).filter(Boolean);
     if (!torrents.length) return;
-    if (!confirm(`Reinsert ${torrents.length} torrent(s)? They will be re-added to your debrid account.`)) return;
     const origHtml = this.innerHTML;
-    this.disabled = true;
-    this.innerHTML = '<span class="dm-spinner"></span> Reinserting…';
-    try {
-        const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ torrents }),
-        });
-        const data = await r.json();
-        if (data.success) {
-            const msg = `${data.reinserted.length} reinserted${data.failed.length ? ', ' + data.failed.length + ' failed' : ''}.`;
-            alert(msg);
-            _libSelected.clear();
-            window._libLoaded = false;
-            loadLibrary(true);
-        } else {
-            alert('Batch reinsert failed: ' + (data.error || 'unknown'));
+    const _btn = this;
+    showPopup({
+        type: 'confirm',
+        title: 'Reinsert Torrents',
+        message: `Reinsert ${torrents.length} torrent(s)? They will be re-added to your debrid account.`,
+        confirmText: 'Reinsert',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            _btn.disabled = true;
+            _btn.innerHTML = '<span class="dm-spinner"></span> Reinserting…';
+            try {
+                const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ torrents }),
+                });
+                const data = await r.json();
+                if (data.success) {
+                    const msg = `${data.reinserted.length} reinserted${data.failed.length ? ', ' + data.failed.length + ' failed' : ''}.`;
+                    showPopup({ type: 'success', title: 'Success', message: msg, autoClose: 4000 });
+                    _libSelected.clear();
+                    window._libLoaded = false;
+                    loadLibrary(true);
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Batch reinsert failed: ' + (data.error || 'unknown'), autoClose: 5000 });
+                }
+            } catch(e) {
+                showPopup({ type: 'error', title: 'Error', message: 'Batch reinsert failed: ' + e.message, autoClose: 5000 });
+            }
+            _btn.innerHTML = origHtml;
+            _btn.disabled = false;
         }
-    } catch(e) {
-        alert('Batch reinsert failed: ' + e.message);
-    }
-    this.innerHTML = origHtml;
-    this.disabled = false;
+    });
 });
 
 // ── MAINTENANCE TAB (Backup + Cleanup) ──────────────────────────────────────
@@ -2768,76 +2827,100 @@ document.getElementById('cl-save-btn').addEventListener('click', async function(
 document.getElementById('cl-run-btn').addEventListener('click', async function() {
     const btn = this;
     const msg = document.getElementById('cl-save-msg');
-    if (!confirm('Run cleanup now?\n\nThis will delete errored/duplicate/stalled torrents based on your current rules. This cannot be undone.')) return;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="dm-spinner"></span> Running…';
-    try {
-        const r = await fetch('/debrid_manager/api/cleanup/run', {method: 'POST'});
-        const data = await r.json();
-        msg.style.display = '';
-        if (data.success) {
-            msg.className = 'dm-backup-msg dm-backup-msg-ok';
-            msg.textContent = `Cleanup complete: ${data.total_deleted} removed (errors: ${data.deleted_errors}, dupes: ${data.deleted_dupes}, stalled: ${data.deleted_stalled}).`;
-            setTimeout(loadMaintenance, 500);
-        } else {
-            msg.className = 'dm-backup-msg dm-backup-msg-err';
-            msg.textContent = 'Cleanup failed: ' + (data.message || data.error || 'unknown');
+    showPopup({
+        type: 'confirm',
+        title: 'Run Cleanup',
+        message: 'Run cleanup now?\n\nThis will delete errored/duplicate/stalled torrents based on your current rules. This cannot be undone.',
+        confirmText: 'Run',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="dm-spinner"></span> Running…';
+            try {
+                const r = await fetch('/debrid_manager/api/cleanup/run', {method: 'POST'});
+                const data = await r.json();
+                msg.style.display = '';
+                if (data.success) {
+                    msg.className = 'dm-backup-msg dm-backup-msg-ok';
+                    msg.textContent = `Cleanup complete: ${data.total_deleted} removed (errors: ${data.deleted_errors}, dupes: ${data.deleted_dupes}, stalled: ${data.deleted_stalled}).`;
+                    setTimeout(loadMaintenance, 500);
+                } else {
+                    msg.className = 'dm-backup-msg dm-backup-msg-err';
+                    msg.textContent = 'Cleanup failed: ' + (data.message || data.error || 'unknown');
+                }
+                setTimeout(() => { msg.style.display = 'none'; }, 8000);
+            } catch(e) {
+                msg.style.display = '';
+                msg.className = 'dm-backup-msg dm-backup-msg-err';
+                msg.textContent = 'Error: ' + e.message;
+            }
+            btn.disabled = false;
+            btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0f01-15.357-2m15.357 2H15"/></svg> Run Now';
         }
-        setTimeout(() => { msg.style.display = 'none'; }, 8000);
-    } catch(e) {
-        msg.style.display = '';
-        msg.className = 'dm-backup-msg dm-backup-msg-err';
-        msg.textContent = 'Error: ' + e.message;
-    }
-    btn.disabled = false;
-    btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0f01-15.357-2m15.357 2H15"/></svg> Run Now';
+    });
 });
 
 async function bkRestore(filename, btn, dryRun) {
-    if (dryRun) {
-        if (!confirm(`Dry run for "${filename}"?\n\nThis will preview what would be restored without making any changes to your debrid library.`)) return;
-    } else {
-        if (!confirm(`Restore from "${filename}"?\n\nThis will re-add any torrents missing from your current debrid library. Existing torrents are not affected.`)) return;
-    }
-    // Disable all restore/dry-run buttons in this row to prevent double-clicks
-    const row = btn.closest('.dm-bk-slot-row');
-    const rowBtns = row ? row.querySelectorAll('button') : [btn];
-    rowBtns.forEach(b => b.disabled = true);
-    const origHtml = btn.innerHTML;
-    btn.innerHTML = '<span class="dm-spinner"></span>';
-    const msg = document.getElementById('bk-save-msg');
-    try {
-        const r = await fetch('/debrid_manager/api/backup/restore', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({filename, dry_run: dryRun}),
-        });
-        const data = await r.json();
-        msg.style.display = '';
-        if (data.success) {
-            msg.className = 'dm-backup-msg dm-backup-msg-ok';
-            if (dryRun) {
-                const failNote = data.failures && data.failures.length ? `, ${data.failures.length} would fail` : '';
-                msg.textContent = `Dry run: ${data.added} would be added, ${data.skipped} already present${failNote}. No changes made.`;
-            } else {
-                const failNote = data.failed ? `, ${data.failed} failed` : '';
-                msg.textContent = `Restore complete: ${data.added} added, ${data.skipped} already present${failNote}.`;
-                if (data.failures && data.failures.length) {
-                    console.warn('Restore failures:', data.failures);
+    const _doRestore = async function() {
+        // Disable all restore/dry-run buttons in this row to prevent double-clicks
+        const row = btn.closest('.dm-bk-slot-row');
+        const rowBtns = row ? row.querySelectorAll('button') : [btn];
+        rowBtns.forEach(b => b.disabled = true);
+        const origHtml = btn.innerHTML;
+        btn.innerHTML = '<span class="dm-spinner"></span>';
+        const msg = document.getElementById('bk-save-msg');
+        try {
+            const r = await fetch('/debrid_manager/api/backup/restore', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({filename, dry_run: dryRun}),
+            });
+            const data = await r.json();
+            msg.style.display = '';
+            if (data.success) {
+                msg.className = 'dm-backup-msg dm-backup-msg-ok';
+                if (dryRun) {
+                    const failNote = data.failures && data.failures.length ? `, ${data.failures.length} would fail` : '';
+                    msg.textContent = `Dry run: ${data.added} would be added, ${data.skipped} already present${failNote}. No changes made.`;
+                } else {
+                    const failNote = data.failed ? `, ${data.failed} failed` : '';
+                    msg.textContent = `Restore complete: ${data.added} added, ${data.skipped} already present${failNote}.`;
+                    if (data.failures && data.failures.length) {
+                        console.warn('Restore failures:', data.failures);
+                    }
                 }
+            } else {
+                msg.className = 'dm-backup-msg dm-backup-msg-err';
+                msg.textContent = (dryRun ? 'Dry run failed: ' : 'Restore failed: ') + (data.message || data.error || 'unknown');
             }
-        } else {
+            setTimeout(() => { msg.style.display = 'none'; }, 10000);
+        } catch(e) {
+            msg.style.display = '';
             msg.className = 'dm-backup-msg dm-backup-msg-err';
-            msg.textContent = (dryRun ? 'Dry run failed: ' : 'Restore failed: ') + (data.message || data.error || 'unknown');
+            msg.textContent = 'Error: ' + e.message;
         }
-        setTimeout(() => { msg.style.display = 'none'; }, 10000);
-    } catch(e) {
-        msg.style.display = '';
-        msg.className = 'dm-backup-msg dm-backup-msg-err';
-        msg.textContent = 'Error: ' + e.message;
+        rowBtns.forEach(b => b.disabled = false);
+        btn.innerHTML = origHtml;
+    };
+    if (dryRun) {
+        showPopup({
+            type: 'confirm',
+            title: 'Dry Run',
+            message: `Dry run for "${filename}"?\n\nThis will preview what would be restored without making any changes to your debrid library.`,
+            confirmText: 'Run Preview',
+            cancelText: 'Cancel',
+            onConfirm: _doRestore
+        });
+    } else {
+        showPopup({
+            type: 'confirm',
+            title: 'Restore Backup',
+            message: `Restore from "${filename}"?\n\nThis will re-add any torrents missing from your current debrid library. Existing torrents are not affected.`,
+            confirmText: 'Restore',
+            cancelText: 'Cancel',
+            onConfirm: _doRestore
+        });
     }
-    rowBtns.forEach(b => b.disabled = false);
-    btn.innerHTML = origHtml;
 }
 
 // ── USAGE TAB ──────────────────────────────────────────────────────────────
@@ -3204,11 +3287,11 @@ function _ptRenderGroup(tbodyId, items, groupId) {
                         btn.classList.add('dm-pt-action-ok');
                         setTimeout(() => { btn.textContent = 'Scan'; btn.classList.remove('dm-pt-action-ok'); btn.disabled = false; }, 3000);
                     } else {
-                        alert('Scan failed: ' + (data.errors?.join(', ') || data.error || 'unknown'));
+                        showPopup({ type: 'error', title: 'Error', message: 'Scan failed: ' + (data.errors?.join(', ') || data.error || 'unknown'), autoClose: 5000 });
                         btn.innerHTML = origHtml; btn.disabled = false;
                     }
                 } catch(e) {
-                    alert('Scan failed: ' + e.message);
+                    showPopup({ type: 'error', title: 'Error', message: 'Scan failed: ' + e.message, autoClose: 5000 });
                     btn.innerHTML = origHtml; btn.disabled = false;
                 }
             } else if (action === 'reinsert') {
@@ -3226,11 +3309,11 @@ function _ptRenderGroup(tbodyId, items, groupId) {
                         setTimeout(() => { btn.textContent = 'Reinsert'; btn.classList.remove('dm-pt-action-ok'); btn.disabled = false; }, 3000);
                     } else {
                         const err = data.failed?.[0]?.error || data.error || 'unknown';
-                        alert('Reinsert failed: ' + err);
+                        showPopup({ type: 'error', title: 'Error', message: 'Reinsert failed: ' + err, autoClose: 5000 });
                         btn.innerHTML = origHtml; btn.disabled = false;
                     }
                 } catch(e) {
-                    alert('Reinsert failed: ' + e.message);
+                    showPopup({ type: 'error', title: 'Error', message: 'Reinsert failed: ' + e.message, autoClose: 5000 });
                     btn.innerHTML = origHtml; btn.disabled = false;
                 }
             }
@@ -3262,44 +3345,54 @@ function _ptRenderGroup(tbodyId, items, groupId) {
                         setTimeout(() => { btn.textContent = 'Reinsert'; btn.classList.remove('dm-pt-action-ok'); btn.disabled = false; }, 3000);
                     } else {
                         const err = data.failed?.[0]?.error || data.error || 'unknown';
-                        alert('Reinsert failed: ' + err);
+                        showPopup({ type: 'error', title: 'Error', message: 'Reinsert failed: ' + err, autoClose: 5000 });
                         btn.innerHTML = origHtml; btn.disabled = false;
                     }
-                } catch(e) { alert('Reinsert failed: ' + e.message); btn.innerHTML = origHtml; btn.disabled = false; }
+                } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Reinsert failed: ' + e.message, autoClose: 5000 }); btn.innerHTML = origHtml; btn.disabled = false; }
             } else if (faction === 'delete-part') {
                 const ratingKey = btn.dataset.rk;
                 const mediaId = btn.dataset.mid;
                 const partId = btn.dataset.pid;
-                if (!confirm(`Remove this file from Plex? This cannot be undone.`)) { btn.disabled = false; return; }
-                btn.textContent = 'Deleting…';
-                try {
-                    const scanItem = [..._ptInRd, ..._ptNotInRd].find(i => i.rating_key === ratingKey);
-                    const r = await fetch('/debrid_manager/api/plex_delete_part', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({rating_key: ratingKey, media_id: mediaId, part_id: partId}),
-                    });
-                    const data = await r.json();
-                    if (!data.success) { alert('Delete failed: ' + (data.error || 'unknown')); btn.innerHTML = origHtml; btn.disabled = false; return; }
-                    const inRdItem = _ptInRd.find(i => i.rating_key === ratingKey);
-                    if (inRdItem?.has_good_file) {
-                        inRdItem.bad_file = null; inRdItem.has_good_file = false; inRdItem.bad_file_orphaned = false;
-                        _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
-                    } else {
-                        _ptInRd = _ptInRd.filter(i => i.rating_key !== ratingKey);
-                        _ptNotInRd = _ptNotInRd.filter(i => i.rating_key !== ratingKey);
-                        _ptSelected.delete(ratingKey);
-                        _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
-                        _ptRenderGroup('pt-not-in-rd-tbody', _ptNotInRd, 'not_in_rd');
-                    }
-                    _ptUpdateCounts(); _ptUpdatePurgeBtn();
-                    if (scanItem?.file_dir) {
-                        fetch('/debrid_manager/api/plex_force_scan', {
-                            method: 'POST', headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({paths: [scanItem.file_dir], empty_trash: false}),
-                        }).catch(() => {});
-                    }
-                } catch(e) { alert('Delete failed: ' + e.message); btn.innerHTML = origHtml; btn.disabled = false; }
+                showPopup({
+                    type: 'confirm',
+                    title: 'Remove File',
+                    message: 'Remove this file from Plex? This cannot be undone.',
+                    confirmText: 'Remove',
+                    cancelText: 'Cancel',
+                    onConfirm: async function() {
+                        btn.textContent = 'Deleting…';
+                        try {
+                            const scanItem = [..._ptInRd, ..._ptNotInRd].find(i => i.rating_key === ratingKey);
+                            const r = await fetch('/debrid_manager/api/plex_delete_part', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({rating_key: ratingKey, media_id: mediaId, part_id: partId}),
+                            });
+                            const data = await r.json();
+                            if (!data.success) { showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + (data.error || 'unknown'), autoClose: 5000 }); btn.innerHTML = origHtml; btn.disabled = false; return; }
+                            const inRdItem = _ptInRd.find(i => i.rating_key === ratingKey);
+                            if (inRdItem?.has_good_file) {
+                                inRdItem.bad_file = null; inRdItem.has_good_file = false; inRdItem.bad_file_orphaned = false;
+                                _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
+                            } else {
+                                _ptInRd = _ptInRd.filter(i => i.rating_key !== ratingKey);
+                                _ptNotInRd = _ptNotInRd.filter(i => i.rating_key !== ratingKey);
+                                _ptSelected.delete(ratingKey);
+                                _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
+                                _ptRenderGroup('pt-not-in-rd-tbody', _ptNotInRd, 'not_in_rd');
+                            }
+                            _ptUpdateCounts(); _ptUpdatePurgeBtn();
+                            if (scanItem?.file_dir) {
+                                fetch('/debrid_manager/api/plex_force_scan', {
+                                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                                    body: JSON.stringify({paths: [scanItem.file_dir], empty_trash: false}),
+                                }).catch(() => {});
+                            }
+                        } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + e.message, autoClose: 5000 }); btn.innerHTML = origHtml; btn.disabled = false; }
+                    },
+                    onCancel: function() { btn.disabled = false; }
+                });
+                return;
             }
         });
     });
@@ -3393,114 +3486,138 @@ document.getElementById('pt-purge-btn')?.addEventListener('click', async functio
     const deletingItems = [..._ptInRd, ..._ptNotInRd].filter(i => _ptSelected.has(i.rating_key));
     const titles = deletingItems.map(i => i.title + (i.year ? ` (${i.year})` : ''));
     const preview = titles.slice(0, 5).join('\n') + (titles.length > 5 ? `\n…and ${titles.length - 5} more` : '');
-    if (!confirm(`Permanently delete ${keys.length} item${keys.length !== 1 ? 's' : ''} from Plex?\n\nThis cannot be undone.\n\n${preview}`)) return;
-
-    this.disabled = true;
     const origHtml = this.innerHTML;
-    this.innerHTML = '<span class="dm-spinner"></span> Deleting…';
-    try {
-        const r = await fetch('/debrid_manager/api/plex_trash_purge', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({rating_keys: keys}),
-        });
-        const data = await r.json();
-        if (data.success) {
-            const deletedSet = new Set(data.deleted);
-            // Collect file_dir paths of successfully deleted items for auto-scan
-            const scanPaths = deletingItems
-                .filter(i => deletedSet.has(i.rating_key) && i.file_dir)
-                .map(i => i.file_dir);
-            _ptInRd = _ptInRd.filter(i => !deletedSet.has(i.rating_key));
-            _ptNotInRd = _ptNotInRd.filter(i => !deletedSet.has(i.rating_key));
-            data.deleted.forEach(rk => _ptSelected.delete(rk));
-            _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
-            _ptRenderGroup('pt-not-in-rd-tbody', _ptNotInRd, 'not_in_rd');
-            _ptUpdateCounts();
-            if (data.failed.length) {
-                alert(`${data.deleted.length} deleted. ${data.failed.length} failed:\n` +
-                    data.failed.map(f => `${f.key}: ${f.error}`).join('\n'));
-            }
-            // Auto-scan the affected directories so Plex re-discovers working files
-            if (scanPaths.length) {
-                fetch('/debrid_manager/api/plex_force_scan', {
+    const _btn = this;
+    showPopup({
+        type: 'confirm',
+        title: 'Delete from Plex',
+        message: `Permanently delete ${keys.length} item${keys.length !== 1 ? 's' : ''} from Plex?\n\nThis cannot be undone.\n\n${preview}`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            _btn.disabled = true;
+            _btn.innerHTML = '<span class="dm-spinner"></span> Deleting…';
+            try {
+                const r = await fetch('/debrid_manager/api/plex_trash_purge', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({paths: scanPaths, empty_trash: false}),
-                }).catch(() => {});
+                    body: JSON.stringify({rating_keys: keys}),
+                });
+                const data = await r.json();
+                if (data.success) {
+                    const deletedSet = new Set(data.deleted);
+                    // Collect file_dir paths of successfully deleted items for auto-scan
+                    const scanPaths = deletingItems
+                        .filter(i => deletedSet.has(i.rating_key) && i.file_dir)
+                        .map(i => i.file_dir);
+                    _ptInRd = _ptInRd.filter(i => !deletedSet.has(i.rating_key));
+                    _ptNotInRd = _ptNotInRd.filter(i => !deletedSet.has(i.rating_key));
+                    data.deleted.forEach(rk => _ptSelected.delete(rk));
+                    _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
+                    _ptRenderGroup('pt-not-in-rd-tbody', _ptNotInRd, 'not_in_rd');
+                    _ptUpdateCounts();
+                    if (data.failed.length) {
+                        showPopup({ type: 'warning', title: 'Notice', message: `${data.deleted.length} deleted. ${data.failed.length} failed:\n` +
+                            data.failed.map(f => `${f.key}: ${f.error}`).join('\n'), autoClose: 4000 });
+                    }
+                    // Auto-scan the affected directories so Plex re-discovers working files
+                    if (scanPaths.length) {
+                        fetch('/debrid_manager/api/plex_force_scan', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({paths: scanPaths, empty_trash: false}),
+                        }).catch(() => {});
+                    }
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Purge failed: ' + (data.error || 'unknown'), autoClose: 5000 });
+                }
+            } catch(e) {
+                showPopup({ type: 'error', title: 'Error', message: 'Purge failed: ' + e.message, autoClose: 5000 });
             }
-        } else {
-            alert('Purge failed: ' + (data.error || 'unknown'));
+            _ptUpdatePurgeBtn();
+            _btn.innerHTML = origHtml;
+            _btn.disabled = _ptSelected.size === 0;
         }
-    } catch(e) {
-        alert('Purge failed: ' + e.message);
-    }
-    _ptUpdatePurgeBtn();
-    this.innerHTML = origHtml;
-    this.disabled = _ptSelected.size === 0;
+    });
 });
 
 // ── BULK ACTION HELPERS ─────────────────────────────────────────────────────
 async function _ptBulkDelete(items, label) {
-    if (!items.length) { alert(`No ${label} items to delete.`); return; }
+    if (!items.length) { showPopup({ type: 'warning', title: 'Notice', message: `No ${label} items to delete.`, autoClose: 4000 }); return; }
     const preview = items.slice(0, 5).map(i => i.title + (i.year ? ` (${i.year})` : '')).join('\n')
         + (items.length > 5 ? `\n…and ${items.length - 5} more` : '');
-    if (!confirm(`Permanently delete ${items.length} ${label} item${items.length !== 1 ? 's' : ''} from Plex?\n\nThis cannot be undone.\n\n${preview}`)) return;
     const btn = event.currentTarget;
     const origHtml = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="dm-spinner"></span>';
-    try {
-        const keys = items.map(i => i.rating_key);
-        const r = await fetch('/debrid_manager/api/plex_trash_purge', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({rating_keys: keys}),
-        });
-        const data = await r.json();
-        if (data.success) {
-            const deletedSet = new Set(data.deleted);
-            const scanPaths = items.filter(i => deletedSet.has(i.rating_key) && i.file_dir).map(i => i.file_dir);
-            _ptInRd = _ptInRd.filter(i => !deletedSet.has(i.rating_key));
-            _ptNotInRd = _ptNotInRd.filter(i => !deletedSet.has(i.rating_key));
-            data.deleted.forEach(rk => _ptSelected.delete(rk));
-            _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
-            _ptRenderGroup('pt-not-in-rd-tbody', _ptNotInRd, 'not_in_rd');
-            _ptUpdateCounts(); _ptUpdatePurgeBtn();
-            if (scanPaths.length) fetch('/debrid_manager/api/plex_force_scan', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({paths: scanPaths, empty_trash: false}),
-            }).catch(() => {});
-            if (data.failed.length) alert(`${data.deleted.length} deleted. ${data.failed.length} failed.`);
-        } else { alert('Delete failed: ' + (data.error || 'unknown')); }
-    } catch(e) { alert('Delete failed: ' + e.message); }
-    btn.innerHTML = origHtml; btn.disabled = false;
+    showPopup({
+        type: 'confirm',
+        title: 'Delete from Plex',
+        message: `Permanently delete ${items.length} ${label} item${items.length !== 1 ? 's' : ''} from Plex?\n\nThis cannot be undone.\n\n${preview}`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="dm-spinner"></span>';
+            try {
+                const keys = items.map(i => i.rating_key);
+                const r = await fetch('/debrid_manager/api/plex_trash_purge', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({rating_keys: keys}),
+                });
+                const data = await r.json();
+                if (data.success) {
+                    const deletedSet = new Set(data.deleted);
+                    const scanPaths = items.filter(i => deletedSet.has(i.rating_key) && i.file_dir).map(i => i.file_dir);
+                    _ptInRd = _ptInRd.filter(i => !deletedSet.has(i.rating_key));
+                    _ptNotInRd = _ptNotInRd.filter(i => !deletedSet.has(i.rating_key));
+                    data.deleted.forEach(rk => _ptSelected.delete(rk));
+                    _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
+                    _ptRenderGroup('pt-not-in-rd-tbody', _ptNotInRd, 'not_in_rd');
+                    _ptUpdateCounts(); _ptUpdatePurgeBtn();
+                    if (scanPaths.length) fetch('/debrid_manager/api/plex_force_scan', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({paths: scanPaths, empty_trash: false}),
+                    }).catch(() => {});
+                    if (data.failed.length) showPopup({ type: 'warning', title: 'Notice', message: `${data.deleted.length} deleted. ${data.failed.length} failed.`, autoClose: 4000 });
+                } else { showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + (data.error || 'unknown'), autoClose: 5000 }); }
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + e.message, autoClose: 5000 }); }
+            btn.innerHTML = origHtml; btn.disabled = false;
+        }
+    });
 }
 
 async function _ptBulkReinsert(items, label) {
     const withHash = items.filter(i => i.rd_hash);
-    if (!withHash.length) { alert(`No ${label} items with a known hash to reinsert.`); return; }
-    if (!confirm(`Reinsert ${withHash.length} ${label} torrent${withHash.length !== 1 ? 's' : ''} to ${providerLabel}?`)) return;
+    if (!withHash.length) { showPopup({ type: 'warning', title: 'Notice', message: `No ${label} items with a known hash to reinsert.`, autoClose: 4000 }); return; }
     const btn = event.currentTarget;
     const origHtml = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="dm-spinner"></span>';
-    try {
-        const torrents = withHash.map(i => ({id: '', hash: i.rd_hash, filename: i.rd_filename || i.folder_name || ''}));
-        const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({torrents}),
-        });
-        const data = await r.json();
-        const doneCount = data.reinserted?.length || 0;
-        const failCount = data.failed?.length || 0;
-        alert(`Reinserted: ${doneCount}${failCount ? `, Failed: ${failCount}` : ''}`);
-    } catch(e) { alert('Reinsert failed: ' + e.message); }
-    btn.innerHTML = origHtml; btn.disabled = false;
+    showPopup({
+        type: 'confirm',
+        title: 'Reinsert Torrents',
+        message: `Reinsert ${withHash.length} ${label} torrent${withHash.length !== 1 ? 's' : ''} to ${providerLabel}?`,
+        confirmText: 'Reinsert',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="dm-spinner"></span>';
+            try {
+                const torrents = withHash.map(i => ({id: '', hash: i.rd_hash, filename: i.rd_filename || i.folder_name || ''}));
+                const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({torrents}),
+                });
+                const data = await r.json();
+                const doneCount = data.reinserted?.length || 0;
+                const failCount = data.failed?.length || 0;
+                showPopup({ type: 'success', title: 'Success', message: `Reinserted: ${doneCount}${failCount ? `, Failed: ${failCount}` : ''}`, autoClose: 4000 });
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Reinsert failed: ' + e.message, autoClose: 5000 }); }
+            btn.innerHTML = origHtml; btn.disabled = false;
+        }
+    });
 }
 
 document.getElementById('pt-bulk-scan-all')?.addEventListener('click', async function() {
     const paths = _ptInRd.filter(i => i.file_dir).map(i => i.file_dir);
-    if (!paths.length) { alert('No scan paths available.'); return; }
+    if (!paths.length) { showPopup({ type: 'warning', title: 'Notice', message: 'No scan paths available.', autoClose: 4000 }); return; }
     this.disabled = true;
     const origHtml = this.innerHTML;
     this.innerHTML = '<span class="dm-spinner"></span>';
@@ -3511,7 +3628,7 @@ document.getElementById('pt-bulk-scan-all')?.addEventListener('click', async fun
         });
         this.textContent = 'Done';
         setTimeout(() => { this.innerHTML = origHtml; this.disabled = false; }, 2500);
-    } catch(e) { alert('Scan failed: ' + e.message); this.innerHTML = origHtml; this.disabled = false; }
+    } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Scan failed: ' + e.message, autoClose: 5000 }); this.innerHTML = origHtml; this.disabled = false; }
 });
 
 document.getElementById('pt-bulk-reinsert-good')?.addEventListener('click', function() {
@@ -3519,37 +3636,45 @@ document.getElementById('pt-bulk-reinsert-good')?.addEventListener('click', func
 });
 document.getElementById('pt-bulk-del-bad')?.addEventListener('click', async function() {
     const items = _ptInRd.filter(i => i.bad_file);
-    if (!items.length) { alert('No bad-file items to delete.'); return; }
+    if (!items.length) { showPopup({ type: 'warning', title: 'Notice', message: 'No bad-file items to delete.', autoClose: 4000 }); return; }
     const preview = items.slice(0, 5).map(i => i.title + (i.year ? ` (${i.year})` : '')).join('\n')
         + (items.length > 5 ? `\n…and ${items.length - 5} more` : '');
-    if (!confirm(`Delete bad (orphaned) file from ${items.length} item${items.length !== 1 ? 's' : ''}?\n\nItems with a good file will have only the orphaned version removed. Items with no good file will be fully deleted from Plex.\n\n${preview}`)) return;
     const btn = event.currentTarget;
     const origHtml = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="dm-spinner"></span>';
-    let deleted = 0, failed = 0;
-    try {
-        for (const item of items) {
-            const partInfo = (item.part_ids || {})[item.bad_file] || {};
-            const mediaId = partInfo.media_id;
-            const partId = partInfo.part_id;
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Bad Files',
+        message: `Delete bad (orphaned) file from ${items.length} item${items.length !== 1 ? 's' : ''}?\n\nItems with a good file will have only the orphaned version removed. Items with no good file will be fully deleted from Plex.\n\n${preview}`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="dm-spinner"></span>';
+            let deleted = 0, failed = 0;
             try {
-                const r = await fetch('/debrid_manager/api/plex_delete_part', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({rating_key: item.rating_key, media_id: mediaId, part_id: partId}),
-                });
-                const d = await r.json();
-                if (d.success) {
-                    item.bad_file = null; item.has_good_file = false; item.bad_file_orphaned = false;
-                    deleted++;
-                } else { failed++; }
-            } catch(e) { failed++; }
+                for (const item of items) {
+                    const partInfo = (item.part_ids || {})[item.bad_file] || {};
+                    const mediaId = partInfo.media_id;
+                    const partId = partInfo.part_id;
+                    try {
+                        const r = await fetch('/debrid_manager/api/plex_delete_part', {
+                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({rating_key: item.rating_key, media_id: mediaId, part_id: partId}),
+                        });
+                        const d = await r.json();
+                        if (d.success) {
+                            item.bad_file = null; item.has_good_file = false; item.bad_file_orphaned = false;
+                            deleted++;
+                        } else { failed++; }
+                    } catch(e) { failed++; }
+                }
+                _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
+                _ptUpdateCounts(); _ptUpdatePurgeBtn();
+                if (failed) showPopup({ type: 'warning', title: 'Notice', message: `${deleted} deleted. ${failed} failed.`, autoClose: 4000 });
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + e.message, autoClose: 5000 }); }
+            btn.innerHTML = origHtml; btn.disabled = false;
         }
-        _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
-        _ptUpdateCounts(); _ptUpdatePurgeBtn();
-        if (failed) alert(`${deleted} deleted. ${failed} failed.`);
-    } catch(e) { alert('Delete failed: ' + e.message); }
-    btn.innerHTML = origHtml; btn.disabled = false;
+    });
 });
 document.getElementById('pt-bulk-del-good')?.addEventListener('click', function() {
     _ptBulkDelete(_ptInRd.filter(i => i.has_good_file), 'good-file');
@@ -3676,7 +3801,7 @@ function _rcRenderNotInPlex(items) {
     }).join('');
     tbody.querySelectorAll('.dm-rc-scan-btn').forEach(btn => btn.addEventListener('click', async function() {
         const dir = this.dataset.dir;
-        if (!dir) { alert('No directory path available for this item.'); return; }
+        if (!dir) { showPopup({ type: 'warning', title: 'Notice', message: 'No directory path available for this item.', autoClose: 4000 }); return; }
         const orig = this.innerHTML; this.disabled = true; this.innerHTML = '<span class="dm-spinner"></span>';
         try {
             const r = await fetch('/debrid_manager/api/plex_force_scan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({paths:[dir], empty_trash:false})});
@@ -3686,9 +3811,9 @@ function _rcRenderNotInPlex(items) {
                 setTimeout(() => { this.innerHTML = orig; this.disabled = false; }, 3000);
             } else {
                 this.innerHTML = orig; this.disabled = false;
-                alert('Scan failed: ' + (d.error || (d.errors||[]).join(', ') || 'unknown error'));
+                showPopup({ type: 'error', title: 'Error', message: 'Scan failed: ' + (d.error || (d.errors||[]).join(', ') || 'unknown error'), autoClose: 5000 });
             }
-        } catch(e) { alert('Scan failed: '+e.message); this.innerHTML = orig; this.disabled = false; }
+        } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Scan failed: ' + e.message, autoClose: 5000 }); this.innerHTML = orig; this.disabled = false; }
     }));
     _rcBindActions(tbody);
     tbody.closest('table').querySelectorAll('.dm-rc-th-sort').forEach(th => {
@@ -3766,18 +3891,27 @@ function _rcRenderUntracked(items) {
     }).join('');
     tbody.querySelectorAll('.dm-rc-del-btn').forEach(btn => btn.addEventListener('click', async function() {
         const tid = this.dataset.tid;
-        if (!confirm(`Delete torrent ${tid} from ${providerLabel}?`)) return;
-        const orig = this.innerHTML; this.disabled = true; this.innerHTML = '<span class="dm-spinner"></span>';
-        try {
-            const r = await fetch(`/debrid_manager/api/torrent/${encodeURIComponent(tid)}`, {method:'DELETE'});
-            const d = await r.json();
-            if (d.success) {
-                this.closest('tr')?.remove();
-                const el = document.getElementById('rc-group-count-untracked');
-                if (el) el.textContent = Math.max(0, parseInt(el.textContent||'0')-1);
-                _rcUpdateBadge();
-            } else { alert('Delete failed: '+(d.error||'unknown')); this.innerHTML = orig; this.disabled = false; }
-        } catch(e) { alert('Delete failed: '+e.message); this.innerHTML = orig; this.disabled = false; }
+        const _self = this;
+        showPopup({
+            type: 'confirm',
+            title: 'Delete Torrent',
+            message: `Delete torrent ${tid} from ${providerLabel}?`,
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: async function() {
+                const orig = _self.innerHTML; _self.disabled = true; _self.innerHTML = '<span class="dm-spinner"></span>';
+                try {
+                    const r = await fetch(`/debrid_manager/api/torrent/${encodeURIComponent(tid)}`, {method:'DELETE'});
+                    const d = await r.json();
+                    if (d.success) {
+                        _self.closest('tr')?.remove();
+                        const el = document.getElementById('rc-group-count-untracked');
+                        if (el) el.textContent = Math.max(0, parseInt(el.textContent||'0')-1);
+                        _rcUpdateBadge();
+                    } else { showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + (d.error||'unknown'), autoClose: 5000 }); _self.innerHTML = orig; _self.disabled = false; }
+                } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + e.message, autoClose: 5000 }); _self.innerHTML = orig; _self.disabled = false; }
+            }
+        });
     }));
     tbody.closest('table').querySelectorAll('.dm-rc-th-sort').forEach(th => {
         th.style.cursor = 'pointer';
@@ -3817,34 +3951,52 @@ function _rcBindActions(tbody) {
             const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({torrents:[{id:'',hash,filename:fname}]})});
             const d = await r.json();
             if (d.success && d.reinserted?.length) { this.textContent = 'Done'; setTimeout(()=>{this.innerHTML=orig;this.disabled=false;},3000); }
-            else { alert('Reinsert failed: '+(d.failed?.[0]?.error||d.error||'unknown')); this.innerHTML=orig; this.disabled=false; }
-        } catch(e) { alert('Reinsert failed: '+e.message); this.innerHTML=orig; this.disabled=false; }
+            else { showPopup({ type: 'error', title: 'Error', message: 'Reinsert failed: ' + (d.failed?.[0]?.error||d.error||'unknown'), autoClose: 5000 }); this.innerHTML=orig; this.disabled=false; }
+        } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Reinsert failed: ' + e.message, autoClose: 5000 }); this.innerHTML=orig; this.disabled=false; }
     }));
     tbody.querySelectorAll('.dm-rc-requeue-btn').forEach(btn => btn.addEventListener('click', async function() {
         const ids = _rcGetIds(this);
         if (!ids.length) return;
         const label = ids.length > 1 ? `${ids.length} items` : `item #${ids[0]}`;
-        if (!confirm(`Move ${label} back to Wanted for re-scraping?`)) return;
-        const orig = this.innerHTML; this.disabled = true; this.textContent = 'Queueing…';
-        try {
-            const r = await fetch('/debrid_manager/api/reconcile/bulk_requeue', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({item_ids: ids})});
-            const d = await r.json();
-            if (d.success) { this.textContent = `Queued (${d.updated})`; setTimeout(()=>{this.innerHTML=orig;this.disabled=false;},3000); }
-            else { alert('Re-queue failed: '+(d.error||'unknown')); this.innerHTML=orig; this.disabled=false; }
-        } catch(e) { alert('Re-queue failed: '+e.message); this.innerHTML=orig; this.disabled=false; }
+        const _self = this;
+        showPopup({
+            type: 'confirm',
+            title: 'Re-queue Items',
+            message: `Move ${label} back to Wanted for re-scraping?`,
+            confirmText: 'Re-queue',
+            cancelText: 'Cancel',
+            onConfirm: async function() {
+                const orig = _self.innerHTML; _self.disabled = true; _self.textContent = 'Queueing…';
+                try {
+                    const r = await fetch('/debrid_manager/api/reconcile/bulk_requeue', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({item_ids: ids})});
+                    const d = await r.json();
+                    if (d.success) { _self.textContent = `Queued (${d.updated})`; setTimeout(()=>{_self.innerHTML=orig;_self.disabled=false;},3000); }
+                    else { showPopup({ type: 'error', title: 'Error', message: 'Re-queue failed: ' + (d.error||'unknown'), autoClose: 5000 }); _self.innerHTML=orig; _self.disabled=false; }
+                } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Re-queue failed: ' + e.message, autoClose: 5000 }); _self.innerHTML=orig; _self.disabled=false; }
+            }
+        });
     }));
     tbody.querySelectorAll('.dm-rc-del-db-btn').forEach(btn => btn.addEventListener('click', async function() {
         const ids = _rcGetIds(this);
-        if (!ids.length) { alert('Could not determine item ID (data-id="' + (this.dataset.id||'') + '", data-ids="' + (this.dataset.ids||'') + '")'); return; }
+        if (!ids.length) { showPopup({ type: 'warning', title: 'Notice', message: 'Could not determine item ID (data-id="' + (this.dataset.id||'') + '", data-ids="' + (this.dataset.ids||'') + '")', autoClose: 4000 }); return; }
         const label = ids.length > 1 ? `${ids.length} items` : 'this item';
-        if (!confirm(`Permanently delete ${label} from the database? This cannot be undone.`)) return;
-        const orig = this.innerHTML; this.disabled = true; this.innerHTML = '<span class="dm-spinner"></span>';
-        try {
-            const r = await fetch('/debrid_manager/api/reconcile/bulk_delete_db', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({item_ids: ids})});
-            const d = await r.json();
-            if (d.success) { this.closest('tr')?.remove(); _rcUpdateBadge(); }
-            else { alert('Delete failed: '+(d.error||'unknown')); this.innerHTML=orig; this.disabled=false; }
-        } catch(e) { alert('Delete failed: '+e.message); this.innerHTML=orig; this.disabled=false; }
+        const _self = this;
+        showPopup({
+            type: 'confirm',
+            title: 'Delete from Database',
+            message: `Permanently delete ${label} from the database? This cannot be undone.`,
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: async function() {
+                const orig = _self.innerHTML; _self.disabled = true; _self.innerHTML = '<span class="dm-spinner"></span>';
+                try {
+                    const r = await fetch('/debrid_manager/api/reconcile/bulk_delete_db', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({item_ids: ids})});
+                    const d = await r.json();
+                    if (d.success) { _self.closest('tr')?.remove(); _rcUpdateBadge(); }
+                    else { showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + (d.error||'unknown'), autoClose: 5000 }); _self.innerHTML=orig; _self.disabled=false; }
+                } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + e.message, autoClose: 5000 }); _self.innerHTML=orig; _self.disabled=false; }
+            }
+        });
     }));
 }
 
@@ -3869,68 +4021,100 @@ function _rcUpdateBadge() {
 // ── Reconcile bulk actions ─────────────────────────────────────────────
 async function _rcBulkRequeue(itemIds, btnEl) {
     if (!itemIds.length) return;
-    if (!confirm(`Re-queue ${itemIds.length} item(s) for re-scraping?`)) return;
-    const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Working…';
-    try {
-        const r = await fetch('/debrid_manager/api/reconcile/bulk_requeue', {
-            method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({item_ids: itemIds})
-        });
-        const d = await r.json();
-        btnEl.textContent = d.success ? `Done (${d.updated})` : 'Failed';
-        if (d.success) { window._rcLoaded = false; setTimeout(() => loadReconcile(true), 2000); }
-        else setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
-    } catch(e) { alert('Failed: '+e.message); btnEl.innerHTML = orig; btnEl.disabled = false; }
+    showPopup({
+        type: 'confirm',
+        title: 'Re-queue Items',
+        message: `Re-queue ${itemIds.length} item(s) for re-scraping?`,
+        confirmText: 'Re-queue',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Working…';
+            try {
+                const r = await fetch('/debrid_manager/api/reconcile/bulk_requeue', {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({item_ids: itemIds})
+                });
+                const d = await r.json();
+                btnEl.textContent = d.success ? `Done (${d.updated})` : 'Failed';
+                if (d.success) { window._rcLoaded = false; setTimeout(() => loadReconcile(true), 2000); }
+                else setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + e.message, autoClose: 5000 }); btnEl.innerHTML = orig; btnEl.disabled = false; }
+        }
+    });
 }
 
 async function _rcBulkReinsert(items, btnEl) {
     const torrents = items.filter(i => i.magnet_hash).map(i => ({id:'', hash: i.magnet_hash, filename: i.rd_filename||i.title}));
-    if (!torrents.length) { alert('No items have a torrent hash available.'); return; }
-    if (!confirm(`Reinsert ${torrents.length} torrent(s) to ${providerLabel}?`)) return;
-    const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Working…';
-    try {
-        const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({torrents})
-        });
-        const d = await r.json();
-        btnEl.textContent = d.success ? `Done (${d.reinserted?.length||0})` : 'Failed';
-        setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
-    } catch(e) { alert('Failed: '+e.message); btnEl.innerHTML = orig; btnEl.disabled = false; }
+    if (!torrents.length) { showPopup({ type: 'warning', title: 'Notice', message: 'No items have a torrent hash available.', autoClose: 4000 }); return; }
+    showPopup({
+        type: 'confirm',
+        title: 'Reinsert Torrents',
+        message: `Reinsert ${torrents.length} torrent(s) to ${providerLabel}?`,
+        confirmText: 'Reinsert',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Working…';
+            try {
+                const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
+                    method:'POST', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({torrents})
+                });
+                const d = await r.json();
+                btnEl.textContent = d.success ? `Done (${d.reinserted?.length||0})` : 'Failed';
+                setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + e.message, autoClose: 5000 }); btnEl.innerHTML = orig; btnEl.disabled = false; }
+        }
+    });
 }
 
 async function _rcBulkDeleteDB(items, btnEl) {
     const ids = items.flatMap(i => i.affected_ids || (i.id ? [i.id] : []));
-    if (!ids.length) { alert('No items to delete.'); return; }
-    if (!confirm(`Permanently delete ${ids.length} item(s) from the database? This cannot be undone.`)) return;
-    const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Deleting…';
-    try {
-        const r = await fetch('/debrid_manager/api/reconcile/bulk_delete_db', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({item_ids: ids})
-        });
-        const d = await r.json();
-        btnEl.textContent = d.success ? `Done (${d.deleted})` : 'Failed';
-        if (d.success) { window._rcLoaded = false; setTimeout(() => loadReconcile(true), 2000); }
-        else setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
-    } catch(e) { alert('Failed: '+e.message); btnEl.innerHTML = orig; btnEl.disabled = false; }
+    if (!ids.length) { showPopup({ type: 'warning', title: 'Notice', message: 'No items to delete.', autoClose: 4000 }); return; }
+    showPopup({
+        type: 'confirm',
+        title: 'Delete from Database',
+        message: `Permanently delete ${ids.length} item(s) from the database? This cannot be undone.`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Deleting…';
+            try {
+                const r = await fetch('/debrid_manager/api/reconcile/bulk_delete_db', {
+                    method:'POST', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({item_ids: ids})
+                });
+                const d = await r.json();
+                btnEl.textContent = d.success ? `Done (${d.deleted})` : 'Failed';
+                if (d.success) { window._rcLoaded = false; setTimeout(() => loadReconcile(true), 2000); }
+                else setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + e.message, autoClose: 5000 }); btnEl.innerHTML = orig; btnEl.disabled = false; }
+        }
+    });
 }
 
 async function _rcBulkDeleteRD(items, btnEl) {
-    if (!items.length) { alert('Nothing to delete.'); return; }
-    if (!confirm(`Delete ${items.length} torrent(s) from ${providerLabel}? This cannot be undone.`)) return;
-    const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Deleting…';
-    const tids = items.map(i => i.filled_by_torrent_id).filter(Boolean);
-    try {
-        const r = await fetch('/debrid_manager/api/torrent/batch-delete', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ids: tids})
-        });
-        const d = await r.json();
-        btnEl.textContent = d.success ? `Done (${d.deleted?.length||0})` : 'Failed';
-        if (d.success) { window._rcLoaded = false; setTimeout(() => loadReconcile(true), 2000); }
-        else setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
-    } catch(e) { alert('Failed: '+e.message); btnEl.innerHTML = orig; btnEl.disabled = false; }
+    if (!items.length) { showPopup({ type: 'warning', title: 'Notice', message: 'Nothing to delete.', autoClose: 4000 }); return; }
+    showPopup({
+        type: 'confirm',
+        title: 'Delete from Debrid',
+        message: `Delete ${items.length} torrent(s) from ${providerLabel}? This cannot be undone.`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Deleting…';
+            const tids = items.map(i => i.filled_by_torrent_id).filter(Boolean);
+            try {
+                const r = await fetch('/debrid_manager/api/torrent/batch-delete', {
+                    method:'POST', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({ids: tids})
+                });
+                const d = await r.json();
+                btnEl.textContent = d.success ? `Done (${d.deleted?.length||0})` : 'Failed';
+                if (d.success) { window._rcLoaded = false; setTimeout(() => loadReconcile(true), 2000); }
+                else setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + e.message, autoClose: 5000 }); btnEl.innerHTML = orig; btnEl.disabled = false; }
+        }
+    });
 }
 
 async function _rcBulkScan(items, btnEl) {
@@ -3942,23 +4126,31 @@ async function _rcBulkScan(items, btnEl) {
         const parts = normalized.split('/');
         return parts.length >= 2 ? parts.slice(0,-1).join('/') : '';
     }).filter(Boolean))];
-    if (!dirs.length) { alert('No directory paths available.'); return; }
-    if (!confirm(`Trigger ${_dmMsLabel} scan for ${dirs.length} ${dirs.length === 1 ? 'directory' : 'directories'}?`)) return;
-    const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Scanning…';
-    try {
-        const r = await fetch('/debrid_manager/api/plex_force_scan', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({paths: dirs, empty_trash: false})
-        });
-        const d = await r.json();
-        if (d.success) {
-            btnEl.textContent = 'Sent';
-            setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
-        } else {
-            btnEl.innerHTML = orig; btnEl.disabled = false;
-            alert('Scan failed: ' + (d.error || (d.errors||[]).join(', ') || 'unknown error'));
+    if (!dirs.length) { showPopup({ type: 'warning', title: 'Notice', message: 'No directory paths available.', autoClose: 4000 }); return; }
+    showPopup({
+        type: 'confirm',
+        title: 'Trigger Scan',
+        message: `Trigger ${_dmMsLabel} scan for ${dirs.length} ${dirs.length === 1 ? 'directory' : 'directories'}?`,
+        confirmText: 'Scan',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = 'Scanning…';
+            try {
+                const r = await fetch('/debrid_manager/api/plex_force_scan', {
+                    method:'POST', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({paths: dirs, empty_trash: false})
+                });
+                const d = await r.json();
+                if (d.success) {
+                    btnEl.textContent = 'Sent';
+                    setTimeout(() => { btnEl.innerHTML = orig; btnEl.disabled = false; }, 3000);
+                } else {
+                    btnEl.innerHTML = orig; btnEl.disabled = false;
+                    showPopup({ type: 'error', title: 'Error', message: 'Scan failed: ' + (d.error || (d.errors||[]).join(', ') || 'unknown error'), autoClose: 5000 });
+                }
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + e.message, autoClose: 5000 }); btnEl.innerHTML = orig; btnEl.disabled = false; }
         }
-    } catch(e) { alert('Failed: '+e.message); btnEl.innerHTML = orig; btnEl.disabled = false; }
+    });
 }
 
 function _rcRenderAll(data) {
@@ -4297,40 +4489,56 @@ function _slRenderIncorrect(items) {
 // _esc defined below (unconditionally, outside symlink_mode block)
 
 async function _slDeleteOne(kind, path, btnEl) {
-    if (!confirm(`Delete this file?\n${path}`)) return;
-    const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = '…';
-    try {
-        const r = await fetch('/debrid_manager/api/symlink_audit/delete', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({paths: [path]})
-        });
-        const d = await r.json();
-        if (d.success && d.deleted > 0) {
-            btnEl.closest('tr').remove();
-        } else {
-            alert('Delete failed: ' + (d.errors?.[0] || 'unknown'));
-            btnEl.innerHTML = orig; btnEl.disabled = false;
+    showPopup({
+        type: 'confirm',
+        title: 'Delete File',
+        message: `Delete this file?\n${path}`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = '…';
+            try {
+                const r = await fetch('/debrid_manager/api/symlink_audit/delete', {
+                    method:'POST', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({paths: [path]})
+                });
+                const d = await r.json();
+                if (d.success && d.deleted > 0) {
+                    btnEl.closest('tr').remove();
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + (d.errors?.[0] || 'unknown'), autoClose: 5000 });
+                    btnEl.innerHTML = orig; btnEl.disabled = false;
+                }
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Error: ' + e.message, autoClose: 5000 }); btnEl.innerHTML = orig; btnEl.disabled = false; }
         }
-    } catch(e) { alert('Error: '+e.message); btnEl.innerHTML = orig; btnEl.disabled = false; }
+    });
 }
 
 async function _slDeletePaths(paths, btnEl) {
-    if (!confirm(`Delete ${paths.length} symlink(s)?`)) return;
-    const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = '…';
-    try {
-        const r = await fetch('/debrid_manager/api/symlink_audit/delete', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({paths})
-        });
-        const d = await r.json();
-        if (d.success && d.deleted > 0) {
-            btnEl.textContent = `Deleted ${d.deleted}`;
-            btnEl.closest('tr').remove();
-        } else {
-            alert('Delete failed: ' + (d.errors?.[0] || 'unknown'));
-            btnEl.innerHTML = orig; btnEl.disabled = false;
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Symlinks',
+        message: `Delete ${paths.length} symlink(s)?`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            const orig = btnEl.innerHTML; btnEl.disabled = true; btnEl.textContent = '…';
+            try {
+                const r = await fetch('/debrid_manager/api/symlink_audit/delete', {
+                    method:'POST', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({paths})
+                });
+                const d = await r.json();
+                if (d.success && d.deleted > 0) {
+                    btnEl.textContent = `Deleted ${d.deleted}`;
+                    btnEl.closest('tr').remove();
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + (d.errors?.[0] || 'unknown'), autoClose: 5000 });
+                    btnEl.innerHTML = orig; btnEl.disabled = false;
+                }
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Error: ' + e.message, autoClose: 5000 }); btnEl.innerHTML = orig; btnEl.disabled = false; }
         }
-    } catch(e) { alert('Error: '+e.message); btnEl.innerHTML = orig; btnEl.disabled = false; }
+    });
 }
 
 async function _slDeleteAll(kind) {
@@ -4340,21 +4548,29 @@ async function _slDeleteAll(kind) {
     else if (kind === 'unlinked')  paths = _slData.unlinked_all || (_slData.unlinked || []).map(f => f.path);
     else if (kind === 'incorrect') paths = (_slData.incorrect_dupes || []).flatMap(d => d.links);
     if (!paths.length) return;
-    if (!confirm(`Delete all ${paths.length} ${kind} file(s)? This cannot be undone.`)) return;
-    try {
-        const r = await fetch('/debrid_manager/api/symlink_audit/delete', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({paths})
-        });
-        const d = await r.json();
-        if (d.success) {
-            alert(`Deleted ${d.deleted}${d.failed ? `, failed ${d.failed}` : ''}`);
-            // Re-scan to refresh
-            await _slStartScan();
-        } else {
-            alert('Delete failed: ' + d.error);
+    showPopup({
+        type: 'confirm',
+        title: 'Delete All Files',
+        message: `Delete all ${paths.length} ${kind} file(s)? This cannot be undone.`,
+        confirmText: 'Delete All',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            try {
+                const r = await fetch('/debrid_manager/api/symlink_audit/delete', {
+                    method:'POST', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({paths})
+                });
+                const d = await r.json();
+                if (d.success) {
+                    showPopup({ type: 'success', title: 'Success', message: `Deleted ${d.deleted}${d.failed ? `, failed ${d.failed}` : ''}`, autoClose: 4000 });
+                    // Re-scan to refresh
+                    await _slStartScan();
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + d.error, autoClose: 5000 });
+                }
+            } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Error: ' + e.message, autoClose: 5000 }); }
         }
-    } catch(e) { alert('Error: '+e.message); }
+    });
 }
 
 // Called when the Audit tab opens — fires in parallel with loadReconcile()
@@ -4633,14 +4849,26 @@ _battEl('batt-bulk-refresh-stale')?.addEventListener('click', function() {
 _battEl('batt-bulk-del-tvdb')?.addEventListener('click', () => {
     const ids = _battGetCheckedIds('orphaned_tvdb');
     if (!ids.length) return;
-    if (!confirm(`Delete ${ids.length} TVDB mapping(s)?`)) return;
-    _battDeleteMapping('tvdb', ids);
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Mappings',
+        message: `Delete ${ids.length} TVDB mapping(s)?`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: function() { _battDeleteMapping('tvdb', ids); }
+    });
 });
 _battEl('batt-bulk-del-tmdb')?.addEventListener('click', () => {
     const ids = _battGetCheckedIds('orphaned_tmdb');
     if (!ids.length) return;
-    if (!confirm(`Delete ${ids.length} TMDB mapping(s)?`)) return;
-    _battDeleteMapping('tmdb', ids);
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Mappings',
+        message: `Delete ${ids.length} TMDB mapping(s)?`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: function() { _battDeleteMapping('tmdb', ids); }
+    });
 });
 
 // Reload + Sync buttons
@@ -4660,12 +4888,12 @@ _battEl('batt-sync-btn')?.addEventListener('click', async function() {
             this.textContent = 'Started';
             setTimeout(() => { this.innerHTML = orig; this.disabled = false; }, 3000);
         } else {
-            alert('Sync failed: ' + (d.error || 'unknown'));
+            showPopup({ type: 'error', title: 'Error', message: 'Sync failed: ' + (d.error || 'unknown'), autoClose: 5000 });
             this.innerHTML = orig;
             this.disabled = false;
         }
     } catch(e) {
-        alert('Error: ' + e.message);
+        showPopup({ type: 'error', title: 'Error', message: 'Error: ' + e.message, autoClose: 5000 });
         this.innerHTML = orig;
         this.disabled = false;
     }
@@ -4704,36 +4932,44 @@ async function _battFetchMetadata(imdb_ids, btn, group) {
                 btn.closest('tr')?.remove();
             }
         } else {
-            alert('Failed: ' + d.error);
+            showPopup({ type: 'error', title: 'Error', message: 'Failed: ' + d.error, autoClose: 5000 });
             if (btn) { btn.textContent = isBulk ? 'Fetch Selected' : 'Fetch'; btn.disabled = false; }
         }
     } catch(e) {
-        alert('Error: ' + e.message);
+        showPopup({ type: 'error', title: 'Error', message: 'Error: ' + e.message, autoClose: 5000 });
         if (btn) { btn.textContent = isBulk ? 'Fetch Selected' : 'Fetch'; btn.disabled = false; }
     }
 }
 
 async function _battDeleteBattery(imdb_ids, btn) {
-    if (!confirm(`Delete ${imdb_ids.length} battery item(s)? This cannot be undone.`)) return;
-    if (btn) { btn.disabled = true; btn.textContent = '…'; }
-    try {
-        const r = await fetch('/debrid_manager/api/battery_audit/delete_battery', {
-            method: 'POST',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({imdb_ids})
-        });
-        const d = await r.json();
-        if (d.success) {
-            _battData = null; _battLoaded = false;
-            loadBatteryAudit(true);
-        } else {
-            alert('Delete failed: ' + d.error);
-            if (btn) { btn.textContent = 'Delete'; btn.disabled = false; }
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Battery Items',
+        message: `Delete ${imdb_ids.length} battery item(s)? This cannot be undone.`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            if (btn) { btn.disabled = true; btn.textContent = '…'; }
+            try {
+                const r = await fetch('/debrid_manager/api/battery_audit/delete_battery', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({imdb_ids})
+                });
+                const d = await r.json();
+                if (d.success) {
+                    _battData = null; _battLoaded = false;
+                    loadBatteryAudit(true);
+                } else {
+                    showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + d.error, autoClose: 5000 });
+                    if (btn) { btn.textContent = 'Delete'; btn.disabled = false; }
+                }
+            } catch(e) {
+                showPopup({ type: 'error', title: 'Error', message: 'Error: ' + e.message, autoClose: 5000 });
+                if (btn) { btn.textContent = 'Delete'; btn.disabled = false; }
+            }
         }
-    } catch(e) {
-        alert('Error: ' + e.message);
-        if (btn) { btn.textContent = 'Delete'; btn.disabled = false; }
-    }
+    });
 }
 
 async function _battDeleteMapping(type, ids, btn) {
@@ -4749,11 +4985,11 @@ async function _battDeleteMapping(type, ids, btn) {
             _battData = null; _battLoaded = false;
             loadBatteryAudit(true);
         } else {
-            alert('Delete failed: ' + d.error);
+            showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + d.error, autoClose: 5000 });
             if (btn) { btn.textContent = 'Delete'; btn.disabled = false; }
         }
     } catch(e) {
-        alert('Error: ' + e.message);
+        showPopup({ type: 'error', title: 'Error', message: 'Error: ' + e.message, autoClose: 5000 });
         if (btn) { btn.textContent = 'Delete'; btn.disabled = false; }
     }
 }
@@ -4993,7 +5229,7 @@ _battEl('batt-reid-verify-btn')?.addEventListener('click', async function() {
     const preview = _battEl('batt-reid-preview');
     const opts    = _battEl('batt-reid-options');
     const footer  = _battEl('batt-reid-footer');
-    if (!newId.startsWith('tt')) { alert('Enter a valid IMDB ID (tt…)'); return; }
+    if (!newId.startsWith('tt')) { showPopup({ type: 'warning', title: 'Required', message: 'Enter a valid IMDB ID (tt…)', autoClose: 4000 }); return; }
     this.disabled = true;
     this.textContent = 'Verifying…';
     try {
@@ -5028,37 +5264,46 @@ _battEl('batt-reid-commit-btn')?.addEventListener('click', async function() {
     const newId    = (_battEl('batt-reid-new-id')?.value || '').trim();
     const syncMain = _battEl('batt-reid-sync-main')?.checked ?? true;
     if (!_battReidImdbId || !newId) return;
-    if (!confirm(`Re-identify ${_battReidImdbId} → ${newId}?\nThis deletes the old battery entry and fetches metadata for the new ID.`)) return;
-    this.disabled = true;
-    this.textContent = 'Committing…';
-    const result = _battEl('batt-reid-result');
-    try {
-        const r = await fetch('/debrid_manager/api/battery_audit/reidentify/commit', {
-            method: 'POST',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({old_imdb_id: _battReidImdbId, new_imdb_id: newId, sync_main_db: syncMain})
-        });
-        const d = await r.json();
-        if (d.success) {
-            if (result) {
-                result.innerHTML = `<span style="color:#22c55e">Done. ${escHtml(_battReidImdbId)} → ${escHtml(newId)} (${escHtml(d.new_title)})${d.main_updated ? ` — ${d.main_updated} main DB row(s) updated` : ''}</span>`;
-                result.style.display = '';
+    const _btn = this;
+    showPopup({
+        type: 'confirm',
+        title: 'Re-identify Item',
+        message: `Re-identify ${_battReidImdbId} → ${newId}?\nThis deletes the old battery entry and fetches metadata for the new ID.`,
+        confirmText: 'Commit',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            _btn.disabled = true;
+            _btn.textContent = 'Committing…';
+            const result = _battEl('batt-reid-result');
+            try {
+                const r = await fetch('/debrid_manager/api/battery_audit/reidentify/commit', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({old_imdb_id: _battReidImdbId, new_imdb_id: newId, sync_main_db: syncMain})
+                });
+                const d = await r.json();
+                if (d.success) {
+                    if (result) {
+                        result.innerHTML = `<span style="color:#22c55e">Done. ${escHtml(_battReidImdbId)} → ${escHtml(newId)} (${escHtml(d.new_title)})${d.main_updated ? ` — ${d.main_updated} main DB row(s) updated` : ''}</span>`;
+                        result.style.display = '';
+                    }
+                    setTimeout(() => {
+                        _battCloseReid();
+                        _battData = null; _battLoaded = false;
+                        loadBatteryAudit(true);
+                    }, 2000);
+                } else {
+                    if (result) { result.innerHTML = `<span style="color:#ef4444">Error: ${escHtml(d.error)}</span>`; result.style.display = ''; }
+                    _btn.disabled = false;
+                    _btn.textContent = 'Commit Re-identify';
+                }
+            } catch(e) {
+                if (result) { result.innerHTML = `<span style="color:#ef4444">Error: ${e.message}</span>`; result.style.display = ''; }
+                _btn.disabled = false;
+                _btn.textContent = 'Commit Re-identify';
             }
-            setTimeout(() => {
-                _battCloseReid();
-                _battData = null; _battLoaded = false;
-                loadBatteryAudit(true);
-            }, 2000);
-        } else {
-            if (result) { result.innerHTML = `<span style="color:#ef4444">Error: ${escHtml(d.error)}</span>`; result.style.display = ''; }
-            this.disabled = false;
-            this.textContent = 'Commit Re-identify';
         }
-    } catch(e) {
-        if (result) { result.innerHTML = `<span style="color:#ef4444">Error: ${e.message}</span>`; result.style.display = ''; }
-        this.disabled = false;
-        this.textContent = 'Commit Re-identify';
-    }
+    });
 });
 
 // Battery audit loads on-demand when Battery sub-tab is clicked (not auto-loaded)

@@ -10,9 +10,8 @@
 @media (max-width: 768px) {
 
     .torresult .assign-magnet-mobile:hover {
-        background-color: #FFA000;
-        transform: scale(1.1);
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
+        background: var(--st-accent);
+        transform: scale(1.05);
     }
 
     .torresult .assign-magnet-mobile svg {
@@ -38,21 +37,24 @@
         overflow: hidden !important;
     }
     .torresult {
-        background: rgba(255, 255, 255, 0.03);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 20px;
-        margin-bottom: 20px;
+        background: var(--st-surf2);
+        border: 1px solid var(--st-border);
+        border-radius: 10px;
+        margin-bottom: 10px;
         overflow: hidden;
-        padding: 1.25rem;
+        padding: 12px;
+        transition: border-color .15s;
+        }
+    .torresult:hover {
+        border-color: var(--st-border2);
         }
     .torresult button {
         width: 100%;
-        padding: 15px 10px;
+        padding: 10px 8px;
         display: flex;
         flex-direction: column;
         align-items: center;
-        background: rgb(255 255 255 / 0%);
+        background: transparent;
         border: none;
     }
     .sresult .media-poster, .torresult {
@@ -63,37 +65,43 @@
         text-align: center;
     }
     p.torresult-title {
-        font-size: 1rem;
+        font-size: 0.875rem;
         text-align: center;
-        margin: 5px 0;
+        margin: 4px 0;
         word-break: break-word;
+        color: var(--st-text);
+        font-weight: 500;
     }
     p.torresult-item {
-        font-size: 0.9rem;
-        margin: 5px 0;
-        color: #e17c52;
+        font-size: 0.78rem;
+        margin: 3px 0;
+        color: var(--st-accent);
         word-break: normal;
         overflow-wrap: anywhere;
         white-space: normal;
         hyphens: none;
+        font-family: var(--st-mono);
     }
     .torresult .assign-magnet-icon {
         position: absolute;
-        bottom: 10px;
-        right: 10px;
-        width: 28px;
+        bottom: 8px;
+        right: 8px;
+        width: 26px;
         padding: 3px;
-        height: 28px;
-        background-color: #e17c52;
-        border: #c56b3d;
-        border-radius: 6px;
+        height: 26px;
+        background: var(--st-surf3);
+        border: 1px solid var(--st-border2);
+        border-radius: 5px;
         display: flex;
         align-items: center;
         justify-content: center;
         z-index: 10;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
         cursor: pointer;
-        transition: all 0.2s ease;
+        transition: all 0.15s ease;
+    }
+    .torresult .assign-magnet-icon:hover {
+        background: var(--st-accent);
+        border-color: var(--st-accent);
     }
     #mobileActionModal {
         display: none !important;
@@ -499,33 +507,36 @@
     }
 
     .mobile-torrent-controls label {
-        color: #d4d4d4;
-        font-size: 0.9rem;
+        color: var(--st-text2);
+        font-size: 12px;
         font-weight: 500;
         white-space: nowrap;
         min-width: 60px;
+        font-family: var(--st-mono);
     }
 
     .mobile-torrent-controls select {
         flex: 1;
-        padding: 12px 40px 12px 12px;
-        background: #1a1a1a;
-        border: 1px solid #404040;
-        border-radius: 8px;
-        color: #fff;
-        font-size: 0.9rem;
-        min-height: 44px;
+        padding: 8px 32px 8px 10px;
+        background: var(--st-surf);
+        border: 1px solid var(--st-border);
+        border-radius: 6px;
+        color: var(--st-text);
+        font-size: 13px;
+        min-height: 36px;
         -webkit-appearance: none;
         appearance: none;
-        background-image: url("data:image/svg+xml;utf8,<svg fill='white' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/></svg>");
+        background-image: url("data:image/svg+xml;utf8,<svg fill='%23aaa' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/></svg>");
         background-repeat: no-repeat;
-        background-position: right 10px center;
-        background-size: 20px;
+        background-position: right 8px center;
+        background-size: 18px;
+        font-family: var(--st-mono);
+        transition: border-color .15s;
     }
 
     .mobile-torrent-controls select:focus {
         outline: none;
-        border-color: #f97316;
+        border-color: var(--st-accent);
     }
 
     form#search-form {
@@ -629,11 +640,11 @@
     .overlay-content tr {
         display: block !important;
         width: 100% !important;
-        margin-bottom: 16px !important;
-        background: rgba(255, 255, 255, 0.03) !important;
-        border-radius: 12px !important;
-        padding: 12px !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        margin-bottom: 10px !important;
+        background: var(--st-surf2) !important;
+        border-radius: 8px !important;
+        padding: 10px !important;
+        border: 1px solid var(--st-border) !important;
     }
 
     .overlay-content td {
@@ -675,11 +686,12 @@
     /* Cache status badges mobile */
     .cache-status {
         display: inline-block !important;
-        padding: 6px 12px !important;
-        border-radius: 20px !important;
-        font-size: 0.75rem !important;
-        margin: 4px 0 !important;
+        padding: 3px 8px !important;
+        border-radius: 5px !important;
+        font-size: 11px !important;
+        margin: 3px 0 !important;
         text-align: center !important;
+        font-family: var(--st-mono);
     }
 
     .torresult .assign-magnet-mobile:active,
@@ -909,92 +921,102 @@
     }
 
     .mobile-action-content {
-        background: rgba(26, 26, 26, 0.95);
-        backdrop-filter: blur(20px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 16px;
-        padding: 24px;
+        background: var(--st-surf);
+        border: 1px solid var(--st-border);
+        border-radius: 12px;
+        padding: 20px;
         width: 90%;
         max-width: 400px;
-        box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
-        color: white;
+        box-shadow: 0 24px 48px rgba(0, 0, 0, 0.6);
+        color: var(--st-text);
     }
 
     .mobile-action-title {
-        font-size: 20px;
-        font-weight: bold;
-        margin-bottom: 16px;
+        font-size: 1rem;
+        font-weight: 700;
+        margin-bottom: 12px;
         text-align: center;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        font-family: var(--st-mono);
+        color: var(--st-text);
     }
 
     .mobile-action-year {
         text-align: center;
-        font-size: 15px;
-        color: rgba(255, 255, 255, 0.7);
-        margin-bottom: 24px;
+        font-size: 13px;
+        color: var(--st-text2);
+        margin-bottom: 18px;
+        font-family: var(--st-mono);
     }
 
     .mobile-action-buttons {
         display: flex;
         flex-direction: column;
-        gap: 14px;
+        gap: 10px;
     }
 
     .mobile-action-button {
-        background: linear-gradient(135deg, #ff6b35, #f7931e);
+        background: var(--st-accent);
         color: white;
-        border: none;
-        padding: 14px 20px;
-        border-radius: 12px;
-        font-size: 16px;
+        border: 1px solid var(--st-accent);
+        padding: 12px 18px;
+        border-radius: 8px;
+        font-size: 14px;
         font-weight: 600;
         cursor: pointer;
-        transition: all 0.3s ease;
+        transition: all 0.15s ease;
+        font-family: var(--st-mono);
     }
 
     .mobile-action-button:hover, .mobile-action-button:active {
-        transform: scale(1.05);
-        box-shadow: 0 6px 16px rgba(255, 107, 53, 0.6);
+        background: var(--st-accent-h);
+        border-color: var(--st-accent-h);
     }
 
     .mobile-request-button {
-        background: linear-gradient(135deg, #3b82f6, #2563eb);
+        background: var(--st-blue);
+        border-color: var(--st-blue);
     }
 
     .mobile-request-button:hover, .mobile-request-button:active {
-        transform: scale(1.05);
-        box-shadow: 0 6px 16px rgba(59, 130, 246, 0.6);
+        background: #2563eb;
+        border-color: #2563eb;
     }
 
     .mobile-cancel-button {
-        background: rgba(255, 255, 255, 0.1);
-        margin-top: 8px;
+        background: var(--st-surf2);
+        border: 1px solid var(--st-border);
+        color: var(--st-text2);
+        margin-top: 4px;
     }
 
     .mobile-cancel-button:hover, .mobile-cancel-button:active {
-        background: rgba(255, 255, 255, 0.15);
+        background: var(--st-surf3);
+        color: var(--st-text);
     }
 }
 @media (max-width: 1045px) {
     .torresult {
-        background: rgba(255, 255, 255, 0.03);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 20px;
-        margin-bottom: 20px;
+        background: var(--st-surf2);
+        border: 1px solid var(--st-border);
+        border-radius: 10px;
+        margin-bottom: 10px;
         overflow: hidden;
-        padding: 1.25rem;
+        padding: 12px;
+        transition: border-color .15s;
+        }
+    .torresult:hover {
+        border-color: var(--st-border2);
         }
     .torresult button {
         width: 100%;
-        padding: 15px 10px;
+        padding: 10px 8px;
         display: flex;
         flex-direction: column;
         align-items: center;
-        background: rgb(255 255 255 / 0%);
+        background: transparent;
         border: none;
     }
     .sresult .media-poster, .torresult {
@@ -1005,37 +1027,43 @@
         text-align: center;
     }
     p.torresult-title {
-        font-size: 1rem;
+        font-size: 0.875rem;
         text-align: center;
-        margin: 5px 0;
+        margin: 4px 0;
         word-break: break-word;
+        color: var(--st-text);
+        font-weight: 500;
     }
     p.torresult-item {
-        font-size: 0.9rem;
-        margin: 5px 0;
-        color: #e17c52;
+        font-size: 0.78rem;
+        margin: 3px 0;
+        color: var(--st-accent);
         word-break: normal;
         overflow-wrap: anywhere;
         white-space: normal;
         hyphens: none;
+        font-family: var(--st-mono);
     }
     .torresult .assign-magnet-icon {
         position: absolute;
-        bottom: 10px;
-        right: 10px;
-        width: 28px;
+        bottom: 8px;
+        right: 8px;
+        width: 26px;
         padding: 3px;
-        height: 28px;
-        background-color: #e17c52;
-        border: #c56b3d;
-        border-radius: 6px;
+        height: 26px;
+        background: var(--st-surf3);
+        border: 1px solid var(--st-border2);
+        border-radius: 5px;
         display: flex;
         align-items: center;
         justify-content: center;
         z-index: 10;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
         cursor: pointer;
-        transition: all 0.2s ease;
+        transition: all 0.15s ease;
+    }
+    .torresult .assign-magnet-icon:hover {
+        background: var(--st-accent);
+        border-color: var(--st-accent);
     }
     .torresult {
         width: 47% !important;
@@ -1056,79 +1084,84 @@
     }
 
     .mobile-action-content {
-        background: rgba(26, 26, 26, 0.95);
-        backdrop-filter: blur(20px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 16px;
-        padding: 24px;
+        background: var(--st-surf);
+        border: 1px solid var(--st-border);
+        border-radius: 12px;
+        padding: 20px;
         width: 90%;
         max-width: 350px;
-        box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
-        color: white;
+        box-shadow: 0 24px 48px rgba(0, 0, 0, 0.6);
+        color: var(--st-text);
     }
 
     .mobile-action-title {
-        font-size: 18px;
-        font-weight: bold;
-        margin-bottom: 16px;
+        font-size: 1rem;
+        font-weight: 700;
+        margin-bottom: 10px;
         text-align: center;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        font-family: var(--st-mono);
     }
 
     .mobile-action-year {
         text-align: center;
-        font-size: 14px;
-        color: rgba(255, 255, 255, 0.7);
-        margin-bottom: 24px;
+        font-size: 13px;
+        color: var(--st-text2);
+        margin-bottom: 18px;
+        font-family: var(--st-mono);
     }
 
     .mobile-action-buttons {
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        gap: 10px;
     }
 
     .mobile-action-button {
-        padding: 14px;
-        border-radius: 12px;
+        padding: 11px;
+        border-radius: 8px;
         border: none;
         color: white;
-        font-size: 16px;
-        font-weight: bold;
+        font-size: 14px;
+        font-weight: 600;
         cursor: pointer;
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 10px;
+        gap: 8px;
+        font-family: var(--st-mono);
     }
 
     .mobile-scrape-button {
-        background: linear-gradient(135deg, #ff6b35 0%, #f7931e 100%);
+        background: var(--st-accent);
+        border: 1px solid var(--st-accent);
     }
 
     .mobile-scrape-button:hover, .mobile-scrape-button:active {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 24px rgba(255, 107, 53, 0.4);
+        background: var(--st-accent-h);
     }
 
     .mobile-request-button {
-        background: linear-gradient(135deg, #3b82f6, #2563eb);
+        background: var(--st-blue);
+        border: 1px solid var(--st-blue);
     }
 
     .mobile-request-button:hover, .mobile-request-button:active {
-        transform: scale(1.05);
-        box-shadow: 0 6px 16px rgba(59, 130, 246, 0.6);
+        background: #2563eb;
     }
 
     .mobile-cancel-button {
-        background: rgba(255, 255, 255, 0.1);
-        margin-top: 8px;
+        background: var(--st-surf2);
+        border: 1px solid var(--st-border);
+        color: var(--st-text2);
+        margin-top: 4px;
     }
 
     .mobile-cancel-button:hover, .mobile-cancel-button:active {
-        background: rgba(255, 255, 255, 0.15);
+        background: var(--st-surf3);
+        color: var(--st-text);
     }
     .torresult {
         width: 100% !important;

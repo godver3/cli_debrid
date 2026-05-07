@@ -1173,28 +1173,33 @@ async function refreshItemMetadata(item) {
 }
 
 async function deleteItem(item) {
-    if (!confirm(`Delete "${item.title}"? This will remove it from the library.`)) {
-        return;
-    }
+    showPopup({
+        type: 'confirm',
+        title: 'Delete Item',
+        message: `Delete "${item.title}"? This will remove it from the library.`,
+        confirmText: 'Delete',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            try {
+                if (window.DeletionCommon) {
+                    // Use deletion common if available
+                    const result = await window.DeletionCommon.executeDelete([item.id], {
+                        layers: ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache']
+                    });
 
-    try {
-        if (window.DeletionCommon) {
-            // Use deletion common if available
-            const result = await window.DeletionCommon.executeDelete([item.id], {
-                layers: ['database', 'media_server', 'filesystem', 'debrid', 'symlinks', 'cache']
-            });
-
-            if (result && result.success) {
-                showSuccess(`Successfully deleted "${item.title}"`);
-                resetAndReload();
+                    if (result && result.success) {
+                        showSuccess(`Successfully deleted "${item.title}"`);
+                        resetAndReload();
+                    }
+                } else {
+                    showError('Deletion system not available');
+                }
+            } catch (error) {
+                console.error('Error deleting item:', error);
+                showError(`Error deleting "${item.title}"`);
             }
-        } else {
-            showError('Deletion system not available');
         }
-    } catch (error) {
-        console.error('Error deleting item:', error);
-        showError(`Error deleting "${item.title}"`);
-    }
+    });
 }
 
 function showSuccess(message) {
@@ -1600,10 +1605,13 @@ async function deleteSelectedItems() {
     const itemWord = itemsToDelete.length === 1 ? 'item' : 'items';
     const action = libraryState.autoGhostlistEnabled ? 'ghostlist' : 'delete';
     const canUndo = libraryState.autoGhostlistEnabled ? 'Ghostlisted items can be recovered.' : 'This action cannot be undone.';
-    const confirmed = confirm(`This will ${action} ${itemsToDelete.length} ${itemWord}. ${canUndo}`);
-    if (!confirmed) {
-        return;
-    }
+    showPopup({
+        type: 'confirm',
+        title: 'Confirm Deletion',
+        message: `This will ${action} ${itemsToDelete.length} ${itemWord}. ${canUndo}`,
+        confirmText: action.charAt(0).toUpperCase() + action.slice(1),
+        cancelText: 'Cancel',
+        onConfirm: async function() {
 
     // Show loading using shared deletion loading with progress tracking
     const deletionTitle = itemsToDelete.length === 1 ? itemsToDelete[0].title : `${itemsToDelete.length} ${itemWord}`;
@@ -1705,9 +1713,17 @@ async function deleteSelectedItems() {
                     });
                     console.log('[DELETE] showPopup called, waiting for user...');
                 } else {
-                    console.log('[DELETE] Falling back to native confirm dialog');
+                    console.log('[DELETE] Falling back to showPopup confirm dialog');
                     const titleList = plexNotFoundItems.map(r => r.item.title).join(', ');
-                    resolve(confirm(`"${titleList}" not found in Plex. Continue removing from database and other layers?`));
+                    showPopup({
+                        type: 'confirm',
+                        title: 'Not Found in Plex',
+                        message: `"${titleList}" not found in Plex. Continue removing from database and other layers?`,
+                        confirmText: 'Continue',
+                        cancelText: 'Cancel',
+                        onConfirm: () => resolve(true),
+                        onCancel: () => resolve(false)
+                    });
                 }
             });
             console.log('[DELETE] Phase 2 confirmed:', confirmed);
@@ -1919,24 +1935,31 @@ async function deleteSelectedItems() {
                 }
             }, 100);
         } else {
-            alert(message);
-            exitSelectionMode();
-            window.location.reload();
+            showPopup({
+                type: successCount > 0 ? 'success' : 'error',
+                title: successCount > 0 ? 'Success' : 'Error',
+                message: message,
+                autoClose: false,
+                onConfirm: () => {
+                    exitSelectionMode();
+                    window.location.reload();
+                }
+            });
         }
 
     } catch (error) {
         window.hideDeletionLoading();
         console.error('Error deleting items:', error);
-        if (window.POPUP_TYPES && window.showPopup) {
-            window.showPopup({
-                type: window.POPUP_TYPES.ERROR,
-                message: `Error deleting items: ${error.message}`,
-                autoClose: 5000
-            });
-        } else {
-            alert(`Error deleting items: ${error.message}`);
-        }
+        showPopup({
+            type: 'error',
+            title: 'Error',
+            message: `Error deleting items: ${error.message}`,
+            autoClose: 5000
+        });
     }
+
+        } // end onConfirm
+    }); // end showPopup
 }
 
 // Keyboard shortcuts

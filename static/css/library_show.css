@@ -981,6 +981,18 @@ button.btn.btn-sm.replace-season-btn.replace-season-pending:hover {
     height: 16px;
 }
 
+/* Magnet assign episode button - no rotation on hover */
+.magnet-assign-episode-btn {
+    border-color: rgba(255, 145, 102, 0.3);
+    color: #ff9166;
+}
+
+.magnet-assign-episode-btn:hover {
+    background: rgba(255, 145, 102, 0.15) !important;
+    border-color: rgba(255, 145, 102, 0.5) !important;
+    transform: none !important;
+}
+
 /* Files Toggle Button */
 .files-toggle-btn {
     display: flex;

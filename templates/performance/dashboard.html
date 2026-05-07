@@ -2,778 +2,797 @@
 
 {% block head %}
 {{ super() }}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/performance.css') }}">
+<style>
+*{box-sizing:border-box}
+:root{
+  --pd-bg:#111;--pd-surface:#1a1a1a;--pd-surface2:#222;--pd-surface3:#2a2a2a;
+  --pd-border:#2d2d2d;--pd-border2:#3d3d3d;
+  --pd-accent:#e8601c;--pd-accent-h:#f07030;
+  --pd-text:#e0e0e0;--pd-text2:#aaa;--pd-text3:#555;
+  --pd-green:#22c55e;--pd-red:#ef4444;--pd-blue:#3b82f6;
+  --pd-purple:#a855f7;--pd-cyan:#06b6d4;--pd-yellow:#f59e0b;
+  --pd-mono:'JetBrains Mono',monospace;--pd-sans:'Inter',sans-serif;
+}
+.pd-wrap{max-width:1300px;margin:0 auto;padding:1.25rem;font-family:var(--pd-sans);font-size:13px;color:var(--pd-text)}
+
+/* Page header */
+.pd-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem;flex-wrap:wrap;gap:.75rem}
+.pd-title{font-size:20px;font-weight:700;border-left:3px solid var(--pd-accent);padding-left:10px;color:var(--pd-text)}
+.pd-hdr-btns{display:flex;gap:7px;flex-wrap:wrap}
+.pd-btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:6px;font-family:var(--pd-sans);font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap;background:transparent;border:none}
+.pd-btn i{font-size:11px}
+.pd-btn-blue{border:1px solid #1e40af!important;color:#60a5fa}
+.pd-btn-blue:hover{background:#1e40af22;border-color:#60a5fa!important}
+.pd-btn-green{border:1px solid #166534!important;color:var(--pd-green)}
+.pd-btn-green:hover{background:#16653422;border-color:var(--pd-green)!important}
+.pd-btn-orange{border:1px solid #c2500f!important;color:#f97316}
+.pd-btn-orange:hover{background:#c2500f22;border-color:#f97316!important}
+.pd-btn:disabled{opacity:.55;cursor:not-allowed}
+
+/* Section */
+.pd-section{background:var(--pd-surface);border:1px solid var(--pd-border);border-radius:9px;padding:16px;margin-bottom:14px}
+.pd-section-title{font-size:13px;font-weight:600;color:var(--pd-text);display:flex;align-items:center;gap:8px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--pd-border)}
+.pd-section-title i{color:var(--pd-accent);font-size:13px}
+
+/* Refresh badge */
+.pd-refresh-badge{font-size:10px;color:var(--pd-text3);font-family:var(--pd-mono);display:flex;align-items:center;gap:4px;margin-left:auto}
+.pd-refresh-dot{width:5px;height:5px;border-radius:50%;background:var(--pd-green);animation:pdBlink 2s infinite}
+@keyframes pdBlink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* Progress bars */
+.pd-prog-section{margin-bottom:12px}
+.pd-prog-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.pd-prog-label{font-size:12px;font-weight:500;color:var(--pd-text2);display:flex;align-items:center;gap:6px}
+.pd-prog-label i{font-size:11px;color:var(--pd-text3)}
+.pd-prog-pct{font-size:13px;font-weight:700;font-family:var(--pd-mono);color:var(--pd-text)}
+.pd-prog-bar-bg{height:8px;background:var(--pd-surface3);border-radius:4px;overflow:hidden}
+.pd-prog-bar-fill{height:100%;border-radius:4px;transition:width .6s ease}
+.pd-prog-bar-fill.cpu{background:linear-gradient(90deg,var(--pd-accent),#fb923c)}
+.pd-prog-bar-fill.mem{background:linear-gradient(90deg,#3b82f6,#8b5cf6)}
+.pd-prog-bar-fill.warn{background:linear-gradient(90deg,var(--pd-yellow),#f97316)}
+.pd-prog-bar-fill.danger{background:linear-gradient(90deg,var(--pd-red),#f97316)}
+.pd-prog-meta{display:flex;gap:14px;margin-top:5px;flex-wrap:wrap}
+.pd-prog-meta-item{font-size:11px;font-family:var(--pd-mono);color:var(--pd-text3)}
+.pd-prog-meta-item b{color:var(--pd-accent);font-weight:500}
+
+/* Memory analysis grid */
+.pd-mem-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:10px}
+@media(max-width:600px){.pd-mem-grid{grid-template-columns:1fr}}
+.pd-mem-stat{background:var(--pd-surface2);border:1px solid var(--pd-border);border-radius:7px;padding:10px;text-align:center}
+.pd-mem-stat-label{font-size:11px;color:var(--pd-text3);margin-bottom:6px}
+.pd-mem-stat-val{font-size:18px;font-weight:700;font-family:var(--pd-mono);color:var(--pd-text)}
+.pd-mem-stat.peak .pd-mem-stat-val{color:#f97316}
+
+/* Memory type cards */
+.pd-mem-type-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:600px){.pd-mem-type-grid{grid-template-columns:1fr}}
+.pd-mem-type-card{background:var(--pd-surface2);border:1px solid var(--pd-border);border-radius:7px;padding:13px}
+.pd-mem-type-hdr{display:flex;align-items:center;gap:7px;margin-bottom:10px;font-size:12px;font-weight:600;color:var(--pd-text)}
+.pd-mem-type-hdr i{font-size:12px;color:var(--pd-accent)}
+.pd-mem-tags{display:flex;gap:6px;flex-wrap:wrap}
+.pd-mem-tag{background:var(--pd-surface3);border:1px solid var(--pd-border2);border-radius:4px;padding:4px 10px;font-size:11px;font-family:var(--pd-mono);color:var(--pd-text2)}
+
+/* Open files list */
+.pd-file-list{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px}
+@media(max-width:600px){.pd-file-list{grid-template-columns:1fr}}
+.pd-file-list::-webkit-scrollbar{width:4px}
+.pd-file-list::-webkit-scrollbar-thumb{background:var(--pd-border2);border-radius:2px}
+.pd-file-row{background:var(--pd-surface2);border:1px solid var(--pd-border);border-radius:6px;padding:10px 13px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.pd-file-row:hover{border-color:var(--pd-border2)}
+.pd-file-name{font-size:12px;font-weight:600;font-family:var(--pd-mono);color:var(--pd-accent);margin-bottom:2px}
+.pd-file-path{font-size:11px;color:var(--pd-text3);font-family:var(--pd-mono)}
+.pd-file-size{font-size:11px;font-family:var(--pd-mono);background:var(--pd-surface3);border:1px solid var(--pd-border2);border-radius:4px;padding:3px 8px;color:var(--pd-text2);white-space:nowrap;flex-shrink:0}
+
+/* Chart containers */
+.pd-chart-wrap{position:relative;width:100%;height:220px;margin-bottom:10px}
+.pd-chart-wrap canvas{display:block;width:100%!important;height:100%!important}
+
+/* Chart legend */
+.pd-chart-legend{display:flex;gap:14px;margin-bottom:10px;flex-wrap:wrap}
+.pd-legend-item{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--pd-text2)}
+.pd-legend-line{width:20px;height:3px;border-radius:2px}
+
+/* Memory growth table */
+.pd-growth-table{display:flex;flex-direction:column;border:1px solid var(--pd-border);border-radius:7px;overflow:hidden}
+.pd-growth-row{display:flex;align-items:center;justify-content:space-between;padding:9px 13px;border-bottom:1px solid var(--pd-border);gap:10px}
+.pd-growth-row:last-child{border-bottom:none}
+.pd-growth-row:hover{background:var(--pd-surface2)}
+.pd-growth-time{font-size:11px;color:var(--pd-text3);font-family:var(--pd-mono);white-space:nowrap}
+.pd-growth-badges{display:flex;gap:6px;flex-wrap:wrap}
+.pd-gbadge{font-size:10px;font-family:var(--pd-mono);padding:3px 8px;border-radius:4px;font-weight:500}
+.pd-gbadge.rss{background:#0c4a6e22;color:var(--pd-cyan);border:1px solid #0c4a6e}
+.pd-gbadge.vms{background:#2e1065aa;color:var(--pd-purple);border:1px solid #3b0764}
+.pd-gbadge.swap{background:#713f1222;color:#fb923c;border:1px solid #7c2d12}
+
+/* Resource handles */
+.pd-rh-grid{display:flex;gap:20px;flex-wrap:wrap}
+.pd-rh-item{display:flex;flex-direction:column;gap:3px}
+.pd-rh-label{font-size:10px;color:var(--pd-text3);text-transform:uppercase;letter-spacing:.5px}
+.pd-rh-val{font-size:15px;font-weight:600;font-family:var(--pd-mono);color:var(--pd-text)}
+.pd-rh-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px}
+.pd-rh-tag{background:var(--pd-surface2);border:1px solid var(--pd-border2);border-radius:4px;padding:2px 8px;font-size:11px;font-family:var(--pd-mono);color:var(--pd-text2)}
+
+/* CPU stats grid */
+.pd-cpu-stats-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px}
+@media(max-width:600px){.pd-cpu-stats-grid{grid-template-columns:1fr}}
+.pd-cpu-stat{background:var(--pd-surface2);border:1px solid var(--pd-border);border-radius:7px;padding:14px;text-align:center}
+.pd-cpu-stat-label{font-size:11px;color:var(--pd-text3);margin-bottom:6px}
+.pd-cpu-stat-val{font-size:16px;font-weight:700;font-family:var(--pd-mono);color:var(--pd-text);display:flex;justify-content:center;gap:17px}
+
+/* Memory snapshot panel */
+.pd-snapshot-panel{background:var(--pd-surface);border:1px solid var(--pd-border);border-radius:9px;padding:16px;margin-bottom:14px}
+.pd-snapshot-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--pd-border);flex-wrap:wrap;gap:8px}
+.pd-snapshot-hdr-left{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--pd-text)}
+.pd-snapshot-hdr-left i{color:var(--pd-accent)}
+.pd-snapshot-hdr-right{display:flex;gap:8px;align-items:center}
+.pd-snapshot-ts{font-size:11px;color:var(--pd-text3);font-family:var(--pd-mono)}
+
+/* Metric item (used in snapshot) */
+.pd-metric-item{background:var(--pd-surface2);border:1px solid var(--pd-border);border-radius:7px;padding:13px 14px}
+.pd-metric-item h6{font-size:10px;color:var(--pd-text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px;font-weight:500}
+.pd-metric-item span{font-size:18px;font-weight:700;font-family:var(--pd-mono);color:var(--pd-text)}
+
+/* Toast */
+.pd-toast{position:fixed;bottom:1.25rem;right:1.25rem;background:var(--pd-surface);border:1px solid var(--pd-border2);border-radius:7px;padding:9px 14px;font-size:12px;color:var(--pd-text);z-index:9999;opacity:0;transform:translateY(6px);transition:all .2s;pointer-events:none;display:flex;align-items:center;gap:7px;font-family:var(--pd-sans)}
+.pd-toast.show{opacity:1;transform:translateY(0)}
+.pd-toast-dot{width:6px;height:6px;border-radius:50%}
+</style>
 {% endblock %}
 
 {% block content %}
-<div class="container">
-    <div class="header">
-        <h2>Performance Dashboard</h2>
-        <div style="display:flex;gap:8px;">
-            <button id="memory-snapshot-btn" title="Capture a live memory snapshot — run this while memory is high">
-                <i class="fas fa-microscope"></i> Memory Snapshot
-            </button>
-            <button id="trim-memory-btn" title="Run gc.collect() + malloc_trim(0) to release glibc arena pages back to OS">
-                <i class="fas fa-broom"></i> Trim Memory
-            </button>
-            <button id="export-btn">
-                <i class="fas fa-download"></i> Export Data
-            </button>
-        </div>
+<div class="pd-wrap">
+
+  <div class="pd-hdr">
+    <div class="pd-title">Performance Dashboard</div>
+    <div class="pd-hdr-btns">
+      <button class="pd-btn pd-btn-blue" id="memory-snapshot-btn" title="Capture a live memory snapshot">
+        <i class="fas fa-microscope"></i> Memory Snapshot
+      </button>
+      <button class="pd-btn pd-btn-green" id="trim-memory-btn" title="Run gc.collect() + malloc_trim(0)">
+        <i class="fas fa-broom"></i> Trim Memory
+      </button>
+      <button class="pd-btn pd-btn-orange" id="export-btn">
+        <i class="fas fa-download"></i> Export Data
+      </button>
+    </div>
+  </div>
+
+  <!-- Memory Snapshot Panel -->
+  <div class="pd-snapshot-panel" id="memory-snapshot-panel" style="display:none">
+    <div class="pd-snapshot-hdr">
+      <div class="pd-snapshot-hdr-left"><i class="fas fa-microscope"></i> Memory Snapshot</div>
+      <div class="pd-snapshot-hdr-right">
+        <span class="pd-snapshot-ts" id="memory-snapshot-ts"></span>
+        <button class="pd-btn pd-btn-blue" id="memory-snapshot-download-btn" style="padding:4px 10px;font-size:11px;">
+          <i class="fas fa-download"></i> Download
+        </button>
+        <button class="pd-btn pd-btn-orange" id="memory-snapshot-close-btn" style="padding:4px 10px;font-size:11px;">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+    </div>
+    <div id="memory-snapshot-content"></div>
+  </div>
+
+  <!-- System Resources -->
+  <div class="pd-section">
+    <div class="pd-section-title">
+      <i class="fas fa-server"></i>
+      System Resources
+      <span class="pd-refresh-badge"><span class="pd-refresh-dot"></span> Live</span>
     </div>
 
-    <!-- Memory Snapshot Result Panel -->
-    <div id="memory-snapshot-panel" style="display:none;" class="row">
-        <div class="col-md-12">
-            <div class="card">
-                <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
-                    <span><i class="fas fa-microscope"></i> Memory Snapshot</span>
-                    <div style="display:flex;gap:8px;align-items:center;">
-                        <span id="memory-snapshot-ts" style="font-size:0.8em;opacity:0.7;"></span>
-                        <button id="memory-snapshot-download-btn" style="padding:4px 10px;font-size:0.8em;">
-                            <i class="fas fa-download"></i> Download
-                        </button>
-                        <button id="memory-snapshot-close-btn" style="padding:4px 10px;font-size:0.8em;">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    </div>
-                </div>
-                <div class="card-body">
-                    <div id="memory-snapshot-content"></div>
-                </div>
-            </div>
-        </div>
+    <div class="pd-prog-section">
+      <div class="pd-prog-hdr">
+        <div class="pd-prog-label"><i class="fas fa-microchip"></i> CPU Usage</div>
+        <div class="pd-prog-pct" id="cpu-text">0%</div>
+      </div>
+      <div class="pd-prog-bar-bg">
+        <div class="pd-prog-bar-fill cpu" id="cpu-progress" style="width:0%"></div>
+      </div>
+      <div class="pd-prog-meta" id="cpu-details"></div>
     </div>
-    
-    <div class="row">
-        <!-- System Resources -->
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <i class="fas fa-microchip"></i> System Resources
-                </div>
-                <div class="card-body">
-                    <div id="system-resources">
-                        <div class="mb-3">
-                            <h5><i class="fas fa-tachometer-alt"></i> CPU Usage</h5>
-                            <div class="progress mb-2">
-                                <div id="cpu-progress" class="progress-bar" role="progressbar" style="width: 0%"></div>
-                                <div id="cpu-text" class="progress-text">0%</div>
-                            </div>
-                            <div id="cpu-details" class="metric-details"></div>
-                        </div>
-                        
-                        <div class="mb-3">
-                            <h5><i class="fas fa-memory"></i> Memory Usage</h5>
-                            <div class="progress mb-2">
-                                <div id="memory-progress" class="progress-bar" role="progressbar" style="width: 0%"></div>
-                                <div id="memory-text" class="progress-text">0%</div>
-                            </div>
-                            <div id="memory-details" class="metric-details"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Memory Analysis -->
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <i class="fas fa-chart-bar"></i> Memory Analysis
-                </div>
-                <div class="card-body">
-                    <div id="memory-analysis">
-                        <div class="memory-metrics">
-                            <div class="metric-item">
-                                <h6>Average RSS Memory</h6>
-                                <span id="avg-rss-memory">0.0 MB</span>
-                            </div>
-                            <div class="metric-item">
-                                <h6>Peak RSS Memory</h6>
-                                <span id="max-rss-memory">0.0 MB</span>
-                            </div>
-                            <div class="metric-item">
-                                <h6>Average Virtual Memory</h6>
-                                <span id="avg-vms-memory">0.0 MB</span>
-                            </div>
-                            <div class="metric-item">
-                                <h6>Peak Virtual Memory</h6>
-                                <span id="max-vms-memory">0.0 MB</span>
-                            </div>
-                        </div>
-                        <div class="memory-type-metrics">
-                            <div class="memory-type">
-                                <h6><i class="fas fa-microchip"></i> Anonymous Memory</h6>
-                                <div class="memory-stats">
-                                    <span id="anon-memory-size">Size: 0 MB</span>
-                                    <span id="anon-memory-count">Mappings: 0</span>
-                                </div>
-                            </div>
-                            <div class="memory-type">
-                                <h6><i class="fas fa-file"></i> File-backed Memory</h6>
-                                <div class="memory-stats">
-                                    <span id="file-memory-size">Size: 0 MB</span>
-                                    <span id="file-memory-count">Mappings: 0</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="memory-chart-small">
-                            <canvas id="memory-distribution-chart"></canvas>
-                        </div>
-                        <div class="file-details mt-3">
-                            <h6><i class="fas fa-folder-open"></i> Open Files</h6>
-                            <div class="file-list">
-                                <!-- Files will be populated here -->
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+
+    <div class="pd-prog-section" style="margin-bottom:0">
+      <div class="pd-prog-hdr">
+        <div class="pd-prog-label"><i class="fas fa-memory"></i> Memory Usage</div>
+        <div class="pd-prog-pct" id="memory-text">0%</div>
+      </div>
+      <div class="pd-prog-bar-bg">
+        <div class="pd-prog-bar-fill mem" id="memory-progress" style="width:0%"></div>
+      </div>
+      <div class="pd-prog-meta" id="memory-details"></div>
     </div>
-    
-    <div class="row">
-        <!-- Memory Growth -->
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <i class="fas fa-chart-line"></i> Memory Growth
-                </div>
-                <div class="card-body">
-                    <div id="memory-growth" class="memory-analysis">
-                        <div class="memory-chart-container">
-                            <canvas id="memory-history-chart"></canvas>
-                        </div>
-                        <div id="memory-growth-text" class="mt-3"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Resource Handles -->
-        <div class="col-md-6">
-            <div class="card">
-                <div class="card-header">
-                    <i class="fas fa-plug"></i> Resource Handles
-                </div>
-                <div class="card-body">
-                    <div id="resource-handles" class="resource-handles">
-                        <div><strong>Open Files:</strong> <span id="open-files-count">0</span></div>
-                        <div><strong>File Types:</strong> <span id="file-types">None</span></div>
-                    </div>
-                </div>
-            </div>
-        </div>
+  </div>
+
+  <!-- Memory Analysis -->
+  <div class="pd-section">
+    <div class="pd-section-title"><i class="fas fa-chart-bar"></i> Memory Analysis</div>
+
+    <div class="pd-mem-grid">
+      <div class="pd-mem-stat">
+        <div class="pd-mem-stat-label">Average RSS Memory</div>
+        <div class="pd-mem-stat-val" id="avg-rss-memory">— MB</div>
+      </div>
+      <div class="pd-mem-stat peak">
+        <div class="pd-mem-stat-label">Peak RSS Memory</div>
+        <div class="pd-mem-stat-val" id="max-rss-memory">— MB</div>
+      </div>
+      <div class="pd-mem-stat">
+        <div class="pd-mem-stat-label">Average Virtual Memory</div>
+        <div class="pd-mem-stat-val" id="avg-vms-memory">— MB</div>
+      </div>
+      <div class="pd-mem-stat peak">
+        <div class="pd-mem-stat-label">Peak Virtual Memory</div>
+        <div class="pd-mem-stat-val" id="max-vms-memory">— MB</div>
+      </div>
     </div>
-    
-    <div class="row">
-        <!-- CPU Profile -->
-        <div class="col-md-12">
-            <div class="card">
-                <div class="card-header">
-                    <i class="fas fa-chart-pie"></i> CPU Profile
-                </div>
-                <div class="card-body">
-                    <div id="cpu-profile">
-                        <div class="cpu-summary">
-                            <div class="cpu-stat">
-                                <h6>Average CPU</h6>
-                                <span id="avg-cpu-percent">0.0%</span>
-                            </div>
-                            <div class="cpu-stat">
-                                <h6>Peak CPU</h6>
-                                <span id="max-cpu-percent">0.0%</span>
-                            </div>
-                            <div class="cpu-stat">
-                                <h6>CPU Time</h6>
-                                <span id="cpu-time">User: 0.0s | System: 0.0s</span>
-                            </div>
-                        </div>
-                        
-                        <div class="cpu-chart-container">
-                            <canvas id="cpu-history-chart"></canvas>
-                        </div>
-                        
-                        <div class="cpu-threads mt-4">
-                            <h6>Active Threads <span id="thread-count" class="badge bg-secondary">0</span></h6>
-                            <div id="thread-list" class="thread-list"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+
+    <div class="pd-mem-type-grid">
+      <div class="pd-mem-type-card">
+        <div class="pd-mem-type-hdr"><i class="fas fa-gear"></i> Anonymous Memory</div>
+        <div class="pd-mem-tags">
+          <div class="pd-mem-tag" id="anon-memory-size">Size: —</div>
+          <div class="pd-mem-tag" id="anon-memory-count">Mappings: —</div>
         </div>
+      </div>
+      <div class="pd-mem-type-card">
+        <div class="pd-mem-type-hdr"><i class="fas fa-file"></i> File-backed Memory</div>
+        <div class="pd-mem-tags">
+          <div class="pd-mem-tag" id="file-memory-size">Size: —</div>
+          <div class="pd-mem-tag" id="file-memory-count">Mappings: —</div>
+        </div>
+      </div>
     </div>
+  </div>
+
+  <!-- Open Files -->
+  <div class="pd-section">
+    <div class="pd-section-title"><i class="fas fa-folder-open"></i> Open Files</div>
+    <div class="pd-file-list" id="open-files-list">
+      <div style="color:var(--pd-text3);font-size:12px;padding:8px 0;">Loading…</div>
+    </div>
+  </div>
+
+  <!-- Memory Growth -->
+  <div class="pd-section">
+    <div class="pd-section-title"><i class="fas fa-chart-line"></i> Memory Growth</div>
+
+    <div class="pd-chart-legend">
+      <div class="pd-legend-item"><div class="pd-legend-line" style="background:var(--pd-cyan)"></div> RSS Memory</div>
+      <div class="pd-legend-item"><div class="pd-legend-line" style="background:var(--pd-purple)"></div> Virtual Memory</div>
+    </div>
+
+    <div class="pd-chart-wrap"><canvas id="memChart"></canvas></div>
+
+    <div class="pd-growth-table" id="memory-growth-text"></div>
+  </div>
+
+  <!-- Resource Handles -->
+  <div class="pd-section">
+    <div class="pd-section-title"><i class="fas fa-sliders"></i> Resource Handles</div>
+    <div class="pd-rh-grid">
+      <div class="pd-rh-item">
+        <div class="pd-rh-label">Open Files</div>
+        <div class="pd-rh-val" id="open-files-count">—</div>
+      </div>
+      <div class="pd-rh-item">
+        <div class="pd-rh-label">File Types</div>
+        <div class="pd-rh-tags" id="file-types-tags"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CPU Profile -->
+  <div class="pd-section">
+    <div class="pd-section-title"><i class="fas fa-gauge-high"></i> CPU Profile</div>
+
+    <div class="pd-cpu-stats-grid">
+      <div class="pd-cpu-stat">
+        <div class="pd-cpu-stat-label">Average CPU</div>
+        <div class="pd-cpu-stat-val" id="avg-cpu-percent">—</div>
+      </div>
+      <div class="pd-cpu-stat">
+        <div class="pd-cpu-stat-label">Peak CPU</div>
+        <div class="pd-cpu-stat-val" id="max-cpu-percent" style="color:#f97316">—</div>
+      </div>
+      <div class="pd-cpu-stat">
+        <div class="pd-cpu-stat-label">CPU Time</div>
+        <div class="pd-cpu-stat-val" style="font-size:14px" id="cpu-time">—</div>
+      </div>
+    </div>
+
+    <div class="pd-chart-legend">
+      <div class="pd-legend-item"><div class="pd-legend-line" style="background:var(--pd-red)"></div> CPU %</div>
+    </div>
+
+    <div class="pd-chart-wrap" style="height:200px"><canvas id="cpuChart"></canvas></div>
+  </div>
+
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<div class="pd-toast" id="pd-toast"><span class="pd-toast-dot" id="pd-toast-dot"></span><span id="pd-toast-msg"></span></div>
+
 <script>
-function formatBytes(bytes, decimals = 2) {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(decimals)) + ' ' + sizes[i];
+(function() {
+'use strict';
+
+// ── Chart state ─────────────────────────────────────────────────────
+let _memEntries = [];
+let _cpuEntries = [];
+let _currentData = null;
+let _lastSnapshotData = null;
+
+// ── Helpers ──────────────────────────────────────────────────────────
+function formatBytes(bytes, decimals) {
+  decimals = decimals === undefined ? 2 : decimals;
+  if (!bytes || bytes === 0) return '0 B';
+  var k = 1024;
+  var sizes = ['B', 'KB', 'MB', 'GB'];
+  var i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(decimals)) + ' ' + sizes[i];
 }
 
-let currentPerformanceData = null;  // Store the current data globally
-let cpuHistoryChart = null;
-let memoryHistoryChart = null;
-let memoryDistributionChart = null;
-
 function downloadJson(data, filename) {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    window.URL.revokeObjectURL(url);
-    document.body.removeChild(a);
+  var blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  var url = window.URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  window.URL.revokeObjectURL(url);
+  document.body.removeChild(a);
+}
+
+// ── Toast ──────────────────────────────────────────────────────────
+var _toastTimer;
+var tColors = { green: '#22c55e', red: '#ef4444', blue: '#3b82f6', orange: '#f97316' };
+function toast(msg, color) {
+  color = color || 'green';
+  var t = document.getElementById('pd-toast');
+  document.getElementById('pd-toast-dot').style.background = tColors[color] || tColors.green;
+  document.getElementById('pd-toast-msg').textContent = msg;
+  t.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(function() { t.classList.remove('show'); }, 2500);
+}
+
+// ── Canvas charts ────────────────────────────────────────────────────
+function drawMemChart() {
+  var canvas = document.getElementById('memChart');
+  if (!canvas) return;
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  var ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = rect.width, H = rect.height;
+  var pad = { top: 12, right: 20, bottom: 30, left: 56 };
+
+  var entries = _memEntries;
+  if (!entries || !entries.length) {
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath(); ctx.roundRect(0, 0, W, H, 6); ctx.fill();
+    ctx.fillStyle = '#555'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('No data yet', W / 2, H / 2);
+    return;
+  }
+
+  var reduced = entries.filter(function(_, i) { return i % Math.max(1, Math.floor(entries.length / 40)) === 0; });
+  var rss = reduced.map(function(e) { return e.metrics.memory_rss || 0; });
+  var vms = reduced.map(function(e) { return e.metrics.memory_vms || 0; });
+  var times = reduced.map(function(e) {
+    var d = new Date(e.timestamp + 'Z');
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  });
+
+  var maxY = Math.ceil(Math.max(Math.max.apply(null, vms), Math.max.apply(null, rss)) * 1.15 / 100) * 100 || 600;
+  var cW = W - pad.left - pad.right;
+  var cH = H - pad.top - pad.bottom;
+  var n = reduced.length;
+
+  function xOf(i) { return pad.left + (n > 1 ? i / (n - 1) : 0.5) * cW; }
+  function yOf(v) { return pad.top + cH - (v / maxY) * cH; }
+
+  ctx.fillStyle = '#1a1a1a';
+  ctx.beginPath(); ctx.roundRect(0, 0, W, H, 6); ctx.fill();
+
+  // Grid
+  ctx.strokeStyle = '#2d2d2d'; ctx.lineWidth = 1;
+  var step = maxY / 4;
+  for (var g = 0; g <= 4; g++) {
+    var gv = g * step;
+    var gy = yOf(gv);
+    ctx.beginPath(); ctx.moveTo(pad.left, gy); ctx.lineTo(W - pad.right, gy); ctx.stroke();
+    ctx.fillStyle = '#555'; ctx.font = '10px JetBrains Mono, monospace'; ctx.textAlign = 'right';
+    ctx.fillText(Math.round(gv) + ' MB', pad.left - 6, gy + 4);
+  }
+
+  // X labels
+  ctx.fillStyle = '#555'; ctx.textAlign = 'center'; ctx.font = '10px JetBrains Mono, monospace';
+  var step2 = Math.max(1, Math.floor(n / 8));
+  times.forEach(function(t, i) { if (i % step2 === 0) ctx.fillText(t, xOf(i), H - 6); });
+
+  // VMS area
+  ctx.beginPath();
+  vms.forEach(function(v, i) { i === 0 ? ctx.moveTo(xOf(i), yOf(v)) : ctx.lineTo(xOf(i), yOf(v)); });
+  ctx.lineTo(xOf(n - 1), yOf(0)); ctx.lineTo(xOf(0), yOf(0)); ctx.closePath();
+  var vg = ctx.createLinearGradient(0, pad.top, 0, H - pad.bottom);
+  vg.addColorStop(0, '#a855f744'); vg.addColorStop(1, '#a855f711');
+  ctx.fillStyle = vg; ctx.fill();
+
+  // RSS area
+  ctx.beginPath();
+  rss.forEach(function(v, i) { i === 0 ? ctx.moveTo(xOf(i), yOf(v)) : ctx.lineTo(xOf(i), yOf(v)); });
+  ctx.lineTo(xOf(n - 1), yOf(0)); ctx.lineTo(xOf(0), yOf(0)); ctx.closePath();
+  var rg = ctx.createLinearGradient(0, pad.top, 0, H - pad.bottom);
+  rg.addColorStop(0, '#06b6d444'); rg.addColorStop(1, '#06b6d411');
+  ctx.fillStyle = rg; ctx.fill();
+
+  // VMS line + dots
+  ctx.beginPath(); ctx.strokeStyle = '#a855f7'; ctx.lineWidth = 2;
+  vms.forEach(function(v, i) { i === 0 ? ctx.moveTo(xOf(i), yOf(v)) : ctx.lineTo(xOf(i), yOf(v)); });
+  ctx.stroke();
+  vms.forEach(function(v, i) {
+    ctx.beginPath(); ctx.arc(xOf(i), yOf(v), 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#a855f7'; ctx.fill();
+  });
+
+  // RSS line + dots
+  ctx.beginPath(); ctx.strokeStyle = '#06b6d4'; ctx.lineWidth = 2;
+  rss.forEach(function(v, i) { i === 0 ? ctx.moveTo(xOf(i), yOf(v)) : ctx.lineTo(xOf(i), yOf(v)); });
+  ctx.stroke();
+  rss.forEach(function(v, i) {
+    ctx.beginPath(); ctx.arc(xOf(i), yOf(v), 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#06b6d4'; ctx.fill();
+  });
+}
+
+function drawCpuChart() {
+  var canvas = document.getElementById('cpuChart');
+  if (!canvas) return;
+  var dpr = window.devicePixelRatio || 1;
+  var rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  var ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  var W = rect.width, H = rect.height;
+  var pad = { top: 12, right: 20, bottom: 30, left: 46 };
+
+  var entries = _cpuEntries;
+  if (!entries || !entries.length) {
+    ctx.fillStyle = '#1a1a1a';
+    ctx.beginPath(); ctx.roundRect(0, 0, W, H, 6); ctx.fill();
+    ctx.fillStyle = '#555'; ctx.font = '12px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('No data yet', W / 2, H / 2);
+    return;
+  }
+
+  var cpu = entries.map(function(e) { return e.metrics.process_cpu_percent || 0; });
+  var labels = entries.map(function(e) {
+    var d = new Date(e.timestamp);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  });
+
+  var maxY = Math.ceil(Math.max.apply(null, cpu) * 1.2 / 50) * 50 || 100;
+  var cW = W - pad.left - pad.right;
+  var cH = H - pad.top - pad.bottom;
+  var n = entries.length;
+
+  function xOf(i) { return pad.left + (n > 1 ? i / (n - 1) : 0.5) * cW; }
+  function yOf(v) { return pad.top + cH - (v / maxY) * cH; }
+
+  ctx.fillStyle = '#1a1a1a';
+  ctx.beginPath(); ctx.roundRect(0, 0, W, H, 6); ctx.fill();
+
+  ctx.strokeStyle = '#2d2d2d'; ctx.lineWidth = 1;
+  var ySteps = [0, 0.25, 0.5, 0.75, 1.0];
+  ySteps.forEach(function(s) {
+    var v = s * maxY;
+    var y = yOf(v);
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    ctx.fillStyle = '#555'; ctx.font = '10px JetBrains Mono, monospace'; ctx.textAlign = 'right';
+    ctx.fillText(Math.round(v) + '%', pad.left - 5, y + 4);
+  });
+
+  ctx.fillStyle = '#555'; ctx.textAlign = 'center'; ctx.font = '9px JetBrains Mono, monospace';
+  var step2 = Math.max(1, Math.floor(n / 8));
+  labels.forEach(function(l, i) { if (i % step2 === 0) ctx.fillText(l, xOf(i), H - 6); });
+
+  ctx.beginPath();
+  cpu.forEach(function(v, i) { i === 0 ? ctx.moveTo(xOf(i), yOf(v)) : ctx.lineTo(xOf(i), yOf(v)); });
+  ctx.lineTo(xOf(n - 1), yOf(0)); ctx.lineTo(xOf(0), yOf(0)); ctx.closePath();
+  var grad = ctx.createLinearGradient(0, pad.top, 0, H - pad.bottom);
+  grad.addColorStop(0, '#ef444455'); grad.addColorStop(1, '#ef444411');
+  ctx.fillStyle = grad; ctx.fill();
+
+  ctx.beginPath(); ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2;
+  cpu.forEach(function(v, i) { i === 0 ? ctx.moveTo(xOf(i), yOf(v)) : ctx.lineTo(xOf(i), yOf(v)); });
+  ctx.stroke();
+
+  cpu.forEach(function(v, i) {
+    ctx.beginPath(); ctx.arc(xOf(i), yOf(v), 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#ef4444'; ctx.fill();
+  });
+}
+
+// ── Data fetch + render ───────────────────────────────────────────────
+function updateMemoryGrowthTable(entries) {
+  var last = entries[entries.length - 1];
+  if (!last) return;
+  var lastTime = new Date(last.timestamp + 'Z');
+  var snapshots = [];
+  for (var i = 0; i < 5; i++) {
+    var target = new Date(lastTime.getTime() - i * 10 * 60 * 1000);
+    var closest = entries.reduce(function(prev, curr) {
+      return Math.abs(new Date(curr.timestamp + 'Z') - target) < Math.abs(new Date(prev.timestamp + 'Z') - target) ? curr : prev;
+    });
+    snapshots.push(closest);
+  }
+  var html = snapshots.map(function(e) {
+    var m = e.metrics;
+    var ts = new Date(e.timestamp + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+    return '<div class="pd-growth-row">' +
+      '<div class="pd-growth-time">' + ts + '</div>' +
+      '<div class="pd-growth-badges">' +
+        '<span class="pd-gbadge rss">RSS: ' + m.memory_rss.toFixed(2) + ' MB</span>' +
+        '<span class="pd-gbadge vms">VMS: ' + m.memory_vms.toFixed(2) + ' MB</span>' +
+        '<span class="pd-gbadge swap">Swap: ' + m.swap_used.toFixed(2) + ' MB</span>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+  document.getElementById('memory-growth-text').innerHTML = html;
 }
 
 function updateDashboard() {
-    // Fetch basic performance data
-    console.log('Fetching performance data at:', new Date().toISOString());
-    fetch('/performance/api/performance/log?hours=1')
-        .then(response => response.json())
-        .then(data => {
-            console.log('Received data with timestamps:', 
-                data.entries[0]?.timestamp, 'to', 
-                data.entries[data.entries.length-1]?.timestamp);
-            currentPerformanceData = data;
-            
-            if (data.entries && data.entries.length > 0) {
-                const entries = data.entries;
-                const basicMetrics = entries.findLast(entry => entry.type === 'basic_metrics');
-                
-                if (basicMetrics) {
-                    const metrics = basicMetrics.metrics;
-                    // Update CPU Usage
-                    const cpuPercent = metrics.cpu_percent || 0;
-                    const cpuBar = document.getElementById('cpu-progress');
-                    const cpuText = document.getElementById('cpu-text');
-                    
-                    cpuBar.style.width = `${Math.min(cpuPercent, 100)}%`;
-                    cpuText.textContent = `${cpuPercent.toFixed(1)}%`;
-                    
-                    document.getElementById('cpu-details').innerHTML = 
-                        `<strong>System Time:</strong> ${metrics.cpu_system_time.toFixed(2)}s ` +
-                        `<strong>User Time:</strong> ${metrics.cpu_user_time.toFixed(2)}s`;
+  fetch('/performance/api/performance/log?hours=1')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      _currentData = data;
+      if (!data.entries || !data.entries.length) return;
 
-                    // Update Memory Progress
-                    const memoryBar = document.getElementById('memory-progress');
-                    const memoryText = document.getElementById('memory-text');
-                    // Use system memory usage (total - available / total) from backend
-                    const memoryPercent = metrics.system_memory_used || 0;
+      var entries = data.entries;
+      var basicMetrics = null;
+      for (var i = entries.length - 1; i >= 0; i--) {
+        if (entries[i].type === 'basic_metrics') { basicMetrics = entries[i]; break; }
+      }
 
-                    memoryBar.style.width = `${Math.min(memoryPercent, 100)}%`;
-                    memoryText.textContent = `${memoryPercent.toFixed(1)}%`;
-                    
-                    document.getElementById('memory-details').innerHTML = 
-                        `<strong>RSS Memory:</strong> ${metrics.memory_rss.toFixed(2)} MB ` +
-                        `<strong>Virtual Memory:</strong> ${metrics.memory_vms.toFixed(2)} MB ` +
-                        `<strong>Swap Used:</strong> ${metrics.swap_used.toFixed(2)} MB`;
-                }
+      if (basicMetrics) {
+        var m = basicMetrics.metrics;
+        var cpuPct = m.cpu_percent || 0;
+        var cpuBar = document.getElementById('cpu-progress');
+        var cpuText = document.getElementById('cpu-text');
+        cpuBar.style.width = Math.min(cpuPct, 100) + '%';
+        cpuBar.className = 'pd-prog-bar-fill cpu' + (cpuPct >= 80 ? ' danger' : cpuPct >= 60 ? ' warn' : '');
+        cpuText.textContent = cpuPct.toFixed(1) + '%';
+        document.getElementById('cpu-details').innerHTML =
+          '<div class="pd-prog-meta-item">System Time: <b>' + m.cpu_system_time.toFixed(2) + 's</b></div>' +
+          '<div class="pd-prog-meta-item">User Time: <b>' + m.cpu_user_time.toFixed(2) + 's</b></div>';
 
-                // Update memory history chart with basic metrics entries
-                const basicMetricsEntries = entries.filter(e => e.type === 'basic_metrics');
-                updateMemoryChart(basicMetricsEntries);
+        var memPct = m.system_memory_used || 0;
+        var memBar = document.getElementById('memory-progress');
+        var memText = document.getElementById('memory-text');
+        memBar.style.width = Math.min(memPct, 100) + '%';
+        memBar.className = 'pd-prog-bar-fill mem' + (memPct >= 85 ? ' danger' : memPct >= 70 ? ' warn' : '');
+        memText.textContent = memPct.toFixed(1) + '%';
+        document.getElementById('memory-details').innerHTML =
+          '<div class="pd-prog-meta-item">RSS Memory: <b>' + m.memory_rss.toFixed(2) + ' MB</b></div>' +
+          '<div class="pd-prog-meta-item">Virtual Memory: <b>' + m.memory_vms.toFixed(2) + ' MB</b></div>' +
+          '<div class="pd-prog-meta-item">Swap Used: <b>' + m.swap_used.toFixed(2) + ' MB</b></div>';
+      }
 
-                // Make a separate request for detailed memory information
-                fetch('/performance/api/performance/log')
-                    .then(response => response.json())
-                    .then(fullData => {
-                        // Get the latest entry with detailed memory info
-                        const detailedMemory = fullData.entries.findLast(entry => entry.memory);
-                        if (detailedMemory) {
-                            // Create a combined data object
-                            const combinedData = {
-                                entries: [...entries, detailedMemory],
-                                summary: data.summary
-                            };
-                            
-                            // Update memory analysis with the combined data
-                            updateMemoryAnalysis(combinedData);
-                            
-                            // Debug logging
-                            console.log('Basic Metrics Count:', basicMetricsEntries.length);
-                            console.log('Latest Detailed Memory:', detailedMemory);
-                        }
-                    })
-                    .catch(error => console.error('Error fetching detailed memory data:', error));
-            }
+      // Memory chart + growth table
+      var basicEntries = entries.filter(function(e) { return e.type === 'basic_metrics'; });
+      _memEntries = basicEntries;
+      drawMemChart();
+      if (basicEntries.length) updateMemoryGrowthTable(basicEntries);
+
+      // Memory analysis stats
+      if (basicEntries.length) {
+        var rssVals = basicEntries.map(function(e) { return e.metrics.memory_rss; });
+        var vmsVals = basicEntries.map(function(e) { return e.metrics.memory_vms; });
+        var avgRss = rssVals.reduce(function(a, b) { return a + b; }, 0) / rssVals.length;
+        var maxRss = Math.max.apply(null, rssVals);
+        var avgVms = vmsVals.reduce(function(a, b) { return a + b; }, 0) / vmsVals.length;
+        var maxVms = Math.max.apply(null, vmsVals);
+        document.getElementById('avg-rss-memory').textContent = avgRss.toFixed(1) + ' MB';
+        document.getElementById('max-rss-memory').textContent = maxRss.toFixed(1) + ' MB';
+        document.getElementById('avg-vms-memory').textContent = avgVms.toFixed(1) + ' MB';
+        document.getElementById('max-vms-memory').textContent = maxVms.toFixed(1) + ' MB';
+      }
+
+      // Detailed memory (separate full-range fetch)
+      fetch('/performance/api/performance/log')
+        .then(function(r) { return r.json(); })
+        .then(function(fullData) {
+          var detail = null;
+          for (var j = fullData.entries.length - 1; j >= 0; j--) {
+            if (fullData.entries[j].memory) { detail = fullData.entries[j]; break; }
+          }
+          if (!detail) return;
+          var mem = detail.memory;
+
+          document.getElementById('anon-memory-size').textContent = 'Size: ' + (mem.anonymous && mem.anonymous.formatted_size ? mem.anonymous.formatted_size : '0 B');
+          document.getElementById('anon-memory-count').textContent = 'Mappings: ' + (mem.anonymous ? mem.anonymous.count || 0 : 0);
+          document.getElementById('file-memory-size').textContent = 'Size: ' + (mem.file_backed && mem.file_backed.formatted_size ? mem.file_backed.formatted_size : '0 B');
+          document.getElementById('file-memory-count').textContent = 'Mappings: ' + (mem.file_backed ? mem.file_backed.count || 0 : 0);
+
+          var openFiles = (mem.open_files && mem.open_files.files) ? mem.open_files.files : [];
+          var fileListEl = document.getElementById('open-files-list');
+          if (openFiles.length) {
+            fileListEl.innerHTML = openFiles.map(function(f) {
+              var name = f.path.split('/').pop();
+              return '<div class="pd-file-row">' +
+                '<div class="pd-file-info">' +
+                  '<div class="pd-file-name">' + name + '</div>' +
+                  '<div class="pd-file-path">' + f.path + '</div>' +
+                '</div>' +
+                '<div class="pd-file-size">' + formatBytes(f.size) + '</div>' +
+              '</div>';
+            }).join('');
+          } else {
+            fileListEl.innerHTML = '<div style="color:var(--pd-text3);font-size:12px;padding:8px 0;">No open files data</div>';
+          }
+
+          var count = mem.open_files ? mem.open_files.count || 0 : 0;
+          document.getElementById('open-files-count').textContent = count;
+
+          var types = openFiles.map(function(f) { return f.path.split('.').pop(); }).filter(function(v, i, a) { return a.indexOf(v) === i; });
+          var tagsEl = document.getElementById('file-types-tags');
+          if (types.length) {
+            tagsEl.innerHTML = types.map(function(t) { return '<span class="pd-rh-tag">' + t + '</span>'; }).join('');
+          } else {
+            tagsEl.innerHTML = '<span style="color:var(--pd-text3);font-size:12px;">None</span>';
+          }
         })
-        .catch(error => console.error('Error fetching performance data:', error));
+        .catch(function(e) { console.error('detailed memory error', e); });
+    })
+    .catch(function(e) { console.error('performance log error', e); });
 
-    // Update CPU metrics separately
-    fetch('/performance/api/performance/cpu?hours=1&threads=true')
-        .then(response => response.json())
-        .then(data => {
-            if (data.summary) {
-                // Update CPU summary statistics
-                document.getElementById('avg-cpu-percent').textContent = 
-                    `${data.summary.avg_cpu_percent.toFixed(1)}%`;
-                document.getElementById('max-cpu-percent').textContent = 
-                    `${data.summary.max_cpu_percent.toFixed(1)}%`;
-                
-                // Get the latest entry for CPU times
-                const latestEntry = data.entries[data.entries.length - 1];
-                if (latestEntry && latestEntry.metrics && latestEntry.metrics.cpu_times) {
-                    const cpuTimes = latestEntry.metrics.cpu_times;
-                    document.getElementById('cpu-time').textContent = 
-                        `User: ${cpuTimes.user.toFixed(1)}s | System: ${cpuTimes.system.toFixed(1)}s`;
-                }
-                
-                // Update thread information
-                if (latestEntry && latestEntry.metrics && latestEntry.metrics.thread_times) {
-                    const threadTimes = latestEntry.metrics.thread_times;
-                    document.getElementById('thread-count').textContent = threadTimes.length;
-                    
-                    const threadList = document.getElementById('thread-list');
-                    threadList.innerHTML = threadTimes
-                        .map(thread => `
-                            <div class="thread-item">
-                                <div class="thread-id">Thread ${thread.id}</div>
-                                <div class="thread-times">
-                                    <span class="user-time">User: ${thread.user_time.toFixed(2)}s</span>
-                                    <span class="system-time">System: ${thread.system_time.toFixed(2)}s</span>
-                                </div>
-                                <div class="thread-bar">
-                                    <div class="bar-user" style="width: ${(thread.user_time / (thread.user_time + thread.system_time)) * 100}%"></div>
-                                    <div class="bar-system" style="width: ${(thread.system_time / (thread.user_time + thread.system_time)) * 100}%"></div>
-                                </div>
-                            </div>
-                        `)
-                        .join('');
-                }
-                
-                // Update CPU history chart
-                updateCpuChart(data.entries);
-            }
-        })
-        .catch(error => console.error('Error fetching CPU data:', error));
+  // CPU metrics
+  fetch('/performance/api/performance/cpu?hours=1&threads=true')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (!data.summary) return;
+      document.getElementById('avg-cpu-percent').textContent = data.summary.avg_cpu_percent.toFixed(1) + '%';
+      document.getElementById('max-cpu-percent').textContent = data.summary.max_cpu_percent.toFixed(1) + '%';
+
+      var latest = data.entries[data.entries.length - 1];
+      if (latest && latest.metrics && latest.metrics.cpu_times) {
+        var ct = latest.metrics.cpu_times;
+        document.getElementById('cpu-time').innerHTML =
+          'User: ' + ct.user.toFixed(1) + 's<br><span style="color:var(--pd-text3)">System: ' + ct.system.toFixed(1) + 's</span>';
+      }
+
+      _cpuEntries = data.entries;
+      drawCpuChart();
+    })
+    .catch(function(e) { console.error('cpu error', e); });
 }
 
-function updateCpuChart(entries) {
-    const ctx = document.getElementById('cpu-history-chart').getContext('2d');
-    
-    const labels = entries.map(entry => {
-        const date = new Date(entry.timestamp);
-        return date.toLocaleTimeString();
+// ── Memory Snapshot ───────────────────────────────────────────────────
+document.getElementById('memory-snapshot-btn').addEventListener('click', function() {
+  var btn = document.getElementById('memory-snapshot-btn');
+  var panel = document.getElementById('memory-snapshot-panel');
+  var content = document.getElementById('memory-snapshot-content');
+  var ts = document.getElementById('memory-snapshot-ts');
+
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Capturing…';
+  content.innerHTML = '<p style="opacity:0.6;font-size:12px;">Fetching snapshot…</p>';
+  panel.style.display = 'block';
+
+  fetch('/debug/api/memory_snapshot')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      _lastSnapshotData = data;
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-microscope"></i> Memory Snapshot';
+      ts.textContent = 'Captured at ' + new Date().toLocaleTimeString();
+      if (!data.success) {
+        content.innerHTML = '<p style="color:#ef4444;">Error: ' + (data.error || 'Unknown error') + '</p>';
+        return;
+      }
+      var s = data.snapshot;
+      var mb = function(v) { return v != null ? v + ' MB' : '—'; };
+      var ks = s.known_structures || {};
+      var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:16px;">';
+      html += '<div class="pd-metric-item"><h6>RSS Memory</h6><span>' + mb(s.vmrss_mb || s.process_rss_mb) + '</span></div>';
+      html += '<div class="pd-metric-item"><h6>Virtual Memory</h6><span>' + mb(s.vmsize_mb) + '</span></div>';
+      html += '<div class="pd-metric-item"><h6>Active Threads</h6><span>' + (s.thread_count != null ? s.thread_count : '—') + '</span></div>';
+      html += '<div class="pd-metric-item"><h6>Session Store</h6><span>' + (ks.session_store_count != null ? ks.session_store_count + ' sessions' : '—') + '</span></div>';
+      html += '<div class="pd-metric-item"><h6>Task Queue</h6><span>' + (ks.task_queue_count != null ? ks.task_queue_count + ' tasks (' + ks.task_queue_completed + ' done)' : '—') + '</span></div>';
+      html += '<div class="pd-metric-item"><h6>Function Cache</h6><span>' + (ks.function_cache_total_entries != null ? ks.function_cache_total_entries + ' entries' : '—') + '</span></div>';
+      html += '<div class="pd-metric-item"><h6>Scan Progress Keys</h6><span>' + (ks.scan_progress_keys != null ? ks.scan_progress_keys : '—') + '</span></div>';
+      html += '<div class="pd-metric-item"><h6>Analysis Progress Keys</h6><span>' + (ks.analysis_progress_keys != null ? ks.analysis_progress_keys : '—') + '</span></div>';
+      html += '<div class="pd-metric-item"><h6>Notification Queues</h6><span>' + (ks.notification_queues_count != null ? ks.notification_queues_count : '—') + '</span></div>';
+      html += '</div>';
+      if (s.top_object_types && s.top_object_types.length) {
+        html += '<h6 style="margin-top:8px;margin-bottom:6px;font-size:12px;color:var(--pd-text2)"><i class="fas fa-list"></i> Top Python Object Types (by count)</h6>';
+        html += '<table style="width:100%;border-collapse:collapse;font-size:0.85em;">';
+        html += '<thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid rgba(128,128,128,0.3);color:var(--pd-text3)">Type</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid rgba(128,128,128,0.3);color:var(--pd-text3)">Count</th></tr></thead><tbody>';
+        s.top_object_types.forEach(function(pair) {
+          html += '<tr><td style="padding:3px 8px;">' + pair[0] + '</td><td style="text-align:right;padding:3px 8px;">' + pair[1].toLocaleString() + '</td></tr>';
+        });
+        html += '</tbody></table>';
+      }
+      if (s.thread_names && s.thread_names.length) {
+        html += '<details style="margin-top:12px;"><summary style="cursor:pointer;opacity:0.7;font-size:12px;">Thread names (' + s.thread_names.length + ')</summary>';
+        html += '<div style="font-size:0.8em;margin-top:6px;column-count:2;">' + s.thread_names.map(function(n) { return '<div>' + n + '</div>'; }).join('') + '</div></details>';
+      }
+      content.innerHTML = html;
+    })
+    .catch(function(err) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-microscope"></i> Memory Snapshot';
+      content.innerHTML = '<p style="color:#ef4444;">Request failed: ' + err + '</p>';
     });
-    
-    const cpuData = entries.map(entry => entry.metrics.process_cpu_percent || 0);
-    
-    // Calculate max value for dynamic y-axis
-    const maxCpu = Math.max(...cpuData);
-    const yAxisMax = Math.ceil(maxCpu * 1.1); // Add 10% padding, and ensure it's at least the max value
+});
 
-    const chartData = {
-        labels: labels,
-        datasets: [{
-            label: 'CPU Usage %',
-            data: cpuData,
-            borderColor: '#f44336',
-            backgroundColor: 'rgba(244, 67, 54, 0.1)',
-            tension: 0.4,
-            fill: true
-        }]
-    };
+document.getElementById('memory-snapshot-close-btn').addEventListener('click', function() {
+  document.getElementById('memory-snapshot-panel').style.display = 'none';
+});
 
-    const config = {
-        type: 'line',
-        data: chartData,
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            animation: {
-                duration: 0
-            },
-            plugins: {
-                legend: {
-                    display: false
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    suggestedMax: yAxisMax,
-                    ticks: {
-                        callback: value => `${value}%`
-                    }
-                }
-            }
-        }
-    };
+document.getElementById('memory-snapshot-download-btn').addEventListener('click', function() {
+  if (_lastSnapshotData) {
+    downloadJson(_lastSnapshotData, 'memory-snapshot-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json');
+  }
+});
 
-    if (cpuHistoryChart) {
-        cpuHistoryChart.data = chartData;
-        cpuHistoryChart.options = config.options;
-        cpuHistoryChart.update('none');
-    } else {
-        cpuHistoryChart = new Chart(ctx, config);
-    }
-}
-
-function updateMemoryChart(entries) {
-    const ctx = document.getElementById('memory-history-chart').getContext('2d');
-    
-    // Sort entries by timestamp
-    entries.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-    
-    // Reduce data points by taking every 10th entry
-    const reducedEntries = entries.filter((_, index) => index % 10 === 0);
-    
-    // Get entries spaced roughly 10 minutes apart for the log
-    const lastEntry = entries[entries.length - 1];
-    const tenMinEntries = [];
-    let currentTime = new Date(lastEntry.timestamp + 'Z');
-    
-    // Work backwards through the entries to find ones at 10-minute intervals
-    for (let i = 0; i < 5; i++) {
-        const targetTime = new Date(currentTime.getTime() - i * 10 * 60 * 1000);
-        // Find the entry closest to this target time
-        const closestEntry = entries.reduce((prev, curr) => {
-            const prevDiff = Math.abs(new Date(prev.timestamp + 'Z') - targetTime);
-            const currDiff = Math.abs(new Date(curr.timestamp + 'Z') - targetTime);
-            return currDiff < prevDiff ? curr : prev;
-        });
-        tenMinEntries.push(closestEntry);
-    }
-    
-    // Debug logging for entries
-    console.log('Memory Growth Entries:', tenMinEntries.map(entry => ({
-        original: entry.timestamp,
-        parsed: new Date(entry.timestamp + 'Z'),
-        local: new Date(entry.timestamp + 'Z').toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: false,
-            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
-        })
-    })));
-    
-    // Update memory growth text with spaced entries (newest first)
-    const growthHtml = tenMinEntries
-        .map(entry => {
-            const metrics = entry.metrics;
-            const date = new Date(entry.timestamp + 'Z');  // Append Z to ensure UTC parsing
-            const timestamp = date.toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: true,  // Change to true to use 12-hour format
-                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
-            });
-            return `
-                <div class="memory-growth-item">
-                    <span class="timestamp">${timestamp}</span>
-                    <div class="memory-values">
-                        <span class="rss">RSS: ${metrics.memory_rss.toFixed(2)} MB</span>
-                        <span class="vms">VMS: ${metrics.memory_vms.toFixed(2)} MB</span>
-                        <span class="swap">Swap: ${metrics.swap_used.toFixed(2)} MB</span>
-                    </div>
-                </div>`;
-        }).join('');
-    
-    document.getElementById('memory-growth-text').innerHTML = growthHtml;
-    
-    // Debug logging for chart labels
-    const chartLabels = reducedEntries.map(entry => {
-        const date = new Date(entry.timestamp + 'Z');
-        const label = date.toLocaleTimeString([], { 
-            hour: '2-digit', 
-            minute: '2-digit', 
-            hour12: false,
-            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone 
-        });
-        return label;
+// ── Trim Memory ────────────────────────────────────────────────────────
+document.getElementById('trim-memory-btn').addEventListener('click', function() {
+  var btn = document.getElementById('trim-memory-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Trimming…';
+  fetch('/debug/api/trim_memory', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data.success) {
+        var freed = data.freed_mb !== null ? data.freed_mb : '?';
+        var before = data.before_mb !== null ? data.before_mb : '?';
+        var after = data.after_mb !== null ? data.after_mb : '?';
+        btn.innerHTML = '<i class="fas fa-check"></i> ' + before + '→' + after + ' MB (freed ' + freed + ' MB)';
+        toast('Memory trimmed: ' + before + '→' + after + ' MB', 'green');
+        setTimeout(function() { btn.disabled = false; btn.innerHTML = '<i class="fas fa-broom"></i> Trim Memory'; }, 5000);
+      } else {
+        btn.innerHTML = '<i class="fas fa-times"></i> Failed';
+        toast('Trim failed', 'red');
+        setTimeout(function() { btn.disabled = false; btn.innerHTML = '<i class="fas fa-broom"></i> Trim Memory'; }, 3000);
+      }
+    })
+    .catch(function(e) {
+      btn.innerHTML = '<i class="fas fa-times"></i> Error';
+      toast('Error trimming memory', 'red');
+      setTimeout(function() { btn.disabled = false; btn.innerHTML = '<i class="fas fa-broom"></i> Trim Memory'; }, 3000);
     });
-    console.log('Chart Labels (last 5):', chartLabels.slice(-5));
-    
-    const labels = chartLabels;
-    
-    const memoryData = reducedEntries.map(entry => ({
-        rss: entry.metrics.memory_rss || 0,
-        vms: entry.metrics.memory_vms || 0
-    }));
-
-    // Calculate max value for consistent y-axis
-    const maxMemory = Math.max(
-        ...memoryData.map(d => Math.max(d.rss, d.vms))
-    );
-    const yAxisMax = Math.ceil(maxMemory * 1.1); // Add 10% padding
-
-    const chartData = {
-        labels: labels,
-        datasets: [
-            {
-                label: 'RSS Memory',
-                data: memoryData.map(d => d.rss),
-                borderColor: '#2196f3',
-                backgroundColor: 'rgba(33, 150, 243, 0.1)',
-                tension: 0.4,
-                fill: true
-            },
-            {
-                label: 'Virtual Memory',
-                data: memoryData.map(d => d.vms),
-                borderColor: '#9c27b0',
-                backgroundColor: 'rgba(156, 39, 176, 0.1)',
-                tension: 0.4,
-                fill: true
-            }
-        ]
-    };
-
-    const config = {
-        type: 'line',
-        data: chartData,
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            animation: {
-                duration: 0
-            },
-            plugins: {
-                legend: {
-                    display: true,
-                    position: 'top'
-                },
-                tooltip: {
-                    callbacks: {
-                        title: (tooltipItems) => {
-                            const index = tooltipItems[0].dataIndex;
-                            const timestamp = entries[index].timestamp;
-                            const date = new Date(timestamp + 'Z');
-                            return date.toLocaleString([], {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                                second: '2-digit',
-                                hour12: false,
-                                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
-                            });
-                        }
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    ticks: {
-                        maxRotation: 0,
-                        autoSkip: true,
-                        maxTicksLimit: 10
-                    }
-                },
-                y: {
-                    beginAtZero: true,
-                    suggestedMax: yAxisMax,
-                    ticks: {
-                        callback: value => `${value} MB`
-                    }
-                }
-            }
-        }
-    };
-
-    if (memoryHistoryChart) {
-        memoryHistoryChart.data = chartData;
-        memoryHistoryChart.options = config.options;
-        memoryHistoryChart.update('none');
-    } else {
-        memoryHistoryChart = new Chart(ctx, config);
-    }
-}
-
-function updateMemoryAnalysis(data) {
-    if (data.entries && data.entries.length > 0) {
-        // Calculate summary statistics from basic_metrics entries
-        const basicMetricsEntries = data.entries.filter(e => e.type === 'basic_metrics');
-        if (basicMetricsEntries.length > 0) {
-            const rssValues = basicMetricsEntries.map(e => e.metrics.memory_rss);
-            const vmsValues = basicMetricsEntries.map(e => e.metrics.memory_vms);
-            
-            const avgRss = rssValues.reduce((a, b) => a + b) / rssValues.length;
-            const maxRss = Math.max(...rssValues);
-            const avgVms = vmsValues.reduce((a, b) => a + b) / vmsValues.length;
-            const maxVms = Math.max(...vmsValues);
-
-            // Update memory analysis metrics
-            document.getElementById('avg-rss-memory').textContent = `${avgRss.toFixed(1)} MB`;
-            document.getElementById('max-rss-memory').textContent = `${maxRss.toFixed(1)} MB`;
-            document.getElementById('avg-vms-memory').textContent = `${avgVms.toFixed(1)} MB`;
-            document.getElementById('max-vms-memory').textContent = `${maxVms.toFixed(1)} MB`;
-        }
-
-        // Get the latest entry with detailed memory info
-        const detailedMemory = data.entries.findLast(entry => entry.memory);
-        if (detailedMemory && detailedMemory.memory) {
-            const memory = detailedMemory.memory;
-            
-            // Update anonymous memory stats
-            document.getElementById('anon-memory-size').textContent = 
-                `Size: ${memory.anonymous?.formatted_size || '0 B'}`;
-            document.getElementById('anon-memory-count').textContent = 
-                `Mappings: ${memory.anonymous?.count || 0}`;
-            
-            // Update file-backed memory stats
-            document.getElementById('file-memory-size').textContent = 
-                `Size: ${memory.file_backed?.formatted_size || '0 B'}`;
-            document.getElementById('file-memory-count').textContent = 
-                `Mappings: ${memory.file_backed?.count || 0}`;
-            
-            // Update open files list
-            const openFiles = memory.open_files?.files || [];
-            const fileList = document.querySelector('.file-list');
-            fileList.innerHTML = openFiles
-                .map(file => `
-                    <div class="file-item">
-                        <div class="file-info">
-                            <div class="file-path" title="${file.path}">${file.path.split('/').pop()}</div>
-                            <div class="file-path-full">${file.path}</div>
-                        </div>
-                        <div class="file-stats">
-                            <div class="file-size">${formatBytes(file.size)}</div>
-                        </div>
-                    </div>
-                `)
-                .join('');
-            
-            // Update open files summary
-            document.getElementById('open-files-count').textContent = 
-                `${memory.open_files?.count || 0}`;
-            document.getElementById('file-types').textContent = 
-                openFiles.length > 0 ? openFiles.map(f => f.path.split('.').pop()).filter((v, i, a) => a.indexOf(v) === i).join(', ') : 'None';
-        }
-    }
-}
-
-// Memory Snapshot
-let _lastSnapshotData = null;
-
-document.getElementById('memory-snapshot-btn').addEventListener('click', () => {
-    const btn = document.getElementById('memory-snapshot-btn');
-    const panel = document.getElementById('memory-snapshot-panel');
-    const content = document.getElementById('memory-snapshot-content');
-    const ts = document.getElementById('memory-snapshot-ts');
-
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Capturing...';
-    content.innerHTML = '<p style="opacity:0.6;">Fetching snapshot...</p>';
-    panel.style.display = '';
-
-    fetch('/debug/api/memory_snapshot')
-        .then(r => r.json())
-        .then(data => {
-            _lastSnapshotData = data;
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-microscope"></i> Memory Snapshot';
-            ts.textContent = 'Captured at ' + new Date().toLocaleTimeString();
-
-            if (!data.success) {
-                content.innerHTML = `<p style="color:#dc3545;">Error: ${data.error || 'Unknown error'}</p>`;
-                return;
-            }
-
-            const s = data.snapshot;
-            const mb = v => v != null ? v + ' MB' : '—';
-            const ks = s.known_structures || {};
-
-            let html = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-bottom:16px;">`;
-
-            // Process stats
-            html += `<div class="metric-item"><h6>RSS Memory</h6><span>${mb(s.vmrss_mb || s.process_rss_mb)}</span></div>`;
-            html += `<div class="metric-item"><h6>Virtual Memory</h6><span>${mb(s.vmsize_mb)}</span></div>`;
-            html += `<div class="metric-item"><h6>Active Threads</h6><span>${s.thread_count != null ? s.thread_count : '—'}</span></div>`;
-            html += `<div class="metric-item"><h6>Session Store</h6><span>${ks.session_store_count != null ? ks.session_store_count + ' sessions' : '—'}</span></div>`;
-            html += `<div class="metric-item"><h6>Task Queue</h6><span>${ks.task_queue_count != null ? ks.task_queue_count + ' tasks (' + ks.task_queue_completed + ' done)' : '—'}</span></div>`;
-            html += `<div class="metric-item"><h6>Function Cache</h6><span>${ks.function_cache_total_entries != null ? ks.function_cache_total_entries + ' entries' : '—'}</span></div>`;
-            html += `<div class="metric-item"><h6>Scan Progress Keys</h6><span>${ks.scan_progress_keys != null ? ks.scan_progress_keys : '—'}</span></div>`;
-            html += `<div class="metric-item"><h6>Analysis Progress Keys</h6><span>${ks.analysis_progress_keys != null ? ks.analysis_progress_keys : '—'}</span></div>`;
-            html += `<div class="metric-item"><h6>Notification Queues</h6><span>${ks.notification_queues_count != null ? ks.notification_queues_count : '—'}</span></div>`;
-            html += `</div>`;
-
-            // Top object types
-            if (s.top_object_types && s.top_object_types.length) {
-                html += `<h6 style="margin-top:8px;margin-bottom:6px;"><i class="fas fa-list"></i> Top Python Object Types (by count)</h6>`;
-                html += `<table style="width:100%;border-collapse:collapse;font-size:0.85em;">`;
-                html += `<thead><tr><th style="text-align:left;padding:4px 8px;border-bottom:1px solid rgba(128,128,128,0.3);">Type</th><th style="text-align:right;padding:4px 8px;border-bottom:1px solid rgba(128,128,128,0.3);">Count</th></tr></thead><tbody>`;
-                s.top_object_types.forEach(([type, count]) => {
-                    html += `<tr><td style="padding:3px 8px;">${type}</td><td style="text-align:right;padding:3px 8px;">${count.toLocaleString()}</td></tr>`;
-                });
-                html += `</tbody></table>`;
-            }
-
-            // Thread names
-            if (s.thread_names && s.thread_names.length) {
-                html += `<details style="margin-top:12px;"><summary style="cursor:pointer;opacity:0.7;">Thread names (${s.thread_names.length})</summary>`;
-                html += `<div style="font-size:0.8em;margin-top:6px;column-count:2;">${s.thread_names.map(n => `<div>${n}</div>`).join('')}</div></details>`;
-            }
-
-            content.innerHTML = html;
-        })
-        .catch(err => {
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fas fa-microscope"></i> Memory Snapshot';
-            content.innerHTML = `<p style="color:#dc3545;">Request failed: ${err}</p>`;
-        });
 });
 
-document.getElementById('memory-snapshot-close-btn').addEventListener('click', () => {
-    document.getElementById('memory-snapshot-panel').style.display = 'none';
+// ── Export ──────────────────────────────────────────────────────────────
+document.getElementById('export-btn').addEventListener('click', function() {
+  if (_currentData) {
+    downloadJson(_currentData, 'performance-data-' + new Date().toISOString().replace(/[:.]/g, '-') + '.json');
+    toast('Exporting data…', 'orange');
+  }
 });
 
-document.getElementById('memory-snapshot-download-btn').addEventListener('click', () => {
-    if (_lastSnapshotData) {
-        const ts = new Date().toISOString().replace(/[:.]/g, '-');
-        downloadJson(_lastSnapshotData, `memory-snapshot-${ts}.json`);
-    }
+// ── Resize ─────────────────────────────────────────────────────────────
+window.addEventListener('resize', function() {
+  drawMemChart();
+  drawCpuChart();
 });
 
-// Trim Memory button
-document.getElementById('trim-memory-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('trim-memory-btn');
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Trimming...';
-    try {
-        const res = await fetch('/debug/api/trim_memory', { method: 'POST' });
-        const data = await res.json();
-        if (data.success) {
-            const freed = data.freed_mb !== null ? data.freed_mb : '?';
-            const before = data.before_mb !== null ? data.before_mb : '?';
-            const after = data.after_mb !== null ? data.after_mb : '?';
-            btn.innerHTML = `<i class="fas fa-check"></i> ${before}→${after} MB (freed ${freed} MB)`;
-            setTimeout(() => {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="fas fa-broom"></i> Trim Memory';
-            }, 5000);
-        } else {
-            btn.innerHTML = '<i class="fas fa-times"></i> Failed';
-            setTimeout(() => { btn.disabled = false; btn.innerHTML = '<i class="fas fa-broom"></i> Trim Memory'; }, 3000);
-        }
-    } catch(e) {
-        btn.innerHTML = '<i class="fas fa-times"></i> Error';
-        setTimeout(() => { btn.disabled = false; btn.innerHTML = '<i class="fas fa-broom"></i> Trim Memory'; }, 3000);
-    }
-});
-
-// Add click handler for export button
-document.getElementById('export-btn').addEventListener('click', () => {
-    if (currentPerformanceData) {
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        downloadJson(currentPerformanceData, `performance-data-${timestamp}.json`);
-    }
-});
-
-// Initialize charts and start updates when DOM is loaded
+// ── Init ───────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
-    updateDashboard();
-    // Force a refresh after 1 second to ensure we get latest data
-    setTimeout(updateDashboard, 1000);
-    setInterval(updateDashboard, 60000);
+  drawMemChart();
+  drawCpuChart();
+  updateDashboard();
+  setTimeout(updateDashboard, 1000);
+  setInterval(updateDashboard, 60000);
 });
+
+})();
 </script>
 {% endblock %}

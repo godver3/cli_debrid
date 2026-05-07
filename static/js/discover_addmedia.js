@@ -462,24 +462,37 @@
 
         versionRadios.innerHTML = '';
 
-        availableVersions.forEach((version, index) => {
-            const div = document.createElement('div');
-            div.className = 'version-checkbox';
-            div.innerHTML = `
-                <input type="radio" id="scrape-version-${version}" name="scrape-versions" value="${version}" ${index === 0 ? 'checked' : ''}>
-                <label for="scrape-version-${version}">${version}</label>
-            `;
-            versionRadios.appendChild(div);
-        });
+        // Title
+        const titleEl = document.createElement('div');
+        titleEl.className = 'dialog-title';
+        titleEl.textContent = 'Select Scrape Version';
+        versionRadios.appendChild(titleEl);
 
-        // Add a 'No Version' option
-        const noVersionDiv = document.createElement('div');
-        noVersionDiv.className = 'version-checkbox';
-        noVersionDiv.innerHTML = `
-            <input type="radio" id="scrape-version-No Version" name="scrape-versions" value="No Version">
-            <label for="scrape-version-No Version">No Version</label>
-        `;
-        versionRadios.appendChild(noVersionDiv);
+        // Subtitle pill
+        const subEl = document.createElement('div');
+        subEl.className = 'dialog-sub';
+        const isTV = content.mediaType === 'tv';
+        subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> ${content.title}${content.year ? ` (${content.year})` : ''}`;
+        versionRadios.appendChild(subEl);
+
+        // Section label
+        const labelEl = document.createElement('div');
+        labelEl.className = 'section-label';
+        labelEl.textContent = 'Select Version';
+        versionRadios.appendChild(labelEl);
+
+        const allVersions = [...availableVersions, 'No Version'];
+        allVersions.forEach((version, index) => {
+            const row = document.createElement('div');
+            row.className = 'option-row' + (index === 0 ? ' selected' : '');
+            row.dataset.value = version;
+            row.innerHTML = `<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">${version}</span>`;
+            row.addEventListener('click', () => {
+                versionRadios.querySelectorAll('.option-row').forEach(r => r.classList.remove('selected'));
+                row.classList.add('selected');
+            });
+            versionRadios.appendChild(row);
+        });
 
         document.body.classList.add('modal-open');
         modal.style.display = 'flex';
@@ -487,7 +500,8 @@
 
     // Handle scrape version confirmation
     async function handleScrapeVersionConfirm() {
-        const selectedVersion = document.querySelector('#scrapeVersionRadios input[name="scrape-versions"]:checked')?.value;
+        const selectedRow = document.querySelector('#scrapeVersionRadios .option-row.selected');
+        const selectedVersion = selectedRow ? selectedRow.dataset.value : undefined;
         if (selectedVersion === undefined) {
             displayError('Please select a version.');
             return;
@@ -511,18 +525,34 @@
         const modal = document.getElementById('versionModal');
         const versionCheckboxes = document.getElementById('versionCheckboxes');
 
-        // Clear existing checkboxes
         versionCheckboxes.innerHTML = '';
 
-        // Create checkboxes for each version
+        // Title
+        const titleEl = document.createElement('div');
+        titleEl.className = 'dialog-title';
+        titleEl.textContent = 'Select Versions';
+        versionCheckboxes.appendChild(titleEl);
+
+        // Subtitle pill
+        const subEl = document.createElement('div');
+        subEl.className = 'dialog-sub';
+        const isTV = content.mediaType === 'tv';
+        subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${content.title}${content.year ? ` (${content.year})` : ''}`;
+        versionCheckboxes.appendChild(subEl);
+
+        // Section label
+        const labelEl = document.createElement('div');
+        labelEl.className = 'section-label';
+        labelEl.textContent = 'Select Versions';
+        versionCheckboxes.appendChild(labelEl);
+
         availableVersions.forEach(version => {
-            const div = document.createElement('div');
-            div.className = 'version-checkbox';
-            div.innerHTML = `
-                <input type="checkbox" id="request-version-${version}" name="versions" value="${version}">
-                <label for="request-version-${version}">${version}</label>
-            `;
-            versionCheckboxes.appendChild(div);
+            const row = document.createElement('div');
+            row.className = 'option-row';
+            row.dataset.value = version;
+            row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">${version}</span>`;
+            row.addEventListener('click', () => row.classList.toggle('checked'));
+            versionCheckboxes.appendChild(row);
         });
 
         document.body.classList.add('modal-open');
@@ -531,8 +561,8 @@
 
     // Handle version confirm for requests
     async function handleVersionConfirm() {
-        const versionCheckboxes = document.querySelectorAll('#versionCheckboxes input[name="versions"]:checked');
-        const selectedVersions = Array.from(versionCheckboxes).map(cb => cb.value);
+        const selectedVersions = Array.from(document.querySelectorAll('#versionCheckboxes .option-row.checked'))
+            .map(row => row.dataset.value);
 
         if (selectedVersions.length === 0) {
             displayError('Please select at least one version');
@@ -664,7 +694,12 @@
                 message: message
             });
         } else {
-            alert('Error: ' + message);
+            showPopup({
+                type: 'error',
+                title: 'Error',
+                message: message,
+                autoClose: 5000
+            });
         }
     }
 
@@ -677,7 +712,12 @@
                 message: message
             });
         } else {
-            alert('Success: ' + message);
+            showPopup({
+                type: 'success',
+                title: 'Success',
+                message: message,
+                autoClose: 4000
+            });
         }
     }
 
@@ -854,8 +894,17 @@
                                         addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
                                     }
                                 });
-                            } else if (confirm(confirmationMessage)) {
-                                addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                            } else {
+                                showPopup({
+                                    type: 'confirm',
+                                    title: 'Add Media',
+                                    message: confirmationMessage,
+                                    confirmText: 'Add',
+                                    cancelText: 'Cancel',
+                                    onConfirm: function() {
+                                        addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                                    }
+                                });
                             }
                         } else {
                             addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
@@ -926,8 +975,17 @@
                                     addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
                                 }
                             });
-                        } else if (confirm(confirmationMessage)) {
-                            addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                        } else {
+                            showPopup({
+                                type: 'confirm',
+                                title: 'Add Media',
+                                message: confirmationMessage,
+                                confirmText: 'Add',
+                                cancelText: 'Cancel',
+                                onConfirm: function() {
+                                    addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                                }
+                            });
                         }
                     } else {
                         addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
@@ -998,8 +1056,17 @@
                                         addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
                                     }
                                 });
-                            } else if (confirm(confirmationMessage)) {
-                                addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                            } else {
+                                showPopup({
+                                    type: 'confirm',
+                                    title: 'Add Media',
+                                    message: confirmationMessage,
+                                    confirmText: 'Add',
+                                    cancelText: 'Cancel',
+                                    onConfirm: function() {
+                                        addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});
+                                    }
+                                });
                             }
                         } else {
                             addToRealDebrid(torrent.magnet, {...torrent, ...torrentData});

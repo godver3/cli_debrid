@@ -75,9 +75,23 @@
     </div>
 
     <div class="mt-4">
-        <form method="POST" action="{{ url_for('debug.purge_not_wanted') }}" onsubmit="return confirm('Are you sure you want to purge all not wanted items?');">
+        <form method="POST" action="{{ url_for('debug.purge_not_wanted') }}" id="purge-not-wanted-form">
             <button type="submit" class="btn btn-danger">Purge All Not Wanted Items</button>
         </form>
     </div>
 </div>
+<script>
+document.getElementById('purge-not-wanted-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const form = this;
+    showPopup({
+        type: 'confirm',
+        title: 'Purge Not Wanted Items',
+        message: 'Are you sure you want to purge all not wanted items?',
+        confirmText: 'Purge',
+        cancelText: 'Cancel',
+        onConfirm: function() { form.submit(); }
+    });
+});
+</script>
 {% endblock %}

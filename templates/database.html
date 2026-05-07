@@ -13,9 +13,65 @@
         document.head.appendChild(link);
     })();
 </script>
+<style>
+/* Prevent blue flash on filter buttons before tangerine CSS loads */
+#filter-sort .btn.btn-secondary,
+#filter-sort .btn-secondary {
+    background: transparent !important;
+    border: 1px solid #3d3d3d !important;
+    color: #aaa !important;
+    padding: 4px 11px !important;
+    border-radius: 4px !important;
+    font-size: 11px !important;
+    font-weight: 500 !important;
+    cursor: pointer !important;
+    box-shadow: none !important;
+    line-height: 1.4 !important;
+}
+</style>
 {% endblock %}
 {% block title %}Database{% endblock %}
 {% block content %}
+<div class="db-page-wrapper">
+<!-- Tangerine theme: top bar — stat boxes left, view buttons right -->
+<div class="db-topbar tangerine-only">
+    <div class="db-stat-boxes">
+        <div class="db-stat-box">
+            <span class="db-stat-val">{{ total_count | default(0) }}</span>
+            <span class="db-stat-label">Total Items</span>
+        </div>
+        <div class="db-stat-box">
+            <span class="db-stat-val">{{ unique_result_count | default(0) }}</span>
+            <span class="db-stat-label">Unique Titles</span>
+        </div>
+        <div class="db-stat-box">
+            <span class="db-stat-val">{{ total_pages | default(1) }}</span>
+            <span class="db-stat-label">Pages</span>
+        </div>
+        <div class="db-stat-box">
+            <select id="db-per-page-select" class="db-per-page-select" title="Items per page">
+                {% for n in [100, 250, 500, 1000, 2000, 5000] %}
+                <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+            </select>
+            <span class="db-stat-label">Per Page</span>
+        </div>
+    </div>
+    <div class="db-view-controls">
+        <button class="db-view-btn" id="db-columns-btn" title="Select columns to display">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3" width="4" height="10" rx="1"/><rect x="6" y="3" width="4" height="10" rx="1"/><rect x="11" y="3" width="4" height="10" rx="1"/></svg>
+            Columns
+        </button>
+        <button class="db-view-btn" id="db-reset-cols-btn" title="Reset column widths">
+            <svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M12 16c1.671 0 3-1.331 3-3s-1.329-3-3-3-3 1.331-3 3 1.329 3 3 3z"/><path d="M20.817 11.186a8.94 8.94 0 0 0-1.355-3.219 9.053 9.053 0 0 0-2.43-2.43 8.95 8.95 0 0 0-3.219-1.355 9.028 9.028 0 0 0-1.838-.18V2L8 5l3.975 3V6.002c.484-.002.968.044 1.435.14a6.961 6.961 0 0 1 2.502 1.053 7.005 7.005 0 0 1 1.892 1.892A6.967 6.967 0 0 1 19 13a7.032 7.032 0 0 1-.55 2.725 7.11 7.11 0 0 1-.644 1.188 7.2 7.2 0 0 1-.858 1.039 7.028 7.028 0 0 1-3.536 1.907 7.13 7.13 0 0 1-2.822 0 6.961 6.961 0 0 1-2.503-1.054 7.002 7.002 0 0 1-1.89-1.89A6.996 6.996 0 0 1 5 13H3a9.02 9.02 0 0 0 1.539 5.034 9.096 9.096 0 0 0 2.428 2.428A8.95 8.95 0 0 0 12 22a9.09 9.09 0 0 0 1.814-.183 9.014 9.014 0 0 0 3.218-1.355 8.886 8.886 0 0 0 1.331-1.099 9.228 9.228 0 0 0 1.1-1.332A8.952 8.952 0 0 0 21 13a9.09 9.09 0 0 0-.183-1.814z"/></svg>
+            Reset Cols
+        </button>
+        <button class="db-view-btn db-view-btn-accent" id="db-filter-btn" title="Filter and sort">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M4 8h8M6 12h4"/></svg>
+            Filter &amp; Sort
+        </button>
+    </div>
+</div>
 <div class="stats-panel">
     <button class="stats-toggle" title="Toggle Statistics">
         <i class="fas fa-chart-bar"></i>
@@ -74,6 +130,11 @@
     <div id="column-selector-wrapper">
         <button id="toggle-column-selector" class="toggle-button">Select Columns to Display</button>
         <div id="column-selector" class="hidden">
+            <!-- Tangerine: header row with title + Hide button -->
+            <div class="db-col-sel-header tangerine-only">
+                <span class="db-col-sel-title">Column Selector</span>
+                <button class="db-view-btn" id="db-col-sel-hide-btn">Hide</button>
+            </div>
             <div class="column-selector-container">
                 <div class="column-list">
                     <label for="available-columns"><h4>Available Columns</h4></label>
@@ -88,6 +149,8 @@
                 <div class="column-buttons">
                     <button id="add-column">&gt;</button>
                     <button id="remove-column">&lt;</button>
+                    <button id="move-up" title="Move selected column up">▲</button>
+                    <button id="move-down" title="Move selected column down">▼</button>
                 </div>
                 <div class="column-list">
                     <label for="selected-columns"><h4>Selected Columns</h4></label>
@@ -97,15 +160,16 @@
                         {% endfor %}
                     </select>
                 </div>
-                <div class="column-buttons">
-                    <button id="move-up" title="Move selected column up">▲</button>
-                    <button id="move-down" title="Move selected column down">▼</button>
-                </div>
             </div>
             <button id="update-columns">Update View</button>
         </div>
     </div>
+    <div class="db-filter-presets-row">
     <div id="filter-sort">
+        <div class="db-filter-header tangerine-only">
+            <span class="db-filter-title">Filter &amp; Sort</span>
+            <button class="db-view-btn" id="db-filter-collapse-btn">Collapse</button>
+        </div>
         <h3>Filter and Sort:</h3>
         <div class="result-count">
             Showing {{ result_count }} results
@@ -158,17 +222,43 @@
             <div class="button-section">
                 <div class="filter-buttons">
                     <button type="submit">Apply</button>
-                    <button type="button" id="clear-filter-sort">Clear Filter & Sort</button>
+                    <button type="button" id="clear-filter-sort"><span class="tangerine-only">Clear all</span><span class="classic-only">Clear Filter &amp; Sort</span></button>
+                    <button type="button" class="db-save-preset-btn tangerine-only">Save Preset</button>
                 </div>
             </div>
         </form>
     </div>
-    <div class="content-type-filter">
+    <div id="db-presets-panel" class="tangerine-only">
+        <div class="db-filter-header">
+            <span class="db-filter-title">Saved Presets</span>
+        </div>
+        <div id="db-presets-list">
+            <div class="db-presets-empty">No presets saved yet</div>
+        </div>
+    </div>
+    </div><!-- /.db-filter-presets-row -->
+    <div class="content-type-filter-row tangerine-only">
+        <div class="content-type-filter">
+            <a href="#" data-content-type="all" class="content-type-link {% if content_type == 'all' %}active{% endif %}">All</a>
+            <a href="#" data-content-type="movie" class="content-type-link {% if content_type == 'movie' %}active{% endif %}">Movies</a>
+            <a href="#" data-content-type="episode" class="content-type-link {% if content_type == 'episode' %}active{% endif %}">Episodes</a>
+        </div>
+        <div class="pagination">
+            {% if alphabet %}
+                <a href="#" data-letter="" class="pagination-link {% if current_letter == '' %}active{% endif %}">All</a>
+                <a href="#" data-letter="#" class="pagination-link {% if current_letter == '#' %}active{% endif %}">#</a>
+                {% for letter in alphabet %}
+                <a href="#" data-letter="{{ letter }}" class="pagination-link {% if letter == current_letter %}active{% endif %}">{{ letter }}</a>
+                {% endfor %}
+            {% endif %}
+        </div>
+    </div>
+    <div class="content-type-filter classic-only">
         <a href="#" data-content-type="all" class="content-type-link {% if content_type == 'all' %}active{% endif %}">All</a>
         <a href="#" data-content-type="movie" class="content-type-link {% if content_type == 'movie' %}active{% endif %}">Movies</a>
         <a href="#" data-content-type="episode" class="content-type-link {% if content_type == 'episode' %}active{% endif %}">Episodes</a>
     </div>
-    <div class="pagination">
+    <div class="pagination classic-only">
         {% if alphabet %}
             <a href="#" data-letter="" class="pagination-link {% if current_letter == '' %}active{% endif %}">All</a>
             <a href="#" data-letter="#" class="pagination-link {% if current_letter == '#' %}active{% endif %}">#</a>
@@ -185,40 +275,77 @@
     </div>
     {# --- END Numerical Pagination --- #}
 </div>
+<div class="db-table-hint tangerine-only">
+    <span>↔ Drag column borders to resize &nbsp;·&nbsp; "Reset Cols" restores defaults &nbsp;·&nbsp; Click column headers to sort</span>
+    <span class="db-showing-count" id="db-showing-count">Showing {{ result_count }} of {{ total_count }} results</span>
+</div>
 <div class="table-container">
     {% if items %}
         <table>
             <thead>
                 <tr>
-                    <th>#</th>
                     <th>Select</th>
-                    <th>Delete</th>
-                    <th>Rescrape</th>
+                    <th class="db-col-rownum">#</th>
+                    <th class="classic-only">Delete</th>
+                    <th class="classic-only">Rescrape</th>
+                    <th class="tangerine-only">Actions</th>
                     {% for column in selected_columns %}
-                        {# Adjust display name for 'size' column #}
-                        <th>{% if column == 'season_number' %}S#{% elif column == 'episode_number' %}E#{% elif column == 'size' %}Size (GB){% else %}{{ column }}{% endif %}</th>
+                        {% set label = 'S#' if column == 'season_number' else 'E#' if column == 'episode_number' else 'Size (GB)' if column == 'size' else column %}
+                        <th data-col="{{ column }}"{% if column == sort_column %} class="db-sort-active"{% endif %}>{{ label }}<span class="db-sort-icon">{% if column == sort_column %}{% if sort_order == 'desc' %}▼{% else %}▲{% endif %}{% else %}⇅{% endif %}</span></th>
                     {% endfor %}
                 </tr>
             </thead>
             <tbody>
                 {% for item in items %}
                     <tr data-page="{{ current_page | default(1) }}">
-                        <td>{{ loop.index }}</td>
-                        <td>
-                            <input type="checkbox" id="item-select-{{ item['id'] }}" name="item_select" class="item-select" data-item-id="{{ item['id'] }}" aria-label="Select item {{ item['id'] }}">
-                        </td>
-                        <td>
+                        <td><input type="checkbox" id="item-select-{{ item['id'] }}" name="item_select" class="item-select" data-item-id="{{ item['id'] }}" aria-label="Select item {{ item['id'] }}"></td>
+                        <td class="db-row-num">{{ loop.index }}</td>
+                        {# Classic: separate Delete / Rescrape columns #}
+                        <td class="classic-only">
                             <button class="delete-item" data-item-id="{{ item['id'] }}">X</button>
                         </td>
-                        <td>
+                        <td class="classic-only">
                             <button class="rescrape-item" data-item-id="{{ item['id'] }}">↻</button>
                         </td>
+                        {# Tangerine: single Actions column with icon buttons #}
+                        <td class="tangerine-only">
+                            <span style="display:flex;gap:4px;align-items:center">
+                                <button class="db-action-btn db-action-btn-delete delete-item" data-item-id="{{ item['id'] }}" title="Delete">
+                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                                </button>
+                                <button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="{{ item['id'] }}" title="Rescrape">
+                                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                </button>
+                            </span>
+                        </td>
                         {% for column in selected_columns %}
-                            {# Use 'size_gb' key for data if column is 'size', format appropriately #}
                             {% if column == 'size' %}
                                 <td class="truncate" data-full-content="{{ '%.2f'|format(item['size_gb']) if item['size_gb'] is defined and item['size_gb'] is not none else 'N/A' }}">{{ '%.2f'|format(item['size_gb']) if item['size_gb'] is defined and item['size_gb'] is not none else 'N/A' }}</td>
+                            {% elif column == 'imdb_id' %}
+                                <td class="truncate" data-full-content="{{ item[column] }}"><span class="db-imdb-link classic-plain">{{ item[column] }}</span></td>
+                            {% elif column == 'state' %}
+                                {% set state_val = item[column] | string %}
+                                {% set state_val = 'Final Scrape' if state_val == 'Final_Check' else state_val %}
+                                {% set state_val = 'Ghostlisted' if state_val == 'ghostlisted' else state_val %}
+                                {% set state_val = 'All Versions Blacklisted' if state_val == 'all_blacklisted' else state_val %}
+                                {% set state_cls = {
+                                    'Collected': 'db-pill db-pill-collected',
+                                    'Wanted': 'db-pill db-pill-wanted',
+                                    'Scraping': 'db-pill db-pill-scraping',
+                                    'Upgrading': 'db-pill db-pill-upgrading',
+                                    'Blacklisted': 'db-pill db-pill-blacklisted',
+                                    'Checking': 'db-pill db-pill-checking',
+                                    'Sleeping': 'db-pill db-pill-sleeping',
+                                    'Unreleased': 'db-pill db-pill-unreleased'
+                                } %}
+                                <td class="truncate" data-full-content="{{ state_val }}"><span class="tangerine-only {{ state_cls.get(state_val, 'db-pill db-pill-other') }}">{{ state_val }}</span><span class="classic-only">{{ state_val }}</span></td>
+                            {% elif column == 'type' %}
+                                {% set type_cls = 'db-pill db-pill-movie' if item[column] == 'movie' else 'db-pill db-pill-episode' %}
+                                <td class="truncate" data-full-content="{{ item[column] }}"><span class="tangerine-only {{ type_cls }}">{{ item[column] }}</span><span class="classic-only">{{ item[column] }}</span></td>
+                            {% elif column == 'version' %}
+                                <td class="truncate" data-full-content="{{ item[column] }}"><span class="tangerine-only db-pill-version">{{ item[column] }}</span><span class="classic-only">{{ item[column] }}</span></td>
                             {% else %}
-                                <td class="truncate" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
+                                <td class="truncate{% if column == 'title' %} db-col-title{% endif %}" data-full-content="{{ item[column] }}">{{ item[column] }}</td>
                             {% endif %}
                         {% endfor %}
                     </tr>
@@ -242,14 +369,17 @@
         SELECTED_COLUMNS: 'db_selected_columns',
         CONTENT_TYPE: 'db_content_type',
         FILTER_LOGIC: 'db_filter_logic',
-        LETTER: 'db_current_letter' // Persist current letter
+        LETTER: 'db_current_letter',
+        PER_PAGE: 'db_per_page'
     };
+    const VALID_PER_PAGE = [100, 250, 500, 1000, 2000, 5000];
     const DEFAULTS = {
         SORT_COLUMN: 'id',
         SORT_ORDER: 'asc',
         CONTENT_TYPE: 'all',
         FILTER_LOGIC: 'AND',
-        LETTER: '' // Empty string means "All"
+        LETTER: '',
+        PER_PAGE: 250
     };
 
     function getQueryParam(param) {
@@ -264,6 +394,7 @@
     const savedContentType = localStorage.getItem(STORAGE_KEYS.CONTENT_TYPE);
     const savedFilterLogic = localStorage.getItem(STORAGE_KEYS.FILTER_LOGIC);
     const savedLetter = localStorage.getItem(STORAGE_KEYS.LETTER);
+    const savedPerPage = localStorage.getItem(STORAGE_KEYS.PER_PAGE);
 
     const queryParams = new URLSearchParams();
     let needsRedirect = false;
@@ -321,6 +452,12 @@
     const letter = (savedLetter !== null) ? savedLetter : DEFAULTS.LETTER;
     if (getQueryParam('letter') !== letter) needsRedirect = true;
     queryParams.set('letter', letter);
+
+    // Per Page
+    const perPageRaw = parseInt(savedPerPage, 10);
+    const perPage = VALID_PER_PAGE.includes(perPageRaw) ? perPageRaw : DEFAULTS.PER_PAGE;
+    if (getQueryParam('per_page') !== String(perPage)) needsRedirect = true;
+    queryParams.set('per_page', perPage);
 
     const redirectFlag = 'database_redirect_marker';
     const flagIsSet = sessionStorage.getItem(redirectFlag) === 'true';
@@ -472,6 +609,37 @@ async function fetchColumnValues(columnName) {
 
     // Return the cached promise
     return await columnValuesCache[columnName];
+}
+
+function renderCell(column, displayContent) {
+    const isTangerine = document.body.classList.contains('tangerine-theme');
+    if (!isTangerine) return `<td class="truncate" data-full-content="${displayContent}">${displayContent}</td>`;
+    if (column === 'title') return `<td class="truncate db-col-title" data-full-content="${displayContent}">${displayContent}</td>`;
+    if (column === 'imdb_id' && displayContent !== 'None') {
+        return `<td class="truncate" data-full-content="${displayContent}"><span class="db-imdb-link">${displayContent}</span></td>`;
+    }
+    if (column === 'state') {
+        const stateMap = {
+            'Collected': 'db-pill db-pill-collected',
+            'Wanted': 'db-pill db-pill-wanted',
+            'Scraping': 'db-pill db-pill-scraping',
+            'Upgrading': 'db-pill db-pill-upgrading',
+            'Blacklisted': 'db-pill db-pill-blacklisted',
+            'Checking': 'db-pill db-pill-checking',
+            'Sleeping': 'db-pill db-pill-sleeping',
+            'Unreleased': 'db-pill db-pill-unreleased',
+        };
+        const cls = stateMap[displayContent] || 'db-pill db-pill-other';
+        return `<td class="truncate" data-full-content="${displayContent}"><span class="${cls}">${displayContent}</span></td>`;
+    }
+    if (column === 'type') {
+        const cls = displayContent === 'movie' ? 'db-pill db-pill-movie' : 'db-pill db-pill-episode';
+        return `<td class="truncate" data-full-content="${displayContent}"><span class="${cls}">${displayContent}</span></td>`;
+    }
+    if (column === 'version' && displayContent !== 'None') {
+        return `<td class="truncate" data-full-content="${displayContent}"><span class="db-pill-version">${displayContent}</span></td>`;
+    }
+    return `<td class="truncate" data-full-content="${displayContent}">${displayContent}</td>`;
 }
 
 document.addEventListener('DOMContentLoaded', function() {
@@ -911,6 +1079,25 @@ document.addEventListener('DOMContentLoaded', function() {
     if (sortColumnSelect) sortColumnSelect.addEventListener('change', handleSortChange);
     if (sortOrderSelect) sortOrderSelect.addEventListener('change', handleSortChange);
 
+    // Column header sort click (tangerine only)
+    if (document.body.classList.contains('tangerine-theme')) {
+        document.addEventListener('click', function(e) {
+            const th = e.target.closest('.table-container th[data-col]');
+            if (!th) return;
+            const col = th.getAttribute('data-col');
+            const sortColEl = document.getElementById('sort-column');
+            const sortOrdEl = document.getElementById('sort-order');
+            if (!sortColEl || !sortOrdEl) return;
+            if (sortColEl.value === col) {
+                sortOrdEl.value = sortOrdEl.value === 'asc' ? 'desc' : 'asc';
+            } else {
+                sortColEl.value = col;
+                sortOrdEl.value = 'asc';
+            }
+            handleSortChange();
+        });
+    }
+
     // Filter form submit (no page reset)
         const filterForm = document.getElementById('filter-form');
         if (filterForm) {
@@ -1190,8 +1377,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 toSelect.appendChild(newOption);
                 fromSelect.removeChild(option);
             });
-            sortOptionsWithAbsoluteOrder(fromSelect);
-            sortOptionsWithAbsoluteOrder(toSelect);
+            // Only sort the available-columns list; selected-columns order is user-defined
+            const availEl = document.getElementById('available-columns');
+            if (fromSelect === availEl) sortOptionsWithAbsoluteOrder(fromSelect);
+            if (toSelect === availEl) sortOptionsWithAbsoluteOrder(toSelect);
         }
 
         function initializeColumnSelection() {
@@ -1266,7 +1455,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 
             sortOptionsWithAbsoluteOrder(availableColumns);
-            sortOptionsWithAbsoluteOrder(selectedColumns);
+            // Do NOT sort selectedColumns — user's custom order must be preserved
         }
 
         // Add event listeners for column selection
@@ -1441,52 +1630,78 @@ document.addEventListener('DOMContentLoaded', function() {
         let tableHTML = '<table><thead><tr>';
         let columnIndex = 0;
 
-        // Helper to create header with optional width
-        const createHeader = (text, index) => {
+        const isTangerineTable = document.body.classList.contains('tangerine-theme');
+        const activeSortCol = document.getElementById('sort-column')?.value || '';
+        const activeSortOrder = document.getElementById('sort-order')?.value || 'asc';
+
+        // Helper to create header with optional width and sort indicator
+        const createHeader = (text, index, colKey = null) => {
             const width = savedWidths[index];
             const style = width ? ` style="width: ${width}px; min-width: ${width}px;"` : '';
+            if (isTangerineTable && colKey) {
+                const isActive = colKey === activeSortCol;
+                const activeClass = isActive ? ' class="db-sort-active"' : '';
+                const icon = isActive ? (activeSortOrder === 'desc' ? '▼' : '▲') : '⇅';
+                return `<th${style} data-col="${colKey}"${activeClass}>${text}<span class="db-sort-icon">${icon}</span></th>`;
+            }
             return `<th${style}>${text}</th>`;
         };
 
-        tableHTML += createHeader('#', columnIndex++);
+        // Unified column order: Select | # | (classic: Delete+Rescrape) | (tangerine: Actions)
         tableHTML += createHeader('Select', columnIndex++);
-        tableHTML += createHeader('Delete', columnIndex++);
-        tableHTML += createHeader('Rescrape', columnIndex++);
+        tableHTML += `<th class="db-col-rownum">#</th>`;
+        columnIndex++;
+        if (isTangerineTable) {
+            tableHTML += createHeader('Actions', columnIndex++);
+        } else {
+            tableHTML += createHeader('Delete', columnIndex++);
+            tableHTML += createHeader('Rescrape', columnIndex++);
+        }
 
         selectedColumns.forEach(column => {
             let displayName = column;
             if (column === 'season_number') displayName = 'S#';
             else if (column === 'episode_number') displayName = 'E#';
             else if (column === 'size') displayName = 'Size (GB)';
-            tableHTML += createHeader(displayName, columnIndex++);
+            tableHTML += createHeader(displayName, columnIndex++, column);
         });
         tableHTML += '</tr></thead><tbody>';
+
+        const deleteSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`;
+        const refreshSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`;
 
         items.forEach((item, index) => {
             const rowNumber = index + 1;
             tableHTML += `<tr data-page="1">`;
-            tableHTML += `<td>${rowNumber}</td>`;
             tableHTML += `<td><input type="checkbox" class="item-select" data-item-id="${item['id']}"></td>`;
-            tableHTML += `<td><button class="delete-item" data-item-id="${item['id']}">X</button></td>`;
-            tableHTML += `<td><button class="rescrape-item" data-item-id="${item['id']}">↻</button></td>`;
+            tableHTML += `<td class="db-row-num">${rowNumber}</td>`;
+            if (isTangerineTable) {
+                tableHTML += `<td><span style="display:flex;gap:4px;align-items:center">` +
+                    `<button class="db-action-btn db-action-btn-delete delete-item" data-item-id="${item['id']}" title="Delete">${deleteSVG}</button>` +
+                    `<button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="${item['id']}" title="Rescrape">${refreshSVG}</button>` +
+                    `</span></td>`;
+            } else {
+                tableHTML += `<td><button class="delete-item" data-item-id="${item['id']}">X</button></td>`;
+                tableHTML += `<td><button class="rescrape-item" data-item-id="${item['id']}">↻</button></td>`;
+            }
             selectedColumns.forEach(column => {
                 let cellContentKey = column;
                 let displayContent;
 
                 if (column === 'size') {
-                    cellContentKey = 'size_gb'; // Data is in item['size_gb']
+                    cellContentKey = 'size_gb';
                     const rawSize = item[cellContentKey];
                     if (rawSize === null || rawSize === undefined || typeof rawSize !== 'number') {
                         displayContent = 'N/A';
                     } else {
-                        displayContent = rawSize.toFixed(2); // Format to 2 decimal places
+                        displayContent = rawSize.toFixed(2);
                     }
                 } else {
                     const rawCellContent = item[cellContentKey];
-                     displayContent = (rawCellContent === null || rawCellContent === undefined || String(rawCellContent).trim() === '')
+                    displayContent = (rawCellContent === null || rawCellContent === undefined || String(rawCellContent).trim() === '')
                         ? 'None'
                         : String(rawCellContent).replace(/"/g, '&quot;');
-                    
+
                     if (column === 'state' && displayContent === 'Final_Check') {
                         displayContent = 'Final Scrape';
                     } else if (column === 'state' && displayContent === 'ghostlisted') {
@@ -1495,7 +1710,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         displayContent = 'All Versions Blacklisted';
                     }
                 }
-                tableHTML += `<td class="truncate" data-full-content="${displayContent}">${displayContent}</td>`;
+                tableHTML += renderCell(column, displayContent);
             });
             tableHTML += '</tr>';
         });
@@ -1577,10 +1792,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 }
 
-                const contentTypeFilterElement = document.querySelector('.content-type-filter');
-                if (contentTypeFilterElement) {
-                    contentTypeFilterElement.innerHTML = renderContentTypeFilter(data);
-                }
+                document.querySelectorAll('.content-type-filter').forEach(el => {
+                    el.innerHTML = renderContentTypeFilter(data);
+                });
 
                 // IMPORTANT: Check for column changes BEFORE updating templateData.all_columns!
                 const filterableColumns = data.all_columns.filter(col => col !== 'size').sort();
@@ -1593,6 +1807,31 @@ document.addEventListener('DOMContentLoaded', function() {
                 currentLetter = data.current_letter;
                 templateData.selectedColumns = data.selected_columns;
                 templateData.all_columns = data.all_columns;  // Track all available columns for change detection
+
+                // Sync the #selected-columns panel select with what the server returned.
+                // This keeps sort/filter requests consistent — they read from this select.
+                const selColEl = document.getElementById('selected-columns');
+                const availColEl = document.getElementById('available-columns');
+                if (selColEl && availColEl && data.selected_columns) {
+                    // Rebuild both lists from all_columns, preserving server-returned order for selected
+                    selColEl.innerHTML = '';
+                    availColEl.innerHTML = '';
+                    data.selected_columns.forEach(col => {
+                        const opt = document.createElement('option');
+                        opt.value = col;
+                        opt.textContent = col;
+                        selColEl.appendChild(opt);
+                    });
+                    data.all_columns.forEach(col => {
+                        if (!data.selected_columns.includes(col)) {
+                            const opt = document.createElement('option');
+                            opt.value = col;
+                            opt.textContent = col;
+                            availColEl.appendChild(opt);
+                        }
+                    });
+                    localStorage.setItem(STORAGE_KEYS.SELECTED_COLUMNS, JSON.stringify(data.selected_columns));
+                }
 
                 // Reset infinite scroll state when table is rebuilt
                 if (typeof window.resetInfiniteScroll === 'function') {
@@ -1683,6 +1922,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (typeof window.initColumnResize === 'function') {
                     window.initColumnResize();
                 }
+                // Reinitialize floating header
+                if (typeof window.reinitFloatHeader === 'function') {
+                    window.reinitFloatHeader();
+                }
 
                 // Tooltips are automatically handled by event delegation in tooltips.js
 
@@ -1690,6 +1933,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 const resultCountElement = document.querySelector('.result-count');
                 if (resultCountElement && typeof data.result_count !== "undefined") {
                     resultCountElement.innerHTML = `Showing ${data.result_count} results <span class="unique-count">(Unique: ${data.unique_result_count})</span> | Total pages: ${data.total_pages} | Total items: ${data.total_count}`;
+                }
+                // Tangerine: update showing count in tabs row
+                const dbShowingCount = document.getElementById('db-showing-count');
+                if (dbShowingCount && typeof data.result_count !== "undefined") {
+                    dbShowingCount.textContent = `Showing ${data.result_count} of ${data.total_count} results`;
+                }
+                // Tangerine: update top stat boxes to reflect current view
+                if (document.body.classList.contains('tangerine-theme') && typeof data.total_count !== "undefined") {
+                    const statVals = document.querySelectorAll('.db-stat-boxes .db-stat-val');
+                    if (statVals[0]) statVals[0].textContent = data.total_count;
+                    if (statVals[1]) statVals[1].textContent = data.unique_result_count;
+                    if (statVals[2]) statVals[2].textContent = data.total_pages;
                 }
             })
             .catch(error => {
@@ -1883,32 +2138,30 @@ document.addEventListener('DOMContentLoaded', function() {
         window.attachLetterPaginationListeners();
     }
 
+    // Event delegation — one listener on the table container handles all rows
+    // including dynamically added infinite scroll rows. No per-button attachment needed.
+    let _delegationAttached = false;
     function attachDeleteListeners() {
-        document.querySelectorAll('.delete-item').forEach(button => {
-            // Clone and replace to remove old listeners
-            const newButton = button.cloneNode(true);
-            button.parentNode.replaceChild(newButton, button);
-
-            newButton.addEventListener('click', function(e) {
+        if (_delegationAttached) return;
+        _delegationAttached = true;
+        document.addEventListener('click', function(e) {
+            const btn = e.target.closest('.delete-item');
+            if (btn) {
                 e.preventDefault();
-                const itemId = this.getAttribute('data-item-id');
-                showDeleteConfirmation(itemId);
-            });
+                showDeleteConfirmation(btn.getAttribute('data-item-id'));
+            }
+        });
+        document.addEventListener('click', function(e) {
+            const btn = e.target.closest('.rescrape-item');
+            if (btn) {
+                e.preventDefault();
+                showRescrapeConfirmation(btn.getAttribute('data-item-id'));
+            }
         });
     }
 
     function attachRescrapeListeners() {
-        document.querySelectorAll('.rescrape-item').forEach(button => {
-            // Clone and replace to remove old listeners
-            const newButton = button.cloneNode(true);
-            button.parentNode.replaceChild(newButton, button);
-
-            newButton.addEventListener('click', function(e) {
-                e.preventDefault();
-                const itemId = this.getAttribute('data-item-id');
-                showRescrapeConfirmation(itemId);
-            });
-        });
+        // Handled by delegation in attachDeleteListeners — no-op kept for call-site compatibility
     }
 
     function showDeleteConfirmation(itemId) {
@@ -2736,7 +2989,8 @@ document.addEventListener('DOMContentLoaded', function() {
             startX: 0,
             startWidth: 0,
             listenersAttached: false,
-            rafId: null
+            rafId: null,
+            didResize: false
         };
 
         // Helper function to stop resizing (defined once at global scope)
@@ -2765,6 +3019,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 columnResizeState.resizingColumn = null;
                 document.body.style.userSelect = '';
                 document.body.style.cursor = '';
+                if (columnResizeState.didResize) {
+                    // Block the click event that fires immediately after mouseup on the same element
+                    document.addEventListener('click', function suppressClick(e) {
+                        e.stopImmediatePropagation();
+                        document.removeEventListener('click', suppressClick, true);
+                    }, true);
+                    columnResizeState.didResize = false;
+                }
             }
         }
 
@@ -2772,6 +3034,7 @@ document.addEventListener('DOMContentLoaded', function() {
         function handleMouseMove(e) {
             if (!columnResizeState.resizingColumn) return;
 
+            columnResizeState.didResize = true;
             e.preventDefault();
 
             // Use requestAnimationFrame for smooth updates
@@ -2926,20 +3189,32 @@ document.addEventListener('DOMContentLoaded', function() {
 
         function buildRowHTML(item, pageToLoad, index) {
             const rowNumber = (pageToLoad - 1) * CONFIG.ITEMS_PER_PAGE + index + 1;
-            let html = `<td>${rowNumber}</td>`;
-            html += `<td><input type="checkbox" id="item-select-${item.id}" name="item_select" class="item-select" data-item-id="${item.id}" aria-label="Select item ${item.id}"></td>`;
-            html += `<td><button class="delete-item" data-item-id="${item.id}">X</button></td>`;
-            html += `<td><button class="rescrape-item" data-item-id="${item.id}">↻</button></td>`;
+            const isTangerine = document.body.classList.contains('tangerine-theme');
+            const deleteSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`;
+            const refreshSVG = `<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>`;
+            // Column order matches Jinja thead: checkbox | # | (classic: delete+rescrape) | (tangerine: actions)
+            let html = '';
+            html += `<td><input type="checkbox" class="item-select" data-item-id="${item.id}"></td>`;
+            html += `<td class="db-row-num">${rowNumber}</td>`;
+            if (isTangerine) {
+                html += `<td><span style="display:flex;gap:4px;align-items:center">` +
+                    `<button class="db-action-btn db-action-btn-delete delete-item" data-item-id="${item.id}" title="Delete">${deleteSVG}</button>` +
+                    `<button class="db-action-btn db-action-btn-refresh rescrape-item" data-item-id="${item.id}" title="Rescrape">${refreshSVG}</button>` +
+                    `</span></td>`;
+            } else {
+                html += `<td><button class="delete-item" data-item-id="${item.id}">X</button></td>`;
+                html += `<td><button class="rescrape-item" data-item-id="${item.id}">↻</button></td>`;
+            }
 
             const selectedColumns = {{ selected_columns | tojson }};
             selectedColumns.forEach(column => {
+                let displayContent;
                 if (column === 'size') {
-                    const sizeValue = item.size_gb !== undefined && item.size_gb !== null ? item.size_gb.toFixed(2) : 'N/A';
-                    html += `<td class="truncate" data-full-content="${sizeValue}">${sizeValue}</td>`;
+                    displayContent = item.size_gb !== undefined && item.size_gb !== null ? parseFloat(item.size_gb).toFixed(2) : 'N/A';
                 } else {
-                    const value = item[column] !== undefined && item[column] !== null ? String(item[column]) : '';
-                    html += `<td class="truncate" data-full-content="${value}">${value}</td>`;
+                    displayContent = item[column] !== undefined && item[column] !== null ? String(item[column]) : '';
                 }
+                html += renderCell(column, displayContent);
             });
 
             return html;
@@ -3007,6 +3282,77 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
+        // Tangerine toolbar button wiring
+        function isTangerine() {
+            return document.body.classList.contains('tangerine-theme');
+        }
+
+        function dbToggleColumnSelector() {
+            const colSel = document.getElementById('column-selector');
+            const toggleBtn = document.getElementById('toggle-column-selector');
+            if (colSel) {
+                const isHidden = colSel.classList.contains('hidden');
+                if (isHidden) {
+                    colSel.classList.remove('hidden');
+                    if (toggleBtn) toggleBtn.textContent = 'Hide Column Selector';
+                } else {
+                    colSel.classList.add('hidden');
+                    if (toggleBtn) toggleBtn.textContent = 'Select Columns to Display';
+                }
+            }
+        }
+
+        function dbToggleFilterPanel() {
+            const filterSort = document.getElementById('filter-sort');
+            const presetsPanel = document.getElementById('db-presets-panel');
+            if (filterSort) {
+                const collapsed = filterSort.classList.toggle('db-filter-collapsed');
+                if (presetsPanel) presetsPanel.classList.toggle('db-filter-collapsed', collapsed);
+            }
+        }
+
+        const dbColumnsBtn = document.getElementById('db-columns-btn');
+        const dbResetColsBtn = document.getElementById('db-reset-cols-btn');
+        const dbFilterBtn = document.getElementById('db-filter-btn');
+        const dbColSelHideBtn = document.getElementById('db-col-sel-hide-btn');
+        const dbFilterCollapseBtn = document.getElementById('db-filter-collapse-btn');
+
+        if (dbColumnsBtn) {
+            dbColumnsBtn.addEventListener('click', dbToggleColumnSelector);
+        }
+        if (dbColSelHideBtn) {
+            dbColSelHideBtn.addEventListener('click', dbToggleColumnSelector);
+        }
+
+        if (dbResetColsBtn) {
+            dbResetColsBtn.addEventListener('click', function() {
+                localStorage.removeItem('db_column_widths');
+                document.querySelectorAll('.table-container th').forEach(th => {
+                    th.style.width = '';
+                    th.style.minWidth = '';
+                });
+            });
+        }
+
+        if (dbFilterBtn) {
+            dbFilterBtn.addEventListener('click', dbToggleFilterPanel);
+        }
+        if (dbFilterCollapseBtn) {
+            dbFilterCollapseBtn.addEventListener('click', dbToggleFilterPanel);
+        }
+
+        // Tangerine: mutually exclusive selection between the two column lists
+        const availCols = document.getElementById('available-columns');
+        const selCols = document.getElementById('selected-columns');
+        if (availCols && selCols) {
+            availCols.addEventListener('mousedown', function() {
+                selCols.selectedIndex = -1;
+            });
+            selCols.addEventListener('mousedown', function() {
+                availCols.selectedIndex = -1;
+            });
+        }
+
         async function loadPreviousItems() {
             if (isLoadingPrevious || minLoadedPage <= 1) return;
 
@@ -3048,6 +3394,274 @@ document.addEventListener('DOMContentLoaded', function() {
                 isLoadingPrevious = false;
             }
         }
-    });
+
+        // ── Floating sticky header ──
+        if (document.body.classList.contains('tangerine-theme')) {
+            const NAV_HEIGHT = 50;
+            let fh = null;
+            let fhRAF = null;
+
+            function dbBuildFloatHeader() {
+                const table = document.querySelector('.table-container table');
+                if (!table) return;
+                if (fh) { fh.remove(); fh = null; }
+                const realThead = table.querySelector('thead');
+                if (!realThead) return;
+
+                fh = document.createElement('div');
+                fh.id = 'db-float-header';
+                fh.style.cssText = 'position:fixed;top:' + NAV_HEIGHT + 'px;left:0;z-index:999;overflow:hidden;pointer-events:none;display:none;background:#222;border-bottom:1px solid #333;box-shadow:0 2px 8px rgba(0,0,0,0.4);';
+                const ct = document.createElement('table');
+                ct.style.cssText = 'border-collapse:separate;border-spacing:0;table-layout:fixed;margin:0;';
+                const ch = realThead.cloneNode(true);
+                ch.querySelectorAll('.column-resize-handle').forEach(el => el.remove());
+                ct.appendChild(ch);
+                fh.appendChild(ct);
+                document.body.appendChild(fh);
+                dbSyncFloatHeader();
+
+                // Mirror horizontal scroll
+                const container = document.querySelector('.table-container');
+                if (container) {
+                    container.addEventListener('scroll', function() { if (fh) fh.scrollLeft = container.scrollLeft; });
+                }
+            }
+
+            function dbSyncFloatHeader() {
+                if (!fh) return;
+                const container = document.querySelector('.table-container');
+                const table = document.querySelector('.table-container table');
+                if (!container || !table) return;
+                const cr = container.getBoundingClientRect();
+                fh.style.width = cr.width + 'px';
+                fh.style.left = cr.left + 'px';
+                fh.scrollLeft = container.scrollLeft;
+                fh.querySelector('table').style.width = table.offsetWidth + 'px';
+                const realThs = table.querySelectorAll('thead th');
+                const cloneThs = fh.querySelectorAll('thead th');
+                realThs.forEach((th, i) => {
+                    if (cloneThs[i]) {
+                        cloneThs[i].style.width = th.offsetWidth + 'px';
+                        cloneThs[i].style.minWidth = th.offsetWidth + 'px';
+                    }
+                });
+            }
+
+            window.addEventListener('scroll', function() {
+                if (!fh) return;
+                const container = document.querySelector('.table-container');
+                const table = document.querySelector('.table-container table');
+                if (!container || !table) return;
+                const cr = container.getBoundingClientRect();
+                const tr = table.getBoundingClientRect();
+                const theadH = table.querySelector('thead') ? table.querySelector('thead').offsetHeight : 40;
+                const show = cr.top < NAV_HEIGHT && tr.bottom > NAV_HEIGHT + theadH;
+                fh.style.display = show ? 'block' : 'none';
+                if (show) {
+                    if (fhRAF) cancelAnimationFrame(fhRAF);
+                    fhRAF = requestAnimationFrame(dbSyncFloatHeader);
+                }
+            }, { passive: true });
+
+            window.addEventListener('resize', function() { dbSyncFloatHeader(); }, { passive: true });
+
+            window.reinitFloatHeader = function() { dbBuildFloatHeader(); };
+
+            dbBuildFloatHeader();
+        }
+
+        // Back to row 1 button (tangerine only)
+        if (document.body.classList.contains('tangerine-theme')) {
+            const dbBackTop = document.getElementById('db-back-top');
+            if (dbBackTop) {
+                // Show/hide based on scroll position
+                window.addEventListener('scroll', function() {
+                    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+                    dbBackTop.classList.toggle('db-back-top-visible', scrollTop > 300);
+                }, { passive: true });
+
+                dbBackTop.addEventListener('click', async function() {
+                    if (minLoadedPage === 1) {
+                        // Page 1 is in DOM — jump to top instantly
+                        window.scrollTo({ top: 0, behavior: 'instant' });
+                    } else {
+                        // Page 1 has been windowed out — reload it
+                        dbBackTop.disabled = true;
+                        try {
+                            const data = await fetchPageData(1);
+                            if (data && data.items) {
+                                const tbody = document.querySelector('.table-container table tbody');
+                                if (!tbody) return;
+
+                                // Remove all existing rows
+                                tbody.innerHTML = '';
+
+                                // Reset windowing state
+                                window.resetInfiniteScroll(totalPages);
+
+                                // Build and insert page 1 rows
+                                const fragment = createPageFragment(data.items, 1);
+                                tbody.appendChild(fragment);
+
+                                window.scrollTo({ top: 0, behavior: 'instant' });
+
+                                if (typeof window.reinitFloatHeader === 'function') window.reinitFloatHeader();
+                                if (typeof window.initColumnResize === 'function') window.initColumnResize();
+                            }
+                        } finally {
+                            dbBackTop.disabled = false;
+                        }
+                    }
+                });
+            }
+        }
+
+    // Per-page selector
+    const dbPerPageSel = document.getElementById('db-per-page-select');
+    if (dbPerPageSel) {
+        dbPerPageSel.addEventListener('change', function() {
+            const val = parseInt(this.value, 10);
+            localStorage.setItem('db_per_page', val);
+            const url = new URL(window.location.href);
+            url.searchParams.set('per_page', val);
+            url.searchParams.set('page', 1);
+            window.location.href = url.toString();
+        });
+    }
+
+    // Presets
+    (function() {
+        const PRESETS_KEY = 'db_presets';
+        const saveBtn = document.querySelector('.db-save-preset-btn');
+        const listEl = document.getElementById('db-presets-list');
+        if (!listEl) return;
+
+        function loadPresets() {
+            try { return JSON.parse(localStorage.getItem(PRESETS_KEY)) || []; }
+            catch(e) { return []; }
+        }
+
+        function savePresets(presets) {
+            localStorage.setItem(PRESETS_KEY, JSON.stringify(presets));
+        }
+
+        function captureState() {
+            const filters = Array.from(document.querySelectorAll('.filter-row')).map(row => ({
+                column: row.querySelector('.filter-column')?.value || '',
+                operator: row.querySelector('.filter-operator')?.value || '',
+                value: row.querySelector('.filter-value')?.value || ''
+            })).filter(f => f.column);
+            const sortColumn = document.getElementById('sort-column')?.value || '';
+            const sortOrder = document.getElementById('sort-order')?.value || 'asc';
+            const filterLogic = document.querySelector('input[name="filter_logic"]:checked')?.value || 'AND';
+            const contentType = localStorage.getItem('db_content_type') || 'all';
+            const perPage = parseInt(localStorage.getItem('db_per_page') || '250', 10);
+            const letter = localStorage.getItem('db_current_letter') || '';
+            let columns = [];
+            try { columns = JSON.parse(localStorage.getItem('db_selected_columns')) || []; } catch(e) {}
+            return { filters, sortColumn, sortOrder, filterLogic, contentType, perPage, columns, letter };
+        }
+
+        function applyPreset(preset) {
+            // Write all preset values to localStorage
+            const filters = preset.filters || [];
+            const sortColumn = preset.sortColumn || 'id';
+            const sortOrder = preset.sortOrder || 'asc';
+            const filterLogic = preset.filterLogic || 'AND';
+            const contentType = preset.contentType || 'all';
+            const perPage = preset.perPage || 250;
+            const letter = preset.letter || '';
+            localStorage.setItem('db_filters', JSON.stringify(filters));
+            localStorage.setItem('db_sort_column', sortColumn);
+            localStorage.setItem('db_sort_order', sortOrder);
+            localStorage.setItem('db_filter_logic', filterLogic);
+            localStorage.setItem('db_content_type', contentType);
+            localStorage.setItem('db_per_page', perPage);
+            if (preset.columns && preset.columns.length > 0) {
+                localStorage.setItem('db_selected_columns', JSON.stringify(preset.columns));
+            }
+            localStorage.setItem('db_current_letter', letter);
+
+            // Clear the redirect flag so the early-redirect script runs fresh
+            sessionStorage.removeItem('database_redirect_marker');
+
+            // Build the full URL directly from preset data — don't rely on redirect script
+            const baseUrl = "{{ url_for('database.index') }}";
+            const params = new URLSearchParams();
+            params.set('sort_column', sortColumn);
+            params.set('sort_order', sortOrder);
+            params.set('content_type', contentType);
+            params.set('filter_logic', filterLogic);
+            params.set('letter', letter);
+            params.set('per_page', perPage);
+            params.set('page', '1');
+            if (filters.length > 0) params.set('filters', JSON.stringify(filters));
+            if (preset.columns && preset.columns.length > 0) {
+                params.set('selected_columns', JSON.stringify(preset.columns));
+            }
+            window.location.href = `${baseUrl}?${params.toString()}`;
+        }
+
+        function renderPresets() {
+            const presets = loadPresets();
+            listEl.innerHTML = '';
+            if (presets.length === 0) {
+                listEl.innerHTML = '<div class="db-presets-empty">No presets saved yet</div>';
+                return;
+            }
+            presets.forEach((preset, idx) => {
+                const item = document.createElement('div');
+                item.className = 'db-preset-item';
+                item.innerHTML = `
+                    <span class="db-preset-name" title="${preset.name}">${preset.name}</span>
+                    <div class="db-preset-actions">
+                        <button class="db-preset-load" data-idx="${idx}">Load</button>
+                        <button class="db-preset-del" data-idx="${idx}">✕</button>
+                    </div>`;
+                item.querySelector('.db-preset-load').addEventListener('click', () => applyPreset(preset));
+                item.querySelector('.db-preset-del').addEventListener('click', () => {
+                    const all = loadPresets();
+                    all.splice(idx, 1);
+                    savePresets(all);
+                    renderPresets();
+                });
+                listEl.appendChild(item);
+            });
+        }
+
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => {
+                showPopup({
+                    type: 'prompt',
+                    title: 'Save Preset',
+                    message: 'Preset name:',
+                    confirmText: 'Save',
+                    cancelText: 'Cancel',
+                    onConfirm: function(value) {
+                        if (!value || !value.trim()) return;
+                        const preset = captureState();
+                        preset.name = value.trim();
+                        const all = loadPresets();
+                        all.push(preset);
+                        savePresets(all);
+                        renderPresets();
+                    }
+                });
+            });
+        }
+
+        renderPresets();
+    })();
+
+    }); // end DOMContentLoaded
+
 </script>
+<button id="db-back-top" class="tangerine-only" title="Back to top / Row 1" aria-label="Back to top">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="18 15 12 9 6 15"/>
+        <line x1="12" y1="9" x2="12" y2="21"/>
+        <line x1="5" y1="4" x2="19" y2="4"/>
+    </svg>
+</button>
+</div><!-- /.db-page-wrapper -->
 {% endblock %}

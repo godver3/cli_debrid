@@ -2,14 +2,29 @@
 {% block title %}Queues{% endblock %}
 
 {% block head %}
+<!-- v9 -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <link rel="stylesheet" href="{{ url_for('static', filename='css/queues.css') }}">
 <!-- Add Font Awesome if not already included in base.html -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+<script>
+(function(){
+    var theme = localStorage.getItem('selectedTheme') || 'tangerine';
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = '/static/css/tangerine/tangerine_queues.css?v=10';
+    link.id = 'theme-tangerine-queues';
+    link.setAttribute('data-theme-css', 'tangerine');
+    if (theme === 'tangerine') {
+        document.head.appendChild(link);
+    }
+})();
+</script>
 {% endblock %}
 
 {% block content %}
 <div class="container">
-    <h2>Queues</h2>
+    <h1>Queues</h1>
     <!-- Processing statistics -->
     <div id="processing-stats" class="processing-stats" style="display:none; margin-bottom: 15px;">
         <strong>Items per Hour:</strong> <span id="stats-items-per-hour">N/A</span>
@@ -107,6 +122,7 @@
     }
 
     function toggleQueue(element) {
+        if (event && event.target && event.target.closest('.filename-toggle')) return;
         const queueItems = element.nextElementSibling;
         const isExpanded = queueItems.style.display !== 'none';
         queueItems.style.display = isExpanded ? 'none' : 'block';
@@ -129,13 +145,16 @@
 
     window.toggleQueue = toggleQueue;
 
-    function toggleFilenames(event) {
+    function toggleFilenames(event, toggleEl) {
+        console.log('[TOGGLE] toggleFilenames called', {event, toggleEl, filenameToggleState});
         event.stopPropagation();
         filenameToggleState = !filenameToggleState;
         localStorage.setItem('filenameToggleState', filenameToggleState);
-        const toggle = event.currentTarget;
-        toggle.classList.toggle('active', filenameToggleState);
+        const toggle = toggleEl || event.target.closest('.filename-toggle');
+        console.log('[TOGGLE] toggle element:', toggle, 'new state:', filenameToggleState);
+        if (toggle) toggle.classList.toggle('active', filenameToggleState);
         updateFilenameVisibility();
+        console.log('[TOGGLE] done, filename-content elements:', document.querySelectorAll('.filename-content').length);
     }
 
     window.toggleFilenames = toggleFilenames;
@@ -320,7 +339,7 @@
         }
 
         if (queueName === 'Sleeping') {
-            itemContent += ` - Wake Count: ${item.wake_count !== undefined ? item.wake_count : 'N/A'}`;
+            itemContent += `<span class="item-separator"> - </span><span class="item-wake-count"><span class="item-label">Wake Count:</span> ${item.wake_count !== undefined ? item.wake_count : 'N/A'}</span>`;
         }
 
         if (queueName === 'Wanted' && item.formatted_scrape_time) {
@@ -448,7 +467,7 @@
         `;
 
         if (item.filled_by_file) {
-            itemContent += `<span class="item-separator"> - </span><span class="item-label">File:</span> <span class="item-checking-file">${item.filled_by_file}</span>`;
+            itemContent += `<span class="filename-content" style="display: ${filenameToggleState ? 'inline' : 'none'}"><span class="item-separator"> - </span><span class="item-label">File:</span> <span class="item-checking-file">${item.filled_by_file}</span></span>`;
         }
 
         // Add Content Source inline for Checking queue items
@@ -718,7 +737,7 @@
                     queueDiv.innerHTML = `
                         <div class="queue-title" onclick="${isCountOnlyQueue ? 'return false;' : 'toggleQueue(this);'}">
                             <span>${displayQueueName.replace(/_/g, ' ')}</span>
-                            ${backendQueueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event)"><i class="fas fa-file"></i></span>` : ''}
+                            ${backendQueueName === 'Checking' ? `<span class="filename-toggle ${filenameToggleState ? 'active' : ''}" onclick="toggleFilenames(event, this)"><i class="fas fa-file"></i></span>` : ''}
                             <span class="queue-count">${totalItems} items</span>
                         </div>
                         <div class="queue-items" style="display: ${isExpanded ? 'block' : 'none'};">

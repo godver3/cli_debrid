@@ -600,7 +600,13 @@ def index():
         except (ValueError, TypeError):
             page = 1
 
-        per_page = PER_PAGE
+        _VALID_PER_PAGE = {100, 250, 500, 1000, 2000, 5000}
+        try:
+            per_page = int(request.args.get('per_page', PER_PAGE))
+            if per_page not in _VALID_PER_PAGE:
+                per_page = PER_PAGE
+        except (ValueError, TypeError):
+            per_page = PER_PAGE
         total_pages = max(1, (total_count + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))  # Clamp to valid range
 

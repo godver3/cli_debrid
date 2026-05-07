@@ -2166,6 +2166,8 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
                                     if _pr.status_code != 200:
                                         continue
                                     for _pp in _pr.json().get('MediaContainer', {}).get('Metadata', []):
+                                        if not _pp.get('selected'):
+                                            continue
                                         _ppk = _pp.get('ratingKey', '')
                                         if _ppk.startswith('upload://posters/'):
                                             _ph = _ppk[len('upload://posters/'):]
@@ -2180,6 +2182,53 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
                                     f"Plex poster cleanup: collection pre-pass added {_coll_added} hash(es) "
                                     f"from {len(_coll_rks)} collection(s) to keep set"
                                 )
+
+                            # Trakt/Adaptive collection upload hashes stored in plex_collection_state.json
+                            try:
+                                import json as _pcjson
+                                _pc_state_path = os.path.join(
+                                    os.environ.get('USER_CONFIG', '/user/config'), 'plex_collection_state.json'
+                                )
+                                if os.path.exists(_pc_state_path):
+                                    with open(_pc_state_path, 'r') as _pcf:
+                                        _pc_state = _pcjson.load(_pcf)
+                                    _pc_added = 0
+                                    for _pc_entry in _pc_state.values():
+                                        if isinstance(_pc_entry, dict):
+                                            for _pch in _pc_entry.get('plex_upload_hashes', {}).values():
+                                                if _pch:
+                                                    _keep_hashes.add(_pch)
+                                                    _pc_added += 1
+                                    if _pc_added:
+                                        logger.info(
+                                            f"Plex poster cleanup: collection state pre-pass added {_pc_added} hash(es) to keep set"
+                                        )
+                            except Exception as _pc_e:
+                                logger.debug(f"Collection hash pre-pass: collection state read error: {_pc_e}")
+
+                            # Box set collection poster hashes stored directly in state file
+                            try:
+                                import json as _bsjson
+                                _bs_state_path = os.path.join(
+                                    os.environ.get('USER_CONFIG', '/user/config'), 'plex_boxsets_state.json'
+                                )
+                                if os.path.exists(_bs_state_path):
+                                    with open(_bs_state_path, 'r') as _bsf:
+                                        _bs_state = _bsjson.load(_bsf)
+                                    _bs_hashes = _bs_state.get('collection_poster_hashes', {})
+                                    _bs_added = 0
+                                    for _bsh in _bs_hashes.values():
+                                        if _bsh:
+                                            _keep_hashes.add(_bsh)
+                                            _bs_added += 1
+                                    if _bs_added:
+                                        logger.info(
+                                            f"Plex poster cleanup: boxsets pre-pass added {_bs_added} hash(es) to keep set"
+                                        )
+                            except Exception as _bs_e:
+                                logger.debug(f"Collection hash pre-pass: boxsets state read error: {_bs_e}")
+
+
                         except Exception as _cp_e:
                             logger.warning(f"Plex poster cleanup: collection hash pre-pass failed: {_cp_e}")
 
@@ -2718,6 +2767,11 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
                         finally:
                             _cconn.close()
 
+                        # Build set of all selected upload hashes across ALL managed ratingKeys first,
+                        # so we never delete a hash that is the active poster for a sibling collection
+                        # (e.g. movie + show collections sharing the same Plex bundle due to same name).
+                        _selected_hashes = set()
+                        _rk_posters = {}
                         for _rk in _rks:
                             try:
                                 r = _requests.get(
@@ -2726,7 +2780,18 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
                                 )
                                 if r.status_code != 200:
                                     continue
-                                posters = r.json().get('MediaContainer', {}).get('Metadata', [])
+                                _rk_posters[_rk] = r.json().get('MediaContainer', {}).get('Metadata', [])
+                                for p in _rk_posters[_rk]:
+                                    if p.get('selected'):
+                                        pk = p.get('ratingKey', '')
+                                        if pk.startswith('upload://posters/'):
+                                            _selected_hashes.add(pk[len('upload://posters/'):])
+                            except Exception as _ce:
+                                logger.debug(f"Collection poster cleanup error fetching rk={_rk}: {_ce}")
+
+                        import glob as _cglob
+                        for _rk, posters in _rk_posters.items():
+                            try:
                                 for p in posters:
                                     pk = p.get('ratingKey', '')
                                     if p.get('selected') or not pk.startswith('upload://posters/'):
@@ -2734,8 +2799,10 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
                                     _chash = pk[len('upload://posters/'):]
                                     if not _chash:
                                         continue
+                                    # Skip if this hash is the selected poster for any other ratingKey
+                                    if _chash in _selected_hashes:
+                                        continue
                                     # Delete via filesystem — same approach as media overlay cleanup
-                                    import glob as _cglob
                                     _cpat = os.path.join(
                                         _coll_plex_data, 'Metadata', '*', '*', '*.bundle',
                                         'Uploads', 'posters', _chash

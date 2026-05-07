@@ -1097,8 +1097,13 @@ def render_collection_poster(design_id: int, collection_name: str,
 
 def upload_collection_poster(plex_url: str, plex_token: str,
                              collection_ratingkey: str,
-                             poster_bytes: bytes) -> bool:
-    """Upload poster JPEG to a Plex collection and set it as the active poster."""
+                             poster_bytes: bytes) -> str | None:
+    """Upload poster JPEG to a Plex collection and set it as the active poster.
+
+    Returns the bare hash (the part after 'upload://posters/') of the newly
+    selected poster on success, or None on failure.  Callers that only need a
+    bool can treat any truthy return value as success.
+    """
     try:
         import requests as _req
         posters_url = f"{plex_url}/library/metadata/{collection_ratingkey}/posters?X-Plex-Token={plex_token}"
@@ -1122,21 +1127,32 @@ def upload_collection_poster(plex_url: str, plex_token: str,
         )
         if resp.status_code not in (200, 201):
             logger.error(f"[CollectionPoster] Upload returned {resp.status_code} for {collection_ratingkey}")
-            return False
+            return None
 
-        # Step 3: Find the newly added upload:// key (not in the pre-upload snapshot)
+        # Step 3: Find the newly added upload:// key (not in the pre-upload snapshot).
+        # If Plex deduplicates (same image already uploaded), no new key appears —
+        # in that case use the selected poster key if it's an upload://, since Plex
+        # will have auto-selected the matching existing poster.
         after = _req.get(posters_url, headers={'Accept': 'application/json'}, timeout=15)
         new_key = None
+        selected_key = None
         if after.status_code == 200:
             for p in after.json().get('MediaContainer', {}).get('Metadata', []):
                 rk = p.get('ratingKey', '')
                 if rk.startswith('upload://') and rk not in existing_keys:
                     new_key = rk
                     break
+                if p.get('selected') and rk.startswith('upload://'):
+                    selected_key = rk
 
         if not new_key:
-            logger.warning(f"[CollectionPoster] Could not identify new upload key for {collection_ratingkey}")
-            return True  # upload succeeded even if select fails
+            # Plex deduplicated — reuse the existing upload key that is now selected
+            if selected_key:
+                logger.info(f"[CollectionPoster] Plex deduplicated upload for {collection_ratingkey}, reusing selected key")
+                new_key = selected_key
+            else:
+                logger.warning(f"[CollectionPoster] Could not identify new upload key for {collection_ratingkey}")
+                return None
 
         # Step 4: SELECT the new poster as active
         sel_resp = _req.put(
@@ -1146,10 +1162,14 @@ def upload_collection_poster(plex_url: str, plex_token: str,
             timeout=15,
         )
         logger.info(f"[CollectionPoster] Uploaded and selected poster for {collection_ratingkey} (select status={sel_resp.status_code})")
-        return True
+
+        # Return bare hash (strip 'upload://posters/' prefix) so callers can
+        # store it for cleanup-safe preservation.
+        prefix = 'upload://posters/'
+        return new_key[len(prefix):] if new_key.startswith(prefix) else new_key
     except Exception as e:
         logger.error(f"[CollectionPoster] Upload failed: {e}", exc_info=True)
-        return False
+        return None
 
 
 _preview_generation_lock = threading.Lock()

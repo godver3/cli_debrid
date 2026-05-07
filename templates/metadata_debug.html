@@ -4,6 +4,157 @@
 
 {% block content %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/metadata_debug.css') }}">
+
+<style>
+/* ── Tangerine metadata debug — show/hide ── */
+body.tangerine-theme .metadata-debug-container,
+body.tangerine-theme #result { display: none !important; }
+body:not(.tangerine-theme) #tngMeta { display: none !important; }
+
+/* ── Tangerine metadata debug styles ── */
+body.tangerine-theme {
+  --tmd-bg:#111;--tmd-surface:#1a1a1a;--tmd-surface2:#222;--tmd-surface3:#2a2a2a;
+  --tmd-border:#2d2d2d;--tmd-border2:#3d3d3d;
+  --tmd-accent:#e8601c;--tmd-accent-h:#f07030;
+  --tmd-text:#e0e0e0;--tmd-text2:#aaa;--tmd-text3:#555;
+  --tmd-green:#22c55e;--tmd-red:#ef4444;--tmd-blue:#3b82f6;--tmd-yellow:#f59e0b;
+}
+#tngMeta { max-width:1200px; margin:0 auto; padding:1.5rem 1.25rem; font-family:'Inter',sans-serif; font-size:13px; color:var(--tmd-text); }
+.tmd-title { font-size:20px; font-weight:700; color:var(--tmd-text); border-left:3px solid var(--tmd-accent); padding-left:10px; margin-bottom:5px; }
+.tmd-sub { font-size:12px; color:var(--tmd-text3); padding-left:13px; margin-bottom:1.25rem; }
+.tmd-search { display:flex; gap:8px; align-items:stretch; margin-bottom:.875rem; flex-wrap:wrap; }
+.tmd-input { flex:1; min-width:200px; background:var(--tmd-surface2); border:1px solid var(--tmd-border2); color:var(--tmd-text); border-radius:6px; padding:0 13px; font-size:13px; font-family:inherit; transition:border-color .15s; height:36px; box-sizing:border-box; }
+.tmd-input:focus { outline:none; border-color:var(--tmd-accent); }
+.tmd-input::placeholder { color:var(--tmd-text3); }
+.tmd-btns { display:flex; gap:7px; flex-wrap:wrap; align-items:stretch; }
+.tmd-btn { display:inline-flex; align-items:center; gap:5px; padding:0 15px; border-radius:6px; font-size:12px; font-weight:500; cursor:pointer; font-family:inherit; transition:all .15s; white-space:nowrap; background:transparent; height:36px; box-sizing:border-box; }
+.tmd-btn svg { width:15px; height:15px; flex-shrink:0; }
+.tmd-btn-fetch { background:var(--tmd-accent); border:1px solid var(--tmd-accent); color:#fff; }
+.tmd-btn-fetch:hover { background:var(--tmd-accent-h); border-color:var(--tmd-accent-h); }
+.tmd-btn-recreate { border:1px solid #c2500f; color:#f97316; }
+.tmd-btn-recreate:hover { background:#c2500f22; border-color:#f97316; }
+.tmd-btn-delete { border:1px solid #7f1d1d; color:var(--tmd-red); }
+.tmd-btn-delete:hover { background:#7f1d1d22; border-color:var(--tmd-red); }
+.tmd-status { font-size:12px; color:var(--tmd-green); margin-bottom:1.25rem; display:flex; align-items:center; gap:6px; min-height:20px; }
+.tmd-status-dot { width:6px; height:6px; border-radius:50%; background:currentColor; flex-shrink:0; }
+.tmd-section { margin-bottom:1.5rem; }
+.tmd-section-title { font-size:14px; font-weight:600; color:var(--tmd-text); border-left:3px solid var(--tmd-accent); padding-left:10px; margin-bottom:12px; }
+.tmd-card { background:var(--tmd-surface); border:1px solid var(--tmd-border); border-radius:9px; overflow:hidden; }
+.tmd-toolbar { display:flex; align-items:center; justify-content:space-between; padding:8px 14px; border-bottom:1px solid var(--tmd-border); background:var(--tmd-surface2); }
+.tmd-card-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.7px; color:var(--tmd-text3); font-family:monospace; }
+.tmd-card-btns { display:flex; gap:5px; }
+.tmd-cbtn { display:inline-flex; align-items:center; gap:4px; padding:4px 9px; border-radius:4px; border:1px solid var(--tmd-border2); background:transparent; color:var(--tmd-text2); font-size:11px; cursor:pointer; font-family:inherit; transition:all .15s; }
+.tmd-cbtn:hover { background:var(--tmd-surface3); color:var(--tmd-text); }
+.tmd-cbtn svg { width:11px; height:11px; }
+.tmd-tree { padding:14px 16px; font-family:'JetBrains Mono',monospace; font-size:12px; line-height:2; overflow-x:auto; }
+.j2-key { color:#60a5fa; }
+.j2-colon { color:var(--tmd-text3); margin-right:5px; }
+.j2-str { color:#4ade80; }
+.j2-num { color:#fb923c; }
+.j2-bool { color:#a78bfa; }
+.j2-null { color:var(--tmd-text3); }
+.j2-bracket { color:var(--tmd-text3); }
+.j2-row { display:flex; align-items:flex-start; flex-wrap:wrap; }
+.j2-nested { margin-left:20px; border-left:1px solid var(--tmd-border2); padding-left:10px; }
+.j2-body { display:block; }
+.j2-toggle {
+  cursor:pointer; user-select:none; display:inline-flex; align-items:center; justify-content:center;
+  width:14px; height:14px; border-radius:3px; flex-shrink:0;
+  border:1px solid var(--tmd-border2); background:var(--tmd-surface2);
+  color:var(--tmd-text2); font-size:11px; font-family:monospace; font-weight:600;
+  transition:all .15s; vertical-align:middle; margin-right:5px; line-height:1;
+}
+.j2-toggle:hover { border-color:var(--tmd-accent); color:var(--tmd-accent); }
+.j2-hint { color:var(--tmd-text3); font-size:11px; }
+.tmd-toast { position:fixed; bottom:1.25rem; right:1.25rem; background:var(--tmd-surface); border:1px solid var(--tmd-border2); border-radius:7px; padding:9px 14px; font-size:12px; color:var(--tmd-text); z-index:9999; opacity:0; transform:translateY(6px); transition:all .2s; pointer-events:none; display:flex; align-items:center; gap:7px; }
+.tmd-toast.show { opacity:1; transform:translateY(0); }
+.tmd-toast-dot { width:6px; height:6px; border-radius:50%; background:var(--tmd-green); flex-shrink:0; }
+</style>
+
+<!-- Tangerine metadata debug -->
+<div id="tngMeta">
+  <div class="tmd-title">Metadata Debug</div>
+  <div class="tmd-sub">Lookup or delete items by IMDB ID from the metadata database.</div>
+
+  <div class="tmd-search">
+    <input class="tmd-input" id="tmdInput" type="text" placeholder="Enter IMDB ID (e.g. tt1234567)">
+    <div class="tmd-btns">
+      <button class="tmd-btn tmd-btn-fetch" id="tmdFetchBtn">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35"/></svg>
+        Fetch
+      </button>
+      <button class="tmd-btn tmd-btn-recreate" id="tmdRecreateBtn">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        Recreate
+      </button>
+      <button class="tmd-btn tmd-btn-delete" id="tmdDeleteBtn">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+        Delete
+      </button>
+    </div>
+  </div>
+
+  <div class="tmd-status" id="tmdStatus" style="display:none">
+    <span class="tmd-status-dot" id="tmdStatusDot"></span>
+    <span id="tmdStatusText"></span>
+  </div>
+
+  <div id="tmdResults" style="display:none">
+    <div class="tmd-section">
+      <div class="tmd-section-title">Item</div>
+      <div class="tmd-card">
+        <div class="tmd-toolbar">
+          <span class="tmd-card-label" id="tmdItemLabel">Object</span>
+          <div class="tmd-card-btns">
+            <button class="tmd-cbtn" id="tmdCopyItem">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1"/><path d="M2 11V3a1 1 0 0 1 1-1h8"/></svg>
+              Copy
+            </button>
+          </div>
+        </div>
+        <div class="tmd-tree" id="tmdItemTree"></div>
+      </div>
+    </div>
+
+    <div class="tmd-section">
+      <div class="tmd-section-title">Metadata</div>
+      <div class="tmd-card">
+        <div class="tmd-toolbar">
+          <span class="tmd-card-label" id="tmdMetaLabel">Object</span>
+          <div class="tmd-card-btns">
+            <button class="tmd-cbtn" onclick="tmdToggleAll('tmdMetaTree','expand')">Expand all</button>
+            <button class="tmd-cbtn" onclick="tmdToggleAll('tmdMetaTree','collapse')">Collapse all</button>
+            <button class="tmd-cbtn" id="tmdCopyMeta">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1"/><path d="M2 11V3a1 1 0 0 1 1-1h8"/></svg>
+              Copy
+            </button>
+          </div>
+        </div>
+        <div class="tmd-tree" id="tmdMetaTree"></div>
+      </div>
+    </div>
+
+    <div class="tmd-section">
+      <div class="tmd-section-title">Seasons</div>
+      <div class="tmd-card">
+        <div class="tmd-toolbar">
+          <span class="tmd-card-label" id="tmdSeasonsLabel">Array</span>
+          <div class="tmd-card-btns">
+            <button class="tmd-cbtn" onclick="tmdToggleAll('tmdSeasonsTree','expand')">Expand all</button>
+            <button class="tmd-cbtn" onclick="tmdToggleAll('tmdSeasonsTree','collapse')">Collapse all</button>
+            <button class="tmd-cbtn" id="tmdCopySeasons">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1"/><path d="M2 11V3a1 1 0 0 1 1-1h8"/></svg>
+              Copy
+            </button>
+          </div>
+        </div>
+        <div class="tmd-tree" id="tmdSeasonsTree"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="tmd-toast" id="tmdToast"><span class="tmd-toast-dot"></span>Copied to clipboard</div>
+
 <div class="metadata-debug-container">
     <div class="page-header">
         <h2>Metadata Debug</h2>
@@ -52,7 +203,26 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function renderJSON(element, data) {
-        try { element.textContent = JSON.stringify(data, null, 2); }
+        try {
+            // Deep-parse any string values that are themselves JSON
+            function deepParse(obj) {
+                if (typeof obj === 'string') {
+                    const t = obj.trim();
+                    if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+                        try { return deepParse(JSON.parse(t)); } catch {}
+                    }
+                    return obj;
+                }
+                if (Array.isArray(obj)) return obj.map(deepParse);
+                if (obj && typeof obj === 'object') {
+                    const out = {};
+                    for (const [k, v] of Object.entries(obj)) out[k] = deepParse(v);
+                    return out;
+                }
+                return obj;
+            }
+            element.textContent = JSON.stringify(deepParse(data), null, 2);
+        }
         catch { element.textContent = 'Unable to render JSON'; }
     }
 
@@ -143,6 +313,209 @@ document.addEventListener('DOMContentLoaded', function() {
     deleteOnlyBtn.addEventListener('click', deleteOnlyByImdb);
     imdbInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); fetchMetadata(); }});
 });
+</script>
+
+<script>
+(function() {
+// ── JSON tree renderer (same logic as design file) ────────
+let _tmdUid = 0;
+const _tmdData = { item: null, meta: null, seasons: null };
+
+function tmdEsc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function tmdValClass(v) {
+  if (v === null) return 'j2-null';
+  if (typeof v === 'boolean') return 'j2-bool';
+  if (typeof v === 'number') return 'j2-num';
+  return 'j2-str';
+}
+function tmdValText(v) {
+  if (v === null) return 'null';
+  if (typeof v === 'string') return '"' + tmdEsc(v) + '"';
+  return tmdEsc(String(v));
+}
+function tmdDeepParse(obj) {
+  if (typeof obj === 'string') {
+    const t = obj.trim();
+    if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+      try { return tmdDeepParse(JSON.parse(t)); } catch {}
+    }
+    return obj;
+  }
+  if (Array.isArray(obj)) return obj.map(tmdDeepParse);
+  if (obj && typeof obj === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(obj)) out[k] = tmdDeepParse(v);
+    return out;
+  }
+  return obj;
+}
+function tmdIsComplex(v) {
+  return (Array.isArray(v) && v.length > 0) || (v !== null && typeof v === 'object' && !Array.isArray(v) && Object.keys(v||{}).length > 0);
+}
+function tmdSortKeys(obj) {
+  // Scalars first, then complex — so "season", "title" etc appear before "episodes"
+  const keys = Object.keys(obj);
+  return keys.sort((a,b) => {
+    const ac = tmdIsComplex(obj[a]), bc = tmdIsComplex(obj[b]);
+    if (ac === bc) return 0;
+    return ac ? 1 : -1;
+  });
+}
+// Unified recursive builder — rootArr=true means skip toggle on direct array items (top-level seasons)
+function tmdBuildNode(val, rootArr) {
+  if (Array.isArray(val)) {
+    if (!val.length) return '<span class="j2-bracket">[ ]</span>';
+    const rows = val.map((item, i) => {
+      const comma = i < val.length-1 ? '<span class="j2-bracket">,</span>' : '';
+      if (tmdIsComplex(item) && !rootArr) {
+        const cid = 'u' + (++_tmdUid);
+        return '<div class="j2-row">'
+          + '<span class="j2-toggle" id="t'+cid+'" onclick="tmdTog(\''+cid+'\')">&#x2212;</span>'
+          + '<div class="j2-body" id="b'+cid+'">' + tmdBuildNode(item) + '</div>' + comma + '</div>';
+      }
+      return '<div class="j2-row">' + tmdBuildNode(item) + comma + '</div>';
+    }).join('');
+    return '<span class="j2-bracket">[</span>'
+      + '<div class="j2-nested">' + rows + '</div>'
+      + '<span class="j2-bracket">]</span>';
+  }
+  if (val !== null && typeof val === 'object') {
+    const keys = tmdSortKeys(val);
+    if (!keys.length) return '<span class="j2-bracket">{ }</span>';
+    const rows = keys.map((k, i) => {
+      const comma = i < keys.length-1 ? '<span class="j2-bracket">,</span>' : '';
+      const v = val[k];
+      if (tmdIsComplex(v)) {
+        const cid = 'u' + (++_tmdUid);
+        return '<div class="j2-row">'
+          + '<span class="j2-toggle" id="t'+cid+'" onclick="tmdTog(\''+cid+'\')">&#x2212;</span>'
+          + '<span class="j2-key">"'+tmdEsc(k)+'"</span><span class="j2-colon">:</span>'
+          + '<div class="j2-body" id="b'+cid+'">' + tmdBuildNode(v) + '</div>' + comma + '</div>';
+      }
+      return '<div class="j2-row"><span class="j2-key">"'+tmdEsc(k)+'"</span><span class="j2-colon">:</span>' + tmdBuildNode(v) + comma + '</div>';
+    }).join('');
+    return '<span class="j2-bracket">{</span><div class="j2-nested">' + rows + '</div><span class="j2-bracket">}</span>';
+  }
+  return '<span class="' + tmdValClass(val) + '">' + tmdValText(val) + '</span>';
+}
+function tmdRenderRoot(data, elId, labelId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const parsed = tmdDeepParse(data);
+  const isArr = Array.isArray(parsed);
+  const label = document.getElementById(labelId);
+  if (label) label.textContent = isArr ? 'Array · ' + parsed.length + ' item' + (parsed.length!==1?'s':'') : 'Object';
+  el.innerHTML = tmdBuildNode(parsed, Array.isArray(parsed));
+}
+
+window.tmdTog = function(id) {
+  const t = document.getElementById('t'+id), b = document.getElementById('b'+id);
+  if (!t||!b) return;
+  const collapsed = b.style.display === 'none';
+  b.style.display = collapsed ? '' : 'none';
+  t.innerHTML = collapsed ? '&#x2212;' : '+';
+  const hid = 'h'+id;
+  if (!collapsed) {
+    if (!document.getElementById(hid)) { const h=document.createElement('span'); h.className='j2-hint'; h.id=hid; h.textContent=' … '; t.after(h); }
+  } else { const h=document.getElementById(hid); if(h) h.remove(); }
+};
+
+window.tmdToggleAll = function(treeId, mode) {
+  document.querySelectorAll('#'+treeId+' .j2-toggle').forEach(el => {
+    const id = el.id.slice(1);
+    const b=document.getElementById('b'+id), h=document.getElementById('h'+id);
+    if (!b) return;
+    if (mode==='collapse' && b.style.display !== 'none') {
+      b.style.display='none'; el.innerHTML='+';
+      if(!h){const hn=document.createElement('span');hn.className='j2-hint';hn.id='h'+id;hn.textContent=' … ';el.after(hn);}
+    } else if (mode==='expand' && b.style.display === 'none') {
+      b.style.display=''; el.innerHTML='&#x2212;';
+      if(h) h.remove();
+    }
+  });
+};
+
+function tmdSetStatus(msg, color) {
+  const line=document.getElementById('tmdStatus'), dot=document.getElementById('tmdStatusDot'), txt=document.getElementById('tmdStatusText');
+  if(!line) return;
+  const colors={green:'#22c55e',red:'#ef4444',yellow:'#f59e0b',blue:'#3b82f6'};
+  line.style.color = colors[color]||colors.green;
+  dot.style.background = colors[color]||colors.green;
+  txt.textContent = msg;
+  line.style.display = msg ? 'flex' : 'none';
+}
+
+function tmdCopy(data) {
+  navigator.clipboard.writeText(JSON.stringify(tmdDeepParse(data), null, 2)).then(() => {
+    const t=document.getElementById('tmdToast'); t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2000);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const input = document.getElementById('tmdInput');
+  if (!input) return;
+
+  document.getElementById('tmdFetchBtn').addEventListener('click', tmdFetch);
+  document.getElementById('tmdRecreateBtn').addEventListener('click', tmdRecreate);
+  document.getElementById('tmdDeleteBtn').addEventListener('click', tmdDelete);
+  document.getElementById('tmdCopyItem').addEventListener('click', ()=>{ if(_tmdData.item) tmdCopy(_tmdData.item); });
+  document.getElementById('tmdCopyMeta').addEventListener('click', ()=>{ if(_tmdData.meta) tmdCopy(_tmdData.meta); });
+  document.getElementById('tmdCopySeasons').addEventListener('click', ()=>{ if(_tmdData.seasons) tmdCopy(_tmdData.seasons); });
+  input.addEventListener('keydown', e=>{ if(e.key==='Enter'){e.preventDefault();tmdFetch();} });
+
+  // Mirror classic input ↔ tangerine input
+  const classicInput = document.getElementById('imdbIdInput');
+  if (classicInput) {
+    input.addEventListener('input', ()=>{ classicInput.value = input.value; });
+    classicInput.addEventListener('input', ()=>{ input.value = classicInput.value; });
+  }
+
+  // Auto-fetch if imdb_id passed as URL param
+  const urlImdbId = new URLSearchParams(window.location.search).get('imdb_id');
+  if (urlImdbId) {
+    input.value = urlImdbId;
+    if (classicInput) classicInput.value = urlImdbId;
+    tmdFetch();
+  }
+});
+
+function tmdFetch() {
+  const id = (document.getElementById('tmdInput').value||'').trim();
+  if (!id) { tmdSetStatus('Please enter an IMDB ID.', 'red'); return; }
+  tmdSetStatus('Fetching…', 'blue');
+  document.getElementById('tmdResults').style.display = 'none';
+  fetch('/metadata/api/item/'+encodeURIComponent(id))
+    .then(r=>r.json())
+    .then(data=>{
+      if (data && !data.error) {
+        _tmdData.item=data.item; _tmdData.meta=data.metadata; _tmdData.seasons=data.seasons;
+        _tmdUid = 0;
+        tmdRenderRoot(data.item,     'tmdItemTree',    'tmdItemLabel');
+        tmdRenderRoot(data.metadata, 'tmdMetaTree',    'tmdMetaLabel');
+        tmdRenderRoot(data.seasons,  'tmdSeasonsTree', 'tmdSeasonsLabel');
+        document.getElementById('tmdResults').style.display = 'block';
+        tmdSetStatus('Fetched.', 'green');
+      } else {
+        tmdSetStatus(data&&data.error ? data.error : 'Not found.', 'red');
+      }
+    })
+    .catch(()=>tmdSetStatus('Error fetching metadata.','red'));
+}
+
+function tmdRecreate() {
+  // Delegate to classic button which has the showPopup confirm
+  const btn = document.getElementById('deleteBtn');
+  if (btn) { document.getElementById('imdbIdInput').value = document.getElementById('tmdInput').value; btn.click(); }
+}
+
+function tmdDelete() {
+  const btn = document.getElementById('deleteOnlyBtn');
+  if (btn) { document.getElementById('imdbIdInput').value = document.getElementById('tmdInput').value; btn.click(); }
+}
+
+})();
 </script>
 {% endblock %}
 

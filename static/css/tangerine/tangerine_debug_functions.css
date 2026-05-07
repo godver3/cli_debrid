@@ -379,7 +379,9 @@ body[data-theme="tangerine"] .debug_items {
 
 .queue-item {
     margin-bottom: 5px;
-    padding: 0.5rem;
+    display: flex;
+    gap: 8px;
+    padding: 0.2rem;
     border-radius: 6px;
     transition: background 0.2s ease;
 }
@@ -405,7 +407,7 @@ body[data-theme="tangerine"] .debug_items {
     display: flex;
     flex-wrap: wrap;
     gap: 15px;
-    margin-bottom: 15px;
+    /* margin-bottom: 15px; */
     padding: 1rem;
     background-color: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -475,15 +477,11 @@ body[data-theme="tangerine"] .debug_items {
     white-space: nowrap;
 }
 
-/* Token Status */
-.token-status-container {
-    margin-bottom: 1rem;
-}
 
 .token-status {
     background: rgba(255, 255, 255, 0.03);
     border-radius: 10px;
-    padding: 1rem;
+    /* padding: 1rem; */
     margin-bottom: 0.5rem;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-left: 4px solid transparent;

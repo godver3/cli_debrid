@@ -869,14 +869,13 @@ def ai_status():
     agent_name = get_setting('AI Assistant', 'display_name', '') or 'AI Butler'
 
     try:
-        resp = requests.post(
-            f"{http_url}/v1/chat/completions",
-            json={"model": f"openclaw:{agent_id}", "messages": [{"role": "user", "content": "ping"}], "stream": False, "max_tokens": 1},
-            headers={**headers, "Content-Type": "application/json"},
+        resp = requests.get(
+            f"{http_url}/v1/models",
+            headers=headers,
             timeout=5
         )
-        reachable = resp.status_code in (200, 400, 422)
-        message = 'Connected' if resp.status_code == 200 else f'HTTP {resp.status_code}'
+        reachable = resp.status_code in (200, 400, 401, 403, 422)
+        message = 'Connected' if reachable else f'HTTP {resp.status_code}'
     except Exception as e:
         reachable = False
         message = str(e)[:100]

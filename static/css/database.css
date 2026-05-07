@@ -1,4 +1,11 @@
     /* Database page specific styles */
+
+    /* Hide tangerine-only elements in classic theme */
+    .tangerine-only {
+        display: none !important;
+    }
+    /* classic-only elements are visible by default — no rule needed */
+
     #column-selector-wrapper {
         margin-bottom: 20px;
     }
@@ -634,3 +641,18 @@
             border-right: none !important;
         }
     }
+
+.db-per-page-select {
+    background: transparent;
+    border: none;
+    color: inherit;
+    font-size: inherit;
+    font-weight: inherit;
+    font-family: inherit;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    -webkit-appearance: none;
+}
