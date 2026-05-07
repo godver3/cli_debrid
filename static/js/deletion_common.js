@@ -300,7 +300,18 @@ class DeletionCommonClass {
             if (!skipConfirmation) {
                 // For custom endpoints with custom messages, show simple confirm
                 if (endpoint && confirmMessage) {
-                    const confirmed = confirm(confirmMessage);
+                    let resolveConfirm;
+                    const confirmPromise = new Promise(resolve => { resolveConfirm = resolve; });
+                    showPopup({
+                        type: 'confirm',
+                        title: 'Confirm',
+                        message: confirmMessage,
+                        confirmText: 'Confirm',
+                        cancelText: 'Cancel',
+                        onConfirm: function() { resolveConfirm(true); },
+                        onCancel: function() { resolveConfirm(false); }
+                    });
+                    const confirmed = await confirmPromise;
                     if (!confirmed) {
                         return { success: false, cancelled: true };
                     }

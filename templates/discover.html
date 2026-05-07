@@ -87,6 +87,7 @@
     </div>
 
     <!-- Tab Navigation -->
+    <div class="discover-tabs-scroll-wrap">
     <div class="discover-tabs">
         <button type="button" class="tab-btn active" data-tab="trending">Trending</button>
         <button type="button" class="tab-btn" data-tab="recommendations" id="recommendations-tab-btn">Recommendations</button>
@@ -136,7 +137,7 @@
             </div>
         </div>
     </div>
-
+    </div><!-- end discover-tabs-scroll-wrap -->
     <!-- Filter Drawer -->
     <div id="filter-drawer" class="filter-drawer">
         <div class="filter-drawer-header">
@@ -193,13 +194,13 @@
                             <div class="sort-controls">
                                 <div class="sort-dropdown-wrapper">
                                     <select id="sort-by" class="sort-select">
-                                        <option value="popularity" selected>Popularity</option>
+                                        <option value="none" selected>None (default order)</option>
+                                        <option value="popularity">Popularity</option>
                                         <option value="vote_average">Rating</option>
                                         <option value="vote_count">Vote Count</option>
                                         <option value="primary_release_date">Release Date</option>
                                         <option value="title">Title</option>
                                         <option value="runtime">Runtime</option>
-                                        <option value="none">None (default order)</option>
                                     </select>
                                 </div>
                                 <button type="button" id="sort-order-toggle" class="sort-order-btn" data-order="desc" title="Toggle sort order">
@@ -906,13 +907,14 @@
     <!-- Scrape Version Selection Modal -->
     <div id="scrapeVersionModal" class="version-modal">
         <div class="version-modal-content">
-            <h3>Select Scrape Version</h3>
-            <div id="scrapeVersionRadios">
-                <!-- Version radio buttons will be dynamically inserted here -->
+            <div class="dialog-body">
+                <div id="scrapeVersionRadios">
+                    <!-- Dynamically populated by JS -->
+                </div>
             </div>
-            <div class="version-modal-buttons">
-                <button id="confirmScrapeVersion">Scrape</button>
-                <button id="cancelScrapeVersion">Cancel</button>
+            <div class="dialog-footer">
+                <button id="confirmScrapeVersion" class="vm-btn vm-btn-accent"><i class="fa-solid fa-magnifying-glass"></i> Scrape</button>
+                <button id="cancelScrapeVersion" class="vm-btn vm-btn-ghost"><i class="fa-solid fa-xmark"></i> Cancel</button>
             </div>
         </div>
     </div>
@@ -920,13 +922,14 @@
     <!-- Request Version Selection Modal -->
     <div id="versionModal" class="version-modal">
         <div class="version-modal-content">
-            <h3>Select Versions</h3>
-            <div id="versionCheckboxes">
-                <!-- Version checkboxes will be dynamically inserted here -->
+            <div class="dialog-body">
+                <div id="versionCheckboxes">
+                    <!-- Dynamically populated by JS -->
+                </div>
             </div>
-            <div class="version-modal-buttons">
-                <button id="confirmVersions">Request</button>
-                <button id="cancelVersions">Cancel</button>
+            <div class="dialog-footer">
+                <button id="confirmVersions" class="vm-btn vm-btn-accent"><i class="fa-solid fa-paper-plane"></i> Request</button>
+                <button id="cancelVersions" class="vm-btn vm-btn-ghost"><i class="fa-solid fa-xmark"></i> Cancel</button>
             </div>
         </div>
     </div>

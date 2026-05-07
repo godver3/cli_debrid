@@ -608,8 +608,18 @@ def root():
     releases_start = time.perf_counter()
     upcoming_releases = get_upcoming_releases()
     formatting_upcoming_releases_start = time.perf_counter()
+    _today_for_soon = datetime.now().date()
     for release in upcoming_releases:
         release['formatted_date'] = format_date(release['release_date'])
+        try:
+            rd = release['release_date']
+            if isinstance(rd, str):
+                rd = datetime.strptime(rd[:10], '%Y-%m-%d').date()
+            elif isinstance(rd, datetime):
+                rd = rd.date()
+            release['is_soon'] = (rd - _today_for_soon).days <= 14
+        except Exception:
+            release['is_soon'] = False
 
     # Get recently added items and upgraded items
     recent_start = time.perf_counter()
@@ -796,8 +806,18 @@ def set_time_preference():
             
             # Get and format upcoming releases
             upcoming_releases = get_upcoming_releases()
+            _today_soon2 = datetime.now().date()
             for release in upcoming_releases:
                 release['formatted_date'] = format_date(release['release_date'])
+                try:
+                    rd2 = release['release_date']
+                    if isinstance(rd2, str):
+                        rd2 = datetime.strptime(rd2[:10], '%Y-%m-%d').date()
+                    elif isinstance(rd2, datetime):
+                        rd2 = rd2.date()
+                    release['is_soon'] = (rd2 - _today_soon2).days <= 14
+                except Exception:
+                    release['is_soon'] = False
             
             # Get recently upgraded items
             upgrade_enabled = get_setting('Scraping', 'enable_upgrading', False)

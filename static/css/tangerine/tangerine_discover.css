@@ -68,6 +68,26 @@ body:has(.discover-container) {
     color: #e0e0e0;
 }
 
+body[data-theme="tangerine"] .discover-title {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #e0e0e0;
+    letter-spacing: -0.01em;
+    margin: 0 0 2px 0;
+    border-left: 3px solid #e8601c;
+    padding-left: 10px;
+}
+
+body[data-theme="tangerine"] .discover-subtitle {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 0.82rem;
+    color: rgba(232, 232, 232, 0.55);
+    opacity: 1;
+    margin: 0;
+    padding-left: 13px;
+}
+
 /* ==========================================================================
    Utility Classes
    ========================================================================== */
@@ -2931,7 +2951,6 @@ body:has(.discover-container) {
     justify-content: space-between;
     padding: 0.75rem 0;
     margin-bottom: 0.75rem;
-    border-bottom: 1px solid rgba(255, 107, 53, 0.2);
 }
 
 .discover-season-header h3 {
@@ -2939,6 +2958,18 @@ body:has(.discover-container) {
     font-size: 1.125rem;
     font-weight: 600;
     color: rgba(255, 255, 255, 0.9);
+}
+
+.magnet-assign-btn,
+.magnet-assign-episode-btn {
+    border-color: rgba(255, 145, 102, 0.35) !important;
+    color: #ff9166 !important;
+}
+
+.magnet-assign-btn:hover,
+.magnet-assign-episode-btn:hover {
+    background: rgba(255, 145, 102, 0.15) !important;
+    border-color: rgba(255, 145, 102, 0.6) !important;
 }
 
 /* ==========================================================================
@@ -3079,9 +3110,61 @@ body:has(.discover-container) {
 
 /* Mobile responsive for MDBList dropdown */
 @media (max-width: 768px) {
+    .discover-tabs-scroll-wrap {
+        position: relative;
+        z-index: 100;
+    }
+
+    .discover-tabs {
+        overflow-x: auto;
+        overflow-y: clip;
+        flex-wrap: nowrap;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+        scrollbar-color: #e17c52 rgba(255,255,255,0.08);
+        padding-bottom: 8px;
+        border-bottom: none;
+    }
+
+    .discover-tabs::-webkit-scrollbar {
+        height: 3px;
+    }
+    .discover-tabs::-webkit-scrollbar-track {
+        background: rgba(255,255,255,0.06);
+        border-radius: 2px;
+    }
+    .discover-tabs::-webkit-scrollbar-thumb {
+        background: #e17c52;
+        border-radius: 2px;
+    }
+
+    .discover-tabs .tab-btn {
+        margin-bottom: 0;
+        border-bottom-width: 2px;
+        padding-bottom: 10px;
+    }
+
+    .mdblist-dropdown-menu,
+    .flixpatrol-dropdown-menu {
+        position: fixed !important;
+        top: 200px;
+        left: 16px;
+        z-index: 9999;
+    }
+
+    .discover-tabs > .tab-btn,
+    .discover-tabs > #flixpatrol-tabs,
     .mdblist-tabs-container {
-        margin-left: 0;
-        margin-top: 0.5rem;
+        flex-shrink: 0;
+    }
+
+    .mdblist-tabs-container {
+        margin-left: auto;
+    }
+
+    .tab-btn {
+        white-space: nowrap;
+        padding: 0.75rem 1rem;
     }
 
     .mdblist-dropdown-menu {
@@ -3273,102 +3356,15 @@ body:has(.discover-container) {
    ========================================================================== */
 
 /* Request Icon - Bottom Right Corner Triangle */
-.result-item .request-icon {
-    position: absolute;
-    bottom: 0px;
-    right: -1px;
-    z-index: 10;
-    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1),
-                background-color var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
-    width: 0;
-    height: 0;
-    border-style: solid;
-    border-width: 0 0 40px 40px;
-    border-color: transparent transparent #ff6b35 transparent;
-    background-color: transparent !important;
-    border-bottom-right-radius: 8px;
-    transform-origin: bottom right;
-    transform: none !important;
-    display: flex;
-    align-items: flex-end;
-    justify-content: flex-end;
-    cursor: pointer;
-    opacity: 0;
-    pointer-events: none;
+/* Action button bar — tangerine theme (inherits discover.css base, accent override) */
+.hover-action-btn.request-icon {
+    color: #ff6b35 !important;
+    border-color: rgba(255, 107, 53, 0.3) !important;
 }
-
-.result-item .request-icon::after {
-    content: "+";
-    position: absolute;
-    bottom: -30px;
-    right: 5px;
-    color: white;
-    font-size: 18px;
-    font-weight: bold;
-    line-height: 1;
-}
-
-/* Tester Icon - Bottom Left Corner Triangle */
-.result-item .tester-icon {
-    position: absolute;
-    bottom: 0px;
-    left: -1px;
-    z-index: 10;
-    transition: transform var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1),
-                background-color var(--transition-speed) cubic-bezier(0.4, 0, 0.2, 1);
-    width: 0;
-    height: 0;
-    border-style: solid;
-    border-width: 40px 0 0 40px;
-    border-color: transparent transparent transparent #ff6b35;
-    background-color: transparent !important;
-    border-bottom-left-radius: 8px;
-    transform-origin: bottom left;
-    transform: none !important;
-    display: flex;
-    align-items: flex-end;
-    justify-content: flex-start;
-    cursor: pointer;
-    opacity: 0;
-    pointer-events: none;
-}
-
-.result-item .tester-icon::after {
-    content: "⚙";
-    position: absolute;
-    bottom: 8px;
-    left: -35px;
-    color: white;
-    font-size: 18px;
-    font-weight: bold;
-    line-height: 1;
-    scale: 0.7;
-}
-
-/* Show icons on hover */
-.result-item:hover .request-icon,
-.result-item:hover .tester-icon {
-    opacity: 1;
-    pointer-events: auto;
-}
-
-/* Hover state for icons */
-.result-item .request-icon:hover {
-    transform: scale(1) !important;
-    border-color: transparent transparent #e15a1f transparent;
-    background-color: transparent !important;
-}
-
-.result-item .tester-icon:hover {
-    transform: none !important;
-    border-color: transparent transparent transparent #e15a1f;
-    background-color: transparent !important;
-}
-
-/* Hide SVG icons (we use ::after pseudo-elements instead) */
-.result-item .request-icon svg,
-.result-item .tester-icon svg {
-    display: none;
+.hover-action-btn.request-icon:hover {
+    background: rgba(255, 107, 53, 0.2) !important;
+    border-color: #ff6b35 !important;
+    box-shadow: 0 0 12px rgba(255, 107, 53, 0.4) !important;
 }
 
 /* ==========================================================================
@@ -3376,204 +3372,208 @@ body:has(.discover-container) {
    ========================================================================== */
 
 /* Version Modal */
+/* ==========================================================================
+   Version Request Modal — Tangerine Theme
+   ========================================================================== */
+
 .version-modal {
     display: none;
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.8);
-    backdrop-filter: blur(8px);
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(6px);
     z-index: 10000;
     align-items: center;
     justify-content: center;
 }
 
 .version-modal-content {
-    background: rgba(26, 26, 26, 0.95);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 2rem;
-    width: 90%;
-    max-width: 400px;
-    border-radius: 20px;
-    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+    background: #1a1a1a;
+    border: 1px solid #3d3d3d;
+    border-top: 3px solid #e8601c;
+    border-radius: 10px;
+    width: 320px;
+    max-width: calc(100vw - 32px);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+    font-family: 'Inter', system-ui, sans-serif;
+}
+
+.version-modal-content h3 { display: none; }
+
+.dialog-body { padding: 20px; }
+
+.dialog-title {
+    font-size: 17px;
+    font-weight: 700;
     color: #e0e0e0;
-    position: relative;
-    overflow: hidden;
+    border-left: 3px solid #e8601c;
+    padding-left: 10px;
+    margin-bottom: 14px;
+    line-height: 1.3;
+    font-family: 'Inter', system-ui, sans-serif;
 }
 
-.version-modal-content h3 {
-    margin: 0 0 1.5rem 0;
-    font-size: 1.5rem;
-    color: #fff;
-}
-
-/* #scrapeVersionRadios,
-#versionCheckboxes {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.5rem;
-    max-height: calc(90vh - 150px);
-    overflow-y: auto;
-    margin-bottom: 1.5rem;
-} */
-
-.version-checkbox {
-    margin-bottom: 1rem;
-    padding: 0.75rem;
-    background: rgba(255, 255, 255, 0.03);
-    border-radius: 8px;
-    /* border: 1px solid rgba(255, 107, 53, 0.2); */
-    transition: all 0.3s ease;
-    cursor: pointer;
-}
-
-.version-checkbox:hover {
-    background: rgba(255, 107, 53, 0.1);
-    border-color: rgba(255, 107, 53, 0.4);
-    transform: translateY(-2px);
-}
-
-.version-checkbox input[type="checkbox"],
-.version-checkbox input[type="radio"] {
-    margin-right: 10px;
-    cursor: pointer;
-}
-
-.version-checkbox label {
-    cursor: pointer;
-    color: #fff;
+.dialog-sub {
+    font-size: 11px;
+    color: #e8601c;
     font-weight: 500;
-}
-
-.version-modal-buttons {
+    margin-bottom: 14px;
+    padding: 5px 9px;
+    background: rgba(232, 96, 28, 0.08);
+    border: 1px solid rgba(232, 96, 28, 0.25);
+    border-radius: 5px;
     display: flex;
-    justify-content: space-between;
-    gap: 15px;
-    margin-top: 20px;
+    align-items: center;
+    gap: 6px;
+    font-family: 'Inter', system-ui, sans-serif;
 }
 
-.version-modal-buttons button {
-    flex: 1;
-    padding: 12px 24px;
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
+.dialog-sub i { font-size: 10px; }
+
+.section-label {
+    font-size: 9px;
     font-weight: 600;
-    font-size: 1em;
-    transition: all 0.3s ease;
-}
-
-.version-modal-buttons button:first-child {
-    background: linear-gradient(135deg, #ff6b35 0%, #f85a23 100%);
-    color: white;
-    box-shadow: 0 4px 15px rgba(255, 107, 53, 0.4);
-}
-
-.version-modal-buttons button:first-child:hover {
-    background: linear-gradient(135deg, #f85a23 0%, #e14e1a 100%);
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(255, 107, 53, 0.6);
-}
-
-.version-modal-buttons button:last-child {
-    background: linear-gradient(135deg, #555 0%, #444 100%);
-    color: white;
-}
-
-.version-modal-buttons button:last-child:hover {
-    background: linear-gradient(135deg, #666 0%, #555 100%);
-    transform: translateY(-2px);
-}
-
-/* Season selection styles - Tangerine Theme */
-.version-section-header {
-    margin: 15px 0 10px;
-    border-bottom: 1px solid rgba(255, 107, 53, 0.3);
-    padding-bottom: 5px;
-}
-
-.version-section-header h4 {
-    margin: 0;
-    font-size: 16px;
-    color: #ff6b35;
-    font-weight: 600;
-}
-
-.selection-type-container {
-    margin: 10px 0;
-}
-
-.selection-type-option {
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: #555;
     margin-bottom: 8px;
-    padding: 4px;
+    font-family: 'Inter', system-ui, sans-serif;
+}
+
+.option-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 11px;
+    border-radius: 6px;
+    border: 1px solid #333;
+    background: #222;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    margin-bottom: 6px;
+    user-select: none;
+}
+
+.option-row:last-child { margin-bottom: 0; }
+.option-row:hover { border-color: #3d3d3d; background: #2a2a2a; }
+
+.option-row.checked,
+.option-row.selected {
+    border-color: rgba(232, 96, 28, 0.25);
+    background: rgba(232, 96, 28, 0.08);
+}
+
+.custom-radio {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 1.5px solid #3d3d3d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.option-row.selected .custom-radio { border-color: #e8601c; background: #e8601c; }
+
+.custom-radio-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #fff;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.option-row.selected .custom-radio-dot { opacity: 1; }
+
+.custom-cb {
+    width: 16px;
+    height: 16px;
     border-radius: 4px;
-    transition: background-color 0.2s;
+    border: 1.5px solid #3d3d3d;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: border-color 0.15s, background 0.15s;
 }
 
-.selection-type-option:hover {
-    background-color: rgba(255, 107, 53, 0.1);
+.option-row.checked .custom-cb { border-color: #e8601c; background: #e8601c; }
+.custom-cb i { font-size: 9px; color: #fff; opacity: 0; transition: opacity 0.15s; }
+.option-row.checked .custom-cb i { opacity: 1; }
+
+.option-label {
+    font-size: 13px;
+    color: #aaa;
+    font-weight: 500;
+    transition: color 0.15s;
+    font-family: 'Inter', system-ui, sans-serif;
 }
 
-.selection-type-option input[type="radio"] {
-    margin-right: 8px;
-    cursor: pointer;
-}
+.option-row.checked .option-label,
+.option-row.selected .option-label { color: #e0e0e0; }
 
-.selection-type-option label {
-    cursor: pointer;
-    color: #e0e0e0;
-}
+.vm-divider { height: 1px; background: #333; margin: 14px 0; }
 
 .season-selection-container {
-    margin: 10px 0;
-    max-height: 200px;
+    margin: 8px 0 0;
+    max-height: 180px;
     overflow-y: auto;
     padding: 8px;
-    background: rgba(255, 107, 53, 0.05);
-    border: 1px solid rgba(255, 107, 53, 0.2);
+    background: rgba(232, 96, 28, 0.04);
+    border: 1px solid rgba(232, 96, 28, 0.15);
     border-radius: 6px;
 }
 
+div#season-selection-container {
+    margin: 8px 0 0;
+    max-height: 180px;
+    overflow-y: auto;
+    padding: 8px;
+    background: rgba(232, 96, 28, 0.04);
+    border: 1px solid rgba(232, 96, 28, 0.15);
+    border-radius: 6px;
+}
+
+* 
+
 .seasons-list {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.dialog-footer {
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
     gap: 8px;
 }
 
-.season-checkbox {
-    margin-bottom: 5px;
-    padding: 4px;
-    border-radius: 4px;
-    transition: background-color 0.2s;
-}
-
-.season-checkbox:hover {
-    background-color: rgba(255, 107, 53, 0.1);
-}
-
-.season-checkbox input[type="checkbox"] {
-    margin-right: 8px;
+.vm-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: 'Inter', system-ui, sans-serif;
     cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    white-space: nowrap;
+    flex: 1;
+    justify-content: center;
+    border: none;
 }
 
-.season-checkbox label {
-    cursor: pointer;
-    color: #e0e0e0;
-}
-
-.version-modal-content hr {
-    border: 0;
-    height: 1px;
-    background: linear-gradient(90deg,
-        transparent 0%,
-        rgba(255, 107, 53, 0.5) 50%,
-        transparent 100%
-    );
-    margin: 15px 0;
-}
+.vm-btn i { font-size: 11px; }
+.vm-btn-accent { background: #e8601c; border: 1px solid #e8601c; color: #fff; }
+.vm-btn-accent:hover { background: #f07030; border-color: #f07030; }
+.vm-btn-ghost { background: #222; border: 1px solid #3d3d3d; color: #aaa; }
+.vm-btn-ghost:hover { background: #2a2a2a; border-color: #555; color: #e0e0e0; }
 
 /* Hide trailer text on mobile, show only play icon */
 @media (max-width: 768px) {
@@ -3589,4 +3589,430 @@ body:has(.discover-container) {
 }
 .cal-episode-highlight {
     animation: cal-ep-pulse 1s ease-in-out infinite;
+}
+
+/* ==========================================================================
+   Discover Details — Tangerine Typography Formula
+   ========================================================================== */
+
+body[data-theme="tangerine"] .season-tab {
+    border-radius: 6px;
+}
+
+body[data-theme="tangerine"] .season-tab-title {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: rgba(232, 232, 232, 0.55);
+}
+
+body[data-theme="tangerine"] .season-tab.active .season-tab-title {
+    color: #e0e0e0;
+}
+
+body[data-theme="tangerine"] .season-tab-stats {
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: #aaa;
+    letter-spacing: 0;
+}
+
+body[data-theme="tangerine"] .season-tab.active .season-tab-stats {
+    color: #e0e0e0;
+}
+
+body[data-theme="tangerine"] .discover-season-header h3 {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #e0e0e0;
+}
+
+body[data-theme="tangerine"] .discover-episode-row,
+body[data-theme="tangerine"] .episode-row {
+    background: #1e1e1e;
+    border: 1px solid #3a3a3a;
+    border-radius: 6px;
+}
+
+body[data-theme="tangerine"] .discover-episode-row:hover,
+body[data-theme="tangerine"] .episode-row:hover {
+    background: #252525;
+    border-color: rgba(255, 107, 53, 0.4);
+}
+
+body[data-theme="tangerine"] .discover-episode-number,
+body[data-theme="tangerine"] .episode-number {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: #e8601c;
+    opacity: 1;
+}
+
+body[data-theme="tangerine"] .discover-episode-title,
+body[data-theme="tangerine"] .episode-title {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #e0e0e0;
+}
+
+body[data-theme="tangerine"] .discover-episode-meta,
+body[data-theme="tangerine"] .episode-meta {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 12px;
+    color: #aaa;
+    opacity: 1;
+    gap: 6px;
+}
+
+body[data-theme="tangerine"] .discover-episode-meta span,
+body[data-theme="tangerine"] .episode-meta span {
+    color: #aaa;
+}
+
+body[data-theme="tangerine"] .episode-version {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    font-variant: normal;
+    background: #252525;
+    border: 1px solid #3a3a3a;
+    color: #aaa;
+    border-radius: 4px;
+    padding: 1px 6px;
+}
+
+body[data-theme="tangerine"] .files-count {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+/* ==========================================================================
+   Discover Details — Movie/Show Header Typography
+   ========================================================================== */
+
+/* Title — matches .show-title on library page */
+body[data-theme="tangerine"] #movie-title,
+body[data-theme="tangerine"] .movie-title {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 1.375rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: #e0e0e0;
+    margin-bottom: 6px;
+    display: block;
+}
+
+/* "NOT IN LIBRARY" badge wrapper — strip badge styling, show as block */
+body[data-theme="tangerine"] .status-badge.missing {
+    display: block;
+    background: none;
+    border: none;
+    padding: 0;
+}
+
+/* The "Not in Library" text + icon inside the badge */
+body[data-theme="tangerine"] .status-badge.missing svg,
+body[data-theme="tangerine"] .status-badge.missing:not(h1) {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #ef4444;
+}
+
+/* Meta row — matches .show-meta on library page */
+body[data-theme="tangerine"] .movie-meta {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 12px;
+    color: #aaa;
+    gap: 8px;
+    margin-top: 8px;
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+}
+
+body[data-theme="tangerine"] .movie-meta .separator {
+    color: #666;
+    opacity: 1;
+    font-size: 11px;
+}
+
+body[data-theme="tangerine"] #show-rating-text {
+    color: #f59e0b;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+body[data-theme="tangerine"] #show-status-badge {
+    font-family: 'Inter', system-ui, sans-serif;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
+
+body[data-theme="tangerine"] #show-status-badge.status-released,
+body[data-theme="tangerine"] #show-status-badge.status-in-production,
+body[data-theme="tangerine"] #show-status-badge.status-post-production {
+    background: rgba(30, 64, 175, 0.15);
+    color: #93c5fd;
+    border: 1px solid rgba(30, 64, 175, 0.35);
+}
+
+body[data-theme="tangerine"] #show-status-badge.status-returning-series,
+body[data-theme="tangerine"] #show-status-badge.status-airing {
+    background: rgba(20, 83, 45, 0.13);
+    color: #4ade80;
+    border: 1px solid rgba(20, 83, 45, 0.33);
+}
+
+body[data-theme="tangerine"] #show-status-badge.status-ended,
+body[data-theme="tangerine"] #show-status-badge.status-canceled,
+body[data-theme="tangerine"] #show-status-badge.status-cancelled {
+    background: rgba(127, 29, 29, 0.13);
+    color: #fca5a5;
+    border: 1px solid rgba(127, 29, 29, 0.33);
+}
+
+body[data-theme="tangerine"] #show-status-badge.status-planned,
+body[data-theme="tangerine"] #show-status-badge.status-rumored {
+    background: rgba(92, 46, 145, 0.13);
+    color: #c4b5fd;
+    border: 1px solid rgba(92, 46, 145, 0.33);
+}
+
+body[data-theme="tangerine"] .movie-tagline {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 12px;
+    font-style: italic;
+    color: #666;
+    margin-top: 6px;
+    margin-bottom: 0;
+}
+
+/* ==========================================================================
+   Discover Page — Tangerine Formula (search, tabs, buttons, categories)
+   ========================================================================== */
+
+body[data-theme="tangerine"] {
+    --td-surf:    #161616;
+    --td-surf2:   #1e1e1e;
+    --td-surf3:   #252525;
+    --td-border:  #2e2e2e;
+    --td-border2: #3a3a3a;
+    --td-accent:  #e8601c;
+    --td-accent-h:#f07030;
+    --td-text:    #e8e8e8;
+    --td-muted:   #888;
+    --td-font:    'Inter', system-ui, sans-serif;
+    --td-mono:    'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+    --td-radius:  6px;
+}
+
+/* ── header margin ───────────────────────────────────────── */
+body[data-theme="tangerine"] .discover-header {
+    margin-bottom: 1rem;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+/* ── action buttons ──────────────────────────────────────── */
+body[data-theme="tangerine"] .action-btn {
+    font-family: var(--td-font);
+    font-size: 0.82rem;
+    font-weight: 500;
+    background: var(--td-surf2);
+    border: 1px solid var(--td-border2);
+    color: var(--td-text);
+    border-radius: var(--td-radius);
+    padding: 0 12px;
+    height: 30px;
+    gap: 5px;
+    transition: background 0.15s, border-color 0.15s;
+    transform: none;
+    box-shadow: none;
+}
+
+body[data-theme="tangerine"] .action-btn:hover {
+    background: #2a2a2a;
+    border-color: #4a4a4a;
+    transform: none;
+    box-shadow: none;
+}
+
+body[data-theme="tangerine"] .action-btn svg {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+}
+
+body[data-theme="tangerine"] .action-btn span,
+body[data-theme="tangerine"] .hidden.sm\:inline {
+    color: inherit;
+}
+
+body[data-theme="tangerine"] .action-btn-primary {
+    background: var(--td-accent);
+    border-color: var(--td-accent);
+    color: #fff;
+}
+body[data-theme="tangerine"] .action-btn-primary:hover {
+    background: var(--td-accent-h);
+    border-color: var(--td-accent-h);
+}
+
+body[data-theme="tangerine"] .action-btn-ghost {
+    background: transparent;
+    border-color: var(--td-border2);
+}
+body[data-theme="tangerine"] .action-btn-ghost:hover {
+    background: rgba(232,96,28,.08);
+    border-color: var(--td-accent);
+}
+
+/* ── search input ────────────────────────────────────────── */
+body[data-theme="tangerine"] .discover-search {
+    margin-bottom: 1rem;
+}
+
+body[data-theme="tangerine"] .search-input-wrapper .form-control,
+body[data-theme="tangerine"] .search-input-wrapper input,
+body[data-theme="tangerine"] #search-input {
+    background: #1a1a1a !important;
+    border: 1px solid var(--td-border2) !important;
+    color: var(--td-text) !important;
+    border-radius: var(--td-radius) !important;
+    font-family: var(--td-font) !important;
+    font-size: 0.85rem !important;
+    height: 36px;
+    padding: 0 36px 0 12px !important;
+    box-shadow: none !important;
+    transition: border-color 0.15s !important;
+}
+
+body[data-theme="tangerine"] #search-input:focus {
+    border-color: var(--td-accent) !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+body[data-theme="tangerine"] #search-input::placeholder {
+    color: var(--td-muted);
+    font-family: var(--td-font);
+}
+
+body[data-theme="tangerine"] .search-clear-btn {
+    color: var(--td-muted);
+}
+body[data-theme="tangerine"] .search-clear-btn:hover {
+    color: var(--td-accent);
+    background: rgba(232,96,28,.1);
+}
+
+/* ── tab navigation ──────────────────────────────────────── */
+body[data-theme="tangerine"] .discover-tabs {
+    border-bottom: 1px solid var(--td-border2);
+    margin-bottom: 1rem;
+    gap: 0;
+    align-items: flex-end;
+}
+
+body[data-theme="tangerine"] .tab-btn {
+    font-family: var(--td-font);
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: var(--td-muted);
+    padding: 0.5rem 1.1rem;
+    border-bottom: 2px solid transparent;
+    border-radius: 0;
+    background: none;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+body[data-theme="tangerine"] .tab-btn:hover {
+    color: var(--td-text);
+    background: none;
+}
+
+body[data-theme="tangerine"] .tab-btn.active {
+    color: var(--td-accent);
+    border-bottom-color: var(--td-accent);
+}
+
+/* ── category section headers ────────────────────────────── */
+body[data-theme="tangerine"] .category-title {
+    font-family: var(--td-font);
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: rgba(232, 232, 232, 0.55);
+}
+
+body[data-theme="tangerine"] .category-header {
+    margin-bottom: 0.75rem;
+}
+
+/* ── results info bar ────────────────────────────────────── */
+body[data-theme="tangerine"] .results-info-bar {
+    font-family: var(--td-font);
+    font-size: 0.78rem;
+    color: var(--td-muted);
+}
+
+body[data-theme="tangerine"] .results-info-bar .results-count {
+    font-family: var(--td-mono);
+    color: var(--td-text);
+}
+
+body[data-theme="tangerine"] .results-info-bar .results-page {
+    font-family: var(--td-mono);
+    color: var(--td-muted);
+}
+
+/* ── content type filter buttons ─────────────────────────── */
+body[data-theme="tangerine"] .type-btn {
+    font-family: var(--td-font);
+    font-size: 0.82rem;
+    font-weight: 500;
+    background: var(--td-surf2);
+    border: 1px solid var(--td-border2);
+    color: var(--td-muted);
+    border-radius: var(--td-radius);
+    padding: 0 12px;
+    height: 28px;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+body[data-theme="tangerine"] .type-btn:hover {
+    border-color: var(--td-accent);
+    color: var(--td-text);
+    background: rgba(232,96,28,.08);
+}
+
+body[data-theme="tangerine"] .type-btn.active {
+    background: var(--td-accent);
+    border-color: var(--td-accent);
+    color: #fff;
+}
+
+body[data-theme="tangerine"] .content-type-label {
+    font-family: var(--td-font);
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--td-muted);
 }

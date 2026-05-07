@@ -2578,89 +2578,89 @@ function showVersionModal(content) {
     selectedContent = content;
     const modal = document.getElementById('versionModal');
     const versionCheckboxes = document.getElementById('versionCheckboxes');
-    
-    // Clear existing checkboxes
+
     versionCheckboxes.innerHTML = '';
-    
-    // If this is a TV show, add options for whole show or seasons
-    if (content.mediaType === 'tv') {
-        // Add a heading for show selection
-        const showSelectionHeader = document.createElement('div');
-        showSelectionHeader.className = 'version-section-header';
-        showSelectionHeader.innerHTML = '<h4>Select Request Type:</h4>';
-        versionCheckboxes.appendChild(showSelectionHeader);
-        
-        // Add radio buttons for selection type
-        const selectionTypeContainer = document.createElement('div');
-        selectionTypeContainer.className = 'selection-type-container';
-        selectionTypeContainer.innerHTML = `
-            <div class="selection-type-option">
-                <input type="radio" id="whole-show" name="selection-type" value="whole-show" checked>
-                <label for="whole-show">Whole Show</label>
-            </div>
-            <div class="selection-type-option">
-                <input type="radio" id="specific-seasons" name="selection-type" value="specific-seasons">
-                <label for="specific-seasons">Specific Seasons</label>
-            </div>
-        `;
-        versionCheckboxes.appendChild(selectionTypeContainer);
-        
-        // Container for season selection (initially hidden)
+
+    // Title
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dialog-title';
+    titleEl.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(titleEl);
+
+    // Subtitle pill
+    const subEl = document.createElement('div');
+    subEl.className = 'dialog-sub';
+    const isTV = content.mediaType === 'tv';
+    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${content.title}${content.year ? ` (${content.year})` : ''}`;
+    versionCheckboxes.appendChild(subEl);
+
+    // TV show: request type radio rows
+    if (isTV) {
+        const typeLabel = document.createElement('div');
+        typeLabel.className = 'section-label';
+        typeLabel.textContent = 'Select Request Type';
+        versionCheckboxes.appendChild(typeLabel);
+
+        const wholeRow = document.createElement('div');
+        wholeRow.className = 'option-row selected';
+        wholeRow.id = 'opt-whole-show';
+        wholeRow.innerHTML = `<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">Whole Show</span>`;
+        versionCheckboxes.appendChild(wholeRow);
+
+        const seasonsRow = document.createElement('div');
+        seasonsRow.className = 'option-row';
+        seasonsRow.id = 'opt-specific-seasons';
+        seasonsRow.innerHTML = `<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">Specific Seasons</span>`;
+        versionCheckboxes.appendChild(seasonsRow);
+
+        // Season container (hidden initially)
         const seasonSelectionContainer = document.createElement('div');
         seasonSelectionContainer.className = 'season-selection-container';
         seasonSelectionContainer.id = 'season-selection-container';
         seasonSelectionContainer.style.display = 'none';
         seasonSelectionContainer.innerHTML = '<p>Loading seasons...</p>';
         versionCheckboxes.appendChild(seasonSelectionContainer);
-        
-        // Add handlers for radio buttons
-        const wholeShowRadio = selectionTypeContainer.querySelector('#whole-show');
-        const specificSeasonsRadio = selectionTypeContainer.querySelector('#specific-seasons');
-        
-        wholeShowRadio.addEventListener('change', function() {
-            if (this.checked) {
-                document.getElementById('season-selection-container').style.display = 'none';
+
+        // Radio row click handlers
+        wholeRow.addEventListener('click', () => {
+            wholeRow.classList.add('selected');
+            seasonsRow.classList.remove('selected');
+            seasonSelectionContainer.style.display = 'none';
+        });
+
+        seasonsRow.addEventListener('click', () => {
+            seasonsRow.classList.add('selected');
+            wholeRow.classList.remove('selected');
+            seasonSelectionContainer.style.display = 'block';
+            if (seasonSelectionContainer.innerHTML === '<p>Loading seasons...</p>') {
+                fetchShowSeasons(content.id);
             }
         });
-        
-        specificSeasonsRadio.addEventListener('change', function() {
-            if (this.checked) {
-                document.getElementById('season-selection-container').style.display = 'block';
-                // Fetch seasons if not already loaded
-                if (document.getElementById('season-selection-container').innerHTML === '<p>Loading seasons...</p>') {
-                    fetchShowSeasons(content.id);
-                }
-            }
-        });
-        
-        // Add a separator
-        const separator = document.createElement('hr');
-        versionCheckboxes.appendChild(separator);
+
+        const divider = document.createElement('div');
+        divider.className = 'vm-divider';
+        versionCheckboxes.appendChild(divider);
     }
-    
-    // Add a heading for version selection
-    const versionHeader = document.createElement('div');
-    versionHeader.className = 'version-section-header';
-    versionHeader.innerHTML = '<h4>Select Versions:</h4>';
-    versionCheckboxes.appendChild(versionHeader);
-    
-    // Create checkboxes for each version
+
+    // Version section label
+    const verLabel = document.createElement('div');
+    verLabel.className = 'section-label';
+    verLabel.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(verLabel);
+
+    // Version option rows (checkboxes)
     availableVersions.forEach(version => {
-        const div = document.createElement('div');
-        div.className = 'version-checkbox';
-        div.innerHTML = `
-            <input type="checkbox" id="${version}" name="versions" value="${version}">
-            <label for="${version}">${version}</label>
-        `;
-        versionCheckboxes.appendChild(div);
-        
-        // If there's only one version available, auto-select it
-        if (availableVersions.length === 1) {
-            div.querySelector('input[type="checkbox"]').checked = true;
-        }
+        const row = document.createElement('div');
+        row.className = 'option-row';
+        row.dataset.value = version;
+        row.dataset.type = 'version';
+        row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">${version}</span>`;
+        row.addEventListener('click', () => row.classList.toggle('checked'));
+        versionCheckboxes.appendChild(row);
+
+        if (availableVersions.length === 1) row.classList.add('checked');
     });
-    
-    // Add modal-open class to body
+
     document.body.classList.add('modal-open');
     modal.style.display = 'flex';
 }
@@ -2686,24 +2686,37 @@ function showScrapeVersionModal(content) {
 
     versionRadios.innerHTML = '';
 
-    availableVersions.forEach((version, index) => {
-        const div = document.createElement('div');
-        div.className = 'version-checkbox'; // Reuse class for styling
-        div.innerHTML = `
-            <input type="radio" id="scrape-version-${version}" name="scrape-versions" value="${version}" ${index === 0 ? 'checked' : ''}>
-            <label for="scrape-version-${version}">${version}</label>
-        `;
-        versionRadios.appendChild(div);
-    });
+    // Title
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dialog-title';
+    titleEl.textContent = 'Select Scrape Version';
+    versionRadios.appendChild(titleEl);
 
-    // Add a 'No Version' option
-    const noVersionDiv = document.createElement('div');
-    noVersionDiv.className = 'version-checkbox';
-    noVersionDiv.innerHTML = `
-        <input type="radio" id="scrape-version-No Version" name="scrape-versions" value="No Version">
-        <label for="scrape-version-No Version">No Version</label>
-    `;
-    versionRadios.appendChild(noVersionDiv);
+    // Subtitle pill
+    const subEl = document.createElement('div');
+    subEl.className = 'dialog-sub';
+    const isTV = content.mediaType === 'tv';
+    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> ${content.title}${content.year ? ` (${content.year})` : ''}`;
+    versionRadios.appendChild(subEl);
+
+    // Section label
+    const labelEl = document.createElement('div');
+    labelEl.className = 'section-label';
+    labelEl.textContent = 'Select Version';
+    versionRadios.appendChild(labelEl);
+
+    const allVersions = [...availableVersions, 'No Version'];
+    allVersions.forEach((version, index) => {
+        const row = document.createElement('div');
+        row.className = 'option-row' + (index === 0 ? ' selected' : '');
+        row.dataset.value = version;
+        row.innerHTML = `<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">${version}</span>`;
+        row.addEventListener('click', () => {
+            versionRadios.querySelectorAll('.option-row').forEach(r => r.classList.remove('selected'));
+            row.classList.add('selected');
+        });
+        versionRadios.appendChild(row);
+    });
 
     document.body.classList.add('modal-open');
     modal.style.display = 'flex';
@@ -2711,7 +2724,8 @@ function showScrapeVersionModal(content) {
 
 // New handler for scrape version confirmation
 async function handleScrapeVersionConfirm() {
-    const selectedVersion = document.querySelector('#scrapeVersionRadios input[name="scrape-versions"]:checked')?.value;
+    const selectedRow = document.querySelector('#scrapeVersionRadios .option-row.selected');
+    const selectedVersion = selectedRow ? selectedRow.dataset.value : undefined;
     if (selectedVersion === undefined) {
         displayError('Please select a version.');
         return;
@@ -2728,42 +2742,43 @@ function showVersionModalForSeason(content) {
     selectedContent = content;
     const modal = document.getElementById('versionModal');
     const versionCheckboxes = document.getElementById('versionCheckboxes');
-    
-    // Clear existing checkboxes
+
     versionCheckboxes.innerHTML = '';
-    
-    // Add a heading for the season being requested
-    const seasonHeader = document.createElement('div');
-    seasonHeader.className = 'version-section-header';
-    seasonHeader.innerHTML = `<h4>Requesting: ${content.title} - Season ${content.seasons[0]}</h4>`;
-    versionCheckboxes.appendChild(seasonHeader);
-    
-    // Add a separator
-    const separator = document.createElement('hr');
-    versionCheckboxes.appendChild(separator);
-    
-    // Add a heading for version selection
-    const versionHeader = document.createElement('div');
-    versionHeader.className = 'version-section-header';
-    versionHeader.innerHTML = '<h4>Select Versions:</h4>';
-    versionCheckboxes.appendChild(versionHeader);
-    
-    // Create checkboxes for each version
+
+    // Title
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dialog-title';
+    titleEl.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(titleEl);
+
+    // Subtitle pill
+    const subEl = document.createElement('div');
+    subEl.className = 'dialog-sub';
+    subEl.innerHTML = `<i class="fa-solid fa-tv"></i> Requesting: ${content.title} — Season ${content.seasons[0]}`;
+    versionCheckboxes.appendChild(subEl);
+
+    const divider = document.createElement('div');
+    divider.className = 'vm-divider';
+    versionCheckboxes.appendChild(divider);
+
+    // Version section label
+    const verLabel = document.createElement('div');
+    verLabel.className = 'section-label';
+    verLabel.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(verLabel);
+
     availableVersions.forEach(version => {
-        const div = document.createElement('div');
-        div.className = 'version-checkbox';
-        div.innerHTML = `
-            <input type="checkbox" id="${version}" name="versions" value="${version}">
-            <label for="${version}">${version}</label>
-        `;
-        versionCheckboxes.appendChild(div);
-        
-        // If there's only one version available, auto-select it
-        if (availableVersions.length === 1) {
-            div.querySelector('input[type="checkbox"]').checked = true;
-        }
+        const row = document.createElement('div');
+        row.className = 'option-row';
+        row.dataset.value = version;
+        row.dataset.type = 'version';
+        row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">${version}</span>`;
+        row.addEventListener('click', () => row.classList.toggle('checked'));
+        versionCheckboxes.appendChild(row);
+
+        if (availableVersions.length === 1) row.classList.add('checked');
     });
-    
+
     modal.style.display = 'flex';
 }
 
@@ -2782,24 +2797,20 @@ async function fetchShowSeasons(tmdbId) {
         if (window.DEBUG) console.log('Show seasons API response:', data);
         
         if (data.success && data.seasons && data.seasons.length > 0) {
-            // Update the season selection container
             const seasonContainer = document.getElementById('season-selection-container');
             seasonContainer.innerHTML = '<div class="seasons-list"></div>';
             const seasonsList = seasonContainer.querySelector('.seasons-list');
-            
-            // Sort seasons in numerical order
+
             const seasons = data.seasons.sort((a, b) => a - b);
             if (window.DEBUG) console.log(`Found ${seasons.length} seasons:`, seasons);
-            
-            // Create checkbox for each season
+
             seasons.forEach(season => {
-                const seasonDiv = document.createElement('div');
-                seasonDiv.className = 'season-checkbox';
-                seasonDiv.innerHTML = `
-                    <input type="checkbox" id="season-${season}" name="seasons" value="${season}">
-                    <label for="season-${season}">Season ${season}</label>
-                `;
-                seasonsList.appendChild(seasonDiv);
+                const row = document.createElement('div');
+                row.className = 'option-row';
+                row.dataset.value = String(season);
+                row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">Season ${season}</span>`;
+                row.addEventListener('click', () => row.classList.toggle('checked'));
+                seasonsList.appendChild(row);
             });
         } else {
             if (window.DEBUG) console.warn('No seasons found or invalid response format:', data);
@@ -2819,41 +2830,32 @@ async function fetchShowSeasons(tmdbId) {
 
 // Handle version confirmation
 async function handleVersionConfirm() {
-    const versionCheckboxes = document.querySelectorAll('#versionCheckboxes input[name="versions"]:checked');
-    const selectedVersions = Array.from(versionCheckboxes).map(cb => cb.value);
-    
+    const selectedVersions = Array.from(document.querySelectorAll('#versionCheckboxes .option-row.checked[data-type="version"]'))
+        .map(row => row.dataset.value);
+
     if (selectedVersions.length === 0) {
         displayError('Please select at least one version');
         return;
     }
-    
-    // Check if this is a TV show
+
+    // Check if this is a TV show with the request type selector
     if (selectedContent.mediaType === 'tv') {
-        // Check if the whole-show radio button exists (it won't exist when using showVersionModalForSeason)
-        const wholeShowRadio = document.querySelector('#whole-show');
-        
-        // If the radio buttons exist, process the selection
-        if (wholeShowRadio) {
-            const wholeShowSelected = wholeShowRadio.checked;
-            
+        const wholeShowRow = document.getElementById('opt-whole-show');
+        if (wholeShowRow) {
+            const wholeShowSelected = wholeShowRow.classList.contains('selected');
             if (!wholeShowSelected) {
-                // Get selected seasons
-                const seasonCheckboxes = document.querySelectorAll('#versionCheckboxes input[name="seasons"]:checked');
-                const selectedSeasons = Array.from(seasonCheckboxes).map(cb => parseInt(cb.value));
-                
+                const selectedSeasons = Array.from(document.querySelectorAll('#season-selection-container .option-row.checked'))
+                    .map(row => parseInt(row.dataset.value));
+
                 if (selectedSeasons.length === 0) {
                     displayError('Please select at least one season or choose "Whole Show"');
                     return;
                 }
-                
-                // Add seasons to selectedContent
                 selectedContent.seasons = selectedSeasons;
             }
         }
-        // If radio buttons don't exist, the seasons are already pre-selected in selectedContent
-        // from the showVersionModalForSeason function, so we don't need to do anything
     }
-    
+
     closeVersionModal();
     await requestContent(selectedContent, selectedVersions);
 }

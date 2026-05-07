@@ -384,6 +384,18 @@ def fetch_from_lists(api_key: str, filters: Dict, list_name: str, source_media_t
                 enriched = fetch_trakt_mylist_items(list_id)
                 all_list_items.extend(enriched)
                 logging.debug(f"[Adaptive List] Fetched {len(enriched)} items from Trakt mylist:{list_id}")
+            elif source == 'tmdb_shows':
+                enriched = fetch_tmdb_shows_items(api_key, list_id)
+                all_list_items.extend(enriched)
+                logging.debug(f"[Adaptive List] Fetched {len(enriched)} items from TMDB shows:{list_id}")
+            elif source == 'tmdb_movies':
+                enriched = fetch_tmdb_movies_items(api_key, list_id)
+                all_list_items.extend(enriched)
+                logging.debug(f"[Adaptive List] Fetched {len(enriched)} items from TMDB movies:{list_id}")
+            elif source == 'mdblist-personal':
+                enriched = fetch_mdblist_personal_items(api_key, list_id)
+                all_list_items.extend(enriched)
+                logging.debug(f"[Adaptive List] Fetched {len(enriched)} items from MDBList personal:{list_id}")
         except Exception as e:
             logging.error(f"[Adaptive List] Error fetching list {list_pair}: {e}")
             continue
@@ -712,6 +724,159 @@ def fetch_trakt_mylist_items(slug: str) -> list:
     return enriched
 
 
+def fetch_tmdb_shows_items(api_key: str, list_id: str) -> List[Dict]:
+    """
+    Fetch TMDB show lists (popular, top_rated, airing_today, trending).
+    list_id format: 'tmdb_shows_popular', 'tmdb_shows_top_rated', etc.
+    """
+    VALID_TYPES = {
+        'popular':      'tv/popular',
+        'top_rated':    'tv/top_rated',
+        'airing_today': 'tv/airing_today',
+        'trending':     'trending/tv/week',
+    }
+    # Strip 'tmdb_shows_' prefix if present, otherwise use list_id directly
+    list_type = list_id.replace('tmdb_shows_', '', 1) if list_id.startswith('tmdb_shows_') else list_id
+    endpoint = VALID_TYPES.get(list_type)
+    if not endpoint:
+        logging.warning(f"[Adaptive List] Unknown TMDB shows list type: {list_id}")
+        return []
+
+    enriched = []
+    try:
+        for page in range(1, 3):  # 2 pages = up to 40 results
+            url = f"https://api.themoviedb.org/3/{endpoint}?api_key={api_key}&language=en-US&page={page}"
+            r = requests.get(url, timeout=REQUEST_TIMEOUT)
+            if not r.ok:
+                break
+            for item in r.json().get('results', []):
+                enriched.append({
+                    'id': item['id'],
+                    'title': item.get('name') or item.get('title', ''),
+                    'media_type': 'tv',
+                    'genre_ids': item.get('genre_ids', []),
+                    'original_language': item.get('original_language', ''),
+                    'origin_country': item.get('origin_country', []),
+                    'vote_average': item.get('vote_average', 0),
+                    'vote_count': item.get('vote_count', 0),
+                    'release_date': '',
+                    'first_air_date': item.get('first_air_date', ''),
+                    'runtime': 0,
+                })
+    except Exception as e:
+        logging.warning(f"[Adaptive List] TMDB shows {list_id} error: {e}")
+    logging.info(f"[Adaptive List] Fetched {len(enriched)} items from TMDB shows:{list_id}")
+    return enriched
+
+
+def fetch_tmdb_movies_items(api_key: str, list_id: str) -> List[Dict]:
+    """
+    Fetch TMDB movie lists (popular, top_rated, now_playing, upcoming).
+    list_id format: 'tmdb_movies_popular', 'tmdb_movies_top_rated', etc.
+    """
+    VALID_TYPES = {
+        'popular':     'movie/popular',
+        'top_rated':   'movie/top_rated',
+        'now_playing': 'movie/now_playing',
+        'upcoming':    'movie/upcoming',
+        'trending':    'trending/movie/week',
+    }
+    list_type = list_id.replace('tmdb_movies_', '', 1) if list_id.startswith('tmdb_movies_') else list_id
+    endpoint = VALID_TYPES.get(list_type)
+    if not endpoint:
+        logging.warning(f"[Adaptive List] Unknown TMDB movies list type: {list_id}")
+        return []
+
+    enriched = []
+    try:
+        for page in range(1, 3):  # 2 pages = up to 40 results
+            url = f"https://api.themoviedb.org/3/{endpoint}?api_key={api_key}&language=en-US&page={page}"
+            r = requests.get(url, timeout=REQUEST_TIMEOUT)
+            if not r.ok:
+                break
+            for item in r.json().get('results', []):
+                enriched.append({
+                    'id': item['id'],
+                    'title': item.get('title') or item.get('name', ''),
+                    'media_type': 'movie',
+                    'genre_ids': item.get('genre_ids', []),
+                    'original_language': item.get('original_language', ''),
+                    'origin_country': item.get('origin_country', []),
+                    'vote_average': item.get('vote_average', 0),
+                    'vote_count': item.get('vote_count', 0),
+                    'release_date': item.get('release_date', ''),
+                    'first_air_date': '',
+                    'runtime': 0,
+                })
+    except Exception as e:
+        logging.warning(f"[Adaptive List] TMDB movies {list_id} error: {e}")
+    logging.info(f"[Adaptive List] Fetched {len(enriched)} items from TMDB movies:{list_id}")
+    return enriched
+
+
+def fetch_mdblist_personal_items(api_key: str, list_id: str) -> List[Dict]:
+    """
+    Fetch items from a user's personal MDBList list by numeric ID.
+    Enriches with full TMDB data for filtering.
+    """
+    from utilities.mdblist_api import fetch_custom_list_items
+    enriched = []
+    try:
+        result = fetch_custom_list_items(list_id, limit=100)
+        if not result.get('items'):
+            logging.warning(f"[Adaptive List] MDBList personal list {list_id} returned no items: {result.get('error', '')}")
+            return []
+        for item in result['items']:
+            tmdb_id = item.get('tmdb_id')
+            if not tmdb_id:
+                continue
+            media_type = item.get('media_type', 'movie')
+            try:
+                endpoint = 'tv' if media_type == 'tv' else 'movie'
+                r = requests.get(
+                    f"https://api.themoviedb.org/3/{endpoint}/{tmdb_id}?api_key={api_key}&language=en-US",
+                    timeout=8
+                )
+                if r.ok:
+                    d = r.json()
+                    genres = d.get('genres', [])
+                    genre_ids = [g['id'] for g in genres if isinstance(g, dict)]
+                    enriched.append({
+                        'id': tmdb_id,
+                        'title': d.get('title') or d.get('name', ''),
+                        'media_type': media_type,
+                        'genre_ids': genre_ids,
+                        'original_language': d.get('original_language', ''),
+                        'origin_country': d.get('origin_country', []),
+                        'vote_average': d.get('vote_average', 0),
+                        'vote_count': d.get('vote_count', 0),
+                        'release_date': d.get('release_date', ''),
+                        'first_air_date': d.get('first_air_date', ''),
+                        'runtime': d.get('runtime', 0) if media_type == 'movie' else (d.get('episode_run_time') or [0])[0],
+                    })
+                else:
+                    enriched.append({
+                        'id': tmdb_id,
+                        'title': item.get('title', ''),
+                        'media_type': media_type,
+                        'genre_ids': [],
+                        'original_language': '',
+                        'origin_country': [],
+                        'vote_average': 0,
+                        'vote_count': 0,
+                        'release_date': '',
+                        'first_air_date': '',
+                        'runtime': 0,
+                    })
+            except Exception as e:
+                logging.debug(f"[Adaptive List] Error enriching MDBList personal item {tmdb_id}: {e}")
+                continue
+    except Exception as e:
+        logging.warning(f"[Adaptive List] MDBList personal list {list_id} error: {e}")
+    logging.info(f"[Adaptive List] Fetched {len(enriched)} items from MDBList personal:{list_id}")
+    return enriched
+
+
 def apply_list_filters(items: List[Dict], filters: Dict, source_media_type: str = 'all') -> List[Dict]:
     """
     Apply filters to list items (client-side filtering like in discover.js).
@@ -741,6 +906,40 @@ def apply_list_filters(items: List[Dict], filters: Dict, source_media_type: str 
     seasons_filtered = 0
     media_type_filtered = 0
     title_filtered = 0
+    keyword_filtered = 0
+
+    # If keyword filters are set, pre-fetch keyword IDs for all items (list sources don't include keywords in item data)
+    item_keywords_map: Dict[str, List[int]] = {}  # "kw_{tmdb_id}_{media_type}" -> list of keyword IDs
+    if filters.get('keywords') or filters.get('keywords_exclude'):
+        kw_api_key = get_setting('TMDB', 'api_key', '')
+        if kw_api_key:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            def _fetch_keywords(tmdb_id, media_type_kw):
+                cache_key_kw = f"kw_{tmdb_id}_{media_type_kw}"
+                try:
+                    kw_endpoint = 'tv' if media_type_kw == 'tv' else 'movie'
+                    r = requests.get(
+                        f"https://api.themoviedb.org/3/{kw_endpoint}/{tmdb_id}/keywords?api_key={kw_api_key}",
+                        timeout=5
+                    )
+                    if r.ok:
+                        kw_data = r.json()
+                        kw_list = kw_data.get('keywords') or kw_data.get('results') or []
+                        return cache_key_kw, [kw['id'] for kw in kw_list if isinstance(kw, dict)]
+                except Exception:
+                    pass
+                return cache_key_kw, []
+
+            unique_items = {(item['id'], item.get('media_type', 'movie')) for item in items if item.get('id')}
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = {executor.submit(_fetch_keywords, tid, mt): (tid, mt) for tid, mt in unique_items}
+                for future in as_completed(futures):
+                    try:
+                        cache_key_kw, kw_ids = future.result()
+                        item_keywords_map[cache_key_kw] = kw_ids
+                    except Exception:
+                        pass
 
     # If seasons_max is set, pre-fetch number_of_seasons for TV items that don't have it
     seasons_max = int(filters['seasons_max']) if filters.get('seasons_max') else 0
@@ -879,7 +1078,24 @@ def apply_list_filters(items: List[Dict], filters: Dict, source_media_type: str 
             if item_genres and any(g in item_genres for g in excluded_genres):
                 genre_filtered += 1
                 skip = True
-        
+
+        # Keyword filters - require/exclude specific TMDB keyword IDs
+        if (filters.get('keywords') or filters.get('keywords_exclude')) and not skip and item_keywords_map:
+            tmdb_id = item.get('id')
+            media_type_kw = item.get('media_type', 'movie')
+            cache_key_kw = f"kw_{tmdb_id}_{media_type_kw}"
+            kw_ids = item_keywords_map.get(cache_key_kw, [])
+            if filters.get('keywords_exclude') and not skip:
+                excluded_kws = [int(k) for k in filters['keywords_exclude'].split(',') if k.strip().isdigit()]
+                if any(k in kw_ids for k in excluded_kws):
+                    keyword_filtered += 1
+                    skip = True
+            if filters.get('keywords') and not skip:
+                required_kws = [int(k) for k in filters['keywords'].split(',') if k.strip().isdigit()]
+                if not any(k in kw_ids for k in required_kws):
+                    keyword_filtered += 1
+                    skip = True
+
         # Language filter - only if item has language data
         if filters.get('language') and not skip:
             allowed_langs = [l.strip() for l in filters['language'].split(',') if l.strip()]
@@ -932,6 +1148,7 @@ def apply_list_filters(items: List[Dict], filters: Dict, source_media_type: str 
     drop_reasons = []
     if media_type_filtered: drop_reasons.append(f"media_type={media_type_filtered}")
     if genre_filtered:      drop_reasons.append(f"genre={genre_filtered}")
+    if keyword_filtered:    drop_reasons.append(f"keyword={keyword_filtered}")
     if rating_filtered:     drop_reasons.append(f"rating={rating_filtered}")
     if votes_filtered:      drop_reasons.append(f"votes={votes_filtered}")
     if runtime_filtered:    drop_reasons.append(f"runtime={runtime_filtered}")

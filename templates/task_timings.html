@@ -112,6 +112,120 @@
         </div>
     </div>
 </div>
+<!-- ══════════ TANGERINE REDESIGN ══════════ -->
+<div id="tngTaskManager">
+
+  <div class="tng-banner">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 7v4M8 5v.5"/></svg>
+    <div class="tng-banner-text">
+      Task timings and intervals are displayed based on the running program. Customize intervals using the input fields (in seconds) and save your preferences.
+      <b style="color:var(--tng-text)">Default</b> = original program default &nbsp;&middot;&nbsp;
+      <b style="color:var(--tng-text)">Custom</b> = your saved value &nbsp;&middot;&nbsp;
+      <b style="color:var(--tng-text)">Configured</b> = currently active interval.
+      Saved intervals apply on program restart unless live updates are successful.
+    </div>
+  </div>
+
+  <div class="tng-flow-box">
+    <div class="tng-flow-hdr" onclick="tngToggleFlow()">
+      <div class="tng-flow-hdr-l">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="4" cy="8" r="2"/><circle cx="12" cy="4" r="2"/><circle cx="12" cy="12" r="2"/><path d="M6 7.5l4-2M6 8.5l4 2"/></svg>
+        Typical Media File Flow
+      </div>
+      <svg class="tng-chev" id="tngFchev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+    </div>
+    <div class="tng-flow-body" id="tngFbody">
+      <svg class="tng-flow-svg" viewBox="0 0 900 210" xmlns="http://www.w3.org/2000/svg">
+        <defs><marker id="tngArr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#777"/></marker></defs>
+        <rect x="8" y="78" width="128" height="54" rx="4" fill="none" stroke="#d97706" stroke-width="1.5"/>
+        <text x="72" y="100" text-anchor="middle" fill="#e0e0e0" font-size="12" font-family="Inter,sans-serif" font-weight="500">Content Source</text>
+        <text x="72" y="117" text-anchor="middle" fill="#aaa" font-size="11" font-family="Inter,sans-serif">mdblist, Trakt, etc.</text>
+        <line x1="136" y1="105" x2="170" y2="105" stroke="#777" stroke-width="1.5" marker-end="url(#tngArr)"/>
+        <rect x="172" y="78" width="100" height="54" rx="4" fill="none" stroke="#ef4444" stroke-width="1.5"/>
+        <text x="222" y="110" text-anchor="middle" fill="#e0e0e0" font-size="12" font-family="Inter,sans-serif" font-weight="500">Wanted</text>
+        <line x1="272" y1="88" x2="335" y2="58" stroke="#777" stroke-width="1.5" marker-end="url(#tngArr)"/>
+        <rect x="337" y="36" width="108" height="44" rx="4" fill="none" stroke="#d97706" stroke-width="1.5"/>
+        <text x="391" y="63" text-anchor="middle" fill="#e0e0e0" font-size="12" font-family="Inter,sans-serif" font-weight="500">Scraping</text>
+        <line x1="445" y1="58" x2="479" y2="58" stroke="#777" stroke-width="1.5" marker-end="url(#tngArr)"/>
+        <rect x="481" y="36" width="100" height="44" rx="4" fill="none" stroke="#22c55e" stroke-width="1.5"/>
+        <text x="531" y="63" text-anchor="middle" fill="#e0e0e0" font-size="12" font-family="Inter,sans-serif" font-weight="500">Adding</text>
+        <line x1="581" y1="58" x2="615" y2="58" stroke="#777" stroke-width="1.5" marker-end="url(#tngArr)"/>
+        <rect x="617" y="36" width="108" height="44" rx="4" fill="none" stroke="#3b82f6" stroke-width="1.5"/>
+        <text x="671" y="63" text-anchor="middle" fill="#e0e0e0" font-size="12" font-family="Inter,sans-serif" font-weight="500">Checking</text>
+        <line x1="725" y1="58" x2="759" y2="58" stroke="#777" stroke-width="1.5" marker-end="url(#tngArr)"/>
+        <rect x="761" y="36" width="108" height="44" rx="4" fill="none" stroke="#22c55e" stroke-width="1.5"/>
+        <text x="815" y="63" text-anchor="middle" fill="#e0e0e0" font-size="12" font-family="Inter,sans-serif" font-weight="500">Collected</text>
+        <line x1="430" y1="80" x2="490" y2="128" stroke="#777" stroke-width="1.5" marker-end="url(#tngArr)"/>
+        <rect x="492" y="128" width="120" height="54" rx="4" fill="none" stroke="#a855f7" stroke-width="1.5"/>
+        <text x="552" y="150" text-anchor="middle" fill="#e0e0e0" font-size="12" font-family="Inter,sans-serif" font-weight="500">Sleeping</text>
+        <text x="552" y="168" text-anchor="middle" fill="#aaa" font-size="11" font-family="Inter,sans-serif">30 min retry</text>
+        <line x1="612" y1="155" x2="646" y2="155" stroke="#777" stroke-width="1.5" marker-end="url(#tngArr)"/>
+        <rect x="648" y="128" width="134" height="54" rx="4" fill="none" stroke="#ef4444" stroke-width="1.5"/>
+        <text x="715" y="150" text-anchor="middle" fill="#e0e0e0" font-size="12" font-family="Inter,sans-serif" font-weight="500">Blacklisted</text>
+        <text x="715" y="168" text-anchor="middle" fill="#aaa" font-size="11" font-family="Inter,sans-serif">after max retries</text>
+        <path d="M492,162 Q350,210 222,132" stroke="#777" stroke-width="1.5" fill="none" marker-end="url(#tngArr)"/>
+      </svg>
+      <div class="tng-flow-notes">
+        <div class="tng-flow-notes-title">Notes:</div>
+        <ul>
+          <li>Default Sleeping attempts is 24 attempts over 12 hours (30 minutes each). If not found, move to Blacklisted.</li>
+          <li>If item not found in Checking state after default one hour, move back to Wanted.</li>
+          <li>If item not found on first Scraping attempt and is old (released more than 7 days ago), move to Blacklisted.</li>
+          <li>If "Enable Unblacklisting" is enabled, items will be unblacklisted after 30 days by default.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <div class="tng-toolbar">
+    <div class="tng-tabs" id="tngTabs">
+      <button class="tng-tab active" data-tng-tab="all">All <span class="tng-tcnt" id="tngCntAll">0</span></button>
+      <button class="tng-tab" data-tng-tab="queues">Queues <span class="tng-tcnt" id="tngCntQueues">0</span></button>
+      <button class="tng-tab" data-tng-tab="sources">Content Sources <span class="tng-tcnt" id="tngCntSources">0</span></button>
+      <button class="tng-tab" data-tng-tab="system">System Tasks <span class="tng-tcnt" id="tngCntSystem">0</span></button>
+      <button class="tng-tab" data-tng-tab="library">Library <span class="tng-tcnt" id="tngCntLibrary">0</span></button>
+      <button class="tng-tab" data-tng-tab="metadata">Metadata <span class="tng-tcnt" id="tngCntMeta">0</span></button>
+      <button class="tng-tab" data-tng-tab="features">Features <span class="tng-tcnt" id="tngCntFeatures">0</span></button>
+    </div>
+    <div class="tng-search-wrap">
+      <span class="tng-search-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4"/><path d="M11 11l3 3"/></svg></span>
+      <input class="tng-search" id="tngSearch" type="text" placeholder="Filter tasks…">
+    </div>
+    <div class="tng-tbtns">
+      <button class="tng-btn tng-btn-ghost" id="tngResetBtn">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        Reset All to Default
+      </button>
+      <button class="tng-btn tng-btn-blue" id="tngSaveBtn">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
+        Save
+      </button>
+    </div>
+  </div>
+
+  <div class="tng-grid" id="tngGrid"></div>
+</div>
+
+<!-- Tangerine Info Modal -->
+<div class="tng-modal-overlay" id="tngModalOverlay">
+  <div class="tng-modal">
+    <div class="tng-modal-hdr">
+      <span class="tng-modal-title" id="tngModalTitle">Task Info</span>
+      <button class="tng-modal-close" id="tngModalClose">&#x2715;</button>
+    </div>
+    <div class="tng-modal-body">
+      <div class="tng-modal-meta" id="tngModalMeta"></div>
+      <div class="tng-modal-desc" id="tngModalDesc"></div>
+      <div class="tng-modal-action" id="tngModalAction"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Tangerine Toast -->
+<div class="tng-toast" id="tngToast">
+  <span class="tng-toast-dot" id="tngToastDot"></span>
+  <span id="tngToastMsg"></span>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -591,6 +705,8 @@ function fetchAndUpdateTasks() {
                     // Small delay to prevent interference with user interactions
                     setTimeout(() => performTargetedUpdate(tasks), 50);
                 }
+                // Feed tangerine renderer (window.tngIngestData set by tangerine IIFE)
+                if (typeof window.tngIngestData === 'function') window.tngIngestData(tasks);
 
             } else {
                  if (isProgramConsideredRunning) {
@@ -1064,5 +1180,384 @@ window.showLibraryMaintenanceWarning = function(event) {
         message: 'Library maintenance assumes cli_debrid has access to your mount location, and that the libraries it is reviewing contain no local content. This process is destructive and should only be used if you are certain that the above is true.'
     });
 }
+
+// Expose functions needed by the tangerine renderer (module scope ≠ global)
+window.performFullRefresh     = performFullRefresh;
+window.performTargetedUpdate  = performTargetedUpdate;
+window.saveSettings           = saveSettings;
+window.handleResetAllSettings = handleResetAllSettings;
+</script>
+
+<script>
+// ══════════════════════════════════════════════════════════
+//  TANGERINE TASK MANAGER — parallel renderer
+//  Reads the same API data as the classic layout.
+//  All save/toggle/trigger actions delegate to the existing
+//  classic functions (saveSettings, toggleTaskStatus, triggerTask).
+// ══════════════════════════════════════════════════════════
+(function() {
+
+// ── state ────────────────────────────────────────────────
+const tngState = {
+    tasks: [],       // flat array: {taskName, cat, info}
+    tab: 'all',
+    search: '',
+};
+let tngCountdownTimer = null;
+
+// ── helpers ──────────────────────────────────────────────
+function tngFmtInterval(sec) {
+    if (!sec || sec <= 0) return 'N/A';
+    if (sec < 60) return sec + ' sec';
+    const m = Math.round(sec / 60);
+    if (m < 60) return m + ' min';
+    const h = Math.floor(m / 60), rm = m % 60;
+    return h + 'h ' + rm + 'm';
+}
+
+function tngFmtCountdown(info) {
+    if (!info.enabled) return '--:--:--';
+    const t = info.next_run_in;
+    if (!t) return '--:--:--';
+    const pad = v => String(v).padStart(2, '0');
+    return pad(t.hours) + ':' + pad(t.minutes) + ':' + pad(t.seconds);
+}
+
+function tngTotalSec(info) {
+    if (!info.enabled || !info.next_run_in) return -1;
+    return Math.max(0, Math.floor(info.next_run_in.total_seconds || 0));
+}
+
+function tngIsLargeInterval(sec) {
+    return sec > 86400; // > 1 day
+}
+
+function tngDisplayName(taskName, info) {
+    if (info.display_name) return info.display_name;
+    let n = taskName;
+    if (n === 'task_check_plex_files')          return 'Check Local Files for Plex Update';
+    if (n === 'task_refresh_library_size_cache') return 'Refresh Debrid Library Size';
+    if (n === 'final_check_queue' || n === 'Final_check_queue') return 'Final Scrape';
+    if (n.endsWith('_wanted')) n = n.replace('task_', '').replace('_wanted', '');
+    else                       n = n.replace('task_', '');
+    return n.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function tngCatFromApiKey(apiKey) {
+    const map = {
+        queues: 'queues', content_sources: 'sources', system_tasks: 'system',
+        library_tasks: 'library', metadata_tasks: 'metadata', feature_tasks: 'features'
+    };
+    return map[apiKey] || apiKey;
+}
+
+// ── card builder ─────────────────────────────────────────
+function tngBuildCard(taskName, cat, info) {
+    const enabled     = info.enabled;
+    const cfgSec      = info.configured_interval_seconds || info.current_interval_seconds || 0;
+    const defSec      = info.default_interval_seconds || 0;
+    const custSec     = info.custom_interval_seconds;
+    const big         = tngIsLargeInterval(cfgSec);
+    const cfgFmt      = tngFmtInterval(cfgSec);
+    const defFmt      = tngFmtInterval(defSec);
+    const cd          = tngFmtCountdown(info);
+    const cdClass     = !enabled ? 'na' : big ? 'warn' : '';
+    const topClass    = !enabled ? 'stop' : big ? 'warn' : 'go';
+    const inputVal    = cfgSec > 0 ? Math.round(cfgSec) : '';
+    const inputClass  = (custSec !== null && custSec !== undefined) ? 'tng-custom' : '';
+    const name        = tngDisplayName(taskName, info);
+
+    const card = document.createElement('div');
+    card.className = 'tng-card' + (enabled ? '' : ' tng-dim');
+    card.dataset.tngTask = taskName;
+    card.dataset.tngCat  = cat;
+
+    card.innerHTML = `
+      <div class="tng-ctop ${topClass}"></div>
+      <div class="tng-cbody">
+        <div class="tng-chdr">
+          <div class="tng-ctitle-row">
+            <span class="tng-sdot ${enabled ? 'on' : 'off'}"></span>
+            <span class="tng-cname">${name}</span>
+          </div>
+          <span class="tng-cbadge ${big ? 'big' : 'norm'}">${cfgFmt}</span>
+        </div>
+        <div class="tng-cmeta">
+          Default: <b>${defFmt} (${defSec}s)</b>${custSec != null ? ` &nbsp;|&nbsp; Custom: <b>${custSec}s</b>` : ''}
+        </div>
+        <div class="tng-div"></div>
+        <div class="tng-cdwrap">
+          <div class="tng-cd ${cdClass}" data-tng-cd="${taskName}">${cd}</div>
+          <div class="tng-cdlbl">until next run</div>
+        </div>
+        <div class="tng-div"></div>
+        <div class="tng-bottom">
+          <div class="tng-irow">
+            <span class="tng-blbl">Interval</span>
+            <div style="display:flex;align-items:center;gap:6px">
+              <input class="tng-sinput ${inputClass}" type="number"
+                     value="${inputVal}" min="1"
+                     data-tng-task="${taskName}"
+                     data-tng-def="${defSec}"
+                     data-default-interval-seconds="${defSec}">
+              <span class="tng-slbl">sec</span>
+            </div>
+          </div>
+          <div class="tng-brow">
+            <span class="tng-tlbl">${enabled ? 'Enabled' : 'Disabled'}</span>
+            <label class="tng-tog">
+              <input type="checkbox" ${enabled ? 'checked' : ''}
+                     data-tng-toggle="${taskName}">
+              <div class="tng-tog-track"></div>
+              <div class="tng-tog-thumb"></div>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="tng-cftr">
+        <button class="tng-ibtn" data-tng-info="${taskName}">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M8 7v4M8 5.5v.01"/></svg>
+          Task Info
+        </button>
+      </div>`;
+
+    // toggle → reuse existing toggleTaskStatus
+    card.querySelector('[data-tng-toggle]').addEventListener('change', function(e) {
+        e.stopPropagation();
+        if (typeof toggleTaskStatus === 'function') toggleTaskStatus(taskName, this.checked);
+    });
+
+    // interval input → keep custom class in sync
+    card.querySelector('.tng-sinput').addEventListener('input', function() {
+        const v = parseInt(this.value, 10);
+        const isDefault = isNaN(v) || v === defSec;
+        this.classList.toggle('tng-custom', !isDefault);
+    });
+
+    // info button → open modal
+    card.querySelector('[data-tng-info]').addEventListener('click', function(e) {
+        e.stopPropagation();
+        tngOpenModal(taskName, cat, info, name, cfgFmt, defFmt, enabled);
+    });
+
+    // click card body → trigger task (enabled only, avoid controls)
+    if (enabled) {
+        card.addEventListener('click', function(e) {
+            if (e.target.closest('.tng-tog') || e.target.closest('.tng-sinput') ||
+                e.target.closest('.tng-ibtn') || e.target.closest('.tng-bval')) return;
+            if (typeof triggerTask === 'function') triggerTask(taskName);
+        });
+    }
+
+    return card;
+}
+
+// ── render ───────────────────────────────────────────────
+function tngRender() {
+    const grid = document.getElementById('tngGrid');
+    if (!grid) return;
+
+    let list = tngState.tasks;
+    if (tngState.tab !== 'all') list = list.filter(t => t.cat === tngState.tab);
+    if (tngState.search) {
+        const q = tngState.search.toLowerCase();
+        list = list.filter(t => t.name.toLowerCase().includes(q) || t.cat.toLowerCase().includes(q));
+    }
+
+    grid.innerHTML = '';
+    if (!list.length) {
+        grid.innerHTML = '<div class="tng-no-results">No tasks match your filter</div>';
+        return;
+    }
+    list.forEach(t => grid.appendChild(tngBuildCard(t.taskName, t.cat, t.info)));
+}
+
+// ── ingest API data ──────────────────────────────────────
+let _tngLastFingerprint = '';
+
+function tngIngestData(tasks) {
+    const flat = [];
+    const catMap = {
+        queues: 'queues', content_sources: 'sources', system_tasks: 'system',
+        library_tasks: 'library', metadata_tasks: 'metadata', feature_tasks: 'features'
+    };
+    Object.entries(catMap).forEach(([apiKey, cat]) => {
+        Object.entries(tasks[apiKey] || {}).forEach(([taskName, info]) => {
+            flat.push({ taskName, cat, name: tngDisplayName(taskName, info), info });
+        });
+    });
+    tngState.tasks = flat;
+
+    // update tab counts
+    const counts = { all: flat.length, queues: 0, sources: 0, system: 0, library: 0, metadata: 0, features: 0 };
+    flat.forEach(t => { if (counts[t.cat] !== undefined) counts[t.cat]++; });
+    document.getElementById('tngCntAll').textContent      = counts.all;
+    document.getElementById('tngCntQueues').textContent   = counts.queues;
+    document.getElementById('tngCntSources').textContent  = counts.sources;
+    document.getElementById('tngCntSystem').textContent   = counts.system;
+    document.getElementById('tngCntLibrary').textContent  = counts.library;
+    document.getElementById('tngCntMeta').textContent     = counts.metadata;
+    document.getElementById('tngCntFeatures').textContent = counts.features;
+
+    // Only rebuild cards when structure changes (task list, enabled state, custom interval)
+    // Countdowns update via tngTickCountdowns — no DOM rebuild needed every second
+    const fingerprint = flat.map(t => `${t.taskName}:${t.info.enabled}:${t.info.custom_interval_seconds}`).join('|');
+    if (fingerprint !== _tngLastFingerprint) {
+        _tngLastFingerprint = fingerprint;
+        tngRender();
+    }
+    tngStartCountdowns();
+}
+
+// ── live countdowns ──────────────────────────────────────
+const tngTimers = {};
+
+function tngStartCountdowns() {
+    tngState.tasks.forEach(t => {
+        tngTimers[t.taskName] = tngTotalSec(t.info);
+    });
+}
+
+function tngTickCountdowns() {
+    document.querySelectorAll('[data-tng-cd]').forEach(el => {
+        const key = el.dataset.tngCd;
+        if (!(key in tngTimers) || tngTimers[key] < 0) return;
+        if (tngTimers[key] > 0) tngTimers[key]--;
+        const s = tngTimers[key];
+        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sc = s % 60;
+        const pad = v => String(v).padStart(2, '0');
+        el.textContent = pad(h) + ':' + pad(m) + ':' + pad(sc);
+    });
+}
+setInterval(tngTickCountdowns, 1000);
+
+// Expose tngIngestData so the module script can call it directly
+window.tngIngestData = tngIngestData;
+
+// ── UI wiring (tabs, search, buttons, modal) ─────────────
+document.addEventListener('DOMContentLoaded', function() {
+
+    // Tab switching
+    document.querySelectorAll('.tng-tab').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.tng-tab').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            tngState.tab = this.dataset.tngTab;
+            tngRender();
+        });
+    });
+
+    // Search
+    document.getElementById('tngSearch').addEventListener('input', function() {
+        tngState.search = this.value.trim();
+        tngRender();
+    });
+
+    // Save — delegate to existing saveSettings
+    document.getElementById('tngSaveBtn').addEventListener('click', function() {
+        // Sync tng inputs back to hidden classic tiles so saveSettings picks them up
+        document.querySelectorAll('.tng-sinput[data-tng-task]').forEach(tngInput => {
+            const taskName = tngInput.dataset.tngTask;
+            const classicInput = document.querySelector(`.task-tile[data-task-name="${taskName}"] .interval-input`);
+            if (classicInput) classicInput.value = tngInput.value;
+        });
+        // Sync toggles
+        document.querySelectorAll('[data-tng-toggle]').forEach(tngChk => {
+            const taskName = tngChk.dataset.tngToggle;
+            const classicChk = document.querySelector(`.task-tile[data-task-name="${taskName}"] input[type="checkbox"]`);
+            if (classicChk) classicChk.checked = tngChk.checked;
+        });
+        if (typeof saveSettings === 'function') saveSettings();
+    });
+
+    // Reset — delegate to existing handleResetAllSettings
+    document.getElementById('tngResetBtn').addEventListener('click', function() {
+        if (typeof handleResetAllSettings === 'function') handleResetAllSettings();
+    });
+
+    // Modal close
+    document.getElementById('tngModalClose').addEventListener('click', tngCloseModal);
+    document.getElementById('tngModalOverlay').addEventListener('click', function(e) {
+        if (e.target === this) tngCloseModal();
+    });
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') tngCloseModal();
+    });
+});
+
+// ── flow diagram toggle ──────────────────────────────────
+window.tngToggleFlow = function() {
+    document.getElementById('tngFbody').classList.toggle('open');
+    document.getElementById('tngFchev').classList.toggle('open');
+};
+
+// ── help data (same source as classic task_help.js) ──────
+let _tngHelpData = null;
+async function tngGetHelpData() {
+    if (_tngHelpData) return _tngHelpData;
+    try {
+        const r = await fetch('/static/js/task_help_data.json');
+        const d = await r.json();
+        _tngHelpData = d.helpData || {};
+    } catch(e) {
+        _tngHelpData = {};
+    }
+    return _tngHelpData;
+}
+function tngFindHelp(helpData, displayName) {
+    if (!displayName) return null;
+    const k = Object.keys(helpData).find(k => k.toLowerCase() === displayName.toLowerCase());
+    return k ? helpData[k] : (helpData['default'] || null);
+}
+
+// ── modal ────────────────────────────────────────────────
+function tngOpenModal(taskName, cat, info, name, cfgFmt, defFmt, enabled) {
+    const catColors = {
+        sources: ['#3b1e5f','#a78bfa'], queues: ['#1e1e3f','#818cf8'],
+        system: ['#1a2e1a','#4ade80'],  library: ['#1e1e3f','#818cf8'],
+        metadata: ['#1a1a2e','#a78bfa'], features: ['#2a1500','#fb923c']
+    };
+    const [cbg, cfg2] = catColors[cat] || ['#222','#aaa'];
+    const [sbg, sfg]  = enabled ? ['#14532d','#4ade80'] : ['#7f1d1d','#fca5a5'];
+
+    document.getElementById('tngModalTitle').textContent = name;
+    document.getElementById('tngModalMeta').innerHTML = `
+      <span class="tng-modal-pill" style="background:${cbg};color:${cfg2};border:1px solid ${cfg2}33">${cat}</span>
+      <span class="tng-modal-pill" style="background:${sbg};color:${sfg};border:1px solid ${sfg}33">${enabled ? 'Enabled' : 'Disabled'}</span>
+      <span class="tng-modal-pill" style="background:var(--tng-accent);color:#fff">Configured: ${cfgFmt}</span>
+      <span class="tng-modal-pill" style="background:var(--tng-surface2);color:var(--tng-text2);border:1px solid var(--tng-border2)">Default: ${defFmt}</span>`;
+    document.getElementById('tngModalDesc').innerHTML  = '';
+    document.getElementById('tngModalAction').innerHTML = '';
+    document.getElementById('tngModalOverlay').classList.add('open');
+
+    // Load help text from same JSON as classic task_help.js
+    tngGetHelpData().then(helpData => {
+        const raw = tngFindHelp(helpData, name);
+        if (raw) {
+            const parts = raw.split(/<br\s*\/?>\s*<br\s*\/?>\s*<b>ACTION<\/b>\s*:\s*/i);
+            document.getElementById('tngModalDesc').innerHTML = parts[0] ? parts[0].trim() : '';
+            document.getElementById('tngModalAction').innerHTML = parts[1]
+                ? `<b style="color:var(--tng-accent)">ACTION</b>: ${parts[1].trim()}` : '';
+        }
+    });
+}
+
+function tngCloseModal() {
+    document.getElementById('tngModalOverlay').classList.remove('open');
+}
+
+// ── toast (used for tangerine-specific feedback) ─────────
+let _tngToastTimer;
+window.tngShowToast = function(msg, color) {
+    const colors = { green: '#22c55e', red: '#ef4444', blue: '#3b82f6', orange: '#f97316' };
+    document.getElementById('tngToastDot').style.background = colors[color] || colors.blue;
+    document.getElementById('tngToastMsg').textContent = msg;
+    const t = document.getElementById('tngToast');
+    t.classList.add('show');
+    clearTimeout(_tngToastTimer);
+    _tngToastTimer = setTimeout(() => t.classList.remove('show'), 2500);
+};
+
+})(); // end IIFE
 </script>
 {% endblock %}

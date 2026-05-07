@@ -47,14 +47,16 @@ async def _fetch_media_details_for_assigner(id_value: str, id_kind: str, content
 
     try:
         if id_kind == 'imdb':
-            # Try movie first, then tv for IMDb ID
-            metadata_result = get_metadata(imdb_id=id_value, item_media_type='movie')
-            if metadata_result and metadata_result.get('tmdb_id'): # Check if tmdb_id exists
-                determined_media_type = 'movie'
+            # Use hint if provided, otherwise try movie first then tv
+            first_type = 'tv' if content_type_hint in ('tv', 'show') else 'movie'
+            second_type = 'movie' if first_type == 'tv' else 'tv'
+            metadata_result = get_metadata(imdb_id=id_value, item_media_type=first_type)
+            if metadata_result and metadata_result.get('tmdb_id'):
+                determined_media_type = first_type
             else:
-                metadata_result = get_metadata(imdb_id=id_value, item_media_type='tv')
+                metadata_result = get_metadata(imdb_id=id_value, item_media_type=second_type)
                 if metadata_result and metadata_result.get('tmdb_id'):
-                    determined_media_type = 'tv'
+                    determined_media_type = second_type
         elif id_kind == 'tmdb':
             try:
                 tmdb_id_int = int(id_value)
@@ -125,9 +127,12 @@ async def _fetch_media_details_for_assigner(id_value: str, id_kind: str, content
                 get_media_meta, tmdb_id_from_meta, determined_media_type
             )
 
+            backdrop_path_final = None
             if media_meta_tuple:
-                poster_path_from_meta, _, _, _, _ = media_meta_tuple
+                poster_path_from_meta, _, _, _, backdrop_path_from_meta = media_meta_tuple
                 poster_path_final = poster_path_from_meta # This is a relative TMDB path
+                if backdrop_path_from_meta and has_tmdb:
+                    backdrop_path_final = f"/scraper/tmdb_image/w780{backdrop_path_from_meta}"
 
             # Construct full poster path using proxy or use placeholder
             if poster_path_final and poster_path_final != "static/images/placeholder.png":
@@ -147,8 +152,9 @@ async def _fetch_media_details_for_assigner(id_value: str, id_kind: str, content
                 'id': tmdb_id_from_meta,
                 'title': title,
                 'year': year,
-                'posterPath': poster_path_final, # Camel case for the template
-                'mediaType': 'show' if determined_media_type == 'tv' else 'movie' # 'movie' or 'show'
+                'posterPath': poster_path_final,
+                'backdropPath': backdrop_path_final,
+                'mediaType': 'show' if determined_media_type == 'tv' else 'movie'
             }
             results.append(formatted_result)
         else:
@@ -348,12 +354,18 @@ def assign_magnet():
                 # Convert search results to template-expected format
                 formatted_search_results = []
                 for result in search_results:
+                    raw_backdrop = result.get('backdropPath', '')
+                    if raw_backdrop:
+                        backdrop_final = f"https://image.tmdb.org/t/p/w780{raw_backdrop}"
+                    else:
+                        backdrop_final = None
                     formatted_result = {
                         'id': result.get('id'),
                         'title': result.get('title'),
                         'year': result.get('year'),
                         'posterPath': result.get('posterPath'),
-                        'mediaType': result.get('media_type', 'movie')  # Convert media_type to mediaType for template
+                        'backdropPath': backdrop_final,
+                        'mediaType': result.get('media_type', 'movie')
                     }
                     formatted_search_results.append(formatted_result)
                 search_results = formatted_search_results

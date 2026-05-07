@@ -3,36 +3,473 @@
 {% block title %}Magnet Assignment{% endblock %}
 
 {% block head %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/magnet_assign.css') }}">
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
+<style>
+/* ── Magnet Assign Page Variables ── */
+:root {
+  --ma-bg: #111;
+  --ma-surface: #1a1a1a;
+  --ma-surface2: #222;
+  --ma-surface3: #2a2a2a;
+  --ma-border: #333;
+  --ma-border2: #3d3d3d;
+  --ma-accent: #e8601c;
+  --ma-accent-h: #f07030;
+  --ma-text: #e0e0e0;
+  --ma-text2: #aaa;
+  --ma-text3: #666;
+  --ma-green: #22c55e;
+  --ma-red: #ef4444;
+  --ma-blue: #3b82f6;
+  --ma-yellow: #f59e0b;
+}
+
+.ma-main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem;
+}
+
+/* ── Page header ── */
+.ma-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+.ma-page-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--ma-text);
+  border-left: 3px solid var(--ma-accent);
+  padding-left: 10px;
+  line-height: 1.2;
+}
+.ma-page-title span { color: var(--ma-text3); font-weight: 400; }
+.ma-result-count {
+  font-size: 11px;
+  color: var(--ma-text3);
+  font-family: monospace;
+  padding-left: 13px;
+  margin-top: 4px;
+}
+
+/* ── Search form (initial) ── */
+.ma-search-form-wrap {
+  max-width: 480px;
+  margin: 2rem auto;
+  background: var(--ma-surface);
+  border: 1px solid var(--ma-border);
+  border-radius: 10px;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.ma-search-form-wrap h3 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ma-text);
+  border-left: 3px solid var(--ma-accent);
+  padding-left: 10px;
+  margin-bottom: 0.25rem;
+}
+.ma-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ma-form-group label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--ma-text3) !important;
+}
+.ma-form-group input[type="text"],
+.ma-form-group select {
+  background: var(--ma-surface2) !important;
+  border: 1px solid var(--ma-border2) !important;
+  color: var(--ma-text) !important;
+  border-radius: 6px !important;
+  padding: 9px 12px !important;
+  font-size: 13px !important;
+  width: 100% !important;
+  transition: border-color 0.15s !important;
+  outline: none !important;
+  box-shadow: none !important;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.ma-form-group input[type="text"]:focus,
+.ma-form-group select:focus {
+  border-color: var(--ma-accent) !important;
+}
+
+/* ── Search row (results page) ── */
+.ma-search-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  margin-bottom: 1.75rem;
+  flex-wrap: wrap;
+}
+.ma-search-wrap {
+  position: relative;
+  flex: 1;
+  max-width: 440px;
+}
+.ma-search-icon {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ma-text3);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+}
+.ma-search-icon svg { width: 14px; height: 14px; }
+.ma-search-input {
+  width: 100% !important;
+  background: var(--ma-surface2) !important;
+  border: 1px solid var(--ma-border2) !important;
+  color: var(--ma-text) !important;
+  border-radius: 6px !important;
+  padding: 0 12px 0 34px !important;
+  height: 36px !important;
+  box-sizing: border-box !important;
+  font-size: 13px !important;
+  transition: border-color 0.15s !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+.ma-search-input:focus { border-color: var(--ma-accent) !important; }
+.ma-search-input::placeholder { color: var(--ma-text3) !important; }
+
+/* ── Buttons ── */
+.ma-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 15px;
+  height: 36px;
+  box-sizing: border-box;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  background: transparent;
+  border: none;
+  text-decoration: none;
+}
+.ma-btn svg { width: 13px; height: 13px; flex-shrink: 0; }
+.ma-btn-ghost {
+  border: 1px solid var(--ma-border2) !important;
+  color: var(--ma-text2) !important;
+}
+.ma-btn-ghost:hover {
+  background: var(--ma-surface2) !important;
+  color: var(--ma-text) !important;
+  border-color: #555 !important;
+}
+.ma-btn-orange {
+  border: 1px solid #c2500f !important;
+  color: #f97316 !important;
+}
+.ma-btn-orange:hover {
+  background: #c2500f22 !important;
+  border-color: #f97316 !important;
+}
+.ma-btn-orange-solid {
+  background: var(--ma-accent) !important;
+  border: 1px solid var(--ma-accent) !important;
+  color: #fff !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  width: 100% !important;
+  justify-content: center !important;
+  padding: 10px !important;
+}
+.ma-btn-orange-solid:hover:not(:disabled) {
+  background: var(--ma-accent-h) !important;
+  border-color: var(--ma-accent-h) !important;
+}
+.ma-btn-orange-solid:disabled {
+  background: #3a2010 !important;
+  border-color: #3a2010 !important;
+  color: #6b4020 !important;
+  cursor: not-allowed !important;
+}
+.ma-btn-search-submit {
+  background: var(--ma-accent) !important;
+  border: 1px solid var(--ma-accent) !important;
+  color: #fff !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  padding: 9px 18px !important;
+}
+.ma-btn-search-submit:hover {
+  background: var(--ma-accent-h) !important;
+  border-color: var(--ma-accent-h) !important;
+}
+
+/* ── Grid — single column list of horizontal cards ── */
+.ma-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Card — horizontal row ── */
+.ma-card {
+  background: var(--ma-surface);
+  border: 1px solid var(--ma-border);
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  transition: border-color 0.2s;
+}
+.ma-card:hover { border-color: var(--ma-border2); }
+
+/* Poster — fixed narrow column, fills card height */
+.ma-card-poster-wrap {
+  width: 177px;
+  flex-shrink: 0;
+  background: var(--ma-surface2);
+  display: flex;
+}
+.ma-card-poster {
+  width: 100%;
+  object-fit: cover;
+  object-position: top center;
+  display: block;
+  flex: 1;
+}
+.ma-card-poster-placeholder {
+  width: 100%;
+  height: auto;
+  min-height: 180px;
+  background: var(--ma-surface2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--ma-text3);
+}
+.ma-card-poster-placeholder svg { width: 28px; height: 28px; opacity: 0.3; }
+.ma-card-poster-placeholder span { font-size: 10px; opacity: 0.5; }
+
+.ma-card-body {
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+.ma-card-title { font-size: 14px; font-weight: 600; color: var(--ma-text); line-height: 1.3; }
+.ma-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+.ma-p-movie { background: #3b1e5f22; color: #a78bfa; border: 1px solid #3b1e5f; }
+.ma-p-show { background: #1e1e3f22; color: #818cf8; border: 1px solid #2d2d5e; }
+.ma-divider { height: 1px; background: var(--ma-border); margin: 0 -14px; }
+.ma-section-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--ma-text3);
+}
+
+/* ── TV show selection ── */
+.ma-tv-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ma-select {
+  width: 100% !important;
+  background: var(--ma-surface2) !important;
+  border: 1px solid var(--ma-border2) !important;
+  color: var(--ma-text) !important;
+  border-radius: 5px !important;
+  padding: 7px 10px !important;
+  font-size: 12px !important;
+  cursor: pointer !important;
+  transition: border-color 0.15s !important;
+  outline: none !important;
+  box-shadow: none !important;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.5l3 3 3-3' stroke='%23666' stroke-width='1.5' fill='none'/%3E%3C/svg%3E") !important;
+  background-repeat: no-repeat !important;
+  background-position: right 10px center !important;
+}
+.ma-select:focus { border-color: var(--ma-accent) !important; }
+.ma-select[multiple] {
+  background-image: none !important;
+  padding: 4px !important;
+  min-height: 80px;
+}
+.ma-select option { padding: 3px 6px; }
+
+.ma-row { display: flex; gap: 8px; }
+.ma-row > * { flex: 1; }
+
+/* ── Magnet input ── */
+.ma-magnet-input {
+  width: 100% !important;
+  background: var(--ma-surface2) !important;
+  border: 1px solid var(--ma-border2) !important;
+  color: var(--ma-text) !important;
+  border-radius: 5px !important;
+  padding: 7px 10px !important;
+  font-size: 12px !important;
+  transition: border-color 0.15s !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+.ma-magnet-input:focus { border-color: var(--ma-accent) !important; }
+.ma-magnet-input::placeholder { color: var(--ma-text3) !important; }
+.ma-magnet-input.has-value { border-color: #166534 !important; color: var(--ma-green) !important; }
+
+.ma-file-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 5px;
+  border: 1px solid var(--ma-border2);
+  background: var(--ma-surface2);
+  color: var(--ma-text2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ma-file-btn:hover { background: var(--ma-surface3); border-color: #555; color: var(--ma-text); }
+.ma-file-btn svg { width: 12px; height: 12px; flex-shrink: 0; }
+.ma-file-btn.has-file { border-color: #166534; color: var(--ma-green); }
+
+.ma-hint { font-size: 10px; color: var(--ma-text3); font-style: italic; line-height: 1.4; }
+
+/* ── Toast ── */
+.ma-toast {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  background: var(--ma-surface);
+  border: 1px solid var(--ma-border2);
+  border-radius: 7px;
+  padding: 10px 16px;
+  font-size: 12px;
+  color: var(--ma-text);
+  box-shadow: 0 4px 20px #00000066;
+  z-index: 9999;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: all 0.25s;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ma-toast.show { opacity: 1; transform: translateY(0); }
+.ma-toast-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.ma-toast-green .ma-toast-dot { background: var(--ma-green); }
+.ma-toast-red .ma-toast-dot { background: var(--ma-red); }
+.ma-toast-blue .ma-toast-dot { background: var(--ma-blue); }
+
+/* ── Empty state ── */
+.ma-empty { text-align: center; padding: 5rem 1rem; color: var(--ma-text3); }
+.ma-empty svg { width: 48px; height: 48px; margin: 0 auto 12px; display: block; opacity: 0.2; }
+.ma-empty-title { font-size: 15px; font-weight: 600; color: var(--ma-text2); margin-bottom: 6px; }
+.ma-empty-sub { font-size: 12px; }
+
+/* ── Show two-column layout (desktop only) ── */
+@media (min-width: 601px) {
+  .ma-show-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+}
+
+@media (max-width: 768px) {
+  .ma-search-wrap { max-width: 100%; flex: 1 1 100%; }
+  .ma-card { flex-direction: column; }
+  .ma-card-poster-wrap { width: 100%; height: 160px; }
+  .ma-card-poster { object-position: center 20%; }
+  .ma-card-poster-wrap.has-backdrop { background-size: cover; background-position: center; background-repeat: no-repeat; }
+  .ma-card-poster-wrap.has-backdrop .ma-card-poster,
+  .ma-card-poster-wrap.has-backdrop .ma-card-poster-placeholder { display: none !important; }
+}
+</style>
 <script type="module">
 const notificationsUrl = "{{ url_for('static', filename='js/notifications.js') }}";
 let showPopup, POPUP_TYPES;
 
-// Dynamic import of notifications module
 import(notificationsUrl).then(module => {
     showPopup = module.showPopup;
     POPUP_TYPES = module.POPUP_TYPES;
 }).catch(error => console.error('Error loading notifications module:', error));
 
 document.addEventListener('DOMContentLoaded', function() {
+    // ── Apply backdrop image on mobile only ──
+    if (window.matchMedia('(max-width: 768px)').matches) {
+        document.querySelectorAll('.ma-card-poster-wrap[data-backdrop]').forEach(el => {
+            el.style.backgroundImage = `url('${el.dataset.backdrop}')`;
+            el.classList.add('has-backdrop');
+        });
+    }
+
+    // ── Auto-fill and submit when prefill_title is in URL (search step only) ──
+    const urlParams = new URLSearchParams(window.location.search);
+    const prefillTitle = urlParams.get('prefill_title');
+    const prefillType = urlParams.get('prefill_type');
+    const prefillId = urlParams.get('prefill_id');
+    const searchInput = document.getElementById('search_term');
     const contentTypeSelect = document.getElementById('content_type');
-    
-    console.log('Starting TV show selection handling');
-    
-    // First, hide all TV show selection UI elements for movies
-    document.querySelectorAll('.media-card').forEach(card => {
-        const mediaType = card.querySelector('input[name="media_type"]')?.value;
-        const tvShowSelection = card.querySelector('.tv-show-selection');
-        console.log(`Card media type: ${mediaType}, Has TV selection: ${!!tvShowSelection}`);
-        
-        if (mediaType === 'movie' && tvShowSelection) {
-            tvShowSelection.style.display = 'none';
+    // Only auto-submit if we have a title but no prefill_id (prefill_id means the route
+    // already resolved the show and rendered results directly — don't re-submit)
+    if (prefillTitle && !prefillId && searchInput && searchInput.form) {
+        searchInput.value = prefillTitle;
+        if (prefillType && contentTypeSelect) {
+            const val = prefillType === 'tv' ? 'show' : prefillType;
+            if ([...contentTypeSelect.options].some(o => o.value === val)) contentTypeSelect.value = val;
+        }
+        searchInput.form.submit();
+        return;
+    }
+
+    // ── TV show selection handling ──
+    document.querySelectorAll('.ma-card').forEach(card => {
+        const mediaTypeInput = card.querySelector('input[name="media_type"]');
+        const mediaType = mediaTypeInput?.value;
+        const tvSection = card.querySelector('.ma-tv-show-selection');
+        if (mediaType === 'movie' && tvSection) {
+            tvSection.style.display = 'none';
         }
     });
 
-    // Handle TV show selection UI only for TV shows
-    document.querySelectorAll('.tv-show-selection').forEach(tvShowSelection => {
+    document.querySelectorAll('.ma-tv-show-selection').forEach(tvShowSelection => {
         const tmdbId = tvShowSelection.dataset.tmdbId;
         const selectionType = tvShowSelection.querySelector('.selection-type');
         const seasonSelection = tvShowSelection.querySelector('.season-selection');
@@ -40,196 +477,131 @@ document.addEventListener('DOMContentLoaded', function() {
         const seasonsSelect = tvShowSelection.querySelector('.seasons-select');
         const seasonSelect = tvShowSelection.querySelector('.season-select');
         const episodeSelect = tvShowSelection.querySelector('.episode-select');
-        
-        // Get the associated form elements
-        const form = tvShowSelection.nextElementSibling;
-        
-        const magnetInput = form.querySelector('.magnet-input');
-        const versionInput = form.querySelector('.version-input');
-        const submitBtn = form.querySelector('.submit-btn');
+
+        const form = tvShowSelection.closest('.ma-card-body').querySelector('.ma-magnet-form');
+        const magnetInputWrap = form.querySelector('.ma-magnet-wrap');
+        const versionInputWrap = form.querySelector('.ma-version-wrap');
+        const submitBtnWrap = form.querySelector('.ma-submit-wrap');
         const selectionTypeInput = form.querySelector('.selection-type-input');
         const selectedSeasonsInput = form.querySelector('.selected-seasons-input');
         const seasonInput = form.querySelector('.season-input');
         const episodeInput = form.querySelector('.episode-input');
 
-        // Load season data when TV show card is loaded
-        async function loadSeasonData() {
-            try {
-                const response = await fetch(`{{ url_for('magnet.get_season_data') }}?tmdb_id=${tmdbId}&allow_specials=true`);
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                const data = await response.json();
-                
-                // Store season data for later use
-                seasonSelect.seasonData = data;
-
-                // Clear existing options
-                seasonsSelect.innerHTML = '';
-                seasonSelect.innerHTML = '';
-                episodeSelect.innerHTML = '';
-
-                // Add seasons to both dropdowns
-                Object.entries(data).forEach(([seasonNum, episodeCount]) => {
-                    // Add to multi-select seasons dropdown
-                    const seasonOption = document.createElement('option');
-                    seasonOption.value = seasonNum;
-                    seasonOption.textContent = seasonNum === '0' ? `Specials (${episodeCount} episodes)` : `Season ${seasonNum} (${episodeCount} episodes)`;
-                    seasonsSelect.appendChild(seasonOption);
-
-                    // Add to single season dropdown
-                    const singleSeasonOption = seasonOption.cloneNode(true);
-                    seasonSelect.appendChild(singleSeasonOption);
-                });
-
-                // Enable season selection
-                seasonSelect.disabled = false;
-
-                // Apply prefilled seasons after options are ready
-                if (prefillSelection === 'seasons' && prefillSeasons) {
-                    const seasonValues = prefillSeasons.split(',').map(s => s.trim()).filter(Boolean);
-                    const optionMap = new Map(Array.from(seasonsSelect.options).map(o => [o.value, o]));
-                    seasonValues.forEach(val => {
-                        const opt = optionMap.get(val);
-                        if (opt) opt.selected = true;
-                    });
-                    const selected = Array.from(seasonsSelect.selectedOptions).map(opt => opt.value);
-                    selectedSeasonsInput.value = selected.join(',');
-                    selectionType.value = 'seasons';
-                    updateSelectionFields('seasons');
-                }
-
-                // Apply prefilled episode after options are ready
-                if (prefillSelection === 'episode' && prefillSeasons) {
-                    const seasonValue = prefillSeasons.split(',')[0]?.trim();
-                    if (seasonValue && data[seasonValue]) {
-                        // Select the prefilled season
-                        seasonSelect.value = seasonValue;
-                        seasonInput.value = seasonValue;
-
-                        // Populate episodes for the selected season
-                        populateEpisodes(data[seasonValue]);
-
-                        // Select the prefilled episode if provided
-                        if (prefillEpisode) {
-                            episodeSelect.value = prefillEpisode;
-                            episodeInput.value = prefillEpisode;
-                        }
-
-                        // Ensure selection type is set
-                        selectionType.value = 'episode';
-                        updateSelectionFields('episode');
-
-                        // Force show magnet fields since we have all values
-                        if (seasonInput.value && episodeInput.value) {
-                            showMagnetFields();
-                        }
-                    }
-                }
-            } catch (error) {
-                console.error('Error loading season data:', error);
-                showError('Failed to load season data');
-            }
-        }
-
-        // Handle selection type changes
-        selectionType.addEventListener('change', function() {
-            updateSelectionFields(this.value);
-            // Ensure selectionTypeInput is always updated
-            selectionTypeInput.value = this.value;
-        });
-
-        // Initialize selection type fields based on default value
         const prefillDataElement = document.getElementById('prefill-data');
         const prefillSelection = (prefillDataElement?.dataset?.prefillSelection || '').trim();
         const prefillSeasons = (prefillDataElement?.dataset?.prefillSeasons || '').trim();
         const prefillEpisode = (prefillDataElement?.dataset?.prefillEpisode || '').trim();
-        const initialSelectionType = prefillSelection || selectionType.value;
-        if (prefillSelection) {
-            const validValues = ['all','seasons','episode'];
-            if (validValues.includes(prefillSelection)) {
-                selectionType.value = prefillSelection;
+
+        async function loadSeasonData() {
+            try {
+                const response = await fetch(`{{ url_for('magnet.get_season_data') }}?tmdb_id=${tmdbId}&allow_specials=true`);
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const data = await response.json();
+
+                seasonSelect.seasonData = data;
+                seasonsSelect.innerHTML = '';
+                seasonSelect.innerHTML = '';
+                episodeSelect.innerHTML = '';
+
+                Object.entries(data).forEach(([seasonNum, episodeCount]) => {
+                    const seasonOption = document.createElement('option');
+                    seasonOption.value = seasonNum;
+                    seasonOption.textContent = seasonNum === '0'
+                        ? `Specials (${episodeCount} episodes)`
+                        : `Season ${seasonNum} (${episodeCount} episodes)`;
+                    seasonsSelect.appendChild(seasonOption);
+                    seasonSelect.appendChild(seasonOption.cloneNode(true));
+                });
+                seasonSelect.disabled = false;
+
+                if (prefillSelection === 'seasons' && prefillSeasons) {
+                    const seasonValues = prefillSeasons.split(',').map(s => s.trim()).filter(Boolean);
+                    const optionMap = new Map(Array.from(seasonsSelect.options).map(o => [o.value, o]));
+                    seasonValues.forEach(val => { const opt = optionMap.get(val); if (opt) opt.selected = true; });
+                    selectedSeasonsInput.value = Array.from(seasonsSelect.selectedOptions).map(o => o.value).join(',');
+                    selectionType.value = 'seasons';
+                    updateSelectionFields('seasons');
+                }
+
+                if (prefillSelection === 'episode' && prefillSeasons) {
+                    const seasonValue = prefillSeasons.split(',')[0]?.trim();
+                    if (seasonValue && data[seasonValue]) {
+                        seasonSelect.value = seasonValue;
+                        seasonInput.value = seasonValue;
+                        populateEpisodes(data[seasonValue]);
+                        if (prefillEpisode) {
+                            episodeSelect.value = prefillEpisode;
+                            episodeInput.value = prefillEpisode;
+                        }
+                        selectionType.value = 'episode';
+                        updateSelectionFields('episode');
+                        if (seasonInput.value && episodeInput.value) showMagnetFields();
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading season data:', error);
+                showErrorToast('Failed to load season data');
             }
         }
+
+        selectionType.addEventListener('change', function() {
+            updateSelectionFields(this.value);
+            selectionTypeInput.value = this.value;
+        });
+
+        const initialSelectionType = prefillSelection || selectionType.value;
+        if (prefillSelection) {
+            const validValues = ['all', 'seasons', 'episode'];
+            if (validValues.includes(prefillSelection)) selectionType.value = prefillSelection;
+        }
         updateSelectionFields(initialSelectionType);
-        // Ensure selectionTypeInput is updated on initial load
         selectionTypeInput.value = initialSelectionType;
 
-        // Handle season selection for single episodes
         seasonSelect.addEventListener('change', function() {
-            const selectedSeason = this.value; // Get value directly
+            const selectedSeason = this.value;
             const seasonData = this.seasonData?.[selectedSeason];
             if (seasonData) {
                 populateEpisodes(seasonData);
-                seasonInput.value = selectedSeason; // Set hidden input *immediately*
-                // Reset episode selection when season changes
+                seasonInput.value = selectedSeason;
                 episodeSelect.value = '';
-                episodeInput.value = ''; // Clear hidden episode input
-                hideMagnetFields(); // Hide fields until episode is selected
+                episodeInput.value = '';
+                hideMagnetFields();
             } else {
-                // Handle case where season data might be missing (error?)
-                 episodeSelect.innerHTML = '';
-                 episodeSelect.disabled = true;
-                 seasonInput.value = ''; // Clear hidden input
-                 episodeInput.value = ''; // Clear hidden input
-                 hideMagnetFields();
-            }
-        });
-
-        // Handle episode selection
-        episodeSelect.addEventListener('change', function() {
-            const selectedEpisode = this.value; // Get value directly
-            episodeInput.value = selectedEpisode; // Set hidden input *immediately*
-            // Show magnet input fields only if a valid episode is selected
-            if (selectedEpisode) {
-                 showMagnetFields();
-            } else {
-                 hideMagnetFields();
-            }
-        });
-
-        // Handle multi-season selection
-        seasonsSelect.addEventListener('change', function() {
-            const selectedSeasons = Array.from(this.selectedOptions).map(opt => opt.value);
-            selectedSeasonsInput.value = selectedSeasons.join(',');
-            if (selectedSeasons.length > 0) {
-                showMagnetFields();
-            } else {
+                episodeSelect.innerHTML = '';
+                episodeSelect.disabled = true;
+                seasonInput.value = '';
+                episodeInput.value = '';
                 hideMagnetFields();
             }
         });
 
-        // If prefilled for seasons, apply after season options are loaded
+        episodeSelect.addEventListener('change', function() {
+            episodeInput.value = this.value;
+            if (this.value) showMagnetFields(); else hideMagnetFields();
+        });
+
+        seasonsSelect.addEventListener('change', function() {
+            const selected = Array.from(this.selectedOptions).map(opt => opt.value);
+            selectedSeasonsInput.value = selected.join(',');
+            if (selected.length > 0) showMagnetFields(); else hideMagnetFields();
+        });
+
         if (prefillSelection === 'seasons' && prefillSeasons) {
-            // Wait one microtask to ensure options appended
             Promise.resolve().then(() => {
                 const seasonValues = prefillSeasons.split(',').map(s => s.trim()).filter(Boolean);
                 const optionMap = new Map(Array.from(seasonsSelect.options).map(o => [o.value, o]));
-                seasonValues.forEach(val => {
-                    const opt = optionMap.get(val);
-                    if (opt) opt.selected = true;
-                });
-                // Sync hidden input and UI
-                const selected = Array.from(seasonsSelect.selectedOptions).map(opt => opt.value);
-                selectedSeasonsInput.value = selected.join(',');
-                // Ensure selection type reflects seasons
+                seasonValues.forEach(val => { const opt = optionMap.get(val); if (opt) opt.selected = true; });
+                selectedSeasonsInput.value = Array.from(seasonsSelect.selectedOptions).map(o => o.value).join(',');
                 selectionType.value = 'seasons';
                 updateSelectionFields('seasons');
             });
         }
 
         function updateSelectionFields(type) {
-            // Clear season/episode hidden inputs when type changes away from 'episode'
-            if (type !== 'episode') {
-                seasonInput.value = '';
-                episodeInput.value = '';
-            }
-            // Clear multi-season hidden input when type changes away from 'seasons'
-            if (type !== 'seasons') {
-                selectedSeasonsInput.value = '';
-            }
+            if (type !== 'episode') { seasonInput.value = ''; episodeInput.value = ''; }
+            if (type !== 'seasons') { selectedSeasonsInput.value = ''; }
 
-            switch(type) {
+            switch (type) {
                 case 'all':
                     seasonSelection.style.display = 'none';
                     episodeSelection.style.display = 'none';
@@ -238,69 +610,44 @@ document.addEventListener('DOMContentLoaded', function() {
                 case 'seasons':
                     seasonSelection.style.display = 'block';
                     episodeSelection.style.display = 'none';
-                    // Hide fields initially for seasons, show when selection made
-                    const selectedSeasons = Array.from(seasonsSelect.selectedOptions).map(opt => opt.value);
+                    const selectedSeasons = Array.from(seasonsSelect.selectedOptions).map(o => o.value);
                     if (selectedSeasons.length > 0) {
-                         selectedSeasonsInput.value = selectedSeasons.join(','); // Ensure hidden input syncs if already selected
-                         showMagnetFields();
+                        selectedSeasonsInput.value = selectedSeasons.join(',');
+                        showMagnetFields();
                     } else {
-                         selectedSeasonsInput.value = ''; // Ensure it's cleared if no selection
-                         hideMagnetFields();
+                        selectedSeasonsInput.value = '';
+                        hideMagnetFields();
                     }
                     break;
                 case 'episode':
                     seasonSelection.style.display = 'none';
                     episodeSelection.style.display = 'block';
-                    hideMagnetFields(); // Hide fields initially
-
-                    // Attempt to auto-select and populate
+                    hideMagnetFields();
                     if (seasonSelect.seasonData && !episodeSelect.value) {
-                        // Select the first season if none selected
                         if (!seasonSelect.value && seasonSelect.options.length > 0) {
                             seasonSelect.value = seasonSelect.options[0].value;
-                            // --- EDIT: Set hidden input during auto-select ---
                             seasonInput.value = seasonSelect.value;
-                            // --- END EDIT ---
                         }
-
-                        // Populate episodes for the selected season
                         const seasonData = seasonSelect.seasonData[seasonSelect.value];
                         if (seasonData) {
                             populateEpisodes(seasonData);
-
-                            // Select the first episode if none selected
                             if (!episodeSelect.value && episodeSelect.options.length > 0) {
                                 episodeSelect.value = episodeSelect.options[0].value;
-                                // --- EDIT: Set hidden input during auto-select ---
                                 episodeInput.value = episodeSelect.value;
-                                // --- END EDIT ---
                             }
                         }
                     }
-
-                    // --- Show fields ONLY if both season AND episode have values ---
-                    // Sync hidden inputs one last time based on current dropdown values
-                    // This handles the case where dropdowns might already have values '1' selected
-                    // when the switch to 'episode' happens.
-                    seasonInput.value = seasonSelect.value || ''; // Use empty string if no value
-                    episodeInput.value = episodeSelect.value || ''; // Use empty string if no value
-
-                    if (seasonInput.value && episodeInput.value) {
-                         showMagnetFields();
-                    } else {
-                         hideMagnetFields(); // Keep hidden if either is missing
-                    }
-                    // --- End logic ---
+                    seasonInput.value = seasonSelect.value || '';
+                    episodeInput.value = episodeSelect.value || '';
+                    if (seasonInput.value && episodeInput.value) showMagnetFields(); else hideMagnetFields();
                     break;
             }
-            // Update the hidden input for selection type *after* the switch logic
             selectionTypeInput.value = type;
         }
 
         function populateEpisodes(episodeCount) {
             episodeSelect.innerHTML = '';
             episodeSelect.disabled = false;
-
             for (let i = 1; i <= episodeCount; i++) {
                 const option = document.createElement('option');
                 option.value = i;
@@ -310,77 +657,42 @@ document.addEventListener('DOMContentLoaded', function() {
         }
 
         function showMagnetFields() {
-            magnetInput.style.display = 'block';
-            versionInput.style.display = 'block';
-            submitBtn.style.display = 'block';
+            if (magnetInputWrap) { magnetInputWrap.style.display = 'flex'; magnetInputWrap.style.flexDirection = 'column'; }
+            if (submitBtnWrap) { submitBtnWrap.style.display = 'flex'; }
         }
 
         function hideMagnetFields() {
-            magnetInput.style.display = 'none';
-            versionInput.style.display = 'none';
-            submitBtn.style.display = 'none';
+            if (magnetInputWrap) magnetInputWrap.style.display = 'none';
+            if (submitBtnWrap) submitBtnWrap.style.display = 'none';
         }
-
-        function showError(message) {
-            if (showPopup) {
-                showPopup({
-                    type: POPUP_TYPES.ERROR,
-                    title: 'Error',
-                    message: message,
-                    autoClose: 5000
-                });
-            }
-        }
-
-
 
         loadSeasonData();
     });
 
-    // --- Function to handle prefilling version --- (REVISED)
+    // ── Version prefill ──
     function prefillVersionIfNeeded() {
         const prefillDataElement = document.getElementById('prefill-data');
-        if (!prefillDataElement) {
-            console.warn('Prefill data element not found.');
-            return;
-        }
-
-        // Read data attributes - use JSON.parse for boolean
+        if (!prefillDataElement) return;
         const isPrefilled = JSON.parse(prefillDataElement.dataset.isPrefilled || 'false');
         const prefillVersion = prefillDataElement.dataset.prefillVersion;
-
         if (isPrefilled && prefillVersion) {
-            console.log(`Attempting to prefill version: ${prefillVersion}`);
-            // Find the version select dropdown within the (likely only) media card
-            const versionSelect = document.querySelector('.media-card .version-input select[name="version"]');
-
+            const versionSelect = document.querySelector('.ma-card .ma-version-select');
             if (versionSelect) {
-                // Wait a very short moment to ensure options are populated by the fetch below
-                // This is a fallback in case the fetch completes *slightly* after this runs
                 setTimeout(() => {
-                    const optionExists = Array.from(versionSelect.options).some(opt => opt.value === prefillVersion);
-                    if (optionExists) {
+                    if (Array.from(versionSelect.options).some(opt => opt.value === prefillVersion)) {
                         versionSelect.value = prefillVersion;
-                        console.log(`Successfully set version dropdown to: ${prefillVersion}`);
-                    } else {
-                        console.warn(`Prefill version "${prefillVersion}" not found in dropdown options.`);
                     }
-                }, 100); // 100ms delay, adjust if needed
-
-            } else {
-                console.warn('Could not find the version select dropdown for prefilling.');
+                }, 100);
             }
         }
     }
-    // --- End function ---
 
-    // Load versions from API
+    // ── Load versions ──
     const versionsUrl = "{{ url_for('magnet.get_versions') }}";
     fetch(versionsUrl)
-        .then(response => response.json())
+        .then(r => r.json())
         .then(versions => {
-            const versionSelects = document.querySelectorAll('select[name="version"]');
-            versionSelects.forEach(select => {
+            document.querySelectorAll('.ma-version-select').forEach(select => {
                 select.innerHTML = '<option value="">Select Version</option>';
                 versions.forEach(version => {
                     const option = document.createElement('option');
@@ -389,409 +701,392 @@ document.addEventListener('DOMContentLoaded', function() {
                     select.appendChild(option);
                 });
             });
-            // Call prefill function AFTER versions are loaded and options populated
             prefillVersionIfNeeded();
         })
         .catch(error => console.error('Error loading versions:', error));
 
-    // Handle file upload UI updates
-    document.querySelectorAll('.custom-file-input').forEach(fileInput => {
+    // ── File input UI ──
+    document.querySelectorAll('.ma-file-input').forEach(fileInput => {
         fileInput.addEventListener('change', function() {
-            const targetInputId = this.getAttribute('data-target-input');
-            const targetInput = document.getElementById(targetInputId);
-            const fileLabel = this.nextElementSibling;
-            
+            const label = this.closest('.ma-file-btn');
+            const magnetInput = this.closest('form').querySelector('.ma-magnet-input');
             if (this.files.length > 0) {
                 const fileName = this.files[0].name;
-                fileLabel.textContent = fileName;
-                
-                // Clear the magnet link input when a file is selected
-                if (targetInput) {
-                    targetInput.value = '';
-                }
+                label.classList.add('has-file');
+                label.querySelector('.ma-file-label').textContent = fileName;
+                if (magnetInput) magnetInput.value = '';
             } else {
-                fileLabel.textContent = 'Choose torrent file';
+                label.classList.remove('has-file');
+                label.querySelector('.ma-file-label').textContent = 'Choose torrent file';
             }
         });
     });
 
-    // Handle magnet link input clearing when file is selected
-    document.querySelectorAll('input[name="magnet_link"]').forEach(magnetInput => {
-        magnetInput.addEventListener('input', function() {
+    // ── Magnet input live state ──
+    document.querySelectorAll('.ma-magnet-input').forEach(input => {
+        input.addEventListener('input', function() {
+            this.classList.toggle('has-value', !!this.value.trim());
             if (this.value.trim()) {
-                // Clear any selected file when magnet link is entered
                 const form = this.closest('form');
-                const fileInput = form.querySelector('input[name="torrent_file"]');
+                const fileInput = form?.querySelector('.ma-file-input');
                 if (fileInput) {
                     fileInput.value = '';
-                    const fileLabel = fileInput.nextElementSibling;
-                    fileLabel.textContent = 'Choose torrent file';
+                    const label = fileInput.closest('.ma-file-btn');
+                    if (label) {
+                        label.classList.remove('has-file');
+                        label.querySelector('.ma-file-label').textContent = 'Choose torrent file';
+                    }
                 }
             }
         });
     });
 
-    // Re-introduce async form submission for the preparation step
-    document.querySelectorAll('.magnet-form').forEach(form => {
+    // ── Async form submission ──
+    document.querySelectorAll('.ma-magnet-form').forEach(form => {
         form.addEventListener('submit', async function(e) {
-            e.preventDefault(); // Prevent default synchronous submission
-
-            const submitButton = form.querySelector('button[type="submit"]');
-            submitButton.disabled = true; // Disable button during processing
-            Loading.show(); // Show loading indicator
+            e.preventDefault();
+            const submitButton = form.querySelector('.ma-btn-orange-solid');
+            if (submitButton) submitButton.disabled = true;
+            Loading.show();
 
             try {
-                // Client-side validation (optional but good practice)
-                const magnetLink = form.querySelector('input[name="magnet_link"]').value;
-                const torrentFile = form.querySelector('input[name="torrent_file"]').files[0];
-                const version = form.querySelector('select[name="version"]').value;
-                
-                if (!magnetLink.trim() && !torrentFile) {
-                    throw new Error('Please enter a magnet link or upload a torrent file.');
-                }
-                if (magnetLink.trim() && torrentFile) {
-                    throw new Error('Please provide either a magnet link OR a torrent file, not both.');
-                }
-                if (!version) {
-                    throw new Error('Please select a version.');
-                }
+                const magnetLink = form.querySelector('.ma-magnet-input')?.value || '';
+                const torrentFile = form.querySelector('.ma-file-input')?.files?.[0];
+                const version = form.querySelector('.ma-version-select')?.value;
 
-                const formData = new FormData(form);
-                
-                // DEBUG: Log the action URL before fetching
-                console.log('Fetching URL:', form.getAttribute('action')); 
-                
+                if (!magnetLink.trim() && !torrentFile) throw new Error('Please enter a magnet link or upload a torrent file.');
+                if (magnetLink.trim() && torrentFile) throw new Error('Please provide either a magnet link OR a torrent file, not both.');
+                if (!version) throw new Error('Please select a version.');
+
                 const response = await fetch(form.getAttribute('action'), {
                     method: 'POST',
-                    body: formData
-                    // No 'Accept': 'application/json' needed here, we expect HTML on success
+                    body: new FormData(form)
                 });
 
                 if (response.ok) {
-                    // **MODIFICATION**: Check for redirect URL in JSON response
-                    const data = await response.json(); 
+                    const data = await response.json();
                     if (data.success && data.redirect_url) {
-                         // Redirect to the manual assignment page
                         window.location.href = data.redirect_url;
                     } else {
-                        // Should not happen if backend logic is correct, but handle anyway
-                         throw new Error(data.error || 'Backend indicated success but provided no redirect URL.');
+                        throw new Error(data.error || 'Backend indicated success but provided no redirect URL.');
                     }
                 } else {
-                    // Error: Backend returned a JSON error
                     const errorData = await response.json();
                     throw new Error(errorData.error || `Server responded with status ${response.status}`);
                 }
             } catch (error) {
                 console.error('Error preparing assignment:', error);
-                if (showPopup) {
-                    showPopup({
-                        type: POPUP_TYPES.ERROR,
-                        title: 'Preparation Error',
-                        message: error.message || 'An unexpected error occurred.',
-                        autoClose: 10000 // 10 seconds
-                    });
-                }
-                // Refresh the page after 10 seconds
-                setTimeout(() => { 
-                    window.location.reload(); 
-                }, 10000);
+                showErrorToast(error.message || 'An unexpected error occurred.');
+                setTimeout(() => { window.location.reload(); }, 10000);
             } finally {
-                // Ensure loading indicator is hidden and button is re-enabled
-                // Note: Button might not exist if page content was replaced on success
                 Loading.hide();
-                if (submitButton && !document.contains(submitButton)) {
-                    // If button is gone (due to success), do nothing
-                } else if (submitButton) {
-                    submitButton.disabled = false;
-                }
+                if (submitButton && document.contains(submitButton)) submitButton.disabled = false;
             }
         });
     });
 
-    // ====================================================================
-    // PHASE 1.2: Debounced Season Data Loading
-    // PHASE 2.3: URL State Management for Season/Episode Selection
-    // PHASE 3.2: Virtual Scrolling for Episode Lists (if applicable)
-    // ====================================================================
-
-    // PHASE 1.2: Debounce helper to prevent excessive API calls
+    // ── URL state management (debounced) ──
     function debounce(func, wait) {
         let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func(...args);
-            };
+        return function(...args) {
             clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
+            timeout = setTimeout(() => func(...args), wait);
         };
     }
 
-    // PHASE 2.3: URL State Management - Save season/episode selection to URL
     function updateURLState(tmdbId, selectionType, season, episode, seasons) {
         const url = new URL(window.location);
         url.searchParams.set('tmdb_id', tmdbId);
         url.searchParams.set('selection_type', selectionType);
-
         if (selectionType === 'episode' && season && episode) {
             url.searchParams.set('season', season);
             url.searchParams.set('episode', episode);
         } else if (selectionType === 'seasons' && seasons) {
             url.searchParams.set('seasons', seasons);
-        } else if (selectionType === 'all') {
+        } else {
             url.searchParams.delete('season');
             url.searchParams.delete('episode');
             url.searchParams.delete('seasons');
         }
-
         window.history.pushState({}, '', url);
-        console.log('URL state updated:', url.search);
     }
 
-    // PHASE 2.3: Restore selection from URL on page load
-    function restoreSelectionFromURL() {
-        const urlParams = new URLSearchParams(window.location.search);
-        const tmdbId = urlParams.get('tmdb_id');
-        const selectionType = urlParams.get('selection_type');
-        const season = urlParams.get('season');
-        const episode = urlParams.get('episode');
-        const seasons = urlParams.get('seasons');
-
-        if (!tmdbId || !selectionType) return;
-
-        // Find the corresponding TV show card
-        const tvShowSelection = document.querySelector(`.tv-show-selection[data-tmdb-id="${tmdbId}"]`);
-        if (!tvShowSelection) return;
-
-        const selectionTypeDropdown = tvShowSelection.querySelector('.selection-type');
-        if (selectionTypeDropdown) {
-            selectionTypeDropdown.value = selectionType;
-
-            // Trigger change event to update UI
-            const event = new Event('change', { bubbles: true });
-            selectionTypeDropdown.dispatchEvent(event);
-
-            // Restore specific selections after a short delay (wait for season data to load)
-            setTimeout(() => {
-                if (selectionType === 'episode' && season && episode) {
-                    const seasonSelect = tvShowSelection.querySelector('.season-select');
-                    const episodeSelect = tvShowSelection.querySelector('.episode-select');
-
-                    if (seasonSelect) {
-                        seasonSelect.value = season;
-                        const seasonEvent = new Event('change', { bubbles: true });
-                        seasonSelect.dispatchEvent(seasonEvent);
-
-                        // Wait for episodes to populate, then select episode
-                        setTimeout(() => {
-                            if (episodeSelect) {
-                                episodeSelect.value = episode;
-                            }
-                        }, 300);
-                    }
-                } else if (selectionType === 'seasons' && seasons) {
-                    const seasonsSelect = tvShowSelection.querySelector('.seasons-select');
-                    if (seasonsSelect) {
-                        const seasonValues = seasons.split(',');
-                        Array.from(seasonsSelect.options).forEach(option => {
-                            if (seasonValues.includes(option.value)) {
-                                option.selected = true;
-                            }
-                        });
-                    }
-                }
-            }, 500);
-        }
-
-        console.log('Selection restored from URL:', { tmdbId, selectionType, season, episode, seasons });
-    }
-
-    // PHASE 2.3: Handle browser back/forward navigation
-    window.addEventListener('popstate', function(event) {
-        console.log('Popstate event - restoring selection from URL');
-        restoreSelectionFromURL();
-    });
-
-    // PHASE 2.3: Restore selection on page load
-    restoreSelectionFromURL();
-
-    // PHASE 1.2: Add debounced event listeners to update URL state
-    document.querySelectorAll('.tv-show-selection').forEach(tvShowSelection => {
+    document.querySelectorAll('.ma-tv-show-selection').forEach(tvShowSelection => {
         const tmdbId = tvShowSelection.dataset.tmdbId;
         const selectionType = tvShowSelection.querySelector('.selection-type');
         const seasonSelect = tvShowSelection.querySelector('.season-select');
         const episodeSelect = tvShowSelection.querySelector('.episode-select');
         const seasonsSelect = tvShowSelection.querySelector('.seasons-select');
 
-        if (selectionType) {
-            selectionType.addEventListener('change', debounce(function() {
-                updateURLState(tmdbId, this.value, null, null, null);
-            }, 300));
-        }
-
-        if (seasonSelect) {
-            seasonSelect.addEventListener('change', debounce(function() {
-                const episode = episodeSelect ? episodeSelect.value : null;
-                updateURLState(tmdbId, 'episode', this.value, episode, null);
-            }, 300));
-        }
-
-        if (episodeSelect) {
-            episodeSelect.addEventListener('change', debounce(function() {
-                const season = seasonSelect ? seasonSelect.value : null;
-                updateURLState(tmdbId, 'episode', season, this.value, null);
-            }, 300));
-        }
-
-        if (seasonsSelect) {
-            seasonsSelect.addEventListener('change', debounce(function() {
-                const selected = Array.from(this.selectedOptions).map(opt => opt.value).join(',');
-                updateURLState(tmdbId, 'seasons', null, null, selected);
-            }, 300));
-        }
+        if (selectionType) selectionType.addEventListener('change', debounce(function() {
+            updateURLState(tmdbId, this.value, null, null, null);
+        }, 300));
+        if (seasonSelect) seasonSelect.addEventListener('change', debounce(function() {
+            updateURLState(tmdbId, 'episode', this.value, episodeSelect?.value, null);
+        }, 300));
+        if (episodeSelect) episodeSelect.addEventListener('change', debounce(function() {
+            updateURLState(tmdbId, 'episode', seasonSelect?.value, this.value, null);
+        }, 300));
+        if (seasonsSelect) seasonsSelect.addEventListener('change', debounce(function() {
+            updateURLState(tmdbId, 'seasons', null, null, Array.from(this.selectedOptions).map(o => o.value).join(','));
+        }, 300));
     });
-
-    console.log('TV show episode optimizations loaded: debouncing, URL state management');
 });
+
+// ── Toast ──
+let maToastTimer;
+function maShowToast(msg, color = 'blue') {
+    const t = document.getElementById('ma-toast');
+    t.className = 'ma-toast ma-toast-' + color;
+    document.getElementById('ma-toast-msg').textContent = msg;
+    void t.offsetWidth;
+    t.classList.add('show');
+    clearTimeout(maToastTimer);
+    maToastTimer = setTimeout(() => t.classList.remove('show'), 3000);
+}
+function showErrorToast(msg) { maShowToast(msg, 'red'); }
 </script>
 {% endblock %}
 
 {% block content %}
-{# --- ADD HIDDEN DIV FOR PREFILL DATA --- #}
 <div id="prefill-data"
      data-is-prefilled="{{ is_prefilled|default(false)|tojson }}"
-     data-prefill-version="{{ prefill_version|default('') }}"
-     data-prefill-selection="{{ prefill_selection|default('') }}"
-     data-prefill-seasons="{{ prefill_seasons|default('') }}"
-     data-prefill-episode="{{ prefill_episode|default('') }}">
-</div>
-{# --- END HIDDEN DIV --- #}
+     data-prefill-version="{{ prefill_version if prefill_version else '' }}"
+     data-prefill-selection="{{ prefill_selection if prefill_selection else '' }}"
+     data-prefill-seasons="{{ prefill_seasons if prefill_seasons else '' }}"
+     data-prefill-episode="{{ prefill_episode if prefill_episode else '' }}"
+     style="display:none"></div>
 
-<div class="search-container">
-    {% if step == 'search' or not step %}
-    <div class="search-form">
-        <h3>Search for Media</h3>
-        <form method="POST" action="{{ url_for('magnet.assign_magnet') }}" class="mb-4 direct-submit-form">
-            <input type="hidden" name="action" value="search">
-            <div class="form-group mb-3">
-                <label for="search_term">Search for Movie/TV Show:</label>
-                <input type="text" class="form-control" id="search_term" name="search_term" required>
-            </div>
-            <div class="form-group mb-3">
-                <label for="content_type">Content Type:</label>
-                <select class="form-control" id="content_type" name="content_type">
-                    <option value="movie">Movie</option>
-                    <option value="show">TV Show</option>
-                </select>
-            </div>
-            <button type="submit" class="btn btn-primary">Search</button>
-        </form>
-    </div>
-    {% endif %}
+<div class="ma-main">
 
-    {% if step == 'results' and search_results %}
-    <div class="search-results">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <h3>Search Results for "{{ search_term }}"</h3>
-            <a href="{{ url_for('magnet.assign_magnet') }}" class="btn btn-secondary">New Search</a>
+  {# ── Initial search form ── #}
+  {% if step == 'search' or not step %}
+  <div class="ma-search-form-wrap">
+    <h3>Search for Media</h3>
+    <form method="POST" action="{{ url_for('magnet.assign_magnet') }}">
+      <input type="hidden" name="action" value="search">
+      <div style="display:flex;flex-direction:column;gap:1rem">
+        <div class="ma-form-group">
+          <label for="search_term">Title</label>
+          <input type="text" id="search_term" name="search_term" placeholder="Movie or TV show name…" required>
         </div>
-        <div class="results-grid{% if is_prefilled %} single-item{% endif %}">
-            {% for result in search_results %}
-            <div class="media-card">
-                {% if result.posterPath %}
-                <img src="{{ result.posterPath }}" class="media-poster" alt="{{ result.title }}">
-                {% endif %}
-                <div class="media-info">
-                    <h6>{{ result.title }} ({{ result.year }})</h6>
-                    <p class="text-muted">{{ result.mediaType|title }}</p>
-                    
-                    {% if result.mediaType == 'show' %}
-                    <div class="tv-show-selection" data-tmdb-id="{{ result.id }}">
-                        <div class="form-group mb-3">
-                            <label for="selection_type_{{ result.id }}">Selection Type:</label>
-                            <select class="form-control selection-type" id="selection_type_{{ result.id }}">
-                                <option value="all">Full Series</option>
-                                <option value="seasons">Season Pack</option>
-                                <option value="episode">Single Episode</option>
-                            </select>
-                        </div>
+        <div class="ma-form-group">
+          <label for="content_type">Content Type</label>
+          <select id="content_type" name="content_type">
+            <option value="movie">Movie</option>
+            <option value="show">TV Show</option>
+          </select>
+        </div>
+        <button type="submit" class="ma-btn ma-btn-search-submit" style="width:100%;justify-content:center">
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35"/></svg>
+          Search
+        </button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
 
-                        <div class="season-selection" style="display: none;">
-                            <label for="seasons_{{ result.id }}">Select Seasons:</label>
-                            <select class="form-control seasons-select" id="seasons_{{ result.id }}" multiple>
-                                <!-- Will be populated via JavaScript -->
-                            </select>
-                            <small class="form-text text-muted">Hold Ctrl/Cmd to select multiple seasons</small>
-                        </div>
-                        <div class="episode-selection" style="display: none;">
-                            <div class="row">
-                                <div class="col">
-                                    <label for="season_{{ result.id }}">Season:</label>
-                                    <select class="form-control season-select" id="season_{{ result.id }}">
-                                        <!-- Will be populated via JavaScript -->
-                                    </select>
-                                </div>
-                                <div class="col">
-                                    <label for="episode_{{ result.id }}">Episode:</label>
-                                    <select class="form-control episode-select" id="episode_{{ result.id }}" disabled>
-                                        <!-- Will be populated based on selected season -->
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    {% endif %}
+  {# ── Results page ── #}
+  {% if step == 'results' and search_results %}
 
-                    <form method="POST" action="{{ url_for('magnet.prepare_manual_assignment') }}" class="magnet-form direct-submit-form">
-                        <input type="hidden" name="action" value="assign">
-                        <input type="hidden" name="tmdb_id" value="{{ result.id }}">
-                        <input type="hidden" name="media_type" value="{{ result.mediaType }}">
-                        <input type="hidden" name="title" value="{{ result.title }}">
-                        <input type="hidden" name="year" value="{{ result.year }}">
-                        
-                        {% if result.mediaType == 'show' %}
-                        <!-- These will be populated by JavaScript before form submission -->
-                        <input type="hidden" name="selection_type" class="selection-type-input">
-                        <input type="hidden" name="selected_seasons" class="selected-seasons-input">
-                        <input type="hidden" name="season" class="season-input">
-                        <input type="hidden" name="episode" class="episode-input">
-                        {% endif %}
+  <div class="ma-page-header">
+    <div>
+      <div class="ma-page-title">Search Results <span>for "{{ search_term }}"</span></div>
+      <div class="ma-result-count">{{ search_results|length }} result{{ 's' if search_results|length != 1 else '' }} found</div>
+    </div>
+  </div>
 
-                        <div class="form-group magnet-input" {% if result.mediaType == 'show' %}style="display: none;"{% endif %}>
-                            <label for="magnet_link_{{ result.id }}">Magnet Link or Torrent File:</label>
-                            <div class="input-group">
-                                <input type="text" class="form-control" id="magnet_link_{{ result.id }}"
-                                       name="magnet_link" placeholder="Enter magnet link"
-                                       {% if is_prefilled and prefill_magnet %} value="{{ prefill_magnet }}" {% endif %}
-                                       >
-                                <div class="input-group-append">
-                                    <span class="input-group-text">or</span>
-                                </div>
-                                <div class="custom-file">
-                                    <input type="file" class="custom-file-input" id="torrent_file_{{ result.id }}"
-                                           name="torrent_file" accept=".torrent" 
-                                           data-target-input="magnet_link_{{ result.id }}">
-                                    <label class="custom-file-label" for="torrent_file_{{ result.id }}">Choose torrent file</label>
-                                </div>
-                            </div>
-                            <small class="form-text text-muted">Enter a magnet link or upload a .torrent file</small>
-                        </div>
-                        <div class="form-group version-input" {% if result.mediaType == 'show' %}style="display: none;"{% endif %}>
-                            <select class="form-control" name="version" required>
-                                <option value="">Select Version</option>
-                            </select>
-                        </div>
-                        <button type="submit" class="btn btn-success submit-btn" {% if result.mediaType == 'show' %}style="display: none;"{% endif %}>
-                            Assign
-                        </button>
-                    </form>
+  {# ── Search row ── #}
+  <form method="POST" action="{{ url_for('magnet.assign_magnet') }}" style="display:contents">
+    <input type="hidden" name="action" value="search">
+    <div class="ma-search-row">
+      <div class="ma-search-wrap">
+        <span class="ma-search-icon">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6.5" cy="6.5" r="4"/><path d="M11 11l3 3"/></svg>
+        </span>
+        <input class="ma-search-input" id="search_term" name="search_term" type="text"
+               placeholder="Search for a title…" value="{{ search_term }}">
+        <input type="hidden" name="content_type" value="{{ content_type|default('movie') }}">
+      </div>
+      <button type="submit" class="ma-btn ma-btn-orange">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35"/></svg>
+        Search
+      </button>
+      <a href="{{ url_for('magnet.assign_magnet') }}" class="ma-btn ma-btn-ghost">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        New Search
+      </a>
+    </div>
+  </form>
+
+  {# ── Results grid ── #}
+  <div class="ma-grid{% if is_prefilled %} single-item{% endif %}">
+    {% for result in search_results %}
+    <div class="ma-card">
+      {# Poster — narrow left column #}
+      <div class="ma-card-poster-wrap"{% if result.backdropPath %} data-backdrop="{{ result.backdropPath }}"{% endif %}>
+        {% if result.posterPath %}
+        <img class="ma-card-poster" src="{{ result.posterPath }}" alt="{{ result.title }}"
+             onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+        {% endif %}
+        <div class="ma-card-poster-placeholder"{% if result.posterPath %} style="display:none"{% endif %}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <path d="m3 9 4-4 4 4 4-4 4 4"/>
+            <circle cx="8.5" cy="14.5" r="2.5"/>
+          </svg>
+          <span>No poster</span>
+        </div>
+      </div>
+
+      <div class="ma-card-body">
+        {# Title + meta #}
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+          <div>
+            <div class="ma-card-title">{{ result.title }} <span style="color:var(--ma-text3);font-weight:400">({{ result.year }})</span></div>
+            {% if result.imdbId %}
+            <div style="margin-top:3px">
+              <span style="font-size:10px;color:#60a5fa;font-family:monospace">{{ result.imdbId }}</span>
+            </div>
+            {% endif %}
+          </div>
+          <span class="ma-pill {{ 'ma-p-movie' if result.mediaType == 'movie' else 'ma-p-show' }}" style="flex-shrink:0;margin-top:2px">
+            {{ result.mediaType }}
+          </span>
+        </div>
+
+        {# TV show selection ── shown only for shows #}
+        {% if result.mediaType == 'show' %}
+        <div class="ma-divider"></div>
+        <div class="ma-show-cols">
+          <div class="ma-tv-show-selection ma-tv-section" data-tmdb-id="{{ result.id }}">
+            <div class="ma-section-label">Selection Type</div>
+            <select class="ma-select selection-type">
+              <option value="all">Full Series</option>
+              <option value="seasons">Season Pack</option>
+              <option value="episode">Single Episode</option>
+            </select>
+
+            <div class="season-selection" style="display:none">
+              <div class="ma-section-label" style="margin-bottom:6px">Select Seasons</div>
+              <select class="ma-select seasons-select" id="seasons_{{ result.id }}" multiple>
+                <!-- populated via JS -->
+              </select>
+              <div class="ma-hint">Hold Ctrl/Cmd to select multiple seasons</div>
+            </div>
+
+            <div class="episode-selection" style="display:none">
+              <div class="ma-row">
+                <div>
+                  <div class="ma-section-label" style="margin-bottom:6px">Season</div>
+                  <select class="ma-select season-select" id="season_{{ result.id }}">
+                    <!-- populated via JS -->
+                  </select>
                 </div>
+                <div>
+                  <div class="ma-section-label" style="margin-bottom:6px">Episode</div>
+                  <select class="ma-select episode-select" id="episode_{{ result.id }}" disabled>
+                    <!-- populated via JS -->
+                  </select>
+                </div>
+              </div>
             </div>
-            {% endfor %}
-        </div>
+          </div>
+
+          {# Assignment form #}
+          <form method="POST" action="{{ url_for('magnet.prepare_manual_assignment') }}" class="ma-magnet-form"
+                style="display:flex;flex-direction:column;gap:12px">
+            <input type="hidden" name="action" value="assign">
+            <input type="hidden" name="tmdb_id" value="{{ result.id }}">
+            <input type="hidden" name="media_type" value="{{ result.mediaType }}">
+            <input type="hidden" name="title" value="{{ result.title }}">
+            <input type="hidden" name="selection_type" class="selection-type-input">
+            <input type="hidden" name="selected_seasons" class="selected-seasons-input">
+            <input type="hidden" name="season" class="season-input">
+            <input type="hidden" name="episode" class="episode-input">
+
+            {# Magnet / file section #}
+            <div class="ma-magnet-wrap ma-show-magnet-col" style="display:flex;flex-direction:column;gap:8px">
+              <div class="ma-section-label">Magnet Link or Torrent File</div>
+              <input class="ma-magnet-input" type="text" name="magnet_link"
+                     placeholder="Enter magnet link…"
+                     {% if is_prefilled and prefill_magnet %}value="{{ prefill_magnet }}"{% endif %}>
+              <label class="ma-file-btn">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                <span class="ma-file-label">Choose torrent file</span>
+                <input type="file" class="ma-file-input" name="torrent_file" accept=".torrent" style="display:none">
+              </label>
+              <div class="ma-hint">Enter a magnet link or upload a .torrent file</div>
+            </div>
+
+            {# Version + Assign on same row #}
+            <div class="ma-submit-wrap" style="display:none;gap:8px;align-items:flex-end">
+              <div class="ma-version-wrap" style="display:flex;flex-direction:column;gap:6px;flex:1">
+                <div class="ma-section-label">Version</div>
+                <select class="ma-select ma-version-select" name="version" required>
+                  <option value="">Select Version</option>
+                </select>
+              </div>
+              <button type="submit" class="ma-btn ma-btn-orange-solid" style="width:auto !important;padding:7px 18px !important;flex-shrink:0">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                Assign
+              </button>
+            </div>
+          </form>
+        </div><!-- /.ma-show-cols -->
+        {% endif %}
+
+        {% if result.mediaType != 'show' %}
+        <div class="ma-divider"></div>
+
+        {# Assignment form (movies) #}
+        <form method="POST" action="{{ url_for('magnet.prepare_manual_assignment') }}" class="ma-magnet-form"
+              style="display:flex;flex-direction:column;gap:12px">
+          <input type="hidden" name="action" value="assign">
+          <input type="hidden" name="tmdb_id" value="{{ result.id }}">
+          <input type="hidden" name="media_type" value="{{ result.mediaType }}">
+          <input type="hidden" name="title" value="{{ result.title }}">
+          <input type="hidden" name="year" value="{{ result.year }}">
+
+          {# Magnet / file section #}
+          <div class="ma-magnet-wrap" style="display:flex;flex-direction:column;gap:8px">
+            <div class="ma-section-label">Magnet Link or Torrent File</div>
+            <input class="ma-magnet-input" type="text" name="magnet_link"
+                   placeholder="Enter magnet link…"
+                   {% if is_prefilled and prefill_magnet %}value="{{ prefill_magnet }}"{% endif %}>
+            <label class="ma-file-btn">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+              <span class="ma-file-label">Choose torrent file</span>
+              <input type="file" class="ma-file-input" name="torrent_file" accept=".torrent" style="display:none">
+            </label>
+            <div class="ma-hint">Enter a magnet link or upload a .torrent file</div>
+          </div>
+
+          {# Version + Assign on same row #}
+          <div class="ma-submit-wrap" style="display:flex;gap:8px;align-items:flex-end">
+            <div class="ma-version-wrap" style="display:flex;flex-direction:column;gap:6px;flex:1">
+              <div class="ma-section-label">Version</div>
+              <select class="ma-select ma-version-select" name="version" required>
+                <option value="">Select Version</option>
+              </select>
+            </div>
+            <button type="submit" class="ma-btn ma-btn-orange-solid" style="width:auto !important;padding:7px 18px !important;flex-shrink:0">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+              Assign
+            </button>
+          </div>
+        </form>
+        {% endif %}
+      </div>
     </div>
-    {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+</div>
+
+<div class="ma-toast" id="ma-toast">
+  <span class="ma-toast-dot"></span>
+  <span id="ma-toast-msg"></span>
 </div>
 {% endblock %}
-

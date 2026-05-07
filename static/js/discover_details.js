@@ -355,7 +355,7 @@ function displayCast(cast) {
     const castHeader = document.getElementById('cast-header');
 
     castGrid.innerHTML = cast.map(person => `
-        <div class="cast-card">
+        <div class="cast-card" title="${person.name}${person.character ? ` · ${person.character}` : ''}">
             <img src="${person.profile_path ? `https://image.tmdb.org/t/p/w185${person.profile_path}` : '/static/images/placeholder.png'}"
                  alt="${person.name}"
                  class="cast-photo"
@@ -466,15 +466,24 @@ function createSeasonTab(season, isActive) {
     return tab;
 }
 
+const MAGNET_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(270deg)"><path d="M21 18.5V20.5C21 21.3284 20.3284 22 19.5 22H17H13C7.47715 22 3 17.5228 3 12C3 6.47715 7.47715 2 13 2H17H19.5C20.3284 2 21 2.67157 21 3.5V5.5C21 6.32843 20.3284 7 19.5 7H17H13C10.2386 7 8 9.23858 8 12C8 14.7614 10.2386 17 13 17H17H19.5C20.3284 17 21 17.6716 21 18.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path opacity="0.5" d="M17 2V7M17 17V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+
 function createSeasonPanel(season, isActive, showData) {
     const panel = document.createElement('div');
     panel.className = `season-panel ${isActive ? 'active' : ''}`;
     panel.dataset.season = season.season_number;
 
-    // Add season header (without delete button for discover)
+    // Add season header with magnet assign button
     const seasonHeader = document.createElement('div');
     seasonHeader.className = 'discover-season-header';
+    const magnetBtn = document.createElement('button');
+    magnetBtn.className = 'search-episode-btn magnet-assign-episode-btn';
+    magnetBtn.type = 'button';
+    magnetBtn.title = `Assign magnet for Season ${season.season_number}`;
+    magnetBtn.innerHTML = MAGNET_SVG;
+    magnetBtn.addEventListener('click', () => handleMagnetAssignSeason(showData, season.season_number));
     seasonHeader.innerHTML = `<h3>Season ${season.season_number}</h3>`;
+    seasonHeader.appendChild(magnetBtn);
     panel.appendChild(seasonHeader);
 
     // Add loading placeholder
@@ -701,6 +710,8 @@ function createEpisodeRow(episode, seasonNumber, showData) {
             </button>
         `;
 
+        const magnetIconHtml = `<button class="search-episode-btn magnet-assign-episode-btn" type="button" title="Assign magnet for this episode">${MAGNET_SVG}</button>`;
+
         row.innerHTML = `
             <div class="episode-number">${episode.episode_number}</div>
             ${statusIcon}
@@ -710,8 +721,11 @@ function createEpisodeRow(episode, seasonNumber, showData) {
             </div>
             ${searchIcon}
             ${refreshIcon}
+            ${magnetIconHtml}
             ${filesIcon}
         `;
+
+        row.querySelector('.magnet-assign-episode-btn')?.addEventListener('click', () => handleMagnetAssignEpisode(showData, seasonNumber, episode.episode_number));
 
         // Add event listeners
         const searchBtn = row.querySelector('.search-episode-btn');
@@ -776,8 +790,7 @@ function createEpisodeRow(episode, seasonNumber, showData) {
         const metaParts = [airDateText, runtimeText].filter(Boolean).join(' • ');
 
         // Conditionally add search button for User/Admin only
-        const searchButtonHTML = hasUserPermissions ? `
-            <div class="discover-episode-actions">
+        const searchBtnInner = hasUserPermissions ? `
                 <button class="search-episode-btn" type="button" title="Search for this episode"
                         data-imdb-id="${showData.imdb_id || ''}"
                         data-tmdb-id="${showData.tmdb_id || ''}"
@@ -787,9 +800,13 @@ function createEpisodeRow(episode, seasonNumber, showData) {
                     <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" width="16" height="16">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M10 21h7a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v11m0 5l4.879-4.879m0 0a3 3 0 104.243-4.242 3 3 0 00-4.243 4.242z"></path>
                     </svg>
-                </button>
+                </button>` : '';
+        const searchButtonHTML = `
+            <div class="discover-episode-actions">
+                ${searchBtnInner}
+                <button class="search-episode-btn magnet-assign-episode-btn" type="button" title="Assign magnet for this episode">${MAGNET_SVG}</button>
             </div>
-        ` : '';
+        `;
 
         row.innerHTML = `
             <div class="discover-episode-number">${episode.episode_number}</div>
@@ -804,6 +821,8 @@ function createEpisodeRow(episode, seasonNumber, showData) {
         if (searchBtn) {
             searchBtn.addEventListener('click', handleSearchEpisode);
         }
+
+        row.querySelector('.magnet-assign-episode-btn')?.addEventListener('click', () => handleMagnetAssignEpisode(showData, seasonNumber, episode.episode_number));
     }
 
     return row;
@@ -867,95 +886,97 @@ function showVersionModal(data) {
 
     if (!modal || !versionCheckboxes) return;
 
-    // Clear existing content
     versionCheckboxes.innerHTML = '';
 
-    // Add request type selection for TV shows
-    if (data.media_type === 'tv') {
-        const showSelectionHeader = document.createElement('div');
-        showSelectionHeader.className = 'version-section-header';
-        showSelectionHeader.innerHTML = '<h4>Select Request Type:</h4>';
-        versionCheckboxes.appendChild(showSelectionHeader);
+    // Title
+    const titleEl = document.createElement('div');
+    titleEl.className = 'dialog-title';
+    titleEl.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(titleEl);
 
-        const selectionTypeContainer = document.createElement('div');
-        selectionTypeContainer.className = 'selection-type-container';
-        selectionTypeContainer.innerHTML = `
-            <div class="selection-type-option">
-                <input type="radio" id="whole-show" name="selection-type" value="whole-show" checked>
-                <label for="whole-show">Whole Show</label>
-            </div>
-            <div class="selection-type-option">
-                <input type="radio" id="specific-seasons" name="selection-type" value="specific-seasons">
-                <label for="specific-seasons">Specific Seasons</label>
-            </div>
-        `;
-        versionCheckboxes.appendChild(selectionTypeContainer);
+    // Subtitle pill
+    const subEl = document.createElement('div');
+    subEl.className = 'dialog-sub';
+    const isTV = data.media_type === 'tv';
+    const year = data.release_date ? data.release_date.split('-')[0] : (data.first_air_date ? data.first_air_date.split('-')[0] : '');
+    subEl.innerHTML = `<i class="fa-solid fa-${isTV ? 'tv' : 'film'}"></i> Requesting: ${data.title}${year ? ` (${year})` : ''}`;
+    versionCheckboxes.appendChild(subEl);
 
-        // Container for season selection (initially hidden)
+    // TV show: request type radio rows
+    if (isTV) {
+        const typeLabel = document.createElement('div');
+        typeLabel.className = 'section-label';
+        typeLabel.textContent = 'Select Request Type';
+        versionCheckboxes.appendChild(typeLabel);
+
+        const wholeRow = document.createElement('div');
+        wholeRow.className = 'option-row selected';
+        wholeRow.id = 'opt-whole-show';
+        wholeRow.innerHTML = `<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">Whole Show</span>`;
+        versionCheckboxes.appendChild(wholeRow);
+
+        const seasonsRow = document.createElement('div');
+        seasonsRow.className = 'option-row';
+        seasonsRow.id = 'opt-specific-seasons';
+        seasonsRow.innerHTML = `<div class="custom-radio"><div class="custom-radio-dot"></div></div><span class="option-label">Specific Seasons</span>`;
+        versionCheckboxes.appendChild(seasonsRow);
+
+        // Season container (hidden initially)
         const seasonSelectionContainer = document.createElement('div');
         seasonSelectionContainer.className = 'season-selection-container';
         seasonSelectionContainer.id = 'season-selection-container';
         seasonSelectionContainer.style.display = 'none';
         versionCheckboxes.appendChild(seasonSelectionContainer);
 
-        // Populate season checkboxes
         if (data.seasons && data.seasons.length > 0) {
-            const regularSeasons = data.seasons.filter(s => s.season_number > 0);
-            regularSeasons.forEach(season => {
-                const div = document.createElement('div');
-                div.className = 'version-checkbox';
-                div.innerHTML = `
-                    <input type="checkbox" id="season-${season.season_number}" name="seasons" value="${season.season_number}">
-                    <label for="season-${season.season_number}">Season ${season.season_number}</label>
-                `;
-                seasonSelectionContainer.appendChild(div);
+            const list = document.createElement('div');
+            list.className = 'seasons-list';
+            seasonSelectionContainer.appendChild(list);
+            data.seasons.filter(s => s.season_number > 0).forEach(season => {
+                const row = document.createElement('div');
+                row.className = 'option-row';
+                row.dataset.value = String(season.season_number);
+                row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">Season ${season.season_number}</span>`;
+                row.addEventListener('click', () => row.classList.toggle('checked'));
+                list.appendChild(row);
             });
         }
 
-        // Add handlers for radio buttons
-        const wholeShowRadio = selectionTypeContainer.querySelector('#whole-show');
-        const specificSeasonsRadio = selectionTypeContainer.querySelector('#specific-seasons');
-
-        wholeShowRadio.addEventListener('change', function() {
-            if (this.checked) {
-                document.getElementById('season-selection-container').style.display = 'none';
-            }
+        wholeRow.addEventListener('click', () => {
+            wholeRow.classList.add('selected');
+            seasonsRow.classList.remove('selected');
+            seasonSelectionContainer.style.display = 'none';
         });
 
-        specificSeasonsRadio.addEventListener('change', function() {
-            if (this.checked) {
-                document.getElementById('season-selection-container').style.display = 'block';
-            }
+        seasonsRow.addEventListener('click', () => {
+            seasonsRow.classList.add('selected');
+            wholeRow.classList.remove('selected');
+            seasonSelectionContainer.style.display = 'block';
         });
 
-        // Add separator
-        const separator = document.createElement('hr');
-        versionCheckboxes.appendChild(separator);
+        const divider = document.createElement('div');
+        divider.className = 'vm-divider';
+        versionCheckboxes.appendChild(divider);
     }
 
-    // Add version selection header
-    const versionHeader = document.createElement('div');
-    versionHeader.className = 'version-section-header';
-    versionHeader.innerHTML = '<h4>Select Versions:</h4>';
-    versionCheckboxes.appendChild(versionHeader);
+    // Version section label
+    const verLabel = document.createElement('div');
+    verLabel.className = 'section-label';
+    verLabel.textContent = 'Select Versions';
+    versionCheckboxes.appendChild(verLabel);
 
-    // Create checkboxes for each version
     discoverVersions.forEach(version => {
-        const div = document.createElement('div');
-        div.className = 'version-checkbox';
-        div.innerHTML = `
-            <input type="checkbox" id="version-${version}" name="versions" value="${version}">
-            <label for="version-${version}">${version}</label>
-        `;
-        versionCheckboxes.appendChild(div);
+        const row = document.createElement('div');
+        row.className = 'option-row';
+        row.dataset.value = version;
+        row.dataset.type = 'version';
+        row.innerHTML = `<div class="custom-cb"><i class="fa-solid fa-check"></i></div><span class="option-label">${version}</span>`;
+        row.addEventListener('click', () => row.classList.toggle('checked'));
+        versionCheckboxes.appendChild(row);
 
-        // If there's only one version available, auto-select it
-        if (discoverVersions.length === 1) {
-            div.querySelector('input[type="checkbox"]').checked = true;
-        }
+        if (discoverVersions.length === 1) row.classList.add('checked');
     });
 
-    // Show the modal
     document.body.classList.add('modal-open');
     modal.style.display = 'flex';
 }
@@ -969,8 +990,8 @@ function closeVersionModal() {
 }
 
 async function handleConfirmRequest() {
-    const selectedVersions = Array.from(document.querySelectorAll('input[name="versions"]:checked'))
-        .map(checkbox => checkbox.value);
+    const selectedVersions = Array.from(document.querySelectorAll('#versionCheckboxes .option-row.checked[data-type="version"]'))
+        .map(row => row.dataset.value);
 
     if (selectedVersions.length === 0) {
         window.showPopup({
@@ -982,12 +1003,13 @@ async function handleConfirmRequest() {
     }
 
     // Check if TV show and specific seasons selected
-    const selectionType = document.querySelector('input[name="selection-type"]:checked');
+    const wholeShowRow = document.getElementById('opt-whole-show');
+    const wholeShowSelected = wholeShowRow ? wholeShowRow.classList.contains('selected') : true;
     let seasons = null;
 
-    if (selectionType && selectionType.value === 'specific-seasons') {
-        seasons = Array.from(document.querySelectorAll('input[name="seasons"]:checked'))
-            .map(checkbox => parseInt(checkbox.value, 10));
+    if (!wholeShowSelected) {
+        seasons = Array.from(document.querySelectorAll('#season-selection-container .option-row.checked'))
+            .map(row => parseInt(row.dataset.value, 10));
 
         if (seasons.length === 0) {
             window.showPopup({
@@ -1185,6 +1207,33 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function handleMagnetAssignSeason(showData, seasonNumber) {
+    const params = new URLSearchParams({
+        prefill_title: showData.title || '',
+        prefill_year: showData.year || contentData?.year || '',
+        prefill_type: 'show',
+        prefill_selection: 'seasons',
+        prefill_seasons: String(seasonNumber),
+    });
+    if (showData.imdb_id) params.set('prefill_id', showData.imdb_id);
+    else if (showData.tmdb_id) params.set('prefill_id', String(showData.tmdb_id));
+    window.location.href = `/magnet/assign_magnet?${params.toString()}`;
+}
+
+function handleMagnetAssignEpisode(showData, seasonNumber, episodeNumber) {
+    const params = new URLSearchParams({
+        prefill_title: showData.title || '',
+        prefill_year: showData.year || contentData?.year || '',
+        prefill_type: 'show',
+        prefill_selection: 'episode',
+        prefill_seasons: String(seasonNumber),
+        prefill_episode: String(episodeNumber),
+    });
+    if (showData.imdb_id) params.set('prefill_id', showData.imdb_id);
+    else if (showData.tmdb_id) params.set('prefill_id', String(showData.tmdb_id));
+    window.location.href = `/magnet/assign_magnet?${params.toString()}`;
+}
+
 function handleRefreshClick(event) {
     const btn = event.currentTarget;
     const data = {
@@ -1215,7 +1264,7 @@ function handleRefreshClick(event) {
     })
     .catch(error => {
         console.error('Error:', error);
-        alert(`Error moving item to Wanted state: ${error.message}`);
+        showPopup({ type: 'error', title: 'Error', message: `Error moving item to Wanted state: ${error.message}`, autoClose: 4000 });
         btn.disabled = false;
     });
 }

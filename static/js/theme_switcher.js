@@ -142,17 +142,21 @@
             }
         });
 
-        // Load mobile nav styles for Tangerine theme
+        // Load mobile nav styles for Tangerine theme — always appended LAST so it overrides tangerine_base.css
         if (themeName === THEMES.TANGERINE) {
             const mobileNavId = 'theme-tangerine-mobile-nav';
-            if (!document.getElementById(mobileNavId)) {
-                const mobileNavLink = document.createElement('link');
+            let mobileNavLink = document.getElementById(mobileNavId);
+            if (!mobileNavLink) {
+                mobileNavLink = document.createElement('link');
                 mobileNavLink.id = mobileNavId;
                 mobileNavLink.rel = 'stylesheet';
-                mobileNavLink.href = '/static/css/tangerine/tangerine_mobile_nav.css';
                 mobileNavLink.setAttribute('data-theme-css', themeName);
-                document.head.appendChild(mobileNavLink);
+            } else {
+                // Remove and re-append to ensure it's last in <head>
+                mobileNavLink.remove();
             }
+            mobileNavLink.href = '/static/css/tangerine/tangerine_mobile_nav.css?v=34';
+            document.head.appendChild(mobileNavLink);
         }
     }
 

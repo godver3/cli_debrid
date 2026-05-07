@@ -1128,6 +1128,17 @@ SETTINGS_SCHEMA = {
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
                 },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
+                },
                 "plex_collection": {
                     "type": "dict",
                     "description": "Configure a Plex collection that mirrors this source list order",
@@ -1191,6 +1202,29 @@ SETTINGS_SCHEMA = {
                             "default": ""
                         }
                     }
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'list_name' uses the source name automatically, 'fixed' uses a static label you specify",
+                            "default": "list_name",
+                            "choices": ["list_name", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
                 }
             },
             "Collected": {
@@ -1241,6 +1275,17 @@ SETTINGS_SCHEMA = {
                     "type": "integer",
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
+                },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
                 }
             },
             "Trakt Watchlist": {
@@ -1277,6 +1322,40 @@ SETTINGS_SCHEMA = {
                     "type": "integer",
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
+                },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
+                },
+                "plex_labels": {
+                    "type": "dict",
+                    "description": "Configure Plex labels to be automatically applied to items from this source",
+                    "default": {},
+                    "schema": {
+                        "enabled": {
+                            "type": "boolean",
+                            "description": "Enable automatic Plex label application for this source",
+                            "default": False
+                        },
+                        "label_mode": {
+                            "type": "string",
+                            "description": "Label mode: 'list_name' uses the source name automatically, 'fixed' uses a static label you specify",
+                            "default": "list_name",
+                            "choices": ["list_name", "fixed"]
+                        },
+                        "fixed_label": {
+                            "type": "string",
+                            "description": "Fixed label(s) to apply (only used when label_mode is 'fixed'). Supports comma-separated values for multiple labels (e.g., 'ufc,ppv')",
+                            "default": ""
+                        }
+                    }
                 }
             },
             "Trakt Lists": {
@@ -1314,6 +1393,17 @@ SETTINGS_SCHEMA = {
                     "type": "integer",
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
+                },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
                 },
                 "plex_labels": {
                     "type": "dict",
@@ -1441,6 +1531,17 @@ SETTINGS_SCHEMA = {
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
                 },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
+                },
                 "plex_labels": {
                     "type": "dict",
                     "description": "Configure Plex labels to be automatically applied to items from this source",
@@ -1512,6 +1613,17 @@ SETTINGS_SCHEMA = {
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
                 },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
+                },
                 "plex_labels": {
                     "type": "dict",
                     "description": "Configure Plex labels to be automatically applied to items from this source",
@@ -1571,6 +1683,17 @@ SETTINGS_SCHEMA = {
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
                 },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
+                },
                 "plex_labels": {
                     "type": "dict",
                     "description": "Configure Plex labels to be automatically applied to items from this source",
@@ -1629,6 +1752,17 @@ SETTINGS_SCHEMA = {
                     "type": "integer",
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
+                },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
                 },
                 "plex_labels": {
                     "type": "dict",
@@ -1691,6 +1825,17 @@ SETTINGS_SCHEMA = {
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
                 },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
+                },
                 "plex_labels": {
                     "type": "dict",
                     "description": "Configure Plex labels to be automatically applied to items from this source",
@@ -1751,6 +1896,17 @@ SETTINGS_SCHEMA = {
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
                 },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
+                },
                 "plex_labels": {
                     "type": "dict",
                     "description": "Configure Plex labels to be automatically applied to items from this source",
@@ -1810,6 +1966,17 @@ SETTINGS_SCHEMA = {
                     "type": "integer",
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
+                },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
                 },
                 "plex_labels": {
                     "type": "dict",
@@ -1946,6 +2113,17 @@ SETTINGS_SCHEMA = {
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
                 },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
+                },
                 "plex_labels": {
                     "type": "dict",
                     "description": "Configure Plex labels to be automatically applied to items from this source",
@@ -2013,6 +2191,17 @@ SETTINGS_SCHEMA = {
                     "type": "integer",
                     "description": "Maximum number of items to process from this content source. Leave empty or set to 0 for no limit.",
                     "default": 0
+                },
+                "seasons_per_show": {
+                    "type": "integer",
+                    "description": "Limit the number of seasons grabbed per TV show from this source. Set to 0 for all seasons.",
+                    "default": 0
+                },
+                "season_grab_order": {
+                    "type": "string",
+                    "description": "Which seasons to grab when seasons_per_show is limited: first seasons, latest seasons, or most recently aired.",
+                    "default": "first",
+                    "choices": ["first", "latest", "recent"]
                 },
                 "plex_labels": {
                     "type": "dict",
@@ -2400,6 +2589,11 @@ SETTINGS_SCHEMA = {
         "remove_from_content_sources": {
             "type": "boolean",
             "description": "Remove items from content sources (Trakt, Overseerr, etc.) during deletion. Enable when ghostlist OFF (prevents re-addition, slower). Disable when ghostlist ON (faster, ghostlist already prevents re-addition).",
+            "default": True
+        },
+        "hide_season_zero": {
+            "type": "boolean",
+            "description": "Hide Season 0 (Specials) tab and its episodes from the TV show page.",
             "default": True
         }
     },

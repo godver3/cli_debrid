@@ -102,14 +102,14 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                alert('Settings saved successfully');
+                showPopup({ type: 'success', title: 'Success', message: 'Settings saved successfully', autoClose: 4000 });
             } else {
-                alert('Error saving settings: ' + data.error);
+                showPopup({ type: 'error', title: 'Error', message: 'Error saving settings: ' + data.error, autoClose: 4000 });
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('An error occurred while saving settings. Please check the console for more details.');
+            showPopup({ type: 'error', title: 'Error', message: 'An error occurred while saving settings. Please check the console for more details.', autoClose: 4000 });
         });
     }
 
@@ -1511,14 +1511,14 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                alert('Settings saved successfully');
+                showPopup({ type: 'success', title: 'Success', message: 'Settings saved successfully', autoClose: 4000 });
             } else {
-                alert('Error saving settings: ' + data.error);
+                showPopup({ type: 'error', title: 'Error', message: 'Error saving settings: ' + data.error, autoClose: 4000 });
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('An error occurred while saving settings. Please check the console for more details.');
+            showPopup({ type: 'error', title: 'Error', message: 'An error occurred while saving settings. Please check the console for more details.', autoClose: 4000 });
         });
     }
 
@@ -1554,7 +1554,7 @@ document.addEventListener('DOMContentLoaded', function() {
         })
         .catch(error => {
             console.error('Error:', error);
-            alert(`Failed to revert settings: ${error.message}`);
+            showPopup({ type: 'error', title: 'Error', message: `Failed to revert settings: ${error.message}`, autoClose: 4000 });
         });
     }
 

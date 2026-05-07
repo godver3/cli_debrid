@@ -25,6 +25,73 @@ from utilities.settings import get_setting
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Poster thumbnail disk cache
+# Caches the resized JPEG served by poster_applied and season_thumb so that
+# the overlay page never hammers Plex with hundreds of simultaneous downloads.
+# Cache lives at /user/config/poster_thumb_cache/ (persisted across restarts).
+# ---------------------------------------------------------------------------
+_THUMB_CACHE_DIR = Path('/user/config/poster_thumb_cache')
+
+
+def _thumb_cache_path(key: str, prefix: str = '') -> Path:
+    """Return the cache file path for a given ms_item_id / season key."""
+    safe = key.replace('/', '_').replace('\\', '_')
+    return _THUMB_CACHE_DIR / f"{prefix}{safe}.jpg"
+
+
+def _serve_from_thumb_cache(cache_path: Path):
+    """Return a Flask Response from a cached JPEG file, or None if not cached."""
+    try:
+        if not cache_path.exists():
+            return None
+        age = __import__('time').time() - cache_path.stat().st_mtime
+        if age > 86400:  # 24-hour TTL
+            return None
+        from io import BytesIO
+        from flask import Response
+        data = cache_path.read_bytes()
+        if not data:
+            return None
+        return Response(data, mimetype='image/jpeg',
+                        headers={'Cache-Control': 'public, max-age=86400'})
+    except Exception:
+        return None
+
+
+def _write_thumb_cache(cache_path: Path, jpeg_bytes: bytes) -> None:
+    """Atomically write JPEG bytes to cache (safe under concurrent requests)."""
+    if not jpeg_bytes:
+        return
+    try:
+        _THUMB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = cache_path.with_suffix('.tmp')
+        tmp.write_bytes(jpeg_bytes)
+        tmp.rename(cache_path)
+    except Exception as e:
+        logger.debug(f"poster thumb cache write failed for {cache_path.name}: {e}")
+
+
+def invalidate_poster_thumb_cache(ms_item_id: str) -> None:
+    """Delete the cached thumbnail for a movie/show after its poster changes."""
+    try:
+        p = _thumb_cache_path(ms_item_id)
+        if p.exists():
+            p.unlink()
+    except Exception:
+        pass
+
+
+def invalidate_season_thumb_cache(season_key: str) -> None:
+    """Delete the cached thumbnail for a season after its poster changes."""
+    try:
+        p = _thumb_cache_path(season_key, prefix='season_')
+        if p.exists():
+            p.unlink()
+    except Exception:
+        pass
+
+
 # Preferred variation keys for the badge sample-asset endpoint, ordered by desirability.
 _BADGE_SAMPLE_PREFERRED_KEYS = {
     'audio_codec':    ['truehd_atmos', 'atmos', 'truehd', 'dts_hd_ma'],
@@ -654,6 +721,8 @@ def apply_specific_poster(media_item_id):
         # Apply overlay on top of the chosen poster
         manager = _get_overlay_manager()
         result = manager.generate_overlay_for_item(media_item_id, force=True)
+        if result.get('success'):
+            invalidate_poster_thumb_cache(ms_item_id)
         log_activity('poster_pick',
                      result='success' if result.get('success') else 'failed',
                      title=f"Poster picked: {row['title']} (item {media_item_id})",
@@ -1713,16 +1782,20 @@ def list_shows():
 def poster_applied(ms_item_id):
     """
     Proxy the currently-selected (overlay-applied) Plex poster for a movie or show.
-    Returns a 300px-wide JPEG thumbnail — same approach as season_thumb but for show/movie cards.
+    Returns a 300px-wide JPEG thumbnail. Results are cached to disk for 24 hours so
+    that the overlay page never floods Plex with hundreds of simultaneous downloads.
     """
     from io import BytesIO
     from flask import Response
+    cache_path = _thumb_cache_path(ms_item_id)
+    cached = _serve_from_thumb_cache(cache_path)
+    if cached:
+        return cached
     try:
         manager = _get_overlay_manager()
         img = manager.client.download_poster(ms_item_id)
         if not img:
             abort(404)
-        # Resize to thumbnail width so we don't serve 2000x3000 images for small cards
         thumb_w = 300
         w, h = img.size
         if w > thumb_w:
@@ -1730,9 +1803,10 @@ def poster_applied(ms_item_id):
             img = img.resize((thumb_w, thumb_h))
         buf = BytesIO()
         img.convert('RGB').save(buf, format='JPEG', quality=85)
-        buf.seek(0)
-        return Response(buf.read(), mimetype='image/jpeg',
-                        headers={'Cache-Control': 'public, max-age=3600'})
+        jpeg_bytes = buf.getvalue()
+        _write_thumb_cache(cache_path, jpeg_bytes)
+        return Response(jpeg_bytes, mimetype='image/jpeg',
+                        headers={'Cache-Control': 'public, max-age=86400'})
     except Exception as e:
         logger.debug(f"poster_applied {ms_item_id}: {e}")
         abort(404)
@@ -1740,9 +1814,13 @@ def poster_applied(ms_item_id):
 
 @overlay_bp.route('/api/overlays/seasons/<season_key>/thumb', methods=['GET'])
 def season_thumb(season_key):
-    """Proxy season thumbnail from the media server to the browser."""
+    """Proxy season thumbnail from the media server to the browser (disk-cached 24 h)."""
     from io import BytesIO
     from flask import Response
+    cache_path = _thumb_cache_path(season_key, prefix='season_')
+    cached = _serve_from_thumb_cache(cache_path)
+    if cached:
+        return cached
     try:
         manager = _get_overlay_manager()
         img = manager.client.download_poster(season_key)
@@ -1750,9 +1828,10 @@ def season_thumb(season_key):
             abort(404)
         buf = BytesIO()
         img.convert('RGB').save(buf, format='JPEG', quality=85)
-        buf.seek(0)
-        return Response(buf.read(), mimetype='image/jpeg',
-                        headers={'Cache-Control': 'public, max-age=3600'})
+        jpeg_bytes = buf.getvalue()
+        _write_thumb_cache(cache_path, jpeg_bytes)
+        return Response(jpeg_bytes, mimetype='image/jpeg',
+                        headers={'Cache-Control': 'public, max-age=86400'})
     except Exception as e:
         logger.debug(f"season_thumb {season_key}: {e}")
         abort(404)
@@ -1957,6 +2036,7 @@ def remove_season_overlay(show_plex_rating_key, season_plex_rating_key):
             user_initiated=True,
         )
         if res.get('success'):
+            invalidate_season_thumb_cache(season_plex_rating_key)
             log_activity('season_remove',
                          title=f"Season {season_number} overlay removed (show {show_plex_rating_key})",
                          stats={'show_key': show_plex_rating_key,
@@ -2212,6 +2292,16 @@ def remove_overlay(media_item_id):
 
         result = manager.remove_overlay(media_item_id)
         if result.get('success'):
+            # Look up ms_item_id so we can drop the thumb cache for this item
+            try:
+                _c = _get_db_connection()
+                _row = _c.execute('SELECT ms_item_id FROM media_items WHERE id = ?',
+                                  (media_item_id,)).fetchone()
+                _c.close()
+                if _row and _row[0]:
+                    invalidate_poster_thumb_cache(_row[0])
+            except Exception:
+                pass
             log_activity('remove', title=f"Overlay removed (item {media_item_id})",
                          stats={'media_item_id': media_item_id})
         return jsonify(result)
@@ -2310,6 +2400,20 @@ def remove_overlays_batch():
         cache_manager = PosterCacheManager(None)
         result = cache_manager.batch_remove_overlays(item_ids)
 
+        # Invalidate thumb cache for all items whose poster just changed
+        try:
+            _ic = _get_db_connection()
+            _placeholders = ','.join('?' * len(item_ids))
+            _rows = _ic.execute(
+                f'SELECT DISTINCT ms_item_id FROM media_items WHERE id IN ({_placeholders}) AND ms_item_id IS NOT NULL',
+                item_ids
+            ).fetchall()
+            _ic.close()
+            for _r in _rows:
+                invalidate_poster_thumb_cache(_r[0])
+        except Exception:
+            pass
+
         # Also remove season overlays for any TV shows in the selection.
         # Items may be episodes (type='episode') or shows (type='show'); both share
         # the show-level ms_item_id which is what season_overlay_state indexes on.
@@ -2344,6 +2448,7 @@ def remove_overlays_batch():
                         season_number=sr['season_number'],
                     )
                     if sr_result.get('success'):
+                        invalidate_season_thumb_cache(sr['season_ms_item_id'])
                         result['restored'] = result.get('restored', 0) + 1
                     elif sr_result.get('status') != 'skipped':
                         logger.warning(f"Season overlay removal failed for {sr['season_ms_item_id']}: {sr_result.get('message')}")
@@ -2366,6 +2471,7 @@ def remove_overlays_batch():
                             season_number=season.get('index', 0),
                         )
                         if sr_result.get('success'):
+                            invalidate_season_thumb_cache(season['ratingKey'])
                             result['restored'] = result.get('restored', 0) + 1
                         elif sr_result.get('status') == 'error':
                             result['failed'] = result.get('failed', 0) + 1
