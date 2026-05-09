@@ -656,10 +656,17 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
     const mediaQuery = window.matchMedia('(max-width: 1024px)');
     async function handleScreenChange(e) {
         if (e.matches) { // Mobile view
+            const subText = season
+                ? `${title} · S${String(season).padStart(2,'0')}${episode ? 'E'+String(episode).padStart(2,'0') : ''} (${year})`
+                : `${title} (${year})`;
             overlayContent.innerHTML = `
-                <h3>
-                    Torrent Results for ${title}${year && !title.trim().endsWith(`(${year})`) ? ` (${year})` : ''}
-                </h3>`;
+                <div class="tr-dlg-hdr">
+                    <div class="tr-dlg-title">
+                        <div class="tr-dlg-h">Torrent Results</div>
+                        <div class="tr-dlg-sub">${subText}</div>
+                    </div>
+                    <button class="tr-close-btn" onclick="closeOverlay()">✕</button>
+                </div>`;
 
             // Get versions from page dropdown
             let versionsToUse = [];
@@ -754,16 +761,25 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
             }
 
             // Create mobile controls section
+            const resultCount = allDisplayItems.length;
             const mobileControls = document.createElement('div');
-            mobileControls.className = 'mobile-torrent-controls';
+            mobileControls.className = 'tr-dlg-filters';
             mobileControls.innerHTML = `
-                <div class="torrent-version-dropdown-wrapper">
-                    <label for="torrent-version-select-mobile">Version:</label>
-                    <select id="torrent-version-select-mobile" class="torrent-version-select">
+                <div class="tr-filter-row">
+                    <span class="tr-filter-label">Version</span>
+                    <select id="torrent-version-select-mobile" class="tr-fsel torrent-version-select">
                         ${versionOptionsHTML}
                     </select>
+                    ${!folderDropdownHTML ? `<span class="tr-result-count">${resultCount} results</span>` : ''}
                 </div>
-                ${folderDropdownHTML}
+                ${folderDropdownHTML ? `
+                <div class="tr-filter-row">
+                    <span class="tr-filter-label">Folder</span>
+                    <select id="torrent-folder-select-mobile" class="tr-fsel torrent-folder-select">
+                        ${(() => { const tmp = document.createElement('div'); tmp.innerHTML = folderDropdownHTML; return tmp.querySelector('select')?.innerHTML || ''; })()}
+                    </select>
+                    <span class="tr-result-count">${resultCount} results</span>
+                </div>` : ''}
             `;
             overlayContent.appendChild(mobileControls);
 
@@ -781,25 +797,40 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 // Format bitrate for inline display in mobile
                 const bitrateInline = formatBitrateInline(torrent.bitrate);
                 
+                // Badge: cached=green check, not-cached/N/A=red minus, else=gray clock
+                const cacheClass = torrent.cached === 'Yes' ? 'cached' :
+                                   torrent.cached === 'No' ? 'not-cached' :
+                                   torrent.cached === 'Not Checked' ? 'not-checked' :
+                                   torrent.cached === 'N/A' ? 'check-unavailable' : 'unknown';
+                const badgeClass = torrent.cached === 'Yes' ? 'badge-cached' :
+                                   (torrent.cached === 'No' || torrent.cached === 'N/A') ? 'badge-na' : 'badge-pending';
+                const badgeIcon  = torrent.cached === 'Yes' ? 'fa-check' :
+                                   (torrent.cached === 'No' || torrent.cached === 'N/A') ? 'fa-xmark' : 'fa-clock';
+                const badgeLabel = torrent.cached === 'Yes' ? 'Cached' :
+                                   torrent.cached === 'No' ? 'Uncached' :
+                                   torrent.cached === 'N/A' ? 'N/A' : 'Not Checked';
+                const scoreSpan = !isFilteredOut && torrent.score_breakdown?.total_score
+                    ? `<span class="vdiv"></span><span class="stat s-seeds"><i class="fa-solid fa-arrow-up"></i>&nbsp;${torrent.score_breakdown.total_score}</span>`
+                    : '';
+                const blockedReason = isFilteredOut && torrent.filter_reason
+                    ? `<div class="card-blocked-reason"><i class="fa-solid fa-ban"></i> ${torrent.filter_reason}</div>` : '';
+
                 torResDiv.innerHTML = `
-                    <button ${isFilteredOut ? 'style="cursor:pointer; opacity:0.7;"' : ''}>
-                    <div class="torresult-info">
-                        <p class="torresult-title">${torrent.title || torrent.original_title || 'N/A'}</p>
-                        <p class="torresult-item">${(torrent.size || 0).toFixed(1)} GB | ${bitrateInline} | ${isFilteredOut ? (torrent.filter_reason || 'Filtered') : (torrent.score_breakdown?.total_score || 'N/A')}</p>
-                        <p class="torresult-item">${torrent.source || 'N/A'}</p>
-                        <span class="cache-status ${torrent.cached === 'Yes' ? 'cached' :
-                                      torrent.cached === 'No' ? 'not-cached' :
-                                      torrent.cached === 'Not Checked' ? 'not-checked' :
-                                      torrent.cached === 'N/A' ? 'check-unavailable' : 'unknown'}" data-index="${index}">${torrent.cached || 'N/A'}</span>
+                    <div class="card-filename">${torrent.title || torrent.original_title || 'N/A'}</div>
+                    <div class="card-stats">
+                        <span class="stat s-size"><i class="fa-solid fa-hard-drive"></i>&nbsp;${(torrent.size || 0).toFixed(1)} GB</span>
+                        <span class="vdiv"></span>
+                        <span class="stat s-speed"><i class="fa-solid fa-gauge-high"></i>&nbsp;${bitrateInline}</span>
+                        ${scoreSpan}
                     </div>
-                    </button>
-                    ${torrent.cached === 'Yes' ? '<div class="mobile-cache-check">✓</div>' : ''}
-                    <div class="assign-magnet-icon" title="Assign Magnet Link">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
-                            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
-                        </svg>
-                    </div>            
+                    ${blockedReason}
+                    <div class="card-sources">${torrent.source || 'N/A'}</div>
+                    <div class="card-footer">
+                        <span class="cache-status badge ${badgeClass}" data-index="${index}"><i class="fa-solid ${badgeIcon}"></i> ${badgeLabel}</span>
+                        <div class="assign-magnet-icon" title="Assign Magnet Link">
+                            <i class="fa-solid fa-link"></i>
+                        </div>
+                    </div>
                 `;
 
                 // Assign Magnet click handler for mobile cards
@@ -1724,7 +1755,7 @@ function setupFilterReasonTooltips() {
     });
     
     // Mobile tooltips
-    const mobileFilteredItems = document.querySelectorAll('.torresult.filtered-out-item .torresult-item:first-of-type');
+    const mobileFilteredItems = document.querySelectorAll('.torresult.filtered-out-item .tr-stats');
     
     mobileFilteredItems.forEach(item => {
         item.addEventListener('mouseenter', function(e) {
@@ -4343,24 +4374,22 @@ function checkCacheStatusInBackground(hashes, results) {
                 }
             }
         } else {
-            // Fallback to old structure (mobile view or classic theme)
-            const cacheStatusElements = document.querySelectorAll('.cache-status');
-            if (index < cacheStatusElements.length) {
-                const element = cacheStatusElements[index];
-                element.classList.remove('not-checked', 'cached', 'not-cached', 'check-unavailable', 'unknown');
-                
+            // Fallback to mobile badge structure
+            const element = document.querySelector(`.cache-status[data-index="${index}"]`);
+            if (element) {
+                element.classList.remove('badge-cached', 'badge-na', 'badge-pending', 'not-checked', 'cached', 'not-cached', 'check-unavailable', 'unknown');
                 if (status === 'cached') {
-                    element.classList.add('cached');
-                    element.textContent = '✓';
+                    element.classList.add('cached', 'badge-cached');
+                    element.innerHTML = '<i class="fa-solid fa-check"></i> Cached';
                 } else if (status === 'not_cached') {
-                    element.classList.add('not-cached');
-                    element.textContent = '✗';
+                    element.classList.add('not-cached', 'badge-na');
+                    element.innerHTML = '<i class="fa-solid fa-xmark"></i> Uncached';
                 } else if (status === 'check_unavailable') {
-                    element.classList.add('check-unavailable');
-                    element.textContent = 'N/A';
+                    element.classList.add('check-unavailable', 'badge-na');
+                    element.innerHTML = '<i class="fa-solid fa-xmark"></i> N/A';
                 } else {
-                    element.classList.add('unknown');
-                    element.textContent = '?';
+                    element.classList.add('unknown', 'badge-pending');
+                    element.innerHTML = '<i class="fa-solid fa-clock"></i> Not Checked';
                 }
             }
         }
@@ -4384,12 +4413,11 @@ function checkCacheStatusInBackground(hashes, results) {
                 }
             } else {
                 // Fallback to old structure
-                const cacheStatusElements = document.querySelectorAll('.cache-status');
-                if (i < cacheStatusElements.length) {
-                    const element = cacheStatusElements[i];
-                    element.classList.remove('not-checked');
-                    element.classList.add('check-unavailable');
-                    element.textContent = 'N/A';
+                const element = document.querySelector(`.cache-status[data-index="${i}"]`);
+                if (element) {
+                    element.classList.remove('badge-cached', 'badge-na', 'badge-pending', 'not-checked', 'cached', 'not-cached', 'check-unavailable', 'unknown');
+                    element.classList.add('check-unavailable', 'badge-na');
+                    element.innerHTML = '<i class="fa-solid fa-xmark"></i> N/A';
                 }
             }
         }

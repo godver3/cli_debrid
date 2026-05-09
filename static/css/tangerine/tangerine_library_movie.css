@@ -1731,7 +1731,7 @@ body.modal-open {
 .overlay-content {
     position: relative;
     background-color: #1a1a1a;
-    padding: 0 20px 20px 20px;
+    /* padding: 0 20px 20px 20px; */
     border-radius: 8px;
     width: 85%;
     max-width: 1200px;
@@ -1907,7 +1907,7 @@ tr.filtered-out-item:hover {
     background: rgba(26, 26, 26, 0.95);
     backdrop-filter: blur(20px);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 0 20px 20px 20px;
+    /* padding: 0 20px 20px 20px; */
     border-radius: 20px;
     width: 85%;
     max-width: 1200px;

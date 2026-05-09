@@ -459,11 +459,7 @@
         width: auto;
     }
 
-    #overlayContent {
-        padding: 10px;
-        width: 100%;
-        box-sizing: border-box;
-    }
+
 
     #overlayContent > div {
         display: flex;
