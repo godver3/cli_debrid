@@ -1200,6 +1200,11 @@ SETTINGS_SCHEMA = {
                             "type": "string",
                             "description": "Icon path for the poster (relative to overlay assets logos folder). Leave blank to use source default.",
                             "default": ""
+                        },
+                        "libraries": {
+                            "type": "list",
+                            "description": "Plex library section keys to sync this collection into. Leave empty to use the first library of each type.",
+                            "default": []
                         }
                     }
                 },
@@ -1492,6 +1497,11 @@ SETTINGS_SCHEMA = {
                             "type": "string",
                             "description": "Icon path for the poster (relative to overlay assets logos folder). Leave blank to use source default.",
                             "default": ""
+                        },
+                        "libraries": {
+                            "type": "list",
+                            "description": "Plex library section keys to sync this collection into. Leave empty to use the first library of each type.",
+                            "default": []
                         }
                     }
                 }
@@ -2287,6 +2297,11 @@ SETTINGS_SCHEMA = {
                             "type": "string",
                             "description": "Icon path for the poster (relative to overlay assets logos folder). Leave blank to use source default.",
                             "default": ""
+                        },
+                        "libraries": {
+                            "type": "list",
+                            "description": "Plex library section keys to sync this collection into. Leave empty to use the first library of each type.",
+                            "default": []
                         }
                     }
                 }

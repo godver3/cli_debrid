@@ -1146,6 +1146,7 @@ def show_detail_data(media_id):
                 state,
                 version,
                 filled_by_file,
+                filled_by_magnet,
                 collected_at,
                 release_date,
                 airtime,
@@ -1203,6 +1204,7 @@ def show_detail_data(media_id):
                 'state': ep['state'],
                 'version': ep['version'],
                 'filled_by_file': ep['filled_by_file'],
+                'filled_by_magnet': ep['filled_by_magnet'],
                 'collected_at': ep['collected_at'],
                 'release_date': ep['release_date'],
                 'airtime': ep['airtime'],
@@ -4470,6 +4472,7 @@ def movie_detail_data(media_id):
             SELECT
                 id,
                 filled_by_file,
+                filled_by_magnet,
                 location_basename,
                 state,
                 collected_at,
@@ -4585,7 +4588,8 @@ def movie_detail_data(media_id):
                 'ghostlisted': file_row['ghostlisted'],
                 'size': file_row['size'],
                 'manual_replace': bool(file_row['manual_replace']),
-                'ms_item_id': file_row['ms_item_id']
+                'ms_item_id': file_row['ms_item_id'],
+                'filled_by_magnet': file_row['filled_by_magnet']
             })
 
         # Fetch poster and backdrop URLs from cache, fallback to TMDB if not cached
@@ -4726,4 +4730,36 @@ def get_cast(media_type, tmdb_id):
         return jsonify({'success': False, 'error': 'Failed to fetch cast data'}), 500
     except Exception as e:
         logging.error(f"Error processing cast for {media_type}/{tmdb_id}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@library_bp.route('/add_not_wanted_magnet', methods=['POST'])
+@admin_required
+def add_not_wanted_magnet():
+    """Add magnet(s) from given item IDs to the not-wanted magnets list."""
+    req = request.get_json(silent=True) or {}
+    item_ids = req.get('item_ids', [])
+    if not item_ids or not isinstance(item_ids, list):
+        return jsonify({'success': False, 'error': 'item_ids list required'}), 400
+
+    try:
+        from database.not_wanted_magnets import add_to_not_wanted
+        conn = get_db_connection()
+        added = []
+        skipped = []
+        for item_id in item_ids:
+            row = conn.execute(
+                'SELECT filled_by_magnet, title, type FROM media_items WHERE id = ?',
+                (item_id,)
+            ).fetchone()
+            if not row or not row['filled_by_magnet']:
+                skipped.append(item_id)
+                continue
+            add_to_not_wanted(row['filled_by_magnet'])
+            added.append({'id': item_id, 'magnet': row['filled_by_magnet'][:60]})
+            logging.info(f"[NotWanted] Added magnet for item {item_id} ({row['title']}) to not-wanted list")
+        conn.close()
+        return jsonify({'success': True, 'added': len(added), 'skipped': len(skipped)})
+    except Exception as e:
+        logging.error(f"[NotWanted] Error adding to not-wanted: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500

@@ -356,6 +356,14 @@ document.addEventListener('DOMContentLoaded', async function() {
             window.history.replaceState({}, document.title, cleanUrl);
         }
     } else {
+        // Restore persisted search term
+        const savedSearchTerm = localStorage.getItem('discoverSearchTerm');
+        if (savedSearchTerm) {
+            searchInput.value = savedSearchTerm;
+            handleSearch();
+            return;
+        }
+
    // Check for saved FlixPatrol, MDBList, sidebar list, or personal list selections
         const savedFlixPatrol = localStorage.getItem('discoverFlixPatrol');
         const savedMDBList = localStorage.getItem('discoverMDBList');
@@ -1993,9 +2001,12 @@ function handleSearch() {
 
     if (query.length === 0) {
         searchClearBtn.style.display = 'none';
+        localStorage.removeItem('discoverSearchTerm');
         loadTrending();
         return;
     }
+
+    localStorage.setItem('discoverSearchTerm', query);
 
     // ID searches (IMDb/TMDB) are now handled inline by the backend API
     // No page redirect needed - just proceed with normal search flow
@@ -2019,6 +2030,7 @@ function clearSearch() {
     searchClearBtn.style.display = 'none';
     window.discoverState.searchTerm = '';
     window.discoverState.filters.searchQuery = '';
+    localStorage.removeItem('discoverSearchTerm');
     updateActiveFilters();
     switchTab('trending'); // Fallback to trending
 }

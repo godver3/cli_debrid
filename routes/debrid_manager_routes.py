@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import threading
 import time
 from collections import defaultdict
@@ -265,10 +266,12 @@ def index():
         'Debrid-Link':  'DL',
     }
     provider_abbrev = _prefix_map.get(provider_name, provider_name[:2].upper())
+    decypharr_mode = _get_bad_folder_path() is not None
     return render_template(
         'debrid_manager.html',
         show_plex_trash=show_plex_trash,
         symlink_mode=symlink_mode,
+        decypharr_mode=decypharr_mode,
         media_server_type=media_server,
         debrid_provider_name=provider_name,
         debrid_provider_abbrev=provider_abbrev,
@@ -3223,3 +3226,450 @@ def api_battery_audit_sync():
 
     threading.Thread(target=_do_sync, daemon=True).start()
     return jsonify({'success': True, 'message': 'Sync tasks started in background'})
+
+
+# ---------------------------------------------------------------------------
+# Bad Torrent Audit (decypharr __bad__ folder)
+# ---------------------------------------------------------------------------
+
+_BAD_TORRENT_AUDIT_STALE_AFTER = 3600  # 1 hour
+
+_bad_torrent_audit_state = {
+    'status': 'idle',   # idle | scanning | done | error | stopped
+    'data':   None,
+    'error':  None,
+    'ts':     0,
+    'lock':   threading.Lock(),
+    'progress': 0,      # 0-100
+    'progress_msg': '',
+    'stop_requested': False,
+}
+
+_BTA_PERSIST_FILE = os.path.join(
+    os.environ.get('USER_DB_CONTENT', '/user/db_content'),
+    'bad_torrent_audit_results.json',
+)
+
+# Cache the bad folder path after first successful discovery so web workers
+# never call os.path.isdir() on the FUSE mount (which can block indefinitely).
+_bta_bad_folder_cache = {'path': None, 'checked': False}
+
+
+def _bta_load_persisted():
+    """Load persisted audit results from disk. Returns data dict or None."""
+    try:
+        with open(_BTA_PERSIST_FILE, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _bta_save_persisted(data):
+    """Save audit results to disk."""
+    try:
+        os.makedirs(os.path.dirname(_BTA_PERSIST_FILE), exist_ok=True)
+        with open(_BTA_PERSIST_FILE, 'w') as f:
+            json.dump(data, f)
+    except Exception as e:
+        logging.warning(f"[BadTorrentAudit] Could not persist results: {e}")
+
+
+def _resolve_bad_folder_path():
+    """Derive the __bad__ candidate paths from settings WITHOUT touching the filesystem."""
+    from utilities.settings import get_setting
+    mount = (get_setting('Plex', 'mounted_file_location', '') or
+             get_setting('File Management', 'original_files_path', ''))
+    if not mount:
+        return []
+    _KNOWN_SUFFIXES = ('/__all__', '/shows', '/movies', '/default', '/realdebrid')
+    debrid_root = mount.rstrip('/')
+    for suffix in _KNOWN_SUFFIXES:
+        if debrid_root.endswith(suffix):
+            debrid_root = debrid_root[:-len(suffix)]
+            break
+    return [
+        os.path.join(debrid_root, '__bad__'),
+        os.path.join(mount, '__bad__'),
+    ]
+
+
+def _get_bad_folder_path():
+    """Return the __bad__ folder path, using cached result after first discovery.
+
+    The os.path.isdir() check is only ever done from background threads (scan start)
+    or once at startup — never from a web worker poll. Web workers use the cached value.
+    """
+    if _bta_bad_folder_cache['path']:
+        return _bta_bad_folder_cache['path']
+    # Check filesystem — only call this from background threads
+    for c in _resolve_bad_folder_path():
+        try:
+            if os.path.isdir(c):
+                _bta_bad_folder_cache['path'] = c
+                _bta_bad_folder_cache['checked'] = True
+                return c
+        except OSError:
+            pass
+    _bta_bad_folder_cache['checked'] = True
+    return None
+
+
+def _ffprobe_check(video_path, timeout=2):
+    """
+    Run ffprobe on video_path with a strict timeout.
+    Returns ('ok', duration_s) if streams detected, ('broken', error_msg) otherwise.
+    """
+    import shutil
+    ffprobe = shutil.which('ffprobe')
+    if not ffprobe:
+        return ('unknown', 'ffprobe not found')
+    cmd = [
+        ffprobe, '-v', 'error',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=codec_type',
+        '-read_intervals', '%+#1',
+        '-of', 'default=noprint_wrappers=1:nokey=1',
+        video_path,
+    ]
+    try:
+        t0 = time.time()
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        elapsed = round(time.time() - t0, 1)
+        stdout = proc.stdout.decode('utf-8', 'ignore').strip()
+        if stdout == 'video' or proc.returncode == 0 and stdout:
+            return ('ok', elapsed)
+        stderr = proc.stderr.decode('utf-8', 'ignore').strip()
+        short_err = (stderr.splitlines()[-1] if stderr else 'no video stream').strip()[:120]
+        return ('broken', short_err)
+    except subprocess.TimeoutExpired:
+        return ('broken', f'timeout after {timeout}s')
+    except Exception as e:
+        return ('broken', str(e)[:120])
+
+
+_VIDEO_EXTS = frozenset(['.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.ts', '.m2ts'])
+
+
+def _find_first_video(folder_path):
+    """Return the path to the first video file found inside a __bad__ entry folder."""
+    try:
+        for entry in sorted(os.scandir(folder_path), key=lambda e: e.name):
+            if entry.is_file(follow_symlinks=False):
+                if os.path.splitext(entry.name)[1].lower() in _VIDEO_EXTS:
+                    return entry.path
+            elif entry.is_dir(follow_symlinks=False):
+                # One level deep (season folders)
+                try:
+                    for sub in sorted(os.scandir(entry.path), key=lambda e: e.name):
+                        if sub.is_file() and os.path.splitext(sub.name)[1].lower() in _VIDEO_EXTS:
+                            return sub.path
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return None
+
+
+def _run_bad_torrent_audit_bg(bad_folder, resume_data=None):
+    """Background thread: probe each __bad__ entry and classify broken vs stale.
+
+    resume_data: previously persisted data dict to carry forward already-scanned entries.
+    """
+    try:
+        entries = sorted(os.listdir(bad_folder))
+        total = len(entries)
+
+        # Seed from resume data so we don't re-probe already-scanned entries
+        already = {}
+        if resume_data:
+            for r in (resume_data.get('results') or []):
+                already[r['name']] = r
+
+        results = list(already.values())  # start with previously scanned
+        broken_count = sum(1 for r in results if r['status'] == 'broken')
+        stale_count  = sum(1 for r in results if r['status'] == 'stale')
+        unknown_count = sum(1 for r in results if r['status'] not in ('broken', 'stale'))
+
+        pending = [n for n in entries if n not in already]
+        pending_total = len(pending)
+
+        for i, name in enumerate(pending):
+            should_stop = False
+            with _bad_torrent_audit_state['lock']:
+                if _bad_torrent_audit_state['stop_requested']:
+                    ts_now = time.time()
+                    stop_data = {
+                        'results': results,
+                        'stats': {
+                            'total': len(results),
+                            'broken': broken_count,
+                            'stale': stale_count,
+                            'unknown': unknown_count,
+                        },
+                        'bad_folder': bad_folder,
+                        'scanned_at': ts_now,
+                        'partial': True,
+                    }
+                    _bad_torrent_audit_state['status'] = 'stopped'
+                    _bad_torrent_audit_state['data'] = stop_data
+                    _bad_torrent_audit_state['error'] = None
+                    _bad_torrent_audit_state['ts'] = ts_now
+                    _bad_torrent_audit_state['progress'] = int((i / max(pending_total, 1)) * 100)
+                    _bad_torrent_audit_state['progress_msg'] = ''
+                    _bad_torrent_audit_state['stop_requested'] = False
+                    should_stop = True
+            if should_stop:
+                _bta_save_persisted(stop_data)
+                logging.info(f"[BadTorrentAudit] Scan stopped at {i}/{pending_total}: {broken_count} broken so far")
+                return
+
+            entry_path = os.path.join(bad_folder, name)
+            if not os.path.isdir(entry_path):
+                continue
+
+            scanned_so_far = len(already) + i + 1
+            pct = int((scanned_so_far / max(total, 1)) * 100)
+            with _bad_torrent_audit_state['lock']:
+                _bad_torrent_audit_state['progress'] = pct
+                _bad_torrent_audit_state['progress_msg'] = f'Checking {scanned_so_far}/{total}: {name[:60]}'
+
+            video_path = _find_first_video(entry_path)
+            if not video_path:
+                results.append({
+                    'name': name,
+                    'folder': entry_path,
+                    'video_file': None,
+                    'status': 'unknown',
+                    'detail': 'no video file found',
+                    'probe_time': None,
+                })
+                unknown_count += 1
+                continue
+
+            status, detail = _ffprobe_check(video_path)
+            if status == 'ok':
+                stale_count += 1
+            elif status == 'broken':
+                broken_count += 1
+            else:
+                unknown_count += 1
+
+            results.append({
+                'name': name,
+                'folder': entry_path,
+                'video_file': os.path.relpath(video_path, entry_path),
+                'status': status,
+                'detail': detail,
+                'probe_time': detail if status == 'ok' else None,
+            })
+
+        ts_now = time.time()
+        data = {
+            'results': results,
+            'stats': {
+                'total': len(results),
+                'broken': broken_count,
+                'stale': stale_count,
+                'unknown': unknown_count,
+            },
+            'bad_folder': bad_folder,
+            'scanned_at': ts_now,
+            'partial': False,
+        }
+        _bta_save_persisted(data)
+        with _bad_torrent_audit_state['lock']:
+            _bad_torrent_audit_state['status'] = 'done'
+            _bad_torrent_audit_state['data'] = data
+            _bad_torrent_audit_state['error'] = None
+            _bad_torrent_audit_state['ts'] = ts_now
+            _bad_torrent_audit_state['progress'] = 100
+            _bad_torrent_audit_state['progress_msg'] = ''
+        logging.info(f"[BadTorrentAudit] Scan complete: {broken_count} broken, {stale_count} stale, {unknown_count} unknown")
+
+    except Exception as exc:
+        logging.error(f"[BadTorrentAudit] Scan error: {exc}", exc_info=True)
+        with _bad_torrent_audit_state['lock']:
+            _bad_torrent_audit_state['status'] = 'error'
+            _bad_torrent_audit_state['error'] = str(exc)
+            _bad_torrent_audit_state['progress'] = 0
+
+
+@debrid_manager_bp.route('/api/bad_torrent_audit')
+@admin_required
+def api_bad_torrent_audit():
+    """Return bad torrent audit state. Never touches the FUSE mount directly."""
+    # Use cached path or derive from settings — no os.path.isdir() here
+    candidates = _resolve_bad_folder_path()
+    if not candidates and not _bta_bad_folder_cache['path']:
+        return jsonify({'success': False, 'error': 'No mount path configured'}), 400
+
+    with _bad_torrent_audit_state['lock']:
+        status = _bad_torrent_audit_state['status']
+        data = _bad_torrent_audit_state['data']
+        err = _bad_torrent_audit_state['error']
+        pct = _bad_torrent_audit_state['progress']
+        msg = _bad_torrent_audit_state['progress_msg']
+
+    # If idle in this process but persisted results exist, load them (disk only, no FUSE)
+    if status == 'idle' and data is None:
+        persisted = _bta_load_persisted()
+        if persisted:
+            with _bad_torrent_audit_state['lock']:
+                _bad_torrent_audit_state['data'] = persisted
+                _bad_torrent_audit_state['status'] = 'stopped' if persisted.get('partial') else 'done'
+            status = _bad_torrent_audit_state['status']
+            data = persisted
+
+    return jsonify({
+        'success': True,
+        'status': status,
+        'data': data,
+        'error': err,
+        'progress': pct,
+        'progress_msg': msg,
+    })
+
+
+def _run_bad_torrent_audit_wrapper(fresh):
+    """Wrapper that resolves the bad folder path in the background thread (never in a web worker)."""
+    bad_folder = _get_bad_folder_path()
+    if not bad_folder:
+        with _bad_torrent_audit_state['lock']:
+            _bad_torrent_audit_state['status'] = 'error'
+            _bad_torrent_audit_state['error'] = 'No __bad__ folder found — check mount path in settings'
+            _bad_torrent_audit_state['progress'] = 0
+        return
+    resume_data = None
+    if not fresh:
+        resume_data = _bta_load_persisted()
+        if resume_data:
+            with _bad_torrent_audit_state['lock']:
+                _bad_torrent_audit_state['data'] = resume_data
+            skipped = len(resume_data.get('results') or [])
+            logging.info(f"[BadTorrentAudit] Resuming scan, skipping {skipped} already-scanned entries")
+        else:
+            with _bad_torrent_audit_state['lock']:
+                _bad_torrent_audit_state['data'] = None
+    else:
+        with _bad_torrent_audit_state['lock']:
+            _bad_torrent_audit_state['data'] = None
+    logging.info(f"[BadTorrentAudit] Scan started: {bad_folder} (fresh={fresh})")
+    _run_bad_torrent_audit_bg(bad_folder, resume_data)
+
+
+@debrid_manager_bp.route('/api/bad_torrent_audit/scan', methods=['POST'])
+@admin_required
+def api_bad_torrent_audit_scan():
+    """Trigger a background bad torrent audit scan. Never touches the FUSE mount in the web worker."""
+    req = request.get_json(silent=True) or {}
+    fresh = req.get('fresh', False)
+
+    with _bad_torrent_audit_state['lock']:
+        if _bad_torrent_audit_state['status'] == 'scanning':
+            return jsonify({'success': True, 'status': 'scanning', 'message': 'Scan already in progress'})
+        _bad_torrent_audit_state['status'] = 'scanning'
+        _bad_torrent_audit_state['error'] = None
+        _bad_torrent_audit_state['progress'] = 0
+        _bad_torrent_audit_state['stop_requested'] = False
+        _bad_torrent_audit_state['progress_msg'] = 'Starting…'
+
+    threading.Thread(target=_run_bad_torrent_audit_wrapper, args=(fresh,), daemon=True).start()
+    return jsonify({'success': True, 'status': 'scanning', 'resumed': not fresh})
+
+
+@debrid_manager_bp.route('/api/bad_torrent_audit/stop', methods=['POST'])
+@admin_required
+def api_bad_torrent_audit_stop():
+    """Request the running scan to stop and preserve results so far."""
+    with _bad_torrent_audit_state['lock']:
+        if _bad_torrent_audit_state['status'] != 'scanning':
+            return jsonify({'success': False, 'error': 'No scan in progress'})
+        _bad_torrent_audit_state['stop_requested'] = True
+    return jsonify({'success': True, 'message': 'Stop requested'})
+
+
+@debrid_manager_bp.route('/api/bad_torrent_audit/delete', methods=['POST'])
+@admin_required
+def api_bad_torrent_audit_delete():
+    """Delete selected bad torrent entries from RD and optionally remove from __bad__."""
+    req = request.get_json(silent=True) or {}
+    names = req.get('names', [])  # folder names inside __bad__
+    if not names or not isinstance(names, list):
+        return jsonify({'success': False, 'error': 'names list required'}), 400
+
+    # Use cached bad folder path — never call os.path.isdir in a web worker
+    bad_folder = _bta_bad_folder_cache['path']
+    if not bad_folder:
+        return jsonify({'success': False, 'error': 'Bad folder path not cached yet — run a scan first'}), 400
+
+    deleted = []
+    failed = []
+
+    import shutil, errno
+    for name in names:
+        entry_path = os.path.join(bad_folder, name)
+        try:
+            # Walk bottom-up: delete all files first, then each empty subdir,
+            # then the root dir. This works on FUSE mounts that reject rmtree
+            # with ENOTEMPTY on the parent even after children are gone.
+            for dirpath, dirnames, filenames in os.walk(entry_path, topdown=False):
+                for fname in filenames:
+                    try:
+                        os.remove(os.path.join(dirpath, fname))
+                    except Exception:
+                        pass
+                try:
+                    os.rmdir(dirpath)
+                except Exception:
+                    pass
+            # Final attempt on the root in case walk missed it
+            if os.path.exists(entry_path):
+                try:
+                    os.rmdir(entry_path)
+                except Exception:
+                    pass
+            deleted.append(name)
+        except FileNotFoundError:
+            deleted.append(name)  # already gone
+        except Exception as e:
+            if not failed:
+                logging.error(f"[BadTorrentAudit] delete failed for {entry_path!r}: {type(e).__name__}: {e}")
+            failed.append({'name': name, 'error': str(e)})
+
+    logging.info(f"[BadTorrentAudit] Mount delete: {len(deleted)} deleted, {len(failed)} failed")
+
+    # Remove deleted entries from persisted results so results stay visible without rescan
+    deleted_names = set(deleted)
+    try:
+        persisted = _bta_load_persisted()
+        if persisted:
+            persisted['results'] = [r for r in persisted.get('results', []) if r['name'] not in deleted_names]
+            s = persisted['results']
+            persisted['stats'] = {
+                'total':   len(s),
+                'broken':  sum(1 for r in s if r['status'] == 'broken'),
+                'stale':   sum(1 for r in s if r['status'] == 'stale'),
+                'unknown': sum(1 for r in s if r['status'] not in ('broken', 'stale')),
+            }
+            _bta_save_persisted(persisted)
+            with _bad_torrent_audit_state['lock']:
+                _bad_torrent_audit_state['data'] = persisted
+                _bad_torrent_audit_state['status'] = 'stopped' if persisted.get('partial') else 'done'
+        else:
+            with _bad_torrent_audit_state['lock']:
+                _bad_torrent_audit_state['status'] = 'idle'
+                _bad_torrent_audit_state['data'] = None
+    except Exception:
+        with _bad_torrent_audit_state['lock']:
+            _bad_torrent_audit_state['status'] = 'idle'
+            _bad_torrent_audit_state['data'] = None
+
+    return jsonify({
+        'success': True,
+        'deleted_rd': len(deleted),
+        'failed_rd': len(failed),
+        'no_rd_id': 0,
+        'errors': [f['error'] for f in failed[:10]],
+        'first_error': failed[0]['error'] if failed else None,
+    })
+

@@ -858,6 +858,60 @@
                 _openCollIconPicker();
             });
         });
+
+        // ── Plex Library Picker ──────────────────────────────────────────────
+        document.querySelectorAll('.plex-lib-load-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var sourceId = btn.dataset.sourceId;
+                var listEl   = document.getElementById('plex-lib-list-' + sourceId);
+                var hiddenEl = document.getElementById('plex-lib-hidden-' + sourceId);
+                btn.disabled = true;
+                btn.textContent = 'Loading…';
+                fetch('/settings/api/plex-libraries')
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        btn.disabled = false;
+                        btn.textContent = 'Reload Libraries';
+                        if (!data.success) {
+                            listEl.innerHTML = '<span style="color:#e57373;font-size:0.85em;">Error: ' + (data.error || 'Could not connect to Plex') + '</span>';
+                            return;
+                        }
+                        var saved = [];
+                        try { saved = JSON.parse(hiddenEl.value) || []; } catch(e) {}
+                        saved = saved.map(String);
+
+                        listEl.innerHTML = '';
+                        data.libraries.forEach(function(lib) {
+                            var typeLabel = lib.type === 'movie' ? '🎬' : '📺';
+                            var checked = saved.includes(String(lib.key));
+                            var label = document.createElement('label');
+                            label.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:0.9em;color:#ccc;';
+                            var cb = document.createElement('input');
+                            cb.type = 'checkbox';
+                            cb.checked = checked;
+                            cb.style.cursor = 'pointer';
+                            cb.addEventListener('change', function() {
+                                var allChecked = Array.from(listEl.querySelectorAll('input[type=checkbox]'))
+                                    .filter(function(c) { return c.checked; })
+                                    .map(function(c) { return c.dataset.key; });
+                                hiddenEl.value = JSON.stringify(allChecked);
+                            });
+                            cb.dataset.key = String(lib.key);
+                            label.appendChild(cb);
+                            label.appendChild(document.createTextNode(typeLabel + ' ' + lib.title + ' (' + lib.key + ')'));
+                            listEl.appendChild(label);
+                        });
+                        if (data.libraries.length === 0) {
+                            listEl.innerHTML = '<span style="color:#888;font-size:0.85em;">No movie or show libraries found in Plex.</span>';
+                        }
+                    })
+                    .catch(function(e) {
+                        btn.disabled = false;
+                        btn.textContent = 'Load Libraries';
+                        listEl.innerHTML = '<span style="color:#e57373;font-size:0.85em;">Failed to reach server.</span>';
+                    });
+            });
+        });
     }
 </script>
 
@@ -1998,6 +2052,41 @@
                                     <p class="settings-description" style="margin-top:6px;">Icon shown on the poster. Leave blank to use the source default.</p>
                                 </div>
                             </div>
+                        {% endif %}
+
+                        {# ── Plex Collection Library Picker ── #}
+                        {% if 'plex_collection' in settings_schema['Content Sources'].schema.get(source_type_pc, {}) %}
+                        {% set _saved_libs = plex_coll_config.get('libraries', []) %}
+                        {% set _saved_libs = _saved_libs if _saved_libs is iterable and _saved_libs is not string else [] %}
+                        <div class="settings-row" id="plex-lib-picker-row-{{ source_id }}">
+                            <label class="settings-title">Target Libraries:</label>
+                            <div class="settings-field" style="flex-direction:column; align-items:flex-start; gap:8px;">
+                                <input type="hidden"
+                                       name="Content Sources.{{ source_id }}.plex_collection.libraries"
+                                       id="plex-lib-hidden-{{ source_id }}"
+                                       value='{{ _saved_libs | tojson }}'>
+                                <div id="plex-lib-list-{{ source_id }}" class="plex-lib-checklist">
+                                    {% if _saved_libs %}
+                                        <span class="settings-description" style="font-style:italic;">
+                                            {{ _saved_libs | length }} librar{{ 'y' if _saved_libs | length == 1 else 'ies' }} selected.
+                                            Click "Load Libraries" to change.
+                                        </span>
+                                    {% else %}
+                                        <span class="settings-description" style="font-style:italic;">
+                                            No libraries selected — defaults to first of each type.
+                                        </span>
+                                    {% endif %}
+                                </div>
+                                <button type="button"
+                                        class="plex-lib-load-btn"
+                                        data-source-id="{{ source_id }}"
+                                        style="background:#1e1e1e; border:1px solid #444; border-radius:6px; padding:6px 14px; cursor:pointer; color:#ddd; font-size:0.85em; transition:border-color 0.2s;"
+                                        onmouseover="this.style.borderColor='#007bff'" onmouseout="this.style.borderColor='#444'">
+                                    Load Libraries
+                                </button>
+                                <p class="settings-description">Select which Plex libraries this collection should appear in. Leave empty to use the first library of each type (default behaviour).</p>
+                            </div>
+                        </div>
                         {% endif %}
 
                     {# --- END: Conditional Rendering based on Type --- #}

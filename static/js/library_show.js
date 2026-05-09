@@ -779,10 +779,25 @@ function createSeasonPanel(season, isActive) {
         </button>
     `;
 
+    // Season-level not-wanted magnet button — show if any episodes share a common pack magnet
+    const seasonMagnets = [...new Set((season.episodes || []).map(ep => ep.filled_by_magnet).filter(Boolean))];
+    const packMagnet = seasonMagnets.length === 1 && season.episodes.filter(ep => ep.filled_by_magnet).length > 1
+        ? seasonMagnets[0] : null;
+    const seasonNotWantedMagnetSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(270deg)"><path d="M21 18.5V20.5C21 21.3284 20.3284 22 19.5 22H17H13C7.47715 22 3 17.5228 3 12C3 6.47715 7.47715 2 13 2H17H19.5C20.3284 2 21 2.67157 21 3.5V5.5C21 6.32843 20.3284 7 19.5 7H17H13C10.2386 7 8 9.23858 8 12C8 14.7614 10.2386 17 13 17H17H19.5C20.3284 17 21 17.6716 21 18.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path opacity="0.5" d="M17 2V7M17 17V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+    const seasonNotWantedBtnHtml = packMagnet ? `
+        <button class="not-wanted-magnet-season-btn btn btn-sm" type="button"
+                title="Add season pack magnet to not-wanted list"
+                data-pack-magnet="${packMagnet.replace(/"/g, '&quot;')}"
+                data-season-item-ids="${(season.episodes || []).filter(ep => ep.filled_by_magnet === packMagnet).map(ep => ep.id).join(',')}">
+            ${seasonNotWantedMagnetSvg}
+        </button>
+    ` : '';
+
     seasonHeader.innerHTML = `
         <h3>Season ${season.season_number}${phantomIndicator}${pendingBadge}</h3>
         <div class="season-action-buttons">
             ${magnetSeasonBtnHtml}
+            ${seasonNotWantedBtnHtml}
             ${replaceButtonHtml}
             ${deleteButtonHtml}
         </div>
@@ -805,6 +820,15 @@ function createSeasonPanel(season, isActive) {
             const seasonVersion = (showData.version || '').replace(/\*/g, '').trim();
             if (seasonVersion) params.set('prefill_version', seasonVersion);
             window.location.href = `/magnet/assign_magnet?${params.toString()}`;
+        });
+    }
+
+    // Season not-wanted magnet button handler
+    const seasonNotWantedBtn = seasonHeader.querySelector('.not-wanted-magnet-season-btn');
+    if (seasonNotWantedBtn) {
+        seasonNotWantedBtn.addEventListener('click', async () => {
+            const itemIds = seasonNotWantedBtn.dataset.seasonItemIds.split(',').map(Number).filter(Boolean);
+            await handleNotWantedMagnetDirect(seasonNotWantedBtn, itemIds, `Season ${season.season_number} pack`);
         });
     }
 
@@ -1151,6 +1175,25 @@ function createEpisodeRow(episodes, seasonNumber) {
         </button>
     `;
 
+    // Not-wanted magnet icon (magnet with slash)
+    const notWantedMagnetSvg = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(270deg)"><path d="M21 18.5V20.5C21 21.3284 20.3284 22 19.5 22H17H13C7.47715 22 3 17.5228 3 12C3 6.47715 7.47715 2 13 2H17H19.5C20.3284 2 21 2.67157 21 3.5V5.5C21 6.32843 20.3284 7 19.5 7H17H13C10.2386 7 8 9.23858 8 12C8 14.7614 10.2386 17 13 17H17H19.5C20.3284 17 21 17.6716 21 18.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path opacity="0.5" d="M17 2V7M17 17V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+
+    // Build not-wanted magnet button for episode level
+    // Collect unique magnets across all versions of this episode
+    const episodeMagnets = [...new Set(episodes.map(ep => ep.filled_by_magnet).filter(Boolean))];
+    // Include ALL episode versions for popup display; only those with magnets can be submitted
+    const episodeMagnetFiles = episodeMagnets.length > 0
+        ? episodes.map(ep => ({
+            id: ep.id,
+            file: ep.filled_by_file || ep.location_basename || 'Unknown file',
+            version: ep.version || 'Unknown',
+            magnet: ep.filled_by_magnet || null
+          }))
+        : [];
+    const notWantedMagnetIcon = episodeMagnetFiles.length > 0
+        ? `<button class="not-wanted-magnet-btn refresh-btn" type="button" title="Add magnet to not-wanted list">${notWantedMagnetSvg}</button>`
+        : '';
+
     // Magnet assign icon
     const magnetIcon = `
         <button class="magnet-assign-episode-btn refresh-btn" type="button" title="Assign magnet for this episode">
@@ -1257,6 +1300,7 @@ function createEpisodeRow(episodes, seasonNumber) {
             ${searchIcon}
             ${refreshIcon}
             ${magnetIcon}
+            ${notWantedMagnetIcon}
             ${deleteIcon}
             ${filesButtonHtml}
         `;
@@ -1310,6 +1354,13 @@ function createEpisodeRow(episodes, seasonNumber) {
     const deleteBtn = row.querySelector('.delete-episode-btn');
     if (deleteBtn) {
         deleteBtn.addEventListener('click', handleDeleteEpisode);
+    }
+
+    // Add event listener for not-wanted magnet button
+    const notWantedBtn = row.querySelector('.not-wanted-magnet-btn');
+    if (notWantedBtn) {
+        notWantedBtn._magnetFiles = episodeMagnetFiles;
+        notWantedBtn.addEventListener('click', () => handleNotWantedMagnet(notWantedBtn));
     }
 
     // Add event listener for files toggle button
@@ -1388,6 +1439,58 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+/**
+ * Handle not-wanted magnet for episode rows.
+ * Single version: fires directly. Multiple versions: shows selection popup.
+ */
+async function handleNotWantedMagnet(btn) {
+    const magnetFiles = btn._magnetFiles || [];
+    if (magnetFiles.length === 0) return;
+
+    // Only versions with a magnet can actually be submitted
+    const submittableFiles = magnetFiles.filter(f => f.magnet);
+    if (submittableFiles.length === 0) return;
+
+    let selectedIds;
+    if (magnetFiles.length === 1) {
+        // Single version — fire directly
+        selectedIds = [submittableFiles[0].id];
+    } else {
+        // Multiple versions — show popup with all versions; non-magnet ones will be greyed out
+        selectedIds = await showFileSelectionPopup(magnetFiles, 'Select versions to blacklist magnet', 'Blacklist Magnet');
+        if (!selectedIds) return;
+        // Filter to only those that have a magnet (popup may have included greyed-out entries)
+        const submittableIds = new Set(submittableFiles.map(f => f.id));
+        selectedIds = selectedIds.filter(id => submittableIds.has(id));
+        if (selectedIds.length === 0) return;
+    }
+    await handleNotWantedMagnetDirect(btn, selectedIds, 'magnet');
+}
+
+async function handleNotWantedMagnetDirect(btn, itemIds, label) {
+    const origTitle = btn.title;
+    btn.disabled = true;
+    try {
+        const resp = await fetch('/library/add_not_wanted_magnet', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ item_ids: itemIds }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+            showPopup({ type: POPUP_TYPES.SUCCESS, message: `Added ${data.added} magnet(s) to not-wanted list`, autoClose: 3000 });
+            btn.style.opacity = '0.4';
+            btn.title = 'Already in not-wanted list';
+        } else {
+            showPopup({ type: POPUP_TYPES.ERROR, message: 'Failed: ' + (data.error || 'Unknown error'), autoClose: 4000 });
+        }
+    } catch (e) {
+        showPopup({ type: POPUP_TYPES.ERROR, message: 'Request failed: ' + e.message, autoClose: 4000 });
+    } finally {
+        btn.disabled = false;
+    }
 }
 
 async function handleSearchEpisode(event) {
@@ -2156,32 +2259,41 @@ function showChoicePopup(title, message, choices) {
 /**
  * Show file selection popup for episodes with multiple files
  */
-function showFileSelectionPopup(files, episodeTitle) {
+function showFileSelectionPopup(files, episodeTitle, actionLabel) {
+    const confirmLabel = actionLabel || 'Delete Selected';
+    const titleLabel = actionLabel ? actionLabel : 'Select Files to Delete';
     return new Promise((resolve) => {
         // Create popup HTML
         const popupHtml = `
             <div class="file-selection-popup-overlay" id="fileSelectionPopup">
                 <div class="file-selection-popup">
-                    <h3>Select Files to Delete</h3>
+                    <h3>${titleLabel}</h3>
                     <p class="file-selection-subtitle">${episodeTitle}</p>
                     <div class="file-selection-list">
-                        ${files.map((file, index) => `
-                            <div class="file-selection-item">
+                        ${files.map((file, index) => {
+                            const hasAction = file.magnet !== undefined ? !!file.magnet : true;
+                            const disabledAttr = !hasAction ? 'disabled' : '';
+                            const checkedAttr = (files.length === 1 && hasAction) ? 'checked' : '';
+                            const itemClass = !hasAction ? 'file-selection-item file-selection-item--no-magnet' : 'file-selection-item';
+                            return `
+                            <div class="${itemClass}">
                                 <input type="checkbox"
                                        id="file-${file.id}"
                                        value="${file.id}"
-                                       ${files.length === 1 ? 'checked' : ''}>
+                                       ${checkedAttr}
+                                       ${disabledAttr}>
                                 <label for="file-${file.id}">
                                     <span class="file-number">${index + 1}.</span>
                                     <span class="file-name">${escapeHtml(file.file)}</span>
                                     <span class="file-version">${escapeHtml(file.version)}</span>
+                                    ${!hasAction ? '<span class="file-no-magnet">(no magnet)</span>' : ''}
                                 </label>
-                            </div>
-                        `).join('')}
+                            </div>`;
+                        }).join('')}
                     </div>
                     <div class="file-selection-actions">
                         <button class="file-selection-btn file-selection-cancel">Cancel</button>
-                        <button class="file-selection-btn file-selection-delete">Delete Selected</button>
+                        <button class="file-selection-btn file-selection-delete">${confirmLabel}</button>
                     </div>
                 </div>
             </div>
