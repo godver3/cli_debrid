@@ -432,6 +432,11 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                     logging.warning(f"Skipping unmatched Plex item: {item.get('title', 'Unknown')} from location(s): {plex_locations}")
                     continue
 
+                # Items tagged by plex_functions with their source library.
+                # Secondary libraries share physical files with the primary library —
+                # don't let them overwrite location_on_disk or ms_item_id on existing rows.
+                is_primary_library = item.get('_plex_library_primary', True)
+
                 # Iterate through each file path provided by Plex for this media item
                 for current_plex_location in plex_locations:
                     filename = os.path.basename(current_plex_location) # This is the filename from Plex
@@ -557,6 +562,15 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                 
                             existing_collected_at = existing_db_item.get('collected_at') or collected_at
 
+                            # Secondary libraries share physical files — don't overwrite
+                            # location_on_disk or ms_item_id that belong to the primary library.
+                            if is_primary_library or not existing_db_item.get('location_on_disk'):
+                                new_location = current_plex_location
+                                new_ms_item_id = plex_ms_item_id
+                            else:
+                                new_location = existing_db_item.get('location_on_disk')
+                                new_ms_item_id = existing_db_item.get('ms_item_id')
+
                             conn.execute('''
                                 UPDATE media_items
                                 SET state = ?, last_updated = ?, collected_at = ?,
@@ -567,8 +581,8 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                     ms_item_id = COALESCE(?, ms_item_id)
                                 WHERE id = ?
                             ''', (new_state, datetime.now(), collected_at, existing_collected_at,
-                                  current_plex_location, is_upgrade, item.get('resolution'), item.get('size_gb'),
-                                  plex_ms_item_id, db_item_id))
+                                  new_location, is_upgrade, item.get('resolution'), item.get('size_gb'),
+                                  new_ms_item_id, db_item_id))
 
                             # Queue items for post-processing AFTER transaction commits
                             # This prevents database lock issues when post-processing tries to write to DB
@@ -646,9 +660,14 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                             if backfill and (existing_size is None or existing_size == 0):
                                 logging.info(f"[Backfill Debug] Item {db_item_id}: existing_size={existing_size}, new_size={new_size}, new_resolution={new_resolution}")
 
+                            # For secondary libraries, don't let a different path trigger a location update —
+                            # only allow location change if this is the primary library or location is unset.
+                            effective_location = current_plex_location if (is_primary_library or not existing_location) else existing_location
+                            location_changed = (existing_location != effective_location)
+
                             # Update if any Plex-sourced field is missing or location changed
                             should_update = (
-                                existing_location != current_plex_location or
+                                location_changed or
                                 ((existing_size is None or existing_size == 0) and new_size is not None and new_size > 0) or
                                 (existing_resolution is None and new_resolution is not None) or
                                 (not existing_imdb_id and imdb_id) or
@@ -676,7 +695,7 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                         last_updated = ?,
                                         ms_item_id = COALESCE(ms_item_id, ?)
                                     WHERE id = ?
-                                ''', (current_plex_location, new_resolution, new_size, imdb_id, tmdb_id, collected_at, datetime.now(), plex_ms_item_id, db_item_id))
+                                ''', (effective_location, new_resolution, new_size, imdb_id, tmdb_id, collected_at, datetime.now(), plex_ms_item_id, db_item_id))
 
                     else:
                         # --- NEW ITEM INSERT ---

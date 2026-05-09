@@ -820,7 +820,7 @@ h2.episode-title {
     position: relative;
     background: var(--st-surf);
     border: 1px solid var(--st-border);
-    padding: 0 20px 20px 20px;
+    /* padding: 0 20px 20px 20px; */
     border-radius: 14px;
     width: 85%;
     max-width: 1200px;
@@ -974,9 +974,7 @@ p.torresult-item {
 }
 
 .assign-magnet-icon {
-    position: absolute;
-    bottom: 10px;
-    right: 10px;
+    position: static;
     width: 30px;
     height: 30px;
     background: var(--st-surf3);
@@ -988,6 +986,17 @@ p.torresult-item {
     justify-content: center;
     z-index: 10;
     transition: all 0.2s ease;
+}
+
+@media (min-width: 1046px) {
+    .assign-magnet-icon {
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+    }
+    .overlay-content {
+        padding: 0 20px 20px 20px;
+    }
 }
 
 .assign-magnet-icon:hover {
@@ -1439,7 +1448,7 @@ tr.filtered-out-item {
     }
 
     .overlay-content {
-        width: 100%;
+        width: 90%;
         max-width: 100%;
         max-height: 90vh;
         border-radius: 14px 14px 0 0;
@@ -1447,11 +1456,7 @@ tr.filtered-out-item {
         margin: 0;
     }
 
-    #overlayContent {
-        padding: 12px;
-        width: 100%;
-        box-sizing: border-box;
-    }
+
 
     #overlayContent > div {
         display: flex;
@@ -2582,29 +2587,11 @@ tr.filtered-out-item {
 
 @media (max-width: 768px) {
     .close-btn {
-        position: sticky;
-        top: 10px;
-        right: 10px;
-        width: 28px;
-        height: 28px;
-        font-size: 18px;
-        border: 1px solid var(--st-border);
-        background: var(--st-surf2);
-        color: var(--st-text2);
-        border-radius: 6px;
-        cursor: pointer;
-        transition: all 0.15s ease;
-        z-index: 30;
-        margin-left: auto;
-        padding: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
+        display: none !important;
     }
 
     .close-btn:hover {
-        background: var(--st-surf3);
-        color: var(--st-text);
+        display: none !important;
     }
 }
 
@@ -2905,4 +2892,274 @@ tr.filtered-out-item {
     .trailer-text {
         display: none !important;
     }
+}
+
+/* ── Mobile torresult cards (max-width: 1045px) ── */
+@media (max-width: 1045px) {
+    .overlay-content {
+        border-top: 2px solid #e8601c !important;
+        border-radius: 10px 10px 0 0 !important;
+        overflow-y: auto !important;
+        padding-bottom: 30px !important;
+    }
+    .close-btn { display: none !important; }
+
+    .tr-dlg-hdr {
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: flex-start !important;
+        justify-content: space-between !important;
+        gap: 10px !important;
+        width: 100% !important;
+        padding: 14px 16px 12px !important;
+        box-sizing: border-box !important;
+        flex-shrink: 0 !important;
+        background-color: #1a1a1a !important;
+    }
+    .tr-dlg-title {
+        border-left: 3px solid #e8601c !important;
+        padding-left: 9px !important;
+    }
+    .tr-dlg-h {
+        font-size: 14px !important;
+        font-weight: 700 !important;
+        color: #e0e0e0 !important;
+        line-height: 1.3 !important;
+        font-family: 'Inter', sans-serif !important;
+    }
+    .tr-dlg-sub {
+        font-size: 12px !important;
+        color: #555 !important;
+        margin-top: 2px !important;
+        font-family: 'Inter', sans-serif !important;
+    }
+    .tr-close-btn {
+        width: 26px !important;
+        height: 26px !important;
+        border-radius: 5px !important;
+        border: 1px solid #3d3d3d !important;
+        background: #222 !important;
+        color: #555 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        cursor: pointer !important;
+        font-size: 11px !important;
+        flex-shrink: 0 !important;
+        transition: all .15s !important;
+        line-height: 1 !important;
+    }
+    .tr-close-btn:hover { background: #2a2a2a !important; color: #e0e0e0 !important; }
+
+    /* ── Filter bar ── */
+    .tr-dlg-filters {
+        flex-shrink: 0 !important;
+        padding: 10px 16px !important;
+        border-bottom: 1px solid #2d2d2d !important;
+        background: #111 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 7px !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+    }
+    .tr-filter-row {
+        display: flex !important;
+        align-items: center !important;
+        gap: 10px !important;
+        width: 100% !important;
+    }
+    .tr-filter-label {
+        font-size: 11px !important;
+        color: #555 !important;
+        font-weight: 500 !important;
+        width: 52px !important;
+        flex-shrink: 0 !important;
+        font-family: 'Inter', sans-serif !important;
+    }
+    .tr-fsel {
+        flex: 1 !important;
+        background: #222 !important;
+        border: 1px solid #3d3d3d !important;
+        color: #aaa !important;
+        border-radius: 5px !important;
+        padding: 6px 28px 6px 9px !important;
+        font-size: 12px !important;
+        font-family: 'Inter', sans-serif !important;
+        outline: none !important;
+        cursor: pointer !important;
+        -webkit-appearance: none !important;
+        appearance: none !important;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23555' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") !important;
+        background-repeat: no-repeat !important;
+        background-position: right 9px center !important;
+        transition: border-color .15s !important;
+        min-height: unset !important;
+        height: auto !important;
+    }
+    .tr-fsel:hover, .tr-fsel:focus { border-color: #555 !important; color: #e0e0e0 !important; }
+    .tr-result-count {
+        font-size: 10px !important;
+        color: #555 !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        background: #222 !important;
+        border: 1px solid #2d2d2d !important;
+        border-radius: 3px !important;
+        padding: 2px 7px !important;
+        white-space: nowrap !important;
+        flex-shrink: 0 !important;
+    }
+
+    /* ── Results scroll area ── */
+    #overlayContent .tr-dlg-filters ~ div {
+        display: flex !important;
+        flex-direction: column !important;
+        flex-wrap: nowrap !important;
+        gap: 0 !important;
+        justify-content: flex-start !important;
+        width: 100% !important;
+        padding: 10px !important;
+        background-color: #1a1a1a !important;
+    }
+
+    /* ── Card ── */
+    .torresult {
+        display: block !important;
+        width: 100% !important;
+        position: static !important;
+        margin: 0 0 8px 0 !important;
+        padding: 11px 12px !important;
+        box-sizing: border-box !important;
+        background: #222 !important;
+        border: 1px solid #2d2d2d !important;
+        border-radius: 7px !important;
+        overflow: hidden !important;
+        cursor: pointer !important;
+        transition: border-color .15s, background .12s !important;
+        text-align: left !important;
+        font-family: 'Inter', sans-serif !important;
+    }
+    .torresult:last-child { margin-bottom: 0 !important; }
+    .torresult:hover { border-color: #3d3d3d !important; background: #2a2a2a !important; }
+    .torresult:active { background: #2e2e2e !important; }
+    .torresult.filtered-out-item { border-color: rgba(239,68,68,.33) !important; opacity: .72 !important; }
+    .torresult.filtered-out-item:hover { border-color: #ef4444 !important; opacity: .88 !important; }
+
+    /* card-filename */
+    .torresult .card-filename {
+        font-size: 11px !important;
+        font-weight: 600 !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        color: #e0e0e0 !important;
+        margin-bottom: 7px !important;
+        word-break: break-all !important;
+        line-height: 1.55 !important;
+    }
+    .torresult.filtered-out-item .card-filename { color: #555 !important; }
+
+    /* card-stats */
+    .torresult .card-stats {
+        display: flex !important;
+        align-items: center !important;
+        gap: 5px !important;
+        margin-bottom: 6px !important;
+        flex-wrap: wrap !important;
+    }
+    .torresult .stat {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 3px !important;
+        font-size: 11px !important;
+        font-family: 'JetBrains Mono', monospace !important;
+    }
+    .torresult .stat i { font-size: 9px !important; }
+    .torresult .s-size   { color: #3b82f6 !important; }
+    .torresult .s-speed  { color: #f59e0b !important; }
+    .torresult .s-seeds  { color: #22c55e !important; }
+    .torresult .vdiv {
+        display: inline-block !important;
+        width: 1px !important;
+        height: 11px !important;
+        background: #3d3d3d !important;
+        flex-shrink: 0 !important;
+    }
+
+    /* card-sources */
+    .torresult .card-sources {
+        font-size: 10px !important;
+        color: #555 !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        margin-bottom: 10px !important;
+        line-height: 1.5 !important;
+    }
+
+    /* card-blocked-reason */
+    .torresult .card-blocked-reason {
+        font-size: 10px !important;
+        color: #ef4444 !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        background: rgba(239,68,68,.08) !important;
+        border: 1px solid rgba(239,68,68,.2) !important;
+        border-radius: 4px !important;
+        padding: 5px 8px !important;
+        margin-bottom: 10px !important;
+        display: flex !important;
+        align-items: flex-start !important;
+        gap: 5px !important;
+        line-height: 1.5 !important;
+    }
+    .torresult .card-blocked-reason i { margin-top: 1px !important; flex-shrink: 0 !important; font-size: 10px !important; }
+
+    /* card-footer */
+    .torresult .card-footer {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 8px !important;
+    }
+
+    /* badge */
+    .torresult .badge {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 5px !important;
+        padding: 4px 10px !important;
+        border-radius: 5px !important;
+        font-size: 11px !important;
+        font-weight: 600 !important;
+        font-family: 'JetBrains Mono', monospace !important;
+        pointer-events: none !important;
+        width: auto !important;
+        margin: 0 !important;
+        animation: none !important;
+    }
+    .torresult .badge i { font-size: 10px !important; }
+    .torresult .cache-status.badge-cached  { background: #22c55e14 !important; border: 1px solid #22c55e33 !important; color: #22c55e !important; animation: none !important; }
+    .torresult .cache-status.badge-na      { background: #ef444414 !important; border: 1px solid #ef444433 !important; color: #ef4444 !important; animation: none !important; }
+    .torresult .cache-status.badge-pending { background: #2a2a2a !important; border: 1px solid #3d3d3d !important; color: #555 !important; animation: none !important; }
+
+    /* assign button (btn-link) */
+    .assign-magnet-icon {
+        position: static !important;
+        flex-shrink: 0 !important;
+        width: 30px !important;
+        height: 30px !important;
+        padding: 0 !important;
+        background: rgba(232,96,28,.08) !important;
+        border: 1px solid rgba(232,96,28,.4) !important;
+        border-radius: 5px !important;
+        color: #e8601c !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        cursor: pointer !important;
+        font-size: 11px !important;
+        z-index: auto !important;
+        transform: none !important;
+        transition: all .15s !important;
+        box-shadow: none !important;
+    }
+    .assign-magnet-icon:hover { background: #e8601c !important; border-color: #e8601c !important; color: #fff !important; transform: none !important; }
+    .assign-magnet-icon:active { transform: scale(.92) !important; }
+    .assign-magnet-icon svg, .assign-magnet-icon i { color: inherit !important; pointer-events: none !important; }
 }

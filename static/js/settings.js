@@ -390,6 +390,8 @@ export function updateSettings() {
                         current[finalKey] = input.checked;
                     } else if (finalKey === 'poster_design') {
                         current[finalKey] = parseInt(input.value) || 0;
+                    } else if (finalKey === 'libraries') {
+                        try { current[finalKey] = JSON.parse(input.value) || []; } catch(e) { current[finalKey] = []; }
                     } else {
                         current[finalKey] = input.value;
                     }

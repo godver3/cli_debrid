@@ -907,6 +907,9 @@ body[data-theme="tangerine"] .recently-upgraded-section .stats-poster-hover .fil
     .stats-box.collection-stats .stat-items { grid-template-columns: repeat(3,1fr) !important; }
 }
 @media (max-width: 768px) {
+    .theme-selector {
+        font-size: 10px;
+    }
     #compact_toggle { display: none; }
     .stats-box.collection-stats .stat-items { grid-template-columns: repeat(2,1fr) !important; gap: .75rem !important; }
     .stats-box.collection-stats .stat-item .stat-number { font-size: .95rem; }
@@ -962,7 +965,7 @@ body[data-theme="tangerine"] .recently-upgraded-section .stats-poster-hover .fil
     .tb-break { flex-basis: 100%; height: 0; }
     #compact_toggle { display: none !important; }
     /* Row 1: Library + Timezone each ~half */
-    .tb-pill:has(#library-size-display) { flex: 1 1 calc(55% - 5px); min-width: 0; }
+    .tb-pill:has(#library-size-display) { flex: 1 1 calc(40% - 5px);min-width: 0; }
     .tb-pill:has(.fas.fa-globe)          { flex: 1 1 calc(40% - 5px); min-width: 0; }
     /* Row 2: Sub + 24h shrink to content, Theme fills rest */
     .tb-pill:has(#subscription-days-toggle) { flex: 0 0 auto; }
@@ -977,7 +980,7 @@ body[data-theme="tangerine"] .recently-upgraded-section .stats-poster-hover .fil
         margin-left: 0 !important; min-width: 0 !important; text-align: left !important;
     }
     .modal-content { margin: 30% auto; width: 90%; }
-    .hide-mobile-text { display: none; }
+    .hide-mobile-text { display: contents; }
 }
 @media (max-width: 500px) {
     .stats-box.collection-stats .stat-items { grid-template-columns: repeat(2,1fr) !important; }

@@ -715,6 +715,15 @@
                         <span class="dm-rc-badge dm-rc-badge-mixed">META</span>
                     </span>
                 </button>
+                {% if decypharr_mode %}
+                <button class="dm-rc-tab" data-rc-group="bad-torrents" id="rc-tab-bad-torrents">
+                    <span class="dm-rc-tab-name">Broken</span>
+                    <span class="dm-rc-tab-count" id="bta-total-badge">—</span>
+                    <span class="dm-rc-tab-badges">
+                        <span class="dm-rc-badge dm-rc-badge-bad">{{ debrid_provider_abbrev }}</span>
+                    </span>
+                </button>
+                {% endif %}
             </div>
 
             <!-- Not in library panel -->
@@ -1084,6 +1093,140 @@
                 </div><!-- /#batt-content -->
             </div><!-- /#rc-panel-battery -->
 
+            {% if decypharr_mode %}
+            <!-- ── BAD TORRENT AUDIT PANEL ── -->
+            <div id="rc-panel-bad-torrents" class="dm-rc-group-panel bta-panel" style="display:none">
+
+                <!-- Idle state -->
+                <div id="bta-idle">
+                    <div class="bta-card bta-intro-card">
+                        <div class="bta-card-hdr">
+                            <span class="bta-card-title">Broken Torrents</span>
+                        </div>
+                        <div class="bta-card-body">
+                            <p class="bta-desc">Scans the decypharr <code class="bta-code">__bad__</code> folder and probes each entry with ffprobe to classify it as <span class="bta-tag bta-tag-broken">broken</span> (unplayable) or <span class="bta-tag bta-tag-stale">stale</span> (file works, stuck in bad folder). Broken entries can be deleted from Real-Debrid.</p>
+                            <div class="bta-action-row">
+                                <button class="bta-btn bta-btn-primary" onclick="_btaStartScan()">
+                                    <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-4.35-4.35"/></svg>
+                                    Run Scan
+                                </button>
+                                <span id="bta-error-msg" class="bta-error-msg" style="display:none"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Scanning state -->
+                <div id="bta-scanning" style="display:none">
+                    <div class="bta-card bta-scan-card">
+                        <div class="bta-card-hdr">
+                            <span class="bta-card-title">Scanning <code class="bta-code">__bad__</code> folder…</span>
+                            <button class="bta-btn bta-btn-stop" onclick="_btaStopScan()" id="bta-stop-btn">Stop</button>
+                        </div>
+                        <div class="bta-card-body">
+                            <div class="bta-progress-row">
+                                <div class="bta-spinner"></div>
+                                <span id="bta-progress-msg" class="bta-progress-msg">Starting…</span>
+                            </div>
+                            <div class="bta-progress-track">
+                                <div id="bta-progress-bar" class="bta-progress-fill" style="width:0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Results -->
+                <div id="bta-results" style="display:none">
+
+                    <!-- KPI row -->
+                    <div class="bta-kpi-row">
+                        <div class="bta-kpi">
+                            <div class="bta-kpi-icon bta-kpi-icon-total">
+                                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7h16M4 12h16M4 17h16"/></svg>
+                            </div>
+                            <div>
+                                <div class="bta-kpi-label">Total</div>
+                                <div class="bta-kpi-val" id="bta-stat-total">—</div>
+                            </div>
+                        </div>
+                        <div class="bta-kpi">
+                            <div class="bta-kpi-icon bta-kpi-icon-broken">
+                                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                            </div>
+                            <div>
+                                <div class="bta-kpi-label">Broken</div>
+                                <div class="bta-kpi-val bta-kpi-broken" id="bta-stat-broken">—</div>
+                            </div>
+                        </div>
+                        <div class="bta-kpi">
+                            <div class="bta-kpi-icon bta-kpi-icon-stale">
+                                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            </div>
+                            <div>
+                                <div class="bta-kpi-label">Stale (working)</div>
+                                <div class="bta-kpi-val bta-kpi-stale" id="bta-stat-stale">—</div>
+                            </div>
+                        </div>
+                        <div class="bta-kpi">
+                            <div class="bta-kpi-icon bta-kpi-icon-unknown">
+                                <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3m.08 4h.01"/></svg>
+                            </div>
+                            <div>
+                                <div class="bta-kpi-label">Unknown</div>
+                                <div class="bta-kpi-val" id="bta-stat-unknown">—</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Toolbar -->
+                    <div class="bta-toolbar">
+                        <div class="bta-toolbar-left">
+                            <button class="bta-btn bta-btn-secondary" onclick="_btaStartScan()" id="bta-resume-btn">▶ Resume Scan</button>
+                            <button class="bta-btn bta-btn-ghost" onclick="_btaStartScan(true)">↺ Full Re-scan</button>
+                            <button class="bta-btn bta-btn-danger" id="bta-delete-all-broken-btn" onclick="_btaDeleteAllBroken()">Delete All Broken</button>
+                            <button class="bta-btn bta-btn-danger bta-btn-outline" id="bta-bulk-delete-btn" onclick="_btaDeleteSelected()" disabled>Delete Selected</button>
+                            <label class="bta-check-label">
+                                <input type="checkbox" id="bta-select-all" onchange="_btaToggleAll(this.checked)"> Select all broken
+                            </label>
+                            <span id="bta-partial-badge" class="bta-partial-badge" style="display:none">partial results</span>
+                        </div>
+                        <div class="bta-toolbar-right">
+                            <span id="bta-last-scanned" class="bta-last-scanned"></span>
+                        </div>
+                    </div>
+
+                    <!-- Filter bar -->
+                    <div class="bta-filter-bar">
+                        <div class="bta-search-wrap">
+                            <svg class="bta-search-icon" width="11" height="11" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-4.35-4.35"/></svg>
+                            <input type="text" class="bta-search" id="bta-search" placeholder="Search torrents…" oninput="_btaRender()">
+                        </div>
+                        <select class="bta-select" id="bta-filter-status" onchange="_btaRender()">
+                            <option value="">All statuses</option>
+                            <option value="broken">Broken</option>
+                            <option value="stale">Stale</option>
+                            <option value="unknown">Unknown</option>
+                        </select>
+                    </div>
+
+                    <!-- Table -->
+                    <div class="bta-table-wrap">
+                        <table class="bta-table">
+                            <thead><tr>
+                                <th class="bta-col-check"><input type="checkbox" id="bta-thead-check" onchange="_btaToggleAll(this.checked)"></th>
+                                <th>Torrent Name</th>
+                                <th class="bta-col-status">Status</th>
+                                <th class="bta-col-detail">Detail</th>
+                            </tr></thead>
+                            <tbody id="bta-tbody"></tbody>
+                        </table>
+                    </div>
+
+                </div><!-- /#bta-results -->
+
+            </div><!-- /#rc-panel-bad-torrents -->
+            {% endif %}
+
         </div><!-- /#rc-content -->
     </div><!-- /#reconcile-tab -->
 
@@ -1147,6 +1290,23 @@
     </div>
     <div class="dm-modal-body" id="lib-detail-body">
         <div class="dm-spinner-wrap"><span class="dm-spinner"></span> Loading…</div>
+    </div>
+</div>
+
+<!-- ── BTA CONFIRM MODAL ── -->
+<div class="dm-modal-overlay" id="bta-confirm-overlay"></div>
+<div class="dm-modal" id="bta-confirm-modal">
+    <div class="dm-modal-header">
+        <h3 id="bta-confirm-title">Confirm</h3>
+        <button class="dm-modal-close" id="bta-confirm-close">&times;</button>
+    </div>
+    <div class="dm-modal-body">
+        <p id="bta-confirm-msg" style="margin-bottom:16px;line-height:1.6"></p>
+        <p style="font-size:11px;color:#e57373;margin-bottom:20px">This cannot be undone.</p>
+        <div style="display:flex;gap:10px;justify-content:flex-end">
+            <button class="dm-btn dm-btn-secondary" id="bta-confirm-cancel">Cancel</button>
+            <button class="dm-btn dm-btn-danger" id="bta-confirm-ok">Confirm Delete</button>
+        </div>
     </div>
 </div>
 {% endblock %}
@@ -1924,7 +2084,7 @@ function applyLibFilters() {
         if (_libDupeFilter === 'hash' && (!t.hash || (_hashCounts[t.hash] || 0) < 2)) return false;
         if (_libDupeFilter === 'title' && (_titleCounts[_titleKey(t)] || 0) < 2) return false;
         if (_libPlexTrash && !_plexTrashFilenames.has((t.filename || '').split('/')[0])) return false;
-        if (re && !re.test(`${t.filename||''} ${t.hash||''} ${t.status||''}`)) return false;
+        if (re && !re.test(`${t.filename||''} ${parseCleanTitle(t.filename)||''} ${t.hash||''} ${t.status||''}`)) return false;
         return true;
     });
     _libFiltered.sort((a, b) => {
@@ -5307,5 +5467,282 @@ _battEl('batt-reid-commit-btn')?.addEventListener('click', async function() {
 });
 
 // Battery audit loads on-demand when Battery sub-tab is clicked (not auto-loaded)
+
+{% if decypharr_mode %}
+// ── Bad Torrent Audit ──────────────────────────────────────────────────────
+(function () {
+    let _btaData = null;
+    let _btaPollTimer = null;
+
+    function _bta(id) { return document.getElementById(id); }
+
+    function _btaEsc(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function _btaSetState(state) {
+        _bta('bta-idle').style.display     = state === 'idle'              ? '' : 'none';
+        _bta('bta-scanning').style.display = state === 'scanning'          ? '' : 'none';
+        _bta('bta-results').style.display  = (state === 'done' || state === 'stopped') ? '' : 'none';
+        // Resume btn label: "Resume Scan" if stopped/partial, "Re-scan" if done
+        const resumeBtn = _bta('bta-resume-btn');
+        if (resumeBtn) resumeBtn.textContent = state === 'stopped' ? '▶ Resume Scan' : '↺ Re-scan';
+    }
+
+    function _btaStatusBadge(status) {
+        const cls = status === 'broken' ? 'bta-status-badge bta-status-broken'
+                  : status === 'stale'  ? 'bta-status-badge bta-status-stale'
+                  :                       'bta-status-badge bta-status-unknown';
+        return `<span class="${cls}">${_btaEsc(status)}</span>`;
+    }
+
+    window._btaRender = function () {
+        if (!_btaData) return;
+        const search = (_bta('bta-search') || {value:''}).value.toLowerCase();
+        const filterStatus = (_bta('bta-filter-status') || {value:''}).value;
+        const rows = (_btaData.results || []).filter(r => {
+            if (filterStatus && r.status !== filterStatus) return false;
+            if (search && !r.name.toLowerCase().includes(search)) return false;
+            return true;
+        });
+        const tbody = _bta('bta-tbody');
+        if (!tbody) return;
+        if (!rows.length) {
+            tbody.innerHTML = '<tr class="bta-empty-row"><td colspan="4">No entries match.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = rows.map(r => `
+            <tr class="bta-row bta-row-${_btaEsc(r.status)}">
+                <td class="bta-col-check"><input type="checkbox" class="bta-row-check" data-name="${_btaEsc(r.name)}"></td>
+                <td class="bta-col-name" title="${_btaEsc(r.name)}">${_btaEsc(r.name)}</td>
+                <td class="bta-col-status">${_btaStatusBadge(r.status)}</td>
+                <td class="bta-col-detail">${_btaEsc(r.detail || '')}</td>
+            </tr>`).join('');
+        // Update delete button state
+        _btaOnCheckChange();
+    };
+
+    window._btaToggleAll = function (checked) {
+        document.querySelectorAll('.bta-row-check').forEach(cb => { cb.checked = checked; });
+        const th = _bta('bta-thead-check');
+        if (th) th.checked = checked;
+        const sa = _bta('bta-select-all');
+        if (sa) sa.checked = checked;
+        _btaOnCheckChange();
+    };
+
+    function _btaOnCheckChange() {
+        const checked = document.querySelectorAll('.bta-row-check:checked').length;
+        const btn = _bta('bta-bulk-delete-btn');
+        if (btn) btn.disabled = checked === 0;
+    }
+
+    document.addEventListener('change', function (e) {
+        if (e.target && e.target.classList.contains('bta-row-check')) _btaOnCheckChange();
+    });
+
+    window._btaStartScan = async function (fresh) {
+        const errEl = _bta('bta-error-msg');
+        if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+        _btaSetState('scanning');
+        if (fresh) _btaData = null;
+        try {
+            const r = await fetch('/debrid_manager/api/bad_torrent_audit/scan', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({fresh: !!fresh}),
+            });
+            const d = await r.json();
+            if (!d.success) throw new Error(d.error || 'Scan failed');
+            _btaPoll();
+        } catch (e) {
+            _btaSetState('idle');
+            if (errEl) { errEl.textContent = e.message; errEl.style.display = ''; }
+        }
+    };
+
+    window._btaStopScan = async function () {
+        const btn = _bta('bta-stop-btn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Stopping…'; }
+        try {
+            await fetch('/debrid_manager/api/bad_torrent_audit/stop', {method: 'POST'});
+        } catch (_) {}
+        // Poll will handle transition to stopped state
+    };
+
+    function _btaResetStopBtn() {
+        const btn = _bta('bta-stop-btn');
+        if (btn) { btn.disabled = false; btn.textContent = 'Stop'; }
+    }
+
+    function _btaPoll() {
+        clearTimeout(_btaPollTimer);
+        _btaPollTimer = setTimeout(async function () {
+            try {
+                const r = await fetch('/debrid_manager/api/bad_torrent_audit');
+                const d = await r.json();
+                if (!d.success) { _btaSetState('idle'); return; }
+                const pbar = _bta('bta-progress-bar');
+                const pmsg = _bta('bta-progress-msg');
+                if (pbar) pbar.style.width = (d.progress || 0) + '%';
+                if (pmsg) pmsg.textContent = d.progress_msg || 'Scanning…';
+                if (d.status === 'scanning') {
+                    _btaPoll();
+                } else if ((d.status === 'done' || d.status === 'stopped') && d.data) {
+                    _btaResetStopBtn();
+                    _btaData = d.data;
+                    _btaApplyResults(d.data, d.status);
+                } else if (d.status === 'error') {
+                    _btaResetStopBtn();
+                    _btaSetState('idle');
+                    const errEl = _bta('bta-error-msg');
+                    if (errEl) { errEl.textContent = d.error || 'Scan error'; errEl.style.display = ''; }
+                } else if (d.status === 'idle') {
+                    _btaResetStopBtn();
+                    _btaSetState('idle');
+                }
+            } catch (_) { _btaPoll(); }
+        }, 2000);
+    }
+
+    function _btaApplyResults(data, status) {
+        const s = data.stats || {};
+        const setText = (id, v) => { const el = _bta(id); if (el) el.textContent = v; };
+        setText('bta-stat-total',   s.total   ?? '—');
+        setText('bta-stat-broken',  s.broken  ?? '—');
+        setText('bta-stat-stale',   s.stale   ?? '—');
+        setText('bta-stat-unknown', s.unknown ?? '—');
+        const badge = _bta('bta-total-badge');
+        if (badge) badge.textContent = s.broken ?? '—';
+        if (data.scanned_at) {
+            const el = _bta('bta-last-scanned');
+            if (el) el.textContent = 'Scanned ' + new Date(data.scanned_at * 1000).toLocaleTimeString();
+        }
+        const partial = data.partial || status === 'stopped';
+        const pb = _bta('bta-partial-badge');
+        if (pb) pb.style.display = partial ? '' : 'none';
+        _btaSetState(partial ? 'stopped' : 'done');
+        _btaRender();
+    }
+
+    // ── BTA confirm modal ────────────────────────────────────────────────────
+    function _btaConfirm(msg, onOk) {
+        const overlay = document.getElementById('bta-confirm-overlay');
+        const modal   = document.getElementById('bta-confirm-modal');
+        const msgEl   = document.getElementById('bta-confirm-msg');
+        const okBtn   = document.getElementById('bta-confirm-ok');
+        const cancelBtn = document.getElementById('bta-confirm-cancel');
+        const closeBtn  = document.getElementById('bta-confirm-close');
+        if (!overlay || !modal) { if (window.confirm(msg)) onOk(); return; }
+        msgEl.textContent = msg;
+        overlay.classList.add('open');
+        modal.classList.add('open');
+        function close() {
+            overlay.classList.remove('open');
+            modal.classList.remove('open');
+            okBtn.removeEventListener('click', doOk);
+            cancelBtn.removeEventListener('click', close);
+            closeBtn.removeEventListener('click', close);
+            overlay.removeEventListener('click', close);
+        }
+        function doOk() { close(); onOk(); }
+        okBtn.addEventListener('click', doOk);
+        cancelBtn.addEventListener('click', close);
+        closeBtn.addEventListener('click', close);
+        overlay.addEventListener('click', close);
+    }
+
+    async function _btaDoDelete(names, btnEl, btnRestoreText) {
+        if (btnEl) { btnEl.disabled = true; btnEl.textContent = `Deleting ${names.length}…`; }
+        try {
+            const r = await fetch('/debrid_manager/api/bad_torrent_audit/delete', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({names}),
+            });
+            const d = await r.json();
+            if (!d.success) { _btaShowMsg('Delete error: ' + (d.error || 'Unknown error'), true); return; }
+            const parts = [`Deleted ${d.deleted_rd} from RD.`];
+            if (d.failed_rd) parts.push(`${d.failed_rd} failed. Error: ${d.first_error || 'unknown'}`);
+            // Refresh results from server so remaining entries stay visible
+            const refresh = await fetch('/debrid_manager/api/bad_torrent_audit');
+            const rd = await refresh.json();
+            if (rd.success && rd.data) {
+                _btaData = rd.data;
+                _btaApplyResults(rd.data, rd.status);
+            }
+            _btaShowMsg(parts.join(' '), false);
+        } catch (e) {
+            _btaShowMsg('Delete failed: ' + e.message, true);
+        } finally {
+            if (btnEl) { btnEl.disabled = false; btnEl.textContent = btnRestoreText; }
+        }
+    }
+
+    function _btaShowMsg(msg, isError) {
+        const errEl = _bta('bta-error-msg');
+        if (errEl) {
+            errEl.textContent = msg;
+            errEl.style.color = isError ? '#e57373' : '#81c784';
+            errEl.style.display = '';
+            setTimeout(() => { if (errEl) errEl.style.display = 'none'; }, 6000);
+        }
+    }
+
+    function _btaShowResult(msg, isError) {
+        _btaSetState('idle');
+        const errEl = _bta('bta-error-msg');
+        if (errEl) {
+            errEl.textContent = msg;
+            errEl.style.color = isError ? '#e57373' : '#81c784';
+            errEl.style.display = '';
+            setTimeout(() => { if (errEl) errEl.style.display = 'none'; }, 6000);
+        }
+    }
+
+    window._btaDeleteSelected = function () {
+        const checked = [...document.querySelectorAll('.bta-row-check:checked')];
+        const names = checked.map(cb => cb.dataset.name).filter(Boolean);
+        if (!names.length) return;
+        const btn = _bta('bta-bulk-delete-btn');
+        _btaConfirm(`Delete ${names.length} selected torrent(s) from Real-Debrid?`, () => {
+            _btaDoDelete(names, btn, 'Delete Selected');
+        });
+    };
+
+    window._btaDeleteAllBroken = function () {
+        if (!_btaData) return;
+        const names = (_btaData.results || []).filter(r => r.status === 'broken').map(r => r.name);
+        if (!names.length) return;
+        const btn = _bta('bta-delete-all-broken-btn');
+        _btaConfirm(`Delete all ${names.length} broken torrent(s) from Real-Debrid?`, () => {
+            _btaDoDelete(names, btn, 'Delete All Broken');
+        });
+    };
+
+    // Load existing results when tab is first clicked
+    document.addEventListener('click', function (e) {
+        const tab = e.target.closest('[data-rc-group="bad-torrents"]');
+        if (!tab) return;
+        if (_btaData) return; // already loaded
+        fetch('/debrid_manager/api/bad_torrent_audit').then(r => r.json()).then(d => {
+            if (!d.success) return;
+            if ((d.status === 'done' || d.status === 'stopped') && d.data) {
+                _btaData = d.data;
+                _btaApplyResults(d.data, d.status);
+            } else if (d.status === 'scanning') {
+                _btaSetState('scanning');
+                _btaPoll();
+            }
+            // else stays idle
+        }).catch(() => {});
+    });
+
+    // Update tab badge on initial tab load
+    const tabBadge = _bta('bta-total-badge');
+    if (tabBadge) tabBadge.textContent = '—';
+})();
+{% endif %}
+
 </script>
 {% endblock %}

@@ -266,9 +266,11 @@ class SameSiteMiddleware:
 from flask_sqlalchemy import SQLAlchemy
 
 db = SQLAlchemy()
-app = Flask(__name__, 
+app = Flask(__name__,
            template_folder='../templates',
            static_folder='../static')
+
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0  # disable static file caching
 
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 app.wsgi_app = SameSiteMiddleware(app.wsgi_app)

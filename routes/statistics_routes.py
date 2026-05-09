@@ -595,7 +595,7 @@ def root():
     library_cache_read_start = time.perf_counter()
     cached_size_data = _read_size_cache()
     if cached_size_data:
-        stats['total_library_size'] = f"{cached_size_data['size_str']} (cached)"
+        stats['total_library_size'] = cached_size_data['size_str']
     else:
         # Default if cache is missing, invalid, or expired
         stats['total_library_size'] = "Click Refresh" # Changed default text
@@ -1126,7 +1126,7 @@ def format_bytes(bytes_value, decimals=2):
     sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
     
     i = int(math.log(bytes_value, k))
-    return f"{round(bytes_value / (k ** i), dm)} {sizes[i]}"
+    return f"{round(bytes_value / (k ** i), dm)}{sizes[i]}"
 
 @statistics_bp.route('/usage_stats', methods=['GET'])
 @user_required
