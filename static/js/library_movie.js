@@ -611,6 +611,56 @@ function createFileRow(file, rowNumber, movie) {
     // Add move to wanted button (always visible)
     actions.appendChild(wantedBtn);
 
+    // Not-wanted magnet button — only if file has a magnet
+    if (file.filled_by_magnet) {
+        const notWantedBtn = document.createElement('button');
+        notWantedBtn.className = 'file-action-btn not-wanted-magnet-btn';
+        notWantedBtn.title = 'Add magnet to not-wanted list';
+        notWantedBtn.style.cssText = `
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0.5rem;
+            background: transparent;
+            border: 1px solid rgba(232, 96, 28, 0.3);
+            border-radius: 0.375rem;
+            color: rgba(232, 96, 28, 0.8);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        `;
+        notWantedBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="transform:rotate(270deg)"><path d="M21 18.5V20.5C21 21.3284 20.3284 22 19.5 22H17H13C7.47715 22 3 17.5228 3 12C3 6.47715 7.47715 2 13 2H17H19.5C20.3284 2 21 2.67157 21 3.5V5.5C21 6.32843 20.3284 7 19.5 7H17H13C10.2386 7 8 9.23858 8 12C8 14.7614 10.2386 17 13 17H17H19.5C20.3284 17 21 17.6716 21 18.5Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path opacity="0.5" d="M17 2V7M17 17V22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`;
+        notWantedBtn.addEventListener('mouseenter', () => {
+            notWantedBtn.style.background = 'rgba(232, 96, 28, 0.12)';
+            notWantedBtn.style.borderColor = 'rgba(232, 96, 28, 0.6)';
+        });
+        notWantedBtn.addEventListener('mouseleave', () => {
+            notWantedBtn.style.background = 'transparent';
+            notWantedBtn.style.borderColor = 'rgba(232, 96, 28, 0.3)';
+        });
+        notWantedBtn.addEventListener('click', async () => {
+            notWantedBtn.disabled = true;
+            try {
+                const resp = await fetch('/library/add_not_wanted_magnet', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ item_ids: [file.id] }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    notWantedBtn.style.opacity = '0.4';
+                    notWantedBtn.title = 'Already in not-wanted list';
+                } else {
+                    console.error('Not-wanted error:', data.error);
+                }
+            } catch (e) {
+                console.error('Not-wanted request failed:', e);
+            } finally {
+                notWantedBtn.disabled = false;
+            }
+        });
+        actions.appendChild(notWantedBtn);
+    }
+
     // Individual file delete button - only for admins
     const hasAdminPermissions = document.getElementById('has_admin_permissions')?.value === 'True';
     if (hasAdminPermissions) {

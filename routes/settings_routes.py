@@ -851,8 +851,21 @@ HARDCODED_DEFAULT_VERSIONS = {
 
 @settings_bp.route('/content-sources/content')
 def content_sources_content():
+    import json as _json
     config = load_config()
     source_types = list(SETTINGS_SCHEMA['Content Sources']['schema'].keys())
+
+    # Normalise plex_collection.libraries — may have been saved as a JSON string by older code
+    for src_cfg in config.get('Content Sources', {}).values():
+        if isinstance(src_cfg, dict):
+            pc = src_cfg.get('plex_collection')
+            if isinstance(pc, dict):
+                libs = pc.get('libraries', [])
+                if isinstance(libs, str):
+                    try:
+                        pc['libraries'] = _json.loads(libs)
+                    except Exception:
+                        pc['libraries'] = []
 
     # Determine which template to use based on theme (from cookie or default to tangerine)
     theme = request.cookies.get('selectedTheme', 'tangerine')
@@ -3924,6 +3937,23 @@ def save_plex_boxsets_settings():
                 config['Plex Movie Box Sets'][key] = data[key]
         save_config(config)
         return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/plex-libraries', methods=['GET'])
+@admin_required
+def get_plex_libraries():
+    """Return all Plex movie/show library sections for the library picker UI."""
+    try:
+        from database.plex_collections import _get_plex_credentials, _get_library_sections
+        plex_url, plex_token = _get_plex_credentials()
+        sections = _get_library_sections(plex_url, plex_token)
+        libraries = [
+            {'key': key, 'title': info['title'], 'type': info['type']}
+            for key, info in sorted(sections.items(), key=lambda x: int(x[0]))
+        ]
+        return jsonify({'success': True, 'libraries': libraries})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 

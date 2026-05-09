@@ -767,6 +767,17 @@ def migrate_schema():
             conn.execute('ALTER TABLE plex_collection_sync ADD COLUMN sort_option TEXT DEFAULT "default"')
             logging.info("Added sort_option column to plex_collection_sync.")
 
+        # Per-library ratingkey tracking for multi-library collection support
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS plex_collection_sync_libraries (
+                source_id TEXT NOT NULL,
+                section_key TEXT NOT NULL,
+                lib_type TEXT NOT NULL,
+                ratingkey TEXT,
+                PRIMARY KEY (source_id, section_key, lib_type)
+            )
+        ''')
+
         logging.info("Attempting to commit schema migrations...")
         conn.commit()
         logging.info("Schema migrations committed successfully.")

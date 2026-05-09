@@ -763,8 +763,14 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
 
         # Initial one-time fetch of movie metadata (reuse later for processing)
         all_movies = []
-        for library_key in movie_libraries:
+        for lib_idx, library_key in enumerate(movie_libraries):
             movies = await get_library_contents(session, plex_url, library_key, headers, semaphore, page_size=effective_page_size)
+            # Tag each item with its source library so collected_items.py can protect
+            # primary-library fields (location_on_disk, ms_item_id) from being overwritten
+            # by secondary libraries that may share the same physical files.
+            for m in movies:
+                m['_plex_library_key'] = library_key
+                m['_plex_library_primary'] = (lib_idx == 0)
             all_movies.extend(movies)
 
         if progress_callback:
@@ -829,7 +835,11 @@ async def get_collected_from_plex(request='all', progress_callback=None, bypass=
             all_raw_episodes = []
             fetch_tasks = [get_library_contents(session, plex_url, key, headers, semaphore, page_size=effective_page_size, item_type=4) for key in show_libraries]
             library_results = await asyncio.gather(*fetch_tasks)
-            for result in library_results:
+            for lib_idx, result in enumerate(library_results):
+                lib_key = show_libraries[lib_idx]
+                for ep in result:
+                    ep['_plex_library_key'] = lib_key
+                    ep['_plex_library_primary'] = (lib_idx == 0)
                 all_raw_episodes.extend(result)
             t_fetch_ep_end = time.perf_counter()
             stats["time_fetch_episodes"] = t_fetch_ep_end - t_fetch_ep_start

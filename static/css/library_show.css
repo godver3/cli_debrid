@@ -1536,7 +1536,7 @@ body.modal-open {
 .overlay-content {
     position: relative;
     background-color: #1a1a1a;
-    padding: 0 20px 20px 20px;
+    /* padding: 0 20px 20px 20px; */
     border-radius: 8px;
     width: 85%;
     max-width: 1200px;
@@ -1799,7 +1799,7 @@ tr.filtered-out-item:hover {
     background: rgba(26, 26, 26, 0.95);
     backdrop-filter: blur(20px);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    padding: 0 20px 20px 20px;
+    /* padding: 0 20px 20px 20px; */
     border-radius: 20px;
     width: 85%;
     max-width: 1200px;
@@ -2226,8 +2226,8 @@ td#scraper-source .source-badge {
     transform: translateY(0);
 }
 @media (max-width: 1045px) {
+    .close-btn { display: none !important; }
     .overlay-content {
-
         margin-top: 90px;
     }
     .overlay-content h3 {
@@ -2276,22 +2276,22 @@ td#scraper-source .source-badge {
         hyphens: none;
     }
     .torresult .assign-magnet-icon {
-        position: absolute;
-        bottom: 10px;
-        right: 10px;
-        width: 28px;
-        padding: 3px;
-        height: 28px;
-        background-color: #e17c52;
-        border: #c56b3d;
-        border-radius: 6px;
-        display: flex;
+        position: static;
+        flex-shrink: 0;
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        background: rgba(232,96,28,.08);
+        border: 1px solid rgba(232,96,28,.25);
+        border-radius: 5px;
+        color: #e8601c;
+        display: inline-flex;
         align-items: center;
         justify-content: center;
-        z-index: 10;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        z-index: auto;
+        box-shadow: none;
         cursor: pointer;
-        transition: all 0.2s ease;
+        transition: all .15s;
     }
     .torresult {
         width: 47% !important;
@@ -2313,11 +2313,7 @@ td#scraper-source .source-badge {
         margin: 0;
     }
 
-    #overlayContent {
-        padding: 12px;
-        width: 100%;
-        box-sizing: border-box;
-    }
+
 
     #overlayContent > div {
         display: flex;
@@ -2392,22 +2388,22 @@ td#scraper-source .source-badge {
         hyphens: none;
     }
     .torresult .assign-magnet-icon {
-        position: absolute;
-        bottom: 10px;
-        right: 10px;
-        width: 28px;
-        padding: 3px;
-        height: 28px;
-        background-color: #e17c52;
-        border: #c56b3d;
-        border-radius: 6px;
-        display: flex;
+        position: static;
+        flex-shrink: 0;
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        background: rgba(232,96,28,.08);
+        border: 1px solid rgba(232,96,28,.25);
+        border-radius: 5px;
+        color: #e8601c;
+        display: inline-flex;
         align-items: center;
         justify-content: center;
-        z-index: 10;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        z-index: auto;
+        box-shadow: none;
         cursor: pointer;
-        transition: all 0.2s ease;
+        transition: all .15s;
     }
     .torresult {
         width: 47% !important;

@@ -965,7 +965,7 @@
 
                     {% if show_full_menu or show_limited_menu %}
                     <!-- Main -->
-                    <div class="st-nav-acc-section open" id="st-acc-main">
+                    <div class="st-nav-acc-section" id="st-acc-main">
                         <div class="st-nav-acc-hdr" onclick="stToggleAcc('st-acc-main')">
                             Main <i class="fa-solid fa-chevron-down st-acc-arr"></i>
                         </div>
@@ -1108,7 +1108,14 @@
         }
         function stToggleAcc(id) {
             var sec = document.getElementById(id);
-            if (sec) sec.classList.toggle('open');
+            if (!sec) return;
+            var isOpen = sec.classList.contains('open');
+            // Close all sections first
+            document.querySelectorAll('.st-nav-acc-section').forEach(function(s) {
+                s.classList.remove('open');
+            });
+            // If it wasn't open, open it; if it was open, leave it closed (toggle)
+            if (!isOpen) sec.classList.add('open');
         }
         // Wire st_ buttons to the original hidden buttons (for program_controls.js compatibility)
         document.addEventListener('DOMContentLoaded', function() {

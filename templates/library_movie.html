@@ -25,6 +25,12 @@
             scraperLink.href = "{{ url_for('static', filename='css/scraper.css') }}";
         }
         document.head.appendChild(scraperLink);
+
+        var mobileCssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_scraper-mobile.css' : 'css/scraper-mobile.css';
+        var mobileLink = document.createElement('link');
+        mobileLink.rel = 'stylesheet';
+        mobileLink.href = '{{ url_for("static", filename="") }}' + mobileCssFile + '?v={{ range(10000, 99999) | random }}';
+        document.head.appendChild(mobileLink);
     })();
 </script>
 <style>
@@ -253,7 +259,7 @@
                 <!-- Files Section -->
                 <div id="files-container" class="files-container">
                     <div class="files-header">
-                        <h2>Movie Files</h2>
+                        <h3>Movie Files</h3>
                         {% if has_admin_permissions %}
                         <div class="files-header-actions">
                             <button class="btn btn-sm replace-movie-btn" title="Replace Movie with new torrent">

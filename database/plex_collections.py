@@ -42,6 +42,10 @@ _SECTION_CACHE_TTL = 300
 _show_imdb_cache: dict = {}           # {(plex_url, section_key): {'data': {imdb: rk}, 'ts': float}}
 _SHOW_CACHE_TTL = 600                 # 10 minutes
 
+# ── Section items cache (IMDB/TMDB → ratingKey per section) ──────────────────
+_section_items_cache: dict = {}       # {(plex_url, section_key): {'data': {'imdb:tt...': rk, 'tmdb:123': rk}, 'ts': float}}
+_SECTION_ITEMS_CACHE_TTL = 120        # 2 minutes
+
 # ── Concurrency guard ─────────────────────────────────────────────────────────
 _sync_lock = threading.Lock()
 _sync_in_flight: set = set()
@@ -148,6 +152,45 @@ def _find_section_key(sections: dict, lib_type: str) -> Optional[str]:
         if info['type'] == lib_type:
             return key
     return None
+
+
+def _get_section_id_map(plex_url: str, token: str, section_key: str, lib_type: str) -> dict:
+    """
+    Return {imdb_id: ratingKey, tmdb_id: ratingKey} for all items in a Plex section.
+    Results are cached for _SECTION_ITEMS_CACHE_TTL seconds.
+    Used to resolve section-local ratingKeys before adding items to a collection.
+    """
+    cache_key = (plex_url, section_key)
+    now = time.time()
+    cached = _section_items_cache.get(cache_key)
+    if cached and (now - cached['ts']) < _SECTION_ITEMS_CACHE_TTL:
+        return cached['data']
+
+    plex_type = 1 if lib_type == 'movie' else 2
+    try:
+        resp = requests.get(
+            f"{plex_url}/library/sections/{section_key}/all",
+            headers=_headers(token),
+            params={'type': plex_type, 'includeGuids': 1},
+            timeout=60
+        )
+        resp.raise_for_status()
+        id_map = {}
+        for item in resp.json().get('MediaContainer', {}).get('Metadata', []):
+            rk = str(item.get('ratingKey', ''))
+            if not rk:
+                continue
+            for guid in item.get('Guid', []):
+                gid = guid.get('id', '')
+                if gid.startswith('imdb://'):
+                    id_map[gid[7:]] = rk
+                elif gid.startswith('tmdb://'):
+                    id_map['tmdb:' + gid[7:]] = rk
+        _section_items_cache[cache_key] = {'data': id_map, 'ts': now}
+        return id_map
+    except Exception as e:
+        logger.warning(f"[PlexCollections] Failed to fetch section {section_key} items: {e}")
+        return {}
 
 
 # ── Collection CRUD ───────────────────────────────────────────────────────────
@@ -573,6 +616,30 @@ def _save_sync_state(source_id: str, movie_rk: Optional[str], show_rk: Optional[
         conn.close()
 
 
+def _get_ratingkey_for_section(source_id: str, section_key: str, lib_type: str) -> Optional[str]:
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT ratingkey FROM plex_collection_sync_libraries WHERE source_id=? AND section_key=? AND lib_type=?",
+            (source_id, section_key, lib_type)
+        ).fetchone()
+        return row['ratingkey'] if row else None
+    finally:
+        conn.close()
+
+
+def _save_ratingkey_for_section(source_id: str, section_key: str, lib_type: str, ratingkey: Optional[str]) -> None:
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO plex_collection_sync_libraries (source_id, section_key, lib_type, ratingkey) VALUES (?,?,?,?)",
+            (source_id, section_key, lib_type, ratingkey)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 # ── Main sync ─────────────────────────────────────────────────────────────────
 
 def sync_collection_for_source(source_id: str, source_data: dict, ordered_imdb_ids: list = None, ordered_pairs: list = None) -> None:
@@ -598,6 +665,29 @@ def sync_collection_for_source(source_id: str, source_data: dict, ordered_imdb_i
     except Exception as e:
         logger.error(f"[PlexCollections] Cannot connect to Plex for {source_id}: {e}")
         return
+
+    # Resolve target section keys — use user selection if configured, else fall back to first-of-type
+    plex_coll_cfg = source_data.get('plex_collection', {})
+    if not isinstance(plex_coll_cfg, dict):
+        plex_coll_cfg = {}
+    raw_lib_selection = plex_coll_cfg.get('libraries', [])
+    if isinstance(raw_lib_selection, str):
+        import json as _json
+        try:
+            raw_lib_selection = _json.loads(raw_lib_selection)
+        except Exception:
+            raw_lib_selection = []
+    if raw_lib_selection and isinstance(raw_lib_selection, list):
+        selected_keys = [str(k) for k in raw_lib_selection if str(k) in sections]
+    else:
+        selected_keys = []
+    # Fall back: if nothing selected, use first of each type (existing behaviour)
+    if not selected_keys:
+        fallback_movie = _find_section_key(sections, 'movie')
+        fallback_show = _find_section_key(sections, 'show')
+        selected_keys = [k for k in [fallback_movie, fallback_show] if k]
+    movie_section_keys = [k for k in selected_keys if sections[k]['type'] == 'movie']
+    show_section_keys  = [k for k in selected_keys if sections[k]['type'] == 'show']
 
     # ── Query ALL Collected items for matching ────────────────────────────────
     conn = get_db_connection()
@@ -703,7 +793,7 @@ def sync_collection_for_source(source_id: str, source_data: dict, ordered_imdb_i
     _show_rk_cache: dict = {}
 
     if episode_imdb_ids:
-        show_section_key = _find_section_key(sections, 'show')
+        show_section_key = show_section_keys[0] if show_section_keys else _find_section_key(sections, 'show')
         if show_section_key:
             cache_key = (plex_url, show_section_key)
             now = time.time()
@@ -801,109 +891,93 @@ def sync_collection_for_source(source_id: str, source_data: dict, ordered_imdb_i
         show_coll_name  = shows_override  or base_name
 
     sync_state = _get_sync_state(source_id)
-    movie_rk = sync_state.get('movie_collection_ratingkey')
-    show_rk  = sync_state.get('show_collection_ratingkey')
+    # movie_rk / show_rk track the first synced ratingkey per type (used for poster thumb fetching)
+    # Seed from per-section table for the first selected section, not from legacy state
+    movie_rk = _get_ratingkey_for_section(source_id, movie_section_keys[0], 'movie') if movie_section_keys else None
+    show_rk  = _get_ratingkey_for_section(source_id, show_section_keys[0],  'show')  if show_section_keys  else None
 
     # Persist sort settings now so check_and_sync_if_needed sees them even if sync fails partway
     _update_source_state(source_id, {'sort_option': sort_option, 'sort_how': sort_how})
 
+    def _sync_items_to_section(items, section_key, coll_name, lib_type, label):
+        """Sync a list of collected items into a named collection in one Plex library section."""
+        nonlocal movie_rk, show_rk
+        rk = _get_ratingkey_for_section(source_id, section_key, lib_type)
+        # Migrate legacy single-library ratingkey only if it belongs to this section
+        if not rk:
+            legacy = sync_state.get(f'{lib_type}_collection_ratingkey')
+            if legacy:
+                legacy_section = _find_section_key(sections, lib_type)
+                if legacy_section == section_key:
+                    rk = legacy
+        try:
+            rk = _get_or_create_collection(plex_url, plex_token, section_key, coll_name, lib_type, sort_prefix) if not rk else rk
+            _save_ratingkey_for_section(source_id, section_key, lib_type, rk)
+            # Keep legacy field in sync with first section for poster code below
+            if lib_type == 'movie' and not movie_rk:
+                movie_rk = rk
+            if lib_type == 'show' and not show_rk:
+                show_rk = rk
+            _rename_collection(plex_url, plex_token, section_key, rk, coll_name, sort_prefix)
+            # Resolve section-local ratingKeys — ms_item_id values may come from a
+            # different library. Fetch all items in this section keyed by IMDB/TMDB ID
+            # so we only add items that actually exist here, using the correct ratingKey.
+            id_map = _get_section_id_map(plex_url, plex_token, section_key, lib_type)
+            if not id_map and items:
+                logger.warning(f"[PlexCollections] {label} section={section_key}: id_map empty (fetch failed?), skipping sync to avoid data loss")
+                return
+            desired = []
+            for i in items:
+                imdb = i.get('imdb_id') or ''
+                tmdb = str(i.get('tmdb_id') or '')
+                local_rk = id_map.get(imdb) or id_map.get('tmdb:' + tmdb) if (imdb or tmdb) else None
+                if local_rk:
+                    desired.append(local_rk)
+            logger.info(f"[PlexCollections] {label} section={section_key}: resolved {len(desired)}/{len(items)} items to local ratingKeys")
+            current_list = _get_collection_items(plex_url, plex_token, rk)
+            if not current_list and rk:
+                verify = requests.get(f"{plex_url}/library/collections/{rk}", headers=_headers(plex_token), timeout=5)
+                if verify.status_code == 404:
+                    logger.info(f"[PlexCollections] {label} collection {rk} not found in section {section_key}, recreating")
+                    rk = _create_collection(plex_url, plex_token, section_key, coll_name, lib_type, sort_prefix)
+                    _save_ratingkey_for_section(source_id, section_key, lib_type, rk)
+                    current_list = []
+            current = set(current_list)
+            to_add    = [k for k in desired if k not in current]
+            to_remove = current - set(desired)
+            notes = []
+            if to_add:    notes.append(f"+{len(to_add)}")
+            if to_remove: notes.append(f"-{len(to_remove)}")
+            if not notes: notes.append("already in sync")
+            logger.info(f"[PlexCollections] {label} '{coll_name}' section={section_key} ({source_id}): "
+                        f"desired={len(desired)} current={len(current)} | {'; '.join(notes)}")
+            if to_add:
+                _add_items_to_collection(plex_url, plex_token, machine_id, rk, to_add)
+            for rk_item in to_remove:
+                _remove_item_from_collection(plex_url, plex_token, rk, rk_item)
+            if sort_option != 'default':
+                native_mode = _PLEX_NATIVE_SORT_MAP.get(sort_option)
+                if native_mode is not None:
+                    _set_collection_sort_mode(plex_url, plex_token, rk, native_mode)
+                else:
+                    _arrange_items_in_order(plex_url, plex_token, rk, desired)
+            logger.info(f"[PlexCollections] {label} sync done for {source_id} section={section_key}: +{len(to_add)} -{len(to_remove)}")
+        except Exception as e:
+            logger.error(f"[PlexCollections] {label} sync failed for {source_id} section={section_key}: {e}", exc_info=True)
+
     # ── Sync movies ───────────────────────────────────────────────────────────
     if movies:
-        section_key = _find_section_key(sections, 'movie')
-        if not section_key:
-            logger.warning(f"[PlexCollections] No movie library section found, skipping movies for {source_id}")
-        else:
-            try:
-                movie_rk = _get_or_create_collection(plex_url, plex_token, section_key, movie_coll_name, 'movie', sort_prefix) if not movie_rk else movie_rk
-                # Persist ratingKey immediately so a later failure doesn't cause a new collection next run
-                _save_sync_state(source_id, movie_rk, show_rk, sync_state.get('last_fingerprint', ''), sort_option)
-                _rename_collection(plex_url, plex_token, section_key, movie_rk, movie_coll_name, sort_prefix)
-                desired = [str(i['ms_item_id']) for i in movies]
-                current_list = _get_collection_items(plex_url, plex_token, movie_rk)
-                if not current_list and movie_rk:
-                    verify = requests.get(f"{plex_url}/library/collections/{movie_rk}", headers=_headers(plex_token), timeout=5)
-                    if verify.status_code == 404:
-                        logger.info(f"[PlexCollections] Movie collection {movie_rk} not found, recreating")
-                        movie_rk = _create_collection(plex_url, plex_token, section_key, movie_coll_name, 'movie', sort_prefix)
-                        _save_sync_state(source_id, movie_rk, show_rk, sync_state.get('last_fingerprint', ''), sort_option)
-                        current_list = []
-                current = set(current_list)
-                to_add    = [k for k in desired if k not in current]
-                to_remove = current - set(desired)
-                _coll_notes = []
-                if to_add:
-                    _coll_notes.append(f"+{len(to_add)} missing from Plex collection (not yet added or stale ratingKey)")
-                if to_remove:
-                    _coll_notes.append(f"-{len(to_remove)} in Plex but not in list (removed from source or filtered out)")
-                if not to_add and not to_remove:
-                    _coll_notes.append("already in sync")
-                logger.info(
-                    f"[PlexCollections] MOVIES '{movie_coll_name}' ({source_id}): "
-                    f"desired={len(desired)} current={len(current)} | {'; '.join(_coll_notes)}"
-                )
-                if to_add:
-                    _add_items_to_collection(plex_url, plex_token, machine_id, movie_rk, to_add)
-                for rk_item in to_remove:
-                    _remove_item_from_collection(plex_url, plex_token, movie_rk, rk_item)
-                if sort_option != 'default':
-                    native_mode = _PLEX_NATIVE_SORT_MAP.get(sort_option)
-                    if native_mode is not None:
-                        _set_collection_sort_mode(plex_url, plex_token, movie_rk, native_mode)
-                        logger.info(f"[PlexCollections] Set native sort mode {native_mode} for {source_id} movies")
-                    else:
-                        _arrange_items_in_order(plex_url, plex_token, movie_rk, desired)
-                logger.info(f"[PlexCollections] Movies sync done for {source_id}: +{len(to_add)} -{len(to_remove)}")
-            except Exception as e:
-                logger.error(f"[PlexCollections] Movie sync failed for {source_id}: {e}", exc_info=True)
+        if not movie_section_keys:
+            logger.warning(f"[PlexCollections] No movie library section found/selected, skipping movies for {source_id}")
+        for section_key in movie_section_keys:
+            _sync_items_to_section(movies, section_key, movie_coll_name, 'movie', 'MOVIES')
 
     # ── Sync shows ────────────────────────────────────────────────────────────
     if shows:
-        section_key = _find_section_key(sections, 'show')
-        if not section_key:
-            logger.warning(f"[PlexCollections] No show library section found, skipping shows for {source_id}")
-        else:
-            try:
-                show_rk = _get_or_create_collection(plex_url, plex_token, section_key, show_coll_name, 'show', sort_prefix) if not show_rk else show_rk
-                # Persist ratingKey immediately so a later failure doesn't cause a new collection next run
-                _save_sync_state(source_id, movie_rk, show_rk, sync_state.get('last_fingerprint', ''), sort_option)
-                _rename_collection(plex_url, plex_token, section_key, show_rk, show_coll_name, sort_prefix)
-                desired = [str(i['ms_item_id']) for i in shows]
-                current_list = _get_collection_items(plex_url, plex_token, show_rk)
-                if not current_list and show_rk:
-                    verify = requests.get(f"{plex_url}/library/collections/{show_rk}", headers=_headers(plex_token), timeout=5)
-                    if verify.status_code == 404:
-                        logger.info(f"[PlexCollections] Show collection {show_rk} not found, recreating")
-                        show_rk = _create_collection(plex_url, plex_token, section_key, show_coll_name, 'show', sort_prefix)
-                        _save_sync_state(source_id, movie_rk, show_rk, sync_state.get('last_fingerprint', ''), sort_option)
-                        current_list = []
-                current = set(current_list)
-                to_add    = [k for k in desired if k not in current]
-                to_remove = current - set(desired)
-                _coll_notes = []
-                if to_add:
-                    _coll_notes.append(f"+{len(to_add)} missing from Plex collection (not yet added or stale ratingKey)")
-                if to_remove:
-                    _coll_notes.append(f"-{len(to_remove)} in Plex but not in list (removed from source or filtered out)")
-                if not to_add and not to_remove:
-                    _coll_notes.append("already in sync")
-                logger.info(
-                    f"[PlexCollections] SHOWS '{show_coll_name}' ({source_id}): "
-                    f"desired={len(desired)} current={len(current)} | {'; '.join(_coll_notes)}"
-                )
-                if to_add:
-                    _add_items_to_collection(plex_url, plex_token, machine_id, show_rk, to_add)
-                for rk_item in to_remove:
-                    _remove_item_from_collection(plex_url, plex_token, show_rk, rk_item)
-                if sort_option != 'default':
-                    native_mode = _PLEX_NATIVE_SORT_MAP.get(sort_option)
-                    if native_mode is not None:
-                        _set_collection_sort_mode(plex_url, plex_token, show_rk, native_mode)
-                        logger.info(f"[PlexCollections] Set native sort mode {native_mode} for {source_id} shows")
-                    else:
-                        _arrange_items_in_order(plex_url, plex_token, show_rk, desired)
-                logger.info(f"[PlexCollections] Shows sync done for {source_id}: +{len(to_add)} -{len(to_remove)}")
-            except Exception as e:
-                logger.error(f"[PlexCollections] Show sync failed for {source_id}: {e}", exc_info=True)
+        if not show_section_keys:
+            logger.warning(f"[PlexCollections] No show library section found/selected, skipping shows for {source_id}")
+        for section_key in show_section_keys:
+            _sync_items_to_section(shows, section_key, show_coll_name, 'show', 'SHOWS')
 
     # ── Custom poster generation ───────────────────────────────────────────────
     poster_design = int(coll_cfg.get('poster_design', 0))
@@ -914,7 +988,15 @@ def sync_collection_for_source(source_id: str, source_data: dict, ordered_imdb_i
         try:
             import requests as _req
             _headers_json = {'X-Plex-Token': plex_token, 'Accept': 'application/json'}
-            for _rk in filter(None, [movie_rk, show_rk]):
+            # Collect all ratingkeys across every synced section
+            _all_rks = set(filter(None, [movie_rk, show_rk]))
+            for _sk in movie_section_keys:
+                _rk2 = _get_ratingkey_for_section(source_id, _sk, 'movie')
+                if _rk2: _all_rks.add(_rk2)
+            for _sk in show_section_keys:
+                _rk2 = _get_ratingkey_for_section(source_id, _sk, 'show')
+                if _rk2: _all_rks.add(_rk2)
+            for _rk in _all_rks:
                 try:
                     r = _req.get(f"{plex_url}/library/metadata/{_rk}/posters",
                                  headers=_headers_json, timeout=30)
@@ -998,6 +1080,19 @@ def sync_collection_for_source(source_id: str, source_data: dict, ordered_imdb_i
                     if show_rk:
                         show_thumbs_for_coll = fetch_movie_thumbs(plex_url, plex_token, show_rk, limit=4, tmdb_map=tmdb_map) if show_rk else [None]*4
                         targets.append((show_rk, show_coll_name, show_thumbs_for_coll))
+
+                    # Expand targets to cover all synced sections (not just first-of-type)
+                    expanded_targets = []
+                    for _base_rk, _coll_name, _thumbs in targets:
+                        expanded_targets.append((_base_rk, _coll_name, _thumbs))
+                        # Find all other sections that were synced for this collection name
+                        for _sk in (movie_section_keys if _coll_name == movie_coll_name else show_section_keys):
+                            _lib_type = 'movie' if _coll_name == movie_coll_name else 'show'
+                            _extra_rk = _get_ratingkey_for_section(source_id, _sk, _lib_type)
+                            if _extra_rk and _extra_rk != _base_rk:
+                                _extra_thumbs = fetch_movie_thumbs(plex_url, plex_token, _extra_rk, limit=4, tmdb_map=tmdb_map)
+                                expanded_targets.append((_extra_rk, _coll_name, _extra_thumbs))
+                    targets = expanded_targets
 
                     _plex_upload_hashes = {}
                     for _rk, _coll_name, _thumbs in targets:
