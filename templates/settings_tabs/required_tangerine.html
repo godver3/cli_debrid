@@ -20,8 +20,8 @@
                 Settings
             </h3>
             <div class="required-settings-actions action-buttons settings-expand-collapse-buttons">
-                <button type="button" class="required-settings-btn btn-secondary settings-collapse-all">Collapse All</button>
-                <button type="button" class="required-settings-btn btn-secondary settings-expand-all">Expand All</button>
+                <button type="button" class="required-settings-btn btn-secondary settings-collapse-all"><i class="fa-solid fa-compress"></i> Collapse All</button>
+                <button type="button" class="required-settings-btn btn-secondary settings-expand-all"><i class="fa-solid fa-expand"></i> Expand All</button>
             </div>
         </div>
 
@@ -43,7 +43,7 @@
             <div class="settings-form-group">
                 <label for="debrid provider-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
                 {% if value.type == 'boolean' %}
-                    <input type="checkbox" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}" 
+                    <input type="checkbox" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}"
                            data-section="Debrid Provider" data-key="{{ key }}"
                            {% if settings.get('Debrid Provider', {}).get(key) %}checked{% endif %}>
                 {% elif value.choices %}
@@ -54,7 +54,7 @@
                         {% endfor %}
                     </select>
                 {% else %}
-                    <input type="{% if value.sensitive %}password{% else %}{{ value.type }}{% endif %}" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}" 
+                    <input type="{% if value.sensitive %}password{% else %}{{ value.type }}{% endif %}" id="debrid provider-{{ key }}" name="Debrid Provider.{{ key }}"
                            value="{{ settings.get('Debrid Provider', {}).get(key, '') }}" class="settings-input"
                            data-section="Debrid Provider" data-key="{{ key }}">
                 {% endif %}
@@ -64,9 +64,153 @@
             </div>
             {% endif %}
         {% endfor %}
-    </div>                    
+
+        <!-- Fallback Providers -->
+        <div class="settings-form-group" style="margin-top:16px">
+            <label class="settings-title">Fallback Providers</label>
+            <p class="settings-description">Additional debrid services tried in order when the primary provider fails (e.g. 451 DMCA block, rate limit). Each fallback needs its own API key.</p>
+        </div>
+        <div id="fallback-providers-list">
+            {% set fallbacks = settings.get('Debrid Provider', {}).get('fallback_providers', []) %}
+            {% for fb in fallbacks %}
+            <div class="fallback-provider-row settings-form-group" style="display: flex;flex-direction: column;gap: 8px;align-items: flex-start;margin-bottom: 8px;">
+                <select class="settings-input fallback-provider-name" style="flex:0 0 150px">
+                    {% for choice in ['RealDebrid','AllDebrid','Premiumize','Torbox','DebridLink'] %}
+                    <option value="{{ choice }}" {% if fb.provider == choice %}selected{% endif %}>{{ choice }}</option>
+                    {% endfor %}
+                </select>
+                <input type="password" class="settings-input fallback-provider-key" placeholder="API key" value="{{ fb.api_key }}" style="flex:1;min-width:0">
+                <button type="button" class="delete-version-btn btn-danger fallback-provider-remove">
+                    <i class="fa-solid fa-trash"></i>
+                    <span class="btn-text">Remove</span>
+                </button>
+            </div>
+            {% endfor %}
+        </div>
+        <button type="button" id="add-fallback-provider-btn" class="add-version-link btn-primary">
+            <i class="fa-solid fa-plus"></i> Add Fallback Provider
+        </button>
+    </div>
 </div>
+
+<script>
+(function() {
+    const PROVIDER_CHOICES = ['RealDebrid','AllDebrid','Premiumize','Torbox','DebridLink'];
+
+    function buildRow(name, key) {
+        const row = document.createElement('div');
+        row.className = 'fallback-provider-row settings-form-group';
+        row.style.cssText = 'display:flex;flex-direction:row;gap:8px;align-items:center;margin-bottom:8px';
+        const sel = document.createElement('select');
+        sel.className = 'settings-input fallback-provider-name';
+        sel.style.cssText = 'flex:0 0 150px';
+        PROVIDER_CHOICES.forEach(c => {
+            const o = document.createElement('option');
+            o.value = c; o.textContent = c;
+            if (c === name) o.selected = true;
+            sel.appendChild(o);
+        });
+        const inp = document.createElement('input');
+        inp.type = 'password'; inp.className = 'settings-input fallback-provider-key';
+        inp.placeholder = 'API key'; inp.value = key || '';
+        inp.style.cssText = 'flex:1;min-width:0';
+        const btn = document.createElement('button');
+        btn.type = 'button'; btn.className = 'delete-version-btn btn-danger fallback-provider-remove';
+        btn.innerHTML = '<i class="fa-solid fa-trash"></i> <span class="btn-text">Remove</span>';
+        btn.addEventListener('click', () => { row.remove(); saveFallbacks(); });
+        sel.addEventListener('change', saveFallbacks);
+        inp.addEventListener('change', saveFallbacks);
+        row.appendChild(sel); row.appendChild(inp); row.appendChild(btn);
+        return row;
+    }
+
+    function saveFallbacks() {
+        const rows = document.querySelectorAll('#fallback-providers-list .fallback-provider-row');
+        const fallbacks = [];
+        rows.forEach(row => {
+            const name = row.querySelector('.fallback-provider-name')?.value;
+            const key  = row.querySelector('.fallback-provider-key')?.value;
+            if (name && key) fallbacks.push({provider: name, api_key: key});
+        });
+        // Store as JSON in a hidden input that the settings save picks up
+        let hidden = document.getElementById('fallback-providers-hidden');
+        if (!hidden) {
+            hidden = document.createElement('input');
+            hidden.type = 'hidden'; hidden.id = 'fallback-providers-hidden';
+            hidden.name = 'Debrid Provider.fallback_providers';
+            hidden.dataset.section = 'Debrid Provider';
+            hidden.dataset.key = 'fallback_providers';
+            hidden.dataset.jsonList = 'true';
+            document.getElementById('fallback-providers-list').after(hidden);
+        }
+        hidden.value = JSON.stringify(fallbacks);
+    }
+
+    document.querySelectorAll('#fallback-providers-list .fallback-provider-remove').forEach(btn => {
+        btn.addEventListener('click', () => { btn.closest('.fallback-provider-row').remove(); saveFallbacks(); });
+    });
+    document.querySelectorAll('#fallback-providers-list .fallback-provider-name, #fallback-providers-list .fallback-provider-key').forEach(el => {
+        el.addEventListener('change', saveFallbacks);
+    });
+    document.getElementById('add-fallback-provider-btn')?.addEventListener('click', () => {
+        const row = buildRow('Torbox', '');
+        document.getElementById('fallback-providers-list').appendChild(row);
+        saveFallbacks();
+    });
+    // Initialize hidden input on load
+    saveFallbacks();
+})();
+</script>
 {% endif %}
+
+<!-- Usenet Provider (Decypharr) -->
+<div class="settings-section settings-card">
+    <div class="settings-section-header">
+        <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+        </svg>
+        <div class="settings-header-left">
+            <h4>Usenet Provider</h4>
+        </div>
+    </div>
+    <div class="settings-section-content">
+        <div class="info-banner info-banner-blue" style="margin-bottom: 16px;">
+            <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <div class="info-banner-content">Connect to Decypharr for usenet downloads. Decypharr handles NNTP connections and serves files via the rclone mount.</div>
+        </div>
+        <div class="settings-form-group">
+            <label for="usenet_provider-enabled" class="settings-title">Enable Usenet:</label>
+            <input type="checkbox" id="usenet_provider-enabled" name="Usenet Provider.enabled"
+                   data-section="Usenet Provider" data-key="enabled"
+                   {% if settings.get('Usenet Provider', {}).get('enabled') %}checked{% endif %}>
+        </div>
+        <div class="settings-form-group">
+            <label for="usenet_provider-url" class="settings-title">Decypharr URL:</label>
+            <input type="text" id="usenet_provider-url" name="Usenet Provider.url"
+                   value="{{ settings.get('Usenet Provider', {}).get('url', '') }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="url"
+                   placeholder="e.g. http://192.168.1.x:8888 or http://decypharr:8888">
+            <p class="settings-description">Do not use localhost:8888 — that conflicts with Phalanx DB. Use the Decypharr host IP or container name.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="usenet_provider-api_token" class="settings-title">API Token:</label>
+            <input type="password" id="usenet_provider-api_token" name="Usenet Provider.api_token"
+                   value="{{ settings.get('Usenet Provider', {}).get('api_token', '') }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="api_token"
+                   placeholder="Leave empty if auth is disabled">
+        </div>
+        <div class="settings-form-group">
+            <label for="usenet_provider-download_folder" class="settings-title">Download Folder:</label>
+            <input type="text" id="usenet_provider-download_folder" name="Usenet Provider.download_folder"
+                   value="{{ settings.get('Usenet Provider', {}).get('download_folder', '') }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="download_folder"
+                   placeholder="Leave empty for Decypharr default">
+            <p class="settings-description">Category/folder in Decypharr for downloads. Leave empty to use Decypharr's default download folder.</p>
+        </div>
+    </div>
+</div>
 
 {% if environment_mode == 'full' %}
 <div class="settings-section settings-card">
@@ -81,17 +225,15 @@
     <div class="settings-section-content">
     <!-- Plex Authentication Section -->
     <div class="plex-auth-section">
-        <h3>Plex Authentication</h3>
+        <h5>Plex Authentication</h5>
         <p class="settings-description">Connect to your Plex Media Server by signing in with your Plex account.</p>
         <button type="button" id="plex-auth-btn" class="plex-auth-btn">
             <img src="https://www.plex.tv/wp-content/themes/plex/assets/img/plex-logo.svg" alt="Plex Logo">
             Sign in to Plex
         </button>
 
-        <div id="plex-auth-failure-note" style="margin-top: 10px;">
-            <em style="color: #b94a48;">
-                If Plex authorization fails to connect using this method, try using your direct IP and Plex token in the section below. Plex cannot always navigate networking automatically.
-            </em>
+        <div id="plex-auth-failure-note" style="margin-top: 8px; font-size: 11px; color: #e8601c;">
+            If Plex authorization fails to connect using this method, try using your direct IP and Plex token in the section below. Plex cannot always navigate networking automatically.
         </div>
 
         <div id="plex-server-select" class="plex-server-select">

@@ -231,9 +231,9 @@
     }
 
     #pause-indicator {
-        position: absolute;
+        /* position: absolute;
         top: 46px;
-        right: 14px;
+        right: 14px; */
         background: #1a1a1a;
         border: 1px solid #3d3d3d;
         color: #f59e0b;
@@ -399,9 +399,9 @@
 
     /* Add styles for the bottom button */
     .bottom-button {
-        position: absolute;
+        /* position: absolute;
         top: 46px;
-        right: 160px;
+        right: 160px; */
         padding: 4px 12px;
         background: #1a1a1a;
         color: #e0e0e0;
@@ -451,19 +451,6 @@
             flex: 1;
             min-width: 120px;
             margin-right: 0 !important;
-        }
-
-        .bottom-button {
-            position: absolute !important;
-            left: 50%;
-            transform: translateX(-50%);
-            margin-top: 159px;
-            width: 90px;
-        }
-
-        #pause-indicator {
-            top: 162px !important;
-            right: 10px !important;
         }
 
         /* --- START EDIT: Adjust height when task monitor overlay is visible --- */

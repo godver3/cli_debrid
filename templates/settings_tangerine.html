@@ -3,7 +3,8 @@
 {% block title %}Settings{% endblock %}
 
 {% block content %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_settings.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/tangerine/tangerine_settings.css') }}?v=33">
+<style>body { font-family: 'Inter', sans-serif !important; }</style>
 
 <!-- Mobile Menu Toggle Button -->
 <button class="settings-mobile-menu-toggle" id="settingsMobileMenuToggle" aria-label="Toggle settings menu">
@@ -19,17 +20,20 @@
         <div class="settings-sidebar-header">
             <h1 class="settings-sidebar-title">Settings</h1>
             <p class="settings-sidebar-subtitle">Configure your application</p>
+        </div>
 
-            <!-- Settings Search Bar -->
-            <div class="settings-search-container">
-                <label for="settingsSearch" class="sr-only">Search Settings</label>
-                <input type="text" id="settingsSearch" name="settings_search" class="settings-search-input" placeholder="Search settings..." autocomplete="off">
-                <button type="button" id="clearSearch" class="settings-search-clear" style="display: none;">
-                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                    </svg>
-                </button>
-            </div>
+        <!-- Settings Search Bar -->
+        <div class="settings-search-container">
+            <svg class="settings-search-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <circle cx="11" cy="11" r="8"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35"/>
+            </svg>
+            <label for="settingsSearch" class="sr-only">Search Settings</label>
+            <input type="text" id="settingsSearch" name="settings_search" class="settings-search-input" placeholder="Search settings..." autocomplete="off">
+            <button type="button" id="clearSearch" class="settings-search-clear" style="display: none;">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
         </div>
 
         <nav>

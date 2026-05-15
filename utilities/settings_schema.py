@@ -284,6 +284,30 @@ SETTINGS_SCHEMA = {
             "sensitive": True
         }
     },
+    "Usenet Provider": {
+        "tab": "Required Settings",
+        "enabled": {
+            "type": "boolean",
+            "description": "Enable usenet as a download source via Decypharr",
+            "default": False
+        },
+        "url": {
+            "type": "string",
+            "description": "Decypharr URL — must not conflict with Phalanx DB (port 8888). Use the actual Decypharr host/port (e.g. http://192.168.1.x:8888 or http://decypharr:8888)",
+            "default": ""
+        },
+        "api_token": {
+            "type": "string",
+            "description": "Decypharr API token (leave empty if auth is disabled)",
+            "default": "",
+            "sensitive": True
+        },
+        "download_folder": {
+            "type": "string",
+            "description": "Download folder category in Decypharr (leave empty for default)",
+            "default": ""
+        }
+    },
     "TMDB": {
         "tab": "Additional Settings",
         "api_key": {
@@ -1083,6 +1107,12 @@ SETTINGS_SCHEMA = {
                 "base_url": {"type": "string", "default": "", "validate": "url"},
                 "uuid": {"type": "string", "default": ""},
                 "password": {"type": "string", "default": "", "sensitive": True}
+            },
+            "Newznab": {
+                "enabled": {"type": "boolean", "default": False},
+                "priority": {"type": "integer", "default": 0, "description": "Scraper priority score (higher = better priority)"},
+                "url": {"type": "string", "default": "", "validate": "url"},
+                "api_key": {"type": "string", "default": "", "sensitive": True}
             }
         }
     },

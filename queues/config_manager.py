@@ -477,7 +477,11 @@ def add_scraper(scraper_type, scraper_config):
         config['Scrapers'] = {}
     
     # Generate a new scraper ID
-    base_name = scraper_type
+    # For Newznab, use the user-provided name as the key prefix instead of the type
+    if scraper_type == 'Newznab' and scraper_config.get('name', '').strip():
+        base_name = scraper_config.get('name').strip().replace(' ', '_')
+    else:
+        base_name = scraper_type
     index = 1
     while f"{base_name}_{index}" in config['Scrapers']:
         index += 1

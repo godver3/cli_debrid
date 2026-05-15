@@ -1698,7 +1698,7 @@
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 
 <!-- Include torrent modal utilities for scraper modals -->
-<script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}?v=20260118"></script>
+<script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}?v={{ range(10000, 99999) | random }}"></script>
 
 <!-- Include scraper.js for search episode functionality -->
 <script src="{{ url_for('static', filename='js/scraper.js') }}?v={{ range(10000, 99999) | random }}"></script>
