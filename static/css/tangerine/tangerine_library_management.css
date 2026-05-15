@@ -327,7 +327,7 @@
 h2::before {
     content: '';
     width: 4px;
-    height: 33px;
+    height: 28px;
     border-left: 3px solid #e8601c;
 }
 

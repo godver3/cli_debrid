@@ -1415,9 +1415,12 @@ def index():
         configured_scrapers = {}
         for scraper, scraper_config in config['Scrapers'].items():
             scraper_type = scraper.split('_')[0]  # Assuming format like 'Zilean_1'
+            # For custom-named scrapers (e.g. Newznab with user-given name), check the type field
+            if scraper_type not in scraper_settings and isinstance(scraper_config, dict):
+                scraper_type = scraper_config.get('type', scraper_type)
             if scraper_type in scraper_settings:
                 configured_scrapers[scraper] = scraper_config
-        
+
         config['Scrapers'] = configured_scrapers
 
         # Ensure 'UI Settings' exists in the config
@@ -1542,7 +1545,7 @@ def api_program_settings():
 
         # Merge defaults for each section
         program_settings = {}
-        sections_to_include = ['Scrapers', 'Content Sources', 'Debug', 'Plex', 'Metadata Battery', 'Debrid Provider']
+        sections_to_include = ['Scrapers', 'Content Sources', 'Debug', 'Plex', 'Metadata Battery', 'Debrid Provider', 'Usenet Provider']
         
         for section in sections_to_include:
             if section in SETTINGS_SCHEMA:
@@ -1641,6 +1644,13 @@ def update_settings():
         # Check for Debrid Provider changes
         if 'Debrid Provider' in new_settings:
             debrid_settings = new_settings['Debrid Provider']
+            # Parse fallback_providers JSON string if sent as string from hidden input
+            import json as _json
+            if 'fallback_providers' in debrid_settings and isinstance(debrid_settings['fallback_providers'], str):
+                try:
+                    debrid_settings['fallback_providers'] = _json.loads(debrid_settings['fallback_providers'])
+                except Exception:
+                    debrid_settings['fallback_providers'] = []
             # Check if actual values changed, not just presence
             current_debrid = config.get('Debrid Provider', {})
             for key, new_value in debrid_settings.items():
@@ -1976,6 +1986,10 @@ def update_settings():
                     from debrid import reset_provider
                     reset_provider()
                     logging.info("Debrid provider reset complete")
+
+                    from usenet.decypharr_client import reset_decypharr_client
+                    reset_decypharr_client()
+                    logging.info("Decypharr client reset complete")
 
                     from queues.queue_manager import QueueManager
                     QueueManager().reinitialize()

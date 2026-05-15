@@ -34,6 +34,8 @@ class TorboxProvider(DebridProvider):
         self.phalanx_cache = PhalanxDBClassManager() if self.phalanx_enabled else None
 
     def _load_api_key(self) -> str:
+        if getattr(self, '_api_key', None):
+            return self._api_key
         try:
             return get_api_key()
         except Exception as e:
@@ -245,6 +247,44 @@ class TorboxProvider(DebridProvider):
                 with open(temp_file_path, 'rb') as f:
                     files = {'file': (os.path.basename(temp_file_path), f)}
                     result = make_request('POST', '/torrents/createtorrent', self.api_key, files=files)
+            elif magnet_link and magnet_link.startswith('http'):
+                # HTTP URL (e.g. Jackett/Prowlarr) — download torrent file or detect magnet redirect
+                import tempfile as _tmp, requests as _req
+                # Follow redirects manually to catch magnet: scheme redirects
+                _session = _req.Session()
+                _resp = _session.get(magnet_link, timeout=30, allow_redirects=False)
+                # Follow redirects manually, stopping if we hit a magnet: URI
+                _resolved_magnet = None
+                while _resp.status_code in (301, 302, 303, 307, 308):
+                    _location = _resp.headers.get('Location', '')
+                    if _location.startswith('magnet:'):
+                        _resolved_magnet = _location
+                        break
+                    _resp = _session.get(_location, timeout=30, allow_redirects=False)
+                if _resolved_magnet:
+                    logging.info(f"[Torbox] URL redirected to magnet link, using it directly")
+                    result = make_request('POST', '/torrents/createtorrent', self.api_key, data={'magnet': _resolved_magnet})
+                else:
+                    _resp.raise_for_status()
+                    content_type = _resp.headers.get('Content-Type', '')
+                    logging.info(f"[Torbox] Downloaded URL content-type={content_type} size={len(_resp.content)} first_bytes={_resp.content[:20]!r}")
+                    if _resp.content.strip().startswith(b'magnet:'):
+                        _resolved_magnet = _resp.content.strip().decode('utf-8')
+                        logging.info(f"[Torbox] URL body is magnet link, using it directly")
+                        result = make_request('POST', '/torrents/createtorrent', self.api_key, data={'magnet': _resolved_magnet})
+                    else:
+                        with _tmp.NamedTemporaryFile(suffix='.torrent', delete=False) as _tf:
+                            _tf.write(_resp.content)
+                            _tmp_path = _tf.name
+                        try:
+                            with open(_tmp_path, 'rb') as f:
+                                files = {'file': ('download.torrent', f)}
+                                result = make_request('POST', '/torrents/createtorrent', self.api_key, files=files)
+                        finally:
+                            try:
+                                os.remove(_tmp_path)
+                            except Exception:
+                                pass
             elif magnet_link:
                 result = make_request('POST', '/torrents/createtorrent', self.api_key, data={'magnet': magnet_link})
             else:
@@ -255,11 +295,30 @@ class TorboxProvider(DebridProvider):
             if not torrent_id and hash_value:
                 existing = self._find_existing_torrent(hash_value)
                 torrent_id = existing.get('id') if existing else None
+            # Torbox may queue the torrent — queued means accepted, poll mylist briefly
+            if not torrent_id and payload.get('queued_id'):
+                queued_hash = payload.get('hash') or hash_value
+                for _ in range(15):
+                    time.sleep(2)
+                    existing = self._find_existing_torrent(queued_hash) if queued_hash else None
+                    if existing:
+                        torrent_id = existing.get('id')
+                        break
+                if not torrent_id:
+                    # Queued but not yet in mylist — treat queued_id as the handle
+                    torrent_id = f"queued:{payload['queued_id']}"
+                    logging.info(f"Torbox torrent queued (queued_id={payload['queued_id']}), using queued handle")
 
             if not torrent_id:
                 raise TorrentAdditionError(f"Failed to add torrent - response: {result}")
 
             torrent_id = str(torrent_id)
+
+            # Queued handle — torrent accepted but not yet in mylist, return immediately
+            if torrent_id.startswith('queued:'):
+                if hash_value:
+                    self._all_torrent_ids[hash_value] = torrent_id
+                return torrent_id
 
             for _ in range(30):
                 info = self.get_torrent_info(torrent_id)
@@ -381,6 +440,11 @@ class TorboxProvider(DebridProvider):
     def remove_torrent(self, torrent_id: str, removal_reason: Optional[str] = None) -> bool:
         hash_value = None
         try:
+            # queued: handles are not yet in mylist — nothing to remove
+            if str(torrent_id).startswith('queued:'):
+                logging.debug(f"[Torbox] Skipping remove for queued handle {torrent_id}")
+                return True
+
             info = self.get_torrent_info(torrent_id)
             if info:
                 hash_value = info.get('hash', '').lower()
@@ -444,6 +508,22 @@ class TorboxProvider(DebridProvider):
             torrent_id = self.add_torrent(magnet_link)
             if not torrent_id:
                 return None
+
+            # If queued, resolve to real torrent_id by polling via hash
+            if str(torrent_id).startswith('queued:'):
+                from ..common import extract_hash_from_magnet
+                hash_value = extract_hash_from_magnet(magnet_link) if magnet_link.startswith('magnet:') else None
+                resolved_id = None
+                for _ in range(20):
+                    time.sleep(3)
+                    existing = self._find_existing_torrent(hash_value) if hash_value else None
+                    if existing:
+                        resolved_id = str(existing.get('id', ''))
+                        break
+                if not resolved_id:
+                    logging.warning(f"[Torbox] Queued torrent never appeared in mylist for file listing")
+                    return None
+                torrent_id = resolved_id
 
             time.sleep(3)
             info = self.get_torrent_info(torrent_id)

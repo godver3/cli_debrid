@@ -380,7 +380,7 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/loading.js') }}"></script>
 <script type="module" src="{{ url_for('static', filename='js/notifications.js') }}"></script>
-<script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}?v=20260118"></script>
+<script src="{{ url_for('static', filename='js/torrent_modal_utils.js') }}?v={{ range(10000, 99999) | random }}"></script>
 <script src="{{ url_for('static', filename='js/scraper.js') }}?v={{ range(10000, 99999) | random }}"></script>
 <script src="{{ url_for('static', filename='js/discover_details.js') }}?v={{ range(10000, 99999) | random }}"></script>
 <script src="{{ url_for('static', filename='js/trailer_modal.js') }}"></script>

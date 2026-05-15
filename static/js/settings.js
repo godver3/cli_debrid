@@ -491,9 +491,13 @@ export function updateSettings() {
             }
 
             const scraperId = header.textContent.trim();
-            
+
+            // Get type from the hidden type input if present (handles custom-named scrapers like Newznab)
+            const typeInput = section.querySelector('input[name$=".type"]');
+            const scraperType = typeInput ? typeInput.value : scraperId.split('_')[0];
+
             const scraperData = {
-                type: scraperId.split('_')[0] // Extract type from the scraper ID
+                type: scraperType
             };
 
             // Collect all input fields for this scraper
@@ -513,7 +517,7 @@ export function updateSettings() {
     }
 
     // Remove any scrapers that are not actual scrapers
-    const validScraperTypes = ['Zilean', 'MediaFusion', 'AIOStreams', 'AIOStreams-API', 'Jackett', 'Torrentio', 'Nyaa', 'Prowlarr'];
+    const validScraperTypes = ['Zilean', 'MediaFusion', 'AIOStreams', 'AIOStreams-API', 'Jackett', 'Torrentio', 'Nyaa', 'Prowlarr', 'OldNyaa', 'Newznab'];
     if (settingsData['Scrapers'] && typeof settingsData['Scrapers'] === 'object') {
         Object.keys(settingsData['Scrapers']).forEach(key => {
             if (settingsData['Scrapers'][key] && settingsData['Scrapers'][key].type && !validScraperTypes.includes(settingsData['Scrapers'][key].type)) {
@@ -523,7 +527,7 @@ export function updateSettings() {
     }
     
     // Update the list of top-level fields to include UI Settings
-    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider','Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings', 'AI Assistant', 'Plex Smart Collections', 'Plex Movie Box Sets'];
+    const topLevelFields = ['Plex', 'Overseerr', 'RealDebrid', 'Debrid Provider', 'Usenet Provider', 'Torrentio', 'Scraping', 'Queue', 'Trakt', 'Debug', 'Content Sources', 'Scrapers', 'Notifications', 'TMDB', 'TVDB', 'UI Settings', 'Sync Deletions', 'File Management', 'Subtitle Settings', 'Bazarr Integration', 'Overlay Settings', 'Staleness Threshold', 'Custom Post-Processing', 'System Load Regulation', 'Library Manager', 'MDBList', 'Discover Settings', 'AI Assistant', 'Plex Smart Collections', 'Plex Movie Box Sets'];
     Object.keys(settingsData).forEach(key => {
         if (!topLevelFields.includes(key)) {
             delete settingsData[key];
@@ -1055,6 +1059,19 @@ export function updateSettings() {
         settingsData['Debrid Provider']['provider'] = debridProvider.value;
 
     } else {
+    }
+
+    // Usenet Provider settings
+    const usenetEnabled = document.getElementById('usenet_provider-enabled');
+    const usenetUrl = document.getElementById('usenet_provider-url');
+    const usenetToken = document.getElementById('usenet_provider-api_token');
+    const usenetFolder = document.getElementById('usenet_provider-download_folder');
+    if (usenetEnabled || usenetUrl || usenetToken || usenetFolder) {
+        if (!settingsData['Usenet Provider']) settingsData['Usenet Provider'] = {};
+        if (usenetEnabled) settingsData['Usenet Provider']['enabled'] = usenetEnabled.checked;
+        if (usenetUrl) settingsData['Usenet Provider']['url'] = usenetUrl.value;
+        if (usenetToken) settingsData['Usenet Provider']['api_token'] = usenetToken.value;
+        if (usenetFolder) settingsData['Usenet Provider']['download_folder'] = usenetFolder.value;
     }
 
     const updatePlexOnFileDiscovery = document.getElementById('plex-update_plex_on_file_discovery');

@@ -53,7 +53,7 @@ def should_retry_error(exception: Exception) -> bool:
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=2, max=10),
     retry=retry_if_exception_type((api.exceptions.RequestException, TorboxAPIError, RateLimitError, api.exceptions.HTTPError)),
-    retry_error_callback=lambda retry_state: None,
+    retry_error_callback=lambda rs: rs.outcome.result(),
 )
 def make_request(
     method: str,
@@ -101,7 +101,21 @@ def make_request(
                 raise RateLimitError("Torbox rate limit exceeded")
             if response.status_code in [500, 502, 503, 504]:
                 raise TorboxAPIError(f"Torbox service temporarily unavailable (HTTP {response.status_code})")
-            response.raise_for_status()
+            try:
+                err_body = response.json()
+            except Exception:
+                err_body = response.text[:500]
+            # Torbox returns 400 for rate limiting on createtorrent — treat as retryable
+            if response.status_code == 400 and isinstance(err_body, dict):
+                err_code = (err_body.get('error') or '').upper()
+                if 'RATE_LIMIT' in err_code or 'TOO_MANY' in err_code:
+                    with _api_rate_limiter['lock']:
+                        _api_rate_limiter['min_interval'] = min(30.0, _api_rate_limiter['min_interval'] * 2)
+                    logging.warning(f"Torbox 400 rate limit on {endpoint}: sleeping 30s")
+                    time.sleep(30)
+                    raise RateLimitError(f"Torbox rate limit (400): {err_body.get('detail', err_code)}")
+            logging.error(f"Torbox {response.status_code} on {endpoint}: {err_body}")
+            raise ProviderUnavailableError(f"Torbox request failed: {response.status_code} - {err_body}")
 
         if response.status_code == 204:
             _decrease_rate_limit_on_success()

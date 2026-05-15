@@ -529,6 +529,33 @@
         padding: 20px;
         background-color: var(--card-bg);
         border-radius: 12px;
+        border: 1px solid var(--border-color, rgba(255,255,255,0.08));
+        border-left: 3px solid #e5a00d;
+    }
+
+    .plex-auth-section h3 {
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--text-primary, #e2e8f0);
+        margin: 0 0 4px 0;
+    }
+
+    .plex-auth-section .settings-description {
+        font-size: 0.8rem;
+        color: var(--text-muted, #64748b);
+        margin: 0 0 16px 0;
+    }
+
+    #plex-auth-failure-note {
+        margin-top: 12px;
+        font-size: 0.8rem;
+        color: #e5a00d;
+        font-style: normal;
+    }
+
+    #plex-auth-failure-note em {
+        font-style: normal;
+        color: #e5a00d;
     }
     
     .plex-auth-btn {

@@ -384,6 +384,28 @@ def get_backup_status() -> dict:
         if slots:
             result['providers'][prefix] = slots
 
+    # Include extra files (e.g. usenet_failed, usenet_not_found) that aren't scheduled slots
+    slot_filenames = {f'{p}_backup_{s}.json' for p in ('rd','ad','tb','dl','pm') for s in ('1d','3d','7d')}
+    extra = []
+    for f in list_backup_files():
+        fname = f['filename']
+        if fname in slot_filenames or fname == _LOG_FILE:
+            continue
+        try:
+            with open(os.path.join(backup_dir, fname), encoding='utf-8') as fh:
+                import json as _json
+                data = _json.load(fh)
+                count = len(data) if isinstance(data, list) else None
+        except Exception:
+            count = None
+        extra.append({
+            'filename': fname,
+            'size': f['size'],
+            'modified': f['modified'],
+            'count': count,
+        })
+    result['extra_files'] = extra
+
     return result
 
 
@@ -685,6 +707,297 @@ def restore_from_file(filename: str, dry_run: bool = False) -> dict:
 
     else:
         return {'success': False, 'message': f'Restore not implemented for {provider_name}'}
+
+
+# Provider IDs supported for cross-provider restore
+RESTORE_PROVIDERS = {
+    'realdebrid':  'Real-Debrid',
+    'alldebrid':   'AllDebrid',
+    'torbox':      'Torbox',
+    'debridlink':  'Debrid-Link',
+    'premiumize':  'Premiumize',
+}
+
+
+_CACHED_STATUSES = frozenset([
+    'downloaded',   # Real-Debrid
+    'Ready',        # AllDebrid
+    'cached',       # Torbox / generic
+    'complete',     # Debrid-Link
+    'finished',     # Premiumize
+])
+
+
+def restore_from_file_to_provider(filename: str, provider_id: str, api_key: str,
+                                   dry_run: bool = False, cached_only: bool = False,
+                                   progress_cb=None) -> dict:
+    """Restore a backup file to an explicitly specified provider using a given API key.
+
+    provider_id must be one of the keys in RESTORE_PROVIDERS.
+    The backup file can be from any provider — only the hash field is used.
+    If cached_only=True, only items whose status indicates they were fully downloaded are restored.
+    progress_cb(current, total, name) is called before each item is processed.
+    """
+    import requests as _req
+
+    if provider_id not in RESTORE_PROVIDERS:
+        return {'success': False, 'message': f'Unknown provider: {provider_id}'}
+    if not api_key or not api_key.strip():
+        return {'success': False, 'message': 'API key required'}
+
+    api_key = api_key.strip()
+    path = os.path.join(get_backup_dir(), filename)
+    if not os.path.exists(path):
+        return {'success': False, 'message': f'File not found: {filename}'}
+
+    with open(path, encoding='utf-8') as f:
+        backup = json.load(f)
+    if not isinstance(backup, list):
+        return {'success': False, 'message': 'Invalid backup format'}
+
+    # Extract all hashes from backup (works for any source provider format)
+    def _extract_hash(item):
+        h = (item.get('hash') or '').lower()
+        if not h:
+            src = item.get('src', '') or item.get('magnet', '')
+            if 'btih:' in src.lower():
+                h = src.lower().split('btih:')[-1].split('&')[0]
+        return h
+
+    if cached_only:
+        before = len(backup)
+        hashes_to_check = [_extract_hash(item) for item in backup]
+        hashes_to_check = [h for h in hashes_to_check if h]
+        cached_hashes = set()
+        try:
+            if provider_id == 'torbox':
+                chunk_size = 100
+                for i in range(0, len(hashes_to_check), chunk_size):
+                    chunk = hashes_to_check[i:i+chunk_size]
+                    r = _req.get('https://api.torbox.app/v1/api/torrents/checkcached',
+                                 params={'hash': ','.join(chunk), 'format': 'object'},
+                                 headers={'Authorization': f'Bearer {api_key}'}, timeout=30)
+                    if r.status_code == 200:
+                        for h, info in (r.json().get('data') or {}).items():
+                            if info: cached_hashes.add(h.lower())
+            elif provider_id == 'alldebrid':
+                chunk_size = 50
+                for i in range(0, len(hashes_to_check), chunk_size):
+                    chunk = hashes_to_check[i:i+chunk_size]
+                    params = [('magnets[]', f'magnet:?xt=urn:btih:{h}') for h in chunk]
+                    r = _req.get('https://api.alldebrid.com/v4.1/magnet/instant',
+                                 params=[('agent', 'cli_debrid'), ('apikey', api_key)] + params, timeout=30)
+                    if r.status_code == 200:
+                        for m in (r.json().get('data') or {}).get('magnets', []):
+                            if m.get('instant'):
+                                h = (m.get('hash') or '').lower()
+                                if h: cached_hashes.add(h)
+            elif provider_id == 'premiumize':
+                chunk_size = 100
+                for i in range(0, len(hashes_to_check), chunk_size):
+                    chunk = hashes_to_check[i:i+chunk_size]
+                    params = [('items[]', h) for h in chunk] + [('apikey', api_key)]
+                    r = _req.get('https://www.premiumize.me/api/cache/check', params=params, timeout=30)
+                    if r.status_code == 200:
+                        data = r.json()
+                        responses = data.get('response', [])
+                        for h, is_cached_val in zip(chunk, responses):
+                            if is_cached_val: cached_hashes.add(h.lower())
+            elif provider_id == 'debridlink':
+                # DL has no batch cache check — add and check if instant (100% immediately)
+                # Fall back to treating all as eligible; DL itself skips non-cached on add
+                cached_hashes = set(hashes_to_check)
+            else:
+                cached_hashes = set(hashes_to_check)
+        except Exception as _ce:
+            logging.warning(f'[BackupRestore] cached_only check failed: {_ce}, falling back to all hashes')
+            cached_hashes = set(hashes_to_check)
+        backup = [item for item in backup if (_extract_hash(item) or '').lower() in cached_hashes]
+        logging.info(f'[BackupRestore] cached_only: filtered {before} → {len(backup)} items (checked against {provider_id})')
+
+    added, skipped, failed = [], [], []
+    total_items = len(backup)
+    _consecutive_failures = [0]
+    _abort_reason = [None]
+    _CONSECUTIVE_FAIL_LIMIT = 10  # abort if 10 non-skip items fail in a row
+
+    def _progress(idx, item):
+        name = item.get('filename') or item.get('name') or _extract_hash(item) or '?'
+        if (idx + 1) % 500 == 0 or idx == 0:
+            logging.info(f'[XPRestore] Progress: {idx + 1}/{total_items} — {name[:80]}')
+        if progress_cb:
+            progress_cb(idx + 1, total_items, name)
+
+    def _record_fail(h, reason):
+        failed.append({'hash': h, 'reason': reason})
+        _consecutive_failures[0] += 1
+        if _consecutive_failures[0] >= _CONSECUTIVE_FAIL_LIMIT and not _abort_reason[0]:
+            _abort_reason[0] = reason
+            logging.warning(f'[XPRestore] Aborting after {_CONSECUTIVE_FAIL_LIMIT} consecutive failures: {reason}')
+
+    def _record_ok(h):
+        added.append(h)
+        _consecutive_failures[0] = 0
+
+    def _should_abort():
+        return _abort_reason[0] is not None
+
+    if provider_id == 'realdebrid':
+        current = fetch_rd_torrents(api_key)
+        current_hashes = {t.get('hash', '').lower() for t in current if t.get('hash')}
+        headers = {'Authorization': f'Bearer {api_key}'}
+        try:
+            hosts_r = _req.get('https://api.real-debrid.com/rest/1.0/torrents/availableHosts', headers=headers, timeout=15)
+            host = hosts_r.json()[0]['host'] if hosts_r.status_code == 200 else 'real-debrid.com'
+        except Exception:
+            host = 'real-debrid.com'
+        for idx, item in enumerate(backup):
+            if _should_abort(): break
+            _progress(idx, item)
+            h = _extract_hash(item)
+            if not h: _record_fail('?', 'no hash'); continue
+            if h in current_hashes: skipped.append(h); continue
+            if dry_run: added.append(h); continue
+            try:
+                r = _req.post('https://api.real-debrid.com/rest/1.0/torrents/addMagnet',
+                              data={'host': host, 'magnet': f'magnet:?xt=urn:btih:{h}'},
+                              headers=headers, timeout=30)
+                torrent = r.json()
+                if 'id' not in torrent:
+                    _record_fail(h, torrent.get('error', 'no id returned')); continue
+                _select_files_rd(torrent['id'], api_key, headers)
+                _record_ok(h)
+                time.sleep(0.5)
+            except Exception as e:
+                _record_fail(h, str(e))
+
+    elif provider_id == 'alldebrid':
+        current = fetch_ad_magnets(api_key)
+        current_hashes = {m.get('hash', '').lower() for m in current if m.get('hash')}
+        for idx, item in enumerate(backup):
+            if _should_abort(): break
+            _progress(idx, item)
+            h = _extract_hash(item)
+            if not h: _record_fail('?', 'no hash'); continue
+            if h in current_hashes: skipped.append(h); continue
+            if dry_run: added.append(h); continue
+            try:
+                r = _req.get('https://api.alldebrid.com/v4.1/magnet/upload',
+                             params={'agent': 'cli_debrid', 'apikey': api_key, 'magnets[]': f'magnet:?xt=urn:btih:{h}'},
+                             timeout=30)
+                resp = r.json()
+                if resp.get('status') != 'success':
+                    _record_fail(h, resp.get('error', {}).get('message', 'unknown')); continue
+                _record_ok(h)
+                time.sleep(0.2)
+            except Exception as e:
+                _record_fail(h, str(e))
+
+    elif provider_id == 'torbox':
+        current = fetch_tb_torrents(api_key)
+        current_hashes = {t.get('hash', '').lower() for t in current if t.get('hash')}
+        for idx, item in enumerate(backup):
+            if _should_abort(): break
+            _progress(idx, item)
+            h = _extract_hash(item)
+            if not h: _record_fail('?', 'no hash'); continue
+            if h in current_hashes: skipped.append(h); continue
+            if dry_run: added.append(h); continue
+            try:
+                r = _req.post('https://api.torbox.app/v1/api/torrents/createtorrent',
+                              data={'magnet': f'magnet:?xt=urn:btih:{h}'},
+                              headers={'Authorization': f'Bearer {api_key}'}, timeout=30)
+                logging.debug(f'[XPRestore] Torbox HTTP {r.status_code} body={r.text[:200]}')
+                if r.status_code == 429 or (r.text and 'rate' in r.text.lower()):
+                    reason = f'Rate limited (HTTP {r.status_code})'
+                    try: reason = r.json().get('detail') or r.json().get('message') or reason
+                    except Exception: pass
+                    _record_fail(h, reason); continue
+                if not r.text.strip():
+                    _record_fail(h, f'Empty response (HTTP {r.status_code})'); continue
+                resp = r.json()
+                if not resp.get('success'):
+                    reason = resp.get('detail') or resp.get('message') or resp.get('error') or str(resp)
+                    _record_fail(h, reason); continue
+                _record_ok(h)
+                time.sleep(0.25)
+            except Exception as e:
+                _record_fail(h, str(e))
+
+    elif provider_id == 'debridlink':
+        logging.info(f'[XPRestore] DL: fetching current torrents')
+        current = fetch_dl_torrents(api_key)
+        logging.info(f'[XPRestore] DL: current library has {len(current)} torrents, backup has {len(backup)} items')
+        current_hashes = {t.get('hash', '').lower() for t in current if t.get('hash')}
+        for idx, item in enumerate(backup):
+            if _should_abort(): break
+            _progress(idx, item)
+            h = _extract_hash(item)
+            if not h: _record_fail('?', 'no hash'); continue
+            if h in current_hashes: skipped.append(h); continue
+            if dry_run: added.append(h); continue
+            try:
+                r = _req.post('https://debrid-link.com/api/v2/seedbox/add',
+                              json={'url': f'magnet:?xt=urn:btih:{h}', 'async': True},
+                              headers={'Authorization': f'Bearer {api_key}'}, timeout=30)
+                if not r.text.strip():
+                    reason = f'Empty response (HTTP {r.status_code})'
+                    logging.warning(f'[XPRestore] DL empty response HTTP={r.status_code}')
+                    _record_fail(h, reason); continue
+                try:
+                    resp = r.json()
+                except Exception:
+                    reason = f'HTTP {r.status_code}: {r.text[:200]}'
+                    logging.warning(f'[XPRestore] DL non-JSON HTTP={r.status_code} body={r.text[:200]}')
+                    _record_fail(h, reason); continue
+                if not resp.get('success'):
+                    reason = (resp.get('error_description')
+                              or resp.get('error')
+                              or resp.get('message')
+                              or resp.get('detail')
+                              or f'HTTP {r.status_code}: {r.text[:200]}')
+                    logging.warning(f'[XPRestore] DL fail HTTP={r.status_code} resp={r.text[:300]}')
+                    _record_fail(h, reason); continue
+                _record_ok(h)
+                time.sleep(0.3)
+            except Exception as e:
+                reason = f'{type(e).__name__}: {e}' if str(e) else type(e).__name__
+                logging.warning(f'[XPRestore] DL exception for {h}: {reason}', exc_info=True)
+                _record_fail(h, reason)
+
+    elif provider_id == 'premiumize':
+        current = fetch_pm_transfers(api_key)
+        current_hashes = {(t.get('hash') or t.get('src', '').split('btih:')[-1].split('&')[0]).lower()
+                          for t in current}
+        for idx, item in enumerate(backup):
+            if _should_abort(): break
+            _progress(idx, item)
+            h = _extract_hash(item)
+            if not h: _record_fail('?', 'no hash'); continue
+            if h in current_hashes: skipped.append(h); continue
+            if dry_run: added.append(h); continue
+            try:
+                r = _req.post('https://www.premiumize.me/api/transfer/create',
+                              params={'apikey': api_key},
+                              data={'src': f'magnet:?xt=urn:btih:{h}'}, timeout=30)
+                resp = r.json()
+                if resp.get('status') != 'success':
+                    _record_fail(h, resp.get('message', 'unknown')); continue
+                _record_ok(h)
+                time.sleep(0.3)
+            except Exception as e:
+                _record_fail(h, str(e))
+
+    return {
+        'success':      True,
+        'total':        len(backup),
+        'added':        len(added),
+        'skipped':      len(skipped),
+        'failed':       len(failed),
+        'failures':     failed[:20],
+        'aborted':      _abort_reason[0] is not None,
+        'abort_reason': _abort_reason[0],
+    }
 
 
 def _select_files_rd(torrent_id: str, api_key: str, headers: dict):
