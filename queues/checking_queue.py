@@ -995,20 +995,20 @@ class CheckingQueue:
                     logging.info(f"Torrent {torrent_id} has been in checking queue for {time_in_queue:.1f} seconds (dynamic limit: {checking_queue_limit} seconds for {len(current_items_for_torrent)} items)")
                     
                     if time_in_queue > checking_queue_limit:
-                        logging.info(f"Removing torrent {torrent_id} from debrid service as content was not found within {checking_queue_limit} seconds (dynamic limit for {len(current_items_for_torrent)} items)")
-                        try:
-                            self.debrid_provider.remove_torrent(
-                                torrent_id,
-                                removal_reason=f"Content not found in checking queue after {checking_queue_limit} seconds (dynamic limit for {len(current_items_for_torrent)} items)"
-                            )
-                        except Exception as e:
-                            logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
-                        # Move all items for this torrent back to Wanted
-                        # Make a copy of current_items_for_torrent for iteration, as move_to_wanted modifies self.items
+                        if str(torrent_id).startswith('nzb:'):
+                            logging.info(f"NZB {torrent_id} content not found within {checking_queue_limit}s — moving back to Wanted (no debrid removal)")
+                        else:
+                            logging.info(f"Removing torrent {torrent_id} from debrid service as content was not found within {checking_queue_limit} seconds (dynamic limit for {len(current_items_for_torrent)} items)")
+                            try:
+                                self.debrid_provider.remove_torrent(
+                                    torrent_id,
+                                    removal_reason=f"Content not found in checking queue after {checking_queue_limit} seconds (dynamic limit for {len(current_items_for_torrent)} items)"
+                                )
+                            except Exception as e:
+                                logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
                         for item_to_move in list(current_items_for_torrent):
-                            if self.contains_item_id(item_to_move['id']): # Check if item is still in the main queue
+                            if self.contains_item_id(item_to_move['id']):
                                 queue_manager.move_to_wanted(item_to_move, "Checking")
-                        # items_to_remove.extend(current_items_for_torrent) # Items are moved by move_to_wanted, which calls remove_item
                         continue
 
                 # Skip remaining checks if the torrent is completed
@@ -1018,14 +1018,17 @@ class CheckingQueue:
                 if current_time - last_check >= 300:  # 5 minutes
                     if current_progress == last_progress:
                         logging.info(f"No progress for torrent {torrent_id} in 5 minutes. Handling failed upgrade/download.")
-                        try:
-                            self.debrid_provider.remove_torrent(
-                                torrent_id,
-                                removal_reason=f"No download progress after 5 minutes (stalled at {current_progress}%)"
-                            )
-                            logging.info(f"Removed failed torrent {torrent_id} from debrid service")
-                        except Exception as e:
-                            logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
+                        if str(torrent_id).startswith('nzb:'):
+                            logging.info(f"NZB {torrent_id} stalled — skipping debrid removal")
+                        else:
+                            try:
+                                self.debrid_provider.remove_torrent(
+                                    torrent_id,
+                                    removal_reason=f"No download progress after 5 minutes (stalled at {current_progress}%)"
+                                )
+                                logging.info(f"Removed failed torrent {torrent_id} from debrid service")
+                            except Exception as e:
+                                logging.error(f"Failed to remove torrent {torrent_id}: {str(e)}")
 
                         # Add upgrade check here
                         upgrading_queue = None # Initialize for potential use
