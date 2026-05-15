@@ -249,6 +249,17 @@ def add_torrent_to_debrid():
         except (ValueError, TypeError):
             episode_number = None
             
+        # NZB / Usenet path — route to Decypharr instead of debrid
+        protocol = request.form.get('protocol', '').lower()
+        nzb_url = request.form.get('nzb_url', '')
+        if protocol == 'nzb' or (nzb_url and not magnet_link):
+            return _add_nzb_to_usenet(
+                nzb_url=nzb_url or magnet_link,
+                title=title, year=year, media_type=media_type,
+                season=season_number, episode=episode_number,
+                version=final_version_for_item, tmdb_id=tmdb_id,
+            )
+
         if not magnet_link:
             return jsonify({'error': 'No magnet link or URL provided'}), 400
 
@@ -307,18 +318,36 @@ def add_torrent_to_debrid():
                         logging.warning(f"Failed to delete temp file {temp_file}: {e_del}")
                 return jsonify({'error': error_message}), 400
 
-        # Add magnet/torrent to debrid provider
-        debrid_provider = get_debrid_provider()
+        # Add magnet/torrent to debrid provider — try each provider in order
+        from debrid import get_debrid_providers
+        from debrid.base import ProviderUnavailableError
+        providers = get_debrid_providers()
+        torrent_id = None
+        debrid_provider = providers[0]  # will be updated to whichever succeeds
+        last_error = None
+        for _prov in providers:
+            try:
+                _id = _prov.add_torrent(actual_magnet_to_add, temp_file)
+                if _id:
+                    torrent_id = _id
+                    debrid_provider = _prov
+                    logging.info(f"[{_prov.PROVIDER_NAME}] Torrent added: {torrent_id}")
+                    break
+            except ProviderUnavailableError as _pue:
+                last_error = str(_pue)
+                if '451' in last_error:
+                    logging.warning(f"[{_prov.PROVIDER_NAME}] 451 DMCA — trying next provider")
+                    continue
+                logging.error(f"[{_prov.PROVIDER_NAME}] ProviderUnavailableError: {last_error}")
+                continue
+            except Exception as _ex:
+                last_error = str(_ex)
+                logging.error(f"[{_prov.PROVIDER_NAME}] Error: {last_error}")
+                continue
         try:
-            # Use 'actual_magnet_to_add' which could be the original magnet, 
-            # the redirected magnet, or None if a temp_file was successfully created.
-            # The debrid_provider.add_torrent method should prioritize temp_file if provided.
-            torrent_id = debrid_provider.add_torrent(actual_magnet_to_add, temp_file)
-            logging.info(f"Torrent result: {torrent_id}")
-            
             if not torrent_id:
-                error_message = "Failed to add torrent to debrid provider"
-                logging.error(error_message)
+                error_message = f"Failed to add torrent to any provider. Last error: {last_error}"
+                logging.error(f"Error in add_torrent_to_debrid: {last_error}")
                 return jsonify({'error': error_message}), 500
 
             # Extract torrent hash from magnet link or torrent file
@@ -1577,6 +1606,33 @@ def select_media():
         logging.error(f"Error in select_media: {str(e)}", exc_info=True)
         return jsonify({'error': 'An error occurred while processing your request'}), 500
 
+def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, version, tmdb_id):
+    """Submit an NZB URL to Decypharr and return a Flask response."""
+    from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
+    reset_decypharr_client()
+    client = get_decypharr_client()
+
+    if not client.is_enabled():
+        return jsonify({'error': 'Usenet provider (Decypharr) is not enabled. Configure it in Required Settings.'}), 503
+
+    if not nzb_url:
+        return jsonify({'error': 'No NZB URL provided'}), 400
+
+    logging.info(f'[NZB] Submitting to Decypharr: {title} ({year})')
+    job_id = client.add_nzb(nzb_url=nzb_url, title=str(title or ''))
+
+    if not job_id:
+        return jsonify({'error': 'Failed to submit NZB to Decypharr'}), 500
+
+    logging.info(f'[NZB] Submitted successfully, job_id={job_id}')
+    return jsonify({
+        'success': True,
+        'message': f'NZB submitted to Decypharr (job: {job_id}). File will appear on mount when download completes.',
+        'job_id': job_id,
+        'provider': 'Decypharr',
+    })
+
+
 @scraper_bp.route('/add_torrent', methods=['POST'])
 @user_required
 @scraper_permission_required
@@ -2011,6 +2067,7 @@ def tmdb_image_proxy(image_path):
         logging.error(f"Error proxying TMDB image {safe_path}: {e}")
         return make_response('Image not found', 404)
 
+
 @scraper_bp.route('/check_cache_status', methods=['POST'])
 @user_required
 @scraper_permission_required
@@ -2054,90 +2111,58 @@ def check_cache_status():
                 if btih_match:
                     torrent_hash = btih_match.group(1).lower()
                     
-                    # Check PhalanxDB immediately using the hash
-                    if _phalanx_cache_manager and torrent_hash:
-                        try:
-                            cache_status = _phalanx_cache_manager.get_cache_status(torrent_hash)
-                            logging.debug(f"Found cache status in PhalanxDB for hash {torrent_hash}: {cache_status}")
-                            # If found in PhalanxDB, return early (assuming PhalanxDB is reliable)
-                            if cache_status is not None:
-                                return jsonify({'status': 'cached' if cache_status.get('is_cached') else 'not_cached', 'index': index}), 200
-                        except Exception as e:
-                            logging.error(f"Error checking PhalanxDB cache: {str(e)}")
-                
-                # Handle HTTP URLs - only extract file hash if we need to
+                # Handle HTTP URLs - extract file hash for later PhalanxDB update only
                 if magnet_link.startswith('http'):
                     file_param = magnet_link.split('&file=')[-1] if '&file=' in magnet_link else None
                     if file_param:
-                        # Generate hash of the file name
                         file_hash = f"FILE_HASH_{hashlib.sha1(file_param.encode()).hexdigest()}"
-                        
-                        # Check if this file hash is already cached
-                        # Add check for cache_manager being None
-                        if cache_manager: 
-                            cache_status = cache_manager.get_cache_status(file_hash)
-                            if cache_status is not None:
-                                logging.debug(f"File hash {file_hash} found in cache with status: {cache_status}")
-                                return jsonify({'status': 'cached' if cache_status.get('is_cached') else 'not_cached', 'index': index}), 200
-            
+
             elif torrent_url:
-                # Try to get hash from torrent URL
                 try:
                     torrent_hash = _download_and_get_hash(torrent_url)
-                    
-                    # Check PhalanxDB immediately using the hash
-                    if _phalanx_cache_manager and torrent_hash:
-                        try:
-                            cache_status = _phalanx_cache_manager.get_cache_status(torrent_hash)
-                            logging.debug(f"Found cache status in PhalanxDB for torrent hash {torrent_hash}: {cache_status}")
-                            # If found in PhalanxDB, return early
-                            if cache_status is not None:
-                                return jsonify({'status': 'cached' if cache_status.get('is_cached') else 'not_cached', 'index': index}), 200
-                        except Exception as e:
-                            logging.error(f"Error checking PhalanxDB cache: {str(e)}")
                 except Exception as e:
                     logging.warning(f"Could not extract hash from torrent URL: {e}")
             
-            # If we reach here, we need to check with the debrid provider
-            # Get the debrid provider
-            debrid_provider = get_debrid_provider()
-            
-            # Create a torrent processor with the debrid provider
-            torrent_processor = TorrentProcessor(debrid_provider)
-            
-            # Check cache status based on what we have
+            # Check all providers: RD uses PhalanxDB, others use direct API
+            from debrid import get_debrid_providers
+            all_providers = get_debrid_providers()
+            cache_providers = {}
             is_cached = None
-            if magnet_link:
-                logging.debug(f"Checking cache status for magnet link at index {index}")
-                # Pass item=None so the is_in_db protection does not block removal of freshly-added
-                # check torrents. Pre-existing torrents are protected by was_preexisting in is_cached().
-                is_cached = torrent_processor.check_cache(magnet_link, remove_cached=True, item=None)
-                
-                # Update PhalanxDB with new cache status if enabled
-                if cache_manager and torrent_hash: # Check cache_manager is not None
-                    try:
-                        cache_manager.update_cache_status(torrent_hash, bool(is_cached))
-                        logging.debug(f"Updated PhalanxDB cache status for hash {torrent_hash}: {bool(is_cached)}")
-                    except Exception as e:
-                        logging.error(f"Error updating PhalanxDB cache: {str(e)}")
-                
-                # Update cache status for file hash if it was a URL
-                if cache_manager and file_hash: # Check cache_manager is not None
-                    cache_manager.update_cache_status(file_hash, bool(is_cached))
-                    logging.debug(f"Updated cache status for file hash {file_hash}: {bool(is_cached)}")
-                    
-            elif torrent_url:
-                logging.info(f"Checking cache status for torrent URL at index {index}")
-                is_cached = torrent_processor.check_cache_for_url(torrent_url, remove_cached=True, item=None)
-                
-                # Update PhalanxDB with new cache status if enabled
-                if cache_manager and torrent_hash: # Check cache_manager is not None
-                    try:
-                        cache_manager.update_cache_status(torrent_hash, bool(is_cached))
-                        logging.debug(f"Updated PhalanxDB cache status for torrent hash {torrent_hash}: {bool(is_cached)}")
-                    except Exception as e:
-                        logging.error(f"Error updating PhalanxDB cache: {str(e)}")
-            
+
+            for prov in all_providers:
+                prov_result = None
+                try:
+                    if prov.PROVIDER_NAME == 'Real-Debrid':
+                        # RD has no direct cache check API — use PhalanxDB
+                        if _phalanx_cache_manager and torrent_hash:
+                            rd_status = _phalanx_cache_manager.get_cache_status(torrent_hash)
+                            prov_result = rd_status.get('is_cached') if rd_status is not None else None
+                        prov_status = 'Yes' if prov_result is True else ('No' if prov_result is False else 'N/A')
+                    else:
+                        prov_processor = TorrentProcessor(prov)
+                        if magnet_link:
+                            prov_result = prov_processor.check_cache(magnet_link, remove_cached=True, item=None)
+                        elif torrent_url:
+                            prov_result = prov_processor.check_cache_for_url(torrent_url, remove_cached=True, item=None)
+                        prov_status = 'Yes' if prov_result is True else ('No' if prov_result is False else 'N/A')
+                except Exception as _pe:
+                    logging.warning(f"[{prov.PROVIDER_NAME}] cache check error: {_pe}")
+                    prov_status = 'Error'
+                cache_providers[prov.PROVIDER_NAME] = prov_status
+                if prov_result is True and is_cached is not True:
+                    is_cached = True
+                elif prov_result is False and is_cached is None:
+                    is_cached = False
+
+            # Update PhalanxDB with primary result
+            if cache_manager and torrent_hash:
+                try:
+                    cache_manager.update_cache_status(torrent_hash, bool(is_cached))
+                except Exception as e:
+                    logging.error(f"Error updating PhalanxDB cache: {str(e)}")
+            if cache_manager and file_hash:
+                cache_manager.update_cache_status(file_hash, bool(is_cached))
+
             # Convert result to the expected format
             if is_cached is True:
                 status = 'cached'
@@ -2145,9 +2170,9 @@ def check_cache_status():
                 status = 'not_cached'
             else:
                 status = 'check_unavailable'
-                
-            logging.debug(f"Returning cache status for index {index}: {status}")
-            return jsonify({'status': status, 'index': index}), 200
+
+            logging.debug(f"Returning cache status for index {index}: {status} providers={cache_providers}")
+            return jsonify({'status': status, 'index': index, 'cache_providers': cache_providers}), 200
             
         # Handle multiple hashes (legacy approach)
         hashes = data.get('hashes', [])

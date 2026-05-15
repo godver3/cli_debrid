@@ -9,17 +9,22 @@ function addToRealDebrid(magnetLink, torrent) {
         return;
     }
 
+    const isNzb = (torrent.protocol === 'nzb') || (torrent.nzb_url && !magnetLink);
+    const confirmMsg = isNzb
+        ? 'Submit this NZB to Decypharr (Usenet) for download?'
+        : 'Are you sure you want to add this torrent to your Debrid Provider?';
+
     showPopup({
         type: POPUP_TYPES.CONFIRM,
         title: 'Confirm Action',
-        message: 'Are you sure you want to add this torrent to your Debrid Provider?',
+        message: confirmMsg,
         confirmText: 'Add',
         cancelText: 'Cancel',
         onConfirm: () => {
             showLoadingState();
 
             const formData = new FormData();
-            formData.append('magnet_link', magnetLink);
+            formData.append('magnet_link', magnetLink || '');
             formData.append('title', torrent.title);
             formData.append('year', torrent.year);
             formData.append('media_type', torrent.media_type);
@@ -31,6 +36,10 @@ function addToRealDebrid(magnetLink, torrent) {
             formData.append('original_scraped_torrent_title', torrent.original_title || torrent.title);
             formData.append('current_score', torrent.score_breakdown?.total_score || '0');
             if (_scraperSourceContext) formData.append('source_context', _scraperSourceContext);
+            if (isNzb) {
+                formData.append('protocol', 'nzb');
+                formData.append('nzb_url', torrent.nzb_url || magnetLink || '');
+            }
 
             // Get selected folder from dropdown if it exists (for symlink mode)
             const folderSelect = document.getElementById('torrent-folder-select');
@@ -114,7 +123,7 @@ function addToRealDebrid(magnetLink, torrent) {
                 showPopup({
                     type: POPUP_TYPES.ERROR,
                     title: 'Error',
-                    message: `Error adding to Real-Debrid: ${error.message}`,
+                    message: `Error adding torrent: ${error.message}`,
                 });
             })
         },
@@ -797,6 +806,9 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 // Format bitrate for inline display in mobile
                 const bitrateInline = formatBitrateInline(torrent.bitrate);
                 
+                // NZB results get a usenet badge instead of cache status
+                const isNzbCard = (torrent.protocol === 'nzb') || !!torrent.nzb_url;
+
                 // Badge: cached=green check, not-cached/N/A=red minus, else=gray clock
                 const cacheClass = torrent.cached === 'Yes' ? 'cached' :
                                    torrent.cached === 'No' ? 'not-cached' :
@@ -809,6 +821,8 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 const badgeLabel = torrent.cached === 'Yes' ? 'Cached' :
                                    torrent.cached === 'No' ? 'Uncached' :
                                    torrent.cached === 'N/A' ? 'N/A' : 'Not Checked';
+                // Per-provider cache badges
+                const multiCacheBadge = createCacheProviderBadges(torrent) || '';
                 const scoreSpan = !isFilteredOut && torrent.score_breakdown?.total_score
                     ? `<span class="vdiv"></span><span class="stat s-seeds"><i class="fa-solid fa-arrow-up"></i>&nbsp;${torrent.score_breakdown.total_score}</span>`
                     : '';
@@ -826,7 +840,10 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     ${blockedReason}
                     <div class="card-sources">${torrent.source || 'N/A'}</div>
                     <div class="card-footer">
-                        <span class="cache-status badge ${badgeClass}" data-index="${index}"><i class="fa-solid ${badgeIcon}"></i> ${badgeLabel}</span>
+                        ${isNzbCard
+                            ? `<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via Decypharr">NZB</span>`
+                            : (multiCacheBadge || `<span class="cache-status badge ${badgeClass}" data-index="${index}"><i class="fa-solid ${badgeIcon}"></i> ${badgeLabel}</span>`)
+                        }
                         <div class="assign-magnet-icon" title="Assign Magnet Link">
                             <i class="fa-solid fa-link"></i>
                         </div>
@@ -1190,9 +1207,12 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 const scoreClass = getScoreColorClass(score);
                 const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (score || 'N/A');
                 
-                // Create cache icon
-                const cacheIconHtml = createCacheIcon(cacheStatus);
-                
+                // NZB results show a usenet badge instead of cache status
+                const isNzbResult = (torrent.protocol === 'nzb') || !!torrent.nzb_url;
+                const cacheIconHtml = isNzbResult
+                    ? '<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via Decypharr">NZB</span>'
+                    : (createCacheProviderBadges(torrent) || createCacheIcon(cacheStatus));
+
                 const row = document.createElement('tr');
                 if (isFilteredOut) {
                     row.classList.add('filtered-row');
@@ -1522,7 +1542,10 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     const scoreClass = getScoreColorClass(score);
                     const scoreDisplay = isFilteredOut ? (torrent.filter_reason || 'Filtered') : (score || 'N/A');
 
-                    const cacheIconHtml = createCacheIcon(cacheStatus);
+                    const isNzbResult2 = (torrent.protocol === 'nzb') || !!torrent.nzb_url;
+                    const cacheIconHtml = isNzbResult2
+                        ? '<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via Decypharr">NZB</span>'
+                        : (createCacheProviderBadges(torrent) || createCacheIcon(cacheStatus));
 
                     const row = document.createElement('tr');
                     if (isFilteredOut) {
@@ -4356,14 +4379,19 @@ function checkCacheStatusInBackground(hashes, results) {
     const MAX_PARALLEL_REQUESTS = 1; // Process up to 3 items at once
 
     // Update to handle both magnet links and torrent files
-    function updateCacheStatusUI(index, status) {
+    function updateCacheStatusUI(index, status, cache_providers) {
+        const providerBadgesHtml = cache_providers && Object.keys(cache_providers).length
+            ? createCacheProviderBadges({cache_providers})
+            : null;
+
         // Try new desktop structure first (Tangerine theme)
         const cacheCell = document.querySelector(`.cache-cell[data-torrent-index="${index}"]`);
         if (cacheCell) {
             const wrapper = cacheCell.querySelector('.cache-icon-wrapper');
             if (wrapper) {
-                // Update with new cache icon (Tangerine theme)
-                if (status === 'cached') {
+                if (providerBadgesHtml) {
+                    wrapper.innerHTML = providerBadgesHtml;
+                } else if (status === 'cached') {
                     wrapper.innerHTML = createCacheIcon('Yes');
                 } else if (status === 'not_cached') {
                     wrapper.innerHTML = createCacheIcon('No');
@@ -4374,22 +4402,26 @@ function checkCacheStatusInBackground(hashes, results) {
                 }
             }
         } else {
-            // Fallback to mobile badge structure
+            // Mobile badge structure
             const element = document.querySelector(`.cache-status[data-index="${index}"]`);
             if (element) {
-                element.classList.remove('badge-cached', 'badge-na', 'badge-pending', 'not-checked', 'cached', 'not-cached', 'check-unavailable', 'unknown');
-                if (status === 'cached') {
-                    element.classList.add('cached', 'badge-cached');
-                    element.innerHTML = '<i class="fa-solid fa-check"></i> Cached';
-                } else if (status === 'not_cached') {
-                    element.classList.add('not-cached', 'badge-na');
-                    element.innerHTML = '<i class="fa-solid fa-xmark"></i> Uncached';
-                } else if (status === 'check_unavailable') {
-                    element.classList.add('check-unavailable', 'badge-na');
-                    element.innerHTML = '<i class="fa-solid fa-xmark"></i> N/A';
+                if (providerBadgesHtml) {
+                    element.outerHTML = providerBadgesHtml;
                 } else {
-                    element.classList.add('unknown', 'badge-pending');
-                    element.innerHTML = '<i class="fa-solid fa-clock"></i> Not Checked';
+                    element.classList.remove('badge-cached', 'badge-na', 'badge-pending', 'not-checked', 'cached', 'not-cached', 'check-unavailable', 'unknown');
+                    if (status === 'cached') {
+                        element.classList.add('cached', 'badge-cached');
+                        element.innerHTML = '<i class="fa-solid fa-check"></i> Cached';
+                    } else if (status === 'not_cached') {
+                        element.classList.add('not-cached', 'badge-na');
+                        element.innerHTML = '<i class="fa-solid fa-xmark"></i> Uncached';
+                    } else if (status === 'check_unavailable') {
+                        element.classList.add('check-unavailable', 'badge-na');
+                        element.innerHTML = '<i class="fa-solid fa-xmark"></i> N/A';
+                    } else {
+                        element.classList.add('unknown', 'badge-pending');
+                        element.innerHTML = '<i class="fa-solid fa-clock"></i> Not Checked';
+                    }
                 }
             }
         }
@@ -4507,12 +4539,12 @@ function checkCacheStatusInBackground(hashes, results) {
         })
         .then(data => {
             if (window.DEBUG) console.log(`Cache status for index ${index}:`, data);
-            updateCacheStatusUI(index, data.status);
+            updateCacheStatusUI(index, data.status, data.cache_providers);
             checkCompletion();
         })
         .catch(error => {
             if (window.DEBUG) console.error(`Error checking cache status for index ${index}:`, error);
-            updateCacheStatusUI(index, 'unknown');
+            updateCacheStatusUI(index, 'unknown', null);
             checkCompletion();
         });
     }

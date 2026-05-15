@@ -8,7 +8,7 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Blueprint, render_template, jsonify, request
-from debrid import get_debrid_provider, get_provider_display_name
+from debrid import get_debrid_provider, get_provider_display_name, get_debrid_providers
 from database.torrent_tracking import get_recent_additions
 from .models import admin_required
 
@@ -267,6 +267,11 @@ def index():
     }
     provider_abbrev = _prefix_map.get(provider_name, provider_name[:2].upper())
     decypharr_mode = _get_bad_folder_path() is not None
+    # Build provider list for reinsert target selector
+    try:
+        all_providers = [{'index': i, 'name': p.PROVIDER_NAME} for i, p in enumerate(get_debrid_providers())]
+    except Exception:
+        all_providers = [{'index': 0, 'name': provider_name}]
     return render_template(
         'debrid_manager.html',
         show_plex_trash=show_plex_trash,
@@ -275,6 +280,7 @@ def index():
         media_server_type=media_server,
         debrid_provider_name=provider_name,
         debrid_provider_abbrev=provider_abbrev,
+        debrid_all_providers=all_providers,
     )
 
 
@@ -988,27 +994,57 @@ def api_batch_reinsert():
     if not torrents:
         return jsonify({'success': False, 'error': 'No torrents provided'}), 400
 
-    provider = get_debrid_provider()
+    provider_index = int(data.get('provider_index', 0))
+    try:
+        all_providers = get_debrid_providers()
+        provider = all_providers[provider_index] if provider_index < len(all_providers) else all_providers[0]
+    except Exception:
+        provider = get_debrid_provider()
     results = {'reinserted': [], 'failed': []}
+
+    def _hash_exists_on_provider(h):
+        try:
+            if hasattr(provider, '_find_existing_torrent'):
+                ex = provider._find_existing_torrent(h)
+                return str(ex.get('id', '')) if ex else None
+            elif hasattr(provider, '_find_by_hash'):
+                ex = provider._find_by_hash(h)
+                return str(ex.get('id', '')) if ex else None
+            elif hasattr(provider, 'get_torrents'):
+                for t in (provider.get_torrents() or []):
+                    if (t.get('hash') or '').lower() == h.lower():
+                        return str(t.get('id', ''))
+        except Exception:
+            pass
+        return None
 
     def reinsert_one(t):
         tid = t.get('id', '')
-        h   = t.get('hash', '')
+        h   = t.get('hash', '').lower()
         fn  = t.get('filename', '')
         if not h:
             return tid, 'missing hash'
         try:
             from urllib.parse import quote
+            # Pre-check: skip add if already on target provider
+            existing_id = _hash_exists_on_provider(h)
+            if existing_id:
+                logging.info(f'[Reinsert] Hash already on {provider.PROVIDER_NAME} as {existing_id}, skipping add')
+                return tid, None
             magnet = f'magnet:?xt=urn:btih:{h}'
             if fn:
                 magnet += f'&dn={quote(fn)}'
-            # Add first — only delete old entry if add succeeds and returned a different ID
             new_id = provider.add_torrent(magnet)
+            if new_id is None:
+                # Provider found it already exists (e.g. RD duplicate 404)
+                logging.info(f'[Reinsert] add_torrent returned None (already exists) for hash {h}')
+                return tid, None
             if tid and str(new_id) != str(tid):
                 try:
                     provider.remove_torrent(tid)
                 except Exception:
-                    pass  # new copy added; best-effort cleanup of old
+                    pass
+            time.sleep(0.5)
             return tid, None
         except Exception as e:
             return tid, str(e)
@@ -1037,18 +1073,47 @@ def api_reinsert_torrent(torrent_id):
     if not torrent_hash:
         return jsonify({'success': False, 'error': 'hash required'}), 400
     try:
-        provider = get_debrid_provider()
+        provider_index = int(data.get('provider_index', 0))
+        try:
+            all_providers = get_debrid_providers()
+            provider = all_providers[provider_index] if provider_index < len(all_providers) else all_providers[0]
+        except Exception:
+            provider = get_debrid_provider()
+        from urllib.parse import quote
+        torrent_hash = torrent_hash.lower()
+        # Pre-check: if already on target provider, skip add
+        existing_id = None
+        try:
+            if hasattr(provider, '_find_existing_torrent'):
+                ex = provider._find_existing_torrent(torrent_hash)
+                existing_id = str(ex.get('id', '')) if ex else None
+            elif hasattr(provider, '_find_by_hash'):
+                ex = provider._find_by_hash(torrent_hash)
+                existing_id = str(ex.get('id', '')) if ex else None
+            elif hasattr(provider, 'get_torrents'):
+                for t in (provider.get_torrents() or []):
+                    if (t.get('hash') or '').lower() == torrent_hash:
+                        existing_id = str(t.get('id', ''))
+                        break
+        except Exception:
+            pass
+        if existing_id:
+            logging.info(f'[Reinsert] Hash already on {provider.PROVIDER_NAME} as {existing_id}, skipping add')
+            _invalidate_library_cache()
+            return jsonify({'success': True, 'new_id': existing_id, 'already_existed': True})
         magnet = f'magnet:?xt=urn:btih:{torrent_hash}'
         if filename:
-            from urllib.parse import quote
             magnet += f'&dn={quote(filename)}'
-        # Add first — only delete old entry if add succeeds and returned a different ID
         new_id = provider.add_torrent(magnet)
+        if new_id is None:
+            logging.info(f'[Reinsert] add_torrent returned None (already exists) for {torrent_id}')
+            _invalidate_library_cache()
+            return jsonify({'success': True, 'new_id': torrent_id, 'already_existed': True})
         if str(new_id) != str(torrent_id):
             try:
                 provider.remove_torrent(torrent_id)
             except Exception:
-                pass  # new copy added; best-effort cleanup of old
+                pass
         _invalidate_library_cache()
         return jsonify({'success': True, 'new_id': new_id})
     except Exception as e:
@@ -1295,6 +1360,423 @@ def api_backup_restore():
     except Exception as e:
         logging.error(f'Restore error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+_xp_restore_state = {
+    'status': 'idle',   # idle | running | done | error
+    'current': 0,
+    'total': 0,
+    'current_name': '',
+    'result': None,
+    'error': None,
+    'started_at': 0,
+}
+_xp_restore_lock = threading.Lock()
+_XP_RESTORE_STALE_AFTER = 1800  # 30 minutes
+
+
+@debrid_manager_bp.route('/api/backup/restore-to-provider', methods=['POST'])
+@admin_required
+def api_backup_restore_to_provider():
+    data = request.get_json(silent=True) or {}
+    filename     = data.get('filename', '')
+    provider_id  = data.get('provider_id', '')
+    api_key      = data.get('api_key', '')
+    dry_run      = bool(data.get('dry_run', False))
+    cached_only  = bool(data.get('cached_only', False))
+    if not filename:
+        return jsonify({'success': False, 'error': 'filename required'}), 400
+    if not provider_id:
+        return jsonify({'success': False, 'error': 'provider_id required'}), 400
+    if not api_key:
+        return jsonify({'success': False, 'error': 'api_key required'}), 400
+
+    with _xp_restore_lock:
+        if _xp_restore_state['status'] == 'running':
+            age = time.time() - _xp_restore_state.get('started_at', 0)
+            if age < _XP_RESTORE_STALE_AFTER:
+                return jsonify({'success': False, 'error': 'A restore is already in progress'}), 409
+            logging.warning(f'[XPRestore] Stale running state ({age:.0f}s), resetting')
+        _xp_restore_state.update({'status': 'running', 'current': 0, 'total': 0,
+                                   'current_name': '', 'result': None, 'error': None,
+                                   'started_at': time.time()})
+
+    def _run():
+        try:
+            from utilities.debrid_backup import restore_from_file_to_provider
+            logging.info(f'[XPRestore] Starting: {filename} -> {provider_id}, dry_run={dry_run}, cached_only={cached_only}')
+            result = restore_from_file_to_provider(
+                filename, provider_id, api_key,
+                dry_run=dry_run, cached_only=cached_only,
+                progress_cb=_xp_progress_cb,
+            )
+            logging.info(f'[XPRestore] Done: {result}')
+            with _xp_restore_lock:
+                _xp_restore_state.update({'status': 'done', 'result': result,
+                                           'current_name': '', 'error': None})
+        except Exception as e:
+            logging.error(f'[XPRestore] Error: {e}', exc_info=True)
+            with _xp_restore_lock:
+                _xp_restore_state.update({'status': 'error', 'error': str(e), 'result': None})
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'success': True, 'status': 'started'})
+
+
+def _xp_progress_cb(current, total, name):
+    with _xp_restore_lock:
+        _xp_restore_state.update({'current': current, 'total': total, 'current_name': name})
+
+
+@debrid_manager_bp.route('/api/backup/restore-to-provider/progress')
+@admin_required
+def api_backup_restore_to_provider_progress():
+    with _xp_restore_lock:
+        s = dict(_xp_restore_state)
+    return jsonify(s)
+
+
+@debrid_manager_bp.route('/api/backup/restore-to-provider/reset', methods=['POST'])
+@admin_required
+def api_backup_restore_to_provider_reset():
+    with _xp_restore_lock:
+        _xp_restore_state.update({'status': 'idle', 'current': 0, 'total': 0,
+                                   'current_name': '', 'result': None, 'error': None, 'started_at': 0})
+    return jsonify({'success': True})
+
+
+# ── Migrate to Usenet ────────────────────────────────────────────────────────
+
+_usenet_migrate_state = {
+    'status': 'idle',   # idle | running | done | error | stopped
+    'current': 0, 'total': 0, 'current_name': '',
+    'submitted': 0, 'not_found': 0, 'failed': 0, 'skipped': 0,
+    'error': None, 'started_at': 0,
+    'stop_requested': False,
+}
+_usenet_migrate_lock = threading.Lock()
+_USENET_MIGRATE_STALE_AFTER = 3600
+
+
+@debrid_manager_bp.route('/api/usenet/migrate', methods=['POST'])
+@admin_required
+def api_usenet_migrate():
+    data = request.get_json(silent=True) or {}
+    filename = data.get('filename', '')
+    if not filename:
+        return jsonify({'success': False, 'error': 'filename required'}), 400
+
+    with _usenet_migrate_lock:
+        if _usenet_migrate_state['status'] == 'running' or _usenet_migrate_state.get('stop_requested'):
+            age = time.time() - _usenet_migrate_state.get('started_at', 0)
+            if age < _USENET_MIGRATE_STALE_AFTER:
+                return jsonify({'success': False, 'error': 'Migration already in progress'}), 409
+        _usenet_migrate_state.update({
+            'status': 'running', 'current': 0, 'total': 0, 'current_name': '',
+            'submitted': 0, 'not_found': 0, 'failed': 0, 'skipped': 0,
+            'error': None, 'started_at': time.time(),
+        })
+
+    def _run():
+        try:
+            from utilities.debrid_backup import get_backup_dir
+            from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
+            from scraper.newznab import scrape_newznab_instance
+            from utilities.settings import get_setting
+            import json as _json
+            import os as _os
+
+            path = _os.path.join(get_backup_dir(), filename)
+            submitted_path = path + '.migrated'
+            if not _os.path.exists(path):
+                raise FileNotFoundError(f'Backup file not found: {filename}')
+
+            with open(path, encoding='utf-8') as f:
+                backup = _json.load(f)
+            if not isinstance(backup, list):
+                raise ValueError('Invalid backup format')
+
+            # Load all enabled Newznab scrapers
+            all_scrapers = get_setting('Scrapers') or {}
+            newznab_scrapers = [
+                (sid, cfg) for sid, cfg in all_scrapers.items()
+                if isinstance(cfg, dict) and cfg.get('type') == 'Newznab'
+                and cfg.get('enabled') and cfg.get('url') and cfg.get('api_key', '').strip()
+            ]
+            if not newznab_scrapers:
+                raise ValueError('No enabled Newznab scrapers configured')
+
+            reset_decypharr_client()
+            client = get_decypharr_client()
+            if not client.is_enabled():
+                raise ValueError('Usenet provider (Decypharr) is not enabled')
+
+            # Fetch existing NZBs from Decypharr to skip already-submitted items
+            # Normalize names for fuzzy matching: lowercase, strip punctuation/dots/underscores
+            import re as _re_dedup
+            def _norm(s):
+                return _re_dedup.sub(r'[^a-z0-9 ]', ' ', s.lower().replace('.', ' ').replace('_', ' ')).split()
+
+            # Load persisted submitted set (survives restarts)
+            already_submitted = set()
+            try:
+                with open(submitted_path, encoding='utf-8') as _sf:
+                    for _line in _sf:
+                        _line = _line.strip()
+                        if _line:
+                            already_submitted.add(_line)
+                logging.info(f'[UsenetMigrate] Loaded {len(already_submitted)} previously submitted items from {submitted_path}')
+            except FileNotFoundError:
+                pass
+            except Exception as _le:
+                logging.warning(f'[UsenetMigrate] Could not load submitted file: {_le}')
+
+            # Load all current Decypharr NZBs (paginated) to skip already-submitted items
+            from routes.api_tracker import api as _api_dc
+            try:
+                _queue_count = 0
+                _page = 1
+                while True:
+                    _r = _api_dc.get(f'{client.base_url}/api/browse/nzbs', headers=client._headers(), timeout=15, params={'page': _page})
+                    if _r.status_code != 200:
+                        break
+                    _data = _r.json()
+                    _entries = _data.get('entries', _data) if isinstance(_data, dict) else _data
+                    if not _entries:
+                        break
+                    for _n in _entries:
+                        _nname = _n.get('name') or _n.get('title') or _n.get('filename') or ''
+                        if _nname:
+                            already_submitted.add(' '.join(_norm(_nname)))
+                            _queue_count += 1
+                    _total_pages = _data.get('total_pages', 1) if isinstance(_data, dict) else 1
+                    if _page >= _total_pages:
+                        break
+                    _page += 1
+                logging.info(f'[UsenetMigrate] Loaded {_queue_count} NZBs from Decypharr queue across {_page} pages')
+            except Exception as _de:
+                logging.warning(f'[UsenetMigrate] Could not fetch Decypharr queue: {_de}')
+
+            total = len(backup)
+            submitted = not_found = failed = skipped = 0
+            failed_items = []
+            not_found_items = []
+            if backup:
+                _sname = backup[0].get('name', '') or backup[0].get('filename', '')
+                logging.info(f'[UsenetMigrate] Sample backup name: {_sname!r} -> normalized: {" ".join(_norm(_sname))!r}')
+
+            with _usenet_migrate_lock:
+                _usenet_migrate_state['total'] = total
+
+            for idx, torrent in enumerate(backup, 1):
+                with _usenet_migrate_lock:
+                    if _usenet_migrate_state.get('stop_requested'):
+                        _usenet_migrate_state.update({'status': 'stopped', 'stop_requested': False})
+                        logging.info(f'[UsenetMigrate] Stopped by user at {idx}/{total}')
+                        return
+
+                name = torrent.get('name', '') or torrent.get('filename', '')
+                hash_val = (torrent.get('hash') or '').lower()
+
+                with _usenet_migrate_lock:
+                    _usenet_migrate_state.update({'current': idx, 'current_name': name or hash_val})
+
+                if not name and not hash_val:
+                    not_found += 1
+                    continue
+
+                dedup_key = ' '.join(_norm(name)) if name else hash_val
+                if dedup_key in already_submitted:
+                    logging.debug(f'[UsenetMigrate] Skipping already submitted: {name or hash_val}')
+                    skipped += 1
+                    continue
+
+                nzb_url = None
+
+                # Strategy 1: search by hash (most precise)
+                if hash_val:
+                    for sid, cfg in newznab_scrapers:
+                        try:
+                            params = {'apikey': cfg['api_key'].strip(), 't': 'search', 'q': hash_val, 'limit': 5}
+                            from routes.api_tracker import api as _api
+                            r = _api.get(f"{cfg['url'].rstrip('/')}/api", params=params, timeout=15)
+                            if r.status_code == 200:
+                                from scraper.newznab import _parse_newznab_xml
+                                results = _parse_newznab_xml(r.text, sid)
+                                if results:
+                                    nzb_url = results[0].get('nzb_url')
+                                    if nzb_url:
+                                        break
+                        except Exception:
+                            continue
+
+                # Strategy 2: tiered name search — most specific first, broaden on no results
+                if not nzb_url and name:
+                    import re as _re
+                    try:
+                        from PTT import parse_title as _ptt
+                        _base = _re.sub(r'\.(mkv|mp4|avi|nzb)$', '', name, flags=_re.IGNORECASE)
+                        _parsed = _ptt(_base)
+                        _title   = _parsed.get('title', '') or ''
+                        _seasons = _parsed.get('seasons', [])
+                        _episodes = _parsed.get('episodes', [])
+                        _res     = _parsed.get('resolution', '')   # e.g. '2160p'
+                        _group   = _parsed.get('group', '')        # e.g. 'GRACE'
+                        _hdr_list = _parsed.get('hdr', [])         # e.g. ['DV', 'HDR10']
+                        _hdr     = ' '.join(_hdr_list) if _hdr_list else ''  # e.g. 'DV'
+                        _sep = f"S{_seasons[0]:02d}E{_episodes[0]:02d}" if _seasons and _episodes \
+                              else (f"S{_seasons[0]:02d}" if _seasons else '')
+                        _year    = _parsed.get('year')
+
+                        # Build tiered queries: most specific → least specific
+                        # Q1: title + episode + resolution + HDR + group  (exact match)
+                        # Q2: title + episode + resolution + HDR           (any group)
+                        # Q3: title + episode + resolution                 (any HDR/group)
+                        # Q4: title + episode                              (last resort)
+                        queries = []
+                        if _title and _sep:
+                            _q_base = f"{_title} {_sep}"
+                            if _res and _hdr and _group:
+                                queries.append(f"{_q_base} {_res} {_hdr} {_group}")
+                            if _res and _hdr:
+                                queries.append(f"{_q_base} {_res} {_hdr}")
+                            if _res:
+                                queries.append(f"{_q_base} {_res}")
+                            queries.append(_q_base)
+                        if not queries:
+                            # movie or no episode info
+                            if _title and _year and _res and _hdr:
+                                queries.append(f"{_title} {_year} {_res} {_hdr}")
+                            if _title and _year and _res:
+                                queries.append(f"{_title} {_year} {_res}")
+                            if _title and _year:
+                                queries.append(f"{_title} {_year}")
+                            if _title:
+                                queries.append(_title)
+                        if not queries:
+                            queries = [_re.sub(r'[\s._-]+', ' ', _base).strip()]
+                    except Exception:
+                        queries = [_re.sub(r'[\s._-]+', ' ', _re.sub(r'\.(mkv|mp4|avi|nzb)$', '', name, flags=_re.IGNORECASE)).strip()]
+
+                    from routes.api_tracker import api as _api
+                    from scraper.newznab import _parse_newznab_xml
+                    for query in queries:
+                        if nzb_url:
+                            break
+                        logging.debug(f'[UsenetMigrate] Name search: {query!r}')
+                        for sid, cfg in newznab_scrapers:
+                            try:
+                                params = {'apikey': cfg['api_key'].strip(), 't': 'search', 'q': query, 'limit': 10}
+                                r = _api.get(f"{cfg['url'].rstrip('/')}/api", params=params, timeout=15)
+                                if r.status_code == 200:
+                                    results = _parse_newznab_xml(r.text, sid)
+                                    if results:
+                                        nzb_url = results[0].get('nzb_url')
+                                        if nzb_url:
+                                            logging.debug(f'[UsenetMigrate] Matched with query {query!r} on {sid}')
+                                            break
+                            except Exception:
+                                continue
+
+                if not nzb_url:
+                    logging.info(f'[UsenetMigrate] Not found on usenet: {name or hash_val}')
+                    not_found_items.append(torrent)
+                    not_found += 1
+                else:
+                    logging.debug(f'[UsenetMigrate] Found NZB for {name!r}: {nzb_url}')
+                    # Fetch and validate NZB content, then upload directly to avoid double-fetch
+                    try:
+                        from routes.api_tracker import api as _api2
+                        _nzb_r = _api2.get(nzb_url, timeout=15)
+                        _nzb_text = _nzb_r.text if _nzb_r.status_code == 200 else ''
+                        if not _nzb_text or '<nzb' not in _nzb_text.lower():
+                            logging.warning(f'[UsenetMigrate] NZB URL returned invalid content for {name!r} (status={_nzb_r.status_code}, preview={_nzb_text[:100]})')
+                            not_found_items.append(torrent)
+                            not_found += 1
+                            continue
+                    except Exception as _ve:
+                        logging.warning(f'[UsenetMigrate] Could not fetch NZB for {name!r}: {_ve}')
+                        failed_items.append(torrent)
+                        failed += 1
+                        continue
+
+                    job_id = client.add_nzb_content(nzb_content=_nzb_text, title=name or hash_val)
+                    if job_id:
+                        logging.info(f'[UsenetMigrate] Submitted: {name} -> job {job_id}')
+                        already_submitted.add(dedup_key)
+                        try:
+                            with open(submitted_path, 'a', encoding='utf-8') as _sf:
+                                _sf.write(dedup_key + '\n')
+                        except Exception as _we:
+                            logging.warning(f'[UsenetMigrate] Could not persist submitted key: {_we}')
+                        submitted += 1
+                    else:
+                        logging.warning(f'[UsenetMigrate] Decypharr rejected NZB for: {name} url={nzb_url}')
+                        failed_items.append(torrent)
+                        failed += 1
+
+                with _usenet_migrate_lock:
+                    _usenet_migrate_state.update({'submitted': submitted, 'not_found': not_found, 'failed': failed, 'skipped': skipped})
+
+                time.sleep(0.3)  # avoid hammering indexers
+
+            # Save not-found and failed items as reusable backup files
+            base = path.replace('.json', '')
+            if not_found_items:
+                _nf_path = f'{base}_usenet_not_found.json'
+                try:
+                    with open(_nf_path, 'w', encoding='utf-8') as _f:
+                        _json.dump(not_found_items, _f, indent=2)
+                    logging.info(f'[UsenetMigrate] Saved {len(not_found_items)} not-found items to {_nf_path}')
+                except Exception as _e:
+                    logging.warning(f'[UsenetMigrate] Could not save not-found file: {_e}')
+            if failed_items:
+                _fail_path = f'{base}_usenet_failed.json'
+                try:
+                    with open(_fail_path, 'w', encoding='utf-8') as _f:
+                        _json.dump(failed_items, _f, indent=2)
+                    logging.info(f'[UsenetMigrate] Saved {len(failed_items)} failed items to {_fail_path}')
+                except Exception as _e:
+                    logging.warning(f'[UsenetMigrate] Could not save failed file: {_e}')
+
+            with _usenet_migrate_lock:
+                _usenet_migrate_state.update({
+                    'status': 'done', 'current_name': '',
+                    'submitted': submitted, 'not_found': not_found, 'failed': failed, 'skipped': skipped,
+                })
+            logging.info(f'[UsenetMigrate] Complete: submitted={submitted} skipped={skipped} not_found={not_found} failed={failed}')
+
+        except Exception as e:
+            logging.error(f'[UsenetMigrate] Error: {e}', exc_info=True)
+            with _usenet_migrate_lock:
+                _usenet_migrate_state.update({'status': 'error', 'error': str(e)})
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'success': True, 'status': 'started'})
+
+
+@debrid_manager_bp.route('/api/usenet/migrate/progress')
+@admin_required
+def api_usenet_migrate_progress():
+    with _usenet_migrate_lock:
+        return jsonify(dict(_usenet_migrate_state))
+
+
+@debrid_manager_bp.route('/api/usenet/migrate/reset', methods=['POST'])
+@admin_required
+def api_usenet_migrate_reset():
+    with _usenet_migrate_lock:
+        if _usenet_migrate_state['status'] == 'running':
+            # Signal thread to stop — keep status as 'running' until thread acknowledges
+            _usenet_migrate_state['stop_requested'] = True
+        else:
+            # Not running, safe to reset immediately
+            _usenet_migrate_state.update({
+                'status': 'idle', 'current': 0, 'total': 0, 'current_name': '',
+                'submitted': 0, 'not_found': 0, 'failed': 0, 'skipped': 0,
+                'error': None, 'started_at': 0, 'stop_requested': False,
+            })
+    return jsonify({'success': True})
 
 
 # ---------------------------------------------------------------------------
@@ -3371,10 +3853,6 @@ def _find_first_video(folder_path):
 
 
 def _run_bad_torrent_audit_bg(bad_folder, resume_data=None):
-    """Background thread: probe each __bad__ entry and classify broken vs stale.
-
-    resume_data: previously persisted data dict to carry forward already-scanned entries.
-    """
     try:
         entries = sorted(os.listdir(bad_folder))
         total = len(entries)
@@ -3588,6 +4066,290 @@ def api_bad_torrent_audit_stop():
     return jsonify({'success': True, 'message': 'Stop requested'})
 
 
+# ---------------------------------------------------------------------------
+# All-folder audit (__all__) — same ffprobe logic, different folder + state
+# ---------------------------------------------------------------------------
+
+_all_torrent_audit_state = {
+    'status': 'idle',
+    'data':   None,
+    'error':  None,
+    'ts':     0,
+    'lock':   threading.Lock(),
+    'progress': 0,
+    'progress_msg': '',
+    'stop_requested': False,
+}
+
+_ATA_PERSIST_FILE = os.path.join(
+    os.environ.get('USER_DB_CONTENT', '/user/db_content'),
+    'all_torrent_audit_results.json',
+)
+
+
+def _ata_load_persisted():
+    try:
+        with open(_ATA_PERSIST_FILE, 'r') as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _ata_save_persisted(data):
+    try:
+        os.makedirs(os.path.dirname(_ATA_PERSIST_FILE), exist_ok=True)
+        with open(_ATA_PERSIST_FILE, 'w') as f:
+            json.dump(data, f)
+    except Exception as e:
+        logging.warning(f"[AllTorrentAudit] Could not persist results: {e}")
+
+
+def _get_all_folder_path():
+    """Derive the __all__ folder path from the same mount setting as __bad__."""
+    from utilities.settings import get_setting
+    mount = (get_setting('Plex', 'mounted_file_location', '') or
+             get_setting('File Management', 'original_files_path', ''))
+    if not mount:
+        return None
+    _KNOWN_SUFFIXES = ('/__all__', '/shows', '/movies', '/default', '/realdebrid')
+    debrid_root = mount.rstrip('/')
+    for suffix in _KNOWN_SUFFIXES:
+        if debrid_root.endswith(suffix):
+            debrid_root = debrid_root[:-len(suffix)]
+            break
+    return os.path.join(debrid_root, '__all__')
+
+
+def _fetch_all_entries_from_decypharr(all_folder):
+    """Fetch __all__ entry names from decypharr API (avoids blocking os.listdir on FUSE).
+    Falls back to os.listdir if decypharr URL not configured.
+    Returns list of entry names (folder names inside __all__).
+    """
+    import requests as _req
+    from utilities.settings import get_setting
+    url = get_setting('Decypharr', 'url', default='').strip().rstrip('/')
+    if not url:
+        logging.info('[AllTorrentAudit] No decypharr URL — falling back to os.listdir')
+        return sorted(os.listdir(all_folder))
+    all_entries = []
+    page = 1
+    while True:
+        try:
+            r = _req.get(f'{url}/api/browse/__all__?page={page}', timeout=15)
+            r.raise_for_status()
+            data = r.json()
+            page_entries = data.get('entries', [])
+            if not page_entries:
+                break
+            all_entries.extend(e['name'] for e in page_entries if e.get('name'))
+            total_pages = data.get('total_pages', 1)
+            logging.info(f'[AllTorrentAudit] Decypharr page {page}/{total_pages}: {len(page_entries)} entries')
+            if page >= total_pages:
+                break
+            page += 1
+        except Exception as e:
+            logging.warning(f'[AllTorrentAudit] Decypharr API error on page {page}: {e} — falling back to os.listdir')
+            return sorted(os.listdir(all_folder))
+    return sorted(all_entries)
+
+
+def _run_all_torrent_audit_bg(all_folder, resume_data=None, touch_only=False, ffprobe_timeout=0.5):
+    """Background thread: probe each __all__ entry via FUSE mount to trigger decypharr's repair check."""
+    try:
+        with _all_torrent_audit_state['lock']:
+            _all_torrent_audit_state['progress_msg'] = 'Fetching entry list from decypharr…'
+        entries = _fetch_all_entries_from_decypharr(all_folder)
+        total = len(entries)
+        logging.info(f"[AllTorrentAudit] Got {total} entries, starting ffprobe scan")
+
+        already = {}
+        if resume_data:
+            for r in (resume_data.get('results') or []):
+                already[r['name']] = r
+
+        results = list(already.values())
+        broken_count  = sum(1 for r in results if r['status'] == 'broken')
+        stale_count   = sum(1 for r in results if r['status'] == 'stale')
+        unknown_count = sum(1 for r in results if r['status'] not in ('broken', 'stale'))
+
+        pending = [n for n in entries if n not in already]
+        pending_total = len(pending)
+
+        for i, name in enumerate(pending):
+            should_stop = False
+            with _all_torrent_audit_state['lock']:
+                if _all_torrent_audit_state['stop_requested']:
+                    ts_now = time.time()
+                    stop_data = {
+                        'results': results,
+                        'stats': {'total': len(results), 'broken': broken_count,
+                                  'stale': stale_count, 'unknown': unknown_count},
+                        'all_folder': all_folder,
+                        'scanned_at': ts_now,
+                        'partial': True,
+                    }
+                    _all_torrent_audit_state['status'] = 'stopped'
+                    _all_torrent_audit_state['data'] = stop_data
+                    _all_torrent_audit_state['error'] = None
+                    _all_torrent_audit_state['ts'] = ts_now
+                    _all_torrent_audit_state['progress'] = int((i / max(pending_total, 1)) * 100)
+                    _all_torrent_audit_state['progress_msg'] = ''
+                    _all_torrent_audit_state['stop_requested'] = False
+                    should_stop = True
+            if should_stop:
+                _ata_save_persisted(stop_data)
+                logging.info(f"[AllTorrentAudit] Scan stopped at {i}/{pending_total}")
+                return
+
+            entry_path = os.path.join(all_folder, name)
+            scanned_so_far = len(already) + i + 1
+            pct = int((scanned_so_far / max(total, 1)) * 100)
+            with _all_torrent_audit_state['lock']:
+                _all_torrent_audit_state['progress'] = pct
+                _all_torrent_audit_state['progress_msg'] = f'Touching {scanned_so_far}/{total}: {name[:60]}' if touch_only else f'Checking {scanned_so_far}/{total}: {name[:60]}'
+
+            # Persist every 100 items so resume works after restart
+            if scanned_so_far % 100 == 0:
+                _ata_save_persisted({
+                    'results': results,
+                    'stats': {'total': len(results), 'broken': broken_count,
+                              'stale': stale_count, 'unknown': unknown_count},
+                    'all_folder': all_folder,
+                    'scanned_at': time.time(),
+                    'partial': True,
+                })
+
+            if touch_only:
+                # Just stat the entry to trigger decypharr's file check — no ffprobe
+                try:
+                    os.stat(entry_path)
+                except Exception:
+                    pass
+                stale_count += 1  # count as touched
+                results.append({'name': name, 'folder': entry_path, 'video_file': None,
+                                 'status': 'touched', 'detail': 'touched', 'probe_time': None})
+                continue
+
+            # Decypharr names the folder same as the video file inside it —
+            # construct the path directly to avoid os.scandir on the FUSE mount
+            _, ext = os.path.splitext(name)
+            if ext.lower() in _VIDEO_EXTS:
+                video_path = os.path.join(entry_path, name)
+            else:
+                # Season pack — need to find the video file
+                video_path = _find_first_video(entry_path)
+
+            if not video_path:
+                results.append({'name': name, 'folder': entry_path, 'video_file': None,
+                                 'status': 'unknown', 'detail': 'no video file found', 'probe_time': None})
+                unknown_count += 1
+                continue
+
+            status, detail = _ffprobe_check(video_path, timeout=ffprobe_timeout)
+            if status == 'ok':
+                stale_count += 1
+            elif status == 'broken':
+                broken_count += 1
+            else:
+                unknown_count += 1
+
+            results.append({'name': name, 'folder': entry_path,
+                             'video_file': os.path.relpath(video_path, entry_path),
+                             'status': status, 'detail': detail,
+                             'probe_time': detail if status == 'ok' else None})
+
+        ts_now = time.time()
+        data = {
+            'results': results,
+            'stats': {'total': len(results), 'broken': broken_count,
+                      'stale': stale_count, 'unknown': unknown_count},
+            'all_folder': all_folder,
+            'scanned_at': ts_now,
+            'partial': False,
+        }
+        _ata_save_persisted(data)
+        with _all_torrent_audit_state['lock']:
+            _all_torrent_audit_state['status'] = 'done'
+            _all_torrent_audit_state['data'] = data
+            _all_torrent_audit_state['error'] = None
+            _all_torrent_audit_state['ts'] = ts_now
+            _all_torrent_audit_state['progress'] = 100
+            _all_torrent_audit_state['progress_msg'] = ''
+        logging.info(f"[AllTorrentAudit] Scan complete: {broken_count} broken, {stale_count} stale, {unknown_count} unknown")
+
+    except Exception as exc:
+        logging.error(f"[AllTorrentAudit] Scan error: {exc}", exc_info=True)
+        with _all_torrent_audit_state['lock']:
+            _all_torrent_audit_state['status'] = 'error'
+            _all_torrent_audit_state['error'] = str(exc)
+            _all_torrent_audit_state['progress'] = 0
+
+
+@debrid_manager_bp.route('/api/all_torrent_audit')
+@admin_required
+def api_all_torrent_audit():
+    with _all_torrent_audit_state['lock']:
+        status = _all_torrent_audit_state['status']
+        data   = _all_torrent_audit_state['data']
+        err    = _all_torrent_audit_state['error']
+        pct    = _all_torrent_audit_state['progress']
+        msg    = _all_torrent_audit_state['progress_msg']
+
+    if status == 'idle' and data is None:
+        persisted = _ata_load_persisted()
+        if persisted:
+            with _all_torrent_audit_state['lock']:
+                _all_torrent_audit_state['data'] = persisted
+                _all_torrent_audit_state['status'] = 'stopped' if persisted.get('partial') else 'done'
+            status = _all_torrent_audit_state['status']
+            data   = persisted
+
+    return jsonify({'success': True, 'status': status, 'data': data,
+                    'error': err, 'progress': pct, 'progress_msg': msg})
+
+
+@debrid_manager_bp.route('/api/all_torrent_audit/scan', methods=['POST'])
+@admin_required
+def api_all_torrent_audit_scan():
+    req   = request.get_json(silent=True) or {}
+    fresh = req.get('fresh', False)
+
+    with _all_torrent_audit_state['lock']:
+        if _all_torrent_audit_state['status'] == 'scanning':
+            return jsonify({'success': True, 'status': 'scanning', 'message': 'Scan already in progress'})
+        _all_torrent_audit_state['status'] = 'scanning'
+        _all_torrent_audit_state['error'] = None
+        _all_torrent_audit_state['progress'] = 0
+        _all_torrent_audit_state['stop_requested'] = False
+        _all_torrent_audit_state['progress_msg'] = 'Starting…'
+
+    def _run():
+        all_folder = _get_all_folder_path()
+        if not all_folder or not os.path.isdir(all_folder):
+            with _all_torrent_audit_state['lock']:
+                _all_torrent_audit_state['status'] = 'error'
+                _all_torrent_audit_state['error'] = f'__all__ folder not found: {all_folder}'
+            return
+        resume_data = None
+        if not fresh:
+            resume_data = _ata_load_persisted()
+        logging.info(f"[AllTorrentAudit] Scan started: {all_folder} (fresh={fresh})")
+        _run_all_torrent_audit_bg(all_folder, resume_data)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'success': True, 'status': 'scanning', 'resumed': not fresh})
+
+
+@debrid_manager_bp.route('/api/all_torrent_audit/stop', methods=['POST'])
+@admin_required
+def api_all_torrent_audit_stop():
+    with _all_torrent_audit_state['lock']:
+        if _all_torrent_audit_state['status'] != 'scanning':
+            return jsonify({'success': False, 'error': 'No scan in progress'})
+        _all_torrent_audit_state['stop_requested'] = True
+    return jsonify({'success': True})
+
+
 @debrid_manager_bp.route('/api/bad_torrent_audit/delete', methods=['POST'])
 @admin_required
 def api_bad_torrent_audit_delete():
@@ -3669,6 +4431,280 @@ def api_bad_torrent_audit_delete():
         'deleted_rd': len(deleted),
         'failed_rd': len(failed),
         'no_rd_id': 0,
+        'errors': [f['error'] for f in failed[:10]],
+        'first_error': failed[0]['error'] if failed else None,
+    })
+
+
+@debrid_manager_bp.route('/api/decypharr/settings', methods=['GET'])
+@admin_required
+def api_decypharr_settings_get():
+    from utilities.settings import get_setting
+    url = get_setting('Decypharr', 'url', default='')
+    return jsonify({'success': True, 'url': url})
+
+
+@debrid_manager_bp.route('/api/decypharr/settings', methods=['POST'])
+@admin_required
+def api_decypharr_settings_save():
+    from utilities.settings import set_setting
+    req = request.get_json(silent=True) or {}
+    url = (req.get('url') or '').strip().rstrip('/')
+    set_setting('Decypharr', 'url', url)
+    return jsonify({'success': True})
+
+
+@debrid_manager_bp.route('/api/decypharr/test', methods=['POST'])
+@admin_required
+def api_decypharr_test():
+    import requests as _requests
+    from utilities.settings import get_setting
+    req = request.get_json(silent=True) or {}
+    url = (req.get('url') or '').strip().rstrip('/') or get_setting('Decypharr', 'url', default='')
+    if not url:
+        return jsonify({'success': False, 'error': 'No URL configured'})
+    try:
+        r = _requests.get(f'{url}/api/browse/__bad__', timeout=8)
+        r.raise_for_status()
+        data = r.json()
+        total = data.get('total') if isinstance(data, dict) else None
+        entries = data if isinstance(data, list) else data.get('entries', [])
+        return jsonify({'success': True, 'count': total if total is not None else len(entries)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+def _get_decypharr_hash_map(names):
+    """Fetch hashes for the given folder names from decypharr's /api/browse/ endpoint.
+
+    Returns a dict of name -> info_hash (only entries with non-empty hashes).
+    Falls back to empty dict if decypharr URL is not configured or request fails.
+    """
+    import requests as _requests
+    from utilities.settings import get_setting
+    url = get_setting('Decypharr', 'url', default='').strip().rstrip('/')
+    logging.debug(f'[BadTorrentAudit] decypharr url from settings: {url!r}')
+    if not url:
+        logging.debug('[BadTorrentAudit] No decypharr URL configured, skipping hash lookup')
+        return {}
+    try:
+        # Fetch all pages — decypharr uses 1-based ?page= pagination with a fixed limit of 50
+        all_entries = []
+        page = 1
+        while True:
+            api_url = f'{url}/api/browse/__bad__?page={page}'
+            logging.info(f'[BadTorrentAudit] Fetching decypharr page {page}: {api_url}')
+            r = _requests.get(api_url, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+            page_entries = data if isinstance(data, list) else data.get('entries', [])
+            if not page_entries:
+                break
+            all_entries.extend(page_entries)
+            total_pages = data.get('total_pages', 1) if isinstance(data, dict) else 1
+            logging.info(f'[BadTorrentAudit] decypharr page {page}/{total_pages}: got {len(page_entries)} entries (total so far: {len(all_entries)})')
+            if page == 1:
+                for e in page_entries[:3]:
+                    logging.info(f'[BadTorrentAudit] sample entry: keys={list(e.keys())} name={e.get("name")!r} info_hash={e.get("info_hash")!r}')
+            if page >= total_pages:
+                break
+            page += 1
+
+        logging.info(f'[BadTorrentAudit] decypharr total entries fetched: {len(all_entries)}')
+        name_set = set(names)
+        result = {}
+        for entry in all_entries:
+            n = entry.get('name', '')
+            h = entry.get('info_hash', '')
+            if n in name_set and h:
+                result[n] = h
+        logging.info(f'[BadTorrentAudit] decypharr hash lookup: {len(result)}/{len(names)} matched')
+        return result
+    except Exception as e:
+        logging.warning(f'[BadTorrentAudit] Could not fetch decypharr hashes: {e}')
+        return {}
+
+
+@debrid_manager_bp.route('/api/bad_torrent_audit/reinsert', methods=['POST'])
+@admin_required
+def api_bad_torrent_audit_reinsert():
+    """Re-insert broken torrents back to the debrid service.
+
+    Prefers hashes from decypharr's /api/browse/ endpoint (if URL configured).
+    Falls back to matching against the RD torrent library by normalised filename.
+    """
+    req = request.get_json(silent=True) or {}
+    names = req.get('names', [])
+    provider_index = int(req.get('provider_index', 0))
+    logging.info(f'[BadTorrentAudit] Reinsert request: {names} provider_index={provider_index}')
+    if not names or not isinstance(names, list):
+        return jsonify({'success': False, 'error': 'names list required'}), 400
+
+    # --- Primary: decypharr hash lookup ---
+    dcyp_hashes = _get_decypharr_hash_map(names)
+    logging.info(f'[BadTorrentAudit] Reinsert: decypharr resolved {len(dcyp_hashes)}/{len(names)} hashes')
+
+    import re as _re
+    def _norm(s):
+        return _re.sub(r'[\s\-_.]+', ' ', str(s)).strip().lower()
+
+    # --- Fallback: library name matching ---
+    missing = [n for n in names if n not in dcyp_hashes]
+    logging.info(f'[BadTorrentAudit] Reinsert: {len(missing)} names need library fallback: {missing}')
+    rd_map = {}
+    try:
+        all_providers = get_debrid_providers()
+        provider = all_providers[provider_index] if provider_index < len(all_providers) else all_providers[0]
+        logging.debug(f'[BadTorrentAudit] Got debrid provider: {type(provider).__name__}')
+    except Exception as e:
+        logging.error(f'[BadTorrentAudit] Failed to get debrid provider: {e}')
+        return jsonify({'success': False, 'error': f'Failed to connect to debrid provider: {e}'}), 500
+
+    if missing:
+        try:
+            rd_torrents = provider.get_torrents()
+            logging.debug(f'[BadTorrentAudit] RD library has {len(rd_torrents) if rd_torrents else 0} torrents')
+        except Exception as e:
+            logging.warning(f'[BadTorrentAudit] Could not fetch RD torrents for fallback: {e}')
+            rd_torrents = []
+        for t in (rd_torrents or []):
+            fn = t.get('filename', '') or t.get('name', '')
+            if fn:
+                rd_map[_norm(fn)] = {
+                    'id': t.get('id', ''),
+                    'hash': t.get('hash', ''),
+                    'filename': fn,
+                }
+        logging.debug(f'[BadTorrentAudit] RD map built with {len(rd_map)} entries')
+        for name in missing:
+            match = rd_map.get(_norm(name))
+            logging.debug(f'[BadTorrentAudit] RD fallback for {name!r}: norm={_norm(name)!r} match={match}')
+
+    reinserted = []
+    failed = []
+    no_hash = []
+
+    from urllib.parse import quote
+
+    _RD_RATE_LIMIT_DELAY = 0.5   # seconds between addMagnet calls (RD allows 250/min)
+    _RD_RATE_LIMIT_RETRY_DELAY = 10.0  # fallback seconds to wait after a 429
+
+    for name in names:
+        torrent_hash = dcyp_hashes.get(name, '')
+        old_id = ''
+        filename = name
+        source = 'decypharr'
+        if not torrent_hash:
+            source = 'rd_fallback'
+            match = rd_map.get(_norm(name))
+            if match:
+                torrent_hash = match['hash']
+                filename     = match['filename']
+                old_id       = match['id']
+
+        logging.info(f'[BadTorrentAudit] reinsert: name={name!r} source={source} hash={torrent_hash!r}')
+
+        if not torrent_hash:
+            logging.warning(f'[BadTorrentAudit] No hash found for {name!r}')
+            no_hash.append(name)
+            continue
+
+        magnet = f'magnet:?xt=urn:btih:{torrent_hash}&dn={quote(filename)}'
+
+        # Pre-check: if the hash already exists on the target provider, skip the add
+        existing_id = None
+        try:
+            if hasattr(provider, '_find_existing_torrent'):
+                ex = provider._find_existing_torrent(torrent_hash)
+                existing_id = str(ex.get('id', '')) if ex else None
+            elif hasattr(provider, '_find_by_hash'):
+                ex = provider._find_by_hash(torrent_hash)
+                existing_id = str(ex.get('id', '')) if ex else None
+            elif hasattr(provider, 'get_torrents'):
+                # RD: scan torrent list for matching hash
+                torrents = provider.get_torrents() or []
+                for t in torrents:
+                    if (t.get('hash') or '').lower() == torrent_hash.lower():
+                        existing_id = str(t.get('id', ''))
+                        break
+        except Exception as ex_err:
+            logging.debug(f'[BadTorrentAudit] Pre-check failed for {name!r}: {ex_err}')
+
+        if existing_id:
+            logging.info(f'[BadTorrentAudit] Hash already on {provider.PROVIDER_NAME} as id={existing_id!r}, skipping add for {name!r}')
+            reinserted.append(name)
+            time.sleep(_RD_RATE_LIMIT_DELAY)
+            continue
+
+        logging.info(f'[BadTorrentAudit] Adding magnet for {name!r}')
+
+        try:
+            new_id = provider.add_torrent(magnet)
+            # None means provider found it already existed (e.g. RD duplicate 404)
+            if new_id is None:
+                logging.info(f'[BadTorrentAudit] add_torrent returned None (already exists) for {name!r}')
+                reinserted.append(name)
+                time.sleep(_RD_RATE_LIMIT_DELAY)
+                continue
+            logging.info(f'[BadTorrentAudit] add_torrent ok for {name!r}: new_id={new_id!r} provider={provider.PROVIDER_NAME}')
+            if old_id and str(new_id) != str(old_id):
+                try:
+                    provider.remove_torrent(old_id)
+                except Exception as ex:
+                    logging.warning(f'[BadTorrentAudit] Could not remove old torrent {old_id}: {ex}')
+            reinserted.append(name)
+            time.sleep(_RD_RATE_LIMIT_DELAY)
+        except Exception as e:
+            err_str = str(e)
+            if '451' in err_str:
+                logging.info(f'[BadTorrentAudit] DMCA blocked (451) for {name!r}, skipping')
+                failed.append({'name': name, 'error': 'DMCA blocked on Real-Debrid (451)'})
+                time.sleep(_RD_RATE_LIMIT_DELAY)
+                continue
+            logging.error(f'[BadTorrentAudit] add_torrent failed for {name!r}: {err_str}')
+            from debrid.base import RateLimitError as _RateLimitError
+            if isinstance(e, _RateLimitError) or '429' in err_str or 'rate limit' in err_str.lower():
+                # Use Retry-After header if available, else exponential backoff
+                retry_after = _RD_RATE_LIMIT_RETRY_DELAY
+                if hasattr(e, 'response') and e.response is not None:
+                    ra = e.response.headers.get('Retry-After')
+                    logging.warning(f'[BadTorrentAudit] 429 headers: {dict(e.response.headers)}')
+                    retry_after = float(ra) if ra else _RD_RATE_LIMIT_RETRY_DELAY
+                backoff = retry_after
+                while True:
+                    logging.warning(f'[BadTorrentAudit] 429 rate limit hit, sleeping {backoff}s then retrying {name!r}')
+                    time.sleep(backoff)
+                    try:
+                        new_id = provider.add_torrent(magnet)
+                        logging.info(f'[BadTorrentAudit] Retry ok for {name!r}: new_id={new_id!r}')
+                        reinserted.append(name)
+                        time.sleep(_RD_RATE_LIMIT_DELAY)
+                        break
+                    except Exception as e2:
+                        err_str = str(e2)
+                        if '451' in err_str:
+                            failed.append({'name': name, 'error': 'DMCA blocked on Real-Debrid (451)'})
+                            break
+                        elif isinstance(e2, _RateLimitError) or '429' in err_str or 'rate limit' in err_str.lower():
+                            retry_after2 = float(e2.response.headers.get('Retry-After', backoff * 2)) if hasattr(e2, 'response') and e2.response is not None else backoff * 2
+                            backoff = min(retry_after2, 120)
+                            continue
+                        else:
+                            logging.error(f'[BadTorrentAudit] Retry failed for {name!r}: {err_str}')
+                            failed.append({'name': name, 'error': err_str})
+                            break
+                continue
+            failed.append({'name': name, 'error': err_str})
+
+    if reinserted:
+        _invalidate_library_cache()
+
+    logging.info(f"[BadTorrentAudit] Reinsert complete: {len(reinserted)} ok, {len(failed)} failed, {len(no_hash)} no hash")
+    return jsonify({
+        'success': True,
+        'reinserted': len(reinserted),
+        'failed': len(failed),
+        'no_hash': len(no_hash),
         'errors': [f['error'] for f in failed[:10]],
         'first_error': failed[0]['error'] if failed else None,
     })

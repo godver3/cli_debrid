@@ -703,13 +703,41 @@ body[data-theme="tangerine"] .debug-container .plex-labels-help-btn:active {
 @media (max-width: 768px) {
     .debug-container {
         padding: 1rem;
+        width: 100%;
+        box-sizing: border-box;
+        overflow-x: hidden;
     }
 
     .debug-grid {
         grid-template-columns: 1fr;
     }
 
+    body[data-theme="tangerine"] .debug-tabs {
+        gap: 0;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    }
+    body[data-theme="tangerine"] .debug-tabs::-webkit-scrollbar {
+        display: none;
+    }
 
+    body[data-theme="tangerine"] .debug-tab {
+        width: auto;
+        flex-shrink: 0;
+        padding: 0.75rem 1rem;
+        font-size: 0.875rem;
+    }
+
+    body[data-theme="tangerine"] .grid,
+    body[data-theme="tangerine"] .debug_items {
+        grid-template-columns: 1fr;
+    }
+
+    .debug_item {
+        padding: 1.25rem !important;
+    }
 
     .tab,
     .debug-tab {

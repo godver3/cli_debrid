@@ -145,23 +145,25 @@ def parse_prowlarr_results(data: List[Dict[str, Any]], ins_name: str, seeders_on
 
         guid = item.get('guid')
         
+        item_protocol = item.get('protocol', 'torrent').lower()
+        is_nzb = (item_protocol == 'nzb')
+
         if magnet_url and magnet_url.startswith('magnet:'):
             primary_link = trim_magnet(magnet_url)
         elif download_url:
             primary_link = download_url
-            is_torrent_url = True
+            is_torrent_url = not is_nzb
         # Check if the guid field contains a magnet link
         elif guid and guid.startswith('magnet:'):
             primary_link = trim_magnet(guid)
             logging.debug(f"Using magnet link from guid field for '{title}' from {ins_name}")
         else:
             filtered_no_link += 1
-            # Add more detailed debugging information about the item being skipped
             item_debug = {
                 'title': title,
                 'indexer': item.get('indexer', 'Unknown'),
                 'guid': guid,
-                'protocol': item.get('protocol', 'Unknown'),
+                'protocol': item_protocol,
                 'categories': item.get('categories', []),
                 'has_magnet': magnet_url is not None,
                 'has_download': download_url is not None
@@ -170,7 +172,8 @@ def parse_prowlarr_results(data: List[Dict[str, Any]], ins_name: str, seeders_on
             continue
 
         seeders = item.get('seeders', 0)
-        if seeders_only and seeders == 0:
+        # Don't filter NZB results by seeders — usenet doesn't have seeders
+        if seeders_only and seeders == 0 and not is_nzb:
             filtered_no_seeders += 1
             continue
             
@@ -192,7 +195,7 @@ def parse_prowlarr_results(data: List[Dict[str, Any]], ins_name: str, seeders_on
         parsed_info = {
             'guid': item.get('guid'),
             'indexer_id_prowlarr': item.get('indexerId'),
-            'protocol': item.get('protocol', 'torrent').lower(),
+            'protocol': item_protocol,
             'publish_date': item.get('publishDate'),
             'leechers': item.get('leechers'),
             'peers': item.get('peers', seeders + item.get('leechers', 0)),
@@ -214,18 +217,23 @@ def parse_prowlarr_results(data: List[Dict[str, Any]], ins_name: str, seeders_on
             'parsed_info': parsed_info,
             'magnet': None,
             'torrent_url': None,
-            'magnet_link': None
+            'magnet_link': None,
+            'protocol': item_protocol,
+            'nzb_url': primary_link if is_nzb else None,
         }
-        
-        result_dict['magnet'] = primary_link
-        
-        if is_torrent_url:
-            result_dict['torrent_url'] = primary_link
-            if info_hash:
-                constructed_magnet = f"magnet:?xt=urn:btih:{info_hash}&dn={quote_plus(str(title))}"
-                result_dict['magnet_link'] = constructed_magnet
+
+        if is_nzb:
+            # NZB result — primary_link is the NZB download URL
+            result_dict['magnet'] = primary_link
         else:
-            result_dict['magnet_link'] = primary_link
+            result_dict['magnet'] = primary_link
+            if is_torrent_url:
+                result_dict['torrent_url'] = primary_link
+                if info_hash:
+                    constructed_magnet = f"magnet:?xt=urn:btih:{info_hash}&dn={quote_plus(str(title))}"
+                    result_dict['magnet_link'] = constructed_magnet
+            else:
+                result_dict['magnet_link'] = primary_link
 
         results.append(result_dict)
 

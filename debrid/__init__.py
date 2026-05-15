@@ -1,5 +1,5 @@
 import logging
-from typing import Optional
+from typing import Optional, List
 from utilities.settings import get_setting, ensure_settings_file
 from .base import DebridProvider, TooManyDownloadsError, ProviderUnavailableError
 from .real_debrid import RealDebridProvider
@@ -17,74 +17,104 @@ from .common import (
 )
 
 _provider_instance: Optional[DebridProvider] = None
+_provider_list: Optional[List[DebridProvider]] = None
+
+_NAME_MAP = {
+    'realdebrid':  'Real-Debrid',
+    'alldebrid':   'AllDebrid',
+    'torbox':      'Torbox',
+    'premiumize':  'Premiumize',
+    'debridlink':  'Debrid-Link',
+    'debrid-link': 'Debrid-Link',
+}
+
+
+def _instantiate_provider(provider_name_raw: str, api_key: Optional[str] = None) -> DebridProvider:
+    """Instantiate a provider by name, optionally overriding its API key."""
+    provider_name = provider_name_raw.lower().strip()
+    logging.info(f"[DEBRID FACTORY] Instantiating provider: {provider_name_raw}")
+    if provider_name == 'realdebrid':
+        p = RealDebridProvider()
+    elif provider_name == 'alldebrid':
+        p = AllDebridProvider()
+    elif provider_name == 'premiumize':
+        p = PremiumizeProvider()
+    elif provider_name == 'torbox':
+        p = TorboxProvider()
+    elif provider_name in ('debridlink', 'debrid-link'):
+        p = DebridLinkProvider()
+    else:
+        raise ValueError(f"Unknown debrid provider: {provider_name_raw}")
+    if api_key:
+        p._api_key = api_key
+    return p
+
 
 def get_debrid_provider() -> DebridProvider:
-    """
-    Factory function that returns the configured debrid provider instance.
-    Uses singleton pattern to maintain one instance per provider.
-    """
+    """Return the primary configured debrid provider (singleton, backward-compatible)."""
     global _provider_instance
-    
     if _provider_instance is not None:
         return _provider_instance
-    
-    # Ensure settings file exists and is properly initialized
     ensure_settings_file()
-
     provider_name_raw = get_setting("Debrid Provider", "provider", "")
-    provider_name = provider_name_raw.lower()
-    logging.info(f"[DEBRID FACTORY] Loading debrid provider: raw='{provider_name_raw}', lower='{provider_name}'")
-
-    if provider_name == 'realdebrid':
-        logging.info("[DEBRID FACTORY] Instantiating RealDebridProvider")
-        _provider_instance = RealDebridProvider()
-    elif provider_name == 'alldebrid':
-        logging.info("[DEBRID FACTORY] Instantiating AllDebridProvider")
-        _provider_instance = AllDebridProvider()
-    elif provider_name == 'premiumize':
-        logging.info("[DEBRID FACTORY] Instantiating PremiumizeProvider")
-        _provider_instance = PremiumizeProvider()
-    elif provider_name == 'torbox':
-        logging.info("[DEBRID FACTORY] Instantiating TorboxProvider")
-        _provider_instance = TorboxProvider()
-    elif provider_name in ('debridlink', 'debrid-link'):
-        logging.info("[DEBRID FACTORY] Instantiating DebridLinkProvider")
-        _provider_instance = DebridLinkProvider()
-    else:
-        raise ValueError(f"Unknown debrid provider: {provider_name}")
-        
+    _provider_instance = _instantiate_provider(provider_name_raw)
     return _provider_instance
 
+
+def get_debrid_providers() -> List[DebridProvider]:
+    """Return all configured debrid providers in priority order.
+
+    Index 0 is always the primary provider.  Additional fallback providers
+    come from ``Debrid Provider.fallback_providers`` — a list of dicts with
+    ``provider`` and ``api_key`` keys stored in config.json.
+
+    Falls back gracefully to a single-element list when no fallbacks are set.
+    """
+    global _provider_list
+    if _provider_list is not None:
+        return _provider_list
+
+    primary = get_debrid_provider()
+    providers = [primary]
+
+    fallbacks = get_setting("Debrid Provider", "fallback_providers", []) or []
+    for fb in fallbacks:
+        if not isinstance(fb, dict):
+            continue
+        name = fb.get("provider", "")
+        key  = fb.get("api_key", "")
+        if not name or not key:
+            continue
+        try:
+            p = _instantiate_provider(name, api_key=key)
+            providers.append(p)
+            logging.info(f"[DEBRID FACTORY] Fallback provider loaded: {name}")
+        except Exception as e:
+            logging.warning(f"[DEBRID FACTORY] Could not load fallback provider '{name}': {e}")
+
+    _provider_list = providers
+    logging.info(f"[DEBRID FACTORY] Provider chain: {[p.PROVIDER_NAME for p in providers]}")
+    return _provider_list
+
+
 def reset_provider() -> None:
-    """Reset the debrid provider instance, forcing it to be reinitialized on next use."""
-    global _provider_instance
+    """Reset all provider instances, forcing reinitialization on next use."""
+    global _provider_instance, _provider_list
     _provider_instance = None
+    _provider_list = None
+
 
 def get_provider_display_name() -> str:
-    """Return the human-readable display name for the configured debrid provider.
-
-    Uses the provider instance's PROVIDER_NAME if already initialised,
-    otherwise reads directly from settings so no instantiation is needed.
-    This is the single source of truth for the provider name in templates
-    and routes — add new providers to the mapping here.
-    """
+    """Return the human-readable display name for the primary debrid provider."""
     if _provider_instance is not None:
         return _provider_instance.PROVIDER_NAME
-
     provider_name = get_setting("Debrid Provider", "provider", "").lower()
-    _name_map = {
-        'realdebrid':  'Real-Debrid',
-        'alldebrid':   'AllDebrid',
-        'torbox':      'Torbox',
-        'premiumize':  'Premiumize',
-        'debridlink':  'Debrid-Link',
-        'debrid-link': 'Debrid-Link',
-    }
-    return _name_map.get(provider_name, provider_name.title() or 'Debrid')
+    return _NAME_MAP.get(provider_name, provider_name.title() or 'Debrid')
 
 # Export public interface
 __all__ = [
     'get_debrid_provider',
+    'get_debrid_providers',
     'get_provider_display_name',
     'reset_provider',
     'DebridProvider',

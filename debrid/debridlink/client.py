@@ -46,6 +46,8 @@ class DebridLinkProvider(DebridProvider):
     # ── Auth ────────────────────────────────────────────────────────────────
 
     def _load_api_key(self) -> str:
+        if getattr(self, '_api_key', None):
+            return self._api_key
         try:
             return get_api_key()
         except Exception as e:

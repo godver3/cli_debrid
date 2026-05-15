@@ -140,6 +140,11 @@ def make_request(
                 response.raise_for_status()
             elif response.status_code in [503, 504]:
                 raise RealDebridAPIError(f"Service temporarily unavailable (HTTP {response.status_code})")
+            elif response.status_code == 451:
+                # RD /user returns 451 with malformed body but valid user data — let it fall through.
+                # RD /torrents/addMagnet returns 451 for DMCA blocks — raise so callers can try fallback.
+                if endpoint != '/user':
+                    raise ProviderUnavailableError("Request failed: 451 Client Error: Unavailable For Legal Reasons")
             else:
                 response.raise_for_status()
         
@@ -154,6 +159,21 @@ def make_request(
             _decrease_rate_limit_on_success()
             return result
         except ValueError:
+            # RD occasionally returns 451 with a malformed body: two concatenated JSON objects.
+            # Extract the last valid JSON object from the response text.
+            if response.status_code == 451:
+                import re as _re
+                text = response.text
+                matches = list(_re.finditer(r'\{', text))
+                for m in reversed(matches):
+                    try:
+                        import json as _json
+                        obj = _json.loads(text[m.start():])
+                        if 'id' in obj or 'username' in obj:
+                            _decrease_rate_limit_on_success()
+                            return obj
+                    except Exception:
+                        continue
             result = response.content
             _decrease_rate_limit_on_success()
             return result

@@ -14,6 +14,7 @@ from .prowlarr import scrape_prowlarr_instance
 from .torrentio import scrape_torrentio_instance
 from .zilean import scrape_zilean_instance
 from .old_nyaa import scrape_nyaa_instance as scrape_old_nyaa_instance
+from .newznab import scrape_newznab_instance
 from utilities.settings import get_setting
 import re
 
@@ -29,7 +30,8 @@ class ScraperManager:
             'Torrentio': scrape_torrentio_instance,
             'Zilean': scrape_zilean_instance,
             'Nyaa': scrape_nyaa,
-            'OldNyaa': scrape_old_nyaa_instance
+            'OldNyaa': scrape_old_nyaa_instance,
+            'Newznab': scrape_newznab_instance,
         }
 
     def get_scraper_settings(self, scraper_type):
@@ -249,6 +251,8 @@ class ScraperManager:
                          common_args["tmdb_id"] = tmdb_id
                          # AIOStreams supports both IMDB and TMDB IDs
                          # Will use TMDB as fallback when IMDB is not available
+                    elif scraper_type == 'Newznab':
+                         common_args["tmdb_id"] = tmdb_id
                     # Add more elif for other scrapers if they need specific args
 
                     results = self.scrapers[scraper_type](**common_args)

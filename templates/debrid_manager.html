@@ -329,6 +329,61 @@
                     </div>
                 </div>
 
+                <!-- ── DECYPHARR SECTION ── -->
+                <div class="dm-maint-section">
+                    <div class="dm-backup-card">
+                        <div class="dm-backup-card-header">
+                            <span>Decypharr</span>
+                        </div>
+                        <p class="dm-backup-desc">Optional. Set the Decypharr base URL to enable hash lookup during Bad Torrent Audit reinsertion (e.g. <code class="bta-code">http://decypharr:8282</code>).</p>
+                    </div>
+                    <div class="dm-backup-card">
+                        <div class="dm-backup-card-title">Connection</div>
+                        <div class="dm-backup-ret-row" style="align-items:center">
+                            <span class="dm-backup-ret-label" style="flex:0 0 auto;min-width:80px">Base URL</span>
+                            <input type="text" id="dcyp-url" placeholder="http://decypharr:8282" class="dm-input-url" style="flex:1;margin:0 8px">
+                        </div>
+                        <div class="dm-backup-actions">
+                            <button id="dcyp-save-btn" class="dm-btn dm-btn-primary dm-btn-sm">
+                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                                Save
+                            </button>
+                            <button id="dcyp-test-btn" class="dm-btn dm-btn-secondary dm-btn-sm">
+                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                Test
+                            </button>
+                        </div>
+                        <div id="dcyp-msg" class="dm-backup-msg" style="display:none"></div>
+                    </div>
+                </div>
+
+                {% if debrid_all_providers|length > 1 %}
+                <div class="dm-maint-section">
+                    <div class="dm-backup-card">
+                        <div class="dm-backup-card-header">
+                            <span>Reinsert Settings</span>
+                        </div>
+                        <p class="dm-backup-desc">Default target provider for all reinsert operations across all tabs. Can be overridden per-action.</p>
+                    </div>
+                    <div class="dm-backup-card">
+                        <div class="dm-backup-card-title">Target Provider</div>
+                        <div class="dm-backup-ret-row" style="align-items:center">
+                            <span class="dm-backup-ret-label" style="flex:0 0 auto;min-width:100px">Reinsert to</span>
+                            <select id="global-reinsert-provider" class="dm-select" style="flex:1;margin:0 8px">
+                                {% for p in debrid_all_providers %}<option value="{{ p.index }}">{{ p.name }}</option>{% endfor %}
+                            </select>
+                        </div>
+                        <div class="dm-backup-actions">
+                            <button id="global-reinsert-save-btn" class="dm-btn dm-btn-primary dm-btn-sm">
+                                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                                Save
+                            </button>
+                        </div>
+                        <div id="global-reinsert-msg" class="dm-backup-msg" style="display:none"></div>
+                    </div>
+                </div>
+                {% endif %}
+
             </div>
 
             <!-- RIGHT COLUMN: Activity + Backup Slots -->
@@ -348,6 +403,60 @@
                     <div id="bk-slots" class="dm-backup-slots">
                         <div class="dm-backup-activity-loading">Loading…</div>
                     </div>
+                </div>
+
+                <!-- Migrate to Usenet progress -->
+                <div class="dm-backup-card" id="usenet-migrate-card" style="display:none">
+                    <div class="dm-backup-card-title">Migrate to Usenet</div>
+                    <div id="usenet-migrate-status" style="font-size:12px;color:#aaa;margin-bottom:8px">Starting…</div>
+                    <div style="background:#1a1a1a;border-radius:4px;height:6px;overflow:hidden;margin-bottom:8px">
+                        <div id="usenet-migrate-bar" style="height:100%;background:#ff6b35;width:0%;transition:width 0.3s"></div>
+                    </div>
+                    <div id="usenet-migrate-stats" style="font-size:11px;color:#888"></div>
+                    <div class="dm-backup-actions" style="margin-top:10px">
+                        <button class="dm-btn dm-btn-ghost dm-btn-sm" onclick="usenetMigrateReset()">Dismiss</button>
+                    </div>
+                </div>
+
+                <!-- Cross-provider restore -->
+                <div class="dm-backup-card" id="xp-restore-card">
+                    <div class="dm-backup-card-header">
+                        <span>Restore to Different Provider</span>
+                    </div>
+                    <p class="dm-backup-desc">Restore any backup file to a different debrid service. The target provider and API key are used only for this restore — your app settings are not changed.</p>
+
+                    <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+                        <select id="xp-provider" class="dm-input-url" style="width:100%;margin:0;box-sizing:border-box">
+                            <option value="">— Select target provider —</option>
+                            <option value="realdebrid">Real-Debrid</option>
+                            <option value="alldebrid">AllDebrid</option>
+                            <option value="torbox">Torbox</option>
+                            <option value="debridlink">Debrid-Link</option>
+                            <option value="premiumize">Premiumize</option>
+                        </select>
+                        <input type="password" id="xp-api-key" placeholder="API key for target provider" class="dm-input-url" style="width:100%;margin:0;box-sizing:border-box">
+                        <select id="xp-filename" class="dm-input-url" style="width:100%;margin:0;box-sizing:border-box">
+                            <option value="">— Select backup file —</option>
+                        </select>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+                        <label class="dm-toggle" title="Only restore torrents that were fully downloaded (cached) in the source backup">
+                            <input type="checkbox" id="xp-cached-only">
+                            <span class="dm-toggle-slider"></span>
+                        </label>
+                        <span style="font-size:12px;color:#aaa">Cached torrents only</span>
+                    </div>
+                    <div class="dm-backup-actions" style="margin-top:10px">
+                        <button id="xp-dry-run-btn" class="dm-btn dm-btn-secondary dm-btn-sm">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                            Dry Run
+                        </button>
+                        <button id="xp-restore-btn" class="dm-btn dm-btn-primary dm-btn-sm">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                            Restore
+                        </button>
+                    </div>
+                    <div id="xp-msg" class="dm-backup-msg" style="display:none"></div>
                 </div>
 
             </div>
@@ -1108,7 +1217,11 @@
                             <div class="bta-action-row">
                                 <button class="bta-btn bta-btn-primary" onclick="_btaStartScan()">
                                     <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-4.35-4.35"/></svg>
-                                    Run Scan
+                                    Scan __bad__
+                                </button>
+                                <button class="bta-btn bta-btn-secondary" onclick="_ataStartScan(false)">
+                                    <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-4.35-4.35"/></svg>
+                                    Scan __all__
                                 </button>
                                 <span id="bta-error-msg" class="bta-error-msg" style="display:none"></span>
                             </div>
@@ -1181,10 +1294,13 @@
                     <!-- Toolbar -->
                     <div class="bta-toolbar">
                         <div class="bta-toolbar-left">
-                            <button class="bta-btn bta-btn-secondary" onclick="_btaStartScan()" id="bta-resume-btn">▶ Resume Scan</button>
-                            <button class="bta-btn bta-btn-ghost" onclick="_btaStartScan(true)">↺ Full Re-scan</button>
+                            <button class="bta-btn bta-btn-secondary" id="bta-resume-btn" onclick="_btaResumeActive()">▶ Resume Scan</button>
+                            <button class="bta-btn bta-btn-ghost" id="bta-full-rescan-btn" onclick="_btaFullRescanActive()">↺ Full Re-scan</button>
+                            <button class="bta-btn bta-btn-ghost" onclick="_ataStartScan(false)">⬛ Scan __all__</button>
                             <button class="bta-btn bta-btn-danger" id="bta-delete-all-broken-btn" onclick="_btaDeleteAllBroken()">Delete All Broken</button>
                             <button class="bta-btn bta-btn-danger bta-btn-outline" id="bta-bulk-delete-btn" onclick="_btaDeleteSelected()" disabled>Delete Selected</button>
+                            <button class="bta-btn bta-btn-accent" id="bta-reinsert-all-broken-btn" onclick="_btaReinsertAllBroken()">↩ Reinsert All Broken</button>
+                            <button class="bta-btn bta-btn-accent bta-btn-outline" id="bta-bulk-reinsert-btn" onclick="_btaReinsertSelected()" disabled>↩ Reinsert Selected</button>
                             <label class="bta-check-label">
                                 <input type="checkbox" id="bta-select-all" onchange="_btaToggleAll(this.checked)"> Select all broken
                             </label>
@@ -1293,28 +1409,26 @@
     </div>
 </div>
 
-<!-- ── BTA CONFIRM MODAL ── -->
-<div class="dm-modal-overlay" id="bta-confirm-overlay"></div>
-<div class="dm-modal" id="bta-confirm-modal">
-    <div class="dm-modal-header">
-        <h3 id="bta-confirm-title">Confirm</h3>
-        <button class="dm-modal-close" id="bta-confirm-close">&times;</button>
-    </div>
-    <div class="dm-modal-body">
-        <p id="bta-confirm-msg" style="margin-bottom:16px;line-height:1.6"></p>
-        <p style="font-size:11px;color:#e57373;margin-bottom:20px">This cannot be undone.</p>
-        <div style="display:flex;gap:10px;justify-content:flex-end">
-            <button class="dm-btn dm-btn-secondary" id="bta-confirm-cancel">Cancel</button>
-            <button class="dm-btn dm-btn-danger" id="bta-confirm-ok">Confirm Delete</button>
-        </div>
-    </div>
-</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
 // ── Provider label (set from backend) ──────────────────────────────────────
 const providerLabel = {{ debrid_provider_name | tojson }};
+const _allProviders = {{ debrid_all_providers | tojson }};
+
+// ── Global reinsert provider (persisted in localStorage) ───────────────────
+function _getReinsertProviderIndex() {
+    const sel = document.getElementById('global-reinsert-provider');
+    if (sel) return parseInt(sel.value, 10) || 0;
+    const stored = localStorage.getItem('dm_reinsert_provider_index');
+    return stored !== null ? parseInt(stored, 10) : 0;
+}
+function _getReinsertProviderName() {
+    const idx = _getReinsertProviderIndex();
+    const p = _allProviders.find(p => p.index === idx);
+    return p ? p.name : providerLabel;
+}
 
 // ── helpers ────────────────────────────────────────────────────────────────
 function escHtml(s) {
@@ -2414,7 +2528,7 @@ async function libReinsertTorrent(id, hash, filename) {
         const r = await fetch(`/debrid_manager/api/torrent/${id}/reinsert`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ hash, filename }),
+            body: JSON.stringify({ hash, filename, provider_index: _getReinsertProviderIndex() }),
         });
         const data = await r.json();
         if (data.success) {
@@ -2672,7 +2786,7 @@ document.getElementById('lib-batch-reinsert-btn').addEventListener('click', asyn
     showPopup({
         type: 'confirm',
         title: 'Reinsert Torrents',
-        message: `Reinsert ${torrents.length} torrent(s)? They will be re-added to your debrid account.`,
+        message: `Reinsert ${torrents.length} torrent(s) to ${_getReinsertProviderName()}?`,
         confirmText: 'Reinsert',
         cancelText: 'Cancel',
         onConfirm: async function() {
@@ -2682,7 +2796,7 @@ document.getElementById('lib-batch-reinsert-btn').addEventListener('click', asyn
                 const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ torrents }),
+                    body: JSON.stringify({ torrents, provider_index: _getReinsertProviderIndex() }),
                 });
                 const data = await r.json();
                 if (data.success) {
@@ -2841,10 +2955,47 @@ function _bkRenderSlots(status) {
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
             Restore
         </button>
+        <button class="dm-btn dm-btn-secondary dm-btn-sm"
+                onclick="usenetMigrateStart('${filename}', this)"
+                title="Search Newznab indexers for each torrent and submit to Decypharr">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+            → Usenet
+        </button>
     </div>
 </div>`;
         }
     }
+    // Extra files section (usenet failed/not-found)
+    const extras = status.extra_files || [];
+    if (extras.length) {
+        html += `<div class="dm-bk-section-label">EXTRA FILES</div>`;
+        for (const f of extras) {
+            const label = f.filename.replace('.json','').replace(/_/g,' ');
+            const count = f.count != null ? `${f.count} torrents` : '';
+            const size = _bkFmtSize(f.size);
+            const date = f.modified ? new Date(f.modified * 1000).toLocaleString() : '';
+            html += `<div class="dm-bk-slot-row">
+    <div class="dm-bk-slot-meta">
+        <span class="dm-bk-slot-label" style="font-size:10px;padding:2px 6px;">${label}</span>
+        <span class="dm-bk-slot-date">${date}</span>
+        <span class="dm-bk-slot-count">${[count, size].filter(Boolean).join(' · ')}</span>
+    </div>
+    <div class="dm-bk-slot-actions">
+        <button class="dm-btn dm-btn-secondary dm-btn-sm"
+                onclick="_xpPreselect('${f.filename}')">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            Restore
+        </button>
+        <button class="dm-btn dm-btn-secondary dm-btn-sm"
+                onclick="usenetMigrateStart('${f.filename}', this)">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
+            → Usenet
+        </button>
+    </div>
+</div>`;
+        }
+    }
+
     el.innerHTML = html || '<div class="dm-bk-activity-empty">No backup files exist yet.</div>';
 }
 
@@ -2872,8 +3023,65 @@ async function loadMaintenance() {
         _bkRenderActivity(data);
         _bkRenderSlots(data);
         _updateMaintNotice();
+        _xpPopulateFiles(data);
+        _xpCheckOnLoad();
     } catch(e) {
         document.getElementById('bk-activity').innerHTML = `<div class="dm-error">Failed to load: ${e.message}</div>`;
+    }
+    // Load decypharr URL (non-blocking)
+    try {
+        const dr = await fetch('/debrid_manager/api/decypharr/settings');
+        const dd = await dr.json();
+        if (dd.success) {
+            const el = document.getElementById('dcyp-url');
+            if (el) el.value = dd.url || '';
+        }
+    } catch(_) {}
+}
+
+function _xpPreselect(filename) {
+    const sel = document.getElementById('xp-filename');
+    if (sel) sel.value = filename;
+    const card = document.getElementById('xp-restore-card');
+    if (card) card.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+function _xpPopulateFiles(data) {
+    const sel = document.getElementById('xp-filename');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— Select backup file —</option>';
+    const pfxNames = {rd: 'Real-Debrid', ad: 'AllDebrid', tb: 'Torbox', dl: 'Debrid-Link', pm: 'Premiumize'};
+    const slotNames = {'1d': 'Daily', '3d': '3-Day', '7d': '7-Day'};
+    const providers = data.providers || {};
+    for (const [pfx, slots] of Object.entries(providers)) {
+        for (const [slot, info] of Object.entries(slots)) {
+            if (!info || !info.exists) continue;
+            const filename = `${pfx}_backup_${slot}.json`;
+            const provName = pfxNames[pfx] || pfx;
+            const slotName = slotNames[slot] || slot;
+            const count = info.count != null ? `${info.count} torrents` : '';
+            const date = info.timestamp ? new Date(info.timestamp * 1000).toLocaleDateString() : '';
+            const parts = [provName, slotName, count, date].filter(Boolean);
+            const opt = document.createElement('option');
+            opt.value = filename;
+            opt.textContent = parts.join(' · ');
+            sel.appendChild(opt);
+        }
+    }
+    // Extra files (usenet failed/not-found etc.)
+    const extras = data.extra_files || [];
+    if (extras.length) {
+        const grp = document.createElement('optgroup');
+        grp.label = 'Extra Files';
+        for (const f of extras) {
+            const opt = document.createElement('option');
+            opt.value = f.filename;
+            const count = f.count != null ? `${f.count} torrents` : '';
+            const label = f.filename.replace('.json','').replace(/_/g,' ');
+            opt.textContent = [label, count].filter(Boolean).join(' · ');
+            grp.appendChild(opt);
+        }
+        sel.appendChild(grp);
     }
 }
 
@@ -3019,6 +3227,358 @@ document.getElementById('cl-run-btn').addEventListener('click', async function()
         }
     });
 });
+
+// ── Global reinsert provider save ──────────────────────────────────────────
+(function() {
+    const sel = document.getElementById('global-reinsert-provider');
+    const saveBtn = document.getElementById('global-reinsert-save-btn');
+    const msg = document.getElementById('global-reinsert-msg');
+    if (!sel || !saveBtn) return;
+    // Restore saved value
+    const stored = localStorage.getItem('dm_reinsert_provider_index');
+    if (stored !== null) sel.value = stored;
+    saveBtn.addEventListener('click', function() {
+        localStorage.setItem('dm_reinsert_provider_index', sel.value);
+        if (msg) {
+            msg.style.display = 'block';
+            msg.textContent = `Reinsert target set to ${_getReinsertProviderName()}`;
+            msg.className = 'dm-backup-msg dm-backup-msg-ok';
+            setTimeout(() => { msg.style.display = 'none'; }, 2500);
+        }
+    });
+})();
+
+document.getElementById('dcyp-save-btn').addEventListener('click', async function() {
+    const btn = this;
+    const msg = document.getElementById('dcyp-msg');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="dm-spinner"></span>';
+    try {
+        const url = (document.getElementById('dcyp-url').value || '').trim();
+        const r = await fetch('/debrid_manager/api/decypharr/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({url}),
+        });
+        const data = await r.json();
+        msg.style.display = '';
+        if (data.success) {
+            msg.className = 'dm-backup-msg dm-backup-msg-ok';
+            msg.textContent = 'Saved.';
+        } else {
+            msg.className = 'dm-backup-msg dm-backup-msg-err';
+            msg.textContent = 'Error: ' + (data.error || 'unknown');
+        }
+        setTimeout(() => { msg.style.display = 'none'; }, 3000);
+    } catch(e) {
+        msg.style.display = '';
+        msg.className = 'dm-backup-msg dm-backup-msg-err';
+        msg.textContent = 'Error: ' + e.message;
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Save';
+});
+
+document.getElementById('dcyp-test-btn').addEventListener('click', async function() {
+    const btn = this;
+    const msg = document.getElementById('dcyp-msg');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="dm-spinner"></span> Testing…';
+    try {
+        const r = await fetch('/debrid_manager/api/decypharr/test', {method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({url: (document.getElementById('dcyp-url').value || '').trim()}),
+        });
+        const data = await r.json();
+        msg.style.display = '';
+        if (data.success) {
+            msg.className = 'dm-backup-msg dm-backup-msg-ok';
+            msg.textContent = `Connected. ${data.count != null ? data.count + ' entries found.' : ''}`;
+        } else {
+            msg.className = 'dm-backup-msg dm-backup-msg-err';
+            msg.textContent = 'Failed: ' + (data.error || 'unknown');
+        }
+        setTimeout(() => { msg.style.display = 'none'; }, 5000);
+    } catch(e) {
+        msg.style.display = '';
+        msg.className = 'dm-backup-msg dm-backup-msg-err';
+        msg.textContent = 'Error: ' + e.message;
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg> Test';
+});
+
+async function _xpDoRestore(dryRun) {
+    const provider_id  = document.getElementById('xp-provider').value;
+    const api_key      = document.getElementById('xp-api-key').value.trim();
+    const filename     = document.getElementById('xp-filename').value;
+    const cached_only  = document.getElementById('xp-cached-only').checked;
+    const msg         = document.getElementById('xp-msg');
+
+    if (!provider_id) { msg.style.display=''; msg.className='dm-backup-msg dm-backup-msg-err'; msg.textContent='Select a target provider.'; setTimeout(()=>msg.style.display='none',4000); return; }
+    if (!api_key)     { msg.style.display=''; msg.className='dm-backup-msg dm-backup-msg-err'; msg.textContent='Enter the API key for the target provider.'; setTimeout(()=>msg.style.display='none',4000); return; }
+    if (!filename)    { msg.style.display=''; msg.className='dm-backup-msg dm-backup-msg-err'; msg.textContent='Select a backup file.'; setTimeout(()=>msg.style.display='none',4000); return; }
+
+    const providerLabel = document.getElementById('xp-provider').selectedOptions[0]?.text || provider_id;
+    const action = dryRun ? 'Preview' : 'Restore';
+
+    showPopup({
+        type: 'confirm',
+        title: dryRun ? 'Dry Run' : 'Cross-Provider Restore',
+        message: dryRun
+            ? `Preview restore of "${filename}" to ${providerLabel}?\n\nNo changes will be made.`
+            : `Restore "${filename}" to ${providerLabel}?\n\nMissing torrents will be re-added to ${providerLabel}. Your current provider is not affected.`,
+        confirmText: action,
+        cancelText: 'Cancel',
+        onConfirm: async () => {
+            const dryBtn = document.getElementById('xp-dry-run-btn');
+            const restBtn = document.getElementById('xp-restore-btn');
+            if (dryBtn) dryBtn.disabled = true;
+            if (restBtn) restBtn.disabled = true;
+            msg.style.display = '';
+            msg.className = 'dm-backup-msg';
+            msg.innerHTML = '<span class="dm-spinner"></span> Starting…';
+
+            const _dryBtnHtml = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg> Dry Run';
+            const _restBtnHtml = '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg> Restore';
+            const _resetBtns = () => {
+                if (dryBtn) { dryBtn.disabled = false; dryBtn.innerHTML = _dryBtnHtml; }
+                if (restBtn) { restBtn.disabled = false; restBtn.innerHTML = _restBtnHtml; }
+            };
+
+            try {
+                const r = await fetch('/debrid_manager/api/backup/restore-to-provider', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({filename, provider_id, api_key, dry_run: dryRun, cached_only}),
+                });
+                if (!r.ok) {
+                    const ct = r.headers.get('content-type') || '';
+                    const errText = ct.includes('json') ? (await r.json()).error : `Server error ${r.status}`;
+                    throw new Error(errText + ' — check app logs for details');
+                }
+                const startData = await r.json();
+                if (!startData.success) {
+                    if (startData.error && startData.error.includes('already in progress')) {
+                        msg.className = 'dm-backup-msg dm-backup-msg-err';
+                        msg.textContent = 'A restore is already running. ';
+                        const rl = document.createElement('a');
+                        rl.href = '#'; rl.textContent = 'Reset stuck state.';
+                        rl.style.cssText = 'color:#ff6b35;text-decoration:underline;cursor:pointer';
+                        rl.onclick = async (e) => { e.preventDefault(); await fetch('/debrid_manager/api/backup/restore-to-provider/reset', {method:'POST'}); msg.style.display='none'; _resetBtns(); };
+                        msg.appendChild(rl);
+                        return;
+                    }
+                    throw new Error(startData.error || 'Failed to start');
+                }
+
+                // Poll progress every second
+                const _poll = async () => {
+                    try {
+                        const pr = await fetch('/debrid_manager/api/backup/restore-to-provider/progress');
+                        const p = await pr.json();
+                        if (p.status === 'running') {
+                            const name = p.current_name ? ` · ${p.current_name.slice(0, 55)}` : '';
+                            msg.innerHTML = `<span class="dm-spinner"></span> ${p.current} of ${p.total}${name}`;
+                            setTimeout(_poll, 1000);
+                        } else if (p.status === 'done') {
+                            const d = p.result || {};
+                            const cachedNote = cached_only ? ' (cached only)' : '';
+                            let text, isErr = false;
+                            if (d.aborted) {
+                                isErr = true;
+                                text = `Aborted after 10 consecutive failures${cachedNote}: ${d.added} added, ${d.failed} failed. Reason: ${d.abort_reason}`;
+                            } else if (d.added === 0 && d.failed > 0) {
+                                isErr = true;
+                                const reasons = [...new Set((d.failures || []).slice(0, 3).map(f => f.reason))];
+                                text = `Restore failed${cachedNote}: 0 added, ${d.failed} failed, ${d.skipped} already present. Error: ${reasons.join('; ')}`;
+                            } else {
+                                const failNote = d.failed ? `, ${d.failed} failed` : '';
+                                text = dryRun
+                                    ? `Dry run${cachedNote}: ${d.added} would be added, ${d.skipped} already present${failNote}.`
+                                    : `Restore complete${cachedNote}: ${d.added} added to ${providerLabel}, ${d.skipped} already present${failNote}.`;
+                                if (d.failures && d.failures.length) {
+                                    const reasons = [...new Set(d.failures.slice(0, 3).map(f => f.reason))];
+                                    text += ` Errors: ${reasons.join('; ')}`;
+                                }
+                                isErr = d.failed > 0;
+                            }
+                            msg.className = isErr ? 'dm-backup-msg dm-backup-msg-err' : 'dm-backup-msg dm-backup-msg-ok';
+                            msg.textContent = text;
+                            setTimeout(() => { msg.style.display = 'none'; }, 12000);
+                            _resetBtns();
+                        } else if (p.status === 'error') {
+                            msg.className = 'dm-backup-msg dm-backup-msg-err';
+                            msg.textContent = 'Failed: ' + (p.error || 'unknown error');
+                            _resetBtns();
+                        } else {
+                            setTimeout(_poll, 1000);
+                        }
+                    } catch(_) { setTimeout(_poll, 2000); }
+                };
+                setTimeout(_poll, 800);
+            } catch(e) {
+                msg.className = 'dm-backup-msg dm-backup-msg-err';
+                msg.textContent = 'Error: ' + e.message;
+                _resetBtns();
+            }
+        }
+    });
+}
+
+document.getElementById('xp-dry-run-btn').addEventListener('click', () => _xpDoRestore(true));
+document.getElementById('xp-restore-btn').addEventListener('click', () => _xpDoRestore(false));
+
+// On maintenance tab load, check if a restore is already running and resume polling
+async function _xpCheckOnLoad() {
+    try {
+        const pr = await fetch('/debrid_manager/api/backup/restore-to-provider/progress');
+        const p = await pr.json();
+        const msg = document.getElementById('xp-msg');
+        if (p.status === 'running') {
+            const dryBtn = document.getElementById('xp-dry-run-btn');
+            const restBtn = document.getElementById('xp-restore-btn');
+            if (dryBtn) dryBtn.disabled = true;
+            if (restBtn) restBtn.disabled = true;
+            msg.style.display = '';
+            msg.className = 'dm-backup-msg';
+            const name = p.current_name ? ` · ${p.current_name.slice(0, 55)}` : '';
+            msg.innerHTML = `<span class="dm-spinner"></span> ${p.current} of ${p.total}${name}`;
+            // Resume polling — reuse the same poll logic by triggering a fake restore start
+            const _resumePoll = async () => {
+                try {
+                    const r2 = await fetch('/debrid_manager/api/backup/restore-to-provider/progress');
+                    const p2 = await r2.json();
+                    if (p2.status === 'running') {
+                        const n = p2.current_name ? ` · ${p2.current_name.slice(0, 55)}` : '';
+                        msg.innerHTML = `<span class="dm-spinner"></span> ${p2.current} of ${p2.total}${n}`;
+                        setTimeout(_resumePoll, 1000);
+                    } else {
+                        if (dryBtn) dryBtn.disabled = false;
+                        if (restBtn) restBtn.disabled = false;
+                        if (p2.status === 'done' && p2.result) {
+                            const d = p2.result;
+                            let t2, e2 = false;
+                            if (d.aborted) {
+                                e2 = true; t2 = `Aborted: ${d.added} added, ${d.failed} failed. Reason: ${d.abort_reason}`;
+                            } else if (d.added === 0 && d.failed > 0) {
+                                e2 = true;
+                                const r2 = [...new Set((d.failures||[]).slice(0,3).map(f=>f.reason))];
+                                t2 = `Restore failed: 0 added, ${d.failed} failed. Error: ${r2.join('; ')}`;
+                            } else {
+                                t2 = `Restore complete: ${d.added} added, ${d.skipped} already present${d.failed ? `, ${d.failed} failed` : ''}.`;
+                                e2 = d.failed > 0;
+                            }
+                            msg.className = e2 ? 'dm-backup-msg dm-backup-msg-err' : 'dm-backup-msg dm-backup-msg-ok';
+                            msg.textContent = t2;
+                        } else if (p2.status === 'error') {
+                            msg.className = 'dm-backup-msg dm-backup-msg-err';
+                            msg.textContent = 'Failed: ' + (p2.error || 'unknown');
+                        }
+                    }
+                } catch(_) { setTimeout(_resumePoll, 2000); }
+            };
+            setTimeout(_resumePoll, 1000);
+        } else if (p.status === 'error' && p.error === 'A restore is already in progress') {
+            // Stale lock — show reset option
+            msg.style.display = '';
+            msg.className = 'dm-backup-msg dm-backup-msg-err';
+            msg.textContent = 'Previous restore state is stuck. ';
+            const resetLink = document.createElement('a');
+            resetLink.href = '#'; resetLink.textContent = 'Click to reset.';
+            resetLink.style.cssText = 'color:#ff6b35;text-decoration:underline;cursor:pointer';
+            resetLink.onclick = async (e) => { e.preventDefault(); await fetch('/debrid_manager/api/backup/restore-to-provider/reset', {method:'POST'}); msg.style.display='none'; };
+            msg.appendChild(resetLink);
+        }
+    } catch(_) {}
+}
+
+// Auto-reset stale state and show reset link when "already in progress" error appears
+const _origXpDoRestore = _xpDoRestore;
+// Check on maintenance tab open
+document.querySelector('.dm-tab[data-tab="maintenance"]')?.addEventListener('click', () => {
+    setTimeout(_xpCheckOnLoad, 500);
+});
+
+// ── Migrate to Usenet ────────────────────────────────────────────────────────
+let _usenetMigratePollTimer = null;
+
+async function usenetMigrateStart(filename, btn) {
+    const card = document.getElementById('usenet-migrate-card');
+    const status = document.getElementById('usenet-migrate-status');
+    const bar = document.getElementById('usenet-migrate-bar');
+    const stats = document.getElementById('usenet-migrate-stats');
+
+    showPopup({
+        type: POPUP_TYPES.CONFIRM,
+        title: 'Migrate to Usenet',
+        message: `Search all enabled Newznab indexers for each torrent in "${filename}" and submit found NZBs to Decypharr?\n\nStrategy: hash lookup first, then name search.`,
+        confirmText: 'Start',
+        cancelText: 'Cancel',
+        onConfirm: async () => {
+            card.style.display = '';
+            status.textContent = 'Starting…';
+            bar.style.width = '0%';
+            stats.textContent = '';
+            btn.disabled = true;
+
+            try {
+                const r = await fetch('/debrid_manager/api/usenet/migrate', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({filename}),
+                });
+                const d = await r.json();
+                if (!d.success) {
+                    status.textContent = 'Error: ' + (d.error || 'unknown');
+                    btn.disabled = false;
+                    return;
+                }
+                _usenetMigratePoll();
+            } catch(e) {
+                status.textContent = 'Error: ' + e.message;
+                btn.disabled = false;
+            }
+        }
+    });
+}
+
+async function _usenetMigratePoll() {
+    clearTimeout(_usenetMigratePollTimer);
+    try {
+        const r = await fetch('/debrid_manager/api/usenet/migrate/progress');
+        const d = await r.json();
+        const card = document.getElementById('usenet-migrate-card');
+        const status = document.getElementById('usenet-migrate-status');
+        const bar = document.getElementById('usenet-migrate-bar');
+        const stats = document.getElementById('usenet-migrate-stats');
+
+        const pct = d.total > 0 ? Math.round((d.current / d.total) * 100) : 0;
+        bar.style.width = pct + '%';
+        stats.textContent = `Submitted: ${d.submitted || 0}  ·  Skipped: ${d.skipped || 0}  ·  Not found: ${d.not_found || 0}  ·  Failed: ${d.failed || 0}`;
+
+        if (d.status === 'running') {
+            status.textContent = `Processing ${d.current}/${d.total}${d.current_name ? ': ' + d.current_name : ''}`;
+            _usenetMigratePollTimer = setTimeout(_usenetMigratePoll, 1500);
+        } else if (d.status === 'done') {
+            bar.style.width = '100%';
+            status.textContent = `Done — ${d.submitted} submitted, ${d.skipped || 0} skipped, ${d.not_found} not found on usenet, ${d.failed} failed.`;
+            status.style.color = '#4ade80';
+        } else if (d.status === 'error') {
+            status.textContent = 'Error: ' + (d.error || 'unknown');
+            status.style.color = '#e57373';
+        }
+    } catch(e) {
+        _usenetMigratePollTimer = setTimeout(_usenetMigratePoll, 3000);
+    }
+}
+
+async function usenetMigrateReset() {
+    clearTimeout(_usenetMigratePollTimer);
+    await fetch('/debrid_manager/api/usenet/migrate/reset', {method: 'POST'});
+    document.getElementById('usenet-migrate-card').style.display = 'none';
+    document.getElementById('usenet-migrate-status').style.color = '';
+}
 
 async function bkRestore(filename, btn, dryRun) {
     const _doRestore = async function() {
@@ -3460,7 +4020,7 @@ function _ptRenderGroup(tbodyId, items, groupId) {
                     const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({torrents: [{id: '', hash: item.rd_hash, filename: item.rd_filename || item.folder_name}]}),
+                        body: JSON.stringify({torrents: [{id: '', hash: item.rd_hash, filename: item.rd_filename || item.folder_name}], provider_index: _getReinsertProviderIndex()}),
                     });
                     const data = await r.json();
                     if (data.success && data.reinserted?.length) {
@@ -3496,7 +4056,7 @@ function _ptRenderGroup(tbodyId, items, groupId) {
                     const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({torrents: [{id: '', hash, filename: fname}]}),
+                        body: JSON.stringify({torrents: [{id: '', hash, filename: fname}], provider_index: _getReinsertProviderIndex()}),
                     });
                     const data = await r.json();
                     if (data.success && data.reinserted?.length) {
@@ -3753,7 +4313,7 @@ async function _ptBulkReinsert(items, label) {
     showPopup({
         type: 'confirm',
         title: 'Reinsert Torrents',
-        message: `Reinsert ${withHash.length} ${label} torrent${withHash.length !== 1 ? 's' : ''} to ${providerLabel}?`,
+        message: `Reinsert ${withHash.length} ${label} torrent${withHash.length !== 1 ? 's' : ''} to ${_getReinsertProviderName()}?`,
         confirmText: 'Reinsert',
         cancelText: 'Cancel',
         onConfirm: async function() {
@@ -3763,7 +4323,7 @@ async function _ptBulkReinsert(items, label) {
                 const torrents = withHash.map(i => ({id: '', hash: i.rd_hash, filename: i.rd_filename || i.folder_name || ''}));
                 const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({torrents}),
+                    body: JSON.stringify({torrents, provider_index: _getReinsertProviderIndex()}),
                 });
                 const data = await r.json();
                 const doneCount = data.reinserted?.length || 0;
@@ -4108,7 +4668,7 @@ function _rcBindActions(tbody) {
         const hash = this.dataset.hash, fname = this.dataset.fname;
         const orig = this.innerHTML; this.disabled = true; this.textContent = 'Reinserting…';
         try {
-            const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({torrents:[{id:'',hash,filename:fname}]})});
+            const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({torrents:[{id:'',hash,filename:fname}], provider_index: _getReinsertProviderIndex()})});
             const d = await r.json();
             if (d.success && d.reinserted?.length) { this.textContent = 'Done'; setTimeout(()=>{this.innerHTML=orig;this.disabled=false;},3000); }
             else { showPopup({ type: 'error', title: 'Error', message: 'Reinsert failed: ' + (d.failed?.[0]?.error||d.error||'unknown'), autoClose: 5000 }); this.innerHTML=orig; this.disabled=false; }
@@ -4209,7 +4769,7 @@ async function _rcBulkReinsert(items, btnEl) {
     showPopup({
         type: 'confirm',
         title: 'Reinsert Torrents',
-        message: `Reinsert ${torrents.length} torrent(s) to ${providerLabel}?`,
+        message: `Reinsert ${torrents.length} torrent(s) to ${_getReinsertProviderName()}?`,
         confirmText: 'Reinsert',
         cancelText: 'Cancel',
         onConfirm: async function() {
@@ -4217,7 +4777,7 @@ async function _rcBulkReinsert(items, btnEl) {
             try {
                 const r = await fetch('/debrid_manager/api/torrent/batch-reinsert', {
                     method:'POST', headers:{'Content-Type':'application/json'},
-                    body: JSON.stringify({torrents})
+                    body: JSON.stringify({torrents, provider_index: _getReinsertProviderIndex()})
                 });
                 const d = await r.json();
                 btnEl.textContent = d.success ? `Done (${d.reinserted?.length||0})` : 'Failed';
@@ -5533,19 +6093,88 @@ _battEl('batt-reid-commit-btn')?.addEventListener('click', async function() {
 
     function _btaOnCheckChange() {
         const checked = document.querySelectorAll('.bta-row-check:checked').length;
-        const btn = _bta('bta-bulk-delete-btn');
-        if (btn) btn.disabled = checked === 0;
+        const delBtn = _bta('bta-bulk-delete-btn');
+        if (delBtn) delBtn.disabled = checked === 0;
+        const reinsertBtn = _bta('bta-bulk-reinsert-btn');
+        if (reinsertBtn) reinsertBtn.disabled = checked === 0;
     }
 
     document.addEventListener('change', function (e) {
         if (e.target && e.target.classList.contains('bta-row-check')) _btaOnCheckChange();
     });
 
-    window._btaStartScan = async function (fresh) {
+    // Which folder is currently active in the results view: 'bad' or 'all'
+    let _btaActiveSource = 'bad';
+
+    window._btaResumeActive   = () => _btaActiveSource === 'all' ? _ataStartScan(false) : _btaStartScan(false);
+    window._btaFullRescanActive = () => _btaActiveSource === 'all' ? _ataStartScan(true)  : _btaStartScan(true);
+
+    window._ataStartScan = async function (fresh) {
+        _btaActiveSource = 'all';
         const errEl = _bta('bta-error-msg');
         if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
         _btaSetState('scanning');
         if (fresh) _btaData = null;
+        // Update scanning label to show __all__
+        const scanLabel = document.querySelector('#bta-scanning .bta-card-title');
+        if (scanLabel) scanLabel.innerHTML = 'Scanning <code class="bta-code">__all__</code> folder…';
+        try {
+            const r = await fetch('/debrid_manager/api/all_torrent_audit/scan', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({fresh: !!fresh}),
+            });
+            const d = await r.json();
+            if (!d.success) throw new Error(d.error || 'Scan failed');
+            _ataPoll();
+        } catch (e) {
+            _btaSetState('idle');
+            if (errEl) { errEl.textContent = e.message; errEl.style.display = ''; }
+        }
+    };
+
+    window._ataStopScan = async function () {
+        await fetch('/debrid_manager/api/all_torrent_audit/stop', {method: 'POST'});
+    };
+
+    async function _ataPoll() {
+        try {
+            const r = await fetch('/debrid_manager/api/all_torrent_audit');
+            const d = await r.json();
+            if (!d.success) throw new Error(d.error);
+            const s = d.status;
+            if (s === 'scanning') {
+                const pbar = _bta('bta-progress-bar');
+                const pmsg = _bta('bta-progress-msg');
+                if (pbar) pbar.style.width = (d.progress || 0) + '%';
+                if (pmsg) pmsg.textContent = d.progress_msg || 'Scanning…';
+                const stopBtn = _bta('bta-stop-btn');
+                if (stopBtn) stopBtn.onclick = _ataStopScan;
+                setTimeout(_ataPoll, 1200);
+            } else {
+                // done / stopped / error — load results
+                _btaData = d.data;
+                _btaSetState(s === 'error' ? 'error' : 'done');
+                if (d.error) { const e = _bta('bta-error-msg'); if(e){e.textContent=d.error;e.style.display='';} }
+                if (d.data) _btaApplyResults(d.data, s);
+                // Update source badge
+                const badge = _bta('bta-partial-badge');
+                if (badge) { badge.textContent = d.data?.partial ? 'partial · __all__' : '__all__'; badge.style.display = ''; }
+            }
+        } catch(e) { setTimeout(_ataPoll, 2000); }
+    }
+
+    window._btaStartScan = async function (fresh) {
+        _btaActiveSource = 'bad';
+        const errEl = _bta('bta-error-msg');
+        if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+        _btaSetState('scanning');
+        if (fresh) _btaData = null;
+        const scanLabel = document.querySelector('#bta-scanning .bta-card-title');
+        if (scanLabel) scanLabel.innerHTML = 'Scanning <code class="bta-code">__bad__</code> folder…';
+        // Restore stop button to default
+        const stopBtn = _bta('bta-stop-btn');
+        if (stopBtn) stopBtn.onclick = _btaStopScan;
         try {
             const r = await fetch('/debrid_manager/api/bad_torrent_audit/scan', {
                 method: 'POST',
@@ -5626,32 +6255,6 @@ _battEl('batt-reid-commit-btn')?.addEventListener('click', async function() {
     }
 
     // ── BTA confirm modal ────────────────────────────────────────────────────
-    function _btaConfirm(msg, onOk) {
-        const overlay = document.getElementById('bta-confirm-overlay');
-        const modal   = document.getElementById('bta-confirm-modal');
-        const msgEl   = document.getElementById('bta-confirm-msg');
-        const okBtn   = document.getElementById('bta-confirm-ok');
-        const cancelBtn = document.getElementById('bta-confirm-cancel');
-        const closeBtn  = document.getElementById('bta-confirm-close');
-        if (!overlay || !modal) { if (window.confirm(msg)) onOk(); return; }
-        msgEl.textContent = msg;
-        overlay.classList.add('open');
-        modal.classList.add('open');
-        function close() {
-            overlay.classList.remove('open');
-            modal.classList.remove('open');
-            okBtn.removeEventListener('click', doOk);
-            cancelBtn.removeEventListener('click', close);
-            closeBtn.removeEventListener('click', close);
-            overlay.removeEventListener('click', close);
-        }
-        function doOk() { close(); onOk(); }
-        okBtn.addEventListener('click', doOk);
-        cancelBtn.addEventListener('click', close);
-        closeBtn.addEventListener('click', close);
-        overlay.addEventListener('click', close);
-    }
-
     async function _btaDoDelete(names, btnEl, btnRestoreText) {
         if (btnEl) { btnEl.disabled = true; btnEl.textContent = `Deleting ${names.length}…`; }
         try {
@@ -5705,8 +6308,13 @@ _battEl('batt-reid-commit-btn')?.addEventListener('click', async function() {
         const names = checked.map(cb => cb.dataset.name).filter(Boolean);
         if (!names.length) return;
         const btn = _bta('bta-bulk-delete-btn');
-        _btaConfirm(`Delete ${names.length} selected torrent(s) from Real-Debrid?`, () => {
-            _btaDoDelete(names, btn, 'Delete Selected');
+        showPopup({
+            type: 'confirm',
+            title: 'Delete Torrents',
+            message: `Delete ${names.length} selected torrent(s) from Real-Debrid?`,
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: () => _btaDoDelete(names, btn, 'Delete Selected'),
         });
     };
 
@@ -5715,8 +6323,65 @@ _battEl('batt-reid-commit-btn')?.addEventListener('click', async function() {
         const names = (_btaData.results || []).filter(r => r.status === 'broken').map(r => r.name);
         if (!names.length) return;
         const btn = _bta('bta-delete-all-broken-btn');
-        _btaConfirm(`Delete all ${names.length} broken torrent(s) from Real-Debrid?`, () => {
-            _btaDoDelete(names, btn, 'Delete All Broken');
+        showPopup({
+            type: 'confirm',
+            title: 'Delete All Broken',
+            message: `Delete all ${names.length} broken torrent(s) from Real-Debrid?`,
+            confirmText: 'Delete',
+            cancelText: 'Cancel',
+            onConfirm: () => _btaDoDelete(names, btn, 'Delete All Broken'),
+        });
+    };
+
+    async function _btaDoReinsert(names, btnEl, btnRestoreText) {
+        if (btnEl) { btnEl.disabled = true; btnEl.textContent = `Reinserting ${names.length}…`; }
+        try {
+            const r = await fetch('/debrid_manager/api/bad_torrent_audit/reinsert', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({names, provider_index: _getReinsertProviderIndex()}),
+            });
+            const d = await r.json();
+            if (!d.success) { _btaShowMsg('Reinsert error: ' + (d.error || 'Unknown error'), true); return; }
+            const parts = [`Reinserted ${d.reinserted} torrent(s).`];
+            if (d.failed) parts.push(`${d.failed} failed.`);
+            if (d.no_hash) parts.push(`${d.no_hash} no longer in __bad__ (hash unavailable).`);
+            if (d.first_error) parts.push(`First error: ${d.first_error}`);
+            _btaShowMsg(parts.join(' '), d.failed > 0);
+        } catch (e) {
+            _btaShowMsg('Reinsert failed: ' + e.message, true);
+        } finally {
+            if (btnEl) { btnEl.disabled = false; btnEl.textContent = btnRestoreText; }
+        }
+    }
+
+    window._btaReinsertSelected = function () {
+        const checked = [...document.querySelectorAll('.bta-row-check:checked')];
+        const names = checked.map(cb => cb.dataset.name).filter(Boolean);
+        if (!names.length) return;
+        const btn = _bta('bta-bulk-reinsert-btn');
+        showPopup({
+            type: 'confirm',
+            title: 'Reinsert Torrents',
+            message: `Reinsert ${names.length} selected torrent(s) to ${_getReinsertProviderName()}?`,
+            confirmText: 'Reinsert',
+            cancelText: 'Cancel',
+            onConfirm: () => _btaDoReinsert(names, btn, '↩ Reinsert Selected'),
+        });
+    };
+
+    window._btaReinsertAllBroken = function () {
+        if (!_btaData) return;
+        const names = (_btaData.results || []).filter(r => r.status === 'broken').map(r => r.name);
+        if (!names.length) return;
+        const btn = _bta('bta-reinsert-all-broken-btn');
+        showPopup({
+            type: 'confirm',
+            title: 'Reinsert All Broken',
+            message: `Reinsert all ${names.length} broken torrent(s) to ${_getReinsertProviderName()}?`,
+            confirmText: 'Reinsert',
+            cancelText: 'Cancel',
+            onConfirm: () => _btaDoReinsert(names, btn, '↩ Reinsert All Broken'),
         });
     };
 
