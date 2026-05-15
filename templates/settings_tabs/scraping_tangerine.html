@@ -24,12 +24,12 @@
                 Versions
             </h3>
             <div class="scraping-settings-actions action-buttons settings-expand-collapse-buttons">
-                <button type="button" class="scraping-settings-btn btn-secondary settings-collapse-all">Collapse All</button>
-                <button type="button" class="scraping-settings-btn btn-secondary settings-expand-all">Expand All</button>
-                <button id="import-versions-btn" class="scraping-settings-btn-primary btn-primary add-version-link">Import</button>
-                <button id="add-version-btn" class="scraping-settings-btn-primary btn-primary add-version-link">Add New Version</button>
-                <button id="add-default-version-btn" class="scraping-settings-btn-primary btn-primary add-version-link">Add Default Version</button>
-                <button id="add-separate-versions-btn" class="scraping-settings-btn-primary btn-primary add-version-link">Add Separate 1080p/4K Versions</button>
+                <button type="button" class="scraping-settings-btn btn-secondary settings-collapse-all"><i class="fa-solid fa-compress"></i> Collapse All</button>
+                <button type="button" class="scraping-settings-btn btn-secondary settings-expand-all"><i class="fa-solid fa-expand"></i> Expand All</button>
+                <button id="import-versions-btn" class="scraping-settings-btn-primary btn-primary add-version-link"><i class="fa-solid fa-file-import"></i> Import</button>
+                <button id="add-version-btn" class="scraping-settings-btn-primary btn-primary add-version-link"><i class="fa-solid fa-plus"></i> Add New Version</button>
+                <button id="add-default-version-btn" class="scraping-settings-btn-primary btn-primary add-version-link"><i class="fa-solid fa-plus"></i> Add Default Version</button>
+                <button id="add-separate-versions-btn" class="scraping-settings-btn-primary btn-primary add-version-link"><i class="fa-solid fa-plus"></i> Add Separate 1080p/4K Versions</button>
             </div>
             <input type="file" id="import-versions-file" accept=".json" style="display:none">
         </div>
@@ -865,15 +865,19 @@ document.addEventListener('scrapingContentLoaded', function() {
         </div>
         <div class="version-buttons version-actions">
             <button type="button" class="export-version-btn btn-secondary" data-version-id="{{ version }}">
+                <i class="fa-solid fa-file-export"></i>
                 <span class="btn-text">Export</span>
             </button>
             <button type="button" class="rename-version-btn btn-secondary" data-version-id="{{ version }}">
+                <i class="fa-solid fa-pen"></i>
                 <span class="btn-text">Rename</span>
             </button>
             <button type="button" class="duplicate-version-btn btn-secondary" data-version-id="{{ version }}">
+                <i class="fa-solid fa-copy"></i>
                 <span class="btn-text">Duplicate</span>
             </button>
             <button type="button" class="delete-version-btn btn-danger" data-version-id="{{ version }}">
+                <i class="fa-solid fa-trash"></i>
                 <span class="btn-text">Delete</span>
             </button>
         </div>

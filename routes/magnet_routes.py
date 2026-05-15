@@ -1,4 +1,7 @@
 from flask import Blueprint, request, render_template, flash, redirect, url_for, jsonify, session
+import threading as _threading
+_assignment_store = {}  # token -> assignment data, avoids session size/race issues
+_assignment_store_lock = _threading.Lock()
 from debrid import get_debrid_provider
 from database.database_writing import add_media_item, update_media_item_torrent_id
 from .models import admin_required
@@ -951,19 +954,19 @@ def prepare_manual_assignment():
 
         logging.info(f"Completed automatic assignment attempt. Suggested assignments for {assignment_count} out of {len(target_items)} items.")
 
-        # **MODIFICATION**: Store data in session instead of rendering template directly
-        session['manual_assignment_data'] = {
-            'target_items': target_items,
-            'video_files': video_files,
-            'magnet_link': actual_magnet_link,  # Use the actual magnet link (could be None for torrent files)
-            'torrent_filename': torrent_filename,
-            'torrent_id': torrent_id,
-            'version': version,
-            'is_torrent_file': torrent_file is not None  # Flag to indicate if this was a torrent file upload
-        }
-        
-        # **MODIFICATION**: Return success JSON pointing to the new GET route
-        return jsonify({'success': True, 'redirect_url': url_for('magnet.show_manual_assignment')})
+        import uuid as _uuid
+        token = str(_uuid.uuid4())
+        with _assignment_store_lock:
+            _assignment_store[token] = {
+                'target_items': target_items,
+                'video_files': video_files,
+                'magnet_link': actual_magnet_link,
+                'torrent_filename': torrent_filename,
+                'torrent_id': torrent_id,
+                'version': version,
+                'is_torrent_file': torrent_file is not None
+            }
+        return jsonify({'success': True, 'redirect_url': url_for('magnet.show_manual_assignment', token=token)})
 
     except Exception as e:
         # Catch-all for unexpected errors
@@ -975,14 +978,17 @@ def prepare_manual_assignment():
 @magnet_bp.route('/show_manual_assignment', methods=['GET'])
 @admin_required
 def show_manual_assignment():
-    """Display the manual assignment page using data stored in the session."""
-    assignment_data = session.pop('manual_assignment_data', None) # Get and remove data from session
+    """Display the manual assignment page using data stored in the server-side store."""
+    token = request.args.get('token')
+    assignment_data = None
+    if token:
+        with _assignment_store_lock:
+            assignment_data = _assignment_store.pop(token, None)
 
     if not assignment_data:
         flash('No assignment data found. Please start the process again.', 'warning')
         return redirect(url_for('magnet.assign_magnet'))
 
-    # Render the template with the retrieved data
     return render_template('manual_assignment.html', **assignment_data)
 
 @magnet_bp.route('/confirm_manual_assignment', methods=['POST'])

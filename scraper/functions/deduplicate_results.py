@@ -11,10 +11,12 @@ def deduplicate_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         size = result.get('size', '')
         rounded_size = round_size(size)
 
-        # First check: Use magnet link
+        # First check: Use magnet link, NZB URL, or title+size
         if magnet:
             trimmed_magnet = trim_magnet(magnet)
             unique_id = trimmed_magnet
+        elif result.get('nzb_url'):
+            unique_id = result['nzb_url']
         else:
             unique_id = f"{title}_{rounded_size}"
 

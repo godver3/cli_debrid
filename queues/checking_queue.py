@@ -194,7 +194,19 @@ class CheckingQueue:
             return
         
         logging.info(f"Found {len(items)} items for missing torrent {torrent_id}")
-        
+
+        # NZB jobs — skip debrid magnet/not-wanted logic, just move items back to Wanted
+        if str(torrent_id).startswith('nzb:'):
+            logging.info(f"[NZB] Decypharr job {torrent_id} failed/missing. Moving {len(items)} item(s) back to Wanted.")
+            from queues.queue_manager import QueueManager
+            qm = QueueManager()
+            for item in items:
+                try:
+                    qm.move_to_wanted(item, "Checking")
+                except Exception as _e:
+                    logging.error(f"[NZB] Could not move item back to Wanted: {_e}")
+            return
+
         # Get the magnet link from the first item
         magnets_to_add = []
         for item in items:
@@ -313,6 +325,46 @@ class CheckingQueue:
 
     @timed_lru_cache(seconds=60)
     @with_timeout(45)  # 45 second timeout for the entire progress check
+    def _get_nzb_progress(self, torrent_id: str) -> Union[int, str, None]:
+        """Poll Decypharr for progress of an NZB job. torrent_id format: 'nzb:<job_id>'"""
+        from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
+        reset_decypharr_client()
+        client = get_decypharr_client()
+        job_id = torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id
+        try:
+            status = client.get_job_status(job_id)
+            if not status:
+                return None
+            raw = status.get('raw', {})
+            state = str(raw.get('state', status.get('state', 'unknown'))).lower()
+            inner_status = str(raw.get('status', '')).lower()
+            # Decypharr progress is 0.0–1.0
+            raw_progress = raw.get('progress', status.get('progress', 0))
+            progress_pct = int(float(raw_progress) * 100)
+            is_complete = raw.get('is_complete', False)
+
+            # Fully complete: is_complete=True OR state is pausedUP/completed with status=downloaded
+            if is_complete or inner_status == 'downloaded' and state in ('pausedup', 'completed', 'seeding'):
+                logging.info(f"[NZB] Decypharr job {job_id} complete (state={state} is_complete={is_complete})")
+                return 100
+            # Downloaded segments, still assembling — treat as 99% so we keep polling
+            if inner_status == 'downloaded' and progress_pct >= 100:
+                return 99
+            # Failed
+            if state in ('error', 'failed', 'bad') or raw.get('bad'):
+                logging.warning(f"[NZB] Decypharr job {job_id} failed (state={state})")
+                return PROGRESS_RESULT_MISSING
+            # Not found in queue — may have completed and been cleaned up
+            if status.get('state') == 'completed':
+                return 100
+            # Actively downloading
+            if progress_pct > 0:
+                return max(1, min(99, progress_pct))
+            return None  # queued/unknown — retry later
+        except Exception as e:
+            logging.error(f"[NZB] Error polling Decypharr for job {job_id}: {e}")
+            return None
+
     def get_torrent_progress(self, torrent_id: str) -> Union[int, str, None]:
         """
         Get the current progress percentage for a torrent or a status string.
@@ -322,6 +374,10 @@ class CheckingQueue:
             - None: If there's a temporary issue (e.g., rate limit, other recoverable error),
                     or if progress cannot be determined for other reasons that warrant a retry.
         """
+        # Route NZB jobs to Decypharr instead of debrid provider
+        if str(torrent_id).startswith('nzb:'):
+            return self._get_nzb_progress(torrent_id)
+
         try:
             status_result = self.debrid_provider.get_torrent_info_with_status(torrent_id)
 

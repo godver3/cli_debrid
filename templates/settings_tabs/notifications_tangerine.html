@@ -9,9 +9,9 @@
                 Notifications
             </h3>
             <div class="notifications-settings-actions action-buttons settings-expand-collapse-buttons">
-                <button type="button" class="notifications-settings-btn btn-secondary settings-collapse-all">Collapse All</button>
-                <button type="button" class="notifications-settings-btn btn-secondary settings-expand-all">Expand All</button>
-                <button id="add-notification-btn" class="notifications-settings-btn-primary btn-primary add-notification-link">Add New Notification</button>
+                <button type="button" class="notifications-settings-btn btn-secondary settings-collapse-all"><i class="fa-solid fa-compress"></i> Collapse All</button>
+                <button type="button" class="notifications-settings-btn btn-secondary settings-expand-all"><i class="fa-solid fa-expand"></i> Expand All</button>
+                <button id="add-notification-btn" class="notifications-settings-btn-primary btn-primary add-notification-link"><i class="fa-solid fa-plus"></i> Add New Notification</button>
             </div>
         </div>
 
@@ -30,10 +30,12 @@
                 </div>
                 <div class="notification-buttons notification-actions">
                     <button type="button" class="test-notification-btn btn-secondary" data-notification-id="{{ notification_id }}">
-                        <span class="btn-text">Test</span>
+                        <i class="fa-solid fa-bell"></i>
+                <span class="btn-text">Test</span>
                     </button>
                     <button type="button" class="delete-notification-btn btn-danger" data-notification-id="{{ notification_id }}">
-                        <span class="btn-text">Delete</span>
+                        <i class="fa-solid fa-trash"></i>
+                <span class="btn-text">Delete</span>
                     </button>
                 </div>
             </div>

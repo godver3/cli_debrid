@@ -9,21 +9,12 @@
                 Scrapers
             </h3>
             <div class="scrapers-actions action-buttons settings-expand-collapse-buttons">
-                <button type="button" class="scrapers-btn btn-secondary settings-collapse-all">Collapse All</button>
-                <button type="button" class="scrapers-btn btn-secondary settings-expand-all">Expand All</button>
-                <button id="add-scraper-btn" class="scrapers-btn-primary btn-primary add-scraper-link">Add New Scraper</button>
+                <button type="button" class="scrapers-btn btn-secondary settings-collapse-all"><i class="fa-solid fa-compress"></i> Collapse All</button>
+                <button type="button" class="scrapers-btn btn-secondary settings-expand-all"><i class="fa-solid fa-expand"></i> Expand All</button>
+                <button id="add-scraper-btn" class="scrapers-btn-primary btn-primary add-scraper-link"><i class="fa-solid fa-plus"></i> Add New Scraper</button>
             </div>
         </div>
 
-        <div class="info-box" style="margin-bottom: 20px;">
-            <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-            </svg>
-            <div>
-                <p><strong>Scraper Priority:</strong></p>
-                <p>Drag and drop scrapers using the ⋮⋮ handle to set their priority order. Scrapers at the top of the list receive higher priority scores, making their results rank better in search results. The last enabled scraper receives a score of 0, with each scraper above it getting +10 points. This helps you prioritize trusted or faster scrapers without changing other settings.</p>
-            </div>
-        </div>
 
         <div class="scraper-list">
 
@@ -89,7 +80,8 @@
                 { value: 'Jackett', text: 'Jackett' },
                 { value: 'Torrentio', text: 'Torrentio' },
                 { value: 'Nyaa', text: 'Nyaa' },
-                { value: 'Prowlarr', text: 'Prowlarr' }
+                { value: 'Prowlarr', text: 'Prowlarr' },
+                { value: 'Newznab', text: 'Newznab (Usenet Indexer)' }
             ],
             confirmText: 'Add',
             cancelText: 'Cancel',
@@ -103,25 +95,13 @@
         });
     }
 
-    function addScraper(scraperType) {
-        console.log('Adding scraper of type:', scraperType);
-        window.showPopup({
-            type: POPUP_TYPES.CONFIRM,
-            title: 'Add Scraper',
-            message: `Are you sure you want to add a scraper of type: ${scraperType}?`,
-            confirmText: 'Add',
-            cancelText: 'Cancel',
-            onConfirm: () => {
-                // Show loading dialog immediately after confirmation
-                window.Loading.show('Adding scraper...', 'Please wait while the scraper is being added.', true);
-
-                fetch('/settings/scrapers/add', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ type: scraperType })
-                })
+    function _doAddScraper(scraperType, extraData) {
+        window.Loading.show('Adding scraper...', 'Please wait while the scraper is being added.', true);
+        fetch('/settings/scrapers/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(Object.assign({ type: scraperType }, extraData || {}))
+        })
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
@@ -159,10 +139,35 @@
                         message: 'Error adding scraper: ' + error.message
                     });
                 });
-            },
-            onCancel: () => {
-            }
-        });
+    }
+
+    function addScraper(scraperType) {
+        if (scraperType === 'Newznab') {
+            window.showPopup({
+                type: POPUP_TYPES.PROMPT,
+                title: 'Name Your Indexer',
+                message: 'Enter a name for this Newznab indexer (e.g. NZBGeek, DrunkenSlug):',
+                inputPlaceholder: 'MyIndexer',
+                confirmText: 'Add',
+                cancelText: 'Cancel',
+                onConfirm: (name) => {
+                    if (!name || !name.trim()) {
+                        window.showPopup({ type: POPUP_TYPES.ERROR, message: 'A name is required for Newznab indexers.' });
+                        return;
+                    }
+                    _doAddScraper('Newznab', { name: name.trim() });
+                }
+            });
+        } else {
+            window.showPopup({
+                type: POPUP_TYPES.CONFIRM,
+                title: 'Add Scraper',
+                message: `Are you sure you want to add a scraper of type: ${scraperType}?`,
+                confirmText: 'Add',
+                cancelText: 'Cancel',
+                onConfirm: () => _doAddScraper(scraperType)
+            });
+        }
     }
 
     function deleteScraper(scraperId) {
@@ -298,6 +303,12 @@
 </script>
 
 <div id="scraper-sortable-list">
+    <div class="info-box" style="margin-bottom: 20px;">
+        <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+        <p><strong>Scraper Priority:</strong> Drag and drop scrapers using the ⋮⋮ handle to set their priority order. Scrapers at the top of the list receive higher priority scores, making their results rank better in search results. The last enabled scraper receives a score of 0, with each scraper above it getting +10 points. This helps you prioritize trusted or faster scrapers without changing other settings.</p>
+    </div>
 {% for scraper_id, config in settings.Scrapers.items() %}
 <div class="settings-section scraper-card scraper-item" data-scraper-id="{{ scraper_id }}">
     <div class="settings-section-header scraper-header scraper-info{% if not config.enabled %} scraper-disabled{% endif %}">
@@ -313,6 +324,7 @@
         </div>
         <div class="scraper-buttons scraper-actions">
             <button type="button" class="delete-scraper-btn btn-danger" data-scraper-id="{{ scraper_id }}">
+                <i class="fa-solid fa-trash"></i>
                 <span class="btn-text">Delete</span>
             </button>
         </div>
@@ -326,7 +338,7 @@
             <label for="{{ scraper_id }}-enabled" class="settings-title">Enabled:</label>
             <input type="checkbox" id="{{ scraper_id }}-enabled" name="Scrapers.{{ scraper_id }}.enabled" {% if config.enabled %}checked{% endif %} data-section="Scrapers" data-key="{{ scraper_id }}.enabled">
         </div>
-        {% if config.type in ['Zilean', 'MediaFusion', 'AIOStreams', 'Jackett', 'Prowlarr'] %}
+        {% if config.type in ['Zilean', 'MediaFusion', 'AIOStreams', 'Jackett', 'Prowlarr', 'Newznab'] %}
         <div class="settings-form-group">
             <label for="{{ scraper_id }}-url" class="settings-title">URL:</label>
             <input type="text" id="{{ scraper_id }}-url" name="Scrapers.{{ scraper_id }}.url" value="{{ config.url | default('') }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.url">
@@ -346,6 +358,12 @@
             <label for="{{ scraper_id }}-password" class="settings-title">Password:</label>
             <input type="password" id="{{ scraper_id }}-password" name="Scrapers.{{ scraper_id }}.password" value="{{ config.password | default('') }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.password">
             <small class="settings-description">Your AIOStreams password</small>
+        </div>
+        {% endif %}
+        {% if config.type == 'Newznab' %}
+        <div class="settings-form-group">
+            <label for="{{ scraper_id }}-api_key" class="settings-title">API Key:</label>
+            <input type="password" id="{{ scraper_id }}-api_key" name="Scrapers.{{ scraper_id }}.api_key" value="{{ config.api_key | default('') }}" class="settings-input" data-section="Scrapers" data-key="{{ scraper_id }}.api_key" placeholder="Your Newznab API key">
         </div>
         {% endif %}
         {% if config.type == 'AIOStreams' %}

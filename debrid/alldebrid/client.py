@@ -92,6 +92,8 @@ class AllDebridProvider(DebridProvider):
 
     def _load_api_key(self) -> str:
         """Load API key from settings"""
+        if getattr(self, '_api_key', None):
+            return self._api_key
         try:
             from .api import get_api_key
             return get_api_key()

@@ -365,6 +365,28 @@ class AddingQueue:
                 # The original_torrent_filename variable already holds the vetted name for 'real_debrid_original_title'.
                 # The logic later that determines 'torrent_title' for move_to_checking will use the vetted title parts.
 
+                # --- NZB / Usenet result — skip debrid file selection, go straight to Checking ---
+                if torrent_info.get('_is_nzb'):
+                    job_id = torrent_info.get('id', '')
+                    nzb_title = torrent_info.get('filename', item_identifier)
+                    nzb_url = torrent_info.get('_nzb_url', '')
+                    # Prefix the job_id so checking_queue can route to Decypharr instead of debrid
+                    checking_id = f"nzb:{job_id}" if job_id and not str(job_id).startswith('nzb:') else str(job_id)
+                    logging.info(f"[NZB] Item '{item_identifier}' submitted to Decypharr (checking_id={checking_id}). Moving to Checking queue.")
+                    try:
+                        queue_manager.move_to_checking(
+                            item, "Adding",
+                            title=nzb_title,
+                            link=nzb_url,
+                            filled_by_file=nzb_title,
+                            torrent_id=checking_id,
+                        )
+                    except Exception as _e:
+                        logging.warning(f"[NZB] Could not move '{item_identifier}' to Checking: {_e}")
+                        self._handle_failed_item(item, f"NZB submitted but state transition failed: {_e}", queue_manager)
+                    processed_this_item = True
+                    continue
+
                 # --- Process Files (Parse Once) ---
                 raw_files = torrent_info.get('files', [])
                 logging.debug(f"Got {len(raw_files)} raw files from torrent info.")

@@ -212,6 +212,32 @@ function createQualityBadge(tag) {
 }
 
 /**
+ * Generate multi-provider cache badge HTML
+ * Shows a small provider abbreviation badge for each provider that has it cached.
+ * Falls back to single icon when only one provider is configured.
+ * @param {string} status - Overall cache status
+ * @param {Object} cacheProviders - Per-provider cache status {ProviderName: 'Yes'/'No'/'Error'}
+ * @returns {string} HTML string
+ */
+function createMultiProviderCacheIcon(status, cacheProviders) {
+    if (!cacheProviders || Object.keys(cacheProviders).length <= 1) {
+        return createCacheIcon(status);
+    }
+    const abbrev = {
+        'Real-Debrid': 'RD', 'AllDebrid': 'AD', 'Torbox': 'TB',
+        'Premiumize': 'PM', 'Debrid-Link': 'DL',
+    };
+    const badges = Object.entries(cacheProviders).map(([name, st]) => {
+        const ab = abbrev[name] || name.slice(0, 2).toUpperCase();
+        const cached = st === 'Yes';
+        const cls = cached ? 'cp-badge cp-cached' : 'cp-badge cp-uncached';
+        const title = `${name}: ${st}`;
+        return `<span class="${cls}" title="${title}">${ab}</span>`;
+    }).join('');
+    return `<div class="cache-providers-wrap">${badges}</div>`;
+}
+
+/**
  * Generate cache status icon HTML
  * @param {string} status - Cache status (Yes/No/Unknown/etc)
  * @returns {string} HTML string for cache icon
@@ -244,6 +270,31 @@ function createCacheIcon(status) {
             </div>
         `;
     }
+}
+
+const _CP_ABBREV = {'Real-Debrid':'RD','AllDebrid':'AD','Torbox':'TB','Premiumize':'PM','Debrid-Link':'DL'};
+// Known provider priority order — primary first, fallbacks after
+const _CP_ORDER = ['Real-Debrid','AllDebrid','Torbox','Premiumize','Debrid-Link'];
+
+function createCacheProviderBadges(torrent) {
+    const cpData = torrent.cache_providers || {};
+    const keys = Object.keys(cpData);
+    if (!keys.length) return null;
+    // Sort by known order, unknown providers appended at end
+    const sorted = [...keys].sort((a, b) => {
+        const ai = _CP_ORDER.indexOf(a), bi = _CP_ORDER.indexOf(b);
+        if (ai === -1 && bi === -1) return 0;
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
+    });
+    const badges = sorted.map(k => {
+        const v = cpData[k];
+        const cls = v === 'Yes' ? 'cp-cached' : v === 'No' ? 'cp-uncached' : v === 'N/A' ? 'cp-na' : 'cp-not-checked';
+        const abbrev = _CP_ABBREV[k] || k.slice(0,2).toUpperCase();
+        return `<span class="cp-badge ${cls}" title="${k}: ${v}">${abbrev}</span>`;
+    }).join('');
+    return `<span class="cp-badges">${badges}</span>`;
 }
 
 /**
