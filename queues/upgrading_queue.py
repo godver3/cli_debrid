@@ -859,10 +859,11 @@ class UpgradingQueue:
             for result in results:
                 # 1. Check Not Wanted (unless disabled or hub pre-seeded — user explicitly chose it)
                 if not item.get('disable_not_wanted_check') and not _skip_not_wanted:
-                    if is_magnet_not_wanted(result['magnet']):
+                    _result_id = result.get('magnet') or result.get('nzb_url')
+                    if is_magnet_not_wanted(_result_id):
                         logging.info(f"Result '{result.get('title', 'N/A')}' filtered out by not_wanted_magnets check")
                         continue
-                    if is_url_not_wanted(result['magnet']):
+                    if is_url_not_wanted(_result_id):
                         logging.info(f"Result '{result.get('title', 'N/A')}' filtered out by not_wanted_urls check")
                         continue
 

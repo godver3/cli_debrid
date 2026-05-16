@@ -520,7 +520,27 @@ class TorrentProcessor:
         job_id = client.add_nzb(nzb_url=nzb_url, title=title)
 
         if not job_id:
+            # Fallback: download NZB and upload directly
+            logging.info(f'[{item_identifier}] URL submission failed, trying direct upload: {title}')
+            try:
+                from routes.api_tracker import api as _nzb_api
+                _r = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
+                if _r.status_code == 200 and '<nzb' in _r.text.lower():
+                    job_id = client.add_nzb_content(nzb_content=_r.text, title=title)
+                    if job_id:
+                        logging.info(f'[{item_identifier}] Direct upload succeeded: {title}')
+            except Exception as _fe:
+                logging.warning(f'[{item_identifier}] Direct upload fallback failed: {_fe}')
+
+        if not job_id:
             logging.warning(f'[{item_identifier}] Decypharr rejected NZB: {title}')
+            return None
+
+        # Verify job is actually in Decypharr's queue — brief wait for processing
+        time.sleep(3)
+        status = client.get_job_status(job_id)
+        if status and status.get('state') == 'failed':
+            logging.warning(f'[{item_identifier}] Decypharr failed NZB immediately after submission: {title} (job_id={job_id})')
             return None
 
         logging.info(f'[{item_identifier}] NZB submitted successfully, job_id={job_id}')
@@ -529,6 +549,7 @@ class TorrentProcessor:
         torrent_info = {
             'id': job_id,
             'filename': title,
+            'original_title': title,  # NZB release name — used as original_scraped_torrent_title
             'status': 'downloading',
             'files': [],
             'progress': 0,
