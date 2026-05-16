@@ -370,6 +370,8 @@ class AddingQueue:
                     job_id = torrent_info.get('id', '')
                     nzb_title = torrent_info.get('filename', item_identifier)
                     nzb_url = torrent_info.get('_nzb_url', '')
+                    # original_scraped_torrent_title is the NZB release name from the scraper
+                    nzb_original_title = torrent_info.get('original_title') or nzb_title
                     # Prefix the job_id so checking_queue can route to Decypharr instead of debrid
                     checking_id = f"nzb:{job_id}" if job_id and not str(job_id).startswith('nzb:') else str(job_id)
                     logging.info(f"[NZB] Item '{item_identifier}' submitted to Decypharr (checking_id={checking_id}). Moving to Checking queue.")
@@ -380,6 +382,7 @@ class AddingQueue:
                             link=nzb_url,
                             filled_by_file=nzb_title,
                             torrent_id=checking_id,
+                            original_scraped_torrent_title=nzb_original_title,
                         )
                     except Exception as _e:
                         logging.warning(f"[NZB] Could not move '{item_identifier}' to Checking: {_e}")

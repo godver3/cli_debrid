@@ -142,7 +142,8 @@ class FinalCheckQueue(BaseQueue):
                         for result in results:
                             # Check if 'disable_not_wanted_check' flag should apply (less likely here, but for consistency)
                             # if not item.get('disable_not_wanted_check'):
-                            if is_magnet_not_wanted(result['magnet']) or is_url_not_wanted(result['magnet']):
+                            _result_id = result.get('magnet') or result.get('nzb_url')
+                            if is_magnet_not_wanted(_result_id) or is_url_not_wanted(_result_id):
                                 continue
                             filtered_results.append(result)
 

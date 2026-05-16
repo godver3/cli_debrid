@@ -525,15 +525,94 @@ def prepare_manual_assignment():
     # Validate that either magnet link or torrent file is provided, but not both
     if not magnet_link and not torrent_file:
         return jsonify({'success': False, 'error': 'Please provide either a magnet link or a torrent file'}), 400
-    
+
     if magnet_link and torrent_file:
         return jsonify({'success': False, 'error': 'Please provide either a magnet link OR a torrent file, not both'}), 400
+
+    # Detect NZB by file extension (.nzb) or HTTP URL (anything not magnet: and not .torrent)
+    is_nzb_file = torrent_file and torrent_file.filename.lower().endswith('.nzb')
+    is_nzb_url = (magnet_link and not magnet_link.startswith('magnet:')
+                  and magnet_link.startswith('http')
+                  and not magnet_link.lower().endswith('.torrent'))
+
+    if is_nzb_url or is_nzb_file:
+        from routes.scraper_routes import _add_nzb_to_usenet
+        from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
+        try:
+            season_num = int(season) if season and season.lower() != 'null' else None
+        except (ValueError, TypeError):
+            season_num = None
+        try:
+            episode_num = int(episode) if episode and episode.lower() != 'null' else None
+        except (ValueError, TypeError):
+            episode_num = None
+
+        try:
+            if is_nzb_file:
+                # Upload .nzb file content directly to Decypharr, then track in queue
+                reset_decypharr_client()
+                client = get_decypharr_client()
+                if not client.is_enabled():
+                    return jsonify({'success': False, 'error': 'Usenet provider (Decypharr) is not enabled'}), 503
+                nzb_content = torrent_file.read().decode('utf-8', errors='replace')
+                job_id = client.add_nzb_content(nzb_content=nzb_content, title=torrent_file.filename)
+                if not job_id:
+                    return jsonify({'success': False, 'error': 'Failed to submit NZB to Decypharr'}), 500
+                # Track in queue directly — NZB already submitted, skip re-submission
+                from database.database_writing import add_media_item
+                from database.database_reading import get_media_item_by_id
+                from metadata.metadata import get_metadata, get_release_date
+                from queues.queue_manager import QueueManager
+                import json as _json
+                checking_id = f"nzb:{job_id}"
+                nzb_title = torrent_file.filename
+                item_type = 'episode' if media_type in ['tv', 'show'] else 'movie'
+                imdb_id = None
+                release_date = 'Unknown'
+                if tmdb_id:
+                    try:
+                        meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+                        imdb_id = meta.get('imdb_id')
+                        if item_type == 'movie':
+                            release_date = get_release_date(meta, imdb_id) or 'Unknown'
+                    except Exception:
+                        pass
+                base_item = {
+                    'title': title, 'year': year, 'type': item_type,
+                    'version': version, 'tmdb_id': tmdb_id, 'imdb_id': imdb_id,
+                    'release_date': release_date, 'genres': _json.dumps([]),
+                    'original_scraped_torrent_title': nzb_title,
+                    'content_source': 'content_requester',
+                }
+                if item_type == 'episode':
+                    base_item.update({'season_number': season_num, 'episode_number': episode_num})
+                item_id = add_media_item(base_item)
+                if item_id:
+                    added = dict(get_media_item_by_id(item_id))
+                    if added:
+                        QueueManager().move_to_checking(added, 'Adding', title=nzb_title,
+                                                        link=nzb_title, filled_by_file=nzb_title,
+                                                        torrent_id=checking_id,
+                                                        original_scraped_torrent_title=nzb_title)
+                return jsonify({'success': True, 'message': f'NZB file submitted to Decypharr (job: {job_id}). Tracking through queue.',
+                                'job_id': job_id, 'provider': 'Decypharr'})
+            else:
+                # NZB URL — use full _add_nzb_to_usenet flow (submits + tracks)
+                return _add_nzb_to_usenet(
+                    nzb_url=magnet_link,
+                    title=title, year=year, media_type=media_type,
+                    season=season_num, episode=episode_num,
+                    version=version, tmdb_id=tmdb_id,
+                )
+        except Exception as _ne:
+            logging.error(f"NZB handling failed: {_ne}", exc_info=True)
+            return jsonify({'success': False, 'error': str(_ne)}), 500
 
     try:
         # Handle torrent file upload if provided
         temp_file_path = None
         actual_magnet_link = magnet_link
-        
+
         if torrent_file:
             # Save uploaded torrent file to temporary location
             import tempfile
