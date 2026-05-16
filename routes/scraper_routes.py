@@ -258,6 +258,10 @@ def add_torrent_to_debrid():
                 title=title, year=year, media_type=media_type,
                 season=season_number, episode=episode_number,
                 version=final_version_for_item, tmdb_id=tmdb_id,
+                original_scraped_torrent_title=original_scraped_torrent_title,
+                genres=genres, current_score=current_score,
+                selected_folder=selected_folder,
+                selected_folder_is_custom=selected_folder_is_custom,
             )
 
         if not magnet_link:
@@ -1606,9 +1610,12 @@ def select_media():
         logging.error(f"Error in select_media: {str(e)}", exc_info=True)
         return jsonify({'error': 'An error occurred while processing your request'}), 500
 
-def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, version, tmdb_id):
-    """Submit an NZB URL to Decypharr and return a Flask response."""
+def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, version, tmdb_id,
+                       original_scraped_torrent_title=None, genres=None, current_score=0.0,
+                       selected_folder=None, selected_folder_is_custom=False):
+    """Submit an NZB URL to Decypharr and track it through the queue like a debrid add."""
     from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
+    from metadata.metadata import get_metadata, get_release_date
     reset_decypharr_client()
     client = get_decypharr_client()
 
@@ -1619,15 +1626,107 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
         return jsonify({'error': 'No NZB URL provided'}), 400
 
     logging.info(f'[NZB] Submitting to Decypharr: {title} ({year})')
-    job_id = client.add_nzb(nzb_url=nzb_url, title=str(title or ''))
+    job_id = client.add_nzb(nzb_url=nzb_url, title=str(original_scraped_torrent_title or title or ''))
+
+    if not job_id:
+        # Fallback: download NZB content and upload directly
+        logging.info(f'[NZB] URL submission failed, trying direct upload for: {title}')
+        try:
+            from routes.api_tracker import api as _nzb_api
+            _r = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
+            if _r.status_code == 200 and '<nzb' in _r.text.lower():
+                job_id = client.add_nzb_content(nzb_content=_r.text, title=str(original_scraped_torrent_title or title or ''))
+                if job_id:
+                    logging.info(f'[NZB] Direct upload succeeded for: {title}')
+        except Exception as _fe:
+            logging.warning(f'[NZB] Direct upload fallback failed: {_fe}')
 
     if not job_id:
         return jsonify({'error': 'Failed to submit NZB to Decypharr'}), 500
 
     logging.info(f'[NZB] Submitted successfully, job_id={job_id}')
+
+    # --- Queue tracking: create media item and move through queue like debrid ---
+    try:
+        nzb_title = original_scraped_torrent_title or title or ''
+        checking_id = f"nzb:{job_id}" if not str(job_id).startswith('nzb:') else str(job_id)
+
+        # Get metadata
+        imdb_id = None
+        release_date = 'Unknown'
+        if tmdb_id:
+            try:
+                meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+                imdb_id = meta.get('imdb_id')
+                if media_type not in ['tv', 'show']:
+                    release_date = get_release_date(meta, imdb_id) or 'Unknown'
+            except Exception as _me:
+                logging.warning(f'[NZB] Could not fetch metadata for queue tracking: {_me}')
+
+        item_type = 'episode' if media_type in ['tv', 'show'] else 'movie'
+        resolution = extract_resolution_from_filename(nzb_title) if nzb_title else None
+
+        base_item = {
+            'title': title,
+            'year': year,
+            'type': item_type,
+            'version': version,
+            'resolution': resolution,
+            'tmdb_id': tmdb_id,
+            'imdb_id': imdb_id,
+            'release_date': release_date,
+            'genres': json.dumps(genres or []),
+            'current_score': current_score,
+            'original_scraped_torrent_title': nzb_title,
+            'content_source': 'content_requester',
+            'selected_folder': selected_folder,
+            'selected_folder_is_custom': selected_folder_is_custom,
+        }
+
+        from queues.queue_manager import QueueManager
+        from database.database_writing import add_media_item
+        queue_manager = QueueManager()
+
+        from database.database_reading import get_media_item_by_id
+        if item_type == 'episode' and season is not None and episode is None:
+            # Season pack — create items per episode
+            try:
+                meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+                season_data = (meta.get('seasons') or {}).get(season, {})
+                episodes = season_data.get('episodes', {})
+                for ep_num_str, ep_data in episodes.items():
+                    ep_item = base_item.copy()
+                    ep_item.update({'season_number': season, 'episode_number': int(ep_num_str),
+                                    'episode_title': ep_data.get('title', f'Episode {ep_num_str}')})
+                    item_id = add_media_item(ep_item)
+                    if item_id:
+                        added = dict(get_media_item_by_id(item_id))
+                        if added:
+                            queue_manager.move_to_checking(added, 'Adding', title=nzb_title,
+                                                           link=nzb_url, filled_by_file=nzb_title,
+                                                           torrent_id=checking_id,
+                                                           original_scraped_torrent_title=nzb_title)
+            except Exception as _spe:
+                logging.warning(f'[NZB] Season pack queue tracking failed: {_spe}')
+        else:
+            if item_type == 'episode':
+                base_item.update({'season_number': season, 'episode_number': episode})
+            item_id = add_media_item(base_item)
+            if item_id:
+                added = dict(get_media_item_by_id(item_id))
+                if added:
+                    queue_manager.move_to_checking(added, 'Adding', title=nzb_title,
+                                                   link=nzb_url, filled_by_file=nzb_title,
+                                                   torrent_id=checking_id,
+                                                   original_scraped_torrent_title=nzb_title)
+                    logging.info(f'[NZB] Item {item_id} moved to Checking queue (checking_id={checking_id})')
+    except Exception as _qe:
+        logging.error(f'[NZB] Queue tracking failed for {title}: {_qe}', exc_info=True)
+        # Don't fail the response — NZB was submitted successfully to Decypharr
+
     return jsonify({
         'success': True,
-        'message': f'NZB submitted to Decypharr (job: {job_id}). File will appear on mount when download completes.',
+        'message': f'NZB submitted to Decypharr (job: {job_id}). Tracking through queue.',
         'job_id': job_id,
         'provider': 'Decypharr',
     })

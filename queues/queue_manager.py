@@ -667,6 +667,7 @@ class QueueManager:
         filled_by_file: str,
         torrent_id: str = None,
         debrid_folder_name: str = None,
+        original_scraped_torrent_title: str = None,
     ):
         item_identifier = self.generate_identifier(item)
 
@@ -722,6 +723,10 @@ class QueueManager:
             return
         '''
         
+        extra = {}
+        if original_scraped_torrent_title:
+            extra['original_scraped_torrent_title'] = original_scraped_torrent_title
+
         updated_item = self._move_item_to_queue(
             item,
             from_queue if from_queue in ["Adding", "Wanted"] else None,
@@ -732,6 +737,7 @@ class QueueManager:
             filled_by_file=filled_by_file,
             filled_by_torrent_id=torrent_id,
             debrid_folder_name=debrid_folder_name,
+            **extra,
         )
         
         # Copy downloading flag from original item

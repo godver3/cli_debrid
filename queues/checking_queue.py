@@ -323,6 +323,69 @@ class CheckingQueue:
             del self.unknown_strikes[torrent_id]
             logging.debug(f"Cleared unknown strikes for missing torrent {torrent_id}")
 
+    def _resolve_nzb_file_info(self, torrent_id: str, items: list) -> None:
+        """
+        When an NZB download completes, query Decypharr to find the actual folder and
+        video filename, then update all items with the correct filled_by_file,
+        filled_by_title, debrid_folder_name, and original_scraped_torrent_title
+        so that symlink creation and Plex file checks work identically to debrid adds.
+        """
+        from usenet.decypharr_client import get_decypharr_client
+        from database.database_writing import update_media_item
+
+        if not items:
+            return
+
+        # Use the NZB title stored as filled_by_title to search Decypharr
+        sample_item = items[0]
+        job_name = sample_item.get('filled_by_title') or sample_item.get('original_scraped_torrent_title') or ''
+        if not job_name:
+            logging.warning(f'[NZB] Cannot resolve file info for {torrent_id}: no job_name')
+            return
+
+        # Skip if already resolved (filled_by_file has a video extension)
+        import os as _os
+        _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
+        if _os.path.splitext(sample_item.get('filled_by_file', ''))[1].lower() in _VIDEO_EXTS:
+            logging.debug(f'[NZB] {torrent_id} already has video filename, skipping resolve')
+            return
+
+        try:
+            client = get_decypharr_client()
+            result = client.get_nzb_file_info(job_name)
+            if not result:
+                logging.warning(f'[NZB] Could not find Decypharr folder for job {job_name!r}')
+                return
+
+            folder_name, video_file = result
+            if not video_file:
+                logging.warning(f'[NZB] Found folder {folder_name!r} but no video file inside for {torrent_id}')
+                # Still update folder name so path searches can work
+                video_file = folder_name
+
+            logging.info(f'[NZB] Resolved: folder={folder_name!r} file={video_file!r} for {torrent_id}')
+
+            for item in items:
+                # Preserve original scraper release name; fall back to job_name
+                orig_scraped = item.get('original_scraped_torrent_title') or job_name
+                update_media_item(item['id'], **{
+                    'filled_by_file': video_file,
+                    'filled_by_title': folder_name,
+                    'debrid_folder_name': folder_name,
+                    'original_scraped_torrent_title': orig_scraped,
+                    'real_debrid_original_title': orig_scraped,  # Original release name, not folder
+                })
+                # Update in-memory item too
+                item['filled_by_file'] = video_file
+                item['filled_by_title'] = folder_name
+                item['debrid_folder_name'] = folder_name
+                item['original_scraped_torrent_title'] = orig_scraped
+                item['real_debrid_original_title'] = orig_scraped
+                logging.info(f'[NZB] Updated item {item["id"]} with resolved file info')
+
+        except Exception as exc:
+            logging.error(f'[NZB] _resolve_nzb_file_info error for {torrent_id}: {exc}', exc_info=True)
+
     @timed_lru_cache(seconds=60)
     @with_timeout(45)  # 45 second timeout for the entire progress check
     def _get_nzb_progress(self, torrent_id: str) -> Union[int, str, None]:
@@ -891,6 +954,34 @@ class CheckingQueue:
                 logging.debug(f"Torrent {torrent_id} - Current progress: {current_progress}%, Last progress: {last_progress}%, Time since last check: {current_time - last_check}s")
                 
                 if int(current_progress) == 100:
+                    # --- NZB: resolve actual folder/file names from Decypharr before symlink/Plex checks ---
+                    if str(torrent_id).startswith('nzb:'):
+                        self._resolve_nzb_file_info(torrent_id, current_items_for_torrent)
+                        # Reload items from DB so updated fields are visible to symlink/plex checks
+                        from database import get_all_media_items
+                        current_items_for_torrent = [
+                            dict(item) for item in get_all_media_items(state='Checking')
+                            if item.get('filled_by_torrent_id') == torrent_id
+                        ]
+                        # If resolve still hasn't found the file after multiple attempts, move back to Wanted
+                        import os as _os
+                        _sample = current_items_for_torrent[0] if current_items_for_torrent else {}
+                        _fbf = _sample.get('filled_by_file', '')
+                        _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
+                        if _fbf and _os.path.splitext(_fbf)[1].lower() not in _VIDEO_EXTS:
+                            # filled_by_file has no video extension — resolve hasn't succeeded
+                            if torrent_id not in self.progress_checks:
+                                self.progress_checks[torrent_id] = {'last_check': current_time, 'last_progress': 100, 'nzb_resolve_failures': 0}
+                            self.progress_checks[torrent_id]['nzb_resolve_failures'] = self.progress_checks[torrent_id].get('nzb_resolve_failures', 0) + 1
+                            failures = self.progress_checks[torrent_id]['nzb_resolve_failures']
+                            logging.warning(f'[NZB] {torrent_id} resolve failure #{failures} — folder not found in Decypharr')
+                            if failures >= 5:
+                                logging.warning(f'[NZB] {torrent_id} failed to resolve after {failures} attempts — moving back to Wanted')
+                                for item_to_move in list(current_items_for_torrent):
+                                    if self.contains_item_id(item_to_move['id']):
+                                        queue_manager.move_to_wanted(item_to_move, 'Checking')
+                                continue
+
                     # --- Restored Symlinked/Local processing logic ---
                     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
                         items_to_scan = []

@@ -1890,11 +1890,12 @@ def get_details(tmdb_id):
         response.raise_for_status()
         data = response.json()
 
-        # Enrich with digital release date if it's a movie
+        # Fetch digital release date separately — do not overwrite theatrical release_date
+        digital_release_date_1895 = None
         if media_type == 'movie':
             digital_date = get_digital_release_date(tmdb_id, 'movie', tmdb_api_key)
             if digital_date:
-                data['release_date'] = digital_date
+                digital_release_date_1895 = digital_date
 
         # Get certification based on user's preferred region
         certification_region = get_setting('TMDB', 'certification_region', 'US')
@@ -1924,7 +1925,8 @@ def get_details(tmdb_id):
             'certification': certification,
             'imdb_id': data.get('external_ids', {}).get('imdb_id') or data.get('imdb_id'),
             'media_type': media_type,
-            'db_status': db_status
+            'db_status': db_status,
+            'digital_release_date': digital_release_date_1895,
         }
 
         # Add TV-specific fields
@@ -2505,11 +2507,12 @@ def details_data(tmdb_id, media_type):
                     logging.debug(f"TVDB error traceback: {traceback.format_exc()}")
                     # Continue with TMDB seasons as fallback
 
-        # Enrich with digital release date if it's a movie
+        # Enrich with digital release date if it's a movie — store separately, don't overwrite theatrical date
+        digital_release_date = None
         if media_type == 'movie':
             digital_date = get_digital_release_date(tmdb_id, 'movie', tmdb_api_key)
             if digital_date and digital_date.get('date'):
-                data['release_date'] = digital_date['date']
+                digital_release_date = digital_date['date']
 
         # Build response object
         if media_type == 'tv':
@@ -2594,7 +2597,8 @@ def details_data(tmdb_id, media_type):
                 'certification': certification,
                 'media_type': 'movie',
                 'tmdb_id': data.get('id'),
-                'imdb_id': data.get('imdb_id') or (data.get('external_ids', {}).get('imdb_id') if isinstance(data.get('external_ids'), dict) else None)
+                'imdb_id': data.get('imdb_id') or (data.get('external_ids', {}).get('imdb_id') if isinstance(data.get('external_ids'), dict) else None),
+                'digital_release_date': digital_release_date,
             }
 
         # Get cast (top 10) - safe extraction

@@ -54,7 +54,7 @@ def add_to_not_wanted(hash_value, item_identifier=None, item=None):
 def get_base_filename(url):
     """Extract the base filename from a URL or magnet link."""
     if url is None:
-        logging.warning("Received None value for URL/magnet in get_base_filename")
+        logging.debug("Received None value for URL/magnet in get_base_filename — skipping")
         return None
 
     if url.startswith('magnet:'):
@@ -86,7 +86,7 @@ def is_magnet_not_wanted(magnet):
         return False
         
     if magnet is None:
-        logging.warning("Received None value for magnet in is_magnet_not_wanted")
+        logging.debug("Received None value for magnet in is_magnet_not_wanted — skipping check")
         return False
         
     not_wanted = load_not_wanted_magnets()

@@ -120,6 +120,12 @@ def download_and_extract_hash(url: str, max_redirects: int = 5) -> Optional[str]
                 logging.debug(f"Content of {current_url} started like a magnet but full text was not. Proceeding as torrent file.")
 
 
+        # Check if content is an NZB file (XML) — not a torrent, return None
+        content_type = response.headers.get('Content-Type', '').lower()
+        if '<nzb' in content_preview.lower() or 'application/x-nzb' in content_type or 'nzb' in content_type:
+            logging.debug(f"URL {current_url} returned NZB content — no hash to extract")
+            return None
+
         # If none of the above, assume it's torrent file content
         logging.debug(f"Processing content of {current_url} as a torrent file.")
         with tempfile.NamedTemporaryFile(suffix='.torrent', delete=False) as temp_file:
