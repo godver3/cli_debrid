@@ -569,9 +569,9 @@ class ScrapingQueue:
                     if results: # Only filter if there are raw results
                         for result in results:
                             if not item_to_process.get('disable_not_wanted_check'):
-                                if is_magnet_not_wanted(result['magnet']):
+                                if is_magnet_not_wanted(result.get('magnet') or result.get('nzb_url')):
                                     continue
-                                if is_url_not_wanted(result['magnet']):
+                                if is_url_not_wanted(result.get('magnet') or result.get('nzb_url')):
                                     continue
                             filtered_results.append(result)
 
@@ -679,9 +679,9 @@ class ScrapingQueue:
                             current_filtered_fallback_results = []
                             for result in fallback_results:
                                 if not item_to_process.get('disable_not_wanted_check'):
-                                    if is_magnet_not_wanted(result['magnet']):
+                                    if is_magnet_not_wanted(result.get('magnet') or result.get('nzb_url')):
                                         continue
-                                    if is_url_not_wanted(result['magnet']):
+                                    if is_url_not_wanted(result.get('magnet') or result.get('nzb_url')):
                                         continue
                                 current_filtered_fallback_results.append(result)
                             
@@ -825,7 +825,7 @@ class ScrapingQueue:
                 r for r in results 
                 if not (
                     not item.get('disable_not_wanted_check') and 
-                    (is_magnet_not_wanted(r['magnet']) or is_url_not_wanted(r['magnet']))
+                    (is_magnet_not_wanted(r.get('magnet') or r.get('nzb_url')) or is_url_not_wanted(r.get('magnet') or r.get('nzb_url')))
                 )
             ]
             
@@ -1066,7 +1066,7 @@ class ScrapingQueue:
             for r_idx, r_val in enumerate(individual_results):
                 logging.debug(f"  Checking individual result #{r_idx + 1} ('{r_val.get('original_title', 'N/A')}') for not_wanted/rescrape filters.")
                 if not item.get('disable_not_wanted_check'):
-                    if is_magnet_not_wanted(r_val['magnet']):
+                    if is_magnet_not_wanted(r_val.get('magnet') or r_val.get('nzb_url')):
                         logging.info(f"    Filtered out '{r_val.get('original_title')}' due to is_magnet_not_wanted.")
                         continue
                     if is_url_not_wanted(r_val['magnet']):
