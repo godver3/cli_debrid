@@ -544,6 +544,8 @@ body[data-theme="tangerine"] .rate-limits-section-toggle {
 
 /* ── finish-setup popup wider width ──────────────────────── */
 body[data-theme="tangerine"] .universal-popup .popup-content {
-    max-width: 444px !important;
+    max-width: 688px !important;
     width: 90vw !important;
+    max-height: 80vh !important;
+    overflow-y: auto !important;
 }

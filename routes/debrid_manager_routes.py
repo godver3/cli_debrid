@@ -1301,7 +1301,10 @@ def api_library():
 def api_backup_status():
     try:
         from utilities.debrid_backup import get_backup_status
-        return jsonify({'success': True, **get_backup_status()})
+        from usenet.repair_engine import get_available_versions
+        status = get_backup_status()
+        status['scraping_versions'] = get_available_versions()
+        return jsonify({'success': True, **status})
     except Exception as e:
         logging.error(f'Debrid backup status error: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1463,6 +1466,7 @@ _USENET_MIGRATE_STALE_AFTER = 3600
 def api_usenet_migrate():
     data = request.get_json(silent=True) or {}
     filename = data.get('filename', '')
+    version_override = data.get('version') or ''
     if not filename:
         return jsonify({'success': False, 'error': 'filename required'}), 400
 
@@ -1505,6 +1509,52 @@ def api_usenet_migrate():
             ]
             if not newznab_scrapers:
                 raise ValueError('No enabled Newznab scrapers configured')
+
+            # Load version filter settings for result filtering on non-group queries
+            _version_settings = {}
+            if version_override:
+                _all_versions = get_setting('Scraping', 'versions', {})
+                _version_settings = _all_versions.get(version_override, {})
+                logging.info(f'[UsenetMigrate] Using version filter: {version_override!r}')
+
+            import re as _re_vf
+
+            def _passes_re(pat):
+                try:
+                    _re_vf.compile(pat)
+                    return True
+                except Exception:
+                    return False
+
+            def _passes_version_filter(result_title):
+                """Return True if result_title passes the selected version's filter_in/filter_out/resolution."""
+                if not _version_settings:
+                    return True
+                t = result_title or ''
+                filter_out = _version_settings.get('filter_out', [])
+                filter_in  = _version_settings.get('filter_in', [])
+                for pat in filter_out:
+                    try:
+                        if _re_vf.search(pat, t, _re_vf.IGNORECASE):
+                            return False
+                    except Exception:
+                        pass
+                if filter_in:
+                    if not any(_re_vf.search(pat, t, _re_vf.IGNORECASE) for pat in filter_in
+                               if _passes_re(pat)):
+                        return False
+                max_res = _version_settings.get('max_resolution', '')
+                res_wanted = _version_settings.get('resolution_wanted', '<=')
+                if max_res:
+                    try:
+                        from scraper.functions.filter_results import resolution_filter
+                        from PTT import parse_title as _ptt2
+                        parsed_res = (_ptt2(t) or {}).get('resolution', '') or ''
+                        if parsed_res and not resolution_filter(parsed_res, max_res, res_wanted):
+                            return False
+                    except Exception:
+                        pass
+                return True
 
             reset_decypharr_client()
             client = get_decypharr_client()
@@ -1660,10 +1710,13 @@ def api_usenet_migrate():
 
                     from routes.api_tracker import api as _api
                     from scraper.newznab import _parse_newznab_xml
-                    for query in queries:
+                    # Q1 is the group-specific query (index 0) — no filtering needed
+                    # Q2+ drop the group, so version filter must be applied
+                    for _qi, query in enumerate(queries):
                         if nzb_url:
                             break
-                        logging.debug(f'[UsenetMigrate] Name search: {query!r}')
+                        _needs_filter = _qi > 0 and bool(_version_settings)
+                        logging.debug(f'[UsenetMigrate] Name search (Q{_qi+1}, filter={_needs_filter}): {query!r}')
                         for sid, cfg in newznab_scrapers:
                             try:
                                 params = {'apikey': cfg['api_key'].strip(), 't': 'search', 'q': query, 'limit': 10}
@@ -1671,10 +1724,14 @@ def api_usenet_migrate():
                                 if r.status_code == 200:
                                     results = _parse_newznab_xml(r.text, sid)
                                     if results:
-                                        nzb_url = results[0].get('nzb_url')
-                                        if nzb_url:
-                                            logging.debug(f'[UsenetMigrate] Matched with query {query!r} on {sid}')
-                                            break
+                                        if _needs_filter:
+                                            results = [res for res in results
+                                                       if _passes_version_filter(res.get('title') or res.get('original_title') or '')]
+                                        if results:
+                                            nzb_url = results[0].get('nzb_url')
+                                            if nzb_url:
+                                                logging.debug(f'[UsenetMigrate] Matched with query {query!r} on {sid} (Q{_qi+1})')
+                                                break
                             except Exception:
                                 continue
 
@@ -1700,8 +1757,75 @@ def api_usenet_migrate():
                         failed += 1
                         continue
 
+                    # Pre-check: skip without submitting if segment already known broken
+                    try:
+                        from database.not_wanted_magnets import is_nzb_segment_not_wanted
+                        if is_nzb_segment_not_wanted(_nzb_text):
+                            logging.info(f'[UsenetMigrate] Skipping {name!r} — segment ID in not-wanted (previously broken)')
+                            failed_items.append(torrent)
+                            failed += 1
+                            continue
+                    except Exception:
+                        pass
+
+                    # Check segment health via Decypharr repair API after submission
                     job_id = client.add_nzb_content(nzb_content=_nzb_text, title=name or hash_val)
                     if job_id:
+                        # Validate NZB health before keeping — delete if broken
+                        try:
+                            health = client.check_entry_health(name or hash_val)
+                            if health == 'broken':
+                                logging.warning(f'[UsenetMigrate] NZB {name!r} is BROKEN (missing segments) — deleting from Decypharr')
+                                # Add segment ID to not-wanted so future migrations skip it
+                                try:
+                                    from database.not_wanted_magnets import add_to_not_wanted_nzb_segment, extract_nzb_segment_id
+                                    _seg = extract_nzb_segment_id(_nzb_text)
+                                    if _seg:
+                                        add_to_not_wanted_nzb_segment(_seg)
+                                except Exception:
+                                    pass
+                                # Delete from Decypharr — paginate to find real info_hash
+                                try:
+                                    from routes.api_tracker import api as _del_api
+                                    from utilities.settings import get_setting as _gs_dm
+                                    _dcy_url = _gs_dm('Usenet Provider', 'url', default='').rstrip('/')
+                                    _dcy_token = _gs_dm('Usenet Provider', 'api_token', default='')
+                                    _dh = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
+                                    _search_name = (name or hash_val).strip()
+                                    _real_hash = None
+                                    _pg = 1
+                                    while not _real_hash:
+                                        _tr = _del_api.get(f'{_dcy_url}/api/torrents',
+                                                           params={'page': _pg, 'limit': 50, 'sort_by': 'added_on', 'sort_order': 'desc'},
+                                                           headers=_dh, timeout=10)
+                                        if _tr.status_code != 200:
+                                            break
+                                        _td = _tr.json()
+                                        for _t in _td.get('torrents', []):
+                                            if _t.get('name', '').strip() == _search_name:
+                                                _real_hash = _t.get('info_hash', '')
+                                                break
+                                        if _real_hash or not _td.get('has_next'):
+                                            break
+                                        _pg += 1
+                                    if _real_hash:
+                                        _del_api.delete(f'{_dcy_url}/api/torrents',
+                                                        headers=_dh, params={'hashes': _real_hash}, timeout=10)
+                                        logging.info(f'[UsenetMigrate] Deleted broken entry {_real_hash} from Decypharr')
+                                    else:
+                                        logging.warning(f'[UsenetMigrate] Could not find {_search_name!r} in Decypharr to delete')
+                                except Exception as _del_e:
+                                    logging.warning(f'[UsenetMigrate] Could not delete broken entry: {_del_e}')
+                                failed_items.append(torrent)
+                                failed += 1
+                                continue
+                            elif health == 'healthy':
+                                logging.info(f'[UsenetMigrate] NZB {name!r} health check passed')
+                            else:
+                                logging.info(f'[UsenetMigrate] NZB {name!r} health check inconclusive — keeping')
+                        except Exception as _he:
+                            logging.debug(f'[UsenetMigrate] Health check error for {name!r}: {_he} — keeping')
+
                         logging.info(f'[UsenetMigrate] Submitted: {name} -> job {job_id}')
                         already_submitted.add(dedup_key)
                         try:
@@ -4709,3 +4833,129 @@ def api_bad_torrent_audit_reinsert():
         'first_error': failed[0]['error'] if failed else None,
     })
 
+
+# ---------------------------------------------------------------------------
+# Usenet Repair API
+# ---------------------------------------------------------------------------
+
+_repair_thread = None
+_repair_progress = {}  # shared state for the running repair
+
+
+@debrid_manager_bp.route('/api/usenet/repair/stats')
+def usenet_repair_stats():
+    """Stats for the Usenet tab: Decypharr health summary + 30-day repair activity counts + available versions."""
+    try:
+        from usenet.repair_engine import get_health_summary, get_available_versions, get_repair_version
+        from database.nzb_repair_activity import get_repair_stats
+        health = get_health_summary()
+        activity = get_repair_stats(days=30)
+        versions = get_available_versions()
+        repair_version = get_repair_version()
+        return jsonify(success=True, health=health, activity=activity, versions=versions, repair_version=repair_version)
+    except Exception as e:
+        logging.error(f'[UsenetRepair] stats error: {e}')
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/usenet/repair/activity')
+def usenet_repair_activity():
+    """Paginated repair activity log."""
+    try:
+        from database.nzb_repair_activity import get_repair_activity
+        limit = int(request.args.get('limit', 50))
+        offset = int(request.args.get('offset', 0))
+        outcome = request.args.get('outcome') or None
+        rows, total = get_repair_activity(limit=limit, offset=offset, outcome=outcome)
+        return jsonify(success=True, rows=rows, total=total)
+    except Exception as e:
+        logging.error(f'[UsenetRepair] activity error: {e}')
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/usenet/repair/health_scan', methods=['POST'])
+def usenet_trigger_health_scan():
+    """Trigger a fresh health scan in Decypharr."""
+    try:
+        from usenet.repair_engine import trigger_health_scan
+        ok = trigger_health_scan()
+        return jsonify(success=ok, message='Health scan triggered' if ok else 'Failed to trigger scan')
+    except Exception as e:
+        logging.error(f'[UsenetRepair] health_scan error: {e}')
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/usenet/repair/broken')
+def usenet_broken_items():
+    """Return current broken items from Decypharr health."""
+    try:
+        from usenet.repair_engine import fetch_broken_items
+        items = fetch_broken_items()
+        return jsonify(success=True, items=items, count=len(items))
+    except Exception as e:
+        logging.error(f'[UsenetRepair] broken items error: {e}')
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/usenet/repair/run', methods=['POST'])
+def usenet_run_repair():
+    """Kick off a repair run in background. Accepts optional version_override in JSON body."""
+    global _repair_thread, _repair_progress
+
+    if _repair_thread and _repair_thread.is_alive():
+        return jsonify(success=False, message='Repair already running')
+
+    body = request.get_json(silent=True) or {}
+    version_override = body.get('version_override') or None
+
+    _repair_progress = {'status': 'running', 'summary': None, 'error': None, 'started_at': time.time(),
+                        'version_override': version_override}
+
+    def _run():
+        global _repair_progress
+        try:
+            from usenet.repair_engine import run_repair
+            summary = run_repair(triggered_by='manual', version_override=version_override)
+            _repair_progress['status'] = 'done'
+            _repair_progress['summary'] = summary
+        except Exception as e:
+            logging.error(f'[UsenetRepair] run_repair thread error: {e}', exc_info=True)
+            _repair_progress['status'] = 'error'
+            _repair_progress['error'] = str(e)
+
+    _repair_thread = threading.Thread(target=_run, daemon=True, name='usenet-repair')
+    _repair_thread.start()
+    return jsonify(success=True, message='Repair started')
+
+
+@debrid_manager_bp.route('/api/usenet/repair/progress')
+def usenet_repair_progress():
+    """Poll repair run progress."""
+    global _repair_thread, _repair_progress
+    is_running = bool(_repair_thread and _repair_thread.is_alive())
+    return jsonify(
+        success=True,
+        is_running=is_running,
+        **_repair_progress,
+    )
+
+
+@debrid_manager_bp.route('/api/usenet/repair/settings', methods=['GET'])
+def usenet_repair_settings_get():
+    try:
+        from usenet.repair_engine import get_repair_version
+        return jsonify(success=True, repair_version=get_repair_version())
+    except Exception as e:
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/usenet/repair/settings', methods=['POST'])
+def usenet_repair_settings_save():
+    try:
+        from usenet.repair_engine import set_repair_version
+        body = request.get_json(silent=True) or {}
+        set_repair_version(body.get('repair_version', ''))
+        return jsonify(success=True)
+    except Exception as e:
+        logging.error(f'[UsenetRepair] save settings error: {e}')
+        return jsonify(success=False, error=str(e))

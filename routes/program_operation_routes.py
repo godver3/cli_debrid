@@ -927,6 +927,7 @@ def get_task_timings():
         'task_run_library_maintenance',
         'task_analyze_media_files',
         'task_manual_plex_full_scan',
+        'task_fix_stuck_plex_items',
     }
     _METADATA_TASKS = {
         'task_refresh_release_dates',
@@ -949,6 +950,8 @@ def get_task_timings():
         'task_upgrade_hub_auto_queue',
         'task_plex_smart_collection_posters',
         'task_plex_movie_boxsets',
+        'task_repair_broken_nzbs',
+        'task_backfill_nzb_torrent_ids',
     }
 
     tasks_data = {

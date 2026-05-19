@@ -26,6 +26,62 @@ _torrent_status_rate_limiter = {
     'lock': threading.Lock()
 }
 
+def _get_provider_display(item: dict) -> str:
+    """Return a short provider label for Adding/Checking queue items.
+    NZB items: scraper name (NZBGeek, althub, etc.)
+    Debrid items: provider name (Real-Debrid, Torbox, Debrid-Link, etc.)
+    """
+    torrent_id = item.get('filled_by_torrent_id', '') or ''
+    if str(torrent_id).startswith('nzb:'):
+        # NZB — extract indexer name from scrape_results
+        try:
+            import re as _re
+            raw = item.get('scrape_results') or '[]'
+            results = json.loads(raw) if isinstance(raw, str) else (raw or [])
+            title = item.get('original_scraped_torrent_title', '') or item.get('filled_by_file', '')
+
+            def _extract_indexer(r):
+                # 'source' field is like "NZBGeek_1" or "althub_1"
+                source = r.get('source', '')
+                if source:
+                    cleaned = _re.sub(r'_\d+$', '', source)
+                    if cleaned and not cleaned.isdigit():
+                        return cleaned
+                # scraper_type is the indexer name e.g. "althub", "NZBGeek"
+                scraper_type = r.get('scraper_type', '')
+                if scraper_type and scraper_type not in ('Newznab', 'newznab') and not scraper_type.isdigit():
+                    return scraper_type
+                return ''
+
+            # Use first NZB result's indexer (all NZB results in a pack come from same indexer search)
+            for r in results:
+                if r.get('protocol') == 'nzb':
+                    name = _extract_indexer(r)
+                    if name:
+                        return name
+        except Exception:
+            pass
+        return 'Usenet'
+    elif torrent_id and torrent_id != 'Unknown':
+        # Debrid — return configured provider name
+        try:
+            from debrid import get_debrid_provider
+            provider = get_debrid_provider()
+            name = type(provider).__name__.replace('Provider', '').replace('Client', '')
+            # Map class name to friendly name
+            _names = {
+                'RealDebrid': 'Real-Debrid',
+                'AllDebrid': 'AllDebrid',
+                'Torbox': 'Torbox',
+                'Premiumize': 'Premiumize',
+                'DebridLink': 'Debrid-Link',
+            }
+            return _names.get(name, name)
+        except Exception:
+            pass
+    return ''
+
+
 def get_torrent_status_check_interval():
     """Get the minimum interval between torrent status checks from settings"""
     try:
@@ -503,6 +559,8 @@ def index():
                     source_config = content_sources.get(item['content_source'], {})
                     display_name = source_config.get('display_name', item['content_source'])
                     item['content_source_display'] = display_name
+                if queue_name in ['Adding', 'Checking']:
+                    item['provider_display'] = _get_provider_display(item)
     display_names_time = time.time() - display_names_start
     logging.debug(f"[QUEUE_ROUTES] Display names processing took {display_names_time:.3f}s")
 
@@ -684,6 +742,8 @@ def api_queue_contents():
                     source_config = content_sources.get(item['content_source'], {})
                     display_name = source_config.get('display_name', item['content_source'])
                     item['content_source_display'] = display_name
+                if queue_name in ['Adding', 'Checking']:
+                    item['provider_display'] = _get_provider_display(item)
     display_names_time = time.time() - display_names_start
     logging.debug(f"[QUEUE_ROUTES] API display names processing took {display_names_time:.3f}s")
 
@@ -838,7 +898,10 @@ def process_item_for_response(item, queue_name, currently_processing_upgrade_id=
             source_config = content_sources.get(item['content_source'], {})
             display_name = source_config.get('display_name', item['content_source'])
             item['content_source_display'] = display_name
-        
+
+        if queue_name in ['Adding', 'Checking']:
+            item['provider_display'] = _get_provider_display(item)
+
         # Optimize JSON serialization - only process problematic fields
         datetime_fields = ['final_check_display_time', 'time_added', 'last_updated']
         for key, value in item.items():

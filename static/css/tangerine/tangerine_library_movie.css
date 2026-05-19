@@ -2721,7 +2721,7 @@ body[data-theme="tangerine"] .file-number {
 
 body[data-theme="tangerine"] .file-name {
     font-family: var(--tm-sans);
-    font-size: 0.875rem;
+    font-size: 12px;
     color: var(--tm-text);
     font-weight: 500;
 }

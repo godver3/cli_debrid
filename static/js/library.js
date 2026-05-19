@@ -1705,7 +1705,7 @@ async function deleteSelectedItems() {
                     window.showPopup({
                         type: window.POPUP_TYPES.CONFIRM,
                         title: `${plexNotFoundItems.length} ${itemWord} not found in Plex`,
-                        message: `The following ${itemWord} were not found in Plex (already removed):<br><br>${titles}<br><br>Continue removing from database, debrid and other layers?`,
+                        message: `The following ${itemWord} were not found in Plex (already removed):<br><br>${titles}<br><br>Continue removing from database, debrid/usenet and other layers?`,
                         confirmText: 'Continue',
                         cancelText: 'Cancel',
                         onConfirm: () => { console.log('[DELETE] User clicked Continue'); resolve(true); },
@@ -1866,7 +1866,7 @@ async function deleteSelectedItems() {
                         } else if (layer.includes('Filesystem')) {
                             reportLines.push('✓ Removed files from filesystem');
                         } else if (layer.includes('Debrid')) {
-                            reportLines.push('✓ Removed from debrid provider');
+                            reportLines.push('✓ Removed from debrid/usenet provider');
                         } else if (layer.includes('Symlinks')) {
                             reportLines.push('✓ Removed symlinks');
                         } else if (layer.includes('Cache')) {

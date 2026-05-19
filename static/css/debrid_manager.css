@@ -1836,3 +1836,123 @@
 
 /* Beta notice box */
 .beta-notice-box { --beta-box-bg: #1e2433; }
+
+/* ── Usenet Tab — defined in debrid_manager.html <style> block ── */
+/* #usenet-tab, #usenet-content {
+    --ov-surf:    #161616;
+    --ov-border:  #252525;
+    --ov-border2: #333;
+    --ov-accent:  #e8601c;
+    --ov-accent-d:#e8601c22;
+    --ov-accent-b:#e8601c44;
+    --ov-text:    #f0f0f0;
+    --ov-text2:   #888;
+    --ov-sans:    'Inter', system-ui, sans-serif;
+    --ov-mono:    'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+    --ov-radius:  8px;
+}
+#usenet-content {
+    font-family: var(--ov-sans);
+    font-size: 13px;
+    color: var(--ov-text);
+    padding: 20px;
+}
+#usenet-content .un-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.75rem;
+    flex-wrap: wrap;
+}
+#usenet-content .un-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--ov-text);
+    margin-bottom: 3px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+#usenet-content .un-title::before {
+    content: '';
+    width: 3px;
+    height: 22px;
+    background: var(--ov-accent);
+    flex-shrink: 0;
+}
+#usenet-content .un-subtitle {
+    font-size: 12px;
+    color: var(--ov-text2);
+    padding-left: 13px;
+    margin: 0;
+}
+#usenet-content .un-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+#usenet-content .un-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 32px;
+    padding: 0 13px;
+    border-radius: var(--ov-radius);
+    font-size: 12px;
+    font-weight: 600;
+    font-family: var(--ov-sans);
+    cursor: pointer;
+    border: 1px solid var(--ov-accent-b);
+    background: var(--ov-accent-d);
+    color: var(--ov-accent);
+    transition: opacity .15s;
+    white-space: nowrap;
+}
+#usenet-content .un-btn:hover { opacity: .85; }
+#usenet-content .un-btn:disabled { opacity: .45; cursor: not-allowed; }
+#usenet-content .un-btn svg { width: 14px; height: 14px; flex-shrink: 0; }
+#usenet-content .un-stats {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+    margin-bottom: 1.25rem;
+}
+@media (max-width: 1100px) { #usenet-content .un-stats { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 600px)  { #usenet-content .un-stats { grid-template-columns: repeat(2, 1fr); } }
+#usenet-content .un-card {
+    background: var(--ov-surf);
+    border: 1px solid var(--ov-border);
+    border-radius: var(--ov-radius);
+    padding: 16px 14px 12px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color .15s;
+    text-align: left;
+}
+#usenet-content .un-card:hover { border-color: var(--ov-border2); }
+#usenet-content .un-card::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--ov-accent);
+    opacity: .5;
+    border-radius: var(--ov-radius) var(--ov-radius) 0 0;
+}
+#usenet-content .un-val {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--ov-accent);
+    font-family: var(--ov-mono);
+    line-height: 1;
+    margin-bottom: 6px;
+}
+#usenet-content .un-lbl {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .8px;
+    text-transform: uppercase;
+    color: var(--ov-text2);
+} */

@@ -26,6 +26,62 @@ DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
 # Update the paths to use the environment variable
 NOT_WANTED_MAGNETS_FILE = os.path.join(DB_CONTENT_DIR, 'not_wanted_magnets.pkl')
 NOT_WANTED_URLS_FILE = os.path.join(DB_CONTENT_DIR, 'not_wanted_urls.pkl')
+NOT_WANTED_NZB_SEGMENTS_FILE = os.path.join(DB_CONTENT_DIR, 'not_wanted_nzb_segments.pkl')
+
+
+def extract_nzb_segment_id(nzb_xml: str) -> str:
+    """Extract the first segment Message-ID from NZB XML — identical across all indexers."""
+    try:
+        import xml.etree.ElementTree as ET
+        # Strip namespace for easier parsing
+        xml_clean = re.sub(r'\sxmlns="[^"]+"', '', nzb_xml, count=1)
+        root = ET.fromstring(xml_clean)
+        for file_el in root.iter('file'):
+            segs = file_el.find('segments')
+            if segs is not None:
+                for seg in segs.iter('segment'):
+                    msg_id = seg.text
+                    if msg_id:
+                        return msg_id.strip().strip('<>').lower()
+    except Exception:
+        pass
+    return ''
+
+
+def load_not_wanted_nzb_segments():
+    try:
+        with open(NOT_WANTED_NZB_SEGMENTS_FILE, 'rb') as f:
+            return pickle.load(f)
+    except (EOFError, pickle.UnpicklingError, FileNotFoundError):
+        return set()
+
+
+def save_not_wanted_nzb_segments(s):
+    os.makedirs(os.path.dirname(NOT_WANTED_NZB_SEGMENTS_FILE), exist_ok=True)
+    with open(NOT_WANTED_NZB_SEGMENTS_FILE, 'wb') as f:
+        pickle.dump(s, f)
+
+
+def add_to_not_wanted_nzb_segment(segment_id: str):
+    if not segment_id:
+        return
+    s = load_not_wanted_nzb_segments()
+    s.add(segment_id.strip().strip('<>').lower())
+    save_not_wanted_nzb_segments(s)
+    logging.info(f'[NZB] Added broken NZB segment ID {segment_id!r} to not-wanted list')
+
+
+def is_nzb_segment_not_wanted(nzb_xml: str) -> bool:
+    if get_setting('Debug', 'disable_not_wanted_check', False):
+        return False
+    seg_id = extract_nzb_segment_id(nzb_xml)
+    if not seg_id:
+        return False
+    s = load_not_wanted_nzb_segments()
+    if seg_id in s:
+        logging.info(f'[NZB] Filtering out NZB — segment ID {seg_id!r} is in not-wanted list')
+        return True
+    return False
 
 def load_not_wanted_magnets():
     try:

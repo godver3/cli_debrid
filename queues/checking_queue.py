@@ -199,10 +199,16 @@ class CheckingQueue:
         if str(torrent_id).startswith('nzb:'):
             logging.info(f"[NZB] Decypharr job {torrent_id} failed/missing. Moving {len(items)} item(s) back to Wanted.")
             from queues.queue_manager import QueueManager
+            from database.database_writing import update_media_item_state
             qm = QueueManager()
             for item in items:
                 try:
-                    qm.move_to_wanted(item, "Checking")
+                    if item.get('ghostlisted'):
+                        logging.warning(f"[NZB] Item {item['id']} is ghostlisted — setting Blacklisted instead of Wanted")
+                        update_media_item_state(item['id'], 'Blacklisted')
+                        self.remove_item(item)
+                    else:
+                        qm.move_to_wanted(item, "Checking")
                 except Exception as _e:
                     logging.error(f"[NZB] Could not move item back to Wanted: {_e}")
             return
@@ -343,6 +349,11 @@ class CheckingQueue:
             logging.warning(f'[NZB] Cannot resolve file info for {torrent_id}: no job_name')
             return
 
+        # Strip virtual pack label and common appended suffixes
+        import re as _re_strip
+        job_name = _re_strip.sub(r'\s*\[NZB Pack[^\]]*\]', '', job_name).strip()
+        job_name = _re_strip.sub(r'[-_\s]+AsRequested$', '', job_name, flags=_re_strip.IGNORECASE).strip()
+
         # Skip if already resolved (filled_by_file has a video extension)
         import os as _os
         _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
@@ -352,36 +363,82 @@ class CheckingQueue:
 
         try:
             client = get_decypharr_client()
-            result = client.get_nzb_file_info(job_name)
-            if not result:
-                logging.warning(f'[NZB] Could not find Decypharr folder for job {job_name!r}')
-                return
+            is_pack = len(items) > 1  # Multiple items share same torrent_id = aggregate pack
 
-            folder_name, video_file = result
-            if not video_file:
-                logging.warning(f'[NZB] Found folder {folder_name!r} but no video file inside for {torrent_id}')
-                # Still update folder name so path searches can work
-                video_file = folder_name
+            if is_pack:
+                # Aggregate pack — get all files and match each item to its episode file
+                result = client.get_nzb_folder_all_files(job_name)
+                if not result:
+                    logging.warning(f'[NZB] Could not find Decypharr folder for pack {job_name!r}')
+                    return
+                folder_name, video_files = result
+                if not video_files:
+                    logging.warning(f'[NZB] Found folder {folder_name!r} but no video files for pack {torrent_id}')
+                    video_files = []
 
-            logging.info(f'[NZB] Resolved: folder={folder_name!r} file={video_file!r} for {torrent_id}')
+                import re as _re_ep
+                for item in items:
+                    ep = item.get('episode_number')
+                    season = item.get('season_number')
+                    orig_scraped = item.get('original_scraped_torrent_title') or job_name
+                    # Find file matching this episode number
+                    matched_file = None
+                    if ep is not None and season is not None:
+                        ep_pat = _re_ep.compile(
+                            rf'[Ss]{season:02d}[Ee]{ep:02d}(?![0-9])',
+                            _re_ep.IGNORECASE
+                        )
+                        for vf in video_files:
+                            if ep_pat.search(vf):
+                                matched_file = vf
+                                break
+                    # Fallback to largest file if no episode match
+                    if not matched_file and video_files:
+                        matched_file = video_files[0]
+                    if not matched_file:
+                        matched_file = folder_name
 
-            for item in items:
-                # Preserve original scraper release name; fall back to job_name
-                orig_scraped = item.get('original_scraped_torrent_title') or job_name
-                update_media_item(item['id'], **{
-                    'filled_by_file': video_file,
-                    'filled_by_title': folder_name,
-                    'debrid_folder_name': folder_name,
-                    'original_scraped_torrent_title': orig_scraped,
-                    'real_debrid_original_title': orig_scraped,  # Original release name, not folder
-                })
-                # Update in-memory item too
-                item['filled_by_file'] = video_file
-                item['filled_by_title'] = folder_name
-                item['debrid_folder_name'] = folder_name
-                item['original_scraped_torrent_title'] = orig_scraped
-                item['real_debrid_original_title'] = orig_scraped
-                logging.info(f'[NZB] Updated item {item["id"]} with resolved file info')
+                    update_media_item(item['id'], **{
+                        'filled_by_file': matched_file,
+                        'filled_by_title': folder_name,
+                        'debrid_folder_name': folder_name,
+                        'original_scraped_torrent_title': orig_scraped,
+                        'real_debrid_original_title': orig_scraped,
+                    })
+                    item['filled_by_file'] = matched_file
+                    item['filled_by_title'] = folder_name
+                    item['debrid_folder_name'] = folder_name
+                    item['original_scraped_torrent_title'] = orig_scraped
+                    item['real_debrid_original_title'] = orig_scraped
+                    logging.info(f'[NZB] Pack item {item["id"]} S{season:02d}E{ep:02d} → {matched_file!r}')
+            else:
+                # Single NZB — pass season/episode for accurate file matching
+                _ep_season = sample_item.get('season_number')
+                _ep_episode = sample_item.get('episode_number')
+                result = client.get_nzb_file_info(job_name, season=_ep_season, episode=_ep_episode)
+                if not result:
+                    logging.warning(f'[NZB] Could not find Decypharr folder for job {job_name!r}')
+                    return
+                folder_name, video_file = result
+                if not video_file:
+                    logging.warning(f'[NZB] Found folder {folder_name!r} but no video file inside for {torrent_id}')
+                    video_file = folder_name
+                logging.info(f'[NZB] Resolved: folder={folder_name!r} file={video_file!r} for {torrent_id}')
+                for item in items:
+                    orig_scraped = item.get('original_scraped_torrent_title') or job_name
+                    update_media_item(item['id'], **{
+                        'filled_by_file': video_file,
+                        'filled_by_title': folder_name,
+                        'debrid_folder_name': folder_name,
+                        'original_scraped_torrent_title': orig_scraped,
+                        'real_debrid_original_title': orig_scraped,
+                    })
+                    item['filled_by_file'] = video_file
+                    item['filled_by_title'] = folder_name
+                    item['debrid_folder_name'] = folder_name
+                    item['original_scraped_torrent_title'] = orig_scraped
+                    item['real_debrid_original_title'] = orig_scraped
+                    logging.info(f'[NZB] Updated item {item["id"]} with resolved file info')
 
         except Exception as exc:
             logging.error(f'[NZB] _resolve_nzb_file_info error for {torrent_id}: {exc}', exc_info=True)
@@ -397,6 +454,16 @@ class CheckingQueue:
         try:
             status = client.get_job_status(job_id)
             if not status:
+                # Job not found in Decypharr — track consecutive misses
+                # After 3 consecutive misses declare it missing so handle_missing_torrent fires
+                _key = f'_nzb_missing_{torrent_id}'
+                _count = getattr(self, _key, 0) + 1
+                setattr(self, _key, _count)
+                if _count >= 3:
+                    logging.warning(f'[NZB] Job {job_id} not found in Decypharr after {_count} checks — declaring missing')
+                    setattr(self, _key, 0)
+                    return PROGRESS_RESULT_MISSING
+                logging.debug(f'[NZB] Job {job_id} not found in Decypharr (miss {_count}/3)')
                 return None
             raw = status.get('raw', {})
             state = str(raw.get('state', status.get('state', 'unknown'))).lower()
@@ -977,10 +1044,20 @@ class CheckingQueue:
                             logging.warning(f'[NZB] {torrent_id} resolve failure #{failures} — folder not found in Decypharr')
                             if failures >= 5:
                                 logging.warning(f'[NZB] {torrent_id} failed to resolve after {failures} attempts — moving back to Wanted')
+                                self.progress_checks[torrent_id]['nzb_resolve_failures'] = 0
                                 for item_to_move in list(current_items_for_torrent):
                                     if self.contains_item_id(item_to_move['id']):
-                                        queue_manager.move_to_wanted(item_to_move, 'Checking')
+                                        # If ghostlisted, can't move to Wanted — set Blacklisted and remove from queue
+                                        if item_to_move.get('ghostlisted'):
+                                            logging.warning(f'[NZB] {torrent_id} item {item_to_move["id"]} is ghostlisted — setting Blacklisted and removing from Checking')
+                                            from database.database_writing import update_media_item_state
+                                            update_media_item_state(item_to_move['id'], 'Blacklisted')
+                                            self.remove_item(item_to_move)
+                                        else:
+                                            queue_manager.move_to_wanted(item_to_move, 'Checking')
                                 continue
+                        elif _fbf:
+                            pass  # Health check now handled in adding_queue before moving to Checking
 
                     # --- Restored Symlinked/Local processing logic ---
                     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':

@@ -1,16 +1,79 @@
 import logging
 import re
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import List, Dict, Any, Optional
 from routes.api_tracker import api
 from utilities.settings import get_setting
 from PTT import parse_title as ptt_parse
+from rapidfuzz import fuzz as _fuzz
 
 # Newznab category IDs
 _CAT_MOVIE = '2000'
 _CAT_TV    = '5000,5010,5020'  # TV All, TV Foreign, TV SD
 
 _SANITIZE_RE = re.compile(r'[!?:&,;"()\[\]{}]')
+
+
+def _build_params_list(
+    api_key: str,
+    clean_imdb: str,
+    title: str,
+    year: int,
+    content_type: str,
+    season: Optional[int],
+    episode: Optional[int],
+    multi: bool,
+) -> List[Dict[str, Any]]:
+    """
+    Always build BOTH an ID-based query AND a title-based query.
+    Both run simultaneously — results are merged and deduped by GUID.
+    """
+    params_list = []
+
+    if content_type.lower() == 'movie':
+        cats = _CAT_MOVIE
+        # 1. ID-based movie search
+        if clean_imdb:
+            params_list.append({
+                'apikey': api_key, 't': 'movie',
+                'imdbid': clean_imdb, 'cat': cats, 'limit': 100,
+            })
+        # 2. Title+year text search
+        raw = _SANITIZE_RE.sub('', f'{title} {year or ""}'.strip()).strip()
+        params_list.append({'apikey': api_key, 't': 'search', 'q': raw, 'cat': cats, 'limit': 100})
+
+    elif content_type.lower() == 'episode':
+        cats = _CAT_TV
+        # 1. ID-based tvsearch
+        if clean_imdb and season is not None:
+            id_params: Dict[str, Any] = {
+                'apikey': api_key, 't': 'tvsearch',
+                'imdbid': clean_imdb, 'season': season,
+                'cat': cats, 'limit': 100,
+            }
+            if episode is not None and not multi:
+                id_params['ep'] = episode
+            params_list.append(id_params)
+        # 2. Title text search
+        query_parts = [title]
+        if season is not None:
+            if episode is not None and not multi:
+                query_parts.append(f'S{season:02d}E{episode:02d}')
+            else:
+                query_parts.append(f'S{season:02d}')
+        raw = _SANITIZE_RE.sub('', ' '.join(query_parts)).strip()
+        params_list.append({'apikey': api_key, 't': 'search', 'q': raw, 'cat': cats, 'limit': 100})
+
+    else:
+        cats = f'{_CAT_MOVIE},{_CAT_TV}'
+        raw = _SANITIZE_RE.sub('', title).strip()
+        params_list.append({'apikey': api_key, 't': 'search', 'q': raw, 'cat': cats, 'limit': 100})
+
+    return params_list
+
 
 def scrape_newznab_instance(
     instance: str,
@@ -34,55 +97,49 @@ def scrape_newznab_instance(
         logging.error(f"Newznab instance '{instance}' is missing URL.")
         return []
 
-    if content_type.lower() == 'movie':
-        cats = _CAT_MOVIE
-        query_parts = [title]
-        if year:
-            query_parts.append(str(year))
-    elif content_type.lower() == 'episode':
-        cats = _CAT_TV
-        query_parts = [title]
-        if season is not None:
-            if episode is not None and not multi:
-                query_parts.append(f'S{season:02d}E{episode:02d}')
-            else:
-                query_parts.append(f'S{season:02d}')
-    else:
-        cats = f'{_CAT_MOVIE},{_CAT_TV}'
-        query_parts = [title]
-
-    # Sanitize query — remove characters that break Newznab APIs
-    raw_query = ' '.join(query_parts)
-    query = _SANITIZE_RE.sub('', raw_query).replace('’', '').strip()
-
-    params: Dict[str, Any] = {
-        'apikey': api_key,
-        't': 'search',
-        'q': query,
-        'cat': cats,
-        'limit': 100,
-    }
-
-    if imdb_id:
-        params['imdbid'] = imdb_id.replace('tt', '')
-
-    logging.info(f"Newznab '{instance}' query: q={query!r} cat={cats}")
-
+    clean_imdb = imdb_id.replace('tt', '') if imdb_id else ''
     endpoint = f'{url}/api'
     timeout = get_setting('Scraping', 'scraper_timeout', 30)
 
-    try:
-        response = api.get(endpoint, params=params, timeout=timeout)
-    except Exception as exc:
-        logging.error(f"Newznab request error for '{instance}': {exc}")
-        return []
+    params_list = _build_params_list(
+        api_key, clean_imdb, title, year, content_type, season, episode, multi
+    )
 
-    if response.status_code != 200:
-        logging.error(f"Newznab '{instance}' returned HTTP {response.status_code}: {response.text[:300]}")
-        return []
+    def _fetch(params):
+        try:
+            r = api.get(endpoint, params=params, timeout=timeout)
+            logging.info(f"Newznab '{instance}' full request URL: {r.url}")
+            if r.status_code != 200:
+                logging.error(f"Newznab '{instance}' HTTP {r.status_code}: {r.text[:200]}")
+                return []
+            return _parse_newznab_xml(r.text, instance)
+        except Exception as exc:
+            logging.error(f"Newznab '{instance}' request error: {exc}")
+            return []
 
-    logging.info(f"Newznab '{instance}' response length: {len(response.text)} chars, preview: {response.text[:300]}")
-    return _parse_newznab_xml(response.text, instance)
+    # Run both queries in parallel if there are 2, otherwise just run one
+    all_results: List[Dict[str, Any]] = []
+    if len(params_list) == 1:
+        all_results = _fetch(params_list[0])
+    else:
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            futures = [ex.submit(_fetch, p) for p in params_list]
+            for f in as_completed(futures):
+                all_results.extend(f.result())
+
+    # Deduplicate by GUID — ID search and title search may return the same NZB
+    seen_guids = set()
+    deduped = []
+    for r in all_results:
+        guid = r.get('parsed_info', {}).get('guid') or r.get('nzb_url', '')
+        if guid and guid not in seen_guids:
+            seen_guids.add(guid)
+            deduped.append(r)
+        elif not guid:
+            deduped.append(r)
+
+    logging.info(f"Newznab '{instance}': {len(all_results)} total results, {len(deduped)} after dedup")
+    return deduped
 
 
 def _parse_newznab_xml(xml_text: str, instance: str) -> List[Dict[str, Any]]:
@@ -136,7 +193,6 @@ def _parse_newznab_xml(xml_text: str, instance: str) -> List[Dict[str, Any]]:
 
         size_gb = round(size_bytes / (1024 ** 3), 2) if size_bytes else 0.0
 
-        # Category
         cats = []
         for cat_el in item.findall('category'):
             if cat_el.text:
@@ -145,7 +201,6 @@ def _parse_newznab_xml(xml_text: str, instance: str) -> List[Dict[str, Any]]:
         pub_date_el = item.find('pubDate')
         pub_date = pub_date_el.text.strip() if pub_date_el is not None and pub_date_el.text else ''
 
-        # Run PTT on the NZB title so the filter pipeline gets resolution, seasons, etc.
         try:
             ptt = ptt_parse(title)
         except Exception:
@@ -157,7 +212,6 @@ def _parse_newznab_xml(xml_text: str, instance: str) -> List[Dict[str, Any]]:
             'publish_date': pub_date,
             'categories_newznab': cats,
             'source_instance': instance,
-            # PTT fields expected by filter_results
             'title': ptt.get('title', title),
             'year': ptt.get('year'),
             'resolution': ptt.get('resolution'),
@@ -193,3 +247,260 @@ def _parse_newznab_xml(xml_text: str, instance: str) -> List[Dict[str, Any]]:
 
     logging.info(f"Newznab '{instance}': parsed {len(results)} NZB results")
     return results
+
+
+# ---------------------------------------------------------------------------
+# NZB episode aggregation — virtual season pack from per-episode searches
+# ---------------------------------------------------------------------------
+
+_NORM_RE = re.compile(r'[^a-z0-9]')
+
+
+def _norm_group_key(title: str, resolution: str, group: str) -> str:
+    """Normalise title+res+group into a stable grouping key."""
+    t = _NORM_RE.sub('', (title or '').lower())
+    r = _NORM_RE.sub('', (resolution or '').lower())
+    g = _NORM_RE.sub('', (group or '').lower())
+    return f'{t}|{r}|{g}'
+
+
+def scrape_newznab_season_aggregate(
+    scrapers: List[tuple],          # [(instance_name, settings_dict), ...]
+    imdb_id: Optional[str],
+    title: str,
+    year: int,
+    season: int,
+    episode_count: int,
+    timeout: int = 20,
+) -> List[Dict[str, Any]]:
+    """
+    Search each episode individually across all indexers in parallel.
+    Group results by (parsed_title, resolution, group).
+    Only return groups that cover ALL episodes — no partial packs.
+    Each returned result is a virtual season pack with episode_nzb_urls
+    containing {episode_number: nzb_url} and fallback_urls {episode_number: [alt_url, ...]}.
+    """
+    if not scrapers or not episode_count:
+        return []
+
+    cats = _CAT_TV
+    clean_imdb = imdb_id.replace('tt', '') if imdb_id else ''
+
+    def _fetch_episode(ep_num: int, instance: str, cfg: dict) -> List[Dict[str, Any]]:
+        url = cfg.get('url', '').rstrip('/')
+        api_key = cfg.get('api_key', '').strip()
+        if not url or not api_key:
+            return []
+        endpoint = f'{url}/api'
+        results = []
+        # ID-based tvsearch first
+        if clean_imdb:
+            try:
+                r = api.get(endpoint, params={
+                    'apikey': api_key, 't': 'tvsearch', 'imdbid': clean_imdb,
+                    'season': season, 'ep': ep_num, 'cat': cats, 'limit': 20,
+                }, timeout=timeout)
+                if r.status_code == 200:
+                    results.extend(_parse_newznab_xml(r.text, instance))
+            except Exception:
+                pass
+        # Title text search
+        try:
+            q = _SANITIZE_RE.sub('', f'{title} S{season:02d}E{ep_num:02d}').strip()
+            r = api.get(endpoint, params={
+                'apikey': api_key, 't': 'search', 'q': q, 'cat': cats, 'limit': 20,
+            }, timeout=timeout)
+            if r.status_code == 200:
+                results.extend(_parse_newznab_xml(r.text, instance))
+        except Exception:
+            pass
+        # Deduplicate by guid
+        seen, deduped = set(), []
+        for res in results:
+            guid = res.get('parsed_info', {}).get('guid') or res.get('nzb_url', '')
+            if guid not in seen:
+                seen.add(guid)
+                deduped.append(res)
+        return deduped
+
+    # Build all tasks: (ep_num, instance, cfg)
+    tasks = [(ep, inst, cfg) for ep in range(1, episode_count + 1) for inst, cfg in scrapers]
+
+    # ep_results: {ep_num: [result, ...]}
+    ep_results: Dict[int, List[Dict]] = {ep: [] for ep in range(1, episode_count + 1)}
+
+    with ThreadPoolExecutor(max_workers=min(len(tasks), 16)) as ex:
+        future_map = {ex.submit(_fetch_episode, ep, inst, cfg): ep for ep, inst, cfg in tasks}
+        for fut in as_completed(future_map):
+            ep = future_map[fut]
+            try:
+                ep_results[ep].extend(fut.result())
+            except Exception:
+                pass
+
+    logging.info(f'[NZBAggregate] {title} S{season:02d}: fetched results for {episode_count} episodes')
+
+    # Title similarity threshold — reject results whose parsed title doesn't match target
+    _norm_target = _NORM_RE.sub('', title.lower())
+
+    # Retention cutoff — skip NZBs older than usenet_retention_days setting (default 1500 days)
+    _retention_days = int(get_setting('Scraping', 'usenet_retention_days', 1500))
+    _now = datetime.now(timezone.utc)
+
+    def _is_within_retention(pub_date_str: str) -> bool:
+        if not pub_date_str or not _retention_days:
+            return True
+        try:
+            pub_dt = parsedate_to_datetime(pub_date_str)
+            age_days = (_now - pub_dt).days
+            return age_days <= _retention_days
+        except Exception:
+            return True  # unknown date — don't reject
+
+    # Group by key across episodes
+    # group_data[key] = {ep_num: [result, ...]}
+    group_data: Dict[str, Dict[int, List[Dict]]] = {}
+    group_meta: Dict[str, Dict] = {}  # key -> first result's parsed fields
+
+    for ep_num, results in ep_results.items():
+        for res in results:
+            pi = res.get('parsed_info', {})
+            # Only include results that actually contain this episode
+            ep_nums_in_result = pi.get('episodes', [])
+            if ep_nums_in_result and ep_num not in ep_nums_in_result:
+                continue
+            # Retention check — skip expired NZBs
+            if not _is_within_retention(pi.get('publish_date', '')):
+                logging.debug(f'[NZBAggregate] Skipping expired NZB: {res.get("title","")!r} (pub={pi.get("publish_date","")})')
+                continue
+            # Title similarity check — reject wrong shows
+            parsed_title = pi.get('title', '')
+            if parsed_title:
+                _norm_parsed = _NORM_RE.sub('', parsed_title.lower())
+                _sim = _fuzz.ratio(_norm_target, _norm_parsed) / 100.0
+                if _sim < 0.6:
+                    logging.debug(f'[NZBAggregate] Rejecting title mismatch: {parsed_title!r} vs {title!r} (sim={_sim:.2f})')
+                    continue
+            key = _norm_group_key(parsed_title, pi.get('resolution', ''), pi.get('group', ''))
+            if not key.replace('|', ''):
+                continue
+            if key not in group_data:
+                group_data[key] = {}
+                group_meta[key] = pi
+            group_data[key].setdefault(ep_num, []).append(res)
+
+    virtual_packs = []
+    for key, ep_map in group_data.items():
+        # Must cover every episode
+        if len(ep_map) < episode_count:
+            logging.debug(f'[NZBAggregate] Skipping incomplete group {key!r}: {len(ep_map)}/{episode_count} eps')
+            continue
+
+        pi = group_meta[key]
+        # Primary NZB per episode (best result = first), fallbacks = rest
+        episode_nzb_urls: Dict[int, str] = {}
+        fallback_urls: Dict[int, List[str]] = {}
+        episode_sizes: Dict[int, float] = {}
+        episode_filenames: Dict[int, str] = {}
+        total_size = 0.0
+        # Use the median episode's result as representative (avoids outliers)
+        rep_result = ep_map[sorted(ep_map.keys())[len(ep_map) // 2]][0]
+
+        for ep_num in range(1, episode_count + 1):
+            ep_list = ep_map[ep_num]
+            ep_result = ep_list[0]
+            episode_nzb_urls[ep_num] = ep_result.get('nzb_url', '')
+            fallback_urls[ep_num] = [r.get('nzb_url', '') for r in ep_list[1:] if r.get('nzb_url')]
+            ep_size = ep_result.get('size', 0.0)
+            episode_sizes[ep_num] = ep_size
+            total_size += ep_size
+            episode_filenames[ep_num] = ep_result.get('original_title') or ep_result.get('title') or ''
+
+        # Build display title: strip episode number AND episode title words,
+        # keeping show title + season + quality tags only.
+        # e.g. "Young.Sheldon.S01E11.A.Computer.a.Plastic.Pony.1080p.BluRay.REMUX-EPSiLON"
+        #   → "Young.Sheldon.S01.1080p.BluRay.REMUX-EPSiLON"
+        rep_orig = rep_result.get('original_title') or rep_result.get('title') or ''
+        _QUALITY_START = re.compile(
+            r'[._\s-]('
+            r'(?:\d{3,4}[pP])'          # resolution: 1080p 2160p 720p
+            r'|(?:BluRay|BDRip|WEB(?:-?DL)?|WEBRip|HDTV|DVDRip|REMUX|BRRip)'
+            r'|(?:x264|x265|H\.?264|H\.?265|HEVC|AVC|XviD)'
+            r'|(?:DTS|AC3|AAC|DDP?5?\.?1?|TrueHD|FLAC|Atmos)'
+            r'|(?:HDR\d*|DV|DoVi|Dolby)'
+            r')',
+            re.IGNORECASE,
+        )
+        # Find where quality tags begin after the episode marker
+        _ep_match = re.search(r'[Ss]\d{1,2}[Ee]\d{1,2}', rep_orig)
+        if _ep_match:
+            _after_ep = rep_orig[_ep_match.end():]
+            _qual_match = _QUALITY_START.search(_after_ep)
+            if _qual_match:
+                # show_title + S01 + quality_tags
+                ep_stripped = (
+                    rep_orig[:_ep_match.start()] +
+                    _ep_match.group(0)[:3] +   # just S01
+                    _after_ep[_qual_match.start():]
+                ).strip(' .-_')
+            else:
+                # No quality tags found — just strip E11 and leave the rest
+                ep_stripped = re.sub(r'([Ss]\d{1,2})[Ee]\d{1,2}', lambda m: m.group(1), rep_orig).strip(' .-_')
+        else:
+            ep_stripped = rep_orig.strip(' .-_')
+        display_title = f"{ep_stripped} [NZB Pack · {episode_count} eps]" if ep_stripped else (
+            f"{pi.get('title', title)} S{season:02d} "
+            f"[NZB Pack · {episode_count} eps · "
+            f"{pi.get('resolution', '') or 'unknown res'}"
+            f"{' · ' + pi.get('group', '') if pi.get('group') else ''}]"
+        )
+
+        # Run the display title through the full file_processing pipeline so that
+        # parsed_info gets resolution_rank, is_hdr, season_episode_info etc. —
+        # identical to what normal scraper results receive before filter/rank
+        try:
+            from scraper.functions.file_processing import _process_single_title
+            enriched_pi = _process_single_title((display_title, round(total_size, 2)))
+            if enriched_pi and 'parsing_error' not in enriched_pi:
+                enriched_pi.update({
+                    'original_title': display_title,
+                    'seasons': [season],
+                    'episodes': [],
+                    'protocol': 'nzb',
+                    'guid': f'nzb_agg_{key}',
+                    'source_instance': 'NZB Aggregate',
+                })
+            else:
+                enriched_pi = rep_result.get('parsed_info', pi).copy()
+                enriched_pi.update({'original_title': display_title, 'seasons': [season],
+                                    'episodes': [], 'protocol': 'nzb'})
+        except Exception:
+            enriched_pi = rep_result.get('parsed_info', pi).copy()
+            enriched_pi.update({'original_title': display_title, 'seasons': [season],
+                                'episodes': [], 'protocol': 'nzb'})
+
+        virtual_packs.append({
+            'title': display_title,
+            'original_title': display_title,
+            'resolution': enriched_pi.get('resolution', 'Unknown'),
+            'parsed_title': enriched_pi.get('title', title),
+            'size': round(total_size, 2),
+            'source': 'NZB Aggregate',
+            'seeders': 0,
+            'hash': '',
+            'magnet': None,
+            'torrent_url': None,
+            'magnet_link': None,
+            'nzb_url': '',
+            'protocol': 'nzb',
+            'is_nzb_season_pack': True,
+            'episode_nzb_urls': episode_nzb_urls,
+            'fallback_nzb_urls': fallback_urls,
+            'episode_sizes': episode_sizes,
+            'episode_filenames': episode_filenames,
+            'episode_count': episode_count,
+            'parsed_info': enriched_pi,
+        })
+
+    logging.info(f'[NZBAggregate] {title} S{season:02d}: {len(virtual_packs)} complete virtual packs found')
+    return virtual_packs

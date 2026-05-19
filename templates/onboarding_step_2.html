@@ -181,23 +181,50 @@
             </div>
         </div>
 
-        <label for="debrid_provider" class="onboarding-label">Debrid Provider:</label>
-        <div id="debrid-provider-description" class="settings-description">
-            Debrid Provider is the debrid provider you want to use.
-        </div>
-        <select id="debrid_provider" name="debrid_provider" required class="onboarding-input">
-            <option value="RealDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'RealDebrid' %}selected{% endif %}>RealDebrid</option>
-            <option value="AllDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'AllDebrid' %}selected{% endif %}>AllDebrid</option>
-            <option value="Premiumize" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'Premiumize' %}selected{% endif %}>Premiumize</option>
-            <option value="Torbox" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'Torbox' %}selected{% endif %}>Torbox</option>
-            <option value="DebridLink" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'DebridLink' %}selected{% endif %}>Debrid-Link</option>
-        </select>
+        <!-- Debrid or Usenet Provider Section -->
+        <div style="margin-top: 20px;">
+            <h3 style="margin-bottom: 4px;">Debrid or Usenet Provider</h3>
+            <p class="settings-description">cli_debrid requires either a debrid provider or a Usenet provider (via Decypharr) to download media.</p>
 
-        <label for="debrid_api_key" class="onboarding-label">Debrid API Key:</label>
-        <div id="debrid-api-key-description" class="settings-description">
-            Debrid API Key is the API key for your debrid provider.
+            <div style="display: flex; gap: 0; margin-bottom: 16px; border-bottom: 2px solid #444;">
+                <button type="button" id="tab-debrid" onclick="switchProviderTab('debrid')"
+                    style="padding: 8px 20px; background: none; border: none; border-bottom: 2px solid #e67e22; margin-bottom: -2px; color: #e67e22; font-weight: bold; cursor: pointer; font-size: 0.95em;">
+                    Debrid
+                </button>
+                <button type="button" id="tab-usenet" onclick="switchProviderTab('usenet')"
+                    style="padding: 8px 20px; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; color: #aaa; cursor: pointer; font-size: 0.95em;">
+                    Usenet (Decypharr)
+                </button>
+            </div>
+
+            <input type="hidden" id="provider_type" name="provider_type" value="{{ 'usenet' if settings.get('Usenet Provider', {}).get('enabled') and not settings.get('Debrid Provider', {}).get('api_key') else 'debrid' }}">
+
+            <!-- Debrid tab -->
+            <div id="panel-debrid">
+                <label for="debrid_provider" class="onboarding-label">Debrid Provider:</label>
+                <div class="settings-description">Select your debrid provider.</div>
+                <select id="debrid_provider" name="debrid_provider" class="onboarding-input">
+                    <option value="RealDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'RealDebrid' %}selected{% endif %}>RealDebrid</option>
+                    <option value="AllDebrid" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'AllDebrid' %}selected{% endif %}>AllDebrid</option>
+                    <option value="Premiumize" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'Premiumize' %}selected{% endif %}>Premiumize</option>
+                    <option value="Torbox" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'Torbox' %}selected{% endif %}>Torbox</option>
+                    <option value="DebridLink" {% if settings.get('Debrid Provider', {}).get('provider', '') == 'DebridLink' %}selected{% endif %}>Debrid-Link</option>
+                </select>
+                <label for="debrid_api_key" class="onboarding-label">Debrid API Key:</label>
+                <div class="settings-description">API key from your debrid provider.</div>
+                <input type="text" id="debrid_api_key" name="debrid_api_key" class="onboarding-input" value="{{ settings.get('Debrid Provider', {}).get('api_key', '') }}">
+            </div>
+
+            <!-- Usenet tab -->
+            <div id="panel-usenet" style="display:none;">
+                <label for="usenet_url" class="onboarding-label">Decypharr URL:</label>
+                <div class="settings-description">URL of your Decypharr instance, e.g. http://192.168.1.x:8888</div>
+                <input type="text" id="usenet_url" name="usenet_url" class="onboarding-input" value="{{ settings.get('Usenet Provider', {}).get('url', '') }}">
+                <label for="usenet_api_token" class="onboarding-label">API Token (optional):</label>
+                <div class="settings-description">Only required if you have authentication enabled in Decypharr.</div>
+                <input type="text" id="usenet_api_token" name="usenet_api_token" class="onboarding-input" value="{{ settings.get('Usenet Provider', {}).get('api_token', '') }}">
+            </div>
         </div>
-        <input type="text" id="debrid_api_key" name="debrid_api_key" required class="onboarding-input" value="{{ settings.get('Debrid Provider', {}).get('api_key', '') }}">
 
         <p class="settings-description">Please create an application at <a href="https://trakt.tv/oauth/applications/" target="_blank" style="color: #3498db;">Trakt Applications</a> if you have not yet done so. All you need to add is a <b>Name</b>, and the <b>Redirect URI</b> which is:</p> 
         <code><b>urn:ietf:wg:oauth:2.0:oob</b></code><br>
@@ -981,6 +1008,40 @@ function pollTraktAuthStatus(device_code) {
             });
     }, 5000); // Check every 5 seconds
 }
+
+window.switchProviderTab = function switchProviderTab(tab) {
+    const debridPanel = document.getElementById('panel-debrid');
+    const usenetPanel = document.getElementById('panel-usenet');
+    const tabDebrid = document.getElementById('tab-debrid');
+    const tabUsenet = document.getElementById('tab-usenet');
+    const providerType = document.getElementById('provider_type');
+
+    if (tab === 'usenet') {
+        debridPanel.style.display = 'none';
+        usenetPanel.style.display = 'block';
+        tabDebrid.style.borderBottomColor = 'transparent';
+        tabDebrid.style.color = '#aaa';
+        tabUsenet.style.borderBottomColor = '#e67e22';
+        tabUsenet.style.color = '#e67e22';
+        providerType.value = 'usenet';
+    } else {
+        debridPanel.style.display = 'block';
+        usenetPanel.style.display = 'none';
+        tabDebrid.style.borderBottomColor = '#e67e22';
+        tabDebrid.style.color = '#e67e22';
+        tabUsenet.style.borderBottomColor = 'transparent';
+        tabUsenet.style.color = '#aaa';
+        providerType.value = 'debrid';
+    }
+}
+
+// Initialize correct tab on page load
+document.addEventListener('DOMContentLoaded', function() {
+    const providerType = document.getElementById('provider_type');
+    if (providerType && providerType.value === 'usenet') {
+        switchProviderTab('usenet');
+    }
+});
 
 function checkTraktAuthStatus() {
     const traktAuthStatus = document.getElementById('trakt-auth-status');

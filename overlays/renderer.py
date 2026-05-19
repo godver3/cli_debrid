@@ -1655,9 +1655,9 @@ class OverlayRenderer:
         # non-2:3 posters place badges in the correct proportional position.
         sx = base_img.width  / 600.0
         sy = base_img.height / 900.0
-        # Uniform scale for sizing/fonts (use width-based scale so badge proportions
-        # match what the user designed at 600px canvas width)
-        s = sx
+        # Uniform scale for sizing/fonts — use the smaller of sx/sy so badges
+        # never overflow on non-2:3 posters (e.g. square or wide art).
+        s = min(sx, sy)
 
         # Audio codec/combo badge preset → dedicated liquid-glass renderer
         # audio_codec: styled without channel count

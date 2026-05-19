@@ -2060,12 +2060,30 @@ class DeletionManager:
                 # Note: Debrid removal happens after this block (Layer 4)
                 # No local file deletion - rclone mount auto-updates when debrid removes the file
 
-            # Layer 4: Debrid removal (if requested)
+            # Layer 4: Debrid / Usenet removal (if requested)
             if delete_from_debrid and not skip_physical_operations:
-                logging.info(f"[DEBRID_REMOVAL] Debrid removal requested. debrid_provider={self.debrid is not None}, torrent_id={item.get('filled_by_torrent_id')}")
-                if self.debrid and item.get('filled_by_torrent_id'):
-                    torrent_id = item['filled_by_torrent_id']
-                    item_title = item.get('title', 'Unknown')
+                torrent_id = item.get('filled_by_torrent_id')
+                item_title = item.get('title', 'Unknown')
+                is_nzb = str(torrent_id or '').startswith('nzb:')
+                logging.info(f"[DEBRID_REMOVAL] Removal requested. is_nzb={is_nzb}, torrent_id={torrent_id}")
+                if is_nzb:
+                    # NZB item — delete from Decypharr
+                    try:
+                        from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
+                        reset_decypharr_client()
+                        client = get_decypharr_client()
+                        info_hash = torrent_id[4:]  # strip 'nzb:'
+                        removed = client.remove_nzb(info_hash, item.get('filled_by_file') or item_title)
+                        result['debrid_removed'] = removed
+                        result['debrid_nzb_removed'] = 1 if removed else 0
+                        if removed:
+                            logging.info(f"[DEBRID_REMOVAL] Successfully removed NZB {info_hash} from Decypharr for '{item_title}'")
+                        else:
+                            logging.warning(f"[DEBRID_REMOVAL] Decypharr removal returned False for {info_hash}")
+                    except Exception as e:
+                        logging.error(f"[DEBRID_REMOVAL] Failed to remove NZB {torrent_id} from Decypharr: {e}")
+                        result['errors'].append(f"Decypharr removal failed: {str(e)}")
+                elif self.debrid and torrent_id:
                     logging.info(f"[DEBRID_REMOVAL] Attempting to remove torrent {torrent_id} for '{item_title}'")
                     try:
                         self.debrid.remove_torrent(torrent_id, removal_reason=f"Library deletion: {item_title}")
@@ -2073,17 +2091,16 @@ class DeletionManager:
                         logging.info(f"[DEBRID_REMOVAL] Successfully removed torrent {torrent_id} from debrid provider")
                     except Exception as e:
                         error_msg = str(e)
-                        # 404 errors are expected when Plex already removed the torrent - log as info not error
                         if '404' in error_msg or 'Not Found' in error_msg:
                             logging.info(f"[DEBRID_REMOVAL] Torrent {torrent_id} already removed from debrid provider (expected after Plex deletion)")
-                            result['debrid_removed'] = True  # Still mark as removed since torrent is gone
+                            result['debrid_removed'] = True
                         else:
                             logging.error(f"[DEBRID_REMOVAL] Failed to remove torrent {torrent_id}: {e}")
                             result['errors'].append(f"Debrid removal failed: {str(e)}")
-                elif not self.debrid:
+                elif not self.debrid and not is_nzb:
                     logging.warning(f"[DEBRID_REMOVAL] Skipped - debrid provider not initialized")
-                elif not item.get('filled_by_torrent_id'):
-                    logging.warning(f"[DEBRID_REMOVAL] Skipped - item has no filled_by_torrent_id (title: {item.get('title', 'Unknown')})")
+                elif not torrent_id:
+                    logging.warning(f"[DEBRID_REMOVAL] Skipped - item has no filled_by_torrent_id (title: {item_title})")
 
             # Layer 6: Clear content source cache (if requested)
             if clear_cache and source_info['cache_files']:
@@ -2464,33 +2481,58 @@ class DeletionManager:
                 aggregate_result['plex_not_found'] = True
                 return aggregate_result
 
-        # PHASE 0: Deduplicated debrid removal - collect unique torrent IDs and remove each ONCE
-        # This prevents removing the same torrent 10+ times when episodes share a torrent pack
-        debrid_removed_ids = set()  # Track which torrent IDs we've already removed
-        if delete_from_debrid and self.debrid:
+        # PHASE 0: Deduplicated debrid/usenet removal - collect unique IDs and remove each ONCE
+        # This prevents removing the same torrent/NZB 10+ times when episodes share a pack
+        debrid_removed_ids = set()
+        if delete_from_debrid:
             from database.database_reading import get_item_by_id
 
-            # Collect unique torrent IDs from all items
-            unique_torrent_ids = {}  # torrent_id -> first item title (for logging)
+            # Collect unique torrent/NZB IDs from all items, split by type
+            unique_torrent_ids = {}   # torrent_id -> first item title (debrid provider)
+            unique_nzb_ids = {}       # info_hash -> (filled_by_file, title) (Decypharr)
             for item_id in item_ids:
                 try:
                     item = get_item_by_id(item_id)
                     if item and item.get('filled_by_torrent_id'):
-                        torrent_id = item['filled_by_torrent_id']
-                        if torrent_id not in unique_torrent_ids:
-                            unique_torrent_ids[torrent_id] = item.get('title', 'Unknown')
+                        tid = item['filled_by_torrent_id']
+                        title = item.get('title', 'Unknown')
+                        if str(tid).startswith('nzb:'):
+                            if tid not in unique_nzb_ids:
+                                unique_nzb_ids[tid] = (item.get('filled_by_file') or title, title)
+                        elif tid not in unique_torrent_ids:
+                            unique_torrent_ids[tid] = title
                 except Exception as e:
-                    logging.warning(f"[DELETE_MULTIPLE] Could not get item {item_id} for debrid dedup: {e}")
+                    logging.warning(f"[DELETE_MULTIPLE] Could not get item {item_id} for dedup: {e}")
 
-            if unique_torrent_ids:
+            # Remove NZB items from Decypharr
+            if unique_nzb_ids:
+                logging.info(f"[DELETE_MULTIPLE] Phase 0: Removing {len(unique_nzb_ids)} NZB(s) from Decypharr")
+                try:
+                    from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
+                    reset_decypharr_client()
+                    dcy_client = get_decypharr_client()
+                    for tid, (file_name, title) in unique_nzb_ids.items():
+                        info_hash = tid[4:]
+                        try:
+                            removed = dcy_client.remove_nzb(info_hash, file_name or title)
+                            if removed:
+                                debrid_removed_ids.add(tid)
+                                logging.info(f"[DELETE_MULTIPLE] Removed NZB {info_hash} from Decypharr")
+                            else:
+                                logging.warning(f"[DELETE_MULTIPLE] Decypharr remove returned False for {info_hash}")
+                        except Exception as e:
+                            logging.error(f"[DELETE_MULTIPLE] Failed to remove NZB {info_hash}: {e}")
+                            aggregate_result['errors'].append(f"Decypharr removal failed for {tid}: {str(e)}")
+                except Exception as e:
+                    logging.error(f"[DELETE_MULTIPLE] Decypharr client error: {e}")
+
+            # Remove torrent items from debrid provider
+            if unique_torrent_ids and self.debrid:
                 logging.info(f"[DELETE_MULTIPLE] Phase 0: Removing {len(unique_torrent_ids)} unique torrent(s) from debrid (from {len(item_ids)} items) - PARALLEL MODE (5 concurrent)")
 
-                # PHASE 2: Parallel deletion with ThreadPoolExecutor (5 concurrent workers)
                 def remove_single_torrent(torrent_id_and_title):
-                    """Helper function for parallel torrent deletion"""
                     torrent_id, first_title = torrent_id_and_title
                     try:
-                        # Skip hash tracking for bulk operations (50% speed improvement)
                         self.debrid.remove_torrent(torrent_id, removal_reason=f"Library deletion: {first_title}", skip_hash_tracking=True)
                         logging.info(f"[DELETE_MULTIPLE] Removed torrent {torrent_id} from debrid")
                         return torrent_id, True, None
@@ -2498,20 +2540,16 @@ class DeletionManager:
                         error_msg = str(e)
                         if '404' in error_msg or 'Not Found' in error_msg:
                             logging.info(f"[DELETE_MULTIPLE] Torrent {torrent_id} already removed from debrid")
-                            return torrent_id, True, None  # Still mark as handled
+                            return torrent_id, True, None
                         else:
                             logging.error(f"[DELETE_MULTIPLE] Failed to remove torrent {torrent_id}: {e}")
                             return torrent_id, False, str(e)
 
-                # Execute deletions in parallel with 5 concurrent workers
                 with ThreadPoolExecutor(max_workers=5) as executor:
-                    # Submit all deletion tasks
                     future_to_torrent = {
                         executor.submit(remove_single_torrent, (tid, title)): tid
                         for tid, title in unique_torrent_ids.items()
                     }
-
-                    # Process results as they complete
                     for future in as_completed(future_to_torrent):
                         torrent_id, success, error = future.result()
                         if success:
@@ -2519,11 +2557,14 @@ class DeletionManager:
                         elif error:
                             aggregate_result['errors'].append(f"Debrid removal failed for {torrent_id}: {error}")
 
-                logging.info(f"[DELETE_MULTIPLE] Phase 0 complete: {len(debrid_removed_ids)}/{len(unique_torrent_ids)} torrents removed (PARALLEL)")
+            total = len(unique_torrent_ids) + len(unique_nzb_ids)
+            if total:
+                logging.info(f"[DELETE_MULTIPLE] Phase 0 complete: {len(debrid_removed_ids)}/{total} items removed")
                 aggregate_result['debrid_removed'] = len(debrid_removed_ids) > 0
-                aggregate_result['debrid_torrents_removed'] = len(debrid_removed_ids)
+                aggregate_result['debrid_torrents_removed'] = sum(1 for tid in debrid_removed_ids if not str(tid).startswith('nzb:'))
+                aggregate_result['debrid_nzb_removed'] = sum(1 for tid in debrid_removed_ids if str(tid).startswith('nzb:'))
             else:
-                logging.info(f"[DELETE_MULTIPLE] Phase 0: No torrent IDs found for debrid removal")
+                logging.info(f"[DELETE_MULTIPLE] Phase 0: No torrent/NZB IDs found for removal")
 
         # PHASE 0.5: Batch cache clearing (if enabled) - BEFORE per-item loop
         # Opens each cache file once instead of once per item

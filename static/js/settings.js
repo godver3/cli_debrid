@@ -1066,12 +1066,14 @@ export function updateSettings() {
     const usenetUrl = document.getElementById('usenet_provider-url');
     const usenetToken = document.getElementById('usenet_provider-api_token');
     const usenetFolder = document.getElementById('usenet_provider-download_folder');
-    if (usenetEnabled || usenetUrl || usenetToken || usenetFolder) {
+    const usenetDataPath = document.getElementById('usenet_provider-data_path');
+    if (usenetEnabled || usenetUrl || usenetToken || usenetFolder || usenetDataPath) {
         if (!settingsData['Usenet Provider']) settingsData['Usenet Provider'] = {};
         if (usenetEnabled) settingsData['Usenet Provider']['enabled'] = usenetEnabled.checked;
         if (usenetUrl) settingsData['Usenet Provider']['url'] = usenetUrl.value;
         if (usenetToken) settingsData['Usenet Provider']['api_token'] = usenetToken.value;
         if (usenetFolder) settingsData['Usenet Provider']['download_folder'] = usenetFolder.value;
+        if (usenetDataPath) settingsData['Usenet Provider']['data_path'] = usenetDataPath.value;
     }
 
     const updatePlexOnFileDiscovery = document.getElementById('plex-update_plex_on_file_discovery');
