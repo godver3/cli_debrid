@@ -1641,27 +1641,11 @@ def api_usenet_migrate():
                     skipped += 1
                     continue
 
-                nzb_url = None
+                # Collect ALL candidate NZB URLs via tiered name search
+                # (torrent hash is not applicable for Usenet — Newznab indexers use title/episode search)
+                candidate_urls = []
 
-                # Strategy 1: search by hash (most precise)
-                if hash_val:
-                    for sid, cfg in newznab_scrapers:
-                        try:
-                            params = {'apikey': cfg['api_key'].strip(), 't': 'search', 'q': hash_val, 'limit': 5}
-                            from routes.api_tracker import api as _api
-                            r = _api.get(f"{cfg['url'].rstrip('/')}/api", params=params, timeout=15)
-                            if r.status_code == 200:
-                                from scraper.newznab import _parse_newznab_xml
-                                results = _parse_newznab_xml(r.text, sid)
-                                if results:
-                                    nzb_url = results[0].get('nzb_url')
-                                    if nzb_url:
-                                        break
-                        except Exception:
-                            continue
-
-                # Strategy 2: tiered name search — most specific first, broaden on no results
-                if not nzb_url and name:
+                if name:
                     import re as _re
                     try:
                         from PTT import parse_title as _ptt
@@ -1670,19 +1654,14 @@ def api_usenet_migrate():
                         _title   = _parsed.get('title', '') or ''
                         _seasons = _parsed.get('seasons', [])
                         _episodes = _parsed.get('episodes', [])
-                        _res     = _parsed.get('resolution', '')   # e.g. '2160p'
-                        _group   = _parsed.get('group', '')        # e.g. 'GRACE'
-                        _hdr_list = _parsed.get('hdr', [])         # e.g. ['DV', 'HDR10']
-                        _hdr     = ' '.join(_hdr_list) if _hdr_list else ''  # e.g. 'DV'
+                        _res     = _parsed.get('resolution', '')
+                        _group   = _parsed.get('group', '')
+                        _hdr_list = _parsed.get('hdr', [])
+                        _hdr     = ' '.join(_hdr_list) if _hdr_list else ''
                         _sep = f"S{_seasons[0]:02d}E{_episodes[0]:02d}" if _seasons and _episodes \
                               else (f"S{_seasons[0]:02d}" if _seasons else '')
                         _year    = _parsed.get('year')
 
-                        # Build tiered queries: most specific → least specific
-                        # Q1: title + episode + resolution + HDR + group  (exact match)
-                        # Q2: title + episode + resolution + HDR           (any group)
-                        # Q3: title + episode + resolution                 (any HDR/group)
-                        # Q4: title + episode                              (last resort)
                         queries = []
                         if _title and _sep:
                             _q_base = f"{_title} {_sep}"
@@ -1694,7 +1673,6 @@ def api_usenet_migrate():
                                 queries.append(f"{_q_base} {_res}")
                             queries.append(_q_base)
                         if not queries:
-                            # movie or no episode info
                             if _title and _year and _res and _hdr:
                                 queries.append(f"{_title} {_year} {_res} {_hdr}")
                             if _title and _year and _res:
@@ -1710,10 +1688,8 @@ def api_usenet_migrate():
 
                     from routes.api_tracker import api as _api
                     from scraper.newznab import _parse_newznab_xml
-                    # Q1 is the group-specific query (index 0) — no filtering needed
-                    # Q2+ drop the group, so version filter must be applied
                     for _qi, query in enumerate(queries):
-                        if nzb_url:
+                        if candidate_urls:
                             break
                         _needs_filter = _qi > 0 and bool(_version_settings)
                         logging.debug(f'[UsenetMigrate] Name search (Q{_qi+1}, filter={_needs_filter}): {query!r}')
@@ -1727,115 +1703,117 @@ def api_usenet_migrate():
                                         if _needs_filter:
                                             results = [res for res in results
                                                        if _passes_version_filter(res.get('title') or res.get('original_title') or '')]
-                                        if results:
-                                            nzb_url = results[0].get('nzb_url')
-                                            if nzb_url:
-                                                logging.debug(f'[UsenetMigrate] Matched with query {query!r} on {sid} (Q{_qi+1})')
-                                                break
+                                        for res in results:
+                                            u = res.get('nzb_url')
+                                            if u and u not in candidate_urls:
+                                                candidate_urls.append(u)
+                                        if candidate_urls:
+                                            logging.debug(f'[UsenetMigrate] Found {len(candidate_urls)} candidate(s) with query {query!r} on {sid} (Q{_qi+1})')
+                                            break
                             except Exception:
                                 continue
 
-                if not nzb_url:
+                if not candidate_urls:
                     logging.info(f'[UsenetMigrate] Not found on usenet: {name or hash_val}')
                     not_found_items.append(torrent)
                     not_found += 1
                 else:
-                    logging.debug(f'[UsenetMigrate] Found NZB for {name!r}: {nzb_url}')
-                    # Fetch and validate NZB content, then upload directly to avoid double-fetch
-                    try:
-                        from routes.api_tracker import api as _api2
-                        _nzb_r = _api2.get(nzb_url, timeout=15)
-                        _nzb_text = _nzb_r.text if _nzb_r.status_code == 200 else ''
-                        if not _nzb_text or '<nzb' not in _nzb_text.lower():
-                            logging.warning(f'[UsenetMigrate] NZB URL returned invalid content for {name!r} (status={_nzb_r.status_code}, preview={_nzb_text[:100]})')
-                            not_found_items.append(torrent)
-                            not_found += 1
-                            continue
-                    except Exception as _ve:
-                        logging.warning(f'[UsenetMigrate] Could not fetch NZB for {name!r}: {_ve}')
-                        failed_items.append(torrent)
-                        failed += 1
-                        continue
+                    # Try each candidate URL in order — fallback to next if broken
+                    from routes.api_tracker import api as _api2
+                    from database.not_wanted_magnets import is_nzb_segment_not_wanted, add_to_not_wanted_nzb_segment, extract_nzb_segment_id
+                    from utilities.settings import get_setting as _gs_dm
+                    from routes.api_tracker import api as _del_api
 
-                    # Pre-check: skip without submitting if segment already known broken
-                    try:
-                        from database.not_wanted_magnets import is_nzb_segment_not_wanted
-                        if is_nzb_segment_not_wanted(_nzb_text):
-                            logging.info(f'[UsenetMigrate] Skipping {name!r} — segment ID in not-wanted (previously broken)')
-                            failed_items.append(torrent)
-                            failed += 1
+                    _item_submitted = False
+                    for _cand_idx, nzb_url in enumerate(candidate_urls):
+                        logging.debug(f'[UsenetMigrate] Trying candidate {_cand_idx+1}/{len(candidate_urls)} for {name!r}')
+                        try:
+                            _nzb_r = _api2.get(nzb_url, timeout=15)
+                            _nzb_text = _nzb_r.text if _nzb_r.status_code == 200 else ''
+                            if not _nzb_text or '<nzb' not in _nzb_text.lower():
+                                logging.debug(f'[UsenetMigrate] Candidate {_cand_idx+1} invalid content — trying next')
+                                continue
+                        except Exception as _ve:
+                            logging.debug(f'[UsenetMigrate] Candidate {_cand_idx+1} fetch failed: {_ve} — trying next')
                             continue
-                    except Exception:
-                        pass
 
-                    # Check segment health via Decypharr repair API after submission
-                    job_id = client.add_nzb_content(nzb_content=_nzb_text, title=name or hash_val)
-                    if job_id:
-                        # Validate NZB health before keeping — delete if broken
+                        # Skip if segment already known broken
+                        try:
+                            if is_nzb_segment_not_wanted(_nzb_text):
+                                logging.info(f'[UsenetMigrate] Candidate {_cand_idx+1} segment in not-wanted — trying next')
+                                continue
+                        except Exception:
+                            pass
+
+                        # Submit to Decypharr
+                        job_id = client.add_nzb_content(nzb_content=_nzb_text, title=name or hash_val)
+                        if not job_id:
+                            logging.debug(f'[UsenetMigrate] Candidate {_cand_idx+1} rejected by Decypharr — trying next')
+                            continue
+
+                        # Health check
                         try:
                             health = client.check_entry_health(name or hash_val)
-                            if health == 'broken':
-                                logging.warning(f'[UsenetMigrate] NZB {name!r} is BROKEN (missing segments) — deleting from Decypharr')
-                                # Add segment ID to not-wanted so future migrations skip it
-                                try:
-                                    from database.not_wanted_magnets import add_to_not_wanted_nzb_segment, extract_nzb_segment_id
-                                    _seg = extract_nzb_segment_id(_nzb_text)
-                                    if _seg:
-                                        add_to_not_wanted_nzb_segment(_seg)
-                                except Exception:
-                                    pass
-                                # Delete from Decypharr — paginate to find real info_hash
-                                try:
-                                    from routes.api_tracker import api as _del_api
-                                    from utilities.settings import get_setting as _gs_dm
-                                    _dcy_url = _gs_dm('Usenet Provider', 'url', default='').rstrip('/')
-                                    _dcy_token = _gs_dm('Usenet Provider', 'api_token', default='')
-                                    _dh = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
-                                    _search_name = (name or hash_val).strip()
-                                    _real_hash = None
-                                    _pg = 1
-                                    while not _real_hash:
-                                        _tr = _del_api.get(f'{_dcy_url}/api/torrents',
-                                                           params={'page': _pg, 'limit': 50, 'sort_by': 'added_on', 'sort_order': 'desc'},
-                                                           headers=_dh, timeout=10)
-                                        if _tr.status_code != 200:
-                                            break
-                                        _td = _tr.json()
-                                        for _t in _td.get('torrents', []):
-                                            if _t.get('name', '').strip() == _search_name:
-                                                _real_hash = _t.get('info_hash', '')
-                                                break
-                                        if _real_hash or not _td.get('has_next'):
-                                            break
-                                        _pg += 1
-                                    if _real_hash:
-                                        _del_api.delete(f'{_dcy_url}/api/torrents',
-                                                        headers=_dh, params={'hashes': _real_hash}, timeout=10)
-                                        logging.info(f'[UsenetMigrate] Deleted broken entry {_real_hash} from Decypharr')
-                                    else:
-                                        logging.warning(f'[UsenetMigrate] Could not find {_search_name!r} in Decypharr to delete')
-                                except Exception as _del_e:
-                                    logging.warning(f'[UsenetMigrate] Could not delete broken entry: {_del_e}')
-                                failed_items.append(torrent)
-                                failed += 1
-                                continue
-                            elif health == 'healthy':
-                                logging.info(f'[UsenetMigrate] NZB {name!r} health check passed')
-                            else:
-                                logging.info(f'[UsenetMigrate] NZB {name!r} health check inconclusive — keeping')
                         except Exception as _he:
-                            logging.debug(f'[UsenetMigrate] Health check error for {name!r}: {_he} — keeping')
+                            health = None
+                            logging.debug(f'[UsenetMigrate] Health check error for candidate {_cand_idx+1}: {_he} — keeping')
 
-                        logging.info(f'[UsenetMigrate] Submitted: {name} -> job {job_id}')
+                        if health == 'broken':
+                            logging.warning(f'[UsenetMigrate] Candidate {_cand_idx+1} for {name!r} is BROKEN — blacklisting and trying next')
+                            try:
+                                _seg = extract_nzb_segment_id(_nzb_text)
+                                if _seg:
+                                    add_to_not_wanted_nzb_segment(_seg)
+                            except Exception:
+                                pass
+                            # Delete broken entry from Decypharr
+                            try:
+                                _dcy_url = _gs_dm('Usenet Provider', 'url', default='').rstrip('/')
+                                _dcy_token = _gs_dm('Usenet Provider', 'api_token', default='')
+                                _dh = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
+                                _search_name = (name or hash_val).strip()
+                                _real_hash = None
+                                _pg = 1
+                                while not _real_hash:
+                                    _tr = _del_api.get(f'{_dcy_url}/api/torrents',
+                                                       params={'page': _pg, 'limit': 50, 'sort_by': 'added_on', 'sort_order': 'desc'},
+                                                       headers=_dh, timeout=10)
+                                    if _tr.status_code != 200:
+                                        break
+                                    _td = _tr.json()
+                                    for _t in _td.get('torrents', []):
+                                        if _t.get('name', '').strip() == _search_name:
+                                            _real_hash = _t.get('info_hash', '')
+                                            break
+                                    if _real_hash or not _td.get('has_next'):
+                                        break
+                                    _pg += 1
+                                if _real_hash:
+                                    _del_api.delete(f'{_dcy_url}/api/torrents', headers=_dh, params={'hashes': _real_hash}, timeout=10)
+                                    logging.info(f'[UsenetMigrate] Deleted broken entry {_real_hash} from Decypharr')
+                            except Exception as _del_e:
+                                logging.warning(f'[UsenetMigrate] Could not delete broken entry: {_del_e}')
+                            continue  # try next candidate
+
+                        # Success (healthy or inconclusive)
+                        if health == 'healthy':
+                            logging.info(f'[UsenetMigrate] NZB {name!r} health check passed (candidate {_cand_idx+1})')
+                        else:
+                            logging.info(f'[UsenetMigrate] NZB {name!r} health check inconclusive — keeping (candidate {_cand_idx+1})')
+
+                        logging.info(f'[UsenetMigrate] Submitted: {name} -> job {job_id} (candidate {_cand_idx+1}/{len(candidate_urls)})')
                         already_submitted.add(dedup_key)
                         try:
                             with open(submitted_path, 'a', encoding='utf-8') as _sf:
                                 _sf.write(dedup_key + '\n')
-                        except Exception as _we:
-                            logging.warning(f'[UsenetMigrate] Could not persist submitted key: {_we}')
+                        except Exception:
+                            pass
                         submitted += 1
-                    else:
-                        logging.warning(f'[UsenetMigrate] Decypharr rejected NZB for: {name} url={nzb_url}')
+                        _item_submitted = True
+                        break  # done with this item
+
+                    if not _item_submitted:
+                        logging.warning(f'[UsenetMigrate] All {len(candidate_urls)} candidate(s) exhausted for {name!r} — marking failed')
                         failed_items.append(torrent)
                         failed += 1
 
@@ -4871,6 +4849,27 @@ def usenet_repair_activity():
     except Exception as e:
         logging.error(f'[UsenetRepair] activity error: {e}')
         return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/usenet/repair/scan_status')
+def usenet_scan_status():
+    """Check if Decypharr is currently running a health sweep (active_run != null)."""
+    try:
+        from usenet.decypharr_client import get_decypharr_client
+        from routes.api_tracker import api as _api
+        client = get_decypharr_client()
+        if not client.is_enabled():
+            return jsonify(success=True, is_scanning=False)
+        r = _api.get(f'{client.base_url}/api/repair/status', headers=client._headers(), timeout=10)
+        if r.status_code != 200:
+            return jsonify(success=True, is_scanning=False)
+        data = r.json()
+        active_run = data.get('active_run') or data.get('value', {}).get('active_run')
+        is_scanning = active_run is not None
+        return jsonify(success=True, is_scanning=is_scanning, active_run=active_run)
+    except Exception as e:
+        logging.debug(f'[UsenetRepair] scan_status error: {e}')
+        return jsonify(success=True, is_scanning=False)
 
 
 @debrid_manager_bp.route('/api/usenet/repair/health_scan', methods=['POST'])
