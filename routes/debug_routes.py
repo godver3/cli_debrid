@@ -6780,6 +6780,132 @@ def cleanup_failed_upgrades():
                 'groups': groups
             })
 
+        # Handle keep_collected_delete_stale — delete Wanted/Scraping/Adding/Checking/Upgrading
+        # duplicates that exist alongside a Collected version
+        if keep_action == 'keep_collected_delete_stale':
+            STALE_STATES = ('Wanted', 'Scraping', 'Adding', 'Checking', 'Unreleased', 'Final Scrape')
+            stale_in = ','.join(f"'{s}'" for s in STALE_STATES)
+            if media_type == 'show':
+                cursor.execute(f"""
+                    SELECT imdb_id, season_number, episode_number,
+                           COUNT(*) as total_versions,
+                           SUM(CASE WHEN state IN ({stale_in}) THEN 1 ELSE 0 END) as stale_count,
+                           SUM(CASE WHEN state IN ('Collected', 'Upgrading') AND ghostlisted = 0 THEN 1 ELSE 0 END) as collected_count
+                    FROM media_items
+                    WHERE {type_filter} AND imdb_id IS NOT NULL
+                    GROUP BY imdb_id, season_number, episode_number
+                    HAVING stale_count > 0 AND collected_count > 0
+                """)
+            else:
+                cursor.execute(f"""
+                    SELECT imdb_id,
+                           COUNT(*) as total_versions,
+                           SUM(CASE WHEN state IN ({stale_in}) THEN 1 ELSE 0 END) as stale_count,
+                           SUM(CASE WHEN state IN ('Collected', 'Upgrading') AND ghostlisted = 0 THEN 1 ELSE 0 END) as collected_count
+                    FROM media_items
+                    WHERE {type_filter} AND imdb_id IS NOT NULL
+                    GROUP BY imdb_id
+                    HAVING stale_count > 0 AND collected_count > 0
+                """)
+
+            problem_items = cursor.fetchall()
+            total_movies = len(problem_items)
+            total_deleted = 0
+            total_excluded = 0
+            results = []
+            groups = []
+            start_time = time.time()
+
+            import os as _os_stale
+            for row in problem_items:
+                row = dict(row)
+                imdb_id = row['imdb_id']
+                if media_type == 'show':
+                    cursor.execute(f"""
+                        SELECT id, title, state, version, filled_by_file, location_on_disk,
+                               season_number, episode_number, ghostlisted
+                        FROM media_items
+                        WHERE {type_filter} AND imdb_id = ?
+                        AND season_number = ? AND episode_number = ?
+                    """, (imdb_id, row['season_number'], row['episode_number']))
+                else:
+                    cursor.execute(f"""
+                        SELECT id, title, state, version, filled_by_file, location_on_disk,
+                               ghostlisted
+                        FROM media_items
+                        WHERE {type_filter} AND imdb_id = ?
+                    """, (imdb_id,))
+
+                all_versions = []
+                for r in cursor.fetchall():
+                    v = dict(r)
+                    v['location_basename'] = _os_stale.path.basename(v.get('location_on_disk') or '')
+                    all_versions.append(v)
+                collected = [v for v in all_versions if v['state'] in ('Collected', 'Upgrading') and not v['ghostlisted']]
+                stale = [v for v in all_versions if v['state'] in STALE_STATES]
+
+                if not collected or not stale:
+                    continue
+
+                if _skip_for_nas_filter(collected):
+                    total_excluded += 1
+                    continue
+
+                def _fmt_item(v, action='keep'):
+                    loc = v.get('filled_by_file') or v.get('location_basename') or v.get('location_on_disk') or 'N/A'
+                    return {
+                        'id': v['id'],
+                        'title': v.get('title', ''),
+                        'state': v.get('state', ''),
+                        'version': v.get('version', ''),
+                        'location': loc,
+                        'ghostlisted': bool(v.get('ghostlisted', 0)),
+                        'current_score': v.get('current_score', 'N/A'),
+                        'season_number': v.get('season_number'),
+                        'episode_number': v.get('episode_number'),
+                        'action': action,
+                    }
+
+                group_keep_items = [_fmt_item(v, 'keep') for v in collected]
+                group_delete_items = [_fmt_item(v, 'delete') for v in stale]
+
+                for v in stale:
+                    if not dry_run:
+                        cursor.execute("DELETE FROM media_items WHERE id = ?", (v['id'],))
+                    total_deleted += 1
+
+                groups.append({'keep_items': group_keep_items, 'delete_items': group_delete_items})
+                results.append({
+                    'title': all_versions[0]['title'] if all_versions else imdb_id,
+                    'imdb_id': imdb_id,
+                    'keep_count': len(group_keep_items),
+                    'delete_count': len(group_delete_items),
+                    'kept': [v['state'] + ' v' + str(v['version']) for v in group_keep_items],
+                    'deleted': [v['state'] + ' v' + str(v['version']) for v in group_delete_items],
+                })
+
+            if not dry_run:
+                conn.commit()
+
+            elapsed_time = time.time() - start_time
+            message = f'{"Would delete" if dry_run else "Deleted"} {total_deleted} stale duplicates from {total_movies} {media_label} (kept Collected)'
+            if total_excluded:
+                message += f', excluded {total_excluded} items by NAS filter'
+
+            return jsonify({
+                'success': True,
+                'message': message,
+                'total_movies': total_movies,
+                'total_deleted': total_deleted,
+                'total_excluded': total_excluded,
+                'elapsed_time': round(elapsed_time, 2),
+                'dry_run': dry_run,
+                'keep_action': keep_action,
+                'version_match': version_match,
+                'results': results,
+                'groups': groups
+            })
+
         # Find items with both collected and blacklisted (non-ghostlisted) versions
         # For shows, group by season/episode to find actual duplicate episodes
         if media_type == 'show':

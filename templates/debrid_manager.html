@@ -4043,6 +4043,8 @@ async function loadUsenetTab() {
         await usenetLoadActivity(null);
         // Only start polling if a repair is already in progress
         _usenetMaybeStartPolling();
+        // Check if Decypharr sweep is already running and start scan status polling if so
+        _usenetScanPoll();
     } catch(e) {
         document.getElementById('usenet-loading').style.display = 'none';
         document.getElementById('usenet-error').style.display = 'block';
@@ -4197,7 +4199,45 @@ async function usenetTriggerScan() {
         const d = await r.json();
         btn.textContent = d.success ? '✓ Scan triggered' : '✗ Failed';
         setTimeout(() => { btn.disabled = false; btn.innerHTML = orig; }, 3000);
+        if (d.success) _usenetStartScanPolling();
     } catch(e) { btn.disabled = false; btn.innerHTML = orig; }
+}
+
+let _usenetScanPollTimer = null;
+
+function _usenetSetScanningState(scanning) {
+    const btn = document.getElementById('usenet-scan-btn');
+    if (!btn) return;
+    if (scanning) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-rotate fa-spin" style="color:#e8601c"></i> Running…';
+    } else {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-rotate" style="color:#e8601c"></i> Run Health Scan';
+    }
+}
+
+function _usenetStartScanPolling() {
+    clearTimeout(_usenetScanPollTimer);
+    _usenetScanPoll();
+}
+
+async function _usenetScanPoll() {
+    try {
+        const r = await fetch('/debrid_manager/api/usenet/repair/scan_status');
+        const d = await r.json();
+        _usenetSetScanningState(d.is_scanning);
+        if (d.is_scanning) {
+            // Refresh stats every 10s while scanning
+            fetch('/debrid_manager/api/usenet/repair/stats').then(r => r.json()).then(sd => {
+                if (sd.success) _usenetRenderStats(sd.health || {}, sd.activity || {}, sd.versions || [], sd.repair_version || '');
+            }).catch(() => {});
+            _usenetScanPollTimer = setTimeout(_usenetScanPoll, 10000);
+        }
+        // If not scanning, stop polling — button already re-enabled above
+    } catch(e) {
+        _usenetSetScanningState(false);
+    }
 }
 
 async function usenetViewBroken() {
