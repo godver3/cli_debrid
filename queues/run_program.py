@@ -5294,9 +5294,13 @@ class ProgramRunner:
             logging.warning("[StuckPlex] plex_data_path not configured.")
             return
 
-        log_path = os.path.join(plex_data_path, 'Logs', 'Plex Media Server.log')
+        # Find the Plex log — some systems name it "Plex Media Server 1.log" etc.
+        import glob as _glob
+        log_dir = os.path.join(plex_data_path, 'Logs')
+        log_candidates = _glob.glob(os.path.join(log_dir, 'Plex Media Server*.log'))
+        log_path = log_candidates[0] if log_candidates else os.path.join(log_dir, 'Plex Media Server.log')
         if not os.path.exists(log_path):
-            logging.warning(f"[StuckPlex] Plex log not found at {log_path}")
+            logging.warning(f"[StuckPlex] Plex log not found at {log_path} (searched {log_dir})")
             return
 
         # Read last 2000 lines

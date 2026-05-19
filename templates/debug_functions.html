@@ -1101,6 +1101,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
                         <option value="keep_collected_delete_ghostlisted">Keep collected, delete ghostlisted</option>
                         <option value="keep_ghostlisted_delete_collected">Keep ghostlisted, delete collected</option>
                         <option value="keep_best_quality">Keep best quality, delete rest (for multiple collected)</option>
+                        <option value="keep_collected_delete_stale">Keep collected, delete all other states (Wanted/Scraping/Adding/Checking)</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -4058,6 +4059,8 @@ if (document.readyState === 'loading') {
                                     actionText = 'Keep ghostlisted, delete collected';
                                 } else if (data.keep_action === 'keep_best_quality') {
                                     actionText = 'Keep best quality';
+                                } else if (data.keep_action === 'keep_collected_delete_stale') {
+                                    actionText = 'Keep collected, delete stale states';
                                 }
                                 resultsHtml += `<span style="${statLabel}">Action:</span><span style="${statVal}">${actionText}</span>${divider}`;
                                 resultsHtml += `<span style="${statLabel}">Version:</span><span style="${statVal}">${data.version_match === 'all' ? 'Any' : 'Same only'}</span>${divider}`;
