@@ -4123,13 +4123,15 @@ ease;
 }
 
 
-.search-highlight {
-    background: rgba(255, 107, 53, 0.1) !important;
+.search-highlight,
+.settings-form-group.search-highlight,
+.settings-section .settings-form-group.search-highlight {
+    background: rgba(255, 107, 53, 0.15) !important;
     border-left: 3px solid #ff6b35 !important;
     padding-left: 12px !important;
-    /* margin-left: -15px; */
     border-radius: 4px !important;
     animation: highlightFade 0.5s ease !important;
+    outline: 1px solid rgba(255, 107, 53, 0.3) !important;
 }
 
 button#trakt-auth-btn {

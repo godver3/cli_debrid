@@ -10,7 +10,10 @@ function addToRealDebrid(magnetLink, torrent) {
     }
 
     const isNzb = (torrent.protocol === 'nzb') || (torrent.nzb_url && !magnetLink);
-    const confirmMsg = isNzb
+    const isNzbPack = isNzb && !!torrent.is_nzb_season_pack;
+    const confirmMsg = isNzbPack
+        ? `Submit ${torrent.episode_count} individual episode NZBs to Decypharr as a season pack? Each episode will be health-checked independently.`
+        : isNzb
         ? 'Submit this NZB to Decypharr (Usenet) for download?'
         : 'Are you sure you want to add this torrent to your Debrid Provider?';
 
@@ -21,6 +24,9 @@ function addToRealDebrid(magnetLink, torrent) {
         confirmText: 'Add',
         cancelText: 'Cancel',
         onConfirm: () => {
+            // Set immediately on confirm so replace-season observer doesn't
+            // auto-cancel if the overlay closes before the fetch resolves
+            window._scraperTorrentWasQueued = true;
             showLoadingState();
 
             const formData = new FormData();
@@ -36,7 +42,11 @@ function addToRealDebrid(magnetLink, torrent) {
             formData.append('original_scraped_torrent_title', torrent.original_title || torrent.title);
             formData.append('current_score', torrent.score_breakdown?.total_score || '0');
             if (_scraperSourceContext) formData.append('source_context', _scraperSourceContext);
-            if (isNzb) {
+            if (isNzbPack) {
+                formData.append('protocol', 'nzb');
+                formData.append('episode_nzb_urls', JSON.stringify(torrent.episode_nzb_urls || {}));
+                formData.append('fallback_nzb_urls', JSON.stringify(torrent.fallback_nzb_urls || {}));
+            } else if (isNzb) {
                 formData.append('protocol', 'nzb');
                 formData.append('nzb_url', torrent.nzb_url || magnetLink || '');
             }
@@ -120,6 +130,7 @@ function addToRealDebrid(magnetLink, torrent) {
             })
             .catch(error => {
                 if (window.DEBUG) console.error('Error:', error);
+                hideLoadingState();
                 showPopup({
                     type: POPUP_TYPES.ERROR,
                     title: 'Error',
@@ -863,8 +874,9 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                             prefill_year: year,
                             prefill_version: version,
                         });
-                        if (torrent.magnet) {
-                            assignUrlParams.set('prefill_magnet', torrent.magnet);
+                        const prefillLink = torrent.magnet || torrent.nzb_url || '';
+                        if (prefillLink) {
+                            assignUrlParams.set('prefill_magnet', prefillLink);
                         }
                         // Set selection type based on whether this is an episode or season pack
                         if (season) {
@@ -1178,9 +1190,9 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
 
                 const assignUrlParams = new URLSearchParams({
                     prefill_id: mediaId, prefill_type: mediaType, prefill_title: title,
-                    prefill_year: year, prefill_magnet: torrent.magnet, prefill_version: version
+                    prefill_year: year, prefill_magnet: torrent.magnet || torrent.nzb_url || '', prefill_version: version
                 });
-                
+
                 if (season) {
                     assignUrlParams.set('prefill_seasons', season);
                     if (episode) {
@@ -1232,7 +1244,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                                     data-magnet="${(torrent.magnet || '').replace(/"/g, '&quot;')}"
                                     data-title="${(torrent.title || torrent.original_title || '').replace(/"/g, '&quot;')}"
                                     aria-label="View file list"
-                                    title="View torrent files">
+                                    title="${torrent.is_nzb_season_pack ? 'View NZB episode list' : (torrent.nzb_url ? 'View NZB info' : 'View torrent files')}">
                                 ${createFolderIcon()}
                             </button>
                         </div>
@@ -1306,7 +1318,13 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                         const magnet = folderButton.getAttribute('data-magnet');
                         const torrentTitle = folderButton.getAttribute('data-title');
 
-                        if (magnet) {
+                        if (torrent.is_nzb_season_pack && torrent.episode_nzb_urls) {
+                            // NZB aggregate pack — show per-episode list
+                            showNzbFileListModal(torrent);
+                        } else if (torrent.nzb_url) {
+                            // Single NZB — show basic info
+                            showNzbFileListModal(torrent);
+                        } else if (magnet) {
                             await showTorrentFileList(magnet, torrentTitle);
                         }
                     };
@@ -1517,7 +1535,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
 
                     const assignUrlParams = new URLSearchParams({
                         prefill_id: mediaId, prefill_type: mediaType, prefill_title: title,
-                        prefill_year: year, prefill_magnet: torrent.magnet, prefill_version: version
+                        prefill_year: year, prefill_magnet: torrent.magnet || torrent.nzb_url || '', prefill_version: version
                     });
                     if (season) {
                         assignUrlParams.set('prefill_seasons', season);
@@ -1559,7 +1577,18 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                                 <div class="release-tags">${qualityBadgesHtml}</div>
                             </div>
                         </td>
-                        <td class="text-right">${(torrent.size || 0).toFixed(1)} GB</td>
+                        <td class="text-right">
+                            <div class="size-cell-wrapper">
+                                <div class="size-value">${(torrent.size || 0).toFixed(1)} GB</div>
+                                <button class="folder-icon-btn desktop-only"
+                                        data-magnet="${(torrent.magnet || '').replace(/"/g, '&quot;')}"
+                                        data-title="${(torrent.title || torrent.original_title || '').replace(/"/g, '&quot;')}"
+                                        aria-label="View file list"
+                                        title="${torrent.is_nzb_season_pack ? 'View NZB episode list' : (torrent.nzb_url ? 'View NZB info' : 'View torrent files')}">
+                                    ${createFolderIcon()}
+                                </button>
+                            </div>
+                        </td>
                         <td>
                             ${(torrent.source || 'N/A').split(' - ').map(p => `<span class="source-badge">${p.trim()}</span>`).join('')}
                         </td>
@@ -1586,6 +1615,24 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
 
                     const addButton = row.querySelector('.add-button');
                     const assignButton = row.querySelector('.assign-button');
+
+                    // Folder icon for second table
+                    const folderButton2 = row.querySelector('.folder-icon-btn');
+                    if (folderButton2) {
+                        folderButton2.onclick = async function(e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if (torrent.is_nzb_season_pack && torrent.episode_nzb_urls) {
+                                showNzbFileListModal(torrent);
+                            } else if (torrent.nzb_url) {
+                                showNzbFileListModal(torrent);
+                            } else {
+                                const magnet = folderButton2.getAttribute('data-magnet');
+                                const torrentTitle = folderButton2.getAttribute('data-title');
+                                if (magnet) await showTorrentFileList(magnet, torrentTitle);
+                            }
+                        };
+                    }
 
                     if (isFilteredOut) {
                         addButton.onclick = function() {
@@ -4374,9 +4421,11 @@ async function selectMedia(mediaId, title, year, mediaType, season, episode, mul
 // Function to check cache status in the background and update the UI
 function checkCacheStatusInBackground(hashes, results) {
     let processedCount = 0;
+    // Count only first 5 non-NZB (debrid) items for cache checking
+    let debridChecked = 0;
+    const MAX_DEBRID_CHECKS = 5;
     let totalCount = Math.min(5, results.length);
     let processingItems = new Set(); // Track items currently being processed
-    const MAX_PARALLEL_REQUESTS = 1; // Process up to 3 items at once
 
     // Update to handle both magnet links and torrent files
     function updateCacheStatusUI(index, status, cache_providers) {
@@ -4502,11 +4551,24 @@ function checkCacheStatusInBackground(hashes, results) {
         }
 
         const result = results[index];
-        
-        // If the item was filtered out (score is N/A), or its score is inherently null/undefined (displayed as N/A),
-        // or if there's no magnet link or torrent URL, mark cache status as N/A and skip checking.
-        if (result.__isActuallyFilteredOut || 
-            result.score_breakdown?.total_score == null || 
+
+        // NZB items don't need cache checking — skip but extend totalCount to find next debrid item
+        const isNzb = result.protocol === 'nzb' || (!!result.nzb_url && !result.magnet_link && !result.torrent_url);
+        if (isNzb) {
+            processingItems.delete(index);
+            // Extend window to include one more item beyond current total, up to results length
+            if (totalCount < results.length && debridChecked < MAX_DEBRID_CHECKS) {
+                totalCount = Math.min(totalCount + 1, results.length);
+            }
+            processedCount++;
+            processNextItems();
+            return;
+        }
+        debridChecked++;
+
+        // If the item was filtered out or has no magnet/torrent URL, mark as N/A
+        if (result.__isActuallyFilteredOut ||
+            result.score_breakdown?.total_score == null ||
             (!result.magnet_link && !result.torrent_url)) {
             updateCacheStatusUI(index, 'check_unavailable');
             processingItems.delete(index);
@@ -4556,19 +4618,19 @@ function checkCacheStatusInBackground(hashes, results) {
             finalizeCacheCheck();
             return;
         }
-        
+
         // Process new items up to our parallel limit
         for (let i = 0; i < totalCount; i++) {
             // Skip if we're at capacity or this item is already being processed
             if (processingItems.size >= MAX_PARALLEL_REQUESTS || processingItems.has(i)) {
                 continue;
             }
-            
+
             // Skip if this item is already processed
             if (i < processedCount) {
                 continue;
             }
-            
+
             // Process this item
             processingItems.add(i);
             checkItemCacheStatus(i);
@@ -5116,6 +5178,51 @@ async function handleAutoScrape(imdbId, season, episode, version) {
 }
 
 /**
+ * Show file list modal for an NZB result (single or aggregate pack)
+ */
+async function showNzbFileListModal(torrent) {
+    const title = torrent.title || torrent.original_title || 'NZB';
+    const metadata = { filename: title, hash: '', status: 'nzb' };
+
+    if (torrent.is_nzb_season_pack && torrent.episode_nzb_urls) {
+        // Aggregate pack — one row per episode using actual filenames and sizes
+        const epNums = Object.keys(torrent.episode_nzb_urls).map(Number).sort((a, b) => a - b);
+        const episodeSizes = torrent.episode_sizes || {};
+        const episodeFilenames = torrent.episode_filenames || {};
+        const files = epNums.map(ep => {
+            const sizeGb = episodeSizes[ep] || 0;
+            const sizeBytes = Math.round(sizeGb * 1024 * 1024 * 1024);
+            const sizeFmt = sizeGb >= 0.1 ? sizeGb.toFixed(2) + ' GB' : (sizeGb * 1024).toFixed(0) + ' MB';
+            const filename = episodeFilenames[ep] || '';
+            return {
+                name: filename || `Episode ${ep}`,
+                path: filename || `Episode ${ep}`,
+                size: sizeBytes,
+                size_formatted: sizeFmt
+            };
+        });
+        displayFileListModal(files, title, files.length, metadata);
+    } else if (torrent.nzb_url) {
+        // Single NZB — fetch and parse from backend
+        Loading.show('Loading NZB file list...', '', true, false);
+        try {
+            const r = await fetch('/scraper/get_nzb_files', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({nzb_url: torrent.nzb_url, title})
+            });
+            const data = await r.json();
+            Loading.hide();
+            if (!data.success) throw new Error(data.error || 'Failed to fetch NZB files');
+            displayFileListModal(data.files, title, data.total_files, data.metadata);
+        } catch (e) {
+            Loading.hide();
+            showPopup({ type: POPUP_TYPES.ERROR, title: 'NZB File List Error', message: e.message });
+        }
+    }
+}
+
+/**
  * Show file list for a torrent magnet link
  * @param {string} magnet - Magnet link
  * @param {string} torrentTitle - Title of the torrent
@@ -5194,6 +5301,9 @@ function displayFileListModal(files, torrentTitle, totalFiles, metadata = {}) {
     } else if (rawStatus === 'downloading') {
         displayStatus = 'Uncached';
         statusColor = '#3b82f6'; // Blue
+    } else if (rawStatus === 'nzb') {
+        displayStatus = 'Usenet / NZB';
+        statusColor = '#a855f7'; // Purple
     }
 
     // Calculate total size from all files

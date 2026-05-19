@@ -542,9 +542,10 @@
         const lowerQuery = query.toLowerCase();
         const tabContents = document.querySelectorAll('.settings-tab-content');
 
+        // Always reset first to clear any previous search state
+        removeSearchHighlights();
+
         if (!query) {
-            // Reset: hide all search highlights and show normal view
-            removeSearchHighlights();
             return;
         }
 

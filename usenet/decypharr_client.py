@@ -21,6 +21,8 @@ from utilities.settings import get_setting
 from routes.api_tracker import api
 
 
+
+
 class DecypharrClient:
     """Submits NZB URLs to Decypharr and polls for completion."""
 
@@ -32,6 +34,7 @@ class DecypharrClient:
         self.api_token = cfg.get('api_token', '')
         self.download_folder = cfg.get('download_folder', '')
         self.enabled = cfg.get('enabled', False)
+        self.last_missing_segments = False  # set True by add_nzb_content on ARTICLE_NOT_FOUND
 
     def _headers(self) -> Dict[str, str]:
         h = {'Accept': 'application/json'}
@@ -54,6 +57,7 @@ class DecypharrClient:
 
     def add_nzb_content(self, nzb_content: str, title: str = '', category: str = '') -> Optional[str]:
         """Submit NZB content directly as a file upload to avoid double-fetching."""
+        self.last_missing_segments = False
         if not self.is_enabled():
             logging.warning('[Decypharr] Usenet provider is disabled or not configured')
             return None
@@ -77,7 +81,10 @@ class DecypharrClient:
                     job = result[0]
                     job_id = job.get('id') or job.get('nzo_id') or job.get('hash', '')
                     if job.get('status') == 'error':
-                        logging.error(f'[Decypharr] add_nzb_content error: {job.get("error")}')
+                        err_msg = job.get('error', '')
+                        logging.error(f'[Decypharr] add_nzb_content error: {err_msg}')
+                        if 'ARTICLE_NOT_FOUND' in err_msg or 'article not found' in err_msg.lower():
+                            self.last_missing_segments = True  # callers can check this flag
                         return None
                     logging.info(f'[Decypharr] NZB content submitted: id={job_id} title={title!r}')
                     return str(job_id) if job_id else 'submitted'
@@ -146,22 +153,11 @@ class DecypharrClient:
             logging.error(f'[Decypharr] add_nzb exception: {exc}')
             return None
 
-    def get_nzb_file_info(self, job_name: str) -> Optional[Tuple[str, str]]:
-        """
-        Find the downloaded folder and largest video file for a completed NZB job.
-        Searches /api/browse/nzbs for a folder matching job_name, then lists its contents.
-        Returns (folder_name, video_filename) or None if not found.
-        """
-        _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
-
+    def _find_nzb_folder(self, job_norm: str) -> Optional[str]:
+        """Paginate /api/browse/nzbs to find a folder matching job_norm."""
         def _norm(s):
             return re.sub(r'[^a-z0-9]', '', s.lower())
-
-        job_norm = _norm(job_name)
-
         try:
-            # Paginate through /api/browse/nzbs to find matching folder
-            folder_name = None
             page = 1
             while True:
                 r = api.get(f'{self.base_url}/api/browse/nzbs',
@@ -177,37 +173,72 @@ class DecypharrClient:
                         continue
                     name_norm = _norm(name)
                     if name_norm == job_norm or job_norm in name_norm or name_norm in job_norm:
-                        folder_name = name
-                        break
-                if folder_name:
-                    break
+                        return name
                 total_pages = data.get('total_pages', 1) if isinstance(data, dict) else 1
                 if page >= total_pages:
                     break
                 page += 1
+        except Exception as exc:
+            logging.warning(f'[Decypharr] _find_nzb_folder error: {exc}')
+        return None
 
+    def _list_nzb_folder_files(self, folder_name: str) -> list:
+        """Return all video files inside a Decypharr NZB folder."""
+        _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
+        try:
+            r = api.get(f'{self.base_url}/api/browse/nzbs/{folder_name}',
+                        headers=self._headers(), timeout=15)
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            entries = data.get('entries', data) if isinstance(data, dict) else data
+            return [
+                (e.get('name', ''), e.get('size', 0) or 0)
+                for e in (entries or [])
+                if not e.get('is_dir') and os.path.splitext(e.get('name', ''))[1].lower() in _VIDEO_EXTS
+            ]
+        except Exception as exc:
+            logging.warning(f'[Decypharr] _list_nzb_folder_files error for {folder_name!r}: {exc}')
+        return []
+
+    def get_nzb_file_info(self, job_name: str, season: int = None, episode: int = None) -> Optional[Tuple[str, str]]:
+        """
+        Find the downloaded folder and best-matching video file for a completed NZB job.
+        If season/episode are provided, picks the file matching that episode.
+        Otherwise picks the largest video file.
+        Returns (folder_name, video_filename) or None if not found.
+        """
+        def _norm(s):
+            return re.sub(r'[^a-z0-9]', '', s.lower())
+
+        job_norm = _norm(job_name)
+
+        try:
+            folder_name = self._find_nzb_folder(job_norm)
             if not folder_name:
                 logging.debug(f'[Decypharr] No folder found for job {job_name!r}')
                 return None
 
-            # List files inside the folder
-            r2 = api.get(f'{self.base_url}/api/browse/nzbs/{folder_name}',
-                         headers=self._headers(), timeout=15)
-            if r2.status_code != 200:
+            video_files = self._list_nzb_folder_files(folder_name)
+            if not video_files:
+                logging.warning(f'[Decypharr] No video files in folder {folder_name!r}')
                 return folder_name, None
 
-            data2 = r2.json()
-            entries2 = data2.get('entries', data2) if isinstance(data2, dict) else data2
-            # Find largest video file
+            # If season/episode provided, find the matching file
             best_file = None
-            best_size = -1
-            for entry in (entries2 or []):
-                name = entry.get('name', '')
-                size = entry.get('size', 0) or 0
-                if not entry.get('is_dir') and os.path.splitext(name)[1].lower() in _VIDEO_EXTS:
-                    if size > best_size:
-                        best_size = size
+            if season is not None and episode is not None:
+                ep_pat = re.compile(
+                    rf'[Ss]{season:02d}[Ee]{episode:02d}(?![0-9])',
+                    re.IGNORECASE
+                )
+                for name, _ in video_files:
+                    if ep_pat.search(name):
                         best_file = name
+                        break
+
+            # Fallback: largest file
+            if not best_file:
+                best_file = max(video_files, key=lambda x: x[1])[0]
 
             logging.info(f'[Decypharr] get_nzb_file_info: folder={folder_name!r} file={best_file!r}')
             return folder_name, best_file
@@ -215,6 +246,79 @@ class DecypharrClient:
         except Exception as exc:
             logging.warning(f'[Decypharr] get_nzb_file_info error for {job_name!r}: {exc}')
             return None
+
+    def get_nzb_folder_all_files(self, job_name: str) -> Optional[Tuple[str, list]]:
+        """
+        Like get_nzb_file_info but returns ALL video files in the folder sorted by name.
+        Returns (folder_name, [filename, ...]) or None if not found.
+        Used for aggregate NZB packs where multiple episodes are in the same folder.
+        """
+        def _norm(s):
+            return re.sub(r'[^a-z0-9]', '', s.lower())
+
+        job_norm = _norm(job_name)
+        try:
+            folder_name = self._find_nzb_folder(job_norm)
+            if not folder_name:
+                return None
+            video_files = sorted([name for name, _ in self._list_nzb_folder_files(folder_name)])
+            logging.info(f'[Decypharr] get_nzb_folder_all_files: folder={folder_name!r} files={video_files}')
+            return folder_name, video_files
+        except Exception as exc:
+            logging.warning(f'[Decypharr] get_nzb_folder_all_files error for {job_name!r}: {exc}')
+            return None
+
+    def remove_nzb(self, info_hash: str, entry_name: str = '') -> bool:
+        """
+        Delete a completed NZB entry from Decypharr.
+        info_hash is the Decypharr job UUID (stored as filled_by_torrent_id without 'nzb:' prefix).
+        Uses DELETE /api/torrents?hashes={uuid} — the correct endpoint for job UUIDs.
+        Falls back to name search via /api/torrents if UUID delete fails.
+        Returns True if removed (or already gone), False on error.
+        """
+        if not self.is_enabled():
+            return False
+        # Primary: DELETE /api/torrents?hashes={uuid}
+        if info_hash:
+            try:
+                r = api.delete(
+                    f'{self.base_url}/api/torrents',
+                    params={'hashes': info_hash},
+                    headers=self._headers(), timeout=15,
+                )
+                if r.status_code in (200, 204):
+                    logging.info(f'[Decypharr] Removed NZB job {info_hash}')
+                    return True
+                if r.status_code == 404:
+                    logging.info(f'[Decypharr] NZB job {info_hash} already gone (404)')
+                    return True
+                logging.debug(f'[Decypharr] remove_nzb hashes endpoint returned {r.status_code}')
+            except Exception as e:
+                logging.debug(f'[Decypharr] remove_nzb primary delete error: {e}')
+        # Fallback: search /api/torrents by name, then delete by found hash
+        if entry_name:
+            try:
+                r = api.get(
+                    f'{self.base_url}/api/torrents',
+                    params={'search': entry_name[:60]},
+                    headers=self._headers(), timeout=10,
+                )
+                if r.status_code == 200:
+                    for t in r.json().get('torrents', []):
+                        h = t.get('info_hash', '')
+                        if h:
+                            d = api.delete(
+                                f'{self.base_url}/api/torrents',
+                                params={'hashes': h},
+                                headers=self._headers(), timeout=10,
+                            )
+                            if d.status_code in (200, 204, 404):
+                                logging.info(f'[Decypharr] Removed NZB by name search: {entry_name!r}')
+                                return True
+            except Exception as e:
+                logging.debug(f'[Decypharr] remove_nzb name-search error: {e}')
+        logging.warning(f'[Decypharr] Could not remove NZB hash={info_hash!r} name={entry_name!r}')
+        return False
 
     def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -248,6 +352,45 @@ class DecypharrClient:
             return {'state': 'completed', 'progress': 100, 'raw': {}}
         except Exception as exc:
             logging.debug(f'[Decypharr] get_job_status exception: {exc}')
+            return None
+
+    def check_entry_health(self, entry_name: str) -> Optional[str]:
+        """
+        Trigger a repair health check for a specific entry and return its status.
+        Returns: 'healthy', 'broken', or None on error/not found.
+        Uses POST /api/repair/health/{name}/check then GET /api/repair/health/{name}.
+        """
+        try:
+            import urllib.parse
+            encoded = urllib.parse.quote(entry_name, safe='')
+            # Trigger the check
+            r = api.post(
+                f'{self.base_url}/api/repair/health/{encoded}/check',
+                headers=self._headers(), timeout=30,
+            )
+            if r.status_code not in (200, 202):
+                logging.warning(f'[Decypharr] health check trigger failed for {entry_name!r}: HTTP {r.status_code}')
+                return None
+            # Poll for result (check runs async, usually fast)
+            import time as _time
+            deadline = _time.time() + 120
+            while _time.time() < deadline:
+                r2 = api.get(
+                    f'{self.base_url}/api/repair/health/{encoded}',
+                    headers=self._headers(), timeout=10,
+                )
+                if r2.status_code == 200:
+                    data = r2.json()
+                    status = data.get('status') if isinstance(data, dict) else None
+                    if status in ('healthy', 'broken'):
+                        logging.info(f'[Decypharr] health check for {entry_name!r}: {status}')
+                        return status
+                    # Still checking — wait and retry
+                _time.sleep(5)
+            logging.warning(f'[Decypharr] health check timed out for {entry_name!r}')
+            return None
+        except Exception as exc:
+            logging.error(f'[Decypharr] check_entry_health error for {entry_name!r}: {exc}')
             return None
 
     def wait_for_completion(self, job_id: str, timeout: int = 3600, poll_interval: int = 10) -> bool:

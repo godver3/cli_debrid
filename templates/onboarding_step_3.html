@@ -118,16 +118,39 @@ document.addEventListener('DOMContentLoaded', function() {
         let formHtml = '<form id="scraperSettingsForm">';
         let hasSettings = false;
 
+        const isNewznab = scraperType === 'Newznab';
+
         // Define descriptions for each setting
         const settingDescriptions = {
-            'url': 'The base URL for the scraper service (e.g., http://localhost:8080)',
+            'url': isNewznab
+                ? 'The API URL for your Newznab indexer (e.g., https://nzbgeek.info)'
+                : 'The base URL for the scraper service (e.g., http://localhost:8080)',
             'api': 'API key required to authenticate with the service',
+            'api_key': 'API key for your Newznab indexer.',
             'enabled_indexers': 'Comma-separated list of indexers to enable (leave empty for all)',
             'opts': 'Additional options or configuration parameters',
         };
 
+        // For Newznab, add a name field first
+        if (isNewznab) {
+            formHtml += `
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label for="scraper_name" style="display: block; margin-bottom: 5px; color: #f1f1f1;">Name:</label>
+                    <input type="text" id="scraper_name" name="scraper_name" placeholder="e.g. NZBGeek" class="setting-value">
+                    <div class="setting-description" style="font-size: 0.85rem; color: #888; margin-top: 3px;">
+                        A unique name to identify this Newznab indexer.
+                    </div>
+                </div>
+            `;
+            hasSettings = true;
+        }
+
+        // Fields to skip for Newznab (priority is set automatically)
+        const newznabSkipFields = new Set(['priority']);
+
         for (const [key, value] of Object.entries(scraperSchema)) {
             if (key === 'enabled') continue;
+            if (isNewznab && newznabSkipFields.has(key)) continue;
 
             hasSettings = true;
             let inputHtml = '';
@@ -137,13 +160,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 inputHtml = `<input type="${value.sensitive ? 'password' : 'text'}" id="${key}" name="${key}" value="${value.default || ''}" ${value.validate === 'url' ? 'pattern="https?://.+"' : ''} class="setting-value">`;
             }
 
+            const description = settingDescriptions[key];
+            if (!description && !isNewznab) {
+                // Skip fields with no description for non-Newznab scrapers too
+            }
+
+            const labelMap = isNewznab ? { 'url': 'Indexer URL', 'api_key': 'API Key' } : {};
+            const displayLabel = labelMap[key] || key;
             formHtml += `
                 <div class="form-group" style="margin-bottom: 15px;">
-                    <label for="${key}" style="display: block; margin-bottom: 5px; color: #f1f1f1;">${key}:</label>
+                    <label for="${key}" style="display: block; margin-bottom: 5px; color: #f1f1f1;">${displayLabel}:</label>
                     ${inputHtml}
-                    <div class="setting-description" style="font-size: 0.85rem; color: #888; margin-top: 3px;">
-                        ${settingDescriptions[key] || 'No description available'}
-                    </div>
+                    ${description ? `<div class="setting-description" style="font-size: 0.85rem; color: #888; margin-top: 3px;">${description}</div>` : ''}
                 </div>
             `;
         }
@@ -160,6 +188,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 cancelText: 'Cancel',
                 onConfirm: (formData) => {
                     formData.enabled = true;
+                    // For Newznab, move scraper_name into config as 'name' for ID generation
+                    if (formData.scraper_name) {
+                        formData.name = formData.scraper_name;
+                        delete formData.scraper_name;
+                    }
                     addScraper(scraperType, formData);
                 }
             });
@@ -170,7 +203,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function addScraper(scraperType, scraperConfig) {
-        console.log('Adding scraper:', scraperType, scraperConfig); // Add this line for debugging
+        console.log('Adding scraper:', scraperType, scraperConfig);
         fetch('/onboarding/scrapers/add', {
             method: 'POST',
             headers: {

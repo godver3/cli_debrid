@@ -306,6 +306,11 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Download folder category in Decypharr (leave empty for default)",
             "default": ""
+        },
+        "data_path": {
+            "type": "string",
+            "description": "Path to Decypharr's data directory inside the container — bind mount your Decypharr host data folder to /decypharr_data in your docker-compose (e.g. - /mnt/data/appdata/decypharr:/decypharr_data) then set this to /decypharr_data. Required for the Decypharr cleanup tool.",
+            "default": "/decypharr_data"
         }
     },
     "TMDB": {

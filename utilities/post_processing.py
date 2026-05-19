@@ -380,7 +380,7 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                 logging.exception("Size/resolution update traceback:")
 
             # Trigger replace cleanup if this item replaced a manual_replace=1 item
-            if state == 'Collected':
+            if state in ('Collected', 'Upgrading'):
                 try:
                     replace_cleanup_after_collect(dict(fresh_item))
                 except Exception as e:
