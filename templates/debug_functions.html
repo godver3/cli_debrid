@@ -78,7 +78,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
 #tngDebug .finput::placeholder{color:var(--text3)}
 
 /* Checkbox */
-#tngDebug .check-row{display:grid;grid-template-columns:16px 1fr;align-items:start;gap:8px;cursor:pointer;font-size:12px;color:var(--text2);line-height:1.5}
+#tngDebug .check-row{display:flex;align-items:start;gap:8px;cursor:pointer;font-size:12px;color:var(--text2);line-height:1.5}
 #tngDebug .check-row input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;flex-shrink:0;margin-top:2px;cursor:pointer}
 /* inline tags inside check-row text column must not break layout */
 #tngDebug .check-row strong,#tngDebug .check-row em,#tngDebug .check-row span{display:inline !important;font-size:inherit !important;color:inherit !important;}
@@ -378,6 +378,9 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
     'Remove Duplicate Database Items':'database',
     'Restore Database from Backup':'database',
     'Clean Up Old Database Files':'database',
+    'Backup Decypharr Databases':'database',
+    'Restore Decypharr Database from Backup':'database',
+    'Clean Up Old Decypharr Backup Files':'database',
     'Manage Duplicate Versions':'database',
     'Fix Episode Numbers':'database',
     'Get Collected from Library (Plex)':'library',
@@ -390,6 +393,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
     'Direct Emby/Jellyfin Scan':'library',
     'Move Item ID to Upgrading':'library',
     'Plex Labels Management':'library',
+    'Decypharr DB Cleanup':'library',
     'Symlink Verification Queue':'symlink',
     'Convert Library to Symlinks':'symlink',
     'Symlink Library Recovery':'symlink',
@@ -421,7 +425,13 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
     'test lookup':                 { cls:'btn-outline-blue',    icon:'fa-solid fa-magnifying-glass' },
     'scan for old databases':      { cls:'btn-outline-orange',  icon:'fa-solid fa-magnifying-glass' },
     'load available backups':      { cls:'btn-outline-orange',  icon:'fa-solid fa-folder-open' },
-    'run cleanup':                 { cls:'btn-orange',          icon:'' },
+    'run cleanup':                 { cls:'btn-orange',          icon:'fa-solid fa-wrench' },
+    'backup now':                  { cls:'btn-orange',          icon:'fa-solid fa-floppy-disk' },
+    'load available backups':      { cls:'btn-outline-orange',  icon:'fa-solid fa-folder-open' },
+    'restore selected':            { cls:'btn-outline-orange',  icon:'fa-solid fa-rotate-left' },
+    'scan for old backups':        { cls:'btn-outline-orange',  icon:'fa-solid fa-magnifying-glass' },
+    'dry run (preview)':           { cls:'btn-outline-orange',  icon:'fa-solid fa-eye' },
+    'delete selected':             { cls:'btn-outline-red',     icon:'fa-solid fa-trash' },
     'fix episode numbers':         { cls:'btn-orange',          icon:'fa-solid fa-list-ol' },
     'get plex collected':          { cls:'btn-orange',          icon:'' },
     'run':                         { cls:'btn-orange',          icon:'' },
@@ -1034,6 +1044,38 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
             </div>
             <div id="cleanupResults" style="margin-top: 15px;"></div>
         </div>
+        <!-- ── Decypharr DB Backup / Restore / Cleanup ── -->
+        <div class="debug_item" id="dcy-backup-section" style="display:none">
+            <h3>Backup Decypharr Databases</h3>
+            <p class="description">Back up Decypharr's <code>entries.db</code> and <code>items.db</code> to <code>{data_path}/db/backups/</code>. Uses the same tiered retention as CLI backups (4 copies per file). Also runs automatically with the daily CLI database backup task.</p>
+            <button type="button" class="btn" id="dcy-backup-now-btn" onclick="dcyBackupNow()">Backup Now</button>
+            <div id="dcy-backup-result" style="margin-top:8px"></div>
+        </div>
+
+        <div class="debug_item" id="dcy-restore-section" style="display:none">
+            <h3>Restore Decypharr Database from Backup</h3>
+            <p class="description">Restore <code>entries.db</code> or <code>items.db</code> from a backup. <strong>Stop Decypharr before restoring</strong>, then start it again after. No container restart needed.</p>
+            <div style="margin-bottom:10px">
+                <button type="button" class="btn" onclick="dcyLoadBackupsList()">Load Available Backups</button>
+            </div>
+            <div class="form-group" style="margin:10px 0">
+                <label>
+                    <input type="checkbox" id="dcyBackupBeforeRestore" checked>
+                    Create safety backup before restore
+                </label>
+            </div>
+            <div id="dcyRestoreResults" style="margin-top:10px"></div>
+        </div>
+
+        <div class="debug_item" id="dcy-cleanup-db-section" style="display:none">
+            <h3>Clean Up Old Decypharr Backup Files</h3>
+            <p class="description">Scan and remove old Decypharr database backups to free up disk space.</p>
+            <div style="margin-bottom:10px">
+                <button type="button" class="btn" onclick="dcyScanOldDatabases()">Scan for Old Backups</button>
+            </div>
+            <div id="dcyCleanupResults" style="margin-top:10px"></div>
+        </div>
+
         <div class="debug_item">
             <h3>Manage Duplicate Versions</h3>
             <p class="description">Clean up duplicate versions based on quality, state, or version field matching. Handles failed upgrades, blacklist bugs, and multiple collected versions.</p>
@@ -1533,6 +1575,47 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
             </div>
         </div>
 
+        <!-- Decypharr Cleanup -->
+        <div class="debug_item" id="decypharr-cleanup-card">
+            <h3>Decypharr DB Cleanup</h3>
+            <p class="description">Remove entries for a specific debrid provider from Decypharr's <code>entries.db</code> and <code>items.db</code> using infohash matching. Mixed folders (containing files from multiple providers) are rebuilt with only non-provider files kept.</p>
+            <div style="background:#2a1a00;border:1px solid #ff6b35;border-radius:4px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#ffaa66;">
+                &#9888; <strong>Stop Decypharr before running a live cleanup.</strong> Dry run is safe to run anytime.
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+                <label for="dcy-provider">Debrid Provider:</label>
+                <select id="dcy-provider" style="min-width:180px">
+                    <option value="">Loading...</option>
+                </select>
+                <button type="button" onclick="dcyLoadProviders()" style="margin-left:6px;padding:4px 10px;font-size:12px">&#8635; Refresh</button>
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+                <label for="dcy-db-path">DB Path:</label>
+                <input type="text" id="dcy-db-path" placeholder="/decypharr_data/db" style="width:300px;font-family:monospace;font-size:12px">
+                <span style="font-size:11px;color:#888;margin-left:6px">path to Decypharr's db/ folder inside container</span>
+            </div>
+            <div class="form-group" style="margin-bottom:12px">
+                <label>
+                    <input type="checkbox" id="dcy-dry-run" checked>
+                    <strong>Dry Run</strong> <span style="font-size:12px;color:#888">(scan only, no changes)</span>
+                </label>
+            </div>
+            <button type="button" id="dcy-run-btn" onclick="dcyRunCleanup()">Run Cleanup</button>
+            <div id="dcy-status" style="margin-top:10px;padding:8px;background:#1a1a1a;border-radius:4px;display:none;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:120px;overflow-y:auto"></div>
+        </div>
+
+        </div>
+    </div>
+
+    <!-- Decypharr Cleanup Results Modal -->
+    <div id="dcy-results-modal" class="episode-modal" style="display:none">
+        <div class="episode-modal-overlay" onclick="document.getElementById('dcy-results-modal').style.display='none'"></div>
+        <div class="episode-modal-content">
+            <div class="episode-modal-header">
+                <h2>Decypharr Cleanup Results</h2>
+                <button class="episode-modal-close" onclick="document.getElementById('dcy-results-modal').style.display='none'">&times;</button>
+            </div>
+            <div class="episode-modal-body" id="dcy-modal-body" style="font-family:monospace;font-size:12px;white-space:pre-wrap"></div>
         </div>
     </div>
 
@@ -5491,6 +5574,320 @@ if (document.readyState === 'loading') {
     window.toggleAllBackups = toggleAllBackups;
     window.toggleAllContent = toggleAllContent;
     window.deleteOldDatabases = deleteOldDatabases;
+
+    // ── Decypharr Cleanup ──────────────────────────────────────────────────
+    let _dcyPollTimer = null;
+
+    async function dcyLoadProviders() {
+        const sel = document.getElementById('dcy-provider');
+        const dbInput = document.getElementById('dcy-db-path');
+        sel.innerHTML = '<option value="">Loading...</option>';
+        try {
+            const r = await fetch('/debug/api/decypharr_providers');
+            const d = await r.json();
+            if (d.success && d.providers && d.providers.length) {
+                sel.innerHTML = d.providers.map(p => `<option value="${p}">${p}</option>`).join('');
+                // Pre-fill db path based on data_path setting
+                if (d.data_path && !dbInput.value) {
+                    dbInput.value = d.data_path.replace(/\/?$/, '/db');
+                }
+            } else {
+                sel.innerHTML = '<option value="">No providers found — check Decypharr Data Path setting</option>';
+            }
+        } catch(e) {
+            sel.innerHTML = '<option value="">Error loading providers</option>';
+        }
+    }
+
+    async function dcyRunCleanup() {
+        const provider = document.getElementById('dcy-provider').value;
+        const dbPath = document.getElementById('dcy-db-path').value.trim();
+        const dryRun = document.getElementById('dcy-dry-run').checked;
+        const btn = document.getElementById('dcy-run-btn');
+        const status = document.getElementById('dcy-status');
+
+        if (!provider) { alert('Select a provider first'); return; }
+        if (!dbPath) { alert('Enter the DB path'); return; }
+
+        btn.disabled = true;
+        btn.textContent = 'Running...';
+        status.style.display = 'block';
+        status.style.color = '#aaa';
+        status.textContent = 'Starting...';
+        clearTimeout(_dcyPollTimer);
+
+        try {
+            const r = await fetch('/debug/api/decypharr_cleanup', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({provider, dry_run: dryRun, db_path: dbPath})
+            });
+            const d = await r.json();
+            if (!d.success) {
+                status.style.color = '#ff6b6b';
+                status.textContent = 'Error: ' + (d.error || 'Unknown error');
+                btn.disabled = false; btn.textContent = 'Run Cleanup';
+                return;
+            }
+            _dcyPollCleanup(d.job_id, btn, status);
+        } catch(e) {
+            status.style.color = '#ff6b6b';
+            status.textContent = 'Error: ' + e.message;
+            btn.disabled = false; btn.textContent = 'Run Cleanup';
+        }
+    }
+
+    function _dcyPollCleanup(jobId, btn, status) {
+        _dcyPollTimer = setTimeout(async () => {
+            try {
+                const r = await fetch(`/debug/api/decypharr_cleanup_status/${jobId}`);
+                const d = await r.json();
+                if (d.status === 'running') {
+                    status.textContent = 'Running...';
+                    _dcyPollCleanup(jobId, btn, status);
+                    return;
+                }
+                btn.disabled = false;
+                btn.textContent = 'Run Cleanup';
+                const result = d.result || {};
+                if (result.success) {
+                    const isDry = result.dry_run;
+                    const summary = isDry
+                        ? `Dry run complete — ${result.entries_to_delete} entries, ${result.items_full_delete} full deletes, ${result.items_partial} partial, ${result.items_untouched} untouched`
+                        : `Done — ${result.entries_deleted} entries deleted, ${result.items_deleted} folders deleted, ${result.items_updated} folders updated`;
+                    status.style.color = '#4ade80';
+                    status.textContent = summary;
+                    // Show full output in modal
+                    const lines = result.lines || [];
+                    document.getElementById('dcy-modal-body').textContent = lines.join('\n');
+                    document.getElementById('dcy-results-modal').style.display = 'flex';
+                } else {
+                    status.style.color = '#ff6b6b';
+                    status.textContent = 'Error: ' + (result.error || 'Unknown error');
+                }
+            } catch(e) {
+                btn.disabled = false; btn.textContent = 'Run Cleanup';
+                status.style.color = '#ff6b6b';
+                status.textContent = 'Poll error: ' + e.message;
+            }
+        }, 1500);
+    }
+
+    window.dcyLoadProviders = dcyLoadProviders;
+    window.dcyRunCleanup = dcyRunCleanup;
+
+    // ── Decypharr DB Backup / Restore / Cleanup ───────────────────────────
+
+    // Show Decypharr DB sections only if data_path is configured
+    (async function dcyCheckDataPath() {
+        try {
+            const r = await fetch('/debug/api/decypharr_providers');
+            const d = await r.json();
+            if (d.success && d.data_path) {
+                ['dcy-backup-section','dcy-restore-section','dcy-cleanup-db-section'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.style.display = '';
+                });
+            }
+        } catch(e) {}
+    })();
+
+    async function dcyBackupNow() {
+        const btn = document.getElementById('dcy-backup-now-btn');
+        const result = document.getElementById('dcy-backup-result');
+        btn.disabled = true; btn.textContent = 'Backing up...';
+        result.textContent = '';
+        try {
+            const r = await fetch('/debug/api/decypharr_backup_now', {method:'POST'});
+            const d = await r.json();
+            result.style.color = d.success ? '#4ade80' : '#ff6b6b';
+            result.textContent = d.success ? d.message : ('Error: ' + d.error);
+        } catch(e) {
+            result.style.color = '#ff6b6b';
+            result.textContent = 'Error: ' + e.message;
+        }
+        btn.disabled = false; btn.textContent = 'Backup Now';
+    }
+
+    let _dcySelectedBackupPath = null;
+
+    async function dcyLoadBackupsList() {
+        const resultsDiv = document.getElementById('dcyRestoreResults');
+        resultsDiv.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="sr-only">Loading...</span></div>';
+        try {
+            const r = await fetch('/debug/api/list_decypharr_backups');
+            const d = await r.json();
+            if (!d.success) { resultsDiv.innerHTML = `<div class="alert alert-danger">Error: ${d.error}</div>`; return; }
+            if (!d.backups.length) { resultsDiv.innerHTML = '<div class="alert alert-info">No backup files found.</div>'; return; }
+
+            const categoryColors = {
+                'corrupted': 'danger', 'manual_copy': 'warning', 'old_version': 'info',
+                'safety_backup': 'secondary', 'recent_backup': 'success', 'orphaned_temp': 'danger', 'unknown': 'dark'
+            };
+            const inlineColors = {
+                'danger': 'background-color: rgba(239, 68, 68, 0.5); color: #fff; border-radius: 0.25rem;',
+                'warning': 'background-color: rgba(234, 179, 8, 0.5); color: #fff; border-radius: 0.25rem;',
+                'success': 'background-color: rgba(16, 185, 129, 0.5); color: #fff; border-radius: 0.25rem;',
+                'info': 'background-color: rgba(59, 130, 246, 0.5); color: #fff; border-radius: 0.25rem;',
+                'secondary': 'background-color: rgba(107, 114, 128, 0.5); color: #fff; border-radius: 0.25rem;',
+                'dark': 'background-color: rgba(30, 30, 30, 0.5); color: #fff; border-radius: 0.25rem;'
+            };
+
+            let html = `<table class="table table-sm table-bordered"><tbody>`;
+            d.backups.forEach(b => {
+                const badgeColor = categoryColors[b.category] || 'secondary';
+                const badgeStyle = inlineColors[badgeColor] || inlineColors['secondary'];
+                const rowClass = b.is_valid ? '' : 'table-danger';
+                const validBadge = b.is_valid
+                    ? `<span class="badge badge-success" style="${inlineColors['success']} font-size: 0.75em; padding: 0.4em 0.6em;">&#10003; Valid</span>`
+                    : `<span class="badge badge-danger" style="${inlineColors['danger']} font-size: 0.75em; padding: 0.4em 0.6em;">&#10007; Invalid</span>`;
+                html += `
+                    <tr class="${rowClass}">
+                        <td style="padding: 8px;">
+                            <div style="display: flex; align-items: flex-start; gap: 8px;">
+                                <input type="radio" name="dcyBackupSel" style="margin-top: 3px; flex-shrink: 0;"
+                                       ${!b.is_valid ? 'disabled' : ''}
+                                       onchange="dcySelectBackup('${b.path}','${b.filename}')">
+                                <div style="flex: 1; min-width: 0; overflow: hidden;">
+                                    <div style="font-weight: 500; margin-bottom: 4px; font-size: 0.9em; word-wrap: break-word;">${b.filename}</div>
+                                    <div style="font-size: 0.8em; opacity: 0.8; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+                                        <span>Size: ${b.size_mb} MB</span>
+                                        <span>Age: ${b.age_display}</span>
+                                        <span class="badge" style="${badgeStyle} font-size: 0.75em; padding: 0.4em 0.6em;">${b.category.replace(/_/g,' ')}</span>
+                                        ${validBadge}
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>`;
+            });
+            html += `</tbody></table>
+                <button class="btn btn-warning btn-lg" id="dcyRestoreBtn" onclick="dcyConfirmRestore()" disabled>
+                    <i class="fas fa-undo"></i> Restore Selected
+                </button>`;
+            resultsDiv.innerHTML = html;
+        } catch(e) {
+            resultsDiv.innerHTML = `<div class="alert alert-danger">Error loading backups: ${e.message}</div>`;
+        }
+    }
+
+    function dcySelectBackup(path, filename) {
+        _dcySelectedBackupPath = path;
+        document.getElementById('dcyRestoreBtn').disabled = false;
+    }
+
+    async function dcyConfirmRestore() {
+        if (!_dcySelectedBackupPath) return;
+        const fname = _dcySelectedBackupPath.split('/').pop();
+        const safety = document.getElementById('dcyBackupBeforeRestore').checked;
+        if (!confirm(`Restore "${fname}"?\n\nMake sure Decypharr is stopped before proceeding.\n${safety ? 'A safety backup will be created.' : 'No safety backup will be created.'}`)) return;
+        const btn = document.getElementById('dcyRestoreBtn');
+        btn.disabled = true; btn.textContent = 'Restoring...';
+        try {
+            const r = await fetch('/debug/api/request_decypharr_restore', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({backup_path: _dcySelectedBackupPath, create_safety_backup: safety})
+            });
+            const d = await r.json();
+            const resultsDiv = document.getElementById('dcyRestoreResults');
+            if (d.success) {
+                resultsDiv.innerHTML = `<div style="color:#4ade80;margin-top:8px">&#10003; ${d.message}</div>`;
+            } else {
+                resultsDiv.innerHTML = `<div style="color:#ff6b6b;margin-top:8px">Error: ${d.error}</div>`;
+                btn.disabled = false; btn.textContent = 'Restore Selected';
+            }
+        } catch(e) {
+            document.getElementById('dcyRestoreResults').innerHTML = `<span style="color:#ff6b6b">Error: ${e.message}</span>`;
+            btn.disabled = false; btn.textContent = 'Restore Selected';
+        }
+    }
+
+    async function dcyScanOldDatabases() {
+        const resultsDiv = document.getElementById('dcyCleanupResults');
+        resultsDiv.innerHTML = '<em>Scanning...</em>';
+        try {
+            const r = await fetch('/debug/api/scan_decypharr_old_databases');
+            const d = await r.json();
+            if (!d.success) { resultsDiv.innerHTML = `<span style="color:#ff6b6b">Error: ${d.error}</span>`; return; }
+            if (!d.files.length) { resultsDiv.innerHTML = '<em>No old backup files found.</em>'; return; }
+
+            const catColors = {recent_backup:'#4ade80', old_version:'#fbbf24', safety_backup:'#60a5fa', corrupted:'#ff6b6b'};
+            let html = `<p style="margin-bottom:8px">Found <strong>${d.files.length}</strong> file(s) (${d.total_size_mb} MB total)</p>`;
+            html += '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr>'
+                + '<th style="padding:4px 8px"><input type="checkbox" onchange="dcyToggleAll(this.checked)"> All</th>'
+                + '<th style="text-align:left;padding:4px 8px">File</th>'
+                + '<th style="padding:4px 8px">Size</th>'
+                + '<th style="padding:4px 8px">Age</th>'
+                + '<th style="padding:4px 8px">Type</th>'
+                + '</tr></thead><tbody>';
+            d.files.forEach(f => {
+                const c = catColors[f.category] || '#888';
+                html += `<tr style="border-bottom:1px solid #333">
+                    <td style="padding:4px 8px;text-align:center"><input type="checkbox" class="dcy-cleanup-cb" value="${f.path}"></td>
+                    <td style="padding:4px 8px;font-family:monospace">${f.filename}</td>
+                    <td style="padding:4px 8px;text-align:right">${f.size_mb} MB</td>
+                    <td style="padding:4px 8px;text-align:center">${f.age_display}</td>
+                    <td style="padding:4px 8px;text-align:center"><span style="color:${c};font-size:11px">${f.category.replace('_',' ')}</span></td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+            html += '<div style="margin-top:10px;display:flex;gap:8px">'
+                + '<button type="button" class="btn" onclick="dcyDeleteSelected(true)">Dry Run (Preview)</button>'
+                + '<button type="button" class="btn" onclick="dcyDeleteSelected(false)" style="background:#c62828">Delete Selected</button>'
+                + '</div><div id="dcyDeleteResult" style="margin-top:8px"></div>';
+            resultsDiv.innerHTML = html;
+        } catch(e) {
+            resultsDiv.innerHTML = `<span style="color:#ff6b6b">Error: ${e.message}</span>`;
+        }
+    }
+
+    function dcyToggleAll(checked) {
+        document.querySelectorAll('.dcy-cleanup-cb').forEach(cb => cb.checked = checked);
+    }
+
+    async function dcyDeleteSelected(dryRun) {
+        const paths = Array.from(document.querySelectorAll('.dcy-cleanup-cb:checked')).map(cb => cb.value);
+        if (!paths.length) { alert('Select files to delete first'); return; }
+        if (!dryRun && !confirm(`Delete ${paths.length} file(s)? This cannot be undone.`)) return;
+        const result = document.getElementById('dcyDeleteResult');
+        result.textContent = dryRun ? 'Previewing...' : 'Deleting...';
+        try {
+            const r = await fetch('/debug/api/delete_decypharr_old_databases', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({file_paths: paths, dry_run: dryRun})
+            });
+            const d = await r.json();
+            if (d.success) {
+                const prefix = dryRun ? '[DRY RUN] Would delete' : 'Deleted';
+                result.style.color = '#4ade80';
+                result.textContent = `${prefix} ${d.deleted_count} file(s) (${d.total_size_freed_mb} MB freed). Skipped: ${d.skipped_count}.`;
+                if (!dryRun) dcyScanOldDatabases();
+            } else {
+                result.style.color = '#ff6b6b';
+                result.textContent = 'Error: ' + d.error;
+            }
+        } catch(e) {
+            result.style.color = '#ff6b6b';
+            result.textContent = 'Error: ' + e.message;
+        }
+    }
+
+    window.dcyBackupNow = dcyBackupNow;
+    window.dcyLoadBackupsList = dcyLoadBackupsList;
+    window.dcySelectBackup = dcySelectBackup;
+    window.dcyConfirmRestore = dcyConfirmRestore;
+    window.dcyScanOldDatabases = dcyScanOldDatabases;
+    window.dcyToggleAll = dcyToggleAll;
+    window.dcyDeleteSelected = dcyDeleteSelected;
+
+    // Auto-load providers when library tab is shown
+    document.querySelector('[onclick="switchDebugTab(\'library\')"]')?.addEventListener('click', () => {
+        if (!document.getElementById('dcy-provider').value) dcyLoadProviders();
+    });
+    // Also load on page ready if library tab is active
+    if (document.getElementById('library-tab')?.classList.contains('active')) dcyLoadProviders();
 
     function runWatchlistCleanup() {
         const btn = document.getElementById('cleanup-watchlist-btn');

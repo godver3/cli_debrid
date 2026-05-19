@@ -48,7 +48,9 @@ class ScraperManager:
                 logging.info(f"Found {scraper_type} settings in instance {instance}")
                 return settings
                 
-        logging.warning(f"No settings found for scraper type: {scraper_type}")
+        # OldNyaa is a legacy scraper — not expected to be configured, suppress warning
+        if scraper_type != 'OldNyaa':
+            logging.warning(f"No settings found for scraper type: {scraper_type}")
         return {}
 
     def scrape_all(

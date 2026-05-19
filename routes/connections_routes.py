@@ -662,6 +662,35 @@ def check_scraper_connection(scraper_id, scraper_config):
                 'tags': scraper_config.get('tags', '')
             })
 
+        elif scraper_type == 'Newznab':
+            url = scraper_config.get('url', '').strip().rstrip('/')
+            api_key = scraper_config.get('api_key', '').strip()
+
+            if not url:
+                base_response['error'] = 'URL not configured'
+                return base_response
+
+            try:
+                params = {'t': 'caps'}
+                if api_key:
+                    params['apikey'] = api_key
+                response = requests.get(f"{url}/api", params=params, timeout=8)
+                if response.status_code == 200 and '<caps' in response.text:
+                    base_response['connected'] = True
+                elif response.status_code == 200:
+                    base_response['connected'] = True
+                else:
+                    base_response['connected'] = False
+                    base_response['error'] = f'Status code: {response.status_code}'
+            except requests.exceptions.Timeout:
+                base_response['error'] = 'Connection timed out'
+            except requests.exceptions.ConnectionError:
+                base_response['error'] = 'Connection refused'
+            except Exception as e:
+                base_response['error'] = str(e)
+
+            base_response['details'].update({'url': url})
+
         elif scraper_type == 'AIOStreams':
             # Test AIOStreams Stremio addon by checking manifest.json endpoint
             # This is more reliable than scraping since it just checks if the addon is reachable

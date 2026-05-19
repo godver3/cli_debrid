@@ -1870,6 +1870,7 @@ def get_available_tasks():
         {'id': 'task_analyze_library', 'display_name': 'Analyze Library'},
         {'id': 'task_overlay_sync', 'display_name': 'Overlay Sync'},
         {'id': 'task_overlay_cleanup', 'display_name': 'Overlay State Maintenance (cleanup orphaned DB records)'},
+        {'id': 'task_backfill_nzb_torrent_ids', 'display_name': 'Backfill NZB Torrent IDs (Usenet migration)'},
     ]
     
     # Get content sources from program runner for content source tasks
@@ -7787,3 +7788,305 @@ def trim_memory():
         'freed_mb': freed,
         'lib_torrents_freed': lib_torrents_freed,
     })
+
+
+# ---------------------------------------------------------------------------
+# Decypharr Cleanup
+# ---------------------------------------------------------------------------
+
+@debug_bp.route('/api/decypharr_providers', methods=['GET'])
+@admin_required
+def decypharr_providers():
+    """Return list of debrid provider names configured in Decypharr."""
+    try:
+        from utilities.settings import get_setting
+        from utilities.decypharr_cleanup import get_decypharr_providers
+        data_path = get_setting('Usenet Provider', 'data_path', '/decypharr_data')
+        db_dir = os.path.join(data_path, 'db')
+        providers = get_decypharr_providers(db_dir)
+        return jsonify({'success': True, 'providers': providers, 'data_path': data_path})
+    except Exception as e:
+        logging.error(f"decypharr_providers error: {e}")
+        return jsonify({'success': False, 'error': str(e), 'providers': []})
+
+
+_decypharr_cleanup_jobs = {}  # job_id -> result dict
+
+@debug_bp.route('/api/decypharr_cleanup', methods=['POST'])
+@admin_required
+def decypharr_cleanup():
+    """Run Decypharr cleanup in a background thread. Returns job_id immediately."""
+    import uuid, threading
+    try:
+        data = request.get_json() or {}
+        provider = data.get('provider', '').strip()
+        dry_run = bool(data.get('dry_run', True))
+        db_path = data.get('db_path', '').strip()
+
+        if not provider:
+            return jsonify({'success': False, 'error': 'Provider is required'}), 400
+        if not db_path:
+            from utilities.settings import get_setting
+            base = get_setting('Usenet Provider', 'data_path', '/decypharr_data')
+            db_path = os.path.join(base, 'db')
+        if not os.path.isdir(db_path):
+            return jsonify({'success': False, 'error': f'DB directory not found: {db_path}'}), 400
+
+        job_id = str(uuid.uuid4())[:8]
+        _decypharr_cleanup_jobs[job_id] = {'status': 'running', 'result': None}
+
+        def _run():
+            try:
+                from utilities.decypharr_cleanup import run_cleanup
+                result = run_cleanup(db_path, provider, dry_run)
+                _decypharr_cleanup_jobs[job_id] = {'status': 'done', 'result': result}
+            except Exception as e:
+                logging.error(f"Decypharr cleanup job {job_id} error: {e}", exc_info=True)
+                _decypharr_cleanup_jobs[job_id] = {
+                    'status': 'error',
+                    'result': {'success': False, 'error': str(e), 'lines': [f"ERROR: {e}"]}
+                }
+
+        threading.Thread(target=_run, daemon=True, name=f'decypharr-cleanup-{job_id}').start()
+        return jsonify({'success': True, 'job_id': job_id})
+
+    except Exception as e:
+        logging.error(f"decypharr_cleanup error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/decypharr_cleanup_status/<job_id>', methods=['GET'])
+@admin_required
+def decypharr_cleanup_status(job_id):
+    job = _decypharr_cleanup_jobs.get(job_id)
+    if not job:
+        return jsonify({'status': 'not_found'}), 404
+    return jsonify(job)
+
+
+# ---------------------------------------------------------------------------
+# Decypharr DB Backup / Restore / Scan / Delete
+# (follows same pattern as CLI DB equivalents)
+# ---------------------------------------------------------------------------
+
+def _get_dcy_dirs():
+    """Return (data_path, db_dir, backup_dir) or raise if not configured."""
+    from utilities.settings import get_setting
+    data_path = get_setting('Usenet Provider', 'data_path', '').strip()
+    if not data_path:
+        raise ValueError("Decypharr Data Path is not configured in Settings → Usenet Provider")
+    db_dir = os.path.join(data_path, 'db')
+    backup_dir = os.path.join(db_dir, 'backups')
+    return data_path, db_dir, backup_dir
+
+
+def _dcy_is_valid_hybr(path):
+    """Check if file starts with HYBR magic bytes."""
+    try:
+        with open(path, 'rb') as f:
+            return f.read(4) == b'HYBR'
+    except Exception:
+        return False
+
+
+def _dcy_age_display(age_sec):
+    if age_sec < 3600: return f"{int(age_sec/60)}m ago"
+    if age_sec < 86400: return f"{int(age_sec/3600)}h ago"
+    return f"{int(age_sec/86400)}d ago"
+
+
+@debug_bp.route('/api/decypharr_backup_now', methods=['POST'])
+@admin_required
+def decypharr_backup_now():
+    """Trigger an immediate Decypharr DB backup."""
+    try:
+        from main import backup_decypharr_databases
+        ok = backup_decypharr_databases()
+        if ok:
+            return jsonify({'success': True, 'message': 'Decypharr databases backed up successfully'})
+        return jsonify({'success': False, 'error': 'Backup failed — check logs'}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/list_decypharr_backups', methods=['GET'])
+@admin_required
+def list_decypharr_backups():
+    """List available Decypharr DB backups — same structure as list_database_backups."""
+    try:
+        _, db_dir, backup_dir = _get_dcy_dirs()
+        if not os.path.isdir(backup_dir):
+            return jsonify({'success': True, 'backups': []})
+
+        import time as _time
+        now = _time.time()
+        backups = []
+        for fname in sorted(os.listdir(backup_dir)):
+            fpath = os.path.join(backup_dir, fname)
+            if not fname.endswith('.db'):
+                continue
+            stat = os.stat(fpath)
+            age = now - stat.st_mtime
+            is_valid = _dcy_is_valid_hybr(fpath)
+            # Category
+            if fname.startswith(('entries_pre_restore_', 'items_pre_restore_')):
+                cat = 'safety_backup'
+            elif not is_valid:
+                cat = 'corrupted'
+            elif age > 7 * 86400:
+                cat = 'old_version'
+            else:
+                cat = 'recent_backup'
+            backups.append({
+                'filename': fname,
+                'path': fpath,
+                'size_mb': round(stat.st_size / (1024*1024), 2),
+                'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                'age_seconds': int(age),
+                'age_display': _dcy_age_display(age),
+                'category': cat,
+                'is_valid': is_valid,
+            })
+        backups.sort(key=lambda x: x['age_seconds'])
+        return jsonify({'success': True, 'backups': backups})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/request_decypharr_restore', methods=['POST'])
+@admin_required
+def request_decypharr_restore():
+    """
+    Restore a Decypharr DB file by direct copy (no container restart needed —
+    Decypharr must be stopped by the user first).
+    """
+    try:
+        data = request.get_json() or {}
+        backup_path = data.get('backup_path', '').strip()
+        create_safety = bool(data.get('create_safety_backup', True))
+        _, db_dir, backup_dir = _get_dcy_dirs()
+
+        if not backup_path:
+            return jsonify({'success': False, 'error': 'backup_path required'}), 400
+        if not os.path.exists(backup_path):
+            return jsonify({'success': False, 'error': f'Backup file not found: {backup_path}'}), 400
+        if not _dcy_is_valid_hybr(backup_path):
+            return jsonify({'success': False, 'error': 'Backup file is not a valid HYBR database'}), 400
+
+        # Determine target filename (entries.db or items.db) from backup name
+        fname = os.path.basename(backup_path)
+        if fname.startswith('entries'):
+            target = os.path.join(db_dir, 'entries.db')
+        elif fname.startswith('items'):
+            target = os.path.join(db_dir, 'items.db')
+        else:
+            return jsonify({'success': False, 'error': f'Cannot determine target DB from filename: {fname}'}), 400
+
+        import shutil as _shutil
+        # Create safety backup if requested
+        if create_safety and os.path.exists(target):
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            safety = os.path.join(backup_dir, f'{os.path.splitext(os.path.basename(target))[0]}_pre_restore_{ts}.db')
+            os.makedirs(backup_dir, exist_ok=True)
+            _shutil.copy2(target, safety)
+            logging.info(f"[DCY_RESTORE] Safety backup: {safety}")
+
+        _shutil.copy2(backup_path, target)
+        logging.info(f"[DCY_RESTORE] Restored {fname} → {target}")
+        return jsonify({'success': True, 'message': f'Restored {os.path.basename(target)} from {fname}. Start Decypharr to apply.'})
+
+    except Exception as e:
+        logging.error(f"[DCY_RESTORE] Error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/scan_decypharr_old_databases', methods=['GET'])
+@admin_required
+def scan_decypharr_old_databases():
+    """Scan Decypharr backup dir for old/corrupted DB files — mirrors scan_old_databases."""
+    try:
+        _, db_dir, backup_dir = _get_dcy_dirs()
+        if not os.path.isdir(backup_dir):
+            return jsonify({'success': True, 'files': [], 'total_size_mb': 0})
+
+        import time as _time
+        now = _time.time()
+        files = []
+        protected = {'entries.db', 'items.db'}
+
+        for fname in os.listdir(backup_dir):
+            fpath = os.path.join(backup_dir, fname)
+            if fname in protected or not fname.endswith('.db'):
+                continue
+            stat = os.stat(fpath)
+            age = now - stat.st_mtime
+            is_valid = _dcy_is_valid_hybr(fpath)
+            if fname.startswith(('entries_pre_restore_', 'items_pre_restore_')):
+                cat = 'safety_backup'
+            elif not is_valid:
+                cat = 'corrupted'
+            elif age > 7 * 86400:
+                cat = 'old_version'
+            else:
+                cat = 'recent_backup'
+            files.append({
+                'filename': fname,
+                'path': fpath,
+                'size_mb': round(stat.st_size / (1024*1024), 2),
+                'age_display': _dcy_age_display(age),
+                'category': cat,
+                'is_valid': is_valid,
+            })
+
+        total_mb = round(sum(f['size_mb'] for f in files), 2)
+        return jsonify({'success': True, 'files': files, 'total_size_mb': total_mb})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/delete_decypharr_old_databases', methods=['POST'])
+@admin_required
+def delete_decypharr_old_databases():
+    """Delete selected Decypharr backup files — mirrors delete_old_databases."""
+    try:
+        data = request.get_json() or {}
+        file_paths = data.get('file_paths', [])
+        dry_run = bool(data.get('dry_run', False))
+        _, db_dir, backup_dir = _get_dcy_dirs()
+
+        protected_names = {'entries.db', 'items.db'}
+        deleted = []
+        skipped = []
+        freed_mb = 0.0
+
+        for fpath in file_paths:
+            fname = os.path.basename(fpath)
+            if fname in protected_names:
+                skipped.append({'file': fname, 'reason': 'Protected system file'})
+                continue
+            if not fpath.startswith(backup_dir):
+                skipped.append({'file': fname, 'reason': 'Outside backup directory'})
+                continue
+            if not os.path.exists(fpath):
+                skipped.append({'file': fname, 'reason': 'File not found'})
+                continue
+            size_mb = os.path.getsize(fpath) / (1024*1024)
+            if not dry_run:
+                os.remove(fpath)
+                freed_mb += size_mb
+                logging.info(f"[DCY_CLEANUP] Deleted: {fname}")
+            else:
+                freed_mb += size_mb
+            deleted.append(fname)
+
+        return jsonify({
+            'success': True,
+            'deleted': deleted,
+            'skipped': skipped,
+            'deleted_count': len(deleted),
+            'skipped_count': len(skipped),
+            'total_size_freed_mb': round(freed_mb, 2),
+            'dry_run': dry_run,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500

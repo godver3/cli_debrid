@@ -500,6 +500,64 @@ def backup_database(skip_if_recent=False, skip_hours=6):
         logging.error(f"[BACKUP] Error creating database backup: {str(e)}")
         return False
 
+
+def backup_decypharr_databases():
+    """
+    Back up Decypharr's HYBR database files (entries.db, items.db) if data_path is configured.
+    Stores backups in {data_path}/db/backups/ using the same tiered retention as CLI backups.
+    Returns True if successful or skipped (not configured), False on error.
+    """
+    try:
+        from utilities.settings import get_setting
+        data_path = get_setting('Usenet Provider', 'data_path', '').strip()
+        if not data_path:
+            return True  # Not configured — skip silently
+
+        db_dir = os.path.join(data_path, 'db')
+        if not os.path.isdir(db_dir):
+            logging.debug(f"[DCY_BACKUP] Decypharr db dir not found: {db_dir}, skipping")
+            return True
+
+        backup_dir = os.path.join(db_dir, 'backups')
+        os.makedirs(backup_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backed_up = []
+
+        for db_name in ('entries.db', 'items.db'):
+            src = os.path.join(db_dir, db_name)
+            if not os.path.exists(src):
+                continue
+            dst = os.path.join(backup_dir, f'{os.path.splitext(db_name)[0]}_{timestamp}.db')
+            import shutil as _shutil
+            _shutil.copy2(src, dst)
+            size_mb = os.path.getsize(dst) / (1024 * 1024)
+            logging.info(f"[DCY_BACKUP] Backed up {db_name} → {os.path.basename(dst)} ({size_mb:.1f} MB)")
+            backed_up.append((db_name, dst))
+
+            # Tiered retention: keep 4 backups per file
+            prefix = os.path.splitext(db_name)[0] + '_'
+            existing = sorted(
+                [os.path.join(backup_dir, f) for f in os.listdir(backup_dir)
+                 if f.startswith(prefix) and f.endswith('.db')],
+                key=os.path.getmtime, reverse=True
+            )
+            for old in existing[4:]:
+                try:
+                    os.remove(old)
+                    logging.info(f"[DCY_BACKUP] Removed old backup: {os.path.basename(old)}")
+                except Exception as e:
+                    logging.warning(f"[DCY_BACKUP] Could not remove old backup {old}: {e}")
+
+        if backed_up:
+            logging.info(f"[DCY_BACKUP] Decypharr backup complete: {len(backed_up)} file(s)")
+        return True
+
+    except Exception as e:
+        logging.error(f"[DCY_BACKUP] Error backing up Decypharr databases: {e}")
+        return False
+
+
 def get_version():
     try:
         # Get the application path based on whether we're frozen or not

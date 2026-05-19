@@ -2411,12 +2411,14 @@ def check_deletion_impact():
                 }
 
             if 'debrid' in layers:
-                # Check debrid impact
-                debrid_hash = item.get('filled_by_magnet_hash')
+                torrent_id = item.get('filled_by_torrent_id', '') or ''
+                is_nzb = str(torrent_id).startswith('nzb:')
+                debrid_hash = item.get('filled_by_magnet_hash') if not is_nzb else torrent_id
                 item_impact['layers']['debrid'] = {
-                    'will_delete': bool(debrid_hash),
-                    'description': 'Debrid torrent',
-                    'hash': debrid_hash
+                    'will_delete': bool(is_nzb or debrid_hash),
+                    'description': 'Usenet NZB (Decypharr)' if is_nzb else 'Debrid torrent',
+                    'hash': debrid_hash,
+                    'is_nzb': is_nzb,
                 }
 
             if 'symlinks' in layers and deletion_manager.using_symlinks:
@@ -2460,6 +2462,8 @@ def check_deletion_impact():
                 layer_stats['files_count'] = layer_stats['affected_count']
             elif layer == 'debrid':
                 layer_stats['torrents_count'] = layer_stats['affected_count']
+                layer_stats['nzb_count'] = sum(1 for ii in impact['items'] if ii['layers'].get('debrid', {}).get('is_nzb'))
+                layer_stats['torrent_only_count'] = layer_stats['torrents_count'] - layer_stats['nzb_count']
             elif layer == 'symlinks':
                 layer_stats['symlinks_count'] = layer_stats['affected_count']
 
@@ -3077,19 +3081,25 @@ def delete_show(imdb_id):
         debrid_removed = result.get('debrid_removed', False) or any(r.get('debrid_removed', False) for r in result.get('results', []))
         if delete_from_debrid:
             if debrid_removed:
-                # Show count if available from batch removal
                 torrent_count = result.get('debrid_torrents_removed', 0)
-                if torrent_count > 0:
-                    layers_executed.append(f'Debrid ({torrent_count} torrent{"s" if torrent_count != 1 else ""})')
-                else:
-                    layers_executed.append('Debrid')
+                nzb_count = result.get('debrid_nzb_removed', 0) or sum(r.get('debrid_nzb_removed', 0) for r in result.get('results', []))
+                if nzb_count == 0 and torrent_count == 0:
+                    # single-item path: infer from per-item results
+                    for r in result.get('results', []):
+                        if r.get('debrid_removed'):
+                            if r.get('debrid_nzb_removed', 0): nzb_count += 1
+                            else: torrent_count += 1
+                _parts = []
+                if torrent_count > 0: _parts.append(f'{torrent_count} torrent{"s" if torrent_count != 1 else ""}')
+                if nzb_count > 0: _parts.append(f'{nzb_count} NZB{"s" if nzb_count != 1 else ""}')
+                layers_executed.append(f'Debrid/Usenet ({", ".join(_parts)})' if _parts else 'Debrid/Usenet')
             else:
                 # Check if debrid provider is available
                 debrid_provider = get_debrid_provider()
                 if not debrid_provider:
-                    layers_skipped.append({'layer': 'Debrid', 'reason': 'Provider not configured'})
+                    layers_skipped.append({'layer': 'Debrid/Usenet', 'reason': 'Provider not configured'})
                 else:
-                    layers_skipped.append({'layer': 'Debrid', 'reason': 'No torrents found'})
+                    layers_skipped.append({'layer': 'Debrid/Usenet', 'reason': 'No torrents/NZBs found'})
 
         # Symlinks - check if deleted or cleaned up (only show in Symlink mode)
         symlink_count = sum(len(r.get('deleted_symlinks', [])) for r in result.get('results', []))
@@ -3398,18 +3408,24 @@ def delete_movie(imdb_id):
         debrid_removed = result.get('debrid_removed', False) or any(r.get('debrid_removed', False) for r in result.get('results', []))
         if delete_from_debrid:
             if debrid_removed:
-                # Show count if available from batch removal
                 torrent_count = result.get('debrid_torrents_removed', 0)
-                if torrent_count > 0:
-                    layers_executed.append(f'Debrid ({torrent_count} torrent{"s" if torrent_count != 1 else ""})')
-                else:
-                    layers_executed.append('Debrid')
+                nzb_count = result.get('debrid_nzb_removed', 0) or sum(r.get('debrid_nzb_removed', 0) for r in result.get('results', []))
+                if nzb_count == 0 and torrent_count == 0:
+                    # single-item path: infer from per-item results
+                    for r in result.get('results', []):
+                        if r.get('debrid_removed'):
+                            if r.get('debrid_nzb_removed', 0): nzb_count += 1
+                            else: torrent_count += 1
+                _parts = []
+                if torrent_count > 0: _parts.append(f'{torrent_count} torrent{"s" if torrent_count != 1 else ""}')
+                if nzb_count > 0: _parts.append(f'{nzb_count} NZB{"s" if nzb_count != 1 else ""}')
+                layers_executed.append(f'Debrid/Usenet ({", ".join(_parts)})' if _parts else 'Debrid/Usenet')
             else:
                 debrid_provider = get_debrid_provider()
                 if not debrid_provider:
-                    layers_skipped.append({'layer': 'Debrid', 'reason': 'Provider not configured'})
+                    layers_skipped.append({'layer': 'Debrid/Usenet', 'reason': 'Provider not configured'})
                 else:
-                    layers_skipped.append({'layer': 'Debrid', 'reason': 'No torrents found'})
+                    layers_skipped.append({'layer': 'Debrid/Usenet', 'reason': 'No torrents/NZBs found'})
 
         # Symlinks - check if deleted or cleaned up (only show in Symlink mode)
         symlink_count = sum(len(r.get('deleted_symlinks', [])) for r in result.get('results', []))
@@ -3673,15 +3689,16 @@ def delete_movie_files():
             if debrid_removed:
                 # Show count if available from batch removal
                 torrent_count = result.get('debrid_torrents_removed', 0)
-                if torrent_count > 0:
-                    layers_executed.append(f'Debrid ({torrent_count} torrent{"s" if torrent_count != 1 else ""})')
-                else:
-                    layers_executed.append('Debrid')
+                nzb_count = result.get('debrid_nzb_removed', 0)
+                _parts = []
+                if torrent_count > 0: _parts.append(f'{torrent_count} torrent{"s" if torrent_count != 1 else ""}')
+                if nzb_count > 0: _parts.append(f'{nzb_count} NZB{"s" if nzb_count != 1 else ""}')
+                layers_executed.append(f'Debrid/Usenet ({", ".join(_parts)})' if _parts else 'Debrid/Usenet')
             else:
                 if not debrid_provider:
-                    layers_skipped.append({'layer': 'Debrid', 'reason': 'Debrid provider not configured'})
+                    layers_skipped.append({'layer': 'Debrid/Usenet', 'reason': 'Provider not configured'})
                 else:
-                    layers_skipped.append({'layer': 'Debrid', 'reason': 'No torrents found'})
+                    layers_skipped.append({'layer': 'Debrid/Usenet', 'reason': 'No torrents/NZBs found'})
 
         # Symlinks - check if deleted or cleaned up
         symlink_count = sum(len(r.get('deleted_symlinks', [])) for r in result.get('results', []))
@@ -3941,19 +3958,25 @@ def delete_season(imdb_id, season_number):
         debrid_removed = result.get('debrid_removed', False) or any(r.get('debrid_removed', False) for r in result.get('results', []))
         if delete_from_debrid:
             if debrid_removed:
-                # Show count if available from batch removal
                 torrent_count = result.get('debrid_torrents_removed', 0)
-                if torrent_count > 0:
-                    layers_executed.append(f'Debrid ({torrent_count} torrent{"s" if torrent_count != 1 else ""})')
-                else:
-                    layers_executed.append('Debrid')
+                nzb_count = result.get('debrid_nzb_removed', 0) or sum(r.get('debrid_nzb_removed', 0) for r in result.get('results', []))
+                if nzb_count == 0 and torrent_count == 0:
+                    # single-item path: infer from per-item results
+                    for r in result.get('results', []):
+                        if r.get('debrid_removed'):
+                            if r.get('debrid_nzb_removed', 0): nzb_count += 1
+                            else: torrent_count += 1
+                _parts = []
+                if torrent_count > 0: _parts.append(f'{torrent_count} torrent{"s" if torrent_count != 1 else ""}')
+                if nzb_count > 0: _parts.append(f'{nzb_count} NZB{"s" if nzb_count != 1 else ""}')
+                layers_executed.append(f'Debrid/Usenet ({", ".join(_parts)})' if _parts else 'Debrid/Usenet')
             else:
                 # Check if debrid provider is available
                 debrid_provider = get_debrid_provider()
                 if not debrid_provider:
-                    layers_skipped.append({'layer': 'Debrid', 'reason': 'Provider not configured'})
+                    layers_skipped.append({'layer': 'Debrid/Usenet', 'reason': 'Provider not configured'})
                 else:
-                    layers_skipped.append({'layer': 'Debrid', 'reason': 'No torrents found'})
+                    layers_skipped.append({'layer': 'Debrid/Usenet', 'reason': 'No torrents/NZBs found'})
 
         # Symlinks - check if deleted or cleaned up
         symlink_count = sum(r.get('symlinks_deleted', 0) for r in result.get('results', []))
@@ -4008,7 +4031,7 @@ def mark_season_replace(imdb_id, season_number):
         cursor = conn.execute(
             """UPDATE media_items SET manual_replace = 1, last_updated = ?
                WHERE imdb_id = ? AND season_number = ? AND type = 'episode'
-               AND state IN ('Collected', 'Upgrading') AND (ghostlisted = 0 OR ghostlisted IS NULL)""",
+               AND state NOT IN ('Blacklisted') AND (ghostlisted = 0 OR ghostlisted IS NULL)""",
             (datetime.now(), imdb_id, season_number)
         )
         marked_count = cursor.rowcount
@@ -4304,18 +4327,24 @@ def delete_episode(imdb_id, season_number, episode_number):
         debrid_removed = result.get('debrid_removed', False) or any(r.get('debrid_removed', False) for r in result.get('results', []))
         if delete_from_debrid:
             if debrid_removed:
-                # Show count if available from batch removal
                 torrent_count = result.get('debrid_torrents_removed', 0)
-                if torrent_count > 0:
-                    layers_executed.append(f'Debrid ({torrent_count} torrent{"s" if torrent_count != 1 else ""})')
-                else:
-                    layers_executed.append('Debrid')
+                nzb_count = result.get('debrid_nzb_removed', 0) or sum(r.get('debrid_nzb_removed', 0) for r in result.get('results', []))
+                if nzb_count == 0 and torrent_count == 0:
+                    # single-item path: infer from per-item results
+                    for r in result.get('results', []):
+                        if r.get('debrid_removed'):
+                            if r.get('debrid_nzb_removed', 0): nzb_count += 1
+                            else: torrent_count += 1
+                _parts = []
+                if torrent_count > 0: _parts.append(f'{torrent_count} torrent{"s" if torrent_count != 1 else ""}')
+                if nzb_count > 0: _parts.append(f'{nzb_count} NZB{"s" if nzb_count != 1 else ""}')
+                layers_executed.append(f'Debrid/Usenet ({", ".join(_parts)})' if _parts else 'Debrid/Usenet')
             else:
                 debrid_provider = get_debrid_provider()
                 if not debrid_provider:
-                    layers_skipped.append({'layer': 'Debrid', 'reason': 'Provider not configured'})
+                    layers_skipped.append({'layer': 'Debrid/Usenet', 'reason': 'Provider not configured'})
                 else:
-                    layers_skipped.append({'layer': 'Debrid', 'reason': 'No torrents found'})
+                    layers_skipped.append({'layer': 'Debrid/Usenet', 'reason': 'No torrents/NZBs found'})
 
         # Symlinks - check if deleted or cleaned up (only relevant in Symlinked/Local mode)
         if file_management_mode != 'Plex':

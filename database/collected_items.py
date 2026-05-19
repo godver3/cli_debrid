@@ -1,5 +1,10 @@
 from .core import get_db_connection, row_to_dict, normalize_string, get_existing_airtime
 import logging
+import time as _time
+
+# Suppress repeated "unmatched Plex item" warnings for the same filename (1 hour)
+_unmatched_warned: dict = {}
+_UNMATCHED_SUPPRESS_SECS = 3600
 import os
 from datetime import datetime, timezone, timedelta
 import json
@@ -429,7 +434,11 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                     plex_ms_item_id = item.get('ratingKey')
 
                 if imdb_id is None and tmdb_id is None:
-                    logging.warning(f"Skipping unmatched Plex item: {item.get('title', 'Unknown')} from location(s): {plex_locations}")
+                    _key = str(plex_locations)
+                    _now = _time.time()
+                    if _now - _unmatched_warned.get(_key, 0) > _UNMATCHED_SUPPRESS_SECS:
+                        logging.warning(f"Skipping unmatched Plex item: {item.get('title', 'Unknown')} from location(s): {plex_locations}")
+                        _unmatched_warned[_key] = _now
                     continue
 
                 # Items tagged by plex_functions with their source library.

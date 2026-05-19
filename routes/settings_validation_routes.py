@@ -397,16 +397,38 @@ def validate_onboarding_settings():
                     'message': plex_message
                 })
 
-    # Validate Debrid settings
-    debrid_provider = settings_data.get('debrid_provider', 'RealDebrid')
-    debrid_api_key = settings_data.get('debrid_api_key', '')
-    debrid_valid, debrid_message = validate_debrid_api_key(debrid_api_key, debrid_provider)
-    validation_checks.append({
-        'name': 'Debrid Provider',
-        'valid': debrid_valid,
-        'message': debrid_message
-    })
-    all_valid = all_valid and debrid_valid
+    # Validate Debrid or Usenet provider
+    provider_type = settings_data.get('provider_type', 'debrid')
+    if provider_type == 'usenet':
+        usenet_url = settings_data.get('usenet_url', '').strip()
+        if usenet_url:
+            try:
+                usenet_token = settings_data.get('usenet_api_token', '')
+                headers = {'Authorization': f'Bearer {usenet_token}'} if usenet_token else {}
+                r = requests.get(f"{usenet_url.rstrip('/')}/version", headers=headers, timeout=10)
+                if r.status_code == 200:
+                    provider_valid, provider_message = True, "Successfully connected to Decypharr"
+                else:
+                    provider_valid, provider_message = False, f"Decypharr returned HTTP {r.status_code}"
+            except Exception as e:
+                provider_valid, provider_message = False, f"Could not connect to Decypharr: {str(e)}"
+        else:
+            provider_valid, provider_message = False, "Decypharr URL is required"
+        validation_checks.append({
+            'name': 'Usenet Provider (Decypharr)',
+            'valid': provider_valid,
+            'message': provider_message
+        })
+    else:
+        debrid_provider = settings_data.get('debrid_provider', 'RealDebrid')
+        debrid_api_key = settings_data.get('debrid_api_key', '')
+        provider_valid, provider_message = validate_debrid_api_key(debrid_api_key, debrid_provider)
+        validation_checks.append({
+            'name': 'Debrid Provider',
+            'valid': provider_valid,
+            'message': provider_message
+        })
+    all_valid = all_valid and provider_valid
 
     # Validate Trakt settings
     trakt_client_id = settings_data.get('trakt_client_id', '')

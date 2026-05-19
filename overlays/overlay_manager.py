@@ -453,6 +453,17 @@ class OverlayManager:
                     result['message'] = f"No active '{media_type}' layout configured"
                     return result
 
+            # Normalize poster to 2:3 aspect ratio before rendering to prevent
+            # badge zoom/crop issues on non-standard aspect ratio sources.
+            pw, ph = poster_image.size
+            expected_h = int(pw * 1.5)
+            if abs(ph - expected_h) > 4:  # >4px tolerance
+                self.logger.debug(
+                    f"Normalizing poster from {pw}x{ph} to {pw}x{expected_h} (2:3) for {plex_rating_key}"
+                )
+                from PIL import Image as _PILImage
+                poster_image = poster_image.resize((pw, expected_h), _PILImage.LANCZOS)
+
             # Render overlay
             self.logger.info(f"Rendering overlay for {plex_rating_key}")
             if template:
