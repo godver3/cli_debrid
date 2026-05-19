@@ -41,6 +41,7 @@ def make_request(
     params: Optional[Dict] = None,
     json_data: Optional[Dict] = None,
     files: Optional[Dict] = None,
+    form_data: Optional[Dict] = None,
     **kwargs,
 ) -> Any:
     """
@@ -65,6 +66,8 @@ def make_request(
         elif method.upper() == 'POST':
             if files:
                 response = api.post(url, params=params, files=files, headers=headers, **kwargs)
+            elif form_data is not None:
+                response = api.post(url, params=params, data=form_data, headers=headers, **kwargs)
             else:
                 response = api.post(url, params=params, json=json_data, headers=headers, **kwargs)
         elif method.upper() == 'DELETE':
@@ -106,6 +109,15 @@ def make_request(
         raise
     except api.exceptions.Timeout:
         raise ProviderUnavailableError("Debrid-Link request timed out")
+    except api.exceptions.HTTPError as e:
+        # Log the response body so we can see the actual API error reason
+        body = ''
+        try:
+            body = e.response.text[:500] if e.response is not None else ''
+        except Exception:
+            pass
+        logging.error(f"Debrid-Link HTTP error {e} — response body: {body}")
+        raise ProviderUnavailableError(f"Debrid-Link request failed: {e}")
     except api.exceptions.RequestException as e:
         raise ProviderUnavailableError(f"Debrid-Link request failed: {e}")
 

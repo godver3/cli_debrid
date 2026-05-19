@@ -588,22 +588,34 @@ def prepare_manual_assignment():
                     base_item.update({'season_number': season_num, 'episode_number': episode_num})
                 item_id = add_media_item(base_item)
                 if item_id:
-                    added = dict(get_media_item_by_id(item_id))
-                    if added:
-                        QueueManager().move_to_checking(added, 'Adding', title=nzb_title,
-                                                        link=nzb_title, filled_by_file=nzb_title,
-                                                        torrent_id=checking_id,
-                                                        original_scraped_torrent_title=nzb_title)
+                    from database.database_writing import update_media_item_state, update_media_item as _umi
+                    _umi(item_id,
+                        filled_by_torrent_id=checking_id,
+                        filled_by_file=nzb_title,
+                        original_scraped_torrent_title=nzb_title,
+                    )
+                    update_media_item_state(item_id, 'Adding')
+                    logging.info(f'[NZB] Item {item_id} placed in Adding queue for health check (checking_id={checking_id})')
+                _nzb_redirect = f'/library/show/{tmdb_id}' if tmdb_id else '/library'
                 return jsonify({'success': True, 'message': f'NZB file submitted to Decypharr (job: {job_id}). Tracking through queue.',
-                                'job_id': job_id, 'provider': 'Decypharr'})
+                                'job_id': job_id, 'provider': 'Decypharr', 'redirect_url': _nzb_redirect})
             else:
-                # NZB URL — use full _add_nzb_to_usenet flow (submits + tracks)
-                return _add_nzb_to_usenet(
+                # NZB URL — use full _add_nzb_to_usenet flow then add redirect_url
+                _nzb_resp = _add_nzb_to_usenet(
                     nzb_url=magnet_link,
                     title=title, year=year, media_type=media_type,
                     season=season_num, episode=episode_num,
                     version=version, tmdb_id=tmdb_id,
                 )
+                # Inject redirect_url into the response so the assign page can navigate
+                try:
+                    _nzb_data = _nzb_resp.get_json()
+                    if _nzb_data and _nzb_data.get('success'):
+                        _nzb_data['redirect_url'] = f'/library/show/{tmdb_id}' if tmdb_id else '/library'
+                        return jsonify(_nzb_data)
+                except Exception:
+                    pass
+                return _nzb_resp
         except Exception as _ne:
             logging.error(f"NZB handling failed: {_ne}", exc_info=True)
             return jsonify({'success': False, 'error': str(_ne)}), 500

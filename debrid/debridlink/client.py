@@ -185,12 +185,13 @@ class DebridLinkProvider(DebridProvider):
                     results[hash_value] = is_complete
                     continue
 
-                # Add raw hash — DL only creates the entry if cached.
+                # Add magnet URI — DL requires full magnet, bare hash returns 400.
                 # async must be False (default) so we get the real downloadPercent/downloaded
                 # status back immediately rather than a pending 0% result.
+                magnet_uri = item if item.startswith('magnet:') else f'magnet:?xt=urn:btih:{hash_value}'
                 add_result = make_request(
                     'POST', '/seedbox/add', self.api_key,
-                    json_data={'url': hash_value},
+                    form_data={'url': magnet_uri},
                 )
                 value = add_result.get('value', {}) if isinstance(add_result, dict) else {}
                 torrent_id = str(value.get('id', '')) if value.get('id') else None
@@ -250,13 +251,21 @@ class DebridLinkProvider(DebridProvider):
                             logger.error(f"Debrid-Link cache check: error removing uncached {torrent_id}: {e}")
 
             except Exception as e:
-                logger.error(f"Debrid-Link is_cached error for {item}: {e}")
-                if torrent_id and not torrent_was_preexisting:
-                    try:
-                        self.remove_torrent(torrent_id, f"Exception during cache check: {e}")
-                    except Exception:
-                        pass
-                results[hash_value if 'hash_value' in dir() else item] = None
+                err_str = str(e)
+                key = hash_value if 'hash_value' in locals() else item
+                # notAddTorrent means DL can't add this magnet — treat as not cached, not an error
+                if 'notAddTorrent' in err_str:
+                    logger.debug(f"Debrid-Link is_cached: notAddTorrent for {key} — treating as not cached")
+                    results[key] = False
+                else:
+                    logger.error(f"Debrid-Link is_cached error for {item}: {e}")
+                    # Only try to remove if torrent was actually added (torrent_id is set)
+                    if torrent_id and not torrent_was_preexisting:
+                        try:
+                            self.remove_torrent(torrent_id, f"Exception during cache check: {e}")
+                        except Exception:
+                            pass
+                    results[key] = None
 
         if return_single:
             return next(iter(results.values())) if results else None
@@ -292,15 +301,18 @@ class DebridLinkProvider(DebridProvider):
 
             if temp_file_path:
                 with open(temp_file_path, 'rb') as f:
+                    # async must be in multipart body, not URL query string
                     result = make_request(
                         'POST', '/seedbox/add', self.api_key,
-                        files={'file': (os.path.basename(temp_file_path), f)},
-                        params={'async': 'true'},
+                        files={
+                            'file': (os.path.basename(temp_file_path), f),
+                            'async': (None, 'true'),
+                        },
                     )
             elif magnet_link:
                 result = make_request(
                     'POST', '/seedbox/add', self.api_key,
-                    json_data={'url': magnet_link, 'async': True},
+                    form_data={'url': magnet_link, 'async': 'true'},
                 )
             else:
                 raise TorrentAdditionError("No magnet link or torrent file provided")
@@ -391,6 +403,55 @@ class DebridLinkProvider(DebridProvider):
             return TorrentInfoStatus(status=TorrentFetchStatus.OK, data=info)
         except Exception as e:
             return TorrentInfoStatus(status=TorrentFetchStatus.UNKNOWN_ERROR, message=str(e))
+
+    def get_torrent_file_list(self, magnet_link: str) -> Optional[Tuple[List[Dict], str, str]]:
+        """
+        Add magnet temporarily, poll until files are populated, then remove.
+        Returns (files, filename, torrent_id) or None on error.
+        Same interface as RealDebrid.get_torrent_file_list.
+        """
+        torrent_id = None
+        try:
+            logger.info(f"[DL] Adding torrent for file listing: {magnet_link[:60]}...")
+            torrent_id = self.add_torrent(magnet_link)
+            if not torrent_id:
+                logger.error("[DL] Failed to add torrent for file listing.")
+                return None
+
+            # Poll until DL resolves the magnet and populates files (up to 15s)
+            files = []
+            filename = 'Unknown'
+            for attempt in range(5):
+                time.sleep(3)
+                info = self.get_torrent_info(torrent_id)
+                if not info:
+                    logger.warning(f"[DL] No torrent info on attempt {attempt + 1}")
+                    continue
+                files = info.get('files', [])
+                if isinstance(files, dict):
+                    files = list(files.values())
+                elif not isinstance(files, list):
+                    files = []
+                filename = info.get('filename', info.get('original_filename', 'Unknown'))
+                if files:
+                    logger.info(f"[DL] Retrieved {len(files)} files on attempt {attempt + 1} ({filename})")
+                    break
+                logger.debug(f"[DL] Files empty on attempt {attempt + 1}, retrying...")
+
+            if not files:
+                logger.warning(f"[DL] No files found after polling for {torrent_id} ({filename})")
+
+            return files, filename, torrent_id
+
+        except Exception as e:
+            logger.error(f"[DL] get_torrent_file_list error: {e}")
+            return None
+        finally:
+            if torrent_id:
+                try:
+                    self.remove_torrent(torrent_id, "Temporary add for file listing")
+                except Exception:
+                    pass
 
     # ── Remove ───────────────────────────────────────────────────────────────
 
@@ -535,8 +596,23 @@ class DebridLinkProvider(DebridProvider):
             except Exception as e:
                 logger.debug(f"Debrid-Link /seedbox/activity failed: {e}")
 
+            # Populate usage stats for statistics page from usagePercent if available
+            # usagePercent is a dict: {"current": 84, "value": 100}
+            usage_percent_obj = limits.get('usagePercent')
+            if isinstance(usage_percent_obj, dict):
+                try:
+                    current = float(usage_percent_obj.get('current', 0))
+                    maximum = float(usage_percent_obj.get('value', 100)) or 100
+                    pct = round((current / maximum) * 100)
+                    result['used'] = f"{current:.0f} / {maximum:.0f}"
+                    result['limit'] = f"{maximum:.0f}"
+                    result['percentage'] = pct
+                except (TypeError, ValueError):
+                    pass
+
             result['downloaded'] = 0
-            result['limit'] = None
+            if 'limit' not in result:
+                result['limit'] = None
             return result
 
         except Exception as e:

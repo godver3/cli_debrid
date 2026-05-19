@@ -1051,16 +1051,16 @@ function showErrorToast(msg) { maShowToast(msg, 'red'); }
 
           {# Magnet / file section #}
           <div class="ma-magnet-wrap" style="display:flex;flex-direction:column;gap:8px">
-            <div class="ma-section-label">Magnet Link or Torrent File</div>
+            <div class="ma-section-label">Magnet / NZB Link or File</div>
             <input class="ma-magnet-input" type="text" name="magnet_link"
-                   placeholder="Enter magnet link…"
+                   placeholder="Enter magnet link or NZB URL…"
                    {% if is_prefilled and prefill_magnet %}value="{{ prefill_magnet }}"{% endif %}>
             <label class="ma-file-btn">
               <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-              <span class="ma-file-label">Choose torrent file</span>
-              <input type="file" class="ma-file-input" name="torrent_file" accept=".torrent" style="display:none">
+              <span class="ma-file-label">Choose torrent or NZB file</span>
+              <input type="file" class="ma-file-input" name="torrent_file" accept=".torrent,.nzb" style="display:none">
             </label>
-            <div class="ma-hint">Enter a magnet link or upload a .torrent file</div>
+            <div class="ma-hint">Enter a magnet link, NZB URL, or upload a .torrent/.nzb file</div>
           </div>
 
           {# Version + Assign on same row #}

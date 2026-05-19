@@ -516,8 +516,51 @@ class TorrentProcessor:
             logging.warning(f'[{item_identifier}] NZB result has no URL, skipping')
             return None
 
+        # Check if same NZB title already in Decypharr to avoid duplicates
+        try:
+            existing_status = client.get_job_status(title)
+            if not existing_status or existing_status.get('state') != 'completed':
+                # Also check browse API for existing entry
+                from routes.api_tracker import api as _check_api
+                from utilities.settings import get_setting as _gs_check
+                _dcy_url = _gs_check('Usenet Provider', 'url', default='').rstrip('/')
+                _dcy_token = _gs_check('Usenet Provider', 'api_token', default='')
+                _ch = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
+                _er = _check_api.get(f'{_dcy_url}/api/browse/torrents', headers=_ch,
+                                     params={'search': title[:50]}, timeout=5)
+                if _er.status_code == 200:
+                    _existing = _er.json().get('entries', [])
+                    for _e in _existing:
+                        if _e.get('name', '') == title:
+                            logging.info(f'[{item_identifier}] NZB already in Decypharr: {title} — reusing job')
+                            return {'id': _e.get('info_hash', ''), 'filename': title, 'original_title': title,
+                                    'status': 'downloading', 'files': [], 'progress': 0,
+                                    '_provider': 'Decypharr', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+        except Exception:
+            pass
+
+        # Fetch NZB XML to check segment ID against not-wanted list
+        _nzb_xml = None
+        try:
+            from routes.api_tracker import api as _nzb_api2
+            _nr = _nzb_api2.get(nzb_url, timeout=15, allow_redirects=True)
+            if _nr.status_code == 200 and '<nzb' in _nr.text.lower():
+                _nzb_xml = _nr.text
+                from database.not_wanted_magnets import is_nzb_segment_not_wanted
+                if is_nzb_segment_not_wanted(_nzb_xml):
+                    logging.info(f'[{item_identifier}] Skipping NZB {title!r} — segment ID in not-wanted list')
+                    return None
+        except Exception as _nzb_check_err:
+            logging.debug(f'[{item_identifier}] Could not pre-check NZB segment: {_nzb_check_err}')
+
         logging.info(f'[{item_identifier}] Submitting NZB to Decypharr: {title}')
-        job_id = client.add_nzb(nzb_url=nzb_url, title=title)
+        if _nzb_xml:
+            job_id = client.add_nzb_content(nzb_content=_nzb_xml, title=title)
+            if not job_id and client.last_missing_segments:
+                logging.warning(f'[{item_identifier}] Decypharr server missing segments for {title!r} — check Decypharr Usenet server config')
+                return None
+        else:
+            job_id = client.add_nzb(nzb_url=nzb_url, title=title)
 
         if not job_id:
             # Fallback: download NZB and upload directly
@@ -527,6 +570,9 @@ class TorrentProcessor:
                 _r = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
                 if _r.status_code == 200 and '<nzb' in _r.text.lower():
                     job_id = client.add_nzb_content(nzb_content=_r.text, title=title)
+                    if not job_id and client.last_missing_segments:
+                        logging.warning(f'[{item_identifier}] Decypharr server missing segments on fallback for {title!r}')
+                        return None
                     if job_id:
                         logging.info(f'[{item_identifier}] Direct upload succeeded: {title}')
             except Exception as _fe:
@@ -545,6 +591,15 @@ class TorrentProcessor:
 
         logging.info(f'[{item_identifier}] NZB submitted successfully, job_id={job_id}')
 
+        # Extract segment ID for not-wanted fingerprinting
+        _segment_id = ''
+        if _nzb_xml:
+            try:
+                from database.not_wanted_magnets import extract_nzb_segment_id
+                _segment_id = extract_nzb_segment_id(_nzb_xml)
+            except Exception:
+                pass
+
         # Return a synthetic torrent_info dict so the caller can treat this like a torrent result
         torrent_info = {
             'id': job_id,
@@ -556,6 +611,7 @@ class TorrentProcessor:
             '_provider': 'Decypharr',
             '_is_nzb': True,
             '_nzb_url': nzb_url,
+            '_nzb_segment_id': _segment_id,
         }
         return torrent_info, nzb_url, result
 

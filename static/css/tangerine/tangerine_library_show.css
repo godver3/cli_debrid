@@ -2713,7 +2713,7 @@ body[data-theme="tangerine"] .file-number {
 
 body[data-theme="tangerine"] .file-name {
     font-family: var(--ts-sans);
-    font-size: 0.875rem;
+    font-size: 12px;
     color: var(--ts-text);
     font-weight: 500;
 }

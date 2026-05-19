@@ -1103,12 +1103,22 @@ def filter_results(
                 
                 if multi:
                     #logging.debug(f"Multi-episode mode: season={season}, season_pack={season_episode_info.get('season_pack')}, seasons={season_episode_info.get('seasons')}")
-                    
+
                     episodes = season_episode_info.get('episodes', [])
                     if len(episodes) == 1:
                         result['filter_reason'] = "Single episode result when searching for multi"
                         logging.info(f"Rejected: Single episode in multi mode for '{original_title}' (Size: {result['size']:.2f}GB)")
                         continue
+
+                    # Reject partial multi-episode files (e.g. S01E01E02) in season pack searches
+                    # A result with explicit episode numbers but fewer than the season episode count
+                    # is a partial pack, not a full season pack
+                    if len(episodes) > 1:
+                        _season_ep_count = season_episode_counts.get(season, 0) if season_episode_counts else 0
+                        if _season_ep_count > 0 and len(episodes) < _season_ep_count:
+                            result['filter_reason'] = f"Partial multi-episode file ({len(episodes)} eps) when searching for full season pack ({_season_ep_count} eps)"
+                            logging.info(f"Rejected: Partial multi-episode {episodes} for season pack of {_season_ep_count} eps: '{original_title}'")
+                            continue
 
                     if episodes and episode is not None and episode not in episodes:
                         result['filter_reason'] = f"Multi-episode pack does not contain requested episode {episode}"
@@ -1303,11 +1313,14 @@ def filter_results(
                             logging.info(f"Rejected: Multi-season pack in single episode mode for '{original_title}' (Size: {result['size']:.2f}GB)")
                             continue
 
-                        # Also check if multiple distinct episodes are detected explicitly
+                        # Allow multi-episode files (e.g. S01E01E02) if target episode is included
+                        # Reject only if target episode is NOT in the file
                         if len(result_episodes) > 1:
-                            result['filter_reason'] = f"Multiple episodes detected: {result_episodes} when searching for single episode {episode}"
-                            logging.info(f"Rejected: Multiple episodes {result_episodes} in single episode mode for '{original_title}' (Size: {result['size']:.2f}GB)")
-                            continue
+                            if episode is not None and episode not in result_episodes:
+                                result['filter_reason'] = f"Multi-episode file {result_episodes} does not contain episode {episode}"
+                                logging.info(f"Rejected: Multi-episode file {result_episodes} missing episode {episode} for '{original_title}'")
+                                continue
+                            # else: target episode is in the file — allow through
                         
                         # This check is for single season packs and should apply only in single mode.
                         # It identifies torrents that are packs of the correct season but don't list episodes,
@@ -1628,7 +1641,6 @@ def filter_results(
                                     logging.info(f"API fallback for 'Complete' pack '{original_title}'. Set num_episodes_in_pack to {num_episodes_in_pack}")
                     elif season_pack_type_from_parse not in ['N/A', 'Unknown']:
                         # Logic for specific season packs (S01, S01,S02) to calculate num_episodes_in_pack
-                        # (as previously implemented, including API fallback)
                         current_sum = 0
                         try:
                             season_numbers_in_pack = []
@@ -1637,26 +1649,36 @@ def filter_results(
                                 cleaned_part = part.strip().lstrip('S').lstrip('s')
                                 if cleaned_part.isdigit():
                                     season_numbers_in_pack.append(int(cleaned_part))
+
+                            # Sanity check: if the pack claims more seasons than the show has,
+                            # it's a bad parse (e.g. anime "Season 2 - 11" parsed as S2-S11).
+                            # Cap to avoid thousands of log lines and wasted API calls.
+                            known_season_count = len(season_episode_counts) if season_episode_counts else 0
+                            if known_season_count > 0 and len(season_numbers_in_pack) > known_season_count + 2:
+                                logging.debug(f"Pack type '{season_pack_type_from_parse}' claims {len(season_numbers_in_pack)} seasons but show only has {known_season_count} — likely bad parse for '{original_title}', skipping pack calc")
+                                season_numbers_in_pack = []
+
                             if season_numbers_in_pack:
+                                _logged_fallback = False
                                 for s_num in season_numbers_in_pack:
                                     ep_count_for_season = season_episode_counts.get(s_num, 0) if season_episode_counts else 0
                                     if ep_count_for_season == 0 and imdb_id and direct_api:
-                                        # API fallback logic for specific season
-                                        logging.warning(f"Season S{s_num} count is 0 for '{original_title}'. Attempting API fallback for imdb_id: {imdb_id}.")
+                                        if not _logged_fallback:
+                                            logging.warning(f"Season count is 0 for '{original_title}' (pack={season_pack_type_from_parse}). Attempting API fallback for imdb_id: {imdb_id}.")
+                                            _logged_fallback = True
                                         if _fetched_detailed_seasons_data_cache is None:
                                             try:
                                                 detailed_s_data, _ = direct_api.get_show_seasons(imdb_id=imdb_id)
                                                 _fetched_detailed_seasons_data_cache = detailed_s_data if detailed_s_data else {}
                                             except Exception as api_err:
-                                                logging.error(f"API fallback direct_api.get_show_seasons failed for {imdb_id} (S{s_num}): {api_err}")
+                                                logging.error(f"API fallback direct_api.get_show_seasons failed for {imdb_id}: {api_err}")
                                                 _fetched_detailed_seasons_data_cache = {}
                                         if s_num in _fetched_detailed_seasons_data_cache:
                                             fetched_s_data = _fetched_detailed_seasons_data_cache[s_num]
                                             ep_count_for_season = fetched_s_data.get('episode_count', 0)
-                                            logging.info(f"API fallback for S{s_num} of '{original_title}' got episode_count: {ep_count_for_season}")
                                     current_sum += ep_count_for_season
                                 num_episodes_in_pack = current_sum
-                        except ValueError: # Fallback for parsing error
+                        except ValueError:
                             if len(parsed_episodes_list_from_parse) > 1:
                                 num_episodes_in_pack = len(parsed_episodes_list_from_parse)
                     else: # Pack identified by PTT parsed episodes list

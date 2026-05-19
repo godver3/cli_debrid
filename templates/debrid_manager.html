@@ -34,6 +34,11 @@
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
                 Usage
             </button>
+            <button class="dm-tab" data-tab="usenet">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                Usenet
+                <span class="dm-tab-badge" id="usenet-tab-badge" style="display:none"></span>
+            </button>
             {% if show_plex_trash %}
             <button class="dm-tab" data-tab="plex-trash">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
@@ -399,7 +404,12 @@
 
                 <!-- Backup slots -->
                 <div class="dm-backup-card">
-                    <div class="dm-backup-card-title">Backup Slots</div>
+                    <div class="dm-backup-card-title" style="display:flex;align-items:center;justify-content:space-between">
+                        <span>Backup Slots</span>
+                        <select id="usenet-migrate-version-select" class="un-btn" style="cursor:pointer;min-width:130px;display:none" title="Version filter applied when migrating to Usenet">
+                            <option value="">Default version</option>
+                        </select>
+                    </div>
                     <div id="bk-slots" class="dm-backup-slots">
                         <div class="dm-backup-activity-loading">Loading…</div>
                     </div>
@@ -588,6 +598,118 @@
             </div>
         </div>
         <div id="usage-error" class="dm-error" style="display:none"></div>
+    </div>
+
+    <!-- ── USENET TAB ── -->
+    <div id="usenet-tab" class="dm-panel">
+        <style>
+            /* Exact values from tangerine_overlays.css */
+            #usenet-content { font-family:'Inter',system-ui,sans-serif; font-size:13px; color:#f0f0f0; }
+            #usenet-content .un-header { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; margin-bottom:1.75rem; flex-wrap:wrap; }
+            #usenet-content .un-title { font-size: 14px; font-weight: 600; color: var(--text); border-left: 3px solid #e8601c; padding-left: 10px; line-height: 1.3;}
+            #usenet-content .un-subtitle { font-size:12px; color:#888; padding-left:13px; }
+            #usenet-content .un-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+            #usenet-content .un-btn { display:inline-flex; align-items:center; gap:8px; height:36px; padding:0 14px; border-radius:8px; font-size:13px; font-weight:500; font-family:'Inter',system-ui,sans-serif; cursor:pointer; border:1px solid #333; background:#1e1e1e; color:#ccc; transition:background .15s,color .15s; white-space:nowrap; }
+            #usenet-content .un-btn:hover { background:#2a2a2a; color:#fff; }
+            #usenet-content .un-btn i { font-size:13px; }
+            #usenet-content .un-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin-bottom:1.25rem; }
+            #usenet-content .un-card { background:#161616; border:1px solid #252525; border-radius:8px; padding:16px 14px 12px; position:relative; overflow:hidden; text-align:left; }
+            #usenet-content .un-card::after { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:#e8601c; opacity:.5; border-radius:8px 8px 0 0; }
+            #usenet-content .un-val { font-size:26px; font-weight:700; color:#e8601c; font-family:'JetBrains Mono','Fira Code',ui-monospace,monospace; line-height:1; margin-bottom:6px; }
+            #usenet-content .un-lbl { font-size:9px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:#888; margin-bottom:8px; }
+        </style>
+        <div id="usenet-loading" style="padding:40px;text-align:center;color:#888">Loading…</div>
+        <div id="usenet-content" style="display:none">
+
+            <div class="un-header">
+                <div>
+                    <h1 class="un-title">Health &amp; Repair</h1>
+                    <p class="un-subtitle">Usenet NZB health monitoring and automatic repair</p>
+                </div>
+                <div class="un-actions">
+                    <button id="usenet-scan-btn" onclick="usenetTriggerScan()" class="un-btn">
+                        <i class="fa-solid fa-rotate" style="color:#e8601c"></i> Run Health Scan
+                    </button>
+                    <button id="usenet-view-broken-btn" onclick="usenetViewBroken()" class="un-btn">
+                        <i class="fa-solid fa-eye" style="color:#ef4444"></i> View Broken <span id="usenet-broken-badge" style="display:none;background:#ff4444;color:#fff;border-radius:10px;padding:1px 7px;font-size:0.75rem;margin-left:2px"></span>
+                    </button>
+                    <select id="usenet-version-select" onchange="usenetSaveVersion(this.value)" class="un-btn" style="cursor:pointer;min-width:130px">
+                        <option value="">Item's version</option>
+                    </select>
+                    <button id="usenet-fix-btn" onclick="usenetRunRepair()" class="un-btn">
+                        <i class="fa-solid fa-wrench" style="color:#e8601c"></i> Fix Broken
+                    </button>
+                </div>
+            </div>
+
+            <div class="un-stats">
+                <div class="un-card">
+                    <div class="un-val" style="color:#4ade80" id="usenet-stat-healthy">—</div>
+                    <div class="un-lbl">Healthy</div>
+                </div>
+                <div class="un-card">
+                    <div class="un-val" style="color:#ff6b6b" id="usenet-stat-broken">—</div>
+                    <div class="un-lbl">Broken</div>
+                </div>
+                <div class="un-card">
+                    <div class="un-val" style="color:var(--text-secondary,#888)" id="usenet-stat-unknown">—</div>
+                    <div class="un-lbl">Unknown</div>
+                </div>
+                <div class="un-card">
+                    <div class="un-val" style="color:#ff6b35" id="usenet-stat-repaired">—</div>
+                    <div class="un-lbl">Repaired (30d)</div>
+                </div>
+                <div class="un-card">
+                    <div class="un-val" style="color:#fbbf24" id="usenet-stat-notfound">—</div>
+                    <div class="un-lbl">Not Found (30d)</div>
+                </div>
+            </div>
+
+            <div id="usenet-repair-running" style="display:none;background:var(--card-background,#1e1e1e);border:1px solid var(--border-color,#333);border-radius:8px;padding:12px 16px;margin-bottom:16px">
+                <div style="font-size:12px;color:var(--text-secondary,#888);margin-bottom:8px" id="usenet-repair-status-text">Repair running…</div>
+                <div style="height:3px;background:var(--border-color,#333);border-radius:2px;overflow:hidden">
+                    <div id="usenet-repair-bar" style="height:100%;background:#ff6b35;width:0%;transition:width 0.5s ease"></div>
+                </div>
+            </div>
+
+            <div id="usenet-broken-list" style="display:none;margin-bottom:20px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                    <div class="un-title">Currently Broken</div>
+                    <button onclick="document.getElementById('usenet-broken-list').style.display='none'" style="background:none;border:none;color:var(--text-secondary,#888);cursor:pointer;font-size:20px;line-height:1">&times;</button>
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:13px">
+                    <thead><tr style="border-bottom:2px solid var(--border-color,#333);text-align:left">
+                        <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:75%">Title</th>
+                        <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:25%;text-align:right">Broken Files</th>
+                    </tr></thead>
+                    <tbody id="usenet-broken-tbody"></tbody>
+                </table>
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+                <div class="un-title">Repair Activity Log</div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <select id="usenet-filter-select" onchange="usenetLoadActivity(this.value||null)" class="un-btn" style="cursor:pointer;min-width:160px">
+                        <option value="">All outcomes</option>
+                        <option value="replaced">Replaced</option>
+                        <option value="not_found">Not Found</option>
+                        <option value="plex_deleted">Plex Deleted</option>
+                        <option value="error">Error</option>
+                    </select>
+                    <button onclick="usenetLoadActivity(document.getElementById('usenet-filter-select').value||null)" class="un-btn"><i class="fa-solid fa-rotate" style="color:#e8601c"></i> Refresh</button>
+                </div>
+            </div>
+            <div id="usenet-activity-container">
+                <p style="color:var(--text-secondary,#666);padding:20px 0">Loading activity…</p>
+            </div>
+            <div id="usenet-activity-pagination" style="display:none;margin-top:16px;display:flex;justify-content:center;align-items:center;gap:8px">
+                <button class="un-btn" id="usenet-prev-btn" onclick="usenetActivityPage(-1)" disabled>&#8592; Previous</button>
+                <span id="usenet-activity-info" style="font-size:13px;color:var(--text-secondary,#666);padding:0 10px"></span>
+                <button class="un-btn" id="usenet-next-btn" onclick="usenetActivityPage(1)" disabled>Next &#8594;</button>
+            </div>
+
+        </div>
+        <div id="usenet-error" style="display:none;padding:20px;color:#f87171;text-align:center"></div>
     </div>
 
     {% if show_plex_trash %}
@@ -1495,6 +1617,7 @@ document.querySelectorAll('.dm-tab').forEach(btn => {
         if (btn.dataset.tab === 'history' && !window._historyLoaded) loadHistory();
         if (btn.dataset.tab === 'library' && !window._libLoaded) loadLibrary(false);
         if (btn.dataset.tab === 'maintenance' && !_bkLoaded) loadMaintenance();
+        if (btn.dataset.tab === 'usenet' && !window._usenetLoaded) loadUsenetTab();
         if (btn.dataset.tab === 'reconcile' && !window._rcLoaded) { loadReconcile(false); loadBatteryAudit(false); }
         if (btn.dataset.tab === 'reconcile' && typeof _slInitAudit === 'function') _slInitAudit();
     });
@@ -3022,6 +3145,13 @@ async function loadMaintenance() {
 
         _bkRenderActivity(data);
         _bkRenderSlots(data);
+        // Populate migrate version dropdown
+        const _msel = document.getElementById('usenet-migrate-version-select');
+        if (_msel && data.scraping_versions && data.scraping_versions.length) {
+            _msel.innerHTML = '<option value="">Default version</option>' +
+                data.scraping_versions.map(v => `<option value="${_esc(v)}">${_esc(v)}</option>`).join('');
+            _msel.style.display = '';
+        }
         _updateMaintNotice();
         _xpPopulateFiles(data);
         _xpCheckOnLoad();
@@ -3508,11 +3638,12 @@ async function usenetMigrateStart(filename, btn) {
     const status = document.getElementById('usenet-migrate-status');
     const bar = document.getElementById('usenet-migrate-bar');
     const stats = document.getElementById('usenet-migrate-stats');
+    const version = document.getElementById('usenet-migrate-version-select')?.value || '';
 
     showPopup({
         type: POPUP_TYPES.CONFIRM,
         title: 'Migrate to Usenet',
-        message: `Search all enabled Newznab indexers for each torrent in "${filename}" and submit found NZBs to Decypharr?\n\nStrategy: hash lookup first, then name search.`,
+        message: `Search all enabled Newznab indexers for each torrent in "${filename}" and submit found NZBs to Decypharr?\n\nVersion filter: ${version || 'Default version'}\nStrategy: hash lookup first, then name search (version filter applied to non-group queries).`,
         confirmText: 'Start',
         cancelText: 'Cancel',
         onConfirm: async () => {
@@ -3526,7 +3657,7 @@ async function usenetMigrateStart(filename, btn) {
                 const r = await fetch('/debrid_manager/api/usenet/migrate', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({filename}),
+                    body: JSON.stringify({filename, version}),
                 });
                 const d = await r.json();
                 if (!d.success) {
@@ -3888,6 +4019,284 @@ document.querySelectorAll('.dm-tab[data-tab="usage"]').forEach(btn => {
 });
 // If usage tab is the active tab on load, load immediately
 if (_dmActiveTab === 'usage') loadUsage();
+
+// ── USENET TAB ─────────────────────────────────────────────────────────────
+window._usenetLoaded = false;
+let _usenetActivityOffset = 0;
+let _usenetActivityTotal = 0;
+const _usenetActivityLimit = 25;
+let _usenetActivityFilter = null;
+let _usenetRepairPollTimer = null;
+
+async function loadUsenetTab() {
+    window._usenetLoaded = true;
+    document.getElementById('usenet-loading').style.display = 'block';
+    document.getElementById('usenet-content').style.display = 'none';
+    document.getElementById('usenet-error').style.display = 'none';
+    try {
+        const r = await fetch('/debrid_manager/api/usenet/repair/stats');
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Failed to load stats');
+        _usenetRenderStats(d.health || {}, d.activity || {}, d.versions || [], d.repair_version || '');
+        document.getElementById('usenet-loading').style.display = 'none';
+        document.getElementById('usenet-content').style.display = 'block';
+        await usenetLoadActivity(null);
+        // Only start polling if a repair is already in progress
+        _usenetMaybeStartPolling();
+    } catch(e) {
+        document.getElementById('usenet-loading').style.display = 'none';
+        document.getElementById('usenet-error').style.display = 'block';
+        document.getElementById('usenet-error').textContent = 'Failed to load: ' + e.message;
+    }
+}
+
+async function _usenetMaybeStartPolling() {
+    try {
+        const r = await fetch('/debrid_manager/api/usenet/repair/progress');
+        const d = await r.json();
+        if (d.is_running || d.status === 'running') {
+            document.getElementById('usenet-repair-running').style.display = 'block';
+            document.getElementById('usenet-repair-status-text').textContent = 'Repair running…';
+            document.getElementById('usenet-repair-bar').style.width = '60%';
+            _usenetPollRepairProgress();
+        }
+    } catch(e) { /* ignore */ }
+}
+
+function _usenetRenderStats(health, activity, versions, savedVersion) {
+    // Populate repair version dropdown and restore saved value
+    const sel = document.getElementById('usenet-version-select');
+    if (sel && versions && versions.length) {
+        sel.innerHTML = '<option value="">Item\'s version</option>' +
+            versions.map(v => `<option value="${_esc(v)}"${v === savedVersion ? ' selected' : ''}>${_esc(v)}</option>`).join('');
+    } else if (sel && savedVersion === '') {
+        sel.value = '';
+    }
+    const healthy = health.healthy || 0;
+    const broken  = health.broken  || 0;
+    const unknown = health.unknown || 0;
+    document.getElementById('usenet-stat-healthy').textContent  = healthy.toLocaleString();
+    document.getElementById('usenet-stat-broken').textContent   = broken;
+    document.getElementById('usenet-stat-unknown').textContent  = unknown.toLocaleString();
+    document.getElementById('usenet-stat-repaired').textContent = activity.replaced  || 0;
+    document.getElementById('usenet-stat-notfound').textContent = (activity.not_found || 0) + (activity.plex_deleted || 0);
+    const badge = document.getElementById('usenet-broken-badge');
+    const tabBadge = document.getElementById('usenet-tab-badge');
+    if (broken > 0) {
+        badge.textContent = broken;
+        badge.style.display = 'inline-block';
+        tabBadge.textContent = broken;
+        tabBadge.style.display = 'inline-flex';
+    } else {
+        badge.style.display = 'none';
+        tabBadge.style.display = 'none';
+    }
+}
+
+async function usenetLoadActivity(filter) {
+    _usenetActivityFilter = filter || null;
+    _usenetActivityOffset = 0;
+    // Sync the select dropdown
+    const sel = document.getElementById('usenet-filter-select');
+    if (sel) sel.value = filter || '';
+    await _usenetFetchActivity();
+}
+
+async function _usenetFetchActivity() {
+    const container = document.getElementById('usenet-activity-container');
+    const pagination = document.getElementById('usenet-activity-pagination');
+    container.innerHTML = '<div style="color:#666;padding:20px 0">Loading activity…</div>';
+    const url = `/debrid_manager/api/usenet/repair/activity?limit=${_usenetActivityLimit}&offset=${_usenetActivityOffset}` +
+        (_usenetActivityFilter ? `&outcome=${_usenetActivityFilter}` : '');
+    try {
+        const r = await fetch(url);
+        const d = await r.json();
+        if (!d.success) return;
+        _usenetActivityTotal = d.total;
+        _usenetRenderActivity(d.rows, container, pagination);
+    } catch(e) { console.error('[Usenet] activity fetch error', e); }
+}
+
+function _usenetRenderActivity(rows, container, pagination) {
+    if (!rows || rows.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-secondary,#666);padding:20px 0">No activity recorded yet.</p>';
+        if (pagination) pagination.style.display = 'none';
+        return;
+    }
+
+    let html = `<table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+            <tr style="border-bottom:2px solid var(--border-color,#333);text-align:left;">
+                <th style="padding:8px 12px;white-space:nowrap;color:var(--text-secondary,#888);font-weight:600;width:155px;">Date / Time</th>
+                <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;">Title</th>
+                <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;">Broken NZB</th>
+                <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;">Replaced With</th>
+                <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:100px;">Outcome</th>
+            </tr>
+        </thead>
+        <tbody>`;
+
+    rows.forEach((r, idx) => {
+        const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
+        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : '#ff4444';
+        const outcomeLabel = r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : (r.outcome || '—');
+        const epSub = r.season_number ? `<br><span style="font-size:11px;color:#888">S${String(r.season_number).padStart(2,'0')}E${String(r.episode_number||0).padStart(2,'0')}</span>` : '';
+        const ts = r.created_at ? new Date(r.created_at + (r.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString() : '—';
+        const brokenTitle = r.broken_nzb_title || r.broken_nzb_id || '—';
+        const replTitle   = r.replacement_title || '—';
+        html += `<tr style="border-bottom:1px solid var(--border-color,#2a2a2a);background:${bg};">
+            <td style="padding:8px 12px;white-space:nowrap;font-family:monospace;font-size:12px;color:var(--text-secondary,#888)">${ts}</td>
+            <td style="padding:8px 12px;font-weight:500">${_esc(r.title || '—')}${epSub}</td>
+            <td style="padding:8px 12px;font-size:12px;color:#888;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(brokenTitle)}">${_esc(brokenTitle.substring(0,60))}</td>
+            <td style="padding:8px 12px;font-size:12px;color:#aaa;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(replTitle)}">${_esc(replTitle.substring(0,60))}</td>
+            <td style="padding:8px 12px"><span style="color:${outcomeColor};font-weight:600;font-size:12px">${outcomeLabel}</span></td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+
+    // Pagination
+    const totalPages = Math.ceil(_usenetActivityTotal / _usenetActivityLimit);
+    const currentPage = Math.floor(_usenetActivityOffset / _usenetActivityLimit) + 1;
+    if (pagination) {
+        if (totalPages > 1) {
+            pagination.style.display = 'flex';
+            document.getElementById('usenet-activity-info').textContent =
+                `Page ${currentPage} of ${totalPages} (${_usenetActivityTotal} events)`;
+            document.getElementById('usenet-prev-btn').disabled = _usenetActivityOffset === 0;
+            document.getElementById('usenet-next-btn').disabled = _usenetActivityOffset + _usenetActivityLimit >= _usenetActivityTotal;
+        } else {
+            pagination.style.display = 'none';
+        }
+    }
+}
+
+function usenetActivityPage(dir) {
+    _usenetActivityOffset = Math.max(0, _usenetActivityOffset + dir * _usenetActivityLimit);
+    _usenetFetchActivity();
+}
+
+async function usenetSaveVersion(version) {
+    try {
+        await fetch('/debrid_manager/api/usenet/repair/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({repair_version: version || ''}),
+        });
+    } catch(e) { console.error('[Usenet] save version error', e); }
+}
+
+async function usenetTriggerScan() {
+    const btn = document.getElementById('usenet-scan-btn');
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = 'Triggering…';
+    try {
+        const r = await fetch('/debrid_manager/api/usenet/repair/health_scan', {method:'POST'});
+        const d = await r.json();
+        btn.textContent = d.success ? '✓ Scan triggered' : '✗ Failed';
+        setTimeout(() => { btn.disabled = false; btn.innerHTML = orig; }, 3000);
+    } catch(e) { btn.disabled = false; btn.innerHTML = orig; }
+}
+
+async function usenetViewBroken() {
+    const list = document.getElementById('usenet-broken-list');
+    if (list.style.display !== 'none') { list.style.display = 'none'; return; }
+    try {
+        const r = await fetch('/debrid_manager/api/usenet/repair/broken');
+        const d = await r.json();
+        const tbody = document.getElementById('usenet-broken-tbody');
+        if (!d.success || !d.items || d.items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="2" style="text-align:center;color:#666;padding:20px 12px">No broken items</td></tr>';
+        } else {
+            tbody.innerHTML = d.items.map((i, idx) => {
+                const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
+                const name = _esc(i.entry_name || i.name || i.title || '—');
+                const broken = i.broken_count || i.broken_files || '?';
+                return `<tr style="border-bottom:1px solid var(--border-color,#2a2a2a);background:${bg}">
+                    <td style="padding:8px 12px;font-weight:500;width:75%">${name}</td>
+                    <td style="padding:8px 12px;color:#ff4444;font-weight:600;width:25%;text-align:right">${broken}</td>
+                </tr>`;
+            }).join('');
+        }
+        list.style.display = 'block';
+    } catch(e) { console.error('[Usenet] view broken error', e); }
+}
+
+async function usenetRunRepair() {
+    const btn = document.getElementById('usenet-fix-btn');
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    const statusEl = document.getElementById('usenet-repair-status-text');
+    const barEl = document.getElementById('usenet-repair-bar');
+    const runningEl = document.getElementById('usenet-repair-running');
+    try {
+        const versionOverride = document.getElementById('usenet-version-select')?.value || null;
+        const r = await fetch('/debrid_manager/api/usenet/repair/run', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({version_override: versionOverride || null}),
+        });
+        const d = await r.json();
+        if (d.success) {
+            runningEl.style.display = 'block';
+            statusEl.textContent = 'Repair running…';
+            barEl.style.width = '15%';
+            _usenetPollRepairProgress();
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = orig;
+            runningEl.style.display = 'block';
+            statusEl.textContent = d.message || 'Already running or could not start';
+            barEl.style.width = '0%';
+        }
+    } catch(e) {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+        console.error('[Usenet] run repair error', e);
+    }
+}
+
+function _usenetPollRepairProgress() {
+    clearTimeout(_usenetRepairPollTimer);
+    _usenetRepairPollTimer = setTimeout(async () => {
+        try {
+            const r = await fetch('/debrid_manager/api/usenet/repair/progress');
+            const d = await r.json();
+            const runningEl = document.getElementById('usenet-repair-running');
+            const fixBtn = document.getElementById('usenet-fix-btn');
+            const statusEl = document.getElementById('usenet-repair-status-text');
+            const barEl = document.getElementById('usenet-repair-bar');
+            if (d.is_running) {
+                barEl.style.width = '60%';
+                _usenetPollRepairProgress();
+            } else if (d.status === 'done' && d.summary) {
+                barEl.style.width = '100%';
+                statusEl.textContent =
+                    `Done — ${d.summary.replaced} replaced, ${d.summary.not_found} not found, ${d.summary.errors} errors`;
+                fixBtn.disabled = false;
+                // Refresh stats without reloading whole tab (avoid flash)
+                fetch('/debrid_manager/api/usenet/repair/stats').then(r => r.json()).then(sd => {
+                    if (sd.success) {
+                        _usenetRenderStats(sd.health || {}, sd.activity || {}, sd.versions || [], sd.repair_version || '');
+                        const c = document.getElementById('usenet-activity-container');
+                        const p = document.getElementById('usenet-activity-pagination');
+                        fetch(`/debrid_manager/api/usenet/repair/activity?limit=${_usenetActivityLimit}&offset=0`)
+                            .then(r => r.json()).then(d => { if (d.success) { _usenetActivityOffset = 0; _usenetActivityTotal = d.total; _usenetRenderActivity(d.rows, c, p); }});
+                    }
+                });
+            } else if (d.status === 'error') {
+                barEl.style.width = '0%';
+                statusEl.textContent = 'Error: ' + (d.error || 'unknown');
+                fixBtn.disabled = false;
+            }
+            // If idle/no status, leave bar visible with last message — no flash
+        } catch(e) { /* ignore */ }
+    }, 3000);
+}
+
+if (_dmActiveTab === 'usenet') loadUsenetTab();
 
 {% if show_plex_trash %}
 // ── PLEX TRASH TAB ─────────────────────────────────────────────────────────

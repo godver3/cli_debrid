@@ -15,6 +15,12 @@ from .models import admin_required
 
 onboarding_bp = Blueprint('onboarding', __name__)
 
+def _media_provider_configured():
+    """Return True if either a debrid provider or usenet provider is configured."""
+    debrid_ok = bool(get_setting('Debrid Provider', 'provider') and get_setting('Debrid Provider', 'api_key'))
+    usenet_ok = bool(get_setting('Usenet Provider', 'enabled') and get_setting('Usenet Provider', 'url'))
+    return debrid_ok or usenet_ok
+
 def get_next_onboarding_step():
     # Load the current configuration
     config = load_config()
@@ -29,15 +35,16 @@ def get_next_onboarding_step():
         ('Plex', 'token'),
         ('Plex', 'shows_libraries'),
         ('Plex', 'movie_libraries'),
-        ('Debrid Provider', 'provider'),
-        ('Debrid Provider', 'api_key'),
         ('Trakt', 'client_id'),
         ('Trakt', 'client_secret')
     ]
-    
+
     for category, key in required_settings:
         if not get_setting(category, key):
             return 2
+
+    if not _media_provider_configured():
+        return 2
     
     # Check if Trakt is authorized
     trakt_status = json.loads(check_trakt_auth_status().get_data(as_text=True))
@@ -130,8 +137,6 @@ def onboarding_step(step):
        
     elif step_num == 2:
         required_settings = [
-            ('Debrid Provider', 'provider'),
-            ('Debrid Provider', 'api_key'),
             ('Trakt', 'client_id'),
             ('Trakt', 'client_secret')
         ]
@@ -207,14 +212,24 @@ def onboarding_step(step):
                             ('Plex', 'movie_libraries')
                         ])
                 
-                # Handle debrid provider selection
-                provider = request.form.get('debrid_provider', 'RealDebrid')
-                api_key = request.form.get('debrid_api_key', '')
-                
-                config['Debrid Provider'] = {
-                    'provider': provider,
-                    'api_key': api_key
-                }
+                # Handle debrid or usenet provider selection
+                provider_type = request.form.get('provider_type', 'debrid')
+                if provider_type == 'usenet':
+                    usenet_url = request.form.get('usenet_url', '').rstrip('/')
+                    usenet_token = request.form.get('usenet_api_token', '')
+                    if 'Usenet Provider' not in config:
+                        config['Usenet Provider'] = {}
+                    config['Usenet Provider']['enabled'] = True
+                    config['Usenet Provider']['url'] = usenet_url
+                    if usenet_token:
+                        config['Usenet Provider']['api_token'] = usenet_token
+                else:
+                    provider = request.form.get('debrid_provider', 'RealDebrid')
+                    api_key = request.form.get('debrid_api_key', '')
+                    config['Debrid Provider'] = {
+                        'provider': provider,
+                        'api_key': api_key
+                    }
                 
                 config['Trakt'] = {
                     'client_id': request.form['trakt_client_id'],
@@ -224,15 +239,15 @@ def onboarding_step(step):
                 save_config(config)
                 
                 # Check if all required settings are now present
-                can_proceed = all(get_setting(category, key) for category, key in required_settings)
-                
+                can_proceed = all(get_setting(category, key) for category, key in required_settings) and _media_provider_configured()
+
                 return jsonify({'success': True, 'can_proceed': can_proceed})
             except Exception as e:
                 return jsonify({'success': False, 'error': str(e)})
         
         # For GET requests, load existing settings if any
         config = load_config()
-        can_proceed = all(get_setting(category, key) for category, key in required_settings)
+        can_proceed = all(get_setting(category, key) for category, key in required_settings) and _media_provider_configured()
         is_windows = platform.system() == 'Windows'  # Proper platform detection
         
         # Get Trakt auth status

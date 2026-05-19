@@ -252,7 +252,29 @@ def add_torrent_to_debrid():
         # NZB / Usenet path — route to Decypharr instead of debrid
         protocol = request.form.get('protocol', '').lower()
         nzb_url = request.form.get('nzb_url', '')
-        if protocol == 'nzb' or (nzb_url and not magnet_link):
+        episode_nzb_urls_raw = request.form.get('episode_nzb_urls', '')
+        fallback_nzb_urls_raw = request.form.get('fallback_nzb_urls', '')
+        if protocol == 'nzb' or (nzb_url and not magnet_link) or episode_nzb_urls_raw:
+            # Virtual season pack — per-episode NZB URLs
+            if episode_nzb_urls_raw:
+                try:
+                    episode_nzb_urls = {int(k): v for k, v in json.loads(episode_nzb_urls_raw).items()}
+                    fallback_nzb_urls = {int(k): v for k, v in json.loads(fallback_nzb_urls_raw).items()} if fallback_nzb_urls_raw else {}
+                except Exception:
+                    episode_nzb_urls = {}
+                    fallback_nzb_urls = {}
+                if episode_nzb_urls:
+                    return _add_nzb_pack_to_usenet(
+                        episode_nzb_urls=episode_nzb_urls,
+                        fallback_nzb_urls=fallback_nzb_urls,
+                        title=title, year=year, media_type=media_type,
+                        season=season_number,
+                        version=final_version_for_item, tmdb_id=tmdb_id,
+                        original_scraped_torrent_title=original_scraped_torrent_title,
+                        genres=genres, current_score=current_score,
+                        selected_folder=selected_folder,
+                        selected_folder_is_custom=selected_folder_is_custom,
+                    )
             return _add_nzb_to_usenet(
                 nzb_url=nzb_url or magnet_link,
                 title=title, year=year, media_type=media_type,
@@ -1600,6 +1622,62 @@ def select_media():
             logging.info(f"select_media: PRE-JSONIFY filtered_out_results_list is NOT a list. Value: {str(filtered_out_results_list)[:500]}")
         # --- END DEBUGGING LOGS ---
 
+        # NZB season aggregate — run per-episode searches, filter+score, prepend virtual packs
+        if multi and season and not episode and media_type in ('tv', 'show'):
+            try:
+                from scraper.newznab import scrape_newznab_season_aggregate
+                from metadata.metadata import get_episode_count_for_seasons
+                from scraper.functions.filter_results import filter_results as _filter_results
+                from scraper.functions.rank_results import rank_result_key as _rank_result_key
+                _all_scrapers = get_setting('Scrapers') or {}
+                _nzb_scrapers = [
+                    (sid, cfg) for sid, cfg in _all_scrapers.items()
+                    if isinstance(cfg, dict) and cfg.get('type') == 'Newznab'
+                    and cfg.get('enabled') and cfg.get('url') and cfg.get('api_key', '').strip()
+                ]
+                if _nzb_scrapers:
+                    _imdb_id = session.get('last_selected_imdb_id') or ''
+                    _ep_count = get_episode_count_for_seasons(_imdb_id, [season]) if _imdb_id else 0
+                    if _ep_count > 0:
+                        _virtual_packs = scrape_newznab_season_aggregate(
+                            scrapers=_nzb_scrapers,
+                            imdb_id=_imdb_id,
+                            title=title,
+                            year=int(year) if year else 0,
+                            season=season,
+                            episode_count=_ep_count,
+                        )
+                        if _virtual_packs:
+                            # Load version settings for filter+score
+                            _scraping_versions = get_setting('Scraping', 'versions', {})
+                            _ver = (version or 'Default').strip('*')
+                            _version_settings = _scraping_versions.get(_ver, {}) or {
+                                'enable_hdr': True, 'max_resolution': '2160p', 'resolution_wanted': '<=',
+                            }
+                            _year_int = int(year) if year else 0
+                            # Filter — title similarity, resolution, filter_in/out
+                            _filtered, _filtered_out = _filter_results(
+                                _virtual_packs, str(media_id), title, _year_int,
+                                'episode', season, None, True, _version_settings,
+                                runtime=0, episode_count=_ep_count,
+                                season_episode_counts={season: _ep_count},
+                                genres=genres,
+                                imdb_id=_imdb_id,
+                            )
+                            # Don't add filtered-out NZB packs to filtered_out_results_list
+                            # — they would appear as hidden "filtered" rows in the UI
+                            if _filtered:
+                                logging.info(f'[select_media] Adding {len(_filtered)} scored NZB virtual packs to results')
+                                # Merge with normal results and sort together by score
+                                _all = passed_results + _filtered
+                                _all.sort(key=lambda x: _rank_result_key(
+                                    x, _all, title, _year_int, season, None,
+                                    True, 'episode', _version_settings,
+                                ))
+                                passed_results = _all
+            except Exception as _agg_err:
+                logging.warning(f'[select_media] NZB season aggregate failed: {_agg_err}', exc_info=True)
+
         # Return the results
         logging.debug(f"[select_media_route] Returning JSON for '{title}': passed_results={len(passed_results)}, filtered_out_results_list={len(filtered_out_results_list if filtered_out_results_list else [])}")
         return jsonify({
@@ -1609,6 +1687,266 @@ def select_media():
     except Exception as e:
         logging.error(f"Error in select_media: {str(e)}", exc_info=True)
         return jsonify({'error': 'An error occurred while processing your request'}), 500
+
+def _submit_single_episode_nzb(client, nzb_url, ep_label):
+    """Fetch + submit one episode NZB.
+    Returns (job_id, nzb_text, missing_segments) where missing_segments=True means
+    Decypharr's server couldn't find the articles (abort pack, don't blacklist)."""
+    from routes.api_tracker import api as _nzb_api
+    from database.not_wanted_magnets import is_nzb_segment_not_wanted
+    nzb_text = None
+    try:
+        r = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
+        if r.status_code != 200 or '<nzb' not in r.text.lower():
+            logging.warning(f'[NZBPack] {ep_label}: bad NZB response (status={r.status_code})')
+            return None, None, False
+        nzb_text = r.text
+        if is_nzb_segment_not_wanted(nzb_text):
+            logging.info(f'[NZBPack] {ep_label}: segment in not-wanted list, skipping')
+            return None, None, False
+        job_id = client.add_nzb_content(nzb_content=nzb_text, title=ep_label)
+        if not job_id and client.last_missing_segments:
+            logging.warning(f'[NZBPack] {ep_label}: Decypharr server missing segments — aborting pack (NZB not blacklisted)')
+            return None, None, True
+        return job_id, nzb_text, False
+    except Exception as e:
+        logging.warning(f'[NZBPack] {ep_label}: submit error: {e}')
+        return None, None, False
+
+
+def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, media_type,
+                             season, version, tmdb_id, original_scraped_torrent_title=None,
+                             genres=None, current_score=0.0,
+                             selected_folder=None, selected_folder_is_custom=False):
+    """Submit a virtual NZB season pack — one NZB per episode with health-check + retry."""
+    from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
+    from database.not_wanted_magnets import add_to_not_wanted_nzb_segment, extract_nzb_segment_id
+    from metadata.metadata import get_metadata, get_release_date
+    from database.database_writing import add_media_item, update_media_item_state, update_media_item
+
+    reset_decypharr_client()
+    client = get_decypharr_client()
+    if not client.is_enabled():
+        return jsonify({'error': 'Usenet provider (Decypharr) is not enabled.'}), 503
+
+    # Resolve metadata once
+    imdb_id = None
+    episode_titles = {}
+    try:
+        meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+        imdb_id = meta.get('imdb_id')
+        # Fallback: resolve imdb_id directly if get_metadata didn't return it
+        if not imdb_id and tmdb_id:
+            try:
+                from metadata.metadata import get_imdb_id_if_missing
+                _api_type = 'show' if media_type in ('tv', 'show') else media_type
+                imdb_id = get_imdb_id_if_missing({'tmdb_id': int(tmdb_id), 'media_type': _api_type})
+            except Exception as _ie:
+                logging.warning(f'[NZBPack] imdb_id fallback failed: {_ie}')
+        # Episode titles via DirectAPI (has full season data)
+        if imdb_id:
+            try:
+                from metadata.metadata import DirectAPI
+                show_meta, _ = DirectAPI.get_show_metadata(imdb_id)
+                season_data = (show_meta.get('seasons') or {}).get(str(season), {}) or \
+                              (show_meta.get('seasons') or {}).get(season, {})
+                episode_titles = {int(k): v.get('title', f'Episode {k}')
+                                 for k, v in (season_data.get('episodes') or {}).items()}
+            except Exception:
+                pass
+    except Exception as _me:
+        logging.warning(f'[NZBPack] Metadata fetch failed: {_me}')
+
+    if not imdb_id:
+        logging.warning(f'[NZBPack] Could not resolve imdb_id for tmdb_id={tmdb_id} — replace cleanup will not fire')
+
+    # Pre-load existing Decypharr NZB names to skip already-submitted episodes
+    _existing_nzb_names = set()
+    try:
+        from routes.api_tracker import api as _dcy_check_api
+        from utilities.settings import get_setting as _gs2
+        _dcy_url2 = _gs2('Usenet Provider', 'url', default='').rstrip('/')
+        _dcy_token2 = _gs2('Usenet Provider', 'api_token', default='')
+        _dh2 = {'Authorization': f'Bearer {_dcy_token2}'} if _dcy_token2 else {}
+        _pg2 = 1
+        while True:
+            _tr2 = _dcy_check_api.get(f'{_dcy_url2}/api/browse/nzbs',
+                                       params={'page': _pg2, 'limit': 100},
+                                       headers=_dh2, timeout=10)
+            if _tr2.status_code != 200:
+                break
+            _td2 = _tr2.json()
+            _entries2 = _td2.get('entries', _td2) if isinstance(_td2, dict) else _td2
+            if not _entries2:
+                break
+            for _n2 in _entries2:
+                _name2 = _n2.get('name') or _n2.get('title') or _n2.get('filename') or ''
+                if _name2:
+                    _existing_nzb_names.add(_name2.strip())
+            _total2 = _td2.get('total_pages', 1) if isinstance(_td2, dict) else 1
+            if _pg2 >= _total2:
+                break
+            _pg2 += 1
+        logging.info(f'[NZBPack] Loaded {len(_existing_nzb_names)} existing Decypharr NZBs for dedup check')
+    except Exception as _de2:
+        logging.warning(f'[NZBPack] Could not load existing Decypharr NZBs: {_de2}')
+
+    # Pre-load already-collected episodes to avoid duplicates
+    # Exclude episodes marked manual_replace=1 — those are intentional replacements
+    _collected_eps = set()
+    if imdb_id:
+        try:
+            from database import get_db_connection as _get_db
+            _conn = _get_db()
+            _rows = _conn.execute(
+                "SELECT episode_number FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode' AND state IN ('Collected','Upgrading') AND (manual_replace IS NULL OR manual_replace=0)",
+                (imdb_id, season)
+            ).fetchall()
+            _collected_eps = {r[0] for r in _rows}
+            _conn.close()
+            if _collected_eps:
+                logging.info(f'[NZBPack] Skipping already-collected episodes (no replace flag): {sorted(_collected_eps)}')
+        except Exception as _ce:
+            logging.warning(f'[NZBPack] Could not check collected episodes: {_ce}')
+
+    submitted = []
+    failed_eps = []
+    pack_expired = False  # set True when missing segments detected — abort remaining episodes
+
+    for ep_num in sorted(episode_nzb_urls.keys()):
+        if pack_expired:
+            failed_eps.append(ep_num)
+            continue
+
+        if ep_num in _collected_eps:
+            logging.info(f'[NZBPack] Skipping S{season:02d}E{ep_num:02d} — already Collected')
+            continue
+
+        # Strip the virtual pack label from the title so Decypharr gets a clean name
+        import re as _re_label
+        _clean_title = _re_label.sub(r'\s*\[NZB Pack[^\]]*\]', '', original_scraped_torrent_title or title).strip()
+        # Also replace S01 with S01E01 style — remove any existing season-only marker first
+        _clean_title = _re_label.sub(r'\.S\d{2}\.', '.', _clean_title).strip(' .')
+        ep_label = f'{_clean_title}.S{season:02d}E{ep_num:02d}'
+        primary_url = episode_nzb_urls[ep_num]
+        fallbacks = fallback_nzb_urls.get(ep_num, [])
+
+        job_id = None
+        nzb_text = None
+
+        # Try primary then fallbacks
+        for url in [primary_url] + fallbacks:
+            if not url:
+                continue
+            job_id, nzb_text, expired = _submit_single_episode_nzb(client, url, ep_label)
+            if expired:
+                # Missing segments on this URL — no point trying more fallbacks from same release
+                pack_expired = True
+                break
+            if not job_id:
+                continue
+
+            # Health check
+            try:
+                health = client.check_entry_health(ep_label)
+                if health == 'broken':
+                    logging.warning(f'[NZBPack] {ep_label}: broken — removing and trying next')
+                    # Add to not-wanted
+                    try:
+                        seg = extract_nzb_segment_id(nzb_text)
+                        if seg:
+                            add_to_not_wanted_nzb_segment(seg)
+                    except Exception:
+                        pass
+                    # Delete from Decypharr
+                    try:
+                        from routes.api_tracker import api as _del_api
+                        from utilities.settings import get_setting as _gs
+                        _dcy_url = _gs('Usenet Provider', 'url', default='').rstrip('/')
+                        _dcy_token = _gs('Usenet Provider', 'api_token', default='')
+                        _dh = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
+                        _pg = 1
+                        _real_hash = None
+                        while not _real_hash:
+                            _tr = _del_api.get(f'{_dcy_url}/api/torrents',
+                                               params={'page': _pg, 'limit': 50},
+                                               headers=_dh, timeout=10)
+                            if _tr.status_code != 200:
+                                break
+                            _td = _tr.json()
+                            for _t in _td.get('torrents', []):
+                                if _t.get('name', '').strip() == ep_label:
+                                    _real_hash = _t.get('info_hash', '')
+                                    break
+                            if _real_hash or not _td.get('has_next'):
+                                break
+                            _pg += 1
+                        if _real_hash:
+                            _del_api.delete(f'{_dcy_url}/api/torrents',
+                                            headers=_dh, params={'hashes': _real_hash}, timeout=10)
+                    except Exception as _de:
+                        logging.warning(f'[NZBPack] Could not delete broken entry: {_de}')
+                    job_id = None
+                    nzb_text = None
+                    continue  # try next fallback
+                else:
+                    logging.info(f'[NZBPack] {ep_label}: health={health or "inconclusive"} — keeping')
+            except Exception as _he:
+                logging.debug(f'[NZBPack] {ep_label}: health check error: {_he} — keeping')
+
+            break  # submitted and passed (or inconclusive)
+
+        if job_id:
+            submitted.append((ep_num, job_id))
+            # Create queue item for this episode
+            try:
+                checking_id = f"nzb:{job_id}" if not str(job_id).startswith('nzb:') else str(job_id)
+                # ep_label is what was submitted to Decypharr — adding_queue uses
+                # filled_by_file to look up the entry, so it must match exactly
+                ep_item = {
+                    'title': title, 'year': year, 'type': 'episode',
+                    'version': version, 'tmdb_id': tmdb_id, 'imdb_id': imdb_id,
+                    'season_number': season, 'episode_number': ep_num,
+                    'episode_title': episode_titles.get(ep_num, f'Episode {ep_num}'),
+                    'release_date': 'Unknown',
+                    'genres': json.dumps(genres or []),
+                    'current_score': current_score,
+                    'original_scraped_torrent_title': ep_label,
+                    'content_source': 'content_requester',
+                    'selected_folder': selected_folder,
+                    'selected_folder_is_custom': selected_folder_is_custom,
+                }
+                item_id = add_media_item(ep_item)
+                if item_id:
+                    update_media_item_state(item_id, 'Adding')
+                    update_media_item(item_id,
+                        filled_by_torrent_id=checking_id,
+                        filled_by_file=ep_label,
+                        original_scraped_torrent_title=ep_label,
+                    )
+            except Exception as _qe:
+                logging.warning(f'[NZBPack] Queue tracking failed for {ep_label}: {_qe}')
+        else:
+            failed_eps.append(ep_num)
+            logging.warning(f'[NZBPack] {ep_label}: all URLs exhausted — episode will need normal queue fill')
+
+    ep_total = len(episode_nzb_urls)
+    if pack_expired:
+        msg = f'Pack aborted — missing segments detected (Usenet retention exceeded). {len(submitted)}/{ep_total} episodes submitted before abort.'
+    else:
+        msg = f'{len(submitted)}/{ep_total} episodes submitted to Decypharr.'
+    if failed_eps and not pack_expired:
+        msg += f' Episodes {failed_eps} not found — will be filled by normal queue.'
+
+    logging.info(f'[NZBPack] {title} S{season:02d}: {msg}')
+    return jsonify({
+        'success': True,
+        'message': msg,
+        'submitted': len(submitted),
+        'failed_episodes': failed_eps,
+        'provider': 'Decypharr',
+    })
+
 
 def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, version, tmdb_id,
                        original_scraped_torrent_title=None, genres=None, current_score=0.0,
@@ -1625,21 +1963,31 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
     if not nzb_url:
         return jsonify({'error': 'No NZB URL provided'}), 400
 
-    logging.info(f'[NZB] Submitting to Decypharr: {title} ({year})')
-    job_id = client.add_nzb(nzb_url=nzb_url, title=str(original_scraped_torrent_title or title or ''))
+    # Pre-fetch NZB XML to check not-wanted list before submitting
+    from routes.api_tracker import api as _nzb_api
+    from database.not_wanted_magnets import is_nzb_segment_not_wanted as _is_not_wanted
+    _nzb_xml = None
+    try:
+        _nr = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
+        if _nr.status_code == 200 and '<nzb' in _nr.text.lower():
+            _nzb_xml = _nr.text
+    except Exception:
+        pass
 
-    if not job_id:
-        # Fallback: download NZB content and upload directly
-        logging.info(f'[NZB] URL submission failed, trying direct upload for: {title}')
-        try:
-            from routes.api_tracker import api as _nzb_api
-            _r = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
-            if _r.status_code == 200 and '<nzb' in _r.text.lower():
-                job_id = client.add_nzb_content(nzb_content=_r.text, title=str(original_scraped_torrent_title or title or ''))
-                if job_id:
-                    logging.info(f'[NZB] Direct upload succeeded for: {title}')
-        except Exception as _fe:
-            logging.warning(f'[NZB] Direct upload fallback failed: {_fe}')
+    if _nzb_xml and _is_not_wanted(_nzb_xml):
+        logging.info(f'[NZB] Skipping {title!r} — segment ID in not-wanted list (previously broken)')
+        return jsonify({'error': f'This NZB is known broken and has been blacklisted: {title}'}), 400
+
+    logging.info(f'[NZB] Submitting to Decypharr: {title} ({year})')
+    # Submit — use pre-fetched content directly if available to avoid double-fetch
+    if _nzb_xml:
+        job_id = client.add_nzb_content(nzb_content=_nzb_xml, title=str(original_scraped_torrent_title or title or ''))
+        if not job_id and client.last_missing_segments:
+            logging.warning(f'[NZB] Decypharr server missing segments for {title!r}')
+        elif job_id:
+            logging.info(f'[NZB] Submitted via content upload: {title}')
+    else:
+        job_id = client.add_nzb(nzb_url=nzb_url, title=str(original_scraped_torrent_title or title or ''))
 
     if not job_id:
         return jsonify({'error': 'Failed to submit NZB to Decypharr'}), 500
@@ -1688,6 +2036,18 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
         queue_manager = QueueManager()
 
         from database.database_reading import get_media_item_by_id
+        from database.database_writing import update_media_item_state, update_media_item
+
+        def _place_nzb_in_adding(item_id_to_place):
+            """Put a freshly-created item into Adding state with NZB fields set for health-check polling."""
+            update_media_item_state(item_id_to_place, 'Adding')
+            update_media_item(item_id_to_place,
+                filled_by_torrent_id=checking_id,
+                filled_by_file=nzb_title,
+                original_scraped_torrent_title=nzb_title,
+            )
+            logging.info(f'[NZB] Item {item_id_to_place} placed in Adding queue for health check (checking_id={checking_id})')
+
         if item_type == 'episode' and season is not None and episode is None:
             # Season pack — create items per episode
             try:
@@ -1700,12 +2060,7 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
                                     'episode_title': ep_data.get('title', f'Episode {ep_num_str}')})
                     item_id = add_media_item(ep_item)
                     if item_id:
-                        added = dict(get_media_item_by_id(item_id))
-                        if added:
-                            queue_manager.move_to_checking(added, 'Adding', title=nzb_title,
-                                                           link=nzb_url, filled_by_file=nzb_title,
-                                                           torrent_id=checking_id,
-                                                           original_scraped_torrent_title=nzb_title)
+                        _place_nzb_in_adding(item_id)
             except Exception as _spe:
                 logging.warning(f'[NZB] Season pack queue tracking failed: {_spe}')
         else:
@@ -1713,13 +2068,7 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
                 base_item.update({'season_number': season, 'episode_number': episode})
             item_id = add_media_item(base_item)
             if item_id:
-                added = dict(get_media_item_by_id(item_id))
-                if added:
-                    queue_manager.move_to_checking(added, 'Adding', title=nzb_title,
-                                                   link=nzb_url, filled_by_file=nzb_title,
-                                                   torrent_id=checking_id,
-                                                   original_scraped_torrent_title=nzb_title)
-                    logging.info(f'[NZB] Item {item_id} moved to Checking queue (checking_id={checking_id})')
+                _place_nzb_in_adding(item_id)
     except Exception as _qe:
         logging.error(f'[NZB] Queue tracking failed for {title}: {_qe}', exc_info=True)
         # Don't fail the response — NZB was submitted successfully to Decypharr
@@ -2802,6 +3151,57 @@ def get_symlink_folders():
         return jsonify({'error': str(e), 'enabled': False}), 500
 
 
+@scraper_bp.route('/get_nzb_files', methods=['POST'])
+@user_required
+@scraper_permission_required
+def get_nzb_files():
+    """Fetch an NZB URL and return its file list parsed from the XML."""
+    try:
+        import xml.etree.ElementTree as ET
+        from routes.api_tracker import api as _nzb_api
+
+        data = request.json or {}
+        nzb_url = data.get('nzb_url', '')
+        if not nzb_url:
+            return jsonify({'success': False, 'error': 'No NZB URL provided'}), 400
+
+        r = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
+        if r.status_code != 200 or '<nzb' not in r.text.lower():
+            return jsonify({'success': False, 'error': f'Failed to fetch NZB (status {r.status_code})'}), 400
+
+        root = ET.fromstring(r.text)
+        ns = {'nzb': 'http://www.newzbin.com/DTD/2003/nzb'}
+
+        # Try with and without namespace
+        files_el = root.findall('.//file') or root.findall('.//nzb:file', ns)
+
+        files = []
+        for f in files_el:
+            subject = f.get('subject', '')
+            # Extract filename from subject (yEnc format: "filename (part/total)")
+            import re as _re
+            m = _re.search(r'"([^"]+)"', subject)
+            name = m.group(1) if m else subject[:80]
+            # Skip par2 files
+            if name.lower().endswith('.par2') or '.par2.' in name.lower():
+                continue
+            # Sum segment sizes
+            size_bytes = sum(int(seg.get('bytes', 0)) for seg in f.findall('.//segment') or f.findall('.//nzb:segment', ns))
+            size_gb = size_bytes / (1024 ** 3)
+            if size_gb >= 0.1:
+                size_fmt = f'{size_gb:.2f} GB'
+            else:
+                size_fmt = f'{size_bytes / (1024 ** 2):.1f} MB'
+            files.append({'name': name, 'path': name, 'size': size_bytes, 'size_formatted': size_fmt})
+
+        files.sort(key=lambda x: x['name'])
+        return jsonify({'success': True, 'files': files, 'total_files': len(files),
+                        'metadata': {'filename': data.get('title', ''), 'hash': '', 'status': 'nzb'}})
+    except Exception as e:
+        logging.error(f'get_nzb_files error: {e}', exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @scraper_bp.route('/get_torrent_files', methods=['POST'])
 @user_required
 @scraper_permission_required
@@ -2895,7 +3295,6 @@ def get_torrent_files():
         # Method 2: Add torrent temporarily to get file list (fallback)
         if not files_list:
             logging.info(f"Adding torrent temporarily to retrieve file list...")
-            torrent_id = None
             try:
                 # Resolve HTTP URLs to actual magnet links (for Jackett, etc.)
                 from debrid.common.torrent import resolve_to_magnet
@@ -2909,28 +3308,34 @@ def get_torrent_files():
                     else:
                         raise Exception("Failed to resolve HTTP URL to magnet link")
 
-                # Add magnet to debrid provider
-                torrent_id = debrid_provider.add_torrent(actual_magnet)
-
-                if not torrent_id:
-                    raise Exception("Failed to add torrent - no ID returned")
-
-                logging.debug(f"Torrent added with ID: {torrent_id}")
-
-                # Wait a moment for provider to process
-                time.sleep(1)
-
-                # Get torrent info
-                if hasattr(debrid_provider, 'get_torrent_info'):
-                    torrent_info_temp = debrid_provider.get_torrent_info(torrent_id)
-
-                    if torrent_info_temp:
-                        files_list = torrent_info_temp.get('files', [])
-                        torrent_info = torrent_info_temp  # Store for metadata
+                # Use get_torrent_file_list if available — it handles polling for slow providers
+                if hasattr(debrid_provider, 'get_torrent_file_list'):
+                    result = debrid_provider.get_torrent_file_list(actual_magnet)
+                    if result:
+                        files_list, _fname, _tid = result
                         method = 'temporary_add'
-                        logging.info(f"Retrieved {len(files_list)} files from temporarily added torrent")
-                    else:
-                        logging.warning(f"No torrent info returned for ID: {torrent_id}")
+                        logging.info(f"Retrieved {len(files_list)} files via get_torrent_file_list")
+                else:
+                    # Fallback: raw add + poll
+                    torrent_id = None
+                    try:
+                        torrent_id = debrid_provider.add_torrent(actual_magnet)
+                        if not torrent_id:
+                            raise Exception("Failed to add torrent - no ID returned")
+                        time.sleep(3)
+                        if hasattr(debrid_provider, 'get_torrent_info'):
+                            torrent_info_temp = debrid_provider.get_torrent_info(torrent_id)
+                            if torrent_info_temp:
+                                files_list = torrent_info_temp.get('files', [])
+                                torrent_info = torrent_info_temp
+                                method = 'temporary_add'
+                                logging.info(f"Retrieved {len(files_list)} files from temporarily added torrent")
+                    finally:
+                        if torrent_id and hasattr(debrid_provider, 'remove_torrent'):
+                            try:
+                                debrid_provider.remove_torrent(torrent_id, "Temporary file list retrieval")
+                            except Exception:
+                                pass
 
             except Exception as e:
                 logging.error(f"Error adding torrent temporarily: {e}")
@@ -2938,16 +3343,6 @@ def get_torrent_files():
                     'success': False,
                     'error': f'Could not retrieve file list: {str(e)}'
                 }), 500
-            finally:
-                # Clean up: remove temporarily added torrent
-                if torrent_id:
-                    try:
-                        if hasattr(debrid_provider, 'remove_torrent'):
-                            logging.info(f"Removing temporary torrent {torrent_id} after file list retrieval")
-                            debrid_provider.remove_torrent(torrent_id, "Temporary file list retrieval")
-                            logging.info(f"Successfully cleaned up temporary torrent {torrent_id}")
-                    except Exception as cleanup_error:
-                        logging.warning(f"Could not remove temporary torrent {torrent_id}: {cleanup_error}")
 
         # Process and format file list
         if not files_list:

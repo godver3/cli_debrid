@@ -309,8 +309,11 @@ class ProgramRunner:
             'task_backup_database': 24 * 60 * 60, # Run every 24 hours (daily backup)
             'task_backup_debrid': 24 * 60 * 60, # Run every 24 hours (disabled by default)
             'task_cleanup_debrid': 24 * 60 * 60, # Run every 24 hours (disabled by default)
+            'task_backfill_nzb_torrent_ids': 24 * 60 * 60, # Run once (disabled by default)
+            'task_repair_broken_nzbs': 6 * 60 * 60, # Run every 6 hours (disabled by default)
             # --- END EDIT ---
             'task_process_standalone_plex_removals': 60 * 60, # Run every hour
+            'task_fix_stuck_plex_items': 5 * 60, # Run every 5 minutes
             # --- START EDIT: Add media analysis task interval ---
             'task_analyze_media_files': 1 * 60 * 60, # Once an hour
             # --- END EDIT ---
@@ -3134,6 +3137,13 @@ class ProgramRunner:
             else:
                 logging.warning("[DATABASE_BACKUP] Scheduled database backup failed")
 
+            # Also back up Decypharr databases if data_path is configured
+            try:
+                from main import backup_decypharr_databases
+                backup_decypharr_databases()
+            except Exception as _dcy_err:
+                logging.warning(f"[DATABASE_BACKUP] Decypharr backup skipped: {_dcy_err}")
+
         except Exception as e:
             logging.error(f"[DATABASE_BACKUP] Error in scheduled backup task: {e}", exc_info=True)
 
@@ -3171,6 +3181,93 @@ class ProgramRunner:
                 logging.warning(f"[DEBRID_CLEANUP] Failed: {result.get('message', 'unknown')}")
         except Exception as e:
             logging.error(f'[DEBRID_CLEANUP] Scheduled task error: {e}', exc_info=True)
+
+    def task_backfill_nzb_torrent_ids(self):
+        """Backfill filled_by_torrent_id for collected items on Decypharr mount that have no torrent ID.
+        Matches location_on_disk folder name against Decypharr /api/torrents entries."""
+        try:
+            import re
+            import requests as _req
+            from utilities.settings import get_setting
+            from database.database_reading import get_all_media_items
+            from database.database_writing import update_media_item
+
+            dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
+            dcy_token = get_setting('Usenet Provider', 'api_token', default='')
+            if not dcy_url:
+                logging.warning('[NZBBackfill] Usenet Provider URL not configured, skipping.')
+                return
+            headers = {'Authorization': f'Bearer {dcy_token}'} if dcy_token else {}
+
+            # Fetch all Decypharr entries (paginated), build name→info_hash map
+            logging.info('[NZBBackfill] Fetching Decypharr entries...')
+            name_to_hash = {}
+            page = 1
+            while True:
+                r = _req.get(f'{dcy_url}/api/torrents',
+                             params={'page': page, 'limit': 100, 'sort_by': 'added_on', 'sort_order': 'desc'},
+                             headers=headers, timeout=15)
+                if r.status_code != 200:
+                    logging.warning(f'[NZBBackfill] Decypharr API error: HTTP {r.status_code}')
+                    break
+                data = r.json()
+                for t in data.get('torrents', []):
+                    name = (t.get('name') or '').strip()
+                    info_hash = (t.get('info_hash') or '').strip()
+                    if name and info_hash:
+                        name_to_hash[name] = info_hash
+                if not data.get('has_next'):
+                    break
+                page += 1
+
+            logging.info(f'[NZBBackfill] Loaded {len(name_to_hash)} Decypharr entries.')
+
+            # Find collected items on /debrid mount with no torrent ID
+            items = [dict(i) for i in get_all_media_items(state='Collected')
+                     if not (i.get('filled_by_torrent_id') or '')
+                     and (i.get('location_on_disk') or '').startswith('/debrid/')]
+
+            logging.info(f'[NZBBackfill] Found {len(items)} collected items to backfill.')
+
+            matched = skipped = 0
+            for item in items:
+                loc = item.get('location_on_disk', '')
+                # Extract folder name: /debrid/shows/FolderName/file.mkv → FolderName
+                parts = loc.split('/')
+                # parts: ['', 'debrid', 'shows'|'movies', 'FolderName', ...]
+                if len(parts) < 4:
+                    skipped += 1
+                    continue
+                folder_name = parts[3]
+                if not folder_name:
+                    skipped += 1
+                    continue
+
+                info_hash = name_to_hash.get(folder_name)
+                if info_hash:
+                    update_media_item(item['id'], filled_by_torrent_id=f'nzb:{info_hash}')
+                    matched += 1
+                else:
+                    skipped += 1
+
+            logging.info(f'[NZBBackfill] Complete: {matched} matched, {skipped} unmatched/skipped.')
+
+        except Exception as e:
+            logging.error(f'[NZBBackfill] Task error: {e}', exc_info=True)
+
+    def task_repair_broken_nzbs(self, triggered_by: str = 'scheduled'):
+        """Scan Decypharr for broken NZBs and attempt to repair them via re-scrape."""
+        logging.info('[NZBRepair] Starting broken NZB repair task')
+        try:
+            from usenet.repair_engine import run_repair
+            summary = run_repair(triggered_by=triggered_by)
+            logging.info(
+                f'[NZBRepair] Task complete — broken={summary["broken_found"]}, '
+                f'matched={summary["matched"]}, replaced={summary["replaced"]}, '
+                f'not_found={summary["not_found"]}, errors={summary["errors"]}'
+            )
+        except Exception as e:
+            logging.error(f'[NZBRepair] Task error: {e}', exc_info=True)
 
     def _is_system_idle_for_backup(self):
         """
@@ -5170,6 +5267,157 @@ class ProgramRunner:
         """Run library maintenance tasks."""
         from database.maintenance import run_library_maintenance
         run_library_maintenance()
+
+    def task_fix_stuck_plex_items(self):
+        """Detect and remove stuck Plex scan items, optionally also removing from Decypharr."""
+        import re
+        import os
+        import xml.etree.ElementTree as ET
+        import requests as _req
+        from utilities.settings import get_setting
+
+        plex_url = get_setting('Plex', 'url', default='').rstrip('/')
+        plex_token = get_setting('Plex', 'token', default='')
+        plex_data_path = get_setting('Overlay Settings', 'plex_data_path', default='').strip().rstrip('/')
+
+        if not plex_url or not plex_token:
+            logging.warning("[StuckPlex] Plex URL or token not configured, skipping.")
+            return
+        if not plex_data_path:
+            from database.core import add_db_notification
+            add_db_notification(
+                'Fix Stuck Plex Items',
+                'Plex data path is not configured. Please set it in Settings → Additional Settings → Overlay Settings → Plex Data Path for this task to work.',
+                'warning',
+                link='/settings'
+            )
+            logging.warning("[StuckPlex] plex_data_path not configured.")
+            return
+
+        log_path = os.path.join(plex_data_path, 'Logs', 'Plex Media Server.log')
+        if not os.path.exists(log_path):
+            logging.warning(f"[StuckPlex] Plex log not found at {log_path}")
+            return
+
+        # Read last 2000 lines
+        try:
+            with open(log_path, 'r', errors='replace') as f:
+                lines = f.readlines()
+            tail = lines[-2000:] if len(lines) > 2000 else lines
+        except Exception as e:
+            logging.error(f"[StuckPlex] Failed to read Plex log: {e}")
+            return
+
+        tail_text = ''.join(tail)
+
+        # Count JobRunner item hits
+        counts = {}
+        for m in re.finditer(r'JobRunner.*?item (\d+)', tail_text):
+            item_id = m.group(1)
+            counts[item_id] = counts.get(item_id, 0) + 1
+
+        stuck = [item_id for item_id, cnt in counts.items() if cnt >= 4]
+        if not stuck:
+            logging.info("[StuckPlex] No stuck items found.")
+            return
+
+        logging.info(f"[StuckPlex] Found {len(stuck)} stuck item(s): {stuck}")
+
+        # Decypharr config
+        from utilities.settings import get_setting as _gs
+        decypharr_url = _gs('Usenet Provider', 'url', default='').rstrip('/')
+        decypharr_token = _gs('Usenet Provider', 'api_token', default='')
+        decypharr_enabled = _gs('Usenet Provider', 'enabled', default=False)
+
+        def decypharr_headers():
+            h = {}
+            if decypharr_token:
+                h['Authorization'] = f'Bearer {decypharr_token}'
+            return h
+
+        def delete_from_decypharr(name):
+            if not decypharr_enabled or not decypharr_url:
+                return False
+            try:
+                # Search by name
+                r = _req.get(f'{decypharr_url}/api/browse/torrents',
+                             params={'search': name[:50]},
+                             headers=decypharr_headers(), timeout=10)
+                if r.status_code != 200:
+                    return False
+                entries = r.json().get('entries', [])
+                if not entries:
+                    return False
+                info_hash = entries[0].get('info_hash', '')
+                if not info_hash:
+                    return False
+                d = _req.delete(f'{decypharr_url}/api/browse/torrents/{info_hash}',
+                                headers=decypharr_headers(), timeout=10)
+                if d.status_code == 200:
+                    logging.info(f"[StuckPlex] Deleted from Decypharr: {name} ({info_hash})")
+                    return True
+            except Exception as e:
+                logging.warning(f"[StuckPlex] Decypharr delete failed for {name}: {e}")
+            return False
+
+        for item_id in stuck:
+            try:
+                r = _req.get(f'{plex_url}/library/metadata/{item_id}',
+                             params={'X-Plex-Token': plex_token}, timeout=10)
+                if r.status_code != 200:
+                    logging.warning(f"[StuckPlex] Could not fetch metadata for item {item_id}: HTTP {r.status_code}")
+                    continue
+
+                tree = ET.fromstring(r.text)
+                item_el = None
+                for tag in ('Video', 'Directory'):
+                    found = tree.find(f'.//{tag}')
+                    if found is not None:
+                        item_el = found
+                        break
+                if item_el is None:
+                    continue
+
+                item_type = item_el.get('type', '')
+                title = item_el.get('title', f'item_{item_id}')
+                grandparent = item_el.get('grandparentTitle', '')
+                display = f"{grandparent} - {title}" if grandparent else title
+
+                parts = [p.get('file', '') for m in item_el.iter('Media') for p in m.iter('Part')]
+
+                # Bad file rules (no file extension rule per spec)
+                has_m2ts = any(p.lower().endswith('.m2ts') for p in parts)
+                is_movie_multi_part = (item_type == 'movie' and len(parts) > 2)
+                dead_item = f'item {item_id}' in tail_text and 'dead item count' in tail_text
+
+                bad_file = has_m2ts or is_movie_multi_part or dead_item
+
+                reason = []
+                if has_m2ts:
+                    reason.append('.m2ts file')
+                if is_movie_multi_part:
+                    reason.append(f'movie with {len(parts)} parts')
+                if dead_item:
+                    reason.append('dead item count in log')
+
+                logging.info(f"[StuckPlex] Stuck: {display} (id={item_id}, type={item_type}, "
+                             f"parts={len(parts)}, bad={bad_file}, reasons={reason})")
+
+                if bad_file:
+                    # Determine a search name for Decypharr from the file path
+                    search_name = grandparent or title
+                    delete_from_decypharr(search_name)
+
+                # Always delete from Plex
+                dr = _req.delete(f'{plex_url}/library/metadata/{item_id}',
+                                 params={'X-Plex-Token': plex_token}, timeout=10)
+                if dr.status_code == 200:
+                    logging.info(f"[StuckPlex] Deleted from Plex: {display} (id={item_id})")
+                else:
+                    logging.warning(f"[StuckPlex] Plex delete failed for {display}: HTTP {dr.status_code}")
+
+            except Exception as e:
+                logging.error(f"[StuckPlex] Error processing item {item_id}: {e}", exc_info=True)
 
     def task_process_standalone_plex_removals(self):
         """

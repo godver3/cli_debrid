@@ -375,6 +375,11 @@
         if (['Wanted', 'Scraping', 'Adding', 'Pre_release', 'Checking'].includes(queueName) && item.content_source && item.content_source !== 'Unknown') {
             itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${item.content_source_display || item.content_source}</span>`;
         }
+        // Add Provider for Adding queue
+        if (queueName === 'Adding' && item.provider_display) {
+            const providerLabel = (item.filled_by_torrent_id && item.filled_by_torrent_id.startsWith('nzb:')) ? 'Indexer:' : 'Provider:';
+            itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">${providerLabel}</span> ${item.provider_display}</span>`;
+        }
 
         itemContent += processingIndicator;
         itemContent += `</div>`;
@@ -473,6 +478,11 @@
         // Add Content Source inline for Checking queue items
         if (item.content_source && item.content_source !== 'Unknown') {
             itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">Content Source:</span> ${item.content_source_display || item.content_source}</span>`;
+        }
+        // Add Provider for Checking queue
+        if (item.provider_display) {
+            const providerLabel = (item.filled_by_torrent_id && item.filled_by_torrent_id.startsWith('nzb:')) ? 'Indexer:' : 'Provider:';
+            itemContent += `<span class="item-separator"> - </span><span class="item-source" style="font-size: smaller; font-style: italic;"><span class="item-label">${providerLabel}</span> ${item.provider_display}</span>`;
         }
 
         // Time in queue

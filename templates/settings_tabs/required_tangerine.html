@@ -73,7 +73,7 @@
         <div id="fallback-providers-list">
             {% set fallbacks = settings.get('Debrid Provider', {}).get('fallback_providers', []) %}
             {% for fb in fallbacks %}
-            <div class="fallback-provider-row settings-form-group" style="display: flex;flex-direction: column;gap: 8px;align-items: flex-start;margin-bottom: 8px;">
+            <div class="fallback-provider-row settings-form-group" style="display: flex;flex-direction: column;gap: 8px;align-items: baseline;margin-bottom: 8px;">
                 <select class="settings-input fallback-provider-name" style="flex:0 0 150px">
                     {% for choice in ['RealDebrid','AllDebrid','Premiumize','Torbox','DebridLink'] %}
                     <option value="{{ choice }}" {% if fb.provider == choice %}selected{% endif %}>{{ choice }}</option>
@@ -100,7 +100,7 @@
     function buildRow(name, key) {
         const row = document.createElement('div');
         row.className = 'fallback-provider-row settings-form-group';
-        row.style.cssText = 'display:flex;flex-direction:row;gap:8px;align-items:center;margin-bottom:8px';
+        row.style.cssText = 'display:flex;flex-direction:column;gap:8px;align-items:baseline;margin-bottom:8px';
         const sel = document.createElement('select');
         sel.className = 'settings-input fallback-provider-name';
         sel.style.cssText = 'flex:0 0 150px';
@@ -208,6 +208,14 @@
                    class="settings-input" data-section="Usenet Provider" data-key="download_folder"
                    placeholder="Leave empty for Decypharr default">
             <p class="settings-description">Category/folder in Decypharr for downloads. Leave empty to use Decypharr's default download folder.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="usenet_provider-data_path" class="settings-title">Decypharr Data Path:</label>
+            <input type="text" id="usenet_provider-data_path" name="Usenet Provider.data_path"
+                   value="{{ settings.get('Usenet Provider', {}).get('data_path', '/decypharr_data') }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="data_path"
+                   placeholder="/decypharr_data">
+            <p class="settings-description">Path to Decypharr's data directory inside the container. Add <code>- /path/to/decypharr/appdata:/decypharr_data</code> to your docker-compose volumes, then set this to <code>/decypharr_data</code>. Required for Decypharr DB backup, restore, and cleanup tools.</p>
         </div>
     </div>
 </div>

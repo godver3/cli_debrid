@@ -1237,6 +1237,8 @@ function tngDisplayName(taskName, info) {
     let n = taskName;
     if (n === 'task_check_plex_files')          return 'Check Local Files for Plex Update';
     if (n === 'task_refresh_library_size_cache') return 'Refresh Debrid Library Size';
+    if (n === 'task_repair_broken_nzbs')         return 'Repair Broken NZBs';
+    if (n === 'task_backfill_nzb_torrent_ids')   return 'Backfill NZB Torrent IDs';
     if (n === 'final_check_queue' || n === 'Final_check_queue') return 'Final Scrape';
     if (n.endsWith('_wanted')) n = n.replace('task_', '').replace('_wanted', '');
     else                       n = n.replace('task_', '');
