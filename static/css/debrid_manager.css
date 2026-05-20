@@ -1620,6 +1620,34 @@
     white-space: nowrap;
 }
 
+.dm-pt-badge-nzb-url {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(74, 222, 128, 0.15);
+    color: #4ade80;
+    border: 1px solid rgba(74, 222, 128, 0.35);
+    vertical-align: middle;
+    white-space: nowrap;
+    margin-left: 5px;
+}
+
+.dm-pt-badge-nzb-nourl {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(251, 191, 36, 0.15);
+    color: #fbbf24;
+    border: 1px solid rgba(251, 191, 36, 0.35);
+    vertical-align: middle;
+    white-space: nowrap;
+    margin-left: 5px;
+}
+
 .dm-orphaned-badge {
     display: inline-block;
     font-size: 0.65rem;

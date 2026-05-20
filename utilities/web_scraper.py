@@ -833,11 +833,13 @@ def get_media_meta(tmdb_id: str, media_type: str) -> Optional[Tuple[str, str, li
         status_code = getattr(getattr(e, 'response', None), 'status_code', None)
         if status_code == 404:
             logging.warning(f"TMDb details not found (404) for {media_type} {tmdb_id}: {e}")
+        elif status_code == 429:
+            logging.warning(f"TMDb rate limit hit for {media_type} {tmdb_id}")
         else:
-            logging.error(f"Error fetching media meta from TMDb: {e}")
+            logging.warning(f"TMDb HTTP error for {media_type} {tmdb_id}: {e}")
         return None
-    except api.exceptions.RequestException as e:
-        logging.error(f"Error fetching media meta from TMDb: {e}")
+    except (api.exceptions.RequestException, ValueError) as e:
+        logging.warning(f"TMDb request failed for {media_type} {tmdb_id}: {e}")
         return None
     
 def overseerr_tvshow(title: str, year: Optional[int] = None, media_id: Optional[int] = None, season: Optional[int] = None) -> List[Dict[str, Any]]:

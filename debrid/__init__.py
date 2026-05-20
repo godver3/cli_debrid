@@ -50,15 +50,21 @@ def _instantiate_provider(provider_name_raw: str, api_key: Optional[str] = None)
     return p
 
 
-def get_debrid_provider() -> DebridProvider:
-    """Return the primary configured debrid provider (singleton, backward-compatible)."""
+def get_debrid_provider() -> Optional[DebridProvider]:
+    """Return the primary configured debrid provider (singleton, backward-compatible).
+    Returns None if no debrid provider is configured (usenet-only setup)."""
     global _provider_instance
     if _provider_instance is not None:
         return _provider_instance
     ensure_settings_file()
     provider_name_raw = get_setting("Debrid Provider", "provider", "")
-    _provider_instance = _instantiate_provider(provider_name_raw)
-    return _provider_instance
+    if not provider_name_raw or not provider_name_raw.strip():
+        return None
+    try:
+        _provider_instance = _instantiate_provider(provider_name_raw)
+        return _provider_instance
+    except ValueError:
+        return None
 
 
 def get_debrid_providers() -> List[DebridProvider]:

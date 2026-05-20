@@ -75,7 +75,7 @@ class CheckingQueue:
             cls._instance.items = []
             cls._instance.checking_queue_times = {}
             cls._instance.progress_checks = {}
-            cls._instance.debrid_provider = get_debrid_provider()
+            cls._instance.debrid_provider = get_debrid_provider()  # May be None for usenet-only setups
             cls._instance.uncached_torrents = {}  # Dict of {torrent_hash: {last_check_time, item_ids[]}}
             cls._instance.unknown_strikes = {} # Tracks consecutive unknown states for torrents
         return cls._instance
@@ -83,7 +83,7 @@ class CheckingQueue:
     def __init__(self):
         # __init__ will be called every time, but instance is already created
         self.items = []
-        self.debrid_provider = get_debrid_provider()
+        self.debrid_provider = get_debrid_provider()  # May be None for usenet-only setups
         self.checking_times = {}
         self.last_check_time = datetime.now()
         self.last_report_time = datetime.now()

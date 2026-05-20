@@ -78,7 +78,8 @@ window.discoverState = {
     discoverSettings: {
         hide_no_rating: false,
         hide_no_poster: false,
-        only_show_missing: false
+        only_show_missing: false,
+        hide_specials: true
     }
 };
 
@@ -253,7 +254,8 @@ async function loadDiscoverSettings() {
             hide_no_rating: discoverSettings.hide_no_rating || false,
             hide_no_poster: discoverSettings.hide_no_poster || false,
             only_show_missing: discoverSettings.only_show_missing || false,
-            tv_show_episode_view: discoverSettings.tv_show_episode_view || 'discover'
+            tv_show_episode_view: discoverSettings.tv_show_episode_view || 'discover',
+            hide_specials: discoverSettings.hide_specials !== false
         };
     } catch (error) {
         console.error('[Discover] Error loading settings:', error);

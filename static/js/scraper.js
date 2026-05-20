@@ -4424,6 +4424,7 @@ function checkCacheStatusInBackground(hashes, results) {
     // Count only first 5 non-NZB (debrid) items for cache checking
     let debridChecked = 0;
     const MAX_DEBRID_CHECKS = 5;
+    const MAX_PARALLEL_REQUESTS = 2;
     let totalCount = Math.min(5, results.length);
     let processingItems = new Set(); // Track items currently being processed
 
@@ -4552,12 +4553,12 @@ function checkCacheStatusInBackground(hashes, results) {
 
         const result = results[index];
 
-        // NZB items don't need cache checking — skip but extend totalCount to find next debrid item
+        // NZB items don't need cache checking — skip and extend window to find debrid items
         const isNzb = result.protocol === 'nzb' || (!!result.nzb_url && !result.magnet_link && !result.torrent_url);
         if (isNzb) {
             processingItems.delete(index);
-            // Extend window to include one more item beyond current total, up to results length
-            if (totalCount < results.length && debridChecked < MAX_DEBRID_CHECKS) {
+            // Always extend the window when skipping an NZB so we still check MAX_DEBRID_CHECKS debrid items
+            if (totalCount < results.length) {
                 totalCount = Math.min(totalCount + 1, results.length);
             }
             processedCount++;

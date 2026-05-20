@@ -2754,6 +2754,28 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
                     _plex_token = _gs('Plex', 'token', '')
                     if _plex_url and _plex_token:
                         _headers = {'X-Plex-Token': _plex_token, 'Accept': 'application/json'}
+
+                        # Build a protected set from state files — these hashes must never
+                        # be deleted even if Plex has reset its selected poster back to its
+                        # own auto-generated one (which causes false-positive deletion of
+                        # our still-valid uploaded poster).
+                        _state_protected_hashes = set()
+                        try:
+                            import json as _cpjson
+                            _cp_state_path = os.path.join(
+                                os.environ.get('USER_CONFIG', '/user/config'), 'plex_collection_state.json'
+                            )
+                            if os.path.exists(_cp_state_path):
+                                with open(_cp_state_path, 'r') as _cpf:
+                                    _cp_state = _cpjson.load(_cpf)
+                                for _cpe in _cp_state.values():
+                                    if isinstance(_cpe, dict):
+                                        for _cph in _cpe.get('plex_upload_hashes', {}).values():
+                                            if _cph:
+                                                _state_protected_hashes.add(_cph)
+                        except Exception as _csp_e:
+                            logger.debug(f"Collection poster cleanup: state file read error: {_csp_e}")
+
                         _cconn = _get_coll_db()
                         _rks = []
                         try:
@@ -2802,6 +2824,11 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
                                     # Skip if this hash is the selected poster for any other ratingKey
                                     if _chash in _selected_hashes:
                                         continue
+                                    # Skip if this hash is tracked in the state file — Plex may have
+                                    # temporarily reset to its own poster but our upload is still valid
+                                    if _chash in _state_protected_hashes:
+                                        logger.debug(f"Collection poster cleanup: skipping state-protected hash {_chash} (rk={_rk})")
+                                        continue
                                     # Delete via filesystem — same approach as media overlay cleanup
                                     _cpat = os.path.join(
                                         _coll_plex_data, 'Metadata', '*', '*', '*.bundle',
@@ -2837,6 +2864,9 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
                     _sc_collections = _sc_state.get('collections', {})
                     _sc_plex_url = get_setting('Plex', 'url', '').rstrip('/')
                     _sc_token = get_setting('Plex', 'token', '')
+                    # Hashes stored when posters were last uploaded — never delete these
+                    _sc_protected_hashes = set(_sc_state.get('plex_upload_hashes', {}).values())
+
                     if _sc_plex_url and _sc_token and _sc_collections:
                         _sc_headers = {'X-Plex-Token': _sc_token, 'Accept': 'application/json'}
                         import glob as _scglob
@@ -2854,6 +2884,9 @@ def task_overlay_cleanup(triggered_by: str = 'scheduled'):
                                         continue
                                     _schash = _scpk[len('upload://posters/'):]
                                     if not _schash:
+                                        continue
+                                    if _schash in _sc_protected_hashes:
+                                        logger.debug(f"Smart collection poster cleanup: skipping state-protected hash {_schash} (rk={_sc_rk})")
                                         continue
                                     _scpat = os.path.join(
                                         _sc_plex_data, 'Metadata', '*', '*', '*.bundle',

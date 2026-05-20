@@ -216,6 +216,32 @@ body[data-theme="tangerine"] .uh-cache-bypass {
     border: 1px solid rgba(192, 132, 252, 0.25);
     cursor: help;
 }
+body[data-theme="tangerine"] .uh-proto-nzb {
+    background: rgba(192, 132, 252, 0.1);
+    color: #fc9784;
+    border: 1px solid rgba(192, 132, 252, 0.25);
+    display: inline-block;
+    font-size: 0.5rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    margin-top: 3px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+body[data-theme="tangerine"] .uh-proto-debrid {
+    background: rgba(192, 132, 252, 0.1);
+    color: #c084fc;
+    border: 1px solid rgba(192, 132, 252, 0.25);
+    display: inline-block;
+    font-size: 0.5rem;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    margin-top: 3px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
 
 /* ── Progress ─────────────────────────────────────────────────────────────── */
 body[data-theme="tangerine"] .uh-progress-wrap {

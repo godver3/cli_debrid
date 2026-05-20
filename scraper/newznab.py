@@ -1,5 +1,8 @@
+import hashlib
 import logging
 import re
+import threading
+import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -11,10 +14,39 @@ from PTT import parse_title as ptt_parse
 from rapidfuzz import fuzz as _fuzz
 
 # Newznab category IDs
-_CAT_MOVIE = '2000'
-_CAT_TV    = '5000,5010,5020'  # TV All, TV Foreign, TV SD
+# Explicit subcategories are required — many indexers do not return subcategory
+# items when querying only the parent (e.g. 2000 won't return 2030/HD results
+# on all indexers). Include all common subcategories to maximise coverage.
+_CAT_MOVIE = '2000,2030,2040,2045,2050,2060'  # Movie All + HD, SD, UHD, BluRay, Foreign
+_CAT_TV    = '5000,5010,5020,5030,5040,5045,5060,5070'  # TV All + Foreign, SD, SD, HD, UHD, BluRay, Sport
 
-_SANITIZE_RE = re.compile(r'[!?:&,;"()\[\]{}]')
+_SANITIZE_RE = re.compile(r"[!?:&,;\"'()\[\]{}]")
+
+# Query result cache — reduces API hits for duplicate searches within TTL window
+_NZB_CACHE: Dict[str, tuple] = {}   # key -> (timestamp, results)
+_NZB_CACHE_LOCK = threading.Lock()
+_NZB_CACHE_TTL = 600  # 10 minutes
+
+
+def _cache_key(endpoint: str, params: dict) -> str:
+    params_no_key = {k: v for k, v in params.items() if k != 'apikey'}
+    stable = f"{endpoint}|{sorted(params_no_key.items())}"
+    return hashlib.sha256(stable.encode()).hexdigest()
+
+
+def _cache_get(key: str) -> Optional[List]:
+    with _NZB_CACHE_LOCK:
+        entry = _NZB_CACHE.get(key)
+        if entry and (time.monotonic() - entry[0]) < _NZB_CACHE_TTL:
+            return entry[1]
+        if entry:
+            del _NZB_CACHE[key]
+    return None
+
+
+def _cache_set(key: str, results: List) -> None:
+    with _NZB_CACHE_LOCK:
+        _NZB_CACHE[key] = (time.monotonic(), results)
 
 
 def _build_params_list(
@@ -106,13 +138,21 @@ def scrape_newznab_instance(
     )
 
     def _fetch(params):
+        ck = _cache_key(endpoint, params)
+        cached = _cache_get(ck)
+        if cached is not None:
+            logging.info(f"Newznab '{instance}' cache hit for {params.get('t')} query")
+            return cached
         try:
             r = api.get(endpoint, params=params, timeout=timeout)
             logging.info(f"Newznab '{instance}' full request URL: {r.url}")
             if r.status_code != 200:
                 logging.error(f"Newznab '{instance}' HTTP {r.status_code}: {r.text[:200]}")
                 return []
-            return _parse_newznab_xml(r.text, instance)
+            results = _parse_newznab_xml(r.text, instance)
+            if results:
+                _cache_set(ck, results)
+            return results
         except Exception as exc:
             logging.error(f"Newznab '{instance}' request error: {exc}")
             return []
@@ -126,6 +166,26 @@ def scrape_newznab_instance(
             futures = [ex.submit(_fetch, p) for p in params_list]
             for f in as_completed(futures):
                 all_results.extend(f.result())
+
+    # For movie searches that return nothing, retry across TV categories too.
+    # Some content (UFC/WWE/boxing PPVs, sports events) is typed as movie in
+    # TMDB/Plex but indexed under TV categories (5000) on NZB indexers.
+    if not all_results and content_type.lower() == 'movie':
+        tv_params_list = _build_params_list(
+            api_key, clean_imdb, title, year, 'search', season, episode, multi
+        )
+        logging.info(f"Newznab '{instance}': 0 movie results — retrying with cross-category search (movie+TV)")
+        retry_results: List[Dict[str, Any]] = []
+        if len(tv_params_list) == 1:
+            retry_results = _fetch(tv_params_list[0])
+        else:
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                futures = [ex.submit(_fetch, p) for p in tv_params_list]
+                for f in as_completed(futures):
+                    retry_results.extend(f.result())
+        if retry_results:
+            logging.info(f"Newznab '{instance}': cross-category retry found {len(retry_results)} results")
+        all_results = retry_results
 
     # Deduplicate by GUID — ID search and title search may return the same NZB
     seen_guids = set()
@@ -291,29 +351,45 @@ def scrape_newznab_season_aggregate(
         api_key = cfg.get('api_key', '').strip()
         if not url or not api_key:
             return []
-        endpoint = f'{url}/api'
+        ep_endpoint = f'{url}/api'
         results = []
         # ID-based tvsearch first
         if clean_imdb:
+            id_params = {
+                'apikey': api_key, 't': 'tvsearch', 'imdbid': clean_imdb,
+                'season': season, 'ep': ep_num, 'cat': cats, 'limit': 20,
+            }
+            ck = _cache_key(ep_endpoint, id_params)
+            cached = _cache_get(ck)
+            if cached is not None:
+                results.extend(cached)
+            else:
+                try:
+                    r = api.get(ep_endpoint, params=id_params, timeout=timeout)
+                    if r.status_code == 200:
+                        parsed = _parse_newznab_xml(r.text, instance)
+                        if parsed:
+                            _cache_set(ck, parsed)
+                        results.extend(parsed)
+                except Exception:
+                    pass
+        # Title text search
+        q = _SANITIZE_RE.sub('', f'{title} S{season:02d}E{ep_num:02d}').strip()
+        txt_params = {'apikey': api_key, 't': 'search', 'q': q, 'cat': cats, 'limit': 20}
+        ck = _cache_key(ep_endpoint, txt_params)
+        cached = _cache_get(ck)
+        if cached is not None:
+            results.extend(cached)
+        else:
             try:
-                r = api.get(endpoint, params={
-                    'apikey': api_key, 't': 'tvsearch', 'imdbid': clean_imdb,
-                    'season': season, 'ep': ep_num, 'cat': cats, 'limit': 20,
-                }, timeout=timeout)
+                r = api.get(ep_endpoint, params=txt_params, timeout=timeout)
                 if r.status_code == 200:
-                    results.extend(_parse_newznab_xml(r.text, instance))
+                    parsed = _parse_newznab_xml(r.text, instance)
+                    if parsed:
+                        _cache_set(ck, parsed)
+                    results.extend(parsed)
             except Exception:
                 pass
-        # Title text search
-        try:
-            q = _SANITIZE_RE.sub('', f'{title} S{season:02d}E{ep_num:02d}').strip()
-            r = api.get(endpoint, params={
-                'apikey': api_key, 't': 'search', 'q': q, 'cat': cats, 'limit': 20,
-            }, timeout=timeout)
-            if r.status_code == 200:
-                results.extend(_parse_newznab_xml(r.text, instance))
-        except Exception:
-            pass
         # Deduplicate by guid
         seen, deduped = set(), []
         for res in results:
