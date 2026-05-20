@@ -587,7 +587,8 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                                     location_on_disk = ?, upgraded = ?,
                                     resolution = COALESCE(?, resolution),
                                     size = COALESCE(?, size),
-                                    ms_item_id = COALESCE(?, ms_item_id)
+                                    ms_item_id = COALESCE(?, ms_item_id),
+                                    scrape_results = NULL
                                 WHERE id = ?
                             ''', (new_state, datetime.now(), collected_at, existing_collected_at,
                                   new_location, is_upgrade, item.get('resolution'), item.get('size_gb'),

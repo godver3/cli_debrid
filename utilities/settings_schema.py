@@ -2669,6 +2669,11 @@ SETTINGS_SCHEMA = {
             "description": "Where to route when clicking on TV shows not in library (movies always go to Discover details)",
             "default": "discover",
             "choices": ["discover", "add_media"]
+        },
+        "hide_specials": {
+            "type": "boolean",
+            "description": "Hide TV show specials (Season 0) from the Discover details page season list",
+            "default": True
         }
     },
     "Bazarr Integration": {

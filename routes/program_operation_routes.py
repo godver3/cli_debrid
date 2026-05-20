@@ -432,49 +432,86 @@ def check_service_connectivity():
             services_reachable = False
             failed_services_details.append({"service": "Plex", "type": "CONNECTION_ERROR", "status_code": None, "message": error_msg})
 
-    # Check Debrid Provider connectivity using provider interface
-    try:
-        from debrid import get_debrid_provider
-        provider = get_debrid_provider()
-        if hasattr(provider, 'check_connectivity'):
-            ok, error_detail = provider.check_connectivity()
-            if not ok:
-                services_reachable = False
-                failed_services_details.append(error_detail or {"service": "Debrid Provider API", "type": "CONNECTION_ERROR", "status_code": None, "message": "Connectivity check failed"})
-        else:
-            logging.info("Provider does not implement connectivity check; skipping provider connectivity validation.")
+    # Check provider connectivity — requires at least debrid OR usenet (Decypharr) to be configured
+    debrid_configured = bool(debrid_provider and debrid_api_key)
+    usenet_enabled = get_setting('Usenet Provider', 'enabled', False)
+    usenet_url = get_setting('Usenet Provider', 'url', '')
 
-        # Verify subscription days remaining > 0
+    if not debrid_configured and not usenet_enabled:
+        services_reachable = False
+        failed_services_details.append({
+            "service": "Provider",
+            "type": "NO_PROVIDER_CONFIGURED",
+            "message": "No provider configured — set up a Debrid provider or a Usenet provider (Decypharr) to continue"
+        })
+    elif debrid_configured:
+        # Check Debrid Provider connectivity
         try:
-            subscription_info = None
-            if hasattr(provider, 'get_subscription_status'):
-                subscription_info = provider.get_subscription_status()
-            if subscription_info is not None:
-                days_remaining = subscription_info.get('days_remaining')
-                premium = subscription_info.get('premium')
-                expiration = subscription_info.get('expiration')
-                logging.info(f"Debrid subscription status: days_remaining={days_remaining}, premium={premium}, expiration={expiration}")
-                if days_remaining is None or not isinstance(days_remaining, (int, float)) or days_remaining <= 0:
+            from debrid import get_debrid_provider
+            provider = get_debrid_provider()
+            if provider and hasattr(provider, 'check_connectivity'):
+                ok, error_detail = provider.check_connectivity()
+                if not ok:
                     services_reachable = False
-                    failed_services_details.append({
-                        "service": "Debrid Subscription",
-                        "type": "SUBSCRIPTION_EXPIRED",
-                        "message": f"Debrid subscription expired or invalid. days_remaining={days_remaining}, premium={premium}, expiration={expiration}"
-                    })
+                    failed_services_details.append(error_detail or {"service": "Debrid Provider API", "type": "CONNECTION_ERROR", "status_code": None, "message": "Connectivity check failed"})
             else:
-                logging.warning("Debrid subscription status unavailable from provider; skipping days remaining check")
-        except Exception as sub_err:
-            logging.error(f"Error checking Debrid subscription status: {sub_err}")
+                logging.info("Provider does not implement connectivity check; skipping provider connectivity validation.")
+
+            # Verify subscription days remaining > 0
+            try:
+                subscription_info = None
+                if provider and hasattr(provider, 'get_subscription_status'):
+                    subscription_info = provider.get_subscription_status()
+                if subscription_info is not None:
+                    days_remaining = subscription_info.get('days_remaining')
+                    premium = subscription_info.get('premium')
+                    expiration = subscription_info.get('expiration')
+                    logging.info(f"Debrid subscription status: days_remaining={days_remaining}, premium={premium}, expiration={expiration}")
+                    if days_remaining is None or not isinstance(days_remaining, (int, float)) or days_remaining <= 0:
+                        services_reachable = False
+                        failed_services_details.append({
+                            "service": "Debrid Subscription",
+                            "type": "SUBSCRIPTION_EXPIRED",
+                            "message": f"Debrid subscription expired or invalid. days_remaining={days_remaining}, premium={premium}, expiration={expiration}"
+                        })
+                else:
+                    logging.warning("Debrid subscription status unavailable from provider; skipping days remaining check")
+            except Exception as sub_err:
+                logging.error(f"Error checking Debrid subscription status: {sub_err}")
+                services_reachable = False
+                failed_services_details.append({
+                    "service": "Debrid Subscription",
+                    "type": "SUBSCRIPTION_CHECK_ERROR",
+                    "message": str(sub_err)
+                })
+        except Exception as e:
+            logging.error(f"Failed to perform provider connectivity check: {e}")
+            services_reachable = False
+            failed_services_details.append({"service": "Debrid Provider API", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)})
+
+    if usenet_enabled and usenet_url:
+        # Check Usenet (Decypharr) connectivity
+        try:
+            from routes.api_tracker import api as _usenet_api
+            _r = _usenet_api.get(f"{usenet_url.rstrip('/')}/version", timeout=10)
+            if _r.status_code != 200:
+                services_reachable = False
+                failed_services_details.append({
+                    "service": "Usenet Provider (Decypharr)",
+                    "type": "CONNECTION_ERROR",
+                    "status_code": _r.status_code,
+                    "message": f"Cannot reach Decypharr at {usenet_url} (HTTP {_r.status_code})"
+                })
+            else:
+                logging.info(f"Usenet provider (Decypharr) reachable at {usenet_url}")
+        except Exception as _ue:
             services_reachable = False
             failed_services_details.append({
-                "service": "Debrid Subscription",
-                "type": "SUBSCRIPTION_CHECK_ERROR",
-                "message": str(sub_err)
+                "service": "Usenet Provider (Decypharr)",
+                "type": "CONNECTION_ERROR",
+                "status_code": None,
+                "message": f"Cannot reach Decypharr at {usenet_url}: {_ue}"
             })
-    except Exception as e:
-        logging.error(f"Failed to perform provider connectivity check: {e}")
-        services_reachable = False
-        failed_services_details.append({"service": "Debrid Provider API", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)})
 
     # Check Metadata Battery connectivity and Trakt authorization
     try:
@@ -872,17 +909,21 @@ def check_program_conditions():
     required_settings = [
         ('Plex', 'url'),
         ('Plex', 'token'),
-        ('Debrid Provider', 'provider'),
-        ('Debrid Provider', 'api_key'),
         ('Metadata Battery', 'url')
     ]
-    
+
     missing_fields = []
     for category, key in required_settings:
         value = get_setting(category, key)
         if not value:
             missing_fields.append(f"{category}.{key}")
-    
+
+    # Require at least one of: Debrid Provider OR Usenet Provider (Decypharr)
+    debrid_ok = bool(get_setting('Debrid Provider', 'provider') and get_setting('Debrid Provider', 'api_key'))
+    usenet_ok = bool(get_setting('Usenet Provider', 'enabled') and get_setting('Usenet Provider', 'url'))
+    if not debrid_ok and not usenet_ok:
+        missing_fields.append("Debrid Provider or Usenet Provider")
+
     required_settings_complete = len(missing_fields) == 0
 
     return jsonify({

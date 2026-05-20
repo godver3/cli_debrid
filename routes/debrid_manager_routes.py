@@ -567,6 +567,39 @@ def api_plex_trash_items():
         elif stable is None and rd_is_loading:
             rd_library_status = 'loading'
 
+        # ── NZB / Usenet — DB lookup (must run before all_files pops) ──────────
+        _usenet_candidates = {}
+        try:
+            import json as _srj2
+            from database.core import get_db_connection as _get_dbc2
+            _uconn2 = _get_dbc2()
+            for _item in unique_items:
+                _lt = (_item.get('show_title') or _item.get('title', '')).strip()
+                _urow = _uconn2.execute(
+                    "SELECT id, filled_by_torrent_id, filled_by_title, scrape_results "
+                    "FROM media_items WHERE title = ? AND filled_by_torrent_id LIKE 'nzb:%' "
+                    "ORDER BY rowid DESC LIMIT 1", (_lt,)
+                ).fetchone()
+                if _urow:
+                    _uid, _ufbt, _ufbt_title, _usr = _urow
+                    _ujob_id = _ufbt[4:] if _ufbt and _ufbt.startswith('nzb:') else ''
+                    _unzb_url = ''
+                    if _usr:
+                        try:
+                            _usl = _srj2.loads(_usr) if isinstance(_usr, str) else _usr
+                            if _usl:
+                                _unzb_url = _usl[0].get('nzb_url') or _usl[0].get('magnet', '')
+                        except Exception:
+                            pass
+                    _item['nzb_job_id'] = _ujob_id
+                    _item['nzb_title'] = _ufbt_title or ''
+                    _item['nzb_url'] = _unzb_url
+                    _item['nzb_item_id'] = _uid
+                    _usenet_candidates[_item['rating_key']] = _item
+            _uconn2.close()
+        except Exception as _upe:
+            logging.debug(f"[PlexTrash] Usenet pre-match error: {_upe}")
+
         in_rd = []
         not_in_rd = []
         if stable:
@@ -677,6 +710,57 @@ def api_plex_trash_items():
             for item in not_in_rd:
                 item.pop('all_files', None)
 
+            # Good/bad file detection for usenet items — same logic as debrid in_rd
+            # Metadata fetch for single-file usenet items to discover additional versions
+            for _ui in list(_usenet_candidates.values()):
+                if len(_ui.get('all_files') or []) <= 1 and _ui.get('rating_key'):
+                    try:
+                        _mr2 = requests.get(
+                            f'{plex_url}/library/metadata/{_ui["rating_key"]}',
+                            headers=headers, timeout=5
+                        )
+                        _meta2 = ET.fromstring(_mr2.text)
+                        _existing2 = set(_ui.get('all_files') or [])
+                        for _mv2 in _meta2.iter('Video'):
+                            for _me2 in _mv2.findall('Media'):
+                                _mid2 = _me2.get('id', '')
+                                for _pe2 in _me2.findall('Part'):
+                                    _fp2 = _pe2.get('file', '')
+                                    if _fp2 and _fp2 not in _existing2:
+                                        _ui.setdefault('all_files', []).append(_fp2)
+                                        _existing2.add(_fp2)
+                                        _bn2 = _os.path.basename(_fp2)
+                                        _pid2 = _pe2.get('id', '')
+                                        if _mid2 and _pid2 and _bn2 not in _ui.get('part_ids', {}):
+                                            _ui.setdefault('part_ids', {})[_bn2] = {'media_id': _mid2, 'part_id': _pid2}
+                    except Exception:
+                        pass
+
+            # Classify good/bad files for usenet items using same logic as debrid
+            for _ui in list(_usenet_candidates.values()):
+                _uall = _ui.pop('all_files', [])
+                _udel_set = set(_ui.pop('deleted_at_files', []))
+                if len(_uall) <= 1:
+                    continue
+                _uunmatched, _umatched = [], []
+                if _udel_set:
+                    for _ufp in _uall:
+                        (_uunmatched if _ufp in _udel_set else _umatched).append(_ufp)
+                else:
+                    # Fallback: the old file's folder won't match the new nzb_title
+                    _new_title_norm = _norm(_ui.get('nzb_title', ''))
+                    for _ufp in _uall:
+                        _ufn = _norm(_folder_from_path(_ufp))
+                        if _new_title_norm and _ufn and (_ufn in _new_title_norm or _new_title_norm.startswith(_ufn)):
+                            _umatched.append(_ufp)
+                        else:
+                            _uunmatched.append(_ufp)
+                if _uunmatched and _umatched:
+                    _ui['bad_file'] = _os.path.basename(_uunmatched[0])
+                    _ui['has_good_file'] = True
+                    _ui['good_file'] = _os.path.basename(_umatched[0])
+                    _ui['bad_file_orphaned'] = bool(_udel_set and _uunmatched[0] in _udel_set)
+
             # Title match count: how many RD entries share the same title+year
             for item in in_rd + not_in_rd:
                 title_norm = _norm(item.get('title', ''))
@@ -729,7 +813,24 @@ def api_plex_trash_items():
             except Exception as _me:
                 logging.debug(f"[PlexTrash] Magnet lookup error: {_me}")
 
-        result = {'in_rd': in_rd, 'not_in_rd': not_in_rd}
+        # ── NZB / Usenet — split into in/not lists, remove from debrid lists ────
+        # Usenet items must not appear in in_rd/not_in_rd — remove them and put
+        # them in the usenet-specific lists instead.
+        in_usenet = []
+        not_in_usenet = []
+        _usenet_rks = set(_usenet_candidates.keys())
+        # Only keep debrid-matched items in in_rd (usenet items should not appear there,
+        # but guard just in case a title matches both)
+        in_rd = [i for i in in_rd if i['rating_key'] not in _usenet_rks]
+        # Remove usenet items from not_in_rd so they don't show in the debrid tab
+        not_in_rd = [i for i in not_in_rd if i['rating_key'] not in _usenet_rks]
+        for _uitem in _usenet_candidates.values():
+            if _uitem.get('nzb_job_id'):
+                in_usenet.append(_uitem)
+            else:
+                not_in_usenet.append(_uitem)
+
+        result = {'in_rd': in_rd, 'not_in_rd': not_in_rd, 'in_usenet': in_usenet, 'not_in_usenet': not_in_usenet}
         _plex_trash_items_cache['items'] = result
         _plex_trash_items_cache['ts'] = time.time()
         return jsonify({'success': True, 'cached': False, 'rd_library_status': rd_library_status, **result})
@@ -1118,6 +1219,109 @@ def api_reinsert_torrent(torrent_id):
         return jsonify({'success': True, 'new_id': new_id})
     except Exception as e:
         logging.error(f"Debrid Manager reinsert error for {torrent_id}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debrid_manager_bp.route('/api/nzb/reinsert', methods=['POST'])
+@admin_required
+def api_nzb_reinsert():
+    """
+    Re-submit a Plex-trashed NZB item to Decypharr.
+
+    Step 1 — try the stored NZB URL from scrape_results.
+    Step 2 — if that fails, run a targeted re-scrape and submit the best result.
+
+    Body: { item_id: int, nzb_url: str, nzb_title: str, rating_key: str }
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        item_id = data.get('item_id')
+        nzb_url = (data.get('nzb_url') or '').strip()
+        nzb_title = (data.get('nzb_title') or '').strip()
+        rating_key = data.get('rating_key', '')
+
+        if not item_id:
+            return jsonify({'success': False, 'error': 'item_id required'}), 400
+
+        from database.core import get_db_connection as _gdbc
+        conn = _gdbc()
+        row = conn.execute(
+            "SELECT id, title, year, type, imdb_id, tmdb_id, season_number, "
+            "episode_number, version, genres, filled_by_torrent_id, scrape_results "
+            "FROM media_items WHERE id = ?", (item_id,)
+        ).fetchone()
+        conn.close()
+        if not row:
+            return jsonify({'success': False, 'error': 'Item not found in database'}), 404
+
+        item = dict(zip(
+            ['id', 'title', 'year', 'type', 'imdb_id', 'tmdb_id', 'season_number',
+             'episode_number', 'version', 'genres', 'filled_by_torrent_id', 'scrape_results'],
+            row
+        ))
+
+        from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
+        reset_decypharr_client()
+        client = get_decypharr_client()
+
+        new_job_id = None
+        used_url = None
+        method = None
+        new_release_title = nzb_title  # updated if rescrape finds a different release
+
+        # ── Step 1: try stored NZB URL ──────────────────────────────────────
+        if nzb_url:
+            try:
+                import requests as _req
+                resp = _req.get(nzb_url, timeout=15, allow_redirects=True,
+                                headers={'User-Agent': 'Sabnzbd/3.0.0'})
+                if resp.status_code == 200 and '<nzb' in resp.text.lower():
+                    new_job_id = client.add_nzb_content(
+                        nzb_content=resp.text,
+                        title=nzb_title or item['title']
+                    )
+                    if new_job_id:
+                        used_url = nzb_url
+                        method = 'url'
+                        logging.info(f"[ReNZB] item={item_id} re-submitted via stored URL, job={new_job_id}")
+            except Exception as _e1:
+                logging.warning(f"[ReNZB] item={item_id} Step 1 failed: {_e1}")
+
+        # ── Step 2: fallback — re-scrape and submit best result ─────────────
+        if not new_job_id:
+            logging.info(f"[ReNZB] item={item_id} falling back to re-scrape")
+            try:
+                from usenet.repair_engine import _scrape_for_replacement, _submit_replacement, _update_db_for_repair
+                results = _scrape_for_replacement(item, broken_nzb_title=nzb_title)
+                if results:
+                    best = results[0]
+                    new_job_id = _submit_replacement(best, item['title'])
+                    if new_job_id:
+                        method = 'rescrape'
+                        new_release_title = best.get('title') or nzb_title
+                        used_url = best.get('nzb_url') or ''
+                        logging.info(f"[ReNZB] item={item_id} re-scraped and submitted, job={new_job_id}")
+                        _update_db_for_repair(item, new_job_id, best, results)
+                        _plex_trash_items_cache['items'] = None
+                        return jsonify({'success': True, 'job_id': new_job_id, 'method': method, 'new_release_title': new_release_title})
+            except Exception as _e2:
+                logging.error(f"[ReNZB] item={item_id} Step 2 failed: {_e2}", exc_info=True)
+
+        if not new_job_id:
+            return jsonify({'success': False, 'error': 'Failed to re-submit NZB — URL expired and re-scrape found no results'}), 502
+
+        # Update DB with new job ID (URL path — state stays Collected, just refresh torrent ID)
+        try:
+            from database.database_writing import update_media_item as _umi
+            _umi(item_id, filled_by_torrent_id=f'nzb:{new_job_id}', fall_back_to_single_scraper=False)
+        except Exception as _dbe:
+            logging.warning(f"[ReNZB] DB update failed for item {item_id}: {_dbe}")
+
+        _plex_trash_items_cache['items'] = None
+        return jsonify({'success': True, 'job_id': new_job_id, 'method': method, 'new_release_title': new_release_title})
+
+    except Exception as e:
+        logging.error(f"[ReNZB] Unexpected error: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

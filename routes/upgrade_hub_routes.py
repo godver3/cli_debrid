@@ -43,8 +43,11 @@ def index():
 @admin_required
 def status():
     from database.zilean_upgrade import get_scan_status, get_last_results, get_zilean_config
+    from database.nzb_upgrade import get_newznab_scrapers
     s = get_scan_status()
     s['zilean_configured'] = get_zilean_config() is not None
+    s['nzb_configured'] = len(get_newznab_scrapers()) > 0
+    s['any_source_configured'] = s['zilean_configured'] or s['nzb_configured']
     results = get_last_results()
     if results and 'error' not in results:
         try:
@@ -67,13 +70,24 @@ def status():
 @admin_required
 def start_scan():
     from database.zilean_upgrade import scan_for_upgrades, get_scan_status, get_zilean_config
+    from database.nzb_upgrade import get_newznab_scrapers
 
     if get_scan_status()['in_progress']:
         return jsonify({'success': False, 'error': 'Scan already in progress'}), 409
 
-    if not get_zilean_config():
+    upgrade_source = get_setting('Upgrade Hub', 'upgrade_source', 'both') or 'both'
+    use_zilean = upgrade_source in ('both', 'zilean_only')
+    use_nzb    = upgrade_source in ('both', 'nzb_only')
+
+    if use_zilean and not use_nzb and not get_zilean_config():
         return jsonify({'success': False,
                         'error': 'Zilean scraper not enabled or URL not configured in Settings → Scrapers'}), 400
+    if use_nzb and not use_zilean and not get_newznab_scrapers():
+        return jsonify({'success': False,
+                        'error': 'No enabled Newznab indexers configured in Settings → Scrapers'}), 400
+    if not get_zilean_config() and not get_newznab_scrapers():
+        return jsonify({'success': False,
+                        'error': 'No upgrade sources configured. Enable Zilean or a Newznab indexer in Settings → Scrapers'}), 400
 
     scan_limit = get_setting('Upgrade Hub', 'scan_limit', None)
     if scan_limit is not None:
@@ -226,6 +240,7 @@ _SETTINGS_KEYS = {
     'recent_threshold_days': int,
     'excluded_genres': str,
     'exclude_nas_items': bool,
+    'upgrade_source': str,
 }
 _SETTINGS_DEFAULTS = {
     'min_improvement_threshold': 0,
@@ -238,6 +253,7 @@ _SETTINGS_DEFAULTS = {
     'recent_threshold_days': 90,
     'excluded_genres': '',
     'exclude_nas_items': False,
+    'upgrade_source': 'both',
 }
 
 

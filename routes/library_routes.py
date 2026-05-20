@@ -1285,7 +1285,7 @@ def show_detail_data(media_id):
                         logging.info(f"Fetching TMDB ratings for show {tmdb_id} (to supplement Battery data)")
                     else:
                         logging.info(f"Fetching TMDB metadata for show {tmdb_id} (Battery unavailable)")
-                    details_response = requests.get(details_url)
+                    details_response = requests.get(details_url, timeout=15, headers={'Accept-Encoding': 'identity'})
                     details_response.raise_for_status()
                     details_data = details_response.json()
 
@@ -4553,7 +4553,7 @@ def movie_detail_data(media_id):
                 try:
                     details_url = f"https://api.themoviedb.org/3/movie/{tmdb_id}?api_key={tmdb_api_key}&language=en-US"
                     logging.info(f"Fetching TMDB metadata for movie {tmdb_id} (Battery fallback)")
-                    details_response = requests.get(details_url)
+                    details_response = requests.get(details_url, timeout=15, headers={'Accept-Encoding': 'identity'})
                     details_response.raise_for_status()
                     details_data = details_response.json()
 

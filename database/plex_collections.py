@@ -32,6 +32,9 @@ logger = logging.getLogger(__name__)
 # ── State file ────────────────────────────────────────────────────────────────
 _STATE_FILE = os.path.join(os.environ.get('USER_CONFIG', '/user/config'), 'plex_collection_state.json')
 _state_lock = threading.Lock()
+# Serialises DB writes from concurrent collection-sync threads so SQLite's
+# exclusive write lock is never contested by two threads simultaneously.
+_db_write_lock = threading.Lock()
 
 # ── In-process caches ─────────────────────────────────────────────────────────
 _machine_id_cache: Optional[str] = None
@@ -601,19 +604,20 @@ def _get_sync_state(source_id: str) -> dict:
 
 
 def _save_sync_state(source_id: str, movie_rk: Optional[str], show_rk: Optional[str], fingerprint: str, sort_option: str = 'default') -> None:
-    conn = get_db_connection()
-    try:
-        conn.execute(
-            """INSERT OR REPLACE INTO plex_collection_sync
-               (source_id, movie_collection_ratingkey, show_collection_ratingkey, last_fingerprint, last_synced_at, sort_option)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (source_id, movie_rk, show_rk, fingerprint,
-             datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
-             sort_option)
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    with _db_write_lock:
+        conn = get_db_connection()
+        try:
+            conn.execute(
+                """INSERT OR REPLACE INTO plex_collection_sync
+                   (source_id, movie_collection_ratingkey, show_collection_ratingkey, last_fingerprint, last_synced_at, sort_option)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (source_id, movie_rk, show_rk, fingerprint,
+                 datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
+                 sort_option)
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
 
 def _get_ratingkey_for_section(source_id: str, section_key: str, lib_type: str) -> Optional[str]:
@@ -629,15 +633,16 @@ def _get_ratingkey_for_section(source_id: str, section_key: str, lib_type: str) 
 
 
 def _save_ratingkey_for_section(source_id: str, section_key: str, lib_type: str, ratingkey: Optional[str]) -> None:
-    conn = get_db_connection()
-    try:
-        conn.execute(
-            "INSERT OR REPLACE INTO plex_collection_sync_libraries (source_id, section_key, lib_type, ratingkey) VALUES (?,?,?,?)",
-            (source_id, section_key, lib_type, ratingkey)
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    with _db_write_lock:
+        conn = get_db_connection()
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO plex_collection_sync_libraries (source_id, section_key, lib_type, ratingkey) VALUES (?,?,?,?)",
+                (source_id, section_key, lib_type, ratingkey)
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
 
 # ── Main sync ─────────────────────────────────────────────────────────────────

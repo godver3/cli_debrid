@@ -813,6 +813,7 @@ def trending():
         if entry and datetime.now() < entry['expires']:
             logging.debug(f"[Trending] Serving from cache ({cache_key})")
             return jsonify({'results': entry['data'], 'total_results': len(entry['data']), 'cached': True})
+        stale_entry = entry  # keep reference to serve as fallback on TMDB failure
 
         results = []
 
@@ -912,9 +913,12 @@ def trending():
             'total_results': len(results)
         })
 
-    except requests.exceptions.RequestException as e:
+    except (requests.exceptions.RequestException, ValueError) as e:
         logging.error(f"TMDB trending API error: {e}")
-        return jsonify({'error': 'Failed to fetch trending content'}), 500
+        if stale_entry:
+            logging.warning(f"[Trending] Serving stale cache for {cache_key} due to TMDB error")
+            return jsonify({'results': stale_entry['data'], 'total_results': len(stale_entry['data']), 'cached': True, 'stale': True})
+        return jsonify({'error': 'Failed to fetch trending content'}), 503
     except Exception as e:
         logging.error(f"Discover trending error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
