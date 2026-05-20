@@ -780,6 +780,40 @@ def migrate_schema():
             )
         ''')
 
+        # ── One-time cleanup: clear scrape_results for terminal states ──────────
+        # scrape_results is only needed while an item is being added/checked.
+        # For Collected/Blacklisted/Ghostlisted/Unreleased items it accumulates
+        # indefinitely and can grow to several GB. Clear it once and prevent
+        # future growth via collected_items.py (scrape_results = NULL on collect).
+        try:
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_cleanup_flags'")
+            if not cursor.fetchone():
+                conn.execute('''
+                    CREATE TABLE schema_cleanup_flags (
+                        flag TEXT PRIMARY KEY,
+                        applied_at TEXT NOT NULL
+                    )
+                ''')
+            cursor.execute("SELECT 1 FROM schema_cleanup_flags WHERE flag='clear_scrape_results_terminal_states'")
+            if not cursor.fetchone():
+                logging.info("[Migration] Clearing scrape_results for terminal-state items (one-time cleanup)...")
+                cur = conn.execute("""
+                    UPDATE media_items SET scrape_results = NULL
+                    WHERE scrape_results IS NOT NULL
+                      AND scrape_results != ''
+                      AND state IN ('Collected', 'Blacklisted', 'Ghostlisted', 'Unreleased')
+                """)
+                logging.info(f"[Migration] Cleared scrape_results for {cur.rowcount} items.")
+                conn.execute(
+                    "INSERT INTO schema_cleanup_flags (flag, applied_at) VALUES ('clear_scrape_results_terminal_states', datetime('now'))"
+                )
+                conn.commit()
+                logging.info("[Migration] Running VACUUM to reclaim disk space...")
+                conn.execute("VACUUM")
+                logging.info("[Migration] VACUUM complete.")
+        except Exception as _ce:
+            logging.warning(f"[Migration] scrape_results cleanup failed: {_ce}")
+
         logging.info("Attempting to commit schema migrations...")
         conn.commit()
         logging.info("Schema migrations committed successfully.")

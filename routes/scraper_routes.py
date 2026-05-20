@@ -486,10 +486,26 @@ def add_torrent_to_debrid():
             logging.error(error_message)
             return jsonify({'error': error_message}), 500
 
-        # Process the content
+        # Process the content — if files are empty (provider hasn't resolved yet),
+        # retry a few times before giving up. Debrid-Link in particular can return
+        # an empty files list immediately after add while it's still resolving the magnet.
         processor = ContentProcessor()
         success, message = processor.process_content(torrent_info)
-        
+
+        if not success and 'No files found' in message:
+            for _retry in range(4):
+                import time as _time
+                _time.sleep(3)
+                try:
+                    torrent_info = debrid_provider.get_torrent_info(torrent_id)
+                except Exception:
+                    pass
+                if torrent_info and torrent_info.get('files'):
+                    success, message = processor.process_content(torrent_info)
+                    if success:
+                        logging.info(f"Torrent files resolved on retry {_retry + 1}")
+                        break
+
         if not success:
             logging.error(f"Failed to process torrent content: {message}")
             return jsonify({'error': message}), 400

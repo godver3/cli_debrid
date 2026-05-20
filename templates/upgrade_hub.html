@@ -47,8 +47,10 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
         </svg>
-        <span><strong>Note:</strong> A local instance of Zilean is required. Configure it in
-        <a href="/settings#scrapers" class="uh-note-link">Settings → Scraper Settings → Zilean Scraper</a>.</span>
+        <span><strong>Note:</strong> Requires at least one upgrade source — a local
+        <a href="/settings#scrapers" class="uh-note-link">Zilean</a> instance and/or enabled
+        <a href="/settings#scrapers" class="uh-note-link">Newznab indexers</a>. Configure sources in
+        Settings → Scraper Settings. Select which source(s) to use in the Settings tab below.</span>
     </div>
 
     <!-- Progress bar (shown during scan) -->
@@ -365,6 +367,17 @@
                     </div>
                 </div>
 
+                <!-- Sub-card: Upgrade Source -->
+                <div class="uh-settings-section">
+                    <div class="uh-settings-subsection-title">Upgrade Source</div>
+                    <p class="uh-settings-desc">Which sources to scan for upgrade candidates.</p>
+                    <select id="settings-upgrade-source" class="uh-filter-select" style="margin-top:6px">
+                        <option value="both">Both (Zilean + NZB Indexers)</option>
+                        <option value="zilean_only">Zilean Only</option>
+                        <option value="nzb_only">NZB Indexers Only</option>
+                    </select>
+                </div>
+
                 <!-- Sub-card: Excluded Genres -->
                 <div class="uh-settings-section">
                     <div class="uh-settings-subsection-title uh-genre-title">Excluded Genres</div>
@@ -619,8 +632,8 @@ function buildUpgradeRow(u) {
         <td class="uh-col-type"><span class="uh-type-badge uh-type-${u.type}">${escHtml(label)}</span></td>
         <td class="uh-col-title">${title}</td>
         <td class="uh-col-files">
-            <div class="uh-muted">${escHtml(u.current_file || '—')}</div>
-            <div class="uh-best-candidate">${escHtml(u.new_title || '—')}</div>
+            <div class="uh-muted">${escHtml(u.current_file || '—')} ${u.current_protocol === 'nzb' ? '<span class="uh-proto-badge uh-proto-nzb">NZB</span>' : '<span class="uh-proto-badge uh-proto-debrid">Debrid</span>'}</div>
+            <div class="uh-best-candidate">${escHtml(u.new_title || '—')} ${u.protocol === 'nzb' ? '<span class="uh-proto-badge uh-proto-nzb">NZB</span>' : '<span class="uh-proto-badge uh-proto-debrid">Debrid</span>'}</div>
         </td>
         <td class="uh-col-version">${escHtml(u.version || '—')}<br>${cacheBadge}${rdBadge ? ' ' + rdBadge : ''}</td>
         <td class="uh-col-score">
@@ -657,17 +670,18 @@ function buildPackRow(p) {
 
     const files = p.current_files || [];
     let currentHtml;
+    const curProtoBadge = p.current_protocol === 'nzb' ? '<span class="uh-proto-badge uh-proto-nzb">NZB</span>' : '<span class="uh-proto-badge uh-proto-debrid">Debrid</span>';
     if (files.length === 0) {
-        currentHtml = '<div class="uh-muted">—</div>';
+        currentHtml = `<div class="uh-muted">— ${curProtoBadge}</div>`;
     } else if (files.length === 1) {
-        currentHtml = `<div class="uh-muted">${escHtml(files[0].file || '—')}</div>`;
+        currentHtml = `<div class="uh-muted">${escHtml(files[0].file || '—')} ${curProtoBadge}</div>`;
     } else {
         const epsHtml = files.map(f =>
             `<div class="uh-pack-ep"><span class="uh-ep-num">E${pad(f.ep)}</span>${escHtml(f.file || '—')}</div>`
         ).join('');
         const tagsStr = fileTagsStr(files[0].file || '');
         const tagsHtml = tagsStr ? `<span class="uh-ep-sep"> - </span><span class="uh-ep-tags">${escHtml(tagsStr)}</span>` : '';
-        currentHtml = `<button class="uh-pack-expand-btn" onclick="togglePackExpand(this)"><span class="uh-ep-count">${files.length} episodes</span>${tagsHtml}<span class="uh-expand-arrow">▼</span></button><div class="uh-pack-episodes">${epsHtml}</div>`;
+        currentHtml = `<button class="uh-pack-expand-btn" onclick="togglePackExpand(this)"><span class="uh-ep-count">${files.length} episodes</span>${tagsHtml} ${curProtoBadge}<span class="uh-expand-arrow">▼</span></button><div class="uh-pack-episodes">${epsHtml}</div>`;
     }
 
     return `<tr data-item-ids="${safeIds}">
@@ -680,7 +694,7 @@ function buildPackRow(p) {
         </td>
         <td class="uh-col-new">
             ${currentHtml}
-            <div class="uh-best-candidate">${escHtml(p.new_title || '—')}</div>
+            <div class="uh-best-candidate">${escHtml(p.new_title || '—')} ${p.protocol === 'nzb' ? '<span class="uh-proto-badge uh-proto-nzb">NZB</span>' : '<span class="uh-proto-badge uh-proto-debrid">Debrid</span>'}</div>
         </td>
         <td class="uh-col-version">${escHtml(p.version || '—')}<br>${cacheBadge}${rdBadge ? ' ' + rdBadge : ''}</td>
         <td class="uh-col-score">
@@ -1197,6 +1211,7 @@ let _settings = {
     recent_threshold_days: 90,
     excluded_genres: '',
     exclude_nas_items: false,
+    upgrade_source: 'both',
 };
 
 async function loadSettings() {
@@ -1265,6 +1280,10 @@ function applySettingsToUI() {
     // Exclude NAS items toggle
     const excludeNasChk = document.getElementById('settings-exclude-nas');
     if (excludeNasChk) excludeNasChk.checked = !!_settings.exclude_nas_items;
+
+    // Upgrade source
+    const upgradeSourceSel = document.getElementById('settings-upgrade-source');
+    if (upgradeSourceSel) upgradeSourceSel.value = _settings.upgrade_source || 'both';
 
     // Excluded genres chips
     const rawGenres = _settings.excluded_genres || '';
@@ -1377,6 +1396,7 @@ async function saveSettings() {
         recent_threshold_days:  recentDaysInp ? parseInt(recentDaysInp.value) || 90 : 90,
         excluded_genres:        _uhExcludedGenres.join(','),
         exclude_nas_items:      excludeNasChk ? excludeNasChk.checked : false,
+        upgrade_source:         (document.getElementById('settings-upgrade-source') || {}).value || 'both',
     };
     try {
         const res = await fetch('/upgrade_hub/api/settings', {

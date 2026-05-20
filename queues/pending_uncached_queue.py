@@ -12,7 +12,7 @@ from .media_matcher import MediaMatcher
 class PendingUncachedQueue:
     def __init__(self):
         self.items = []
-        self.debrid_provider = get_debrid_provider()
+        self.debrid_provider = get_debrid_provider()  # May be None for usenet-only setups
         self.adding_queue = AddingQueue()
         self.torrent_processor = TorrentProcessor(self.debrid_provider)
         self.media_matcher = MediaMatcher()

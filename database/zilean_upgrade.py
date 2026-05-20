@@ -420,6 +420,11 @@ def _get_db_config(zilean_settings: Dict) -> Optional[Dict]:
     }
 
 
+def _item_filename(item: Dict) -> str:
+    """Return the best available filename for an item, falling back to location_basename."""
+    return (item.get('filled_by_file') or item.get('location_basename') or '')
+
+
 def _item_size_gb(item: Dict) -> float:
     """Return item size in GB: DB value if set, else stat location_on_disk, else 0."""
     db_size = float(item.get('size') or 0)
@@ -652,6 +657,19 @@ def _score_results_with_current(
     # rank_result_key() and are intentionally not hard gates.
     candidates = _apply_version_hard_filters(list(candidates), version_settings)
 
+    # Reject candidates that are the same release as the current file.
+    # Normalize by lowercasing and stripping non-alphanumeric chars so that
+    # minor formatting differences (dots vs spaces, .mkv suffix) don't create
+    # false upgrades against the exact same encode.
+    if filename:
+        import re as _re2
+        _strip = _re2.compile(r'[^a-z0-9]')
+        _norm_current = _strip.sub('', filename.lower())
+        candidates = [
+            r for r in candidates
+            if _strip.sub('', (r.get('title') or r.get('original_title') or '').lower()) != _norm_current
+        ]
+
     current_result = _make_current_result(filename, title, size_bytes=size_bytes,
                                           genres_raw=genres_raw) if filename else None
     pool = ([current_result] if current_result else []) + list(candidates)
@@ -736,12 +754,18 @@ def _pick_best_alt(alts: List[Tuple[float, Dict]], recent_days: int = 90) -> Tup
         if iat_str:
             try:
                 iat = datetime.fromisoformat(iat_str.replace('Z', '+00:00'))
-                if iat.tzinfo is None:
-                    iat = iat.replace(tzinfo=timezone.utc)
-                if iat >= cutoff:
-                    recent.append((s, r))
+            except (ValueError, TypeError):
+                try:
+                    from email.utils import parsedate_to_datetime as _p2dt
+                    iat = _p2dt(iat_str)
+                except Exception:
+                    continue
             except Exception:
-                pass
+                continue
+            if iat.tzinfo is None:
+                iat = iat.replace(tzinfo=timezone.utc)
+            if iat >= cutoff:
+                recent.append((s, r))
     if recent:
         best = max(recent, key=lambda x: x[0])
         return best[0], best[1], True
@@ -1042,9 +1066,12 @@ def _scan_movie(item: Dict, zilean_instance: str, zilean_settings: Dict,
             phalanx_only = True
     if not results:
         return None
+    current_filename = _item_filename(item)
+    if not current_filename:
+        return None  # no baseline to score against — skip to avoid false upgrades
     # Score current file and all candidates in the same pool with the same version settings.
     current_score, candidate_scored = _score_results_with_current(
-        item.get('filled_by_file') or '', results,
+        current_filename, results,
         item['title'], item.get('year'), None, None, 'movie', False, vs,
         size_bytes=_item_size_gb(item),
         genres_raw=item.get('genres') or '',
@@ -1077,7 +1104,8 @@ def _scan_movie(item: Dict, zilean_instance: str, zilean_settings: Dict,
         'title': item['title'], 'year': item.get('year'), 'version': version,
         'current_score': round(current_score, 2), 'new_score': round(best_score, 2),
         'improvement_pct': round((best_score - current_score) / max(abs(current_score), 1) * 100, 1),
-        'current_file': item.get('filled_by_file') or '',
+        'current_file': _item_filename(item),
+        'current_protocol': 'nzb' if str(item.get('filled_by_torrent_id') or '').startswith('nzb:') else 'torrent',
         'current_size_gb': current_size_gb,
         'new_title': best_result.get('title', ''), 'new_size_gb': best_result.get('size', 0),
         'new_magnet': best_result.get('magnet', ''),
@@ -1114,9 +1142,12 @@ def _scan_episode(item: Dict, zilean_instance: str, zilean_settings: Dict,
             phalanx_only = True
     if not results:
         return None
+    current_filename = _item_filename(item)
+    if not current_filename:
+        return None  # no baseline to score against — skip to avoid false upgrades
     # Score current file and all candidates in the same pool with the same version settings.
     current_score, candidate_scored = _score_results_with_current(
-        item.get('filled_by_file') or '', results,
+        current_filename, results,
         item['title'], item.get('year'), season, episode, 'episode', False, vs,
         size_bytes=_item_size_gb(item),
         genres_raw=item.get('genres') or '',
@@ -1160,7 +1191,8 @@ def _scan_episode(item: Dict, zilean_instance: str, zilean_settings: Dict,
         'season': season, 'episode': episode, 'version': version,
         'current_score': round(current_score, 2), 'new_score': round(best_score, 2),
         'improvement_pct': round((best_score - current_score) / max(abs(current_score), 1) * 100, 1),
-        'current_file': item.get('filled_by_file') or '',
+        'current_file': _item_filename(item),
+        'current_protocol': 'nzb' if str(item.get('filled_by_torrent_id') or '').startswith('nzb:') else 'torrent',
         'current_size_gb': current_size_gb,
         'new_title': best_result.get('title', ''), 'new_size_gb': best_result.get('size', 0),
         'new_magnet': best_result.get('magnet', ''),
@@ -1215,7 +1247,7 @@ def _scan_season_pack(imdb_id: str, season_num: int, season_eps: List[Dict],
     # Score sample episode's current file alongside pack candidates in the same pool,
     # so current_score is computed consistently (not read from stale DB column).
     current_score, scored_candidates = _score_results_with_current(
-        sample.get('filled_by_file') or '', pack_results,
+        _item_filename(sample), pack_results,
         sample['title'], sample.get('year'),
         season_num, None, 'episode', True, vs,
         size_bytes=_item_size_gb(sample),
@@ -1248,13 +1280,14 @@ def _scan_season_pack(imdb_id: str, season_num: int, season_eps: List[Dict],
         'current_score': round(current_score, 2), 'best_score': round(best_score, 2),
         'improvement_pct': improvement_pct,
         'current_size_gb': round(sum(_item_size_gb(ep) for ep in season_eps), 2),
+        'current_protocol': 'nzb' if str(sample.get('filled_by_torrent_id') or '').startswith('nzb:') else 'torrent',
         'new_title': best_result.get('title', ''), 'new_size_gb': best_result.get('size', 0),
         'new_magnet': best_result.get('magnet', ''),
         '_alts': scored_candidates[:3],
         '_phalanx_only': phalanx_only,
         'current_files': sorted([
             {'ep': ep.get('episode_number') or ep.get('episode') or 0,
-             'file': ep.get('filled_by_file') or ''}
+             'file': _item_filename(ep)}
             for ep in season_eps
         ], key=lambda x: x['ep']),
     }
@@ -1315,6 +1348,10 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         threshold = float(get_setting('Scraping', 'upgrading_percentage_threshold', 0.1))
         pack_threshold = float(get_setting('Debug', 'zilean_pack_threshold', 0.5))
         default_version = get_default_version()
+        upgrade_source = get_setting('Upgrade Hub', 'upgrade_source', 'both') or 'both'
+        use_zilean = upgrade_source in ('both', 'zilean_only')
+        use_nzb    = upgrade_source in ('both', 'nzb_only')
+        logger.info(f'[UPGRADE_HUB] Upgrade source: {upgrade_source} (zilean={use_zilean}, nzb={use_nzb})')
 
         # Compute after_date if show_recent_only is enabled
         after_date = None
@@ -1326,8 +1363,8 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
 
         columns = ['id', 'type', 'imdb_id', 'title', 'year',
                    'season_number', 'episode_number', 'version',
-                   'current_score', 'filled_by_file', 'location_on_disk', 'state', 'genres', 'size',
-                   'filled_by_torrent_id']
+                   'current_score', 'filled_by_file', 'location_on_disk', 'location_basename',
+                   'state', 'genres', 'size', 'filled_by_torrent_id']
         all_collected = [
             dict(row) for row in get_all_media_items(state='Collected', columns=columns)
             if row['imdb_id']
@@ -1409,12 +1446,14 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         unique_seasons = list(season_groups.items())
 
         # ── DB pre-fetch phase (single connection, bulk queries) ──────────────
+        if not use_zilean:
+            logger.info('[UPGRADE_HUB] Zilean disabled by upgrade_source setting — skipping Zilean phases')
         # All Zilean data is loaded before workers start. Workers receive
         # pre-built lists and do zero DB access → fully parallel scoring.
         movie_prefetch: Optional[Dict[str, List[Dict]]] = None   # imdb_id → results
         show_prefetch:  Optional[Dict[str, List[tuple]]] = None  # imdb_id → raw rows
 
-        if db_cfg:
+        if use_zilean and db_cfg:
             db_conn = None
             try:
                 import psycopg2
@@ -1461,7 +1500,7 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         # Persistent cache: responses saved to SQLite, reused across restarts.
         # Smart invalidation: only re-fetch seasons where Zilean has new content.
         rest_season_cache: Dict[Tuple, List[Dict]] = {}
-        if not used_db and episodes:
+        if use_zilean and not used_db and episodes:
             # Load persisted REST cache from SQLite
             sqlite_rest_cache = _load_rest_cache_from_db(zilean_url)
             rest_season_cache = dict(sqlite_rest_cache)
@@ -1572,7 +1611,7 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
         # Separate from movies so their instant completion isn't mixed into
         # the REST-bound movie rate, which would corrupt the ETA.
         ep_pack_total = len(episodes) + len(unique_seasons)
-        if ep_pack_total > 0:
+        if use_zilean and ep_pack_total > 0:
             _scan_progress.update({'phase': 'scoring', 'done': 0, 'total': ep_pack_total})
             logger.info(f"[UPGRADE_HUB] Scoring {len(episodes)} episodes, "
                         f"{len(unique_seasons)} packs (CPU-only)…")
@@ -1628,7 +1667,7 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
 
         # ── Phase B: Scan movies (REST calls, I/O-bound) ──────────────────────
         # Separate phase so the ETA reflects only movie REST call speed.
-        if movies:
+        if use_zilean and movies:
             _scan_progress.update({'phase': 'scanning', 'done': 0, 'total': len(movies)})
             logger.info(f"[UPGRADE_HUB] Scanning {len(movies)} movies "
                         f"(DB={'yes' if used_db else 'no'}, workers={max_workers})…")
@@ -1651,6 +1690,64 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
                     with _state_lock:
                         _scan_progress['done'] = _scan_progress.get('done', 0) + 1
                         _scan_progress['errors'] = len(errors)
+
+        # ── Phase C: NZB indexer scan (all collected items vs latest NZBs) ──────
+        # Fetches latest NZBs from enabled Newznab indexers in browse mode,
+        # scores them with the same pipeline, and merges results.
+        # Runs for ALL collected items (both debrid and NZB items) so cross-
+        # protocol upgrades are possible (debrid→NZB and NZB→debrid via Zilean).
+        try:
+            from database.nzb_upgrade import scan_nzb_upgrades, get_newznab_scrapers
+            if use_nzb and get_newznab_scrapers():
+                logger.info('[UPGRADE_HUB] Starting NZB indexer scan phase…')
+                _scan_progress.update({'phase': 'nzb_scan', 'done': 0, 'total': len(movies) + len(episodes) + len(season_groups)})
+
+                def _nzb_progress(done, total):
+                    with _state_lock:
+                        _scan_progress['done'] = done
+
+                nzb_upgrades, nzb_packs = scan_nzb_upgrades(
+                    movies=movies,
+                    episodes=episodes,
+                    season_groups=dict(season_groups),
+                    threshold=threshold,
+                    pack_threshold=pack_threshold,
+                    default_version=default_version,
+                    not_wanted_hashes=_not_wanted_hashes,
+                    max_workers=max_workers,
+                    progress_callback=_nzb_progress,
+                )
+                # Merge: prefer whichever source gives the higher improvement_pct
+                # for the same item_id. New items with no Zilean result are added directly.
+                zilean_by_item = {c['item_id']: c for c in upgrade_candidates if 'item_id' in c}
+                for c in nzb_upgrades:
+                    iid = c.get('item_id')
+                    existing = zilean_by_item.get(iid)
+                    if existing is None:
+                        upgrade_candidates.append(c)
+                    elif c.get('improvement_pct', 0) > existing.get('improvement_pct', 0):
+                        upgrade_candidates.remove(existing)
+                        upgrade_candidates.append(c)
+
+                zilean_packs_by_key = {(p['imdb_id'], p['season']): p for p in pack_candidates}
+                for p in nzb_packs:
+                    key = (p.get('imdb_id'), p.get('season'))
+                    existing = zilean_packs_by_key.get(key)
+                    if existing is None:
+                        pack_candidates.append(p)
+                    elif p.get('improvement_pct', 0) > existing.get('improvement_pct', 0):
+                        pack_candidates.remove(existing)
+                        pack_candidates.append(p)
+
+                logger.info(f'[UPGRADE_HUB] After NZB merge: {len(upgrade_candidates)} upgrades, '
+                            f'{len(pack_candidates)} packs')
+        except Exception as _nzb_e:
+            logger.warning(f'[UPGRADE_HUB] NZB scan phase failed: {_nzb_e}', exc_info=True)
+
+        # Tag protocol on all candidates so the UI can show NZB/Debrid badges
+        for c in upgrade_candidates + pack_candidates:
+            if 'protocol' not in c:
+                c['protocol'] = 'torrent'
 
         upgrade_candidates.sort(key=lambda x: -x.get('improvement_pct', 0))
         pack_candidates.sort(key=lambda x: -x.get('ratio_pct', 0))

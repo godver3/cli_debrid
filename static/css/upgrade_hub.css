@@ -196,6 +196,27 @@
     color: #EF9A9A;
     border: 1px solid #6a2a2a;
 }
+.uh-proto-badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 4px;
+    vertical-align: middle;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.uh-proto-nzb {
+    background: #1a2a3a;
+    color: #80CBC4;
+    border: 1px solid #2a5a55;
+}
+.uh-proto-debrid {
+    background: #2a1a3a;
+    color: #CE93D8;
+    border: 1px solid #5a2a7a;
+}
 
 /* ── Progress ───────────────────────────────────────────────────────────── */
 .uh-progress-wrap {
