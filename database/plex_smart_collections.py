@@ -184,8 +184,10 @@ def apply_smart_collection_posters() -> None:
             )
 
             if poster_bytes:
-                upload_collection_poster(plex_url, plex_token, rk, poster_bytes)
+                upload_hash = upload_collection_poster(plex_url, plex_token, rk, poster_bytes)
                 any_uploaded = True
+                if upload_hash:
+                    state.setdefault('plex_upload_hashes', {})[rk] = upload_hash
                 logger.info(f"[SmartCollections] Poster applied for '{collection_name}' (rk={rk})")
             else:
                 logger.warning(f"[SmartCollections] Poster render returned None for '{collection_name}'")
@@ -258,6 +260,7 @@ def reapply_single_collection_poster(rating_key: str) -> dict:
         # Force re-render on next task run by clearing shared hash
         state = _migrate_state(_load_state())
         state.setdefault('shared', {})['poster_hash'] = ''
+        state.setdefault('plex_upload_hashes', {})[rating_key] = upload_hash
         _save_state(state)
         logger.info(f"[SmartCollections] Force-reapplied poster for '{collection_name}' (rk={rating_key})")
         return {'success': True, 'message': f"Poster applied for '{collection_name}'"}

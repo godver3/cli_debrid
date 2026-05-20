@@ -10,6 +10,26 @@ document.addEventListener('DOMContentLoaded', function() {
 let contentData = null;
 let discoverVersions = [];
 
+async function loadDiscoverSettings() {
+    if (window.discoverState && window.discoverState.discoverSettings) return;
+    try {
+        const response = await fetch('/settings/api/config');
+        if (!response.ok) return;
+        const config = await response.json();
+        const s = config['Discover Settings'] || {};
+        if (!window.discoverState) window.discoverState = {};
+        window.discoverState.discoverSettings = {
+            hide_no_rating: s.hide_no_rating || false,
+            hide_no_poster: s.hide_no_poster || false,
+            only_show_missing: s.only_show_missing || false,
+            tv_show_episode_view: s.tv_show_episode_view || 'discover',
+            hide_specials: s.hide_specials !== false
+        };
+    } catch (e) {
+        console.warn('[Discover Details] Could not load settings, using defaults:', e);
+    }
+}
+
 async function initDiscoverDetails() {
     const container = document.querySelector('.movie-container');
     if (!container) return;
@@ -28,6 +48,9 @@ async function initDiscoverDetails() {
     } catch (e) {
         console.warn('Modal initialization failed:', e);
     }
+
+    // Load settings before content so season filtering uses saved preferences
+    await loadDiscoverSettings();
 
     // Fetch available versions in background (don't block page load)
     fetchVersions().catch(e => console.warn('Failed to fetch versions:', e));
@@ -382,9 +405,12 @@ async function loadAndDisplaySeasons(data) {
 
     if (!seasonsContainer || !tabsNav || !tabsContent) return;
 
-    // Filter out specials (season 0) and sort by season number
+    // Filter out specials (season 0) based on setting — default true matches previous hardcoded behaviour
+    const hideSpecials = (window.discoverState && window.discoverState.discoverSettings)
+        ? window.discoverState.discoverSettings.hide_specials !== false
+        : true;
     const regularSeasons = data.seasons
-        .filter(s => s.season_number > 0)
+        .filter(s => hideSpecials ? s.season_number > 0 : true)
         .sort((a, b) => a.season_number - b.season_number);
 
     if (regularSeasons.length === 0) return;
@@ -932,7 +958,10 @@ function showVersionModal(data) {
             const list = document.createElement('div');
             list.className = 'seasons-list';
             seasonSelectionContainer.appendChild(list);
-            data.seasons.filter(s => s.season_number > 0).forEach(season => {
+            const _hideSpecials2 = (window.discoverState && window.discoverState.discoverSettings)
+                ? window.discoverState.discoverSettings.hide_specials !== false
+                : true;
+            data.seasons.filter(s => _hideSpecials2 ? s.season_number > 0 : true).forEach(season => {
                 const row = document.createElement('div');
                 row.className = 'option-row';
                 row.dataset.value = String(season.season_number);

@@ -1,5 +1,8 @@
 from routes.api_tracker import api
+import hashlib
 import logging
+import threading
+import time
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from utilities.settings import get_setting
@@ -7,6 +10,31 @@ from urllib.parse import urlencode, quote_plus
 import re
 import json
 from scraper.functions.common import trim_magnet
+
+# Query result cache — reduces API hits for duplicate NZB searches within TTL window
+_NZB_CACHE: Dict[str, tuple] = {}   # key -> (timestamp, results)
+_NZB_CACHE_LOCK = threading.Lock()
+_NZB_CACHE_TTL = 600  # 10 minutes
+
+
+def _cache_key(endpoint: str, params: dict) -> str:
+    stable = f"{endpoint}|{sorted(params.items())}"
+    return hashlib.sha256(stable.encode()).hexdigest()
+
+
+def _cache_get(key: str) -> Optional[List]:
+    with _NZB_CACHE_LOCK:
+        entry = _NZB_CACHE.get(key)
+        if entry and (time.monotonic() - entry[0]) < _NZB_CACHE_TTL:
+            return entry[1]
+        if entry:
+            del _NZB_CACHE[key]
+    return None
+
+
+def _cache_set(key: str, results: List) -> None:
+    with _NZB_CACHE_LOCK:
+        _NZB_CACHE[key] = (time.monotonic(), results)
 
 
 def _build_prowlarr_params_list(
@@ -107,13 +135,21 @@ def scrape_prowlarr_instance(
     )
 
     def _fetch(query_params):
+        ck = _cache_key(search_endpoint, query_params)
+        cached = _cache_get(ck)
+        if cached is not None:
+            logging.info(f"Prowlarr '{instance}' cache hit for {query_params.get('type')} query")
+            return cached
         try:
             logging.debug(f"Prowlarr '{instance}' query: {query_params}")
             response = api.get(search_endpoint, headers=headers, params=query_params, timeout=timeout)
             if response.status_code == 200:
                 data = response.json()
                 if isinstance(data, list):
-                    return parse_prowlarr_results(data, instance, seeders_only)
+                    results = parse_prowlarr_results(data, instance, seeders_only)
+                    if results:
+                        _cache_set(ck, results)
+                    return results
                 logging.error(f"Prowlarr '{instance}' unexpected response type: {type(data)}")
             else:
                 logging.error(f"Prowlarr '{instance}' HTTP {response.status_code}: {response.text[:300]}")

@@ -32,7 +32,7 @@
     loadThemeCSS();
 
     let modal, overlay, closeBtn, cancelBtn, saveBtn;
-    let hideNoRatingInput, hideNoPosterInput, onlyShowMissingInput, discoverEpisodeViewSelect;
+    let hideNoRatingInput, hideNoPosterInput, onlyShowMissingInput, discoverEpisodeViewSelect, hideSpecialsInput;
     let currentSettings = null;
 
     // Initialize elements after DOM is ready
@@ -52,6 +52,7 @@
         hideNoPosterInput = document.getElementById('discoverHideNoPoster');
         onlyShowMissingInput = document.getElementById('discoverOnlyShowMissing');
         discoverEpisodeViewSelect = document.getElementById('discoverEpisodeView');
+        hideSpecialsInput = document.getElementById('discoverHideSpecials');
 
         return true;
     }
@@ -93,6 +94,11 @@
 
             if (discoverEpisodeViewSelect) {
                 discoverEpisodeViewSelect.value = discoverSettings.tv_show_episode_view || 'discover';
+            }
+
+            if (hideSpecialsInput) {
+                // Default true — matches the previous hardcoded behaviour
+                hideSpecialsInput.checked = discoverSettings.hide_specials !== false;
             }
 
             // Show modal
@@ -142,6 +148,9 @@
             updatedSettings['Discover Settings'].hide_no_poster = hideNoPosterInput.checked;
             updatedSettings['Discover Settings'].only_show_missing = onlyShowMissingInput.checked;
             updatedSettings['Discover Settings'].tv_show_episode_view = discoverEpisodeViewSelect.value;
+            if (hideSpecialsInput) {
+                updatedSettings['Discover Settings'].hide_specials = hideSpecialsInput.checked;
+            }
 
             // Send to same API endpoint as settings page
             const response = await fetch('/settings/api/settings', {

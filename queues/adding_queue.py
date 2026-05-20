@@ -20,13 +20,12 @@ class AddingQueue:
     
     def __init__(self):
         """Initialize the queue manager"""
-        self.debrid_provider = get_debrid_provider()
+        self.debrid_provider = get_debrid_provider()  # May be None for usenet-only setups
         self.torrent_processor = TorrentProcessor(self.debrid_provider)
         self.media_matcher = MediaMatcher(relaxed_matching=get_setting('Matching', 'relaxed_matching', False))
         self.items: List[Dict] = []
         self.last_process_time = {}
-        # logging.info("Initialized AddingQueue")
-        
+
     def reinitialize_provider(self):
         """Reinitialize the debrid provider and processors"""
         self.debrid_provider = get_debrid_provider()

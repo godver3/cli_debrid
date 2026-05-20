@@ -738,97 +738,206 @@
         <div id="pt-error" class="dm-error" style="display:none"></div>
         <div id="pt-content" style="display:none">
 
-            <!-- In Real-Debrid group -->
-            <div class="dm-pt-group">
-                <div class="dm-pt-group-header">
-                    <div class="dm-pt-group-title">
-                        <span class="dm-pt-group-dot dm-pt-dot-in"></span>
-                        In {{ debrid_provider_name }}
-                        <span class="dm-pt-group-count" id="pt-in-rd-count">0</span>
-                    </div>
-                    <div class="dm-pt-group-actions">
-                        <button class="dm-btn dm-btn-secondary dm-btn-sm" id="pt-select-in-rd">Select All</button>
-                    </div>
-                </div>
-                <p class="dm-pt-group-desc">These items are still in your {{ debrid_provider_name }} library. You may want to remove them from {{ debrid_provider_name }} first before purging from Plex.</p>
-                <div class="dm-pt-bulk-bar">
-                    <button class="dm-pt-bulk-btn dm-pt-bulk-scan" id="pt-bulk-scan-all" title="Trigger Plex directory scan on all in-{{ debrid_provider_name }} items">
-                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
-                        Scan All
-                    </button>
-                    <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-reinsert-good" title="Re-add all matched torrents to {{ debrid_provider_name }}">
-                        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"/></svg>
-                        Reinsert All Good
-                    </button>
-                    <button class="dm-pt-bulk-btn dm-pt-bulk-del" id="pt-bulk-del-bad" title="Delete all Plex items with an orphaned bad file">
-                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
-                        Delete All Bad
-                    </button>
-                    <button class="dm-pt-bulk-btn dm-pt-bulk-del" id="pt-bulk-del-good" title="Delete all Plex items that have a matching good file">
-                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
-                        Delete All Good
-                    </button>
-                </div>
-                <div class="dm-table-wrap">
-                    <table class="dm-table dm-pt-table">
-                        <thead>
-                            <tr>
-                                <th class="dm-col-check"><input type="checkbox" id="pt-in-rd-select-all" title="Select all in-RD"></th>
-                                <th class="dm-pt-col-title">Title</th>
-                                <th class="dm-pt-col-type">Type</th>
-                                <th class="dm-pt-col-files-hdr">Files</th>
-                                <th class="dm-col-actions">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="pt-in-rd-tbody">
-                            <tr class="dm-empty-row"><td colspan="5">Loading…</td></tr>
-                        </tbody>
-                    </table>
-                </div>
+            <!-- Sub-tab bar -->
+            <div class="dm-rc-tab-bar">
+                <button class="dm-rc-tab dm-pt-subtab dm-rc-tab-active" data-pt-group="debrid">
+                    <span class="dm-rc-tab-name">{{ debrid_provider_name }}</span>
+                    <span class="dm-rc-tab-count" id="pt-subtab-debrid-count">0</span>
+                </button>
+                <button class="dm-rc-tab dm-pt-subtab" data-pt-group="usenet">
+                    <span class="dm-rc-tab-name">Usenet</span>
+                    <span class="dm-rc-tab-count" id="pt-subtab-usenet-count">0</span>
+                </button>
             </div>
 
-            <!-- Not in Real-Debrid group -->
-            <div class="dm-pt-group">
-                <div class="dm-pt-group-header">
-                    <div class="dm-pt-group-title">
-                        <span class="dm-pt-group-dot dm-pt-dot-out"></span>
-                        Not in {{ debrid_provider_name }}
-                        <span class="dm-pt-group-count" id="pt-not-in-rd-count">0</span>
+            <!-- Debrid panel -->
+            <div id="pt-panel-debrid">
+                <!-- In Real-Debrid group -->
+                <div class="dm-pt-group">
+                    <div class="dm-pt-group-header">
+                        <div class="dm-pt-group-title">
+                            <span class="dm-pt-group-dot dm-pt-dot-in"></span>
+                            In {{ debrid_provider_name }}
+                            <span class="dm-pt-group-count" id="pt-in-rd-count">0</span>
+                        </div>
+                        <div class="dm-pt-group-actions">
+                            <button class="dm-btn dm-btn-secondary dm-btn-sm" id="pt-select-in-rd">Select All</button>
+                        </div>
                     </div>
-                    <div class="dm-pt-group-actions">
-                        <button class="dm-btn dm-btn-secondary dm-btn-sm" id="pt-select-not-in-rd">Select All</button>
+                    <p class="dm-pt-group-desc">These items are still in your {{ debrid_provider_name }} library. You may want to remove them from {{ debrid_provider_name }} first before purging from Plex.</p>
+                    <div class="dm-pt-bulk-bar">
+                        <button class="dm-pt-bulk-btn dm-pt-bulk-scan" id="pt-bulk-scan-all" title="Trigger Plex directory scan on all in-{{ debrid_provider_name }} items">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
+                            Scan All
+                        </button>
+                        <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-reinsert-good" title="Re-add all matched torrents to {{ debrid_provider_name }}">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"/></svg>
+                            Reinsert All Good
+                        </button>
+                        <button class="dm-pt-bulk-btn dm-pt-bulk-del" id="pt-bulk-del-bad" title="Delete all Plex items with an orphaned bad file">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                            Delete All Bad
+                        </button>
+                        <button class="dm-pt-bulk-btn dm-pt-bulk-del" id="pt-bulk-del-good" title="Delete all Plex items that have a matching good file">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                            Delete All Good
+                        </button>
+                    </div>
+                    <div class="dm-table-wrap">
+                        <table class="dm-table dm-pt-table">
+                            <thead>
+                                <tr>
+                                    <th class="dm-col-check"><input type="checkbox" id="pt-in-rd-select-all" title="Select all in-RD"></th>
+                                    <th class="dm-pt-col-title">Title</th>
+                                    <th class="dm-pt-col-type">Type</th>
+                                    <th class="dm-pt-col-files-hdr">Files</th>
+                                    <th class="dm-col-actions">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pt-in-rd-tbody">
+                                <tr class="dm-empty-row"><td colspan="5">Loading…</td></tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
-                <p class="dm-pt-group-desc">These items are not found in {{ debrid_provider_name }}. Safe to permanently delete from Plex.</p>
-                <div class="dm-pt-bulk-bar">
-                    <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-reinsert-notrd" title="Re-add all items with a known magnet hash to {{ debrid_provider_name }}">
-                        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"/></svg>
-                        Reinsert All
-                    </button>
-                    <button class="dm-pt-bulk-btn dm-pt-bulk-del" id="pt-bulk-del-notrd" title="Permanently delete all not-in-RD items from Plex">
-                        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
-                        Delete All
-                    </button>
+
+                <!-- Not in Real-Debrid group -->
+                <div class="dm-pt-group">
+                    <div class="dm-pt-group-header">
+                        <div class="dm-pt-group-title">
+                            <span class="dm-pt-group-dot dm-pt-dot-out"></span>
+                            Not in {{ debrid_provider_name }}
+                            <span class="dm-pt-group-count" id="pt-not-in-rd-count">0</span>
+                        </div>
+                        <div class="dm-pt-group-actions">
+                            <button class="dm-btn dm-btn-secondary dm-btn-sm" id="pt-select-not-in-rd">Select All</button>
+                        </div>
+                    </div>
+                    <p class="dm-pt-group-desc">These items are not found in {{ debrid_provider_name }}. Safe to permanently delete from Plex.</p>
+                    <div class="dm-pt-bulk-bar">
+                        <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-reinsert-notrd" title="Re-add all items with a known magnet hash to {{ debrid_provider_name }}">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"/></svg>
+                            Reinsert All
+                        </button>
+                        <button class="dm-pt-bulk-btn dm-pt-bulk-del" id="pt-bulk-del-notrd" title="Permanently delete all not-in-RD items from Plex">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                            Delete All
+                        </button>
+                    </div>
+                    <div class="dm-table-wrap">
+                        <table class="dm-table dm-pt-table">
+                            <thead>
+                                <tr>
+                                    <th class="dm-col-check"><input type="checkbox" id="pt-not-in-rd-select-all" title="Select all not-in-RD"></th>
+                                    <th class="dm-pt-col-title">Title</th>
+                                    <th class="dm-pt-col-type">Type</th>
+                                    <th class="dm-pt-col-files-hdr">Files</th>
+                                    <th class="dm-col-actions">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pt-not-in-rd-tbody">
+                                <tr class="dm-empty-row"><td colspan="5">Loading…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-                <div class="dm-table-wrap">
-                    <table class="dm-table dm-pt-table">
-                        <thead>
-                            <tr>
-                                <th class="dm-col-check"><input type="checkbox" id="pt-not-in-rd-select-all" title="Select all not-in-RD"></th>
-                                <th class="dm-pt-col-title">Title</th>
-                                <th class="dm-pt-col-type">Type</th>
-                                <th class="dm-pt-col-files-hdr">Files</th>
-                                <th class="dm-col-actions">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="pt-not-in-rd-tbody">
-                            <tr class="dm-empty-row"><td colspan="5">Loading…</td></tr>
-                        </tbody>
-                    </table>
+            </div><!-- /#pt-panel-debrid -->
+
+            <!-- Usenet panel -->
+            <div id="pt-panel-usenet" style="display:none">
+                <!-- In Usenet (NZB) group -->
+                <div class="dm-pt-group">
+                    <div class="dm-pt-group-header">
+                        <div class="dm-pt-group-title">
+                            <span class="dm-pt-group-dot dm-pt-dot-in"></span>
+                            In Usenet
+                            <span class="dm-pt-group-count" id="pt-in-usenet-count">0</span>
+                        </div>
+                        <div class="dm-pt-group-actions">
+                            <button class="dm-btn dm-btn-secondary dm-btn-sm" id="pt-select-in-usenet">Select All</button>
+                        </div>
+                    </div>
+                    <p class="dm-pt-group-desc">These items were downloaded via Usenet and are tracked by Decypharr. Use Re-NZB to resubmit the original download or find a replacement.</p>
+                    <div class="dm-pt-bulk-bar">
+                        <button class="dm-pt-bulk-btn dm-pt-bulk-scan" id="pt-bulk-scan-in-usenet" title="Trigger Plex directory scan on all in-Usenet items">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
+                            Scan All
+                        </button>
+                        <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-renzb-in" title="Re-submit all in-Usenet items to Decypharr">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"/></svg>
+                            Re-NZB All
+                        </button>
+                        <button class="dm-pt-bulk-btn dm-pt-bulk-del" id="pt-bulk-del-in-usenet" title="Delete all in-Usenet items from Plex">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                            Delete All
+                        </button>
+                    </div>
+                    <div class="dm-table-wrap">
+                        <table class="dm-table dm-pt-table">
+                            <thead>
+                                <tr>
+                                    <th class="dm-col-check"><input type="checkbox" id="pt-in-usenet-select-all" title="Select all"></th>
+                                    <th class="dm-pt-col-title">Title</th>
+                                    <th class="dm-pt-col-type">Type</th>
+                                    <th class="dm-pt-col-files-hdr">Release</th>
+                                    <th class="dm-col-actions">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pt-in-usenet-tbody">
+                                <tr class="dm-empty-row"><td colspan="5">Loading…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-            </div>
-        </div>
-    </div>
+
+                <!-- Not in Usenet group -->
+                <div class="dm-pt-group">
+                    <div class="dm-pt-group-header">
+                        <div class="dm-pt-group-title">
+                            <span class="dm-pt-group-dot dm-pt-dot-out"></span>
+                            Not in Usenet
+                            <span class="dm-pt-group-count" id="pt-not-usenet-count">0</span>
+                        </div>
+                        <div class="dm-pt-group-actions">
+                            <button class="dm-btn dm-btn-secondary dm-btn-sm" id="pt-select-not-usenet">Select All</button>
+                        </div>
+                    </div>
+                    <p class="dm-pt-group-desc">These Plex trash items were originally downloaded via Usenet but have no active job ID. Use Re-NZB to find a new download.</p>
+                    <div class="dm-pt-bulk-bar">
+                        <button class="dm-pt-bulk-btn dm-pt-bulk-scan" id="pt-bulk-scan-not-usenet" title="Trigger Plex directory scan on all not-in-Usenet items">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
+                            Scan All
+                        </button>
+                        <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-renzb-not" title="Re-scrape and re-submit all not-in-Usenet items to Decypharr">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"/></svg>
+                            Re-NZB All
+                        </button>
+                        <button class="dm-pt-bulk-btn dm-pt-bulk-del" id="pt-bulk-del-not-usenet" title="Delete all not-in-Usenet items from Plex">
+                            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                            Delete All
+                        </button>
+                    </div>
+                    <div class="dm-table-wrap">
+                        <table class="dm-table dm-pt-table">
+                            <thead>
+                                <tr>
+                                    <th class="dm-col-check"><input type="checkbox" id="pt-not-usenet-select-all" title="Select all"></th>
+                                    <th class="dm-pt-col-title">Title</th>
+                                    <th class="dm-pt-col-type">Type</th>
+                                    <th class="dm-pt-col-files-hdr">Release</th>
+                                    <th class="dm-col-actions">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pt-not-usenet-tbody">
+                                <tr class="dm-empty-row"><td colspan="5">Loading…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div><!-- /#pt-panel-usenet -->
+
+        </div><!-- /#pt-content -->
+    </div><!-- /#plex-trash-tab -->
     {% endif %}
 
     <!-- ── RECONCILE TAB ── -->
@@ -4344,6 +4453,22 @@ let _ptSelected = new Set();
 let _ptInRd = [];
 let _ptNotInRd = [];
 let _ptLoaded = false;
+let _ptActiveSubtab = 'debrid';
+
+function _ptSwitchSubtab(group) {
+    _ptActiveSubtab = group;
+    document.querySelectorAll('.dm-pt-subtab').forEach(btn => {
+        btn.classList.toggle('dm-rc-tab-active', btn.dataset.ptGroup === group);
+    });
+    const debridPanel = document.getElementById('pt-panel-debrid');
+    const usenetPanel = document.getElementById('pt-panel-usenet');
+    if (debridPanel) debridPanel.style.display = group === 'debrid' ? '' : 'none';
+    if (usenetPanel) usenetPanel.style.display = group === 'usenet' ? '' : 'none';
+}
+
+document.querySelectorAll('.dm-pt-subtab').forEach(btn => {
+    btn.addEventListener('click', () => _ptSwitchSubtab(btn.dataset.ptGroup));
+});
 
 function _ptUpdatePurgeBtn() {
     const btn = document.getElementById('pt-purge-btn');
@@ -4571,12 +4696,18 @@ function _ptUpdateCounts() {
     const inCount = document.getElementById('pt-in-rd-count');
     const outCount = document.getElementById('pt-not-in-rd-count');
     const tabCount = document.getElementById('plex-trash-tab-count');
-    const total = _ptInRd.length + _ptNotInRd.length;
+    const debridTotal = _ptInRd.length + _ptNotInRd.length;
     if (inCount) inCount.textContent = _ptInRd.length;
     if (outCount) outCount.textContent = _ptNotInRd.length;
-    if (tabCount) tabCount.textContent = total ? total : '';
+    // Update debrid sub-tab badge
+    const debridSubtabBadge = document.getElementById('pt-subtab-debrid-count');
+    if (debridSubtabBadge) debridSubtabBadge.textContent = debridTotal || '';
+    // Total tab badge = all items across both sub-tabs
+    const usenetTotal = _ptInUsenet.length + _ptNotUsenet.length;
+    const grand = debridTotal + usenetTotal;
+    if (tabCount) tabCount.textContent = grand ? grand : '';
     const info = document.getElementById('pt-info-text');
-    if (info) info.textContent = total ? `${total} item${total !== 1 ? 's' : ''} in Plex Trash` : '';
+    if (info) info.textContent = grand ? `${grand} item${grand !== 1 ? 's' : ''} in Plex Trash` : '';
 }
 
 async function loadPlexTrash(force) {
@@ -4594,14 +4725,24 @@ async function loadPlexTrash(force) {
         if (!data.success) throw new Error(data.error || 'Failed to load');
         _ptInRd = data.in_rd || [];
         _ptNotInRd = data.not_in_rd || [];
+        _ptInUsenet = data.in_usenet || [];
+        _ptNotUsenet = data.not_in_usenet || [];
         _ptSelected.clear();
         _ptRenderGroup('pt-in-rd-tbody', _ptInRd, 'in_rd');
         _ptRenderGroup('pt-not-in-rd-tbody', _ptNotInRd, 'not_in_rd');
+        _ptRenderUsenetGroup('pt-in-usenet-tbody', _ptInUsenet);
+        _ptRenderUsenetGroup('pt-not-usenet-tbody', _ptNotUsenet);
         _ptUpdateCounts();
+        _ptUpdateUsenetCounts();
         _ptUpdatePurgeBtn();
         loading.style.display = 'none';
         content.style.display = '';
         _ptLoaded = true;
+        // Auto-switch to usenet tab if there are usenet items but no debrid items
+        const hasDebrid = (_ptInRd.length + _ptNotInRd.length) > 0;
+        const hasUsenet = (_ptInUsenet.length + _ptNotUsenet.length) > 0;
+        if (!hasDebrid && hasUsenet) _ptSwitchSubtab('usenet');
+        else _ptSwitchSubtab(_ptActiveSubtab);
         // If RD library was not ready, show a notice and auto-refresh in 15s
         const rdBanner = document.getElementById('pt-rd-loading-banner');
         if (data.rd_library_status === 'loading') {
@@ -4860,6 +5001,324 @@ document.querySelectorAll('.dm-tab[data-tab="plex-trash"]').forEach(btn => {
     btn.addEventListener('click', () => { if (!_ptLoaded) loadPlexTrash(false); });
 });
 if (_dmActiveTab === 'plex-trash') loadPlexTrash(false);
+
+// ── USENET (NZB) SECTION ───────────────────────────────────────────────────
+let _ptInUsenet = [];
+let _ptNotUsenet = [];
+
+function _ptRenderUsenetGroup(tbodyId, items) {
+    const tbody = document.getElementById(tbodyId);
+    if (!tbody) return;
+    if (!items.length) {
+        tbody.innerHTML = '<tr class="dm-empty-row"><td colspan="5">None</td></tr>';
+        return;
+    }
+    tbody.innerHTML = items.map((item, idx) => {
+        const checked = _ptSelected.has(item.rating_key) ? 'checked' : '';
+        const typeLabel = item.media_type === 'show'
+            ? '<span class="dm-type-badge dm-type-tv">Show</span>'
+            : '<span class="dm-type-badge dm-type-movie">Movie</span>';
+        const year = item.year ? ` (${item.year})` : '';
+        const rk = escHtml(item.rating_key);
+        const _shorten = (s, n) => s && s.length > n ? s.substring(0, n) + '…' : (s || '');
+
+        // Build Files column — mirrors debrid _ptRenderGroup logic exactly
+        let filesHtml = '';
+        if (item.bad_file && item.has_good_file) {
+            const goodName = item.good_file || item.nzb_title || item.folder_name || '';
+            const _pids = item.part_ids || {};
+            const badPart = _pids[item.bad_file] || {};
+            const goodPart = _pids[goodName] || {};
+            const badMid = escHtml(badPart.media_id || '');
+            const badPid = escHtml(badPart.part_id || '');
+            const goodMid = escHtml(goodPart.media_id || '');
+            const goodPid = escHtml(goodPart.part_id || '');
+            const orphanLabel = item.bad_file_orphaned ? `<span class="dm-pt-badge-orphaned">Orphaned</span>` : '';
+            // Bad file row: Re-NZB disabled (no point reinserting the broken file) + Delete
+            const badBtns = `<span class="dm-pt-file-btns">`
+                + `<button class="dm-btn dm-btn-xs dm-pt-fbtn" data-faction="renzb-file" data-idx="${idx}" data-tbody="${tbodyId}" disabled title="Use Re-NZB button to resubmit">Re-NZB</button>`
+                + `<button class="dm-btn dm-btn-xs dm-pt-fbtn dm-pt-fbtn-del" data-faction="delete-part" data-rk="${rk}" data-mid="${badMid}" data-pid="${badPid}" data-protected="1" title="Remove this file from Plex">Delete</button>`
+                + `</span>`;
+            // Good file row: Re-NZB enabled + Delete
+            const goodBtns = `<span class="dm-pt-file-btns">`
+                + `<button class="dm-btn dm-btn-xs dm-pt-fbtn" data-faction="renzb-file" data-idx="${idx}" data-tbody="${tbodyId}" title="Re-submit this item to Decypharr">Re-NZB</button>`
+                + `<button class="dm-btn dm-btn-xs dm-pt-fbtn dm-pt-fbtn-del" data-faction="delete-part" data-rk="${rk}" data-mid="${goodMid}" data-pid="${goodPid}" data-protected="1" title="Remove this file from Plex">Delete</button>`
+                + `</span>`;
+            filesHtml = `<div class="dm-pt-file-row"><span class="dm-pt-file-bad" title="${escHtml(item.bad_file)}">${escHtml(item.bad_file)}</span>${orphanLabel}${badBtns}</div>`
+                      + `<div class="dm-pt-file-row"><span class="dm-pt-file-good" title="${escHtml(goodName)}">${escHtml(goodName)}</span>${goodBtns}</div>`;
+        } else if (item.bad_file) {
+            filesHtml = `<div class="dm-pt-file-row"><span class="dm-pt-file-bad" title="${escHtml(item.bad_file)}">${escHtml(item.bad_file)}</span></div>`;
+        } else {
+            const releaseTitle = escHtml(item.nzb_title || item.folder_name || '');
+            const hasUrl = !!(item.nzb_url);
+            const urlBadge = hasUrl
+                ? '<span class="dm-pt-badge-nzb-url" title="Original NZB URL available">URL</span>'
+                : '<span class="dm-pt-badge-nzb-nourl" title="No stored NZB URL — will re-scrape">Re-scrape</span>';
+            filesHtml = `<div class="dm-pt-file-row"><span class="dm-pt-folder" title="${releaseTitle}">${releaseTitle}</span>${urlBadge}</div>`;
+        }
+
+        const action = `<button class="dm-btn dm-btn-secondary dm-btn-sm dm-pt-action-btn" data-action="renzb" data-idx="${idx}" data-group="${tbodyId}" title="Re-submit to Decypharr">Re-NZB</button>`;
+        return `<tr>
+            <td class="dm-col-check"><input type="checkbox" data-rk="${rk}" data-group="usenet" ${checked}></td>
+            <td><span class="dm-pt-title">${escHtml(item.title)}${escHtml(year)}</span></td>
+            <td class="dm-pt-col-type">${typeLabel}</td>
+            <td class="dm-pt-col-files">${filesHtml}</td>
+            <td class="dm-col-actions">${action}</td>
+        </tr>`;
+    }).join('');
+
+    tbody.querySelectorAll('input[type=checkbox][data-rk]').forEach(cb => {
+        cb.addEventListener('change', () => {
+            if (cb.checked) _ptSelected.add(cb.dataset.rk);
+            else _ptSelected.delete(cb.dataset.rk);
+            _ptUpdatePurgeBtn();
+        });
+    });
+
+    tbody.querySelectorAll('.dm-pt-action-btn[data-action="renzb"]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const idx = parseInt(btn.dataset.idx);
+            const isIn = btn.dataset.group === 'pt-in-usenet-tbody';
+            const item = isIn ? _ptInUsenet[idx] : _ptNotUsenet[idx];
+            if (!item) return;
+            const origHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.textContent = 'Submitting…';
+            try {
+                const r = await fetch('/debrid_manager/api/nzb/reinsert', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        item_id: item.nzb_item_id,
+                        nzb_url: item.nzb_url || '',
+                        nzb_title: item.nzb_title || '',
+                        rating_key: item.rating_key,
+                    }),
+                });
+                const data = await r.json();
+                if (data.success) {
+                    const methodLabel = data.method === 'rescrape' ? 'Re-scraped & submitted' : 'Re-submitted';
+                    // Update item's nzb_title with new release so Scan All uses the right path
+                    if (data.new_release_title) item.nzb_title = data.new_release_title;
+                    btn.textContent = 'Done';
+                    btn.classList.add('dm-pt-action-ok');
+                    showPopup({ type: 'success', title: 'Re-NZB', message: `${methodLabel} — job ID: ${data.job_id}`, autoClose: 5000 });
+                    // Auto-scan the new path
+                    const parentDir = item.file_dir ? item.file_dir.substring(0, item.file_dir.lastIndexOf('/')) : '';
+                    const newPath = (parentDir && item.nzb_title) ? `${parentDir}/${item.nzb_title}` : '';
+                    if (newPath) {
+                        fetch('/debrid_manager/api/plex_force_scan', {
+                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({paths: [newPath], empty_trash: false}),
+                        }).catch(() => {});
+                    }
+                    setTimeout(() => { btn.innerHTML = origHtml; btn.classList.remove('dm-pt-action-ok'); btn.disabled = false; }, 4000);
+                } else {
+                    showPopup({ type: 'error', title: 'Re-NZB Failed', message: data.error || 'Unknown error', autoClose: 6000 });
+                    btn.innerHTML = origHtml; btn.disabled = false;
+                }
+            } catch(e) {
+                showPopup({ type: 'error', title: 'Re-NZB Failed', message: e.message, autoClose: 5000 });
+                btn.innerHTML = origHtml; btn.disabled = false;
+            }
+        });
+    });
+
+    // Per-file inline button handlers (renzb-file and delete-part)
+    tbody.querySelectorAll('.dm-pt-fbtn').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const faction = btn.dataset.faction;
+            const origHtml = btn.innerHTML;
+            if (btn.disabled) return;
+            btn.disabled = true;
+            if (faction === 'renzb-file') {
+                const idx = parseInt(btn.dataset.idx);
+                const isIn = btn.dataset.tbody === 'pt-in-usenet-tbody';
+                const item = isIn ? _ptInUsenet[idx] : _ptNotUsenet[idx];
+                if (!item) { btn.disabled = false; return; }
+                btn.textContent = 'Submitting…';
+                try {
+                    const r = await fetch('/debrid_manager/api/nzb/reinsert', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ item_id: item.nzb_item_id, nzb_url: item.nzb_url || '', nzb_title: item.nzb_title || '', rating_key: item.rating_key }),
+                    });
+                    const data = await r.json();
+                    if (data.success) {
+                        if (data.new_release_title) item.nzb_title = data.new_release_title;
+                        btn.textContent = 'Done';
+                        btn.classList.add('dm-pt-action-ok');
+                        setTimeout(() => { btn.innerHTML = origHtml; btn.classList.remove('dm-pt-action-ok'); btn.disabled = false; }, 3000);
+                    } else {
+                        showPopup({ type: 'error', title: 'Re-NZB Failed', message: data.error || 'Unknown error', autoClose: 6000 });
+                        btn.innerHTML = origHtml; btn.disabled = false;
+                    }
+                } catch(e) { showPopup({ type: 'error', title: 'Re-NZB Failed', message: e.message, autoClose: 5000 }); btn.innerHTML = origHtml; btn.disabled = false; }
+            } else if (faction === 'delete-part') {
+                const ratingKey = btn.dataset.rk;
+                const mediaId = btn.dataset.mid;
+                const partId = btn.dataset.pid;
+                showPopup({
+                    type: 'confirm', title: 'Remove File', message: 'Remove this file from Plex? This cannot be undone.',
+                    confirmText: 'Remove', cancelText: 'Cancel',
+                    onConfirm: async function() {
+                        btn.textContent = 'Deleting…';
+                        try {
+                            const scanItem = [..._ptInUsenet, ..._ptNotUsenet].find(i => i.rating_key === ratingKey);
+                            const r = await fetch('/debrid_manager/api/plex_delete_part', {
+                                method: 'POST', headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({ rating_key: ratingKey, media_id: mediaId, part_id: partId }),
+                            });
+                            const data = await r.json();
+                            if (!data.success) { showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + (data.error || 'unknown'), autoClose: 5000 }); btn.innerHTML = origHtml; btn.disabled = false; return; }
+                            const inItem = _ptInUsenet.find(i => i.rating_key === ratingKey);
+                            if (inItem?.has_good_file) {
+                                inItem.bad_file = null; inItem.has_good_file = false; inItem.bad_file_orphaned = false;
+                                _ptRenderUsenetGroup('pt-in-usenet-tbody', _ptInUsenet);
+                            } else {
+                                _ptInUsenet = _ptInUsenet.filter(i => i.rating_key !== ratingKey);
+                                _ptNotUsenet = _ptNotUsenet.filter(i => i.rating_key !== ratingKey);
+                                _ptSelected.delete(ratingKey);
+                                _ptRenderUsenetGroup('pt-in-usenet-tbody', _ptInUsenet);
+                                _ptRenderUsenetGroup('pt-not-usenet-tbody', _ptNotUsenet);
+                            }
+                            _ptUpdateUsenetCounts(); _ptUpdatePurgeBtn();
+                            if (scanItem?.file_dir) {
+                                fetch('/debrid_manager/api/plex_force_scan', {
+                                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                                    body: JSON.stringify({ paths: [scanItem.file_dir], empty_trash: false }),
+                                }).catch(() => {});
+                            }
+                        } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Delete failed: ' + e.message, autoClose: 5000 }); btn.innerHTML = origHtml; btn.disabled = false; }
+                    },
+                    onCancel: function() { btn.disabled = false; }
+                });
+                return;
+            }
+        });
+    });
+}
+
+function _ptUpdateUsenetCounts() {
+    const inEl = document.getElementById('pt-in-usenet-count');
+    const outEl = document.getElementById('pt-not-usenet-count');
+    if (inEl) inEl.textContent = _ptInUsenet.length;
+    if (outEl) outEl.textContent = _ptNotUsenet.length;
+    // Update sub-tab badge
+    const usenetTotal = _ptInUsenet.length + _ptNotUsenet.length;
+    const subtabBadge = document.getElementById('pt-subtab-usenet-count');
+    if (subtabBadge) subtabBadge.textContent = usenetTotal || '';
+}
+
+
+document.getElementById('pt-in-usenet-select-all')?.addEventListener('change', function() {
+    if (this.checked) _ptInUsenet.forEach(i => _ptSelected.add(i.rating_key));
+    else _ptInUsenet.forEach(i => _ptSelected.delete(i.rating_key));
+    _ptRenderUsenetGroup('pt-in-usenet-tbody', _ptInUsenet);
+    _ptUpdatePurgeBtn();
+});
+document.getElementById('pt-not-usenet-select-all')?.addEventListener('change', function() {
+    if (this.checked) _ptNotUsenet.forEach(i => _ptSelected.add(i.rating_key));
+    else _ptNotUsenet.forEach(i => _ptSelected.delete(i.rating_key));
+    _ptRenderUsenetGroup('pt-not-usenet-tbody', _ptNotUsenet);
+    _ptUpdatePurgeBtn();
+});
+document.getElementById('pt-select-in-usenet')?.addEventListener('click', () => {
+    _ptInUsenet.forEach(i => _ptSelected.add(i.rating_key));
+    _ptRenderUsenetGroup('pt-in-usenet-tbody', _ptInUsenet);
+    _ptUpdatePurgeBtn();
+});
+document.getElementById('pt-select-not-usenet')?.addEventListener('click', () => {
+    _ptNotUsenet.forEach(i => _ptSelected.add(i.rating_key));
+    _ptRenderUsenetGroup('pt-not-usenet-tbody', _ptNotUsenet);
+    _ptUpdatePurgeBtn();
+});
+
+async function _ptBulkReNzb(items, label) {
+    if (!items.length) { showPopup({ type: 'warning', title: 'Notice', message: `No ${label} items to re-submit.`, autoClose: 4000 }); return; }
+    const btn = event.currentTarget;
+    const origHtml = btn.innerHTML;
+    showPopup({
+        type: 'confirm',
+        title: 'Re-NZB All',
+        message: `Re-submit ${items.length} ${label} item${items.length !== 1 ? 's' : ''} to Decypharr?\n\nItems without a stored URL will fall back to re-scraping.`,
+        confirmText: 'Re-NZB All',
+        cancelText: 'Cancel',
+        onConfirm: async function() {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="dm-spinner"></span>';
+            let done = 0, failed = 0;
+            for (const item of items) {
+                try {
+                    const r = await fetch('/debrid_manager/api/nzb/reinsert', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ item_id: item.nzb_item_id, nzb_url: item.nzb_url || '', nzb_title: item.nzb_title || '', rating_key: item.rating_key }),
+                    });
+                    const d = await r.json();
+                    if (d.success) done++; else failed++;
+                } catch(e) { failed++; }
+            }
+            showPopup({ type: done ? 'success' : 'error', title: 'Re-NZB All', message: `Submitted: ${done}${failed ? `, Failed: ${failed}` : ''}`, autoClose: 5000 });
+            btn.innerHTML = origHtml; btn.disabled = false;
+        }
+    });
+}
+
+function _ptUsenetScanPaths(items) {
+    // Build new-download paths: parent(file_dir) + nzb_title
+    // Falls back to just parent(file_dir) if no title available
+    const paths = [];
+    for (const i of items) {
+        if (!i.file_dir) continue;
+        const parent = i.file_dir.substring(0, i.file_dir.lastIndexOf('/'));
+        if (!parent) continue;
+        const newPath = i.nzb_title ? `${parent}/${i.nzb_title}` : parent;
+        paths.push(newPath);
+    }
+    return [...new Set(paths)];
+}
+
+document.getElementById('pt-bulk-scan-in-usenet')?.addEventListener('click', async function() {
+    const paths = _ptUsenetScanPaths(_ptInUsenet);
+    if (!paths.length) { showPopup({ type: 'warning', title: 'Notice', message: 'No scan paths available.', autoClose: 4000 }); return; }
+    this.disabled = true;
+    const origHtml = this.innerHTML;
+    this.innerHTML = '<span class="dm-spinner"></span>';
+    try {
+        await fetch('/debrid_manager/api/plex_force_scan', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({paths, empty_trash: false}),
+        });
+        this.textContent = 'Done';
+        setTimeout(() => { this.innerHTML = origHtml; this.disabled = false; }, 2500);
+    } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Scan failed: ' + e.message, autoClose: 5000 }); this.innerHTML = origHtml; this.disabled = false; }
+});
+document.getElementById('pt-bulk-scan-not-usenet')?.addEventListener('click', async function() {
+    const paths = _ptUsenetScanPaths(_ptNotUsenet);
+    if (!paths.length) { showPopup({ type: 'warning', title: 'Notice', message: 'No scan paths available.', autoClose: 4000 }); return; }
+    this.disabled = true;
+    const origHtml = this.innerHTML;
+    this.innerHTML = '<span class="dm-spinner"></span>';
+    try {
+        await fetch('/debrid_manager/api/plex_force_scan', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({paths, empty_trash: false}),
+        });
+        this.textContent = 'Done';
+        setTimeout(() => { this.innerHTML = origHtml; this.disabled = false; }, 2500);
+    } catch(e) { showPopup({ type: 'error', title: 'Error', message: 'Scan failed: ' + e.message, autoClose: 5000 }); this.innerHTML = origHtml; this.disabled = false; }
+});
+document.getElementById('pt-bulk-renzb-in')?.addEventListener('click', function() {
+    _ptBulkReNzb(_ptInUsenet, 'in-Usenet');
+});
+document.getElementById('pt-bulk-renzb-not')?.addEventListener('click', function() {
+    _ptBulkReNzb(_ptNotUsenet, 'not-in-Usenet');
+});
+document.getElementById('pt-bulk-del-in-usenet')?.addEventListener('click', function() {
+    _ptBulkDelete(_ptInUsenet, 'in-Usenet');
+});
+document.getElementById('pt-bulk-del-not-usenet')?.addEventListener('click', function() {
+    _ptBulkDelete(_ptNotUsenet, 'not-in-Usenet');
+});
 {% endif %}
 
 // ── RECONCILE TAB ──────────────────────────────────────────────────────────

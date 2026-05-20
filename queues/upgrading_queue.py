@@ -779,11 +779,17 @@ class UpgradingQueue:
                         logging.info(f"[{item_identifier}] Hub candidate score: stored={pre_candidate.get('new_score', 0):.2f} recalc={_recalc:.2f} using={_hub_new_score:.2f}")
                 except Exception as _e:
                     logging.debug(f"[{item_identifier}] Hub candidate score recalc failed: {_e}")
-                results = [{
+                _cand_protocol = pre_candidate.get('protocol', 'torrent')
+                _cand_magnet   = pre_candidate.get('new_magnet', '')
+                _cand_result = {
                     'title': pre_candidate.get('new_title', ''),
-                    'magnet': pre_candidate.get('new_magnet', ''),
+                    'magnet': _cand_magnet,
                     'score_breakdown': {'total_score': _hub_new_score},
-                }]
+                }
+                if _cand_protocol == 'nzb':
+                    _cand_result['protocol'] = 'nzb'
+                    _cand_result['nzb_url']  = _cand_magnet
+                results = [_cand_result]
                 filtered_out = []
                 # Hub-queued items bypass not_wanted check — user explicitly chose this torrent
                 _skip_not_wanted = True
@@ -964,6 +970,15 @@ class UpgradingQueue:
                 # We might want to pass the best_result score explicitly if AddingQueue needs it immediately
                 # For now, assume AddingQueue recalculates or uses scrape_results
 
+                # If the current item was collected via NZB, clear filled_by_torrent_id
+                # before passing to AddingQueue. Otherwise the health check loop in
+                # adding_queue sees the old nzb:<job_id>, finds it complete in Decypharr,
+                # and moves straight to Checking without ever submitting the new NZB.
+                _original_torrent_id = str(item.get('filled_by_torrent_id') or '')
+                if _original_torrent_id.startswith('nzb:'):
+                    from database.database_writing import update_media_item as _umi
+                    _umi(item['id'], filled_by_torrent_id=None)
+
                 update_media_item_state(item['id'], **update_data)
                 updated_item = get_media_item_by_id(item['id']) # Reload item with updated state
 
@@ -992,15 +1007,51 @@ class UpgradingQueue:
                 # Check final state after AddingQueue processing
                 from database.core import get_db_connection
                 conn = get_db_connection()
-                cursor = conn.execute('SELECT state FROM media_items WHERE id = ?', (item['id'],))
-                current_state_after_add = cursor.fetchone()['state']
+                row = conn.execute('SELECT state, filled_by_torrent_id FROM media_items WHERE id = ?', (item['id'],)).fetchone()
+                current_state_after_add = row['state']
+                _new_torrent_id = str(row['filled_by_torrent_id'] or '')
+                # A NEW NZB job was submitted if the torrent ID changed to a new nzb: value
+                # (covers both: previously torrent item now upgrading via NZB, and
+                #  previously NZB item upgrading to a different NZB job)
+                _nzb_submitted = (
+                    _new_torrent_id.startswith('nzb:') and
+                    _new_torrent_id != _original_torrent_id
+                )
                 conn.close()
 
-                if current_state_after_add == 'Checking':
-                    logging.info(f"Successfully initiated upgrade for item {item_identifier}. Item moved to Checking.")
+                # Success conditions:
+                #   Debrid: state moves to 'Checking' (torrent added to debrid service)
+                #   NZB:    state stays 'Adding' while Decypharr polls, but filled_by_torrent_id
+                #           changed to a new 'nzb:<job_id>' confirming the job was submitted
+                _upgrade_succeeded = (
+                    current_state_after_add == 'Checking' or
+                    (current_state_after_add == 'Adding' and _nzb_submitted)
+                )
+                if _upgrade_succeeded:
+                    logging.info(f"Successfully initiated upgrade for item {item_identifier}. Item moved to {current_state_after_add}.")
 
-                    # Update item data with the successful upgrade details, including the NEW score
-                    self.update_item_with_upgrade(item, adding_queue, best_result) # Pass best_result to get score
+                    # For NZB upgrades the adding_queue already set the correct state ('Adding'),
+                    # filled_by_torrent_id ('nzb:<job_id>'), and filled_by_file (nzb job name).
+                    # update_item_with_upgrade would overwrite state to 'Checking' and clobber
+                    # those values — skip it and just record upgrading_from + score directly.
+                    if _nzb_submitted:
+                        try:
+                            new_score = best_result.get('score_breakdown', {}).get('total_score', 0)
+                            upgrading_from = item.get('filled_by_file') or ''
+                            conn2 = get_db_connection()
+                            conn2.execute(
+                                "UPDATE media_items SET upgrading_from=?, current_score=?, upgraded=1, upgrading=0, upgrading_from_torrent_id=?, upgrading_from_version=? WHERE id=?",
+                                (upgrading_from, new_score, item.get('filled_by_torrent_id'), item.get('version'), item['id'])
+                            )
+                            conn2.commit()
+                            conn2.close()
+                            item['upgrading_from'] = upgrading_from
+                            item['current_score'] = new_score
+                        except Exception as _ue:
+                            logging.warning(f"[{item_identifier}] NZB upgrade DB update failed: {_ue}")
+                    else:
+                        # Update item data with the successful upgrade details, including the NEW score
+                        self.update_item_with_upgrade(item, adding_queue, best_result)
 
                     # Log success, record tracking etc. (combine logic from original code)
                     self.log_upgrade(item, adding_queue) # Needs updated item dict after update_item_with_upgrade?
@@ -1083,9 +1134,10 @@ class UpgradingQueue:
                     self.remove_item(item)
 
                 else:
+                    _protocol_label = 'NZB' if best_result.get('protocol') == 'nzb' else 'Torrent'
                     _failure_reason = (updated_item.get('_upgrade_failure_reason') or
                                        item.get('_upgrade_failure_reason') or
-                                       f'Torrent not added — tried: {best_result.get("title", "?")} (state: {current_state_after_add})')
+                                       f'{_protocol_label} not added — tried: {best_result.get("title", "?")} (state: {current_state_after_add})')
                     logging.warning(f"Failed to upgrade item {item_identifier} - {_failure_reason}")
                     from routes.notifications import send_upgrade_failed_notification
                     notification_data = {
