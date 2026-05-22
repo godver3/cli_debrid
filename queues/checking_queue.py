@@ -424,6 +424,7 @@ class CheckingQueue:
                     logging.warning(f'[NZB] Found folder {folder_name!r} but no video file inside for {torrent_id}')
                     video_file = folder_name
                 logging.info(f'[NZB] Resolved: folder={folder_name!r} file={video_file!r} for {torrent_id}')
+
                 for item in items:
                     orig_scraped = item.get('original_scraped_torrent_title') or job_name
                     update_media_item(item['id'], **{
@@ -443,7 +444,7 @@ class CheckingQueue:
         except Exception as exc:
             logging.error(f'[NZB] _resolve_nzb_file_info error for {torrent_id}: {exc}', exc_info=True)
 
-    @timed_lru_cache(seconds=60)
+    @timed_lru_cache(seconds=15)
     @with_timeout(45)  # 45 second timeout for the entire progress check
     def _get_nzb_progress(self, torrent_id: str) -> Union[int, str, None]:
         """Poll Decypharr for progress of an NZB job. torrent_id format: 'nzb:<job_id>'"""

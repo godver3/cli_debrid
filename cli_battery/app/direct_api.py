@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session as SqlAlchemySession, selectinload
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func
 from thefuzz import fuzz
 
 from .logger_config import logger
@@ -35,6 +36,8 @@ from .xem_utils import fetch_xem_mapping
 LEGO_MASTERS_US_IMDB_ID = "tt9615014"
 
 _refresh_worker_started = False
+_plex_guid_backfilled: set = set()  # tracks shows already backfilled this session
+_plex_guid_backfilled_lock = __import__('threading').Lock()
 
 
 def _apply_lego_masters_us_season_fix(seasons_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -93,6 +96,9 @@ def _format_seasons_from_orm(seasons) -> dict:
     for season in seasons:
         result[season.season_number] = {
             'episode_count': season.episode_count,
+            'plex_guid': season.plex_guid,
+            'tmdb_id': season.tmdb_id,
+            'tvdb_id': season.tvdb_id,
             'episodes': {
                 ep.episode_number: {
                     'title': ep.title,
@@ -100,10 +106,207 @@ def _format_seasons_from_orm(seasons) -> dict:
                     'runtime': ep.runtime,
                     'first_aired': ep.first_aired.isoformat() if ep.first_aired else None,
                     'imdb_id': ep.imdb_id,
+                    'tmdb_id': ep.tmdb_id,
+                    'tvdb_id': ep.tvdb_id,
+                    'absolute': ep.absolute_episode,
+                    'plex_guid': ep.plex_guid,
                 } for ep in season.episodes
             },
         }
     return result
+
+
+def _ensure_plex_guids_in_data(imdb_id: str, data: dict, media_type: str) -> None:
+    """
+    Ensure Plex GUIDs are present at all levels (show/season/episode) in data.
+    If TVDB is primary (or Trakt data had no plex guid), do a supplementary
+    Trakt call to fetch all levels in one request. Mutates data in-place.
+    """
+    existing_plex = (data.get('ids') or {}).get('plex')
+    if existing_plex and media_type == 'movie':
+        return  # movie already has guid
+
+    # For shows, always check — even if show-level guid exists, seasons/episodes may be missing
+    if existing_plex and media_type == 'show':
+        seasons = data.get('seasons') or {}
+        # Only skip the Trakt call if every episode has plex_guid, imdb_id, tmdb_id, tvdb_id
+        has_all_guids = all(
+            isinstance(s, dict) and s.get('plex_guid') and
+            all(isinstance(ep, dict) and ep.get('plex_guid') and ep.get('imdb_id')
+                and ep.get('tmdb_id') and ep.get('tvdb_id')
+                for ep in (s.get('episodes') or {}).values()
+                if isinstance(ep, dict))
+            for s in seasons.values() if isinstance(s, dict)
+        )
+        if has_all_guids:
+            return
+
+    try:
+        result = trakt_client.get_plex_guid(imdb_id, media_type)
+        if not result:
+            return
+        show_guid        = result.get('show_guid')
+        season_guids     = result.get('season_guids') or {}
+        season_tmdb_ids  = result.get('season_tmdb_ids') or {}
+        season_tvdb_ids  = result.get('season_tvdb_ids') or {}
+        episode_guids    = result.get('episode_guids') or {}
+        episode_imdb_ids = result.get('episode_imdb_ids') or {}
+        episode_tmdb_ids = result.get('episode_tmdb_ids') or {}
+        episode_tvdb_ids = result.get('episode_tvdb_ids') or {}
+
+        if show_guid:
+            data.setdefault('ids', {})['plex'] = {'guid': show_guid}
+            logger.debug(f"[PlexGUID] Fetched show GUID for {imdb_id}: {show_guid}")
+
+        if 'seasons' in data and isinstance(data['seasons'], dict):
+            for snum, s_guid in season_guids.items():
+                s = data['seasons'].get(snum) or data['seasons'].get(str(snum))
+                if isinstance(s, dict):
+                    s['plex_guid'] = s_guid
+            for snum, s_tmdb in season_tmdb_ids.items():
+                s = data['seasons'].get(snum) or data['seasons'].get(str(snum))
+                if isinstance(s, dict) and not s.get('tmdb_id'):
+                    s['tmdb_id'] = s_tmdb
+            for snum, s_tvdb in season_tvdb_ids.items():
+                s = data['seasons'].get(snum) or data['seasons'].get(str(snum))
+                if isinstance(s, dict) and not s.get('tvdb_id'):
+                    s['tvdb_id'] = s_tvdb
+
+            # Propagate episode GUIDs into season episode dicts.
+            # Two passes:
+            #   Pass 1 — direct match: Trakt season+episode key matches TVDB season+episode key.
+            #            Works for shows where Trakt and TVDB use the same numbering.
+            #   Pass 2 — absolute fallback: for episodes still missing a GUID, match using the
+            #            episode's absolute_episode number against Trakt Season 1 episode numbers.
+            #            Handles anime where Trakt uses absolute (S01E15) but TVDB splits seasons
+            #            (S02E03 with absolute_episode=15).
+
+            # Build absolute→id lookups from Trakt Season 1 episodes
+            trakt_s1_ep_guids = episode_guids.get(1) or episode_guids.get('1') or {}
+            trakt_s1_ep_imdb  = episode_imdb_ids.get(1) or episode_imdb_ids.get('1') or {}
+            trakt_s1_ep_tmdb  = episode_tmdb_ids.get(1) or episode_tmdb_ids.get('1') or {}
+            trakt_s1_ep_tvdb  = episode_tvdb_ids.get(1) or episode_tvdb_ids.get('1') or {}
+
+            for snum, ep_map in episode_guids.items():
+                s = data['seasons'].get(snum) or data['seasons'].get(str(snum))
+                if not isinstance(s, dict):
+                    continue
+                eps = s.get('episodes') or {}
+                if isinstance(eps, dict):
+                    for ep_num, ep_guid in ep_map.items():
+                        ep = eps.get(ep_num) or eps.get(str(ep_num))
+                        if isinstance(ep, dict):
+                            ep['plex_guid'] = ep_guid
+
+            # Pass 1b — propagate episode IMDb/TMDb/TVDb IDs via direct season/episode match.
+            # For anime where Trakt uses absolute S1 numbering, Pass 2 below handles the offset.
+            for _id_map, _field in [
+                (episode_imdb_ids, 'imdb_id'),
+                (episode_tmdb_ids, 'tmdb_id'),
+                (episode_tvdb_ids, 'tvdb_id'),
+            ]:
+                for snum, id_map in _id_map.items():
+                    s = data['seasons'].get(snum) or data['seasons'].get(str(snum))
+                    if not isinstance(s, dict):
+                        continue
+                    eps = s.get('episodes') or {}
+                    if isinstance(eps, dict):
+                        for ep_num, ep_id_val in id_map.items():
+                            ep = eps.get(ep_num) or eps.get(str(ep_num))
+                            if isinstance(ep, dict) and not ep.get(_field):
+                                ep[_field] = ep_id_val
+
+            # Pass 2 — cumulative offset mapping for episodes still missing plex_guid.
+            #
+            # Only runs when Trakt has all episodes in S1 (absolute/anime style) but
+            # TVDB splits them into multiple seasons. Detection: Trakt S1 episode count
+            # equals total non-special TVDB episodes across all seasons.
+            #
+            # Formula: TVDB S{n}E{e} → Trakt S1E{offset(n) + e}
+            # where offset(n) = sum of episode counts of all TVDB seasons before season n.
+            #
+            # Safety: if Trakt S1 episode count ≠ total TVDB episodes, the structure
+            # doesn't match the assumption — skip this pass to avoid wrong mappings.
+            if trakt_s1_ep_guids or trakt_s1_ep_imdb or trakt_s1_ep_tmdb or trakt_s1_ep_tvdb:
+                _trakt_s1_count = max(len(trakt_s1_ep_guids), len(trakt_s1_ep_imdb),
+                                      len(trakt_s1_ep_tmdb), len(trakt_s1_ep_tvdb))
+
+                # Count total non-special TVDB episodes
+                _tvdb_total = sum(
+                    len(s.get('episodes', {}))
+                    for k, s in data['seasons'].items()
+                    if str(k).isdigit() and int(k) > 0 and isinstance(s, dict)
+                )
+
+                # Run cumulative mapping if TVDB total <= Trakt S1 count.
+                # When TVDB has more episodes (e.g. trailing OVA season not in Trakt yet),
+                # we still map what fits — episodes where _trakt_abs > _trakt_s1_count
+                # simply won't find a guid and are silently skipped.
+                _mapping_viable = _tvdb_total > 0 and _trakt_s1_count > 0
+
+                if _mapping_viable:
+                    # Structure matches — safe to use cumulative offset mapping
+                    logger.debug(
+                        f"[PlexGUID] Cumulative offset mapping: TVDB total={_tvdb_total} "
+                        f"= Trakt S1={_trakt_s1_count} for {imdb_id}"
+                    )
+                    _season_offsets: dict = {}
+                    _cumulative = 0
+                    for _snum in sorted(
+                        int(k) for k in data['seasons'].keys()
+                        if str(k).isdigit() and int(k) > 0
+                    ):
+                        _season_offsets[_snum] = _cumulative
+                        _s_info = data['seasons'].get(_snum) or data['seasons'].get(str(_snum))
+                        _s_ep_count = len(_s_info.get('episodes', {})) if isinstance(_s_info, dict) else 0
+                        _cumulative += _s_ep_count
+
+                    for _snum_key, s_data in data['seasons'].items():
+                        if not isinstance(s_data, dict):
+                            continue
+                        try:
+                            _snum_int = int(_snum_key)
+                        except (ValueError, TypeError):
+                            continue
+                        if _snum_int == 0:
+                            continue
+                        _offset = _season_offsets.get(_snum_int, 0)
+                        eps = s_data.get('episodes') or {}
+                        if not isinstance(eps, dict):
+                            continue
+                        for ep_num_key, ep_data in eps.items():
+                            if not isinstance(ep_data, dict):
+                                continue
+                            if (ep_data.get('plex_guid') and ep_data.get('imdb_id') and
+                                    ep_data.get('tmdb_id') and ep_data.get('tvdb_id')):
+                                continue
+                            try:
+                                _ep_num = int(ep_num_key)
+                            except (ValueError, TypeError):
+                                continue
+                            _trakt_abs = _offset + _ep_num
+                            for _src, _field in [
+                                (trakt_s1_ep_guids, 'plex_guid'),
+                                (trakt_s1_ep_imdb,  'imdb_id'),
+                                (trakt_s1_ep_tmdb,  'tmdb_id'),
+                                (trakt_s1_ep_tvdb,  'tvdb_id'),
+                            ]:
+                                if not ep_data.get(_field):
+                                    _val = _src.get(_trakt_abs) or _src.get(str(_trakt_abs))
+                                    if _val:
+                                        ep_data[_field] = _val
+                                        logger.debug(
+                                            f"[PlexGUID] S{_snum_int}E{_ep_num} "
+                                            f"→ Trakt abs {_trakt_abs} → {_field}={_val}"
+                                        )
+                else:
+                    logger.debug(f"[PlexGUID] No episodes to map for {imdb_id}")
+
+        if season_guids or episode_guids:
+            logger.debug(f"[PlexGUID] Fetched {len(season_guids)} season + "
+                         f"{sum(len(v) for v in episode_guids.values())} episode GUIDs for {imdb_id}")
+    except Exception as e:
+        logger.debug(f"[PlexGUID] Supplementary Trakt lookup failed for {imdb_id}: {e}")
 
 
 def _refresh_show(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
@@ -118,6 +321,7 @@ def _refresh_show(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
         return None
 
     show_data.setdefault('type', 'show')
+    _ensure_plex_guids_in_data(imdb_id, show_data, 'show')
     _persist_item(imdb_id, dict(show_data), session)
     return show_data
 
@@ -134,6 +338,7 @@ def _refresh_movie(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
         return None
 
     movie_data.setdefault('type', 'movie')
+    _ensure_plex_guids_in_data(imdb_id, movie_data, 'movie')
     _persist_item(imdb_id, dict(movie_data), session)
     return movie_data
 
@@ -231,6 +436,9 @@ def _upsert_seasons_and_episodes(item_id: int, seasons_data: dict, session: SqlA
             'item_id': item_id,
             'season_number': season_number,
             'episode_count': episode_count,
+            'plex_guid': season_info.get('plex_guid'),
+            'tmdb_id': season_info.get('tmdb_id'),
+            'tvdb_id': season_info.get('tvdb_id'),
         })
 
         episodes = season_info.get('episodes', {})
@@ -256,7 +464,12 @@ def _upsert_seasons_and_episodes(item_id: int, seasons_data: dict, session: SqlA
         stmt = insert(Season).values(season_rows)
         stmt = stmt.on_conflict_do_update(
             index_elements=['item_id', 'season_number'],
-            set_=dict(episode_count=stmt.excluded.episode_count),
+            set_=dict(
+                episode_count=stmt.excluded.episode_count,
+                plex_guid=func.coalesce(stmt.excluded.plex_guid, Season.plex_guid),
+                tmdb_id=func.coalesce(stmt.excluded.tmdb_id, Season.tmdb_id),
+                tvdb_id=func.coalesce(stmt.excluded.tvdb_id, Season.tvdb_id),
+            ),
         )
         session.execute(stmt)
         session.flush()
@@ -286,6 +499,7 @@ def _upsert_seasons_and_episodes(item_id: int, seasons_data: dict, session: SqlA
             except Exception:
                 pass
 
+        _ep_ids = ep_data.get('ids', {}) or {}
         ep_rows.append({
             'season_id': season_id,
             'episode_number': ep_num,
@@ -293,8 +507,11 @@ def _upsert_seasons_and_episodes(item_id: int, seasons_data: dict, session: SqlA
             'overview': ep_data.get('overview', ''),
             'runtime': ep_data.get('runtime', 0),
             'first_aired': first_aired_dt,
-            'imdb_id': ep_data.get('imdb_id') or (ep_data.get('ids', {}) or {}).get('imdb'),
+            'imdb_id': ep_data.get('imdb_id') or _ep_ids.get('imdb'),
+            'tmdb_id': ep_data.get('tmdb_id') or (str(_ep_ids['tmdb']) if _ep_ids.get('tmdb') else None),
+            'tvdb_id': ep_data.get('tvdb_id') or (str(_ep_ids['tvdb']) if _ep_ids.get('tvdb') else None),
             'absolute_episode': ep_data.get('absolute'),
+            'plex_guid': ep_data.get('plex_guid'),
         })
 
     if ep_rows:
@@ -309,8 +526,13 @@ def _upsert_seasons_and_episodes(item_id: int, seasons_data: dict, session: SqlA
                     overview=stmt.excluded.overview,
                     runtime=stmt.excluded.runtime,
                     first_aired=stmt.excluded.first_aired,
-                    imdb_id=stmt.excluded.imdb_id,
+                    # Preserve existing values when incoming is NULL — prevents TVDB refresh
+                    # from wiping fields populated by Trakt supplementary call
+                    imdb_id=func.coalesce(stmt.excluded.imdb_id, Episode.imdb_id),
+                    tmdb_id=func.coalesce(stmt.excluded.tmdb_id, Episode.tmdb_id),
+                    tvdb_id=func.coalesce(stmt.excluded.tvdb_id, Episode.tvdb_id),
                     absolute_episode=stmt.excluded.absolute_episode,
+                    plex_guid=func.coalesce(stmt.excluded.plex_guid, Episode.plex_guid),
                 ),
             )
             session.execute(stmt)
@@ -1275,3 +1497,117 @@ class DirectAPI:
     @staticmethod
     def receive_trakt_auth(auth_data: dict) -> dict:
         return trakt_auth.receive_auth(auth_data)
+
+    @staticmethod
+    def get_plex_guid(imdb_id: str, media_type: str,
+                      season: Optional[int] = None,
+                      episode: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """
+        Return stored Plex GUIDs from the battery DB.
+
+        For movies: returns {'show_guid': str|None}
+        For shows:  returns {
+            'show_guid': str|None,
+            'season_guids': {season_num: guid}|None,
+            'episode_guids': {season_num: {ep_num: guid}}|None,
+        }
+
+        If season+episode are provided, also returns 'episode_guid' for the
+        specific episode for convenient access.
+
+        Reads from DB first; falls back to live Trakt lookup if not found.
+        """
+        if not imdb_id:
+            return None
+        try:
+            with managed_session() as session:
+                item = session.query(Item).options(
+                    selectinload(Item.item_metadata),
+                    selectinload(Item.seasons).selectinload(Season.episodes),
+                ).filter_by(imdb_id=imdb_id).first()
+
+                if item:
+                    # Extract show-level plex guid from metadata KV store
+                    md = _build_metadata_dict(item)
+                    plex_ids = (md.get('ids') or {})
+                    if isinstance(plex_ids, str):
+                        try:
+                            import json as _json
+                            plex_ids = _json.loads(plex_ids)
+                        except Exception:
+                            plex_ids = {}
+                    plex_obj = plex_ids.get('plex') or {}
+                    if isinstance(plex_obj, str):
+                        try:
+                            import json as _json
+                            plex_obj = _json.loads(plex_obj)
+                        except Exception:
+                            plex_obj = {}
+                    show_guid = plex_obj.get('guid') if isinstance(plex_obj, dict) else None
+
+                    if media_type == 'movie':
+                        return {'show_guid': show_guid}
+
+                    # Season and episode guids from DB
+                    season_guids: Dict[int, str] = {}
+                    episode_guids: Dict[int, Dict[int, str]] = {}
+                    for s in item.seasons:
+                        if s.plex_guid:
+                            season_guids[s.season_number] = s.plex_guid
+                        for ep in s.episodes:
+                            if ep.plex_guid:
+                                episode_guids.setdefault(s.season_number, {})[ep.episode_number] = ep.plex_guid
+
+                    result = {
+                        'show_guid': show_guid,
+                        'season_guids': season_guids or None,
+                        'episode_guids': episode_guids or None,
+                    }
+                    if season is not None and episode is not None:
+                        result['episode_guid'] = (episode_guids.get(season) or {}).get(episode)
+                        result['season_guid'] = season_guids.get(season)
+
+                    # If episode GUID is missing, backfill from Trakt once per session
+                    _need_ep_guid = (season is not None and episode is not None
+                                     and not result.get('episode_guid'))
+                    with _plex_guid_backfilled_lock:
+                        _should_backfill = _need_ep_guid and imdb_id not in _plex_guid_backfilled
+                        if _should_backfill:
+                            _plex_guid_backfilled.add(imdb_id)
+                    if _should_backfill:
+                        logger.debug(f"[PlexGUID] Missing episode GUID for {imdb_id} S{season}E{episode} — backfilling from Trakt")
+                        try:
+                            md_live = _build_show_metadata_dict(item)
+                            _ensure_plex_guids_in_data(imdb_id, md_live, 'show')
+                            _seasons_live = md_live.get('seasons') or {}
+                            if _seasons_live:
+                                _updated_ep_guids: Dict[int, Dict[int, str]] = {}
+                                with managed_session() as _ws:
+                                    _upsert_seasons_and_episodes(item.id, _seasons_live, _ws)
+                                    # Re-read updated GUIDs inside the same session to avoid detached instance
+                                    from sqlalchemy.orm import selectinload as _sil
+                                    from cli_battery.app.database import Item as _Item, Season as _Season
+                                    _fresh = _ws.query(_Item).options(
+                                        _sil(_Item.seasons).selectinload(_Season.episodes)
+                                    ).filter_by(id=item.id).first()
+                                    if _fresh:
+                                        for _s in _fresh.seasons:
+                                            for _ep in _s.episodes:
+                                                if _ep.plex_guid:
+                                                    _updated_ep_guids.setdefault(_s.season_number, {})[_ep.episode_number] = _ep.plex_guid
+                                result['episode_guid'] = (_updated_ep_guids.get(season) or {}).get(episode)
+                        except Exception as _be:
+                            logger.debug(f"[PlexGUID] Backfill failed for {imdb_id}: {_be}")
+
+                    return result
+
+            # Not in DB — do live lookup
+            return trakt_client.get_plex_guid(imdb_id, media_type)
+        except Exception as e:
+            logger.debug(f"[PlexGUID] Battery lookup failed for {imdb_id}: {e} — falling back to live Trakt")
+            try:
+                # Fall back to live Trakt lookup if battery DB has I/O errors
+                return trakt_client.get_plex_guid(imdb_id, media_type)
+            except Exception as e2:
+                logger.debug(f"[PlexGUID] Live Trakt fallback also failed for {imdb_id}: {e2}")
+                return None

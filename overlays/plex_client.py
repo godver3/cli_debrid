@@ -133,6 +133,37 @@ class PlexClient:
             self.logger.error(f"Failed to get poster URL for {rating_key}: {e}")
         return None
 
+    def get_thumb_url(self, rating_key: str) -> Optional[str]:
+        """Return the current thumb path for a media item (e.g. /library/metadata/18036/thumb/1779017573).
+        Used to detect poster deselection — the timestamp suffix changes when selected poster changes."""
+        try:
+            metadata = self.get_media_metadata(rating_key)
+            return metadata.get('thumb')
+        except Exception:
+            return None
+
+    def get_bulk_thumb_urls(self, section_id: str) -> dict:
+        """Fetch current thumb URL for all items in a library section in one API call.
+        Returns {rating_key: thumb_path} dict."""
+        result = {}
+        try:
+            url = f"{self.base_url}/library/sections/{section_id}/all"
+            params = {'X-Plex-Token': self.token, 'X-Plex-Container-Start': 0, 'X-Plex-Container-Size': 100000}
+            headers = {'Accept': 'application/xml'}
+            resp = self.session.get(url, params=params, headers=headers, timeout=30)
+            if resp.status_code != 200:
+                return result
+            import xml.etree.ElementTree as _ET
+            root = _ET.fromstring(resp.content)
+            for item in root:
+                rk = item.get('ratingKey')
+                thumb = item.get('thumb')
+                if rk and thumb:
+                    result[rk] = thumb
+        except Exception as e:
+            self.logger.warning(f"get_bulk_thumb_urls section {section_id}: {e}")
+        return result
+
     def download_poster(self, rating_key: str) -> Optional[Image.Image]:
         """
         Download original poster image for a media item.

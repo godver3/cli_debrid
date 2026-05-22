@@ -1368,6 +1368,58 @@ def task_overlay_sync(triggered_by: str = 'scheduled'):
         if content_reset_count:
             logger.info(f"Content-change check: reset {content_reset_count} item(s) to pending (ratings/status/version changed)")
 
+        # Step 1.9: Detect deselected overlay posters by comparing stored thumb URLs
+        # against Plex's current thumb via a 2-call bulk fetch (one per library section).
+        # If the timestamp suffix of the thumb URL changed, the selected poster changed
+        # in Plex — reset that item to 'pending' so the overlay gets re-applied.
+        try:
+            from overlays.plex_client import PlexClient as _PlexClient
+            _pc = _PlexClient(plex_url, plex_token)
+            _sections_resp = _pc.session.get(
+                f"{plex_url}/library/sections",
+                params={'X-Plex-Token': plex_token},
+                headers={'Accept': 'application/xml'}, timeout=10)
+            if _sections_resp.status_code == 200:
+                import xml.etree.ElementTree as _ET
+                _sec_root = _ET.fromstring(_sections_resp.content)
+                _section_ids = [s.get('key') for s in _sec_root if s.get('key')]
+                # Bulk fetch thumb URLs for all sections
+                _current_thumbs = {}  # rating_key -> thumb_path
+                for _sid in _section_ids:
+                    _current_thumbs.update(_pc.get_bulk_thumb_urls(_sid))
+                if _current_thumbs:
+                    # Find applied items with a stored plex_thumb_url
+                    _th_conn = _get_db_connection()
+                    _th_rows = _th_conn.execute('''
+                        SELECT mos.media_item_id, mos.plex_thumb_url, mi.ms_item_id
+                        FROM media_overlay_state mos
+                        JOIN media_items mi ON mi.id = mos.media_item_id
+                        WHERE mos.status = 'applied'
+                          AND mos.plex_thumb_url IS NOT NULL
+                          AND mi.ms_item_id IS NOT NULL
+                          AND mos.overlay_applied_at < datetime('now', '-10 minutes')
+                    ''').fetchall()
+                    _thumb_reset_ids = []
+                    _seen_ms = set()
+                    for _row in _th_rows:
+                        _ms_id = str(_row[2])
+                        if _ms_id in _seen_ms:
+                            continue
+                        _stored = _row[1]
+                        _current = _current_thumbs.get(_ms_id)
+                        if _current and _stored and _current != _stored:
+                            _thumb_reset_ids.append(_row[0])
+                            _seen_ms.add(_ms_id)
+                    if _thumb_reset_ids:
+                        _th_conn.execute(
+                            f"UPDATE media_overlay_state SET status='pending', reason='Poster deselected in Plex (thumb changed)', updated_at=CURRENT_TIMESTAMP WHERE media_item_id IN ({','.join('?' * len(_thumb_reset_ids))})",
+                            _thumb_reset_ids)
+                        _th_conn.commit()
+                        logger.info(f"[ThumbCheck] Reset {len(_thumb_reset_ids)} item(s) to pending — poster changed in Plex")
+                    _th_conn.close()
+        except Exception as _te:
+            logger.debug(f"[ThumbCheck] Thumb deselection check failed (non-fatal): {_te}")
+
         # Step 1.6: One-pass season backfill — register seasons for any shows that
         # are already 'applied' but have no season_overlay_state rows yet.
         # This fixes existing libraries where shows were applied before season overlays

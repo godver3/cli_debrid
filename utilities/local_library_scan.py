@@ -1060,6 +1060,69 @@ def _find_all_video_files_in_folder(folder_path: str, primary_file: str) -> List
     return video_files
 
 
+def _apply_nzb_naming(source_file: str, item: Dict[str, Any]) -> str:
+    """
+    For NZB items in Plex mode with enable_nzb_naming enabled:
+    Move the downloaded file to a path mirroring the symlink template structure,
+    rooted at original_files_path instead of symlinked_files_path.
+
+    Returns the new source_file path (moved), or original source_file if skipped.
+    """
+    try:
+        # Only NZB items
+        torrent_id = item.get('filled_by_torrent_id', '') or ''
+        if not str(torrent_id).startswith('nzb:'):
+            return source_file
+
+        # Guard: Plex mode + setting enabled
+        if get_setting('File Management', 'file_collection_management', 'Plex') != 'Plex':
+            return source_file
+        if not get_setting('Usenet Provider', 'enable_nzb_naming', False):
+            return source_file
+
+        original_path = get_setting('File Management', 'original_files_path', '')
+        symlinked_path = get_setting('File Management', 'symlinked_files_path', '')
+        if not original_path or not symlinked_path:
+            return source_file
+
+        # Get the structured path that get_symlink_path would produce
+        structured = get_symlink_path(item, source_file, skip_jikan_lookup=False)
+        if not structured:
+            return source_file
+
+        # Strip the symlinked_files_path prefix to get the relative organised path
+        symlinked_path_norm = os.path.normpath(symlinked_path)
+        structured_norm = os.path.normpath(structured)
+        if not structured_norm.startswith(symlinked_path_norm + os.sep):
+            logging.warning(f'[NZBNaming] structured path {structured!r} not under symlinked_path {symlinked_path!r} — skipping rename')
+            return source_file
+
+        rel_path = structured_norm[len(symlinked_path_norm) + 1:]
+        new_path = os.path.join(original_path, rel_path)
+
+        # Already in place
+        if os.path.normpath(source_file) == os.path.normpath(new_path):
+            return source_file
+
+        # Create parent dirs and move
+        os.makedirs(os.path.dirname(new_path), exist_ok=True)
+        if not os.path.exists(new_path):
+            os.rename(source_file, new_path)
+            logging.info(f'[NZBNaming] Moved {os.path.basename(source_file)!r} → {rel_path!r}')
+        else:
+            logging.debug(f'[NZBNaming] Target already exists: {new_path!r} — skipping move')
+
+        # Update item fields so DB and Plex scan use the new path
+        item['filled_by_file'] = os.path.basename(new_path)
+        item['filled_by_title'] = os.path.basename(os.path.dirname(new_path))
+        item['debrid_folder_name'] = os.path.basename(os.path.dirname(new_path))
+        return new_path
+
+    except Exception as _e:
+        logging.warning(f'[NZBNaming] Could not apply NZB naming to {source_file!r}: {_e}')
+        return source_file
+
+
 def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, extended_search: bool = False, on_success_callback: Optional[Callable[[str], None]] = None, skip_multifile_scan: bool = False) -> bool:
     """
     Check if the local file for the item exists and create symlink if needed.
@@ -1238,6 +1301,9 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 logging.warning(f"File '{current_filename}' not found in any checked location")
                 return False
             
+            # For NZB items in Plex mode with NZB naming enabled: move file to organised structure
+            source_file = _apply_nzb_naming(source_file, item)
+
             # Get destination path based on settings (using the found source_file)
             dest_file = get_symlink_path(item, source_file, skip_jikan_lookup=False)
             if not dest_file:
@@ -1317,6 +1383,22 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                             os.remove(old_file_path_from_item)
                             removal_successful = True # Assume success if os.remove doesn't raise error
                             logging.info(f"[UPGRADE] Successfully removed old local file: {old_file_path_from_item}")
+                            # Also remove subtitle files with same stem (e.g. Movie.en.srt, Movie.srt)
+                            _SUBTITLE_EXTS = {'.srt', '.ass', '.ssa', '.sub', '.idx', '.vtt', '.sup', '.pgs'}
+                            _old_dir = os.path.dirname(old_file_path_from_item)
+                            _old_stem = os.path.splitext(os.path.basename(old_file_path_from_item))[0]
+                            try:
+                                for _f in os.listdir(_old_dir):
+                                    _fpath = os.path.join(_old_dir, _f)
+                                    _fname_no_ext, _fext = os.path.splitext(_f)
+                                    # Match exact stem or stem.language (e.g. Movie.en)
+                                    if (_fext.lower() in _SUBTITLE_EXTS and
+                                            (_fname_no_ext == _old_stem or
+                                             _fname_no_ext.startswith(_old_stem + '.'))):
+                                        os.remove(_fpath)
+                                        logging.info(f"[UPGRADE] Removed subtitle file: {_fpath}")
+                            except Exception as _sub_err:
+                                logging.debug(f"[UPGRADE] Subtitle cleanup error: {_sub_err}")
                             # Optionally, check if the file is truly gone
                             if os.path.exists(old_file_path_from_item):
                                 logging.warning(f"[UPGRADE] Local file {old_file_path_from_item} still exists after os.remove attempt.")

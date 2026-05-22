@@ -24,6 +24,9 @@ def format_bytes(size):
         size /= 1024.0
     return f"{size:.2f} PB"
 
+# Cache for Decypharr nzbs folder size (updated by background du -sh)
+_dcy_nzbs_size_cache = {'size': 'N/A', 'last_update': 0}
+
 # Cache for download stats
 download_stats_cache = {
     'active_downloads': None,
@@ -64,6 +67,86 @@ def get_cached_download_stats():
         
         logging.debug("Download stats cache expired, fetching fresh data...")
         
+        # If no debrid API key configured, use Decypharr stats instead
+        _debrid_api_key = get_setting('Debrid Provider', 'api_key', default='').strip()
+        if not _debrid_api_key:
+            try:
+                _dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
+                _dcy_token = get_setting('Usenet Provider', 'api_token', default='').strip()
+                _dcy_enabled = get_setting('Usenet Provider', 'enabled', default=False)
+                if _dcy_enabled and _dcy_url:
+                    import requests as _rq
+                    _headers = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
+                    _r = _rq.get(f'{_dcy_url}/debug/stats', headers=_headers, timeout=10)
+                    if _r.status_code == 200:
+                        _data = _r.json()
+                        _pool = _data.get('usenet', {}).get('pool', {})
+                        _active = _pool.get('active', 0)
+                        _idle = _pool.get('idle', 0)
+                        _max = _pool.get('max_connections', 0)
+                        _used = _active + _idle
+                        _pct = round((_used / _max * 100) if _max > 0 else 0)
+                        _status = 'critical' if _pct >= 90 else ('warning' if _pct >= 75 else 'normal')
+
+                        # Library size — subprocess du -sh inherits FUSE mount namespace, cached 30 min
+                        _library_size_str = _dcy_nzbs_size_cache.get('size', 'N/A')
+                        if time.time() - _dcy_nzbs_size_cache.get('last_update', 0) > 1800:
+                            try:
+                                import os as _os, subprocess as _sp
+                                _file_mgmt = get_setting('File Management', 'file_collection_management', 'Plex')
+                                _mount_raw = (get_setting('File Management', 'original_files_path', '')
+                                              if _file_mgmt == 'Symlinked/Local'
+                                              else get_setting('Plex', 'mounted_file_location', ''))
+                                if _mount_raw:
+                                    _base = _mount_raw.rstrip('/').replace('/__all__', '')
+                                    _nzbs_path = _base + '/nzbs'
+                                    logging.info(f"[LibSize] Checking nzbs path: {_nzbs_path}, exists={_os.path.isdir(_nzbs_path)}")
+                                    if _os.path.isdir(_nzbs_path):
+                                        _du = _sp.run(
+                                            ['du', '-sh', '--apparent-size', _nzbs_path],
+                                            capture_output=True, text=True, timeout=60
+                                        )
+                                        logging.info(f"[LibSize] du rc={_du.returncode} stdout={_du.stdout[:50]!r} stderr={_du.stderr[:50]!r}")
+                                        if _du.stdout.strip():  # accept output even if rc=1 (inaccessible files)
+                                            _library_size_str = _du.stdout.split('\t')[0].strip()
+                                            _dcy_nzbs_size_cache['size'] = _library_size_str
+                                            _dcy_nzbs_size_cache['last_update'] = time.time()
+                                            logging.info(f"[LibSize] nzbs size: {_library_size_str}")
+                            except Exception as _le:
+                                logging.info(f"[LibSize] nzbs size check failed: {_le}")
+
+                        # Broken NZBs from repair health
+                        _broken = _data.get('repair', {}).get('health', {}).get('broken', 0)
+
+                        download_stats_cache['active_downloads'] = {
+                            'count': _active,
+                            'limit': _max,
+                            'percentage': round((_active / _max * 100) if _max > 0 else 0),
+                            'status': _status,
+                            'error': None,
+                            'source': 'decypharr',
+                            'library_size': _library_size_str,
+                            'broken_nzbs': _broken,
+                        }
+                        download_stats_cache['usage_stats'] = {
+                            'used': str(_used),
+                            'limit': str(_max),
+                            'percentage': _pct,
+                            'error': None,
+                            'source': 'decypharr',
+                            'label': 'Connections'
+                        }
+                        download_stats_cache['last_update'] = current_time
+                        logging.debug(f"Decypharr stats: active={_active}, idle={_idle}, max={_max}, broken={_broken}, library={_library_size_str}")
+                        return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
+            except Exception as _dcy_err:
+                logging.debug(f"Decypharr stats fetch failed: {_dcy_err}")
+            # Decypharr not available either — return empty stats
+            download_stats_cache['active_downloads'] = {'count': 0, 'limit': 0, 'percentage': 0, 'status': 'error', 'error': 'no_provider'}
+            download_stats_cache['usage_stats'] = {'used': '0', 'limit': '0', 'percentage': 0, 'error': 'no_provider'}
+            download_stats_cache['last_update'] = current_time
+            return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
+
         try:
             # Add timeout protection for provider initialization
             provider = get_debrid_provider()

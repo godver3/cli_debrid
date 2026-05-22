@@ -1205,8 +1205,8 @@ function initializeDeletionHandlers() {
                 replaceMovieBtn.title = 'Cancel movie replacement';
                 replaceMovieBtn.querySelector('span.action-text').textContent = 'Cancel Replace';
                 replaceMovieBtn.addEventListener('click', handleCancelMovieReplace);
-                // Show pending badge next to h2
-                const filesH2 = document.querySelector('.files-header h2');
+                // Show pending badge next to files header heading
+                const filesH2 = document.querySelector('.files-header h2, .files-header h3');
                 if (filesH2 && !filesH2.querySelector('.replace-pending-badge')) {
                     filesH2.insertAdjacentHTML('beforeend', '<span class="replace-pending-badge">Replacement Pending</span>');
                 }

@@ -211,16 +211,37 @@ def run_migrations(eng):
                     # Existing rows without media_type will have NULL — they'll be ignored on typed lookups
                     # and overwritten when next looked up with a media_type
 
-            # --- episodes: add absolute_episode ---
+            # --- episodes: add absolute_episode, null_airdate_checked_at, plex_guid ---
             if 'episodes' in inspector.get_table_names():
                 columns = [col['name'] for col in inspector.get_columns('episodes')]
                 if 'absolute_episode' not in columns:
                     logger.info("Adding absolute_episode column to episodes table...")
                     conn.execute(text("ALTER TABLE episodes ADD COLUMN absolute_episode INTEGER"))
-                # --- episodes: add null_airdate_checked_at ---
                 if 'null_airdate_checked_at' not in columns:
                     logger.info("Adding null_airdate_checked_at column to episodes table...")
                     conn.execute(text("ALTER TABLE episodes ADD COLUMN null_airdate_checked_at DATETIME"))
+                if 'plex_guid' not in columns:
+                    logger.info("Adding plex_guid column to episodes table...")
+                    conn.execute(text("ALTER TABLE episodes ADD COLUMN plex_guid STRING"))
+                if 'tmdb_id' not in columns:
+                    logger.info("Adding tmdb_id column to episodes table...")
+                    conn.execute(text("ALTER TABLE episodes ADD COLUMN tmdb_id STRING"))
+                if 'tvdb_id' not in columns:
+                    logger.info("Adding tvdb_id column to episodes table...")
+                    conn.execute(text("ALTER TABLE episodes ADD COLUMN tvdb_id STRING"))
+
+            # --- seasons: add plex_guid, tmdb_id, tvdb_id ---
+            if 'seasons' in inspector.get_table_names():
+                columns = [col['name'] for col in inspector.get_columns('seasons')]
+                if 'plex_guid' not in columns:
+                    logger.info("Adding plex_guid column to seasons table...")
+                    conn.execute(text("ALTER TABLE seasons ADD COLUMN plex_guid STRING"))
+                if 'tmdb_id' not in columns:
+                    logger.info("Adding tmdb_id column to seasons table...")
+                    conn.execute(text("ALTER TABLE seasons ADD COLUMN tmdb_id STRING"))
+                if 'tvdb_id' not in columns:
+                    logger.info("Adding tvdb_id column to seasons table...")
+                    conn.execute(text("ALTER TABLE seasons ADD COLUMN tvdb_id STRING"))
 
             # --- items: add media_status, last_trakt_fetch ---
             if 'items' in inspector.get_table_names():
@@ -284,6 +305,9 @@ class Season(Base):
     item_id = Column(Integer, ForeignKey('items.id'), nullable=False)
     season_number = Column(Integer, nullable=False)
     episode_count = Column(Integer)
+    plex_guid = Column(String, nullable=True)
+    tmdb_id = Column(String, nullable=True)
+    tvdb_id = Column(String, nullable=True)
     item = relationship("Item", back_populates="seasons")
     episodes = relationship("Episode", back_populates="season", cascade="all, delete-orphan")
 
@@ -301,8 +325,11 @@ class Episode(Base):
     runtime = Column(Integer)
     first_aired = Column(DateTime)
     imdb_id = Column(String)
+    tmdb_id = Column(String, nullable=True)
+    tvdb_id = Column(String, nullable=True)
     absolute_episode = Column(Integer, nullable=True)
     null_airdate_checked_at = Column(DateTime, nullable=True)
+    plex_guid = Column(String, nullable=True)
     season = relationship("Season", back_populates="episodes")
 
 

@@ -8,7 +8,7 @@ import re
 
 from utilities.settings import get_setting
 from scraper.scraper import scrape
-from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted
+from database.not_wanted_magnets import is_magnet_not_wanted, is_url_not_wanted, is_nzb_guid_not_wanted
 from cli_battery.app.direct_api import DirectAPI
 from routes.notifications import send_upgrade_failed_notification
 
@@ -274,7 +274,42 @@ class ScrapingQueue:
                 # logging.info(f"[DEBUG_ITEM_{DEBUG_ITEM_ID}] PASSED alternate scrape window check.")
                 pass
 
-            # --- START: Check if related item is in Adding Queue --- 
+            # --- NZB season pack coalescing: if another episode of the same show/season
+            # is already in Adding or Checking with an NZB job, reuse that job directly
+            # instead of scraping again (which would pick a different season pack NZB).
+            if item_to_process.get('type') == 'episode':
+                _coalesce_imdb = item_to_process.get('imdb_id')
+                _coalesce_season = item_to_process.get('season_number')
+                if _coalesce_imdb and _coalesce_season is not None:
+                    try:
+                        from database import get_db_connection as _gdb
+                        _cconn = _gdb()
+                        _sibling_nzb = _cconn.execute(
+                            "SELECT filled_by_torrent_id, filled_by_file, filled_by_magnet "
+                            "FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode' "
+                            "AND state IN ('Adding','Checking') "
+                            "AND filled_by_torrent_id LIKE 'nzb:%' LIMIT 1",
+                            (_coalesce_imdb, _coalesce_season)
+                        ).fetchone()
+                        _cconn.close()
+                        if _sibling_nzb:
+                            _job_id = _sibling_nzb[0]
+                            _job_file = _sibling_nzb[1] or ''
+                            _job_url = _sibling_nzb[2] or ''
+                            logging.info(f'[NZBPack] {item_identifier}: season pack already submitted (job={_job_id}), coalescing into same job')
+                            from database.database_writing import update_media_item, update_media_item_state
+                            update_media_item_state(item_to_process['id'], 'Adding')
+                            update_media_item(item_to_process['id'],
+                                filled_by_torrent_id=_job_id,
+                                filled_by_file=_job_file,
+                                filled_by_magnet=_job_url,
+                            )
+                            self.remove_item(item_to_process)
+                            return True
+                    except Exception as _ce:
+                        logging.debug(f'[NZBPack] Season pack coalesce check failed: {_ce}')
+
+            # --- START: Check if related item is in Adding Queue ---
             item_imdb_id = item_to_process.get('imdb_id')
             if item_imdb_id: # Only check if IMDb ID exists
                 if str(item_id_being_processed) == DEBUG_ITEM_ID:
@@ -552,12 +587,114 @@ class ScrapingQueue:
                             logging.info(f"Episode {item_identifier} is older than 7 days. Forcing multi-pack scrape for initial attempt.")
                         is_multi_pack = True
                     
+                    # --- NZB Batch Detection ---
+                    # If usenet is enabled and this is an episode, check if 5+ episodes of the
+                    # same show+season+version are waiting in Scraping. If so, submit them all
+                    # as an NZB aggregate pack (up to 30 at a time) instead of scraping individually.
+                    _nzb_batch_handled = False
+                    if (item_to_process.get('type') == 'episode' and
+                            get_setting('Usenet Provider', 'enabled', False)):
+                        try:
+                            _BATCH_MIN = 2
+                            _BATCH_MAX = 30
+                            _curr_imdb = item_to_process.get('imdb_id')
+                            _curr_season = item_to_process.get('season_number')
+                            _curr_version = item_to_process.get('version', '')
+                            # Find all Scraping items for same show+season+version
+                            # Exclude items already Collected/Upgrading in DB (stale Scraping items)
+                            from database.database_reading import get_all_media_items as _get_items
+                            _already_collected = {
+                                (r['imdb_id'], r['season_number'], r['episode_number'])
+                                for r in (_get_items(imdb_id=_curr_imdb) or [])
+                                if r.get('state') in ('Collected', 'Upgrading')
+                            }
+                            _batch_candidates = [
+                                it for it in self.items
+                                if (it.get('type') == 'episode' and
+                                    it.get('imdb_id') == _curr_imdb and
+                                    it.get('season_number') == _curr_season and
+                                    it.get('version', '') == _curr_version and
+                                    (_curr_imdb, it.get('season_number'), it.get('episode_number')) not in _already_collected)
+                            ]
+                            if len(_batch_candidates) >= _BATCH_MIN:
+                                # Take up to BATCH_MAX episodes sorted by episode number
+                                _batch = sorted(_batch_candidates, key=lambda x: x.get('episode_number', 0))[:_BATCH_MAX]
+                                _ep_nums = [it['episode_number'] for it in _batch]
+                                logging.info(f'[NZBBatch] {item_to_process.get("title")} S{_curr_season:02d}: '
+                                             f'detected {len(_batch_candidates)} episodes in Scraping, '
+                                             f'batching {len(_batch)} as aggregate ({_ep_nums[0]}-{_ep_nums[-1]})')
+                                # Get newznab scrapers same way as select_media route
+                                _all_scrapers = get_setting('Scrapers') or {}
+                                _newznab_scrapers = [
+                                    (sid, cfg) for sid, cfg in _all_scrapers.items()
+                                    if isinstance(cfg, dict) and cfg.get('type') == 'Newznab'
+                                    and cfg.get('enabled') and cfg.get('url') and cfg.get('api_key', '').strip()
+                                ]
+                                if _newznab_scrapers:
+                                    from scraper.newznab import scrape_newznab_season_aggregate
+                                    _agg_results = scrape_newznab_season_aggregate(
+                                        scrapers=_newznab_scrapers,
+                                        imdb_id=_curr_imdb,
+                                        title=item_to_process.get('title', ''),
+                                        year=item_to_process.get('year', ''),
+                                        season=_curr_season,
+                                        episode_numbers=_ep_nums,
+                                    )
+                                    if _agg_results:
+                                        _best = _agg_results[0]
+                                        _ep_nzb_urls = _best.get('episode_nzb_urls', {})
+                                        _fallback_urls = _best.get('fallback_nzb_urls', {})
+                                        if _ep_nzb_urls:
+                                            # Build existing_items dict {ep_num: item}
+                                            _existing = {it['episode_number']: it for it in _batch}
+                                            from routes.scraper_routes import _add_nzb_pack_to_usenet
+                                            from routes.extensions import app as _flask_app
+                                            _pack_resp = None
+                                            with _flask_app.test_request_context():
+                                                _pack_resp = _add_nzb_pack_to_usenet(
+                                                    episode_nzb_urls=_ep_nzb_urls,
+                                                    fallback_nzb_urls=_fallback_urls,
+                                                    title=item_to_process.get('title', ''),
+                                                    year=item_to_process.get('year', ''),
+                                                    media_type='tv',
+                                                    season=_curr_season,
+                                                    version=_curr_version,
+                                                    tmdb_id=item_to_process.get('tmdb_id'),
+                                                    original_scraped_torrent_title=_best.get('title', ''),
+                                                    genres=json.loads(item_to_process.get('genres', '[]') or '[]'),
+                                                    current_score=item_to_process.get('current_score', 0.0),
+                                                    existing_items=_existing,
+                                                )
+                                            # Check how many were actually submitted
+                                            _submitted_count = 0
+                                            try:
+                                                import json as _pjson
+                                                _resp_data = _pjson.loads(_pack_resp.get_data(as_text=True))
+                                                _submitted_count = _resp_data.get('submitted', 0)
+                                            except Exception:
+                                                pass
+                                            if _submitted_count > 0:
+                                                logging.info(f'[NZBBatch] Submitted {_submitted_count} episodes as aggregate pack')
+                                                # Remove batch items from in-memory queue immediately
+                                                # so next tick doesn't re-submit them before DB update propagates
+                                                _batch_ids = {it['id'] for it in _batch}
+                                                self.items = [it for it in self.items if it.get('id') not in _batch_ids]
+                                                self._item_ids -= _batch_ids
+                                                _nzb_batch_handled = True
+                                            else:
+                                                logging.info(f'[NZBBatch] 0 episodes submitted (all already collected) — falling back to individual scrape')
+                        except Exception as _be:
+                            logging.warning(f'[NZBBatch] Batch processing failed, falling back to individual scrape: {_be}', exc_info=True)
+
+                    if _nzb_batch_handled:
+                        return True
+
                     logging.info(f"Scraping for {item_identifier} (multi-pack: {is_multi_pack}) with initial check_pack_wantedness={check_pack_wantedness_for_initial_scrape}")
                     results, filtered_out_results = self.scrape_with_fallback(
-                        item_to_process, 
-                        is_multi_pack, 
-                        queue_manager, 
-                        check_pack_wantedness=check_pack_wantedness_for_initial_scrape # Use the determined value
+                        item_to_process,
+                        is_multi_pack,
+                        queue_manager,
+                        check_pack_wantedness=check_pack_wantedness_for_initial_scrape
                     )
 
                     # Ensure both results and filtered_out_results are lists
@@ -572,6 +709,8 @@ class ScrapingQueue:
                                 if is_magnet_not_wanted(result.get('magnet') or result.get('nzb_url')):
                                     continue
                                 if is_url_not_wanted(result.get('magnet') or result.get('nzb_url')):
+                                    continue
+                                if result.get('nzb_url') and is_nzb_guid_not_wanted(result.get('parsed_info', {}).get('guid') or result.get('nzb_url')):
                                     continue
                             filtered_results.append(result)
 
@@ -682,6 +821,8 @@ class ScrapingQueue:
                                     if is_magnet_not_wanted(result.get('magnet') or result.get('nzb_url')):
                                         continue
                                     if is_url_not_wanted(result.get('magnet') or result.get('nzb_url')):
+                                        continue
+                                    if result.get('nzb_url') and is_nzb_guid_not_wanted(result.get('parsed_info', {}).get('guid') or result.get('nzb_url')):
                                         continue
                                 current_filtered_fallback_results.append(result)
                             
@@ -820,12 +961,15 @@ class ScrapingQueue:
         filtered_out = filtered_out if filtered_out is not None else []
 
         if not skip_filter: # Apply existing filters
-            # Filter out unwanted magnets and URLs
+            # Filter out unwanted magnets, URLs and NZB guids
             results = [
-                r for r in results 
+                r for r in results
                 if not (
-                    not item.get('disable_not_wanted_check') and 
-                    (is_magnet_not_wanted(r.get('magnet') or r.get('nzb_url')) or is_url_not_wanted(r.get('magnet') or r.get('nzb_url')))
+                    not item.get('disable_not_wanted_check') and (
+                        is_magnet_not_wanted(r.get('magnet') or r.get('nzb_url')) or
+                        is_url_not_wanted(r.get('magnet') or r.get('nzb_url')) or
+                        (r.get('nzb_url') and is_nzb_guid_not_wanted(r.get('parsed_info', {}).get('guid') or r.get('nzb_url')))
+                    )
                 )
             ]
             
@@ -1071,6 +1215,9 @@ class ScrapingQueue:
                         continue
                     if is_url_not_wanted(r_val['magnet']):
                         logging.info(f"    Filtered out '{r_val.get('original_title')}' due to is_url_not_wanted.")
+                        continue
+                    if r_val.get('nzb_url') and is_nzb_guid_not_wanted(r_val.get('parsed_info', {}).get('guid') or r_val.get('nzb_url')):
+                        logging.info(f"    Filtered out '{r_val.get('original_title')}' due to is_nzb_guid_not_wanted.")
                         continue
                 if stored_rescrape_title and r_val.get('original_title') and r_val.get('original_title') == stored_rescrape_title:
                     # Only filter out if there are other results available

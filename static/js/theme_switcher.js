@@ -31,11 +31,10 @@
     // Get the saved theme from localStorage, default to tangerine
     function getSavedTheme() {
         const savedTheme = localStorage.getItem(STORAGE_KEY);
-        if (savedTheme) {
+        if (savedTheme && savedTheme !== THEMES.CLASSIC) {
             return savedTheme;
         }
-
-        // Default to tangerine for new users
+        // Classic is no longer supported — migrate to tangerine
         return THEMES.TANGERINE;
     }
 

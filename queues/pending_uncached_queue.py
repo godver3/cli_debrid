@@ -45,9 +45,14 @@ class PendingUncachedQueue:
         self.items = [i for i in self.items if i['id'] != item['id']]
 
     def process(self, queue_manager):
+        if self.debrid_provider is None:
+            return
         logging.debug(f"Processing pending uncached queue. Items: {len(self.items)}")
-        
-        active_downloads, download_limit = self.debrid_provider.get_active_downloads()
+
+        try:
+            active_downloads, download_limit = self.debrid_provider.get_active_downloads()
+        except Exception:
+            return
         
         if active_downloads >= download_limit:
             logging.info("Download limit reached. Stopping pending uncached queue processing.")

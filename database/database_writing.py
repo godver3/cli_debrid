@@ -200,6 +200,12 @@ def update_media_item_state(item_id, state, **kwargs):
                     value = json.dumps(value) if value else None
                 params.append(value)
 
+        # Always clear scrape_results when transitioning to a terminal state —
+        # scrape_results is only needed while adding/checking and can grow to
+        # hundreds of MB if left on collected/blacklisted items.
+        if state in ('Collected', 'Blacklisted', 'Ghostlisted', 'Unreleased') and 'scrape_results' not in kwargs:
+            query += ", scrape_results = NULL"
+
         # Complete the query
         query += " WHERE id = ?"
         params.append(item_id)
@@ -714,6 +720,22 @@ def add_media_item(item: dict, user_initiated: bool = False) -> int:
         tmdb_id = item.get('tmdb_id')
         item_type = item.get('type')
         version = item.get('version')
+
+        # Resolve imdb_id from tmdb_id if missing — ensures Plex GUID fast-path works
+        # and prevents trial-and-error match loops for items added with only TMDB ID.
+        if not imdb_id and tmdb_id:
+            try:
+                from cli_battery.app.direct_api import DirectAPI
+                _resolved_imdb, _ = DirectAPI.tmdb_to_imdb(
+                    str(tmdb_id),
+                    media_type='show' if item_type in ('episode', 'show') else 'movie'
+                )
+                if _resolved_imdb:
+                    imdb_id = _resolved_imdb
+                    item['imdb_id'] = _resolved_imdb
+                    logging.debug(f"[add_media_item] Resolved imdb_id {_resolved_imdb} from tmdb_id {tmdb_id}")
+            except Exception:
+                pass
 
         # GHOSTLIST/BLACKLIST CHECK
         if imdb_id or tmdb_id:

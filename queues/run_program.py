@@ -164,32 +164,30 @@ class ProgramRunner:
             from metadata.metadata import _get_local_timezone # Added import
             tz = _get_local_timezone()
             logging.info(f"Initializing APScheduler with timezone: {tz.key}")
-            # --- START EDIT: Configure scheduler for sequential execution ---
             executors = {
-                'default': ThreadPoolExecutor(max_workers=1)
-            }
-            job_defaults = {
-                'coalesce': True, # If multiple runs are missed, only run once
-                'max_instances': 1, # Already part of individual job scheduling, but good to have as default
-                'misfire_grace_time': None  # Allow jobs to run no matter how late
-            }
-            self.scheduler = BackgroundScheduler(jobstores=_jobstores, executors=executors, job_defaults=job_defaults, timezone=tz)
-            logging.info("APScheduler configured with a single worker thread for sequential job execution.")
-            # --- END EDIT ---
-        except Exception as e:
-            logging.error(f"Failed to get local timezone for scheduler, using system default: {e}")
-            # --- START EDIT: Configure scheduler for sequential execution (fallback) ---
-            executors = {
-                'default': ThreadPoolExecutor(max_workers=1)
+                'default': ThreadPoolExecutor(max_workers=1),  # scheduled/maintenance tasks — sequential
+                'queue': ThreadPoolExecutor(max_workers=2),    # queue processing tasks — Scraping/Adding + Checking run simultaneously
             }
             job_defaults = {
                 'coalesce': True,
                 'max_instances': 1,
-                'misfire_grace_time': None  # Allow jobs to run no matter how late
+                'misfire_grace_time': None
             }
-            self.scheduler = BackgroundScheduler(jobstores=_jobstores, executors=executors, job_defaults=job_defaults) # Fallback to default timezone
-            logging.info("APScheduler configured with a single worker thread for sequential job execution (using system default timezone).")
-            # --- END EDIT ---
+            self.scheduler = BackgroundScheduler(jobstores=_jobstores, executors=executors, job_defaults=job_defaults, timezone=tz)
+            logging.info("APScheduler configured with separate thread pools: queue(3) and default(2).")
+        except Exception as e:
+            logging.error(f"Failed to get local timezone for scheduler, using system default: {e}")
+            executors = {
+                'default': ThreadPoolExecutor(max_workers=1),
+                'queue': ThreadPoolExecutor(max_workers=2),
+            }
+            job_defaults = {
+                'coalesce': True,
+                'max_instances': 1,
+                'misfire_grace_time': None
+            }
+            self.scheduler = BackgroundScheduler(jobstores=_jobstores, executors=executors, job_defaults=job_defaults)
+            logging.info("APScheduler configured with separate thread pools: queue(2) and default(1) (system default timezone).")
 
         # self.scheduler_lock = threading.Lock() # Previous version
         self.scheduler_lock = threading.RLock() # MODIFIED: Ensure RLock for reentrancy
@@ -311,6 +309,8 @@ class ProgramRunner:
             'task_cleanup_debrid': 24 * 60 * 60, # Run every 24 hours (disabled by default)
             'task_backfill_nzb_torrent_ids': 24 * 60 * 60, # Run once (disabled by default)
             'task_repair_broken_nzbs': 6 * 60 * 60, # Run every 6 hours (disabled by default)
+            'task_nzb_health_check': 10,             # Run every 10 seconds — polls NZB items in Adding
+            'task_backfill_plex_guids': 24 * 60 * 60, # Run once (disabled by default)
             # --- END EDIT ---
             'task_process_standalone_plex_removals': 60 * 60, # Run every hour
             'task_fix_stuck_plex_items': 5 * 60, # Run every 5 minutes
@@ -509,6 +509,7 @@ class ProgramRunner:
             # Combined/High Frequency Tasks
             'task_update_queue_views',
             'task_send_notifications',
+            'task_nzb_health_check',
             # Essential Periodic Tasks
             'task_check_service_connectivity',
             'task_heartbeat',
@@ -1085,15 +1086,28 @@ class ProgramRunner:
                                 logging.debug(f"Task '{job_id}' interval jittered: {jittered_interval}s (from {interval_seconds}s)")
                         # *** END STAGGER EDIT ***
 
+                        # Queue-processing tasks get their own executor so they don't
+                        # block scheduled maintenance tasks and vice versa.
+                        _QUEUE_TASKS = {
+                            'Adding', 'Checking', 'Sleeping', 'Unreleased',
+                            'Blacklisted', 'Pending Uncached', 'Upgrading',
+                            'final_check_queue', 'Pre_release',
+                            'task_check_plex_files', 'task_send_notifications',
+                            'task_update_queue_views', 'task_fix_stuck_plex_items',
+                            'task_regulate_system_load',
+                        }
+                        _executor = 'queue' if job_id in _QUEUE_TASKS else 'default'
+
                         add_job_kwargs = {
                             'func': wrapped_func,
                             'trigger': trigger,
                             'id': job_id,
                             'name': job_id,
                             'replace_existing': True,
-                            'misfire_grace_time': None,  # No grace limit – run even if very late
+                            'misfire_grace_time': None,
                             'max_instances': 1,
-                            'timezone': resolved_timezone
+                            'timezone': resolved_timezone,
+                            'executor': _executor,
                         }
 
                         self.scheduler.add_job(**add_job_kwargs)
@@ -3182,6 +3196,242 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f'[DEBRID_CLEANUP] Scheduled task error: {e}', exc_info=True)
 
+    def task_nzb_health_check(self):
+        """Poll NZB items in Adding state, run health checks, move to Checking or back to Wanted.
+        Runs as a dedicated scheduled task so it doesn't block the Adding/Scraping queue threads."""
+        try:
+            if not self.queue_manager:
+                return
+            adding_queue = self.queue_manager.queues.get('Adding')
+            if not adding_queue:
+                return
+
+            _nzb_items = [
+                item for item in adding_queue.items[:]
+                if str(item.get('filled_by_torrent_id', '')).startswith('nzb:')
+            ]
+            if not _nzb_items:
+                return
+
+            from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
+            from utilities.settings import get_setting as _gs
+            from collections import defaultdict as _dd
+            from concurrent.futures import ThreadPoolExecutor as _TPE, as_completed as _ac
+
+            reset_decypharr_client()
+            _nzb_client = get_decypharr_client()
+
+            # Group items by job_id
+            _job_groups: dict = _dd(list)
+            for _ni in _nzb_items:
+                _jid = _ni.get('filled_by_torrent_id', '')[4:]
+                _job_groups[_jid].append(_ni)
+
+            def _poll_job(job_id):
+                try:
+                    status = _nzb_client.get_job_status(job_id)
+                    if not status:
+                        return job_id, None, None, None
+                    raw = status.get('raw', {})
+                    raw_progress = raw.get('progress', status.get('progress', 0))
+                    progress = int(float(raw_progress) * 100)
+                    is_complete = raw.get('is_complete', False)
+                    state = str(raw.get('state', status.get('state', ''))).lower()
+                    inner_status = str(raw.get('status', '')).lower()
+                    if is_complete or (inner_status == 'downloaded' and state in ('pausedup', 'completed', 'seeding')):
+                        progress = 100
+                    elif state in ('error', 'failed', 'bad') or raw.get('bad'):
+                        progress = -1
+                    elif status.get('state') == 'completed':
+                        progress = 100
+                    entry_name = None
+                    if progress == 100:
+                        items_for_job = _job_groups[job_id]
+                        nzb_title = items_for_job[0].get('filled_by_file', '') or items_for_job[0].get('original_scraped_torrent_title', '')
+                        search_name = nzb_title or job_id
+                        try:
+                            result = _nzb_client.get_nzb_file_info(search_name)
+                            if result:
+                                entry_name, _ = result
+                        except Exception:
+                            pass
+                        if not entry_name:
+                            entry_name = nzb_title or None
+                    return job_id, progress, entry_name, None
+                except Exception as exc:
+                    return job_id, None, None, exc
+
+            _unique_jobs = list(_job_groups.keys())
+            _job_results = {}
+            with _TPE(max_workers=min(len(_unique_jobs), 10)) as _pool:
+                _futures = {_pool.submit(_poll_job, jid): jid for jid in _unique_jobs}
+                for _fut in _ac(_futures):
+                    jid, prog, entry, err = _fut.result()
+                    _job_results[jid] = (prog, entry, err)
+
+            # Health check completed entries in parallel
+            _entries_to_check = {}
+            for jid, (prog, entry, err) in _job_results.items():
+                if prog == 100 and entry and entry not in _entries_to_check:
+                    _entries_to_check[entry] = jid
+
+            _health_results = {}
+            if _entries_to_check:
+                def _check_health(entry_name):
+                    try:
+                        return entry_name, _nzb_client.check_entry_health(entry_name)
+                    except Exception:
+                        return entry_name, None
+                with _TPE(max_workers=min(len(_entries_to_check), 5)) as _hpool:
+                    _hfutures = {_hpool.submit(_check_health, en): en for en in _entries_to_check}
+                    for _hfut in _ac(_hfutures):
+                        en, health = _hfut.result()
+                        _health_results[en] = health
+
+            # Process results per item
+            for item in _nzb_items:
+                torrent_id = item.get('filled_by_torrent_id', '')
+                item_id = item.get('id')
+                nzb_title = item.get('filled_by_file', '') or item.get('original_scraped_torrent_title', '')
+                try:
+                    job_id = torrent_id[4:]
+                    if job_id not in _job_results:
+                        continue
+                    _prog, _entry, _err = _job_results[job_id]
+                    if _err:
+                        logging.debug(f'[NZB] Error polling progress for {torrent_id}: {_err}')
+                        continue
+                    progress = _prog
+                    entry_name = _entry
+                    if progress is None:
+                        logging.debug(f'[NZB] {torrent_id} still queued/unknown — waiting')
+                        continue
+                    elif progress == -1:
+                        logging.warning(f'[NZB] {torrent_id} failed in Decypharr — moving back to Wanted')
+                        adding_queue._handle_failed_item(item, 'NZB failed in Decypharr', self.queue_manager)
+                        continue
+                    elif progress < 100:
+                        logging.debug(f'[NZB] {torrent_id} progress={progress}% — waiting')
+                        continue
+
+                    logging.info(f'[NZB] {torrent_id} complete — running health check')
+                    if not entry_name:
+                        logging.warning(f'[NZB] {torrent_id} could not determine entry name — proceeding to Checking anyway')
+                        health = None
+                    else:
+                        health = _health_results.get(entry_name)
+
+                    if health == 'broken':
+                        logging.warning(f'[NZB] {torrent_id} entry {entry_name!r} is BROKEN — deleting and moving back to Wanted')
+                        # Add NZB guid to not-wanted so it's filtered at scrape time in future
+                        try:
+                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid
+                            _nzb_url_for_guid = item.get('filled_by_magnet', '')
+                            if _nzb_url_for_guid:
+                                _add_guid(_nzb_url_for_guid)
+                        except Exception as _ge:
+                            logging.debug(f'[NZB] Could not add guid to not-wanted: {_ge}')
+                        try:
+                            import requests as _req
+                            _dcy_url = _gs('Usenet Provider', 'url', default='').rstrip('/')
+                            _dcy_token = _gs('Usenet Provider', 'api_token', default='')
+                            _headers = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
+                            _real_hash = None
+                            _search_name = (entry_name or nzb_title or '').strip()
+                            _page = 1
+                            while not _real_hash:
+                                _tr = _req.get(f'{_dcy_url}/api/torrents',
+                                               params={'page': _page, 'limit': 50, 'sort_by': 'added_on', 'sort_order': 'desc'},
+                                               headers=_headers, timeout=10)
+                                if _tr.status_code != 200:
+                                    break
+                                _data = _tr.json()
+                                for _t in _data.get('torrents', []):
+                                    if _t.get('name', '').strip() == _search_name:
+                                        _real_hash = _t.get('info_hash', '')
+                                        break
+                                if _real_hash or not _data.get('has_next'):
+                                    break
+                                _page += 1
+                            if _real_hash:
+                                _dr = _req.delete(f'{_dcy_url}/api/torrents', headers=_headers,
+                                                  params={'hashes': _real_hash}, timeout=10)
+                                if _dr.status_code == 200:
+                                    logging.info(f'[NZB] Deleted broken entry {_real_hash} from Decypharr')
+                                else:
+                                    logging.warning(f'[NZB] Could not delete {_real_hash}: HTTP {_dr.status_code}')
+                            else:
+                                logging.warning(f'[NZB] Entry {_search_name!r} not found in /api/torrents')
+                        except Exception as _de:
+                            logging.warning(f'[NZB] Error deleting broken entry: {_de}')
+                        try:
+                            from database.not_wanted_magnets import add_to_not_wanted_nzb_segment, extract_nzb_segment_id
+                            import json as _j
+                            _seg_id = ''
+                            _results_raw = item.get('scrape_results', [])
+                            if isinstance(_results_raw, str):
+                                _results_raw = _j.loads(_results_raw)
+                            for _r in (_results_raw or []):
+                                if _r.get('title', '') == nzb_title or _r.get('original_title', '') == nzb_title:
+                                    _nzb_fetch_url = _r.get('nzb_url', '') or _r.get('magnet', '')
+                                    if _nzb_fetch_url:
+                                        try:
+                                            from routes.api_tracker import api as _fapi
+                                            _fr = _fapi.get(_nzb_fetch_url, timeout=15, allow_redirects=True)
+                                            if _fr.status_code == 200 and '<nzb' in _fr.text.lower():
+                                                _seg_id = extract_nzb_segment_id(_fr.text)
+                                        except Exception:
+                                            pass
+                                    break
+                            if _seg_id:
+                                add_to_not_wanted_nzb_segment(_seg_id)
+                                logging.info(f'[NZB] Added broken NZB segment ID {_seg_id!r} to not-wanted')
+                        except Exception as _nwe:
+                            logging.debug(f'[NZB] Could not add segment to not-wanted: {_nwe}')
+                        from database.database_writing import update_media_item as _umi
+                        _umi(item_id, filled_by_torrent_id=None, filled_by_file=None, filled_by_title=None,
+                             debrid_folder_name=None, fall_back_to_single_scraper=False)
+                        try:
+                            import json as _json
+                            _results = item.get('scrape_results', [])
+                            if isinstance(_results, str):
+                                _results = _json.loads(_results)
+                            _filtered = [r for r in (_results or []) if r.get('title', '') != nzb_title and r.get('original_title', '') != nzb_title]
+                            if _filtered and len(_filtered) < len(_results):
+                                _umi(item_id, scrape_results=_json.dumps(_filtered), fall_back_to_single_scraper=False)
+                                logging.info(f'[NZB] Removed broken result, {len(_filtered)} remaining — retrying Adding')
+                                item['scrape_results'] = _json.dumps(_filtered)
+                            else:
+                                logging.info(f'[NZB] No remaining scrape results — moving back to Wanted')
+                                self.queue_manager.move_to_wanted(item, 'Adding')
+                        except Exception as _re:
+                            logging.warning(f'[NZB] Could not remove broken result: {_re}')
+                            self.queue_manager.move_to_wanted(item, 'Adding')
+                    else:
+                        if health == 'healthy':
+                            logging.info(f'[NZB] {torrent_id} health check passed — moving to Checking')
+                        else:
+                            logging.warning(f'[NZB] {torrent_id} health check inconclusive — proceeding to Checking anyway')
+                        nzb_url = item.get('filled_by_magnet', '') or item.get('link', '')
+                        nzb_original_title = item.get('original_scraped_torrent_title', nzb_title)
+                        try:
+                            self.queue_manager.move_to_checking(
+                                item, 'Adding',
+                                title=nzb_title,
+                                link=nzb_url,
+                                filled_by_file=entry_name or nzb_title,
+                                torrent_id=torrent_id,
+                                original_scraped_torrent_title=nzb_original_title,
+                            )
+                        except Exception as _ce:
+                            logging.warning(f'[NZB] Could not move {torrent_id} to Checking: {_ce}')
+                            adding_queue._handle_failed_item(item, f'NZB health passed but queue move failed: {_ce}', self.queue_manager)
+                except Exception as _exc:
+                    logging.error(f'[NZB] Error in health check for {torrent_id}: {_exc}', exc_info=True)
+
+        except Exception as e:
+            logging.error(f'[NZBHealthCheck] Task error: {e}', exc_info=True)
+
     def task_backfill_nzb_torrent_ids(self):
         """Backfill filled_by_torrent_id for collected items on Decypharr mount that have no torrent ID.
         Matches location_on_disk folder name against Decypharr /api/torrents entries."""
@@ -3254,6 +3504,99 @@ class ProgramRunner:
 
         except Exception as e:
             logging.error(f'[NZBBackfill] Task error: {e}', exc_info=True)
+
+    def task_backfill_plex_guids(self):
+        """
+        Backfill plex_guid on media_items and season_guids/plex_guid on tv_shows
+        for all collected movies and episodes by querying cli_battery.
+
+        Runs once (disabled by default). Enable in Task Manager under Features.
+        Uses the Plex GUID stored in battery from Trakt API (ids.plex.guid).
+        Falls back to a live Trakt lookup if battery doesn't have it yet.
+        """
+        try:
+            from cli_battery.app.direct_api import DirectAPI
+            from database.database_reading import get_all_media_items
+            from database.database_writing import update_media_item
+            from database.core import get_db_connection
+
+            logging.info('[PlexGUIDBackfill] Starting Plex GUID backfill task')
+
+            items = [dict(i) for i in get_all_media_items(state='Collected')
+                     if i.get('imdb_id') and not i.get('plex_guid')]
+
+            logging.info(f'[PlexGUIDBackfill] {len(items)} items need plex_guid')
+
+            movie_ids = list({i['imdb_id'] for i in items if i.get('type') == 'movie'})
+            show_ids  = list({i['imdb_id'] for i in items if i.get('type') == 'episode'})
+
+            updated = 0
+            errors  = 0
+
+            # Movies
+            for imdb_id in movie_ids:
+                try:
+                    result = DirectAPI.get_plex_guid(imdb_id, 'movie')
+                    guid = (result or {}).get('show_guid')
+                    if guid:
+                        conn = get_db_connection()
+                        conn.execute(
+                            "UPDATE media_items SET plex_guid=? WHERE imdb_id=? AND type='movie'",
+                            (guid, imdb_id)
+                        )
+                        conn.commit()
+                        conn.close()
+                        updated += 1
+                except Exception as e:
+                    logging.debug(f'[PlexGUIDBackfill] Movie {imdb_id} error: {e}')
+                    errors += 1
+
+            # Shows — update episodes + tv_shows table
+            for imdb_id in show_ids:
+                try:
+                    # Force refresh to ensure absolute→TVDB episode GUID mapping runs
+                    # This triggers _ensure_plex_guids_in_data which handles anime absolute numbering
+                    try:
+                        DirectAPI.force_refresh_metadata(imdb_id, item_type='show')
+                    except Exception:
+                        pass
+                    result = DirectAPI.get_plex_guid(imdb_id, 'show')
+                    if not result:
+                        continue
+                    show_guid    = result.get('show_guid')
+                    season_guids = result.get('season_guids') or {}
+
+                    conn = get_db_connection()
+                    # Update episode plex_guid using season number lookup
+                    # Store show-level guid + season_guids on tv_shows
+                    if show_guid:
+                        conn.execute(
+                            "UPDATE tv_shows SET plex_guid=? WHERE imdb_id=?",
+                            (show_guid, imdb_id)
+                        )
+                    if season_guids:
+                        import json as _json
+                        conn.execute(
+                            "UPDATE tv_shows SET season_guids=? WHERE imdb_id=?",
+                            (_json.dumps({str(k): v for k, v in season_guids.items()}), imdb_id)
+                        )
+                    # Update episode rows
+                    if show_guid:
+                        conn.execute(
+                            "UPDATE media_items SET plex_guid=? WHERE imdb_id=? AND type='episode' AND plex_guid IS NULL",
+                            (show_guid, imdb_id)
+                        )
+                    conn.commit()
+                    conn.close()
+                    updated += 1
+                except Exception as e:
+                    logging.debug(f'[PlexGUIDBackfill] Show {imdb_id} error: {e}')
+                    errors += 1
+
+            logging.info(f'[PlexGUIDBackfill] Complete: {updated} updated, {errors} errors')
+
+        except Exception as e:
+            logging.error(f'[PlexGUIDBackfill] Task error: {e}', exc_info=True)
 
     def task_repair_broken_nzbs(self, triggered_by: str = 'scheduled'):
         """Scan Decypharr for broken NZBs and attempt to repair them via re-scrape."""
@@ -3372,10 +3715,40 @@ class ProgramRunner:
             if items_to_delete_filepath:
                 delete_ids_filepath = list(items_to_delete_filepath - set(items_to_update))
                 if delete_ids_filepath:
-                    delete_sql = f"DELETE FROM media_items WHERE id IN ({','.join(['?']*len(delete_ids_filepath))})"
-                    cursor.execute(delete_sql, delete_ids_filepath)
-                    deleted_count_filepath = cursor.rowcount
-                    reconciliation_logger.info(f"Deleted {deleted_count_filepath} duplicate items (file-based reconciliation). IDs: {delete_ids_filepath}")
+                    # Only delete items that are true duplicates (same imdb_id+season+episode).
+                    # Items that share filled_by_file but are different episodes (season pack coalescing)
+                    # should be marked Collected, not deleted.
+                    rows = cursor.execute(
+                        f"SELECT id, imdb_id, season_number, episode_number FROM media_items "
+                        f"WHERE id IN ({','.join(['?']*len(delete_ids_filepath))})",
+                        delete_ids_filepath
+                    ).fetchall()
+                    # Build set of (imdb_id, season, episode) for already-updating items
+                    updating_eps = set()
+                    if items_to_update:
+                        for _ur in cursor.execute(
+                            f"SELECT imdb_id, season_number, episode_number FROM media_items "
+                            f"WHERE id IN ({','.join(['?']*len(items_to_update))})",
+                            items_to_update
+                        ).fetchall():
+                            updating_eps.add((_ur['imdb_id'], _ur['season_number'], _ur['episode_number']))
+                    true_dupes = []
+                    collect_instead = []
+                    for r in rows:
+                        key = (r['imdb_id'], r['season_number'], r['episode_number'])
+                        if key in updating_eps:
+                            true_dupes.append(r['id'])
+                        else:
+                            collect_instead.append(r['id'])
+                    if collect_instead:
+                        collect_sql = f"UPDATE media_items SET state = 'Collected', collected_at = ? WHERE id IN ({','.join(['?']*len(collect_instead))})"
+                        cursor.execute(collect_sql, [now_str] + collect_instead)
+                        reconciliation_logger.info(f"Marked {cursor.rowcount} season pack coalesced items as Collected (shared file). IDs: {collect_instead}")
+                    if true_dupes:
+                        delete_sql = f"DELETE FROM media_items WHERE id IN ({','.join(['?']*len(true_dupes))})"
+                        cursor.execute(delete_sql, true_dupes)
+                        deleted_count_filepath = cursor.rowcount
+                        reconciliation_logger.info(f"Deleted {deleted_count_filepath} true duplicate items (file-based reconciliation). IDs: {true_dupes}")
 
             # --- Step 1b: Replace Season/Movie cleanup ---
             # When new items are promoted to Collected, remove old entries flagged with
@@ -4786,6 +5159,156 @@ class ProgramRunner:
                                             logging.info(f"[PlexCheck] Removed old upgrade file from Plex for item {item_id} ({item_title_for_log})")
                                         except Exception as _cp_err:
                                             logging.warning(f"[PlexCheck] Failed to remove old upgrade file from Plex for item {item_id}: {_cp_err}")
+                                # Check if the Plex episode has a local:// guid (episode-level mismatch)
+                                # or the show has no external IDs (show-level mismatch).
+                                # In both cases, use the Plex GUID from battery to fix directly.
+                                _plex_ep_item = None
+                                _plex_ep_guid_is_local = False
+                                try:
+                                    _check_fn2 = os.path.basename((_fb_details.get('filled_by_file') or '') if _fb_details else '')
+                                    if _check_fn2 and _fb_details and _fb_details.get('type') == 'episode':
+                                        for _cs2 in sections:
+                                            if _cs2.type != 'show':
+                                                continue
+                                            _cr2 = plex.fetchItems(f'/library/sections/{_cs2.key}/all?file={__import__("urllib.parse", fromlist=["quote"]).quote(_check_fn2)}&type=4')
+                                            if _cr2:
+                                                _plex_ep_item = _cr2[0]
+                                                _ep_guid_str = str(getattr(_plex_ep_item, 'guid', ''))
+                                                _plex_ep_guid_is_local = _ep_guid_str.startswith('local://')
+                                                break
+                                except Exception:
+                                    pass
+
+                                if _fb_details and _plex_ep_item and _plex_ep_guid_is_local:
+                                    try:
+                                        _fix_imdb   = _fb_details.get('imdb_id')
+                                        _fix_imdb   = _fb_details.get('imdb_id')
+                                        _fix_tmdb   = _fb_details.get('tmdb_id')
+                                        _fix_season = _fb_details.get('season_number')
+                                        _fix_ep     = _fb_details.get('episode_number')
+                                        _fix_ep_rk  = str(_plex_ep_item.ratingKey)
+                                        _fix_show_rk = str(getattr(_plex_ep_item, 'grandparentRatingKey', _fix_ep_rk))
+
+                                        # Determine fix strategy using absolute_episode in battery:
+                                        # - absolute_episode > 0 (anime/absolute numbering) → episode-level GUID per episode
+                                        # - absolute_episode = 0 or NULL (regular shows) → show-level GUID via force_match
+                                        _is_absolute = False
+                                        try:
+                                            from cli_battery.app.database import Session as _BatSess2, Item as _BatItem2, Season as _BatSeason2, Episode as _BatEp2
+                                            with _BatSess2() as _bs2:
+                                                _bi2 = _bs2.query(_BatItem2).filter_by(imdb_id=_fix_imdb).first() if _fix_imdb else None
+                                                if _bi2:
+                                                    _abs2 = _bs2.query(_BatEp2).join(_BatSeason2).filter(
+                                                        _BatSeason2.item_id == _bi2.id,
+                                                        _BatEp2.absolute_episode > 0
+                                                    ).first()
+                                                    _is_absolute = _abs2 is not None
+                                        except Exception:
+                                            pass
+
+                                        import threading as _threading
+
+                                        if not _is_absolute:
+                                            logging.info(
+                                                f"[PlexGUID] Item {item_id} regular show — "
+                                                f"scheduling show-level fix-match (ratingKey={_fix_show_rk})"
+                                            )
+                                            def _do_show_fix(_rk, _title, _year, _tmdb, _imdb, _s, _ep):
+                                                try:
+                                                    from utilities.plex_matching_functions import force_match_with_tmdb
+                                                    force_match_with_tmdb(
+                                                        _title,
+                                                        str(_year) if _year else None,
+                                                        str(_tmdb) if _tmdb else '0',
+                                                        _rk,
+                                                        imdb_id=_imdb,
+                                                        media_type='show',
+                                                        season=_s,
+                                                        episode=_ep,
+                                                    )
+                                                except Exception as _fe:
+                                                    logging.debug(f"[PlexGUID] Show fix-match failed: {_fe}")
+                                            _threading.Thread(
+                                                target=_do_show_fix,
+                                                args=(_fix_show_rk, _fb_details.get('title', ''),
+                                                      _fb_details.get('year'), _fix_tmdb, _fix_imdb,
+                                                      _fix_season, _fix_ep),
+                                                daemon=True
+                                            ).start()
+                                        else:
+                                            logging.info(
+                                                f"[PlexGUID] Item {item_id} absolute show — "
+                                                f"scheduling episode fix-match (ratingKey={_fix_ep_rk}, "
+                                                f"S{_fix_season}E{_fix_ep})"
+                                            )
+
+                                        def _do_ep_fix(_rk, _title, _year, _tmdb, _imdb, _s, _ep):
+                                            try:
+                                                from cli_battery.app.direct_api import DirectAPI
+                                                from utilities.settings import get_setting as _gs
+                                                from plexapi.server import PlexServer as _PS
+                                                _gu = _gs('Plex', 'url', '').rstrip('/')
+                                                _gt = _gs('Plex', 'token', '')
+                                                if not _gu or not _gt:
+                                                    return
+                                                _gplex = _PS(_gu, _gt, timeout=30)
+                                                _gitem = _gplex.fetchItem(int(_rk))
+                                                # Get episode GUID from battery
+                                                _gr = DirectAPI.get_plex_guid(_imdb, 'show', season=_s, episode=_ep) if _imdb else None
+                                                logging.info(f"[PlexGUID] get_plex_guid({_imdb}, S{_s}E{_ep}) returned: {_gr}")
+                                                _ep_guid = (_gr or {}).get('episode_guid')
+                                                _s_guid  = (_gr or {}).get('season_guid')
+                                                _sh_guid = (_gr or {}).get('show_guid')
+                                                # Use most specific available
+                                                if _ep_guid:
+                                                    _full_guid = f'plex://episode/{_ep_guid}'
+                                                    _gname = f'{_title} S{_s:02d}E{_ep:02d}'
+                                                elif _s_guid:
+                                                    _full_guid = f'plex://season/{_s_guid}'
+                                                    _gname = f'{_title} Season {_s}'
+                                                elif _sh_guid:
+                                                    _full_guid = f'plex://show/{_sh_guid}'
+                                                    _gname = _title
+                                                else:
+                                                    logging.debug(f"[PlexGUID] No GUID available for {_imdb} S{_s}E{_ep}")
+                                                    return
+                                                logging.info(f"[PlexGUID] Applying {_full_guid} to ratingKey={_rk}")
+                                                import time as _time
+                                                import requests as _req
+                                                from urllib.parse import quote as _uq
+
+                                                # Use raw HTTP PUT — PlexAPI fixMatch() doesn't
+                                                # work on episode items but the API endpoint does.
+                                                _match_url = (
+                                                    f"{_gu}/library/metadata/{_rk}/match"
+                                                    f"?guid={_uq(_full_guid)}&name={_uq(_gname)}"
+                                                    f"&X-Plex-Token={_gt}"
+                                                )
+                                                _resp = _req.put(_match_url, timeout=15)
+                                                logging.info(f"[PlexGUID] PUT match HTTP {_resp.status_code} for ratingKey={_rk}")
+                                                _time.sleep(2)
+                                                # Trigger metadata refresh so Plex fetches episode title/summary immediately
+                                                _req.put(f"{_gu}/library/metadata/{_rk}/refresh?X-Plex-Token={_gt}", timeout=15)
+                                                _time.sleep(4)
+                                                _gitem.reload()
+                                                _new_guid = str(getattr(_gitem, 'guid', ''))
+                                                if not _new_guid.startswith('local://'):
+                                                    logging.info(f"[PlexGUID] Episode fix-match SUCCESS for '{_title}' S{_s}E{_ep} → {_new_guid}")
+                                                else:
+                                                    logging.warning(f"[PlexGUID] Episode fix-match failed (HTTP {_resp.status_code}) — guid still local:// for '{_title}' S{_s}E{_ep}")
+                                            except Exception as _fme:
+                                                logging.debug(f"[PlexGUID] Episode fix-match failed: {_fme}")
+                                        if _is_absolute:
+                                            _threading.Thread(
+                                                target=_do_ep_fix,
+                                                args=(_fix_ep_rk, _fb_details.get('title', ''),
+                                                      _fb_details.get('year'), _fix_tmdb, _fix_imdb,
+                                                      _fix_season, _fix_ep),
+                                                daemon=True
+                                            ).start()
+                                    except Exception as _guid_err:
+                                        logging.debug(f"[PlexGUID] Fix-match scheduling failed: {_guid_err}")
+
                                 if cache_key in self.plex_scan_tick_counts:
                                     del self.plex_scan_tick_counts[cache_key]
                             else:
@@ -5084,15 +5607,25 @@ class ProgramRunner:
                         logging.error(f"Cannot trigger task '{job_id_base}': Scheduler is not initialized")
                         raise RuntimeError(f"Scheduler not initialized for manual task '{job_id_base}'")
                     
+                    _QUEUE_TASKS_MANUAL = {
+                        'Adding', 'Checking', 'Sleeping', 'Unreleased',
+                        'Blacklisted', 'Pending Uncached', 'Upgrading',
+                        'final_check_queue', 'Pre_release',
+                        'task_check_plex_files', 'task_send_notifications',
+                        'task_update_queue_views', 'task_fix_stuck_plex_items',
+                        'task_regulate_system_load',
+                    }
+                    _manual_executor = 'queue' if job_id_base in _QUEUE_TASKS_MANUAL else 'default'
                     self.scheduler.add_job(
                         func=wrapped_func,
-                        trigger='date',  # Use DateTrigger for true run-once
+                        trigger='date',
                         run_date=run_now_date,
-                        id=manual_job_instance_id, # Use the unique ID for this job instance
+                        id=manual_job_instance_id,
                         name=f"Manual run of {job_id_base}",
-                        replace_existing=False, # Should be false for unique IDs
-                        max_instances=1, # Max instances for this specific job ID
-                        misfire_grace_time=600 # Allow 10 minutes for long-running tasks to free the worker
+                        replace_existing=False,
+                        max_instances=1,
+                        misfire_grace_time=600,
+                        executor=_manual_executor,
                     )
                         
                     logging.info(f"Task '{job_id_base}' (Manual Job ID: {manual_job_instance_id}) successfully queued for immediate execution via APScheduler.")
@@ -5368,6 +5901,10 @@ class ProgramRunner:
             try:
                 r = _req.get(f'{plex_url}/library/metadata/{item_id}',
                              params={'X-Plex-Token': plex_token}, timeout=10)
+                if r.status_code == 404:
+                    # Already gone — unstuck itself or was deleted, nothing to do
+                    logging.info(f"[StuckPlex] Item {item_id} already gone from Plex (404) — skipping")
+                    continue
                 if r.status_code != 200:
                     logging.warning(f"[StuckPlex] Could not fetch metadata for item {item_id}: HTTP {r.status_code}")
                     continue
@@ -5518,6 +6055,16 @@ class ProgramRunner:
 
         except Exception as e:
             logging.error(f"Error verifying symlinked files: {e}")
+
+        # Sync ms_item_id for any Collected items missing it
+        try:
+            from overlays.scheduled_tasks import _sync_ms_keys_auto
+            counts = _sync_ms_keys_auto()
+            if counts and any(counts.values()):
+                logging.info(f"[SyncMsItemIds] Updated ms_item_id: movies={counts.get('movies', 0)}, "
+                             f"episodes={counts.get('episodes', 0)}, errors={counts.get('errors', 0)}")
+        except Exception as e:
+            logging.debug(f"[SyncMsItemIds] ms_item_id sync skipped: {e}")
 
     def task_verify_plex_removals(self):
         """Verify that files marked for removal are actually gone from the configured media server (Plex or Jellyfin/Emby) using title-based search."""
@@ -7923,9 +8470,12 @@ def _setup_scheduler_listeners(runner_instance):
             logging.error(f"[_setup_scheduler_listeners] Failed to get local timezone for scheduler, using UTC fallback: {e_tz}")
             tz = pytz.utc
 
-        executors = {'default': ThreadPoolExecutor(max_workers=1)}
+        executors = {
+            'default': ThreadPoolExecutor(max_workers=1),
+            'queue': ThreadPoolExecutor(max_workers=2),
+        }
         job_defaults = {'coalesce': True, 'max_instances': 1}
-        
+
         try:
             new_scheduler = BackgroundScheduler(
                 executors=executors,
