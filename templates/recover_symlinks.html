@@ -5,7 +5,7 @@
 <script>
     // Dynamically load the correct CSS based on theme cookie
     (function() {
-        const theme = document.cookie.split('; ').find(row => row.startsWith('selectedTheme='))?.split('=')[1] || 'classic';
+        const theme = document.cookie.split('; ').find(row => row.startsWith('selectedTheme='))?.split('=')[1] || 'tangerine';
         const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_recover_symlinks.css' : 'css/recover_symlinks.css';
         const link = document.createElement('link');
         link.rel = 'stylesheet';

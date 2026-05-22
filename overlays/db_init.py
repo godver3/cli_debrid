@@ -197,6 +197,10 @@ def init_overlay_tables(db_path: str = None):
             logger.info("Adding 'textless_poster_used' column to media_overlay_state table...")
             cursor.execute("ALTER TABLE media_overlay_state ADD COLUMN textless_poster_used INTEGER DEFAULT 0")
             conn.commit()
+        if 'plex_thumb_url' not in pos_columns:
+            logger.info("Adding 'plex_thumb_url' column to media_overlay_state table...")
+            cursor.execute("ALTER TABLE media_overlay_state ADD COLUMN plex_thumb_url TEXT")
+            conn.commit()
 
         # Table: season_overlay_state
         # Tracks overlay generation status for each TV show season (keyed by media server season item ID)

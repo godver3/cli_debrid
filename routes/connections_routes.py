@@ -523,6 +523,59 @@ def check_phalanx_db_connection():
             }
         }
 
+def check_tvdb_connection():
+    """Check TVDB API key if configured."""
+    api_key = get_setting('TVDB', 'api_key', '').strip()
+    if not api_key:
+        return None
+    try:
+        import requests as _req
+        r = _req.post('https://api4.thetvdb.com/v4/login',
+                      json={'apikey': api_key}, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            token = data.get('data', {}).get('token') or data.get('token')
+            return {'name': 'TVDB', 'connected': bool(token), 'error': None,
+                    'details': {'status': 'API key valid'}}
+        return {'name': 'TVDB', 'connected': False,
+                'error': f'HTTP {r.status_code}', 'details': {}}
+    except Exception as e:
+        return {'name': 'TVDB', 'connected': False, 'error': str(e), 'details': {}}
+
+
+def check_tmdb_connection():
+    """Check TMDB API key if configured."""
+    api_key = get_setting('TMDB', 'api_key', '').strip()
+    if not api_key:
+        return None
+    try:
+        import requests as _req
+        r = _req.get(f'https://api.themoviedb.org/3/configuration?api_key={api_key}', timeout=10)
+        if r.status_code == 200:
+            return {'name': 'TMDB', 'connected': True, 'error': None,
+                    'details': {'status': 'API key valid'}}
+        return {'name': 'TMDB', 'connected': False,
+                'error': f'HTTP {r.status_code}', 'details': {}}
+    except Exception as e:
+        return {'name': 'TMDB', 'connected': False, 'error': str(e), 'details': {}}
+
+
+def check_decypharr_connection():
+    """Check Decypharr connection if usenet is enabled and URL is set."""
+    enabled = get_setting('Usenet Provider', 'enabled', default=False)
+    url = get_setting('Usenet Provider', 'url', '').strip().rstrip('/')
+    if not enabled or not url:
+        return None
+    try:
+        from usenet.decypharr_client import get_decypharr_client
+        client = get_decypharr_client()
+        ok, err = client.check_connectivity()
+        return {'name': 'Decypharr', 'connected': ok,
+                'error': err, 'details': {'url': url}}
+    except Exception as e:
+        return {'name': 'Decypharr', 'connected': False, 'error': str(e), 'details': {}}
+
+
 def check_scraper_connection(scraper_id, scraper_config):
     """Check connection to a specific scraper."""
     scraper_type = scraper_config.get('type')
@@ -1277,6 +1330,9 @@ def api_check_system():
         tasks['jellyfin_status'] = check_jellyfin_connection
     else:
         tasks['plex_status'] = check_plex_connection
+    tasks['tvdb_status'] = check_tvdb_connection
+    tasks['tmdb_status'] = check_tmdb_connection
+    tasks['decypharr_status'] = check_decypharr_connection
     results = {}
     with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
         future_to_task = {executor.submit(func): name for name, func in tasks.items()}
@@ -1294,6 +1350,9 @@ def api_check_system():
     results.setdefault('mounted_files_status', None)
     results.setdefault('phalanx_db_status', None)
     results.setdefault('cli_battery_status', None)
+    results.setdefault('tvdb_status', None)
+    results.setdefault('tmdb_status', None)
+    results.setdefault('decypharr_status', None)
     return jsonify(results)
 
 
@@ -1520,6 +1579,7 @@ def index():
         'cli_battery_status': None, 'plex_status': None,
         'jellyfin_status': None, 'mounted_files_status': None,
         'phalanx_db_status': None,
+        'tvdb_status': None, 'tmdb_status': None, 'decypharr_status': None,
         'scraper_statuses': skeleton_scrapers,
         'content_source_statuses': skeleton_sources,
     }
@@ -1541,6 +1601,9 @@ def index():
                          jellyfin_status=results['jellyfin_status'],
                          mounted_files_status=results['mounted_files_status'],
                          phalanx_db_status=results['phalanx_db_status'],
+                         tvdb_status=results['tvdb_status'],
+                         tmdb_status=results['tmdb_status'],
+                         decypharr_status=results['decypharr_status'],
                          scraper_statuses=results['scraper_statuses'],
                          content_source_statuses=results['content_source_statuses'],
                          failing_connections=failing_connections,

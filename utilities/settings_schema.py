@@ -311,6 +311,16 @@ SETTINGS_SCHEMA = {
             "type": "string",
             "description": "Path to Decypharr's data directory inside the container — bind mount your Decypharr host data folder to /decypharr_data in your docker-compose (e.g. - /mnt/data/appdata/decypharr:/decypharr_data) then set this to /decypharr_data. Required for the Decypharr cleanup tool.",
             "default": "/decypharr_data"
+        },
+        "enable_nzb_naming": {
+            "type": "boolean",
+            "description": "Name NZB jobs submitted to Decypharr using a structured format with title, year, IMDb ID, version and original filename. Applies to movies, episodes, season packs and virtual aggregate packs.",
+            "default": False
+        },
+        "retention_days": {
+            "type": "integer",
+            "description": "Maximum age of NZB results in days. Results older than this are filtered out before submission. Set to 0 to disable. Applies everywhere NZB indexers are searched.",
+            "default": 1500
         }
     },
     "TMDB": {

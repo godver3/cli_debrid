@@ -322,12 +322,14 @@ class DecypharrClient:
 
     def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
         """
-        Poll Decypharr queue for job status.
+        Poll Decypharr queue for a single job by its ID/hash.
+        Uses ?hash= parameter to avoid fetching all torrents (fixes pagination bug).
         Returns a dict with 'state' key: 'downloading' | 'completed' | 'failed' | 'unknown'.
         """
         try:
             r = api.get(
                 f'{self.base_url}/api/torrents',
+                params={'hash': job_id, 'limit': 1},
                 headers=self._headers(),
                 timeout=10,
             )
@@ -339,7 +341,6 @@ class DecypharrClient:
                 tid = str(t.get('id') or t.get('nzo_id') or t.get('hash', ''))
                 if tid == job_id:
                     state = str(t.get('state', t.get('status', ''))).lower()
-                    # Decypharr progress is 0.0–1.0
                     raw_progress = t.get('progress', 0)
                     progress_pct = int(float(raw_progress) * 100)
                     return {
@@ -366,18 +367,19 @@ class DecypharrClient:
             # Trigger the check
             r = api.post(
                 f'{self.base_url}/api/repair/health/{encoded}/check',
-                headers=self._headers(), timeout=30,
+                headers=self._headers(), timeout=5,
             )
             if r.status_code not in (200, 202):
-                logging.warning(f'[Decypharr] health check trigger failed for {entry_name!r}: HTTP {r.status_code}')
+                # 400 = entry no longer exists in Decypharr (already downloaded/cleaned up) — normal, not an error
+                log_fn = logging.debug if r.status_code == 400 else logging.warning
+                log_fn(f'[Decypharr] health check trigger failed for {entry_name!r}: HTTP {r.status_code}')
                 return None
-            # Poll for result (check runs async, usually fast)
+            # Poll for result — try up to 3 times with no sleep, fast return
             import time as _time
-            deadline = _time.time() + 120
-            while _time.time() < deadline:
+            for _ in range(3):
                 r2 = api.get(
                     f'{self.base_url}/api/repair/health/{encoded}',
-                    headers=self._headers(), timeout=10,
+                    headers=self._headers(), timeout=4,
                 )
                 if r2.status_code == 200:
                     data = r2.json()
@@ -385,12 +387,13 @@ class DecypharrClient:
                     if status in ('healthy', 'broken'):
                         logging.info(f'[Decypharr] health check for {entry_name!r}: {status}')
                         return status
-                    # Still checking — wait and retry
-                _time.sleep(5)
-            logging.warning(f'[Decypharr] health check timed out for {entry_name!r}')
+            logging.debug(f'[Decypharr] health check inconclusive for {entry_name!r} — proceeding')
             return None
         except Exception as exc:
-            logging.error(f'[Decypharr] check_entry_health error for {entry_name!r}: {exc}')
+            # 400 errors raised as HTTPError are expected for completed/cleaned-up entries
+            _msg = str(exc)
+            _log = logging.debug if '400' in _msg else logging.warning
+            _log(f'[Decypharr] check_entry_health error for {entry_name!r}: {exc}')
             return None
 
     def wait_for_completion(self, job_id: str, timeout: int = 3600, poll_interval: int = 10) -> bool:

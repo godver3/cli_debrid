@@ -242,17 +242,27 @@ def get_show_seasons_and_episodes(imdb_id: str, include_specials: bool = False) 
             ep_num = ep.get('number')
             if ep_num is None:
                 continue
+            ep_plex = ep.get('ids', {}).get('plex') or {}
+            ep_ids = ep.get('ids', {}) or {}
             ep_dict[ep_num] = {
                 'title': ep.get('title', ''),
                 'overview': ep.get('overview', ''),
                 'runtime': ep.get('runtime', 0),
                 'first_aired': ep.get('first_aired'),
-                'imdb_id': ep.get('ids', {}).get('imdb'),
+                'imdb_id': ep_ids.get('imdb'),
+                'tmdb_id': str(ep_ids['tmdb']) if ep_ids.get('tmdb') else None,
+                'tvdb_id': str(ep_ids['tvdb']) if ep_ids.get('tvdb') else None,
                 'absolute': ep.get('number_abs'),
+                'plex_guid': ep_plex.get('guid') if isinstance(ep_plex, dict) else None,
             }
+        season_plex = season.get('ids', {}).get('plex') or {}
+        season_ids = season.get('ids', {}) or {}
         processed[season_number] = {
             'episode_count': season.get('episode_count', len(episodes)),
             'episodes': ep_dict,
+            'plex_guid': season_plex.get('guid') if isinstance(season_plex, dict) else None,
+            'tmdb_id': str(season_ids['tmdb']) if season_ids.get('tmdb') else None,
+            'tvdb_id': str(season_ids['tvdb']) if season_ids.get('tvdb') else None,
         }
     return processed, 'trakt'
 
@@ -408,6 +418,91 @@ def search_media(query: str, year: Optional[int] = None,
             'type': item_type,
         })
     return results
+
+
+def get_plex_guid(imdb_id: str, media_type: str) -> Optional[Dict[str, Any]]:
+    """
+    Fetch Plex GUIDs for a movie or show from Trakt.
+
+    For movies: returns {'show_guid': str|None}
+    For shows:  returns {
+        'show_guid': str|None,
+        'season_guids': {season_num: guid, ...}|None,
+        'episode_guids': {season_num: {ep_num: guid, ...}, ...}|None,
+    }
+
+    Uses ?extended=full,episodes on the seasons endpoint to get all levels
+    in a single call. Called as supplementary lookup when TVDB is primary.
+    """
+    if media_type == 'movie':
+        url = f"{TRAKT_BASE_URL}/movies/{imdb_id}?extended=full"
+        resp = _make_request(url)
+        if resp and resp.status_code == 200:
+            plex = resp.json().get('ids', {}).get('plex') or {}
+            return {'show_guid': plex.get('guid') if isinstance(plex, dict) else None}
+        return None
+
+    # TV show — fetch show-level GUID
+    url = f"{TRAKT_BASE_URL}/shows/{imdb_id}?extended=full"
+    resp = _make_request(url)
+    if not resp or resp.status_code != 200:
+        return None
+
+    plex = resp.json().get('ids', {}).get('plex') or {}
+    show_guid = plex.get('guid') if isinstance(plex, dict) else None
+
+    # Fetch season + episode GUIDs in one call (?extended=full,episodes)
+    seasons_url = f"{TRAKT_BASE_URL}/shows/{imdb_id}/seasons?extended=full,episodes"
+    seasons_resp = _make_request(seasons_url)
+    season_guids: Dict[int, str] = {}
+    season_tmdb_ids: Dict[int, str] = {}
+    season_tvdb_ids: Dict[int, str] = {}
+    episode_guids: Dict[int, Dict[int, str]] = {}
+    episode_imdb_ids: Dict[int, Dict[int, str]] = {}
+    episode_tmdb_ids: Dict[int, Dict[int, str]] = {}
+    episode_tvdb_ids: Dict[int, Dict[int, str]] = {}
+
+    if seasons_resp and seasons_resp.status_code == 200:
+        for season in seasons_resp.json():
+            snum = season.get('number')
+            if snum is None:
+                continue
+            s_ids = season.get('ids', {}) or {}
+            s_plex = s_ids.get('plex') or {}
+            s_guid = s_plex.get('guid') if isinstance(s_plex, dict) else None
+            if s_guid:
+                season_guids[snum] = s_guid
+            if s_ids.get('tmdb'):
+                season_tmdb_ids[snum] = str(s_ids['tmdb'])
+            if s_ids.get('tvdb'):
+                season_tvdb_ids[snum] = str(s_ids['tvdb'])
+
+            for ep in season.get('episodes', []):
+                ep_num = ep.get('number')
+                if ep_num is None:
+                    continue
+                ep_ids = ep.get('ids', {}) or {}
+                ep_plex = ep_ids.get('plex') or {}
+                ep_guid = ep_plex.get('guid') if isinstance(ep_plex, dict) else None
+                if ep_guid:
+                    episode_guids.setdefault(snum, {})[ep_num] = ep_guid
+                if ep_ids.get('imdb'):
+                    episode_imdb_ids.setdefault(snum, {})[ep_num] = ep_ids['imdb']
+                if ep_ids.get('tmdb'):
+                    episode_tmdb_ids.setdefault(snum, {})[ep_num] = str(ep_ids['tmdb'])
+                if ep_ids.get('tvdb'):
+                    episode_tvdb_ids.setdefault(snum, {})[ep_num] = str(ep_ids['tvdb'])
+
+    return {
+        'show_guid': show_guid,
+        'season_guids': season_guids or None,
+        'season_tmdb_ids': season_tmdb_ids or None,
+        'season_tvdb_ids': season_tvdb_ids or None,
+        'episode_guids': episode_guids or None,
+        'episode_imdb_ids': episode_imdb_ids or None,
+        'episode_tmdb_ids': episode_tmdb_ids or None,
+        'episode_tvdb_ids': episode_tvdb_ids or None,
+    }
 
 
 def get_updated_shows(since_iso: str) -> List[dict]:

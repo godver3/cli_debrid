@@ -5161,12 +5161,24 @@ def remove_duplicate_items():
         dry_run = request.form.get('dry_run') == 'on'
         nas_filter = request.form.get('nas_filter', 'all')  # 'all', 'exclude_nas', 'only_nas'
 
+        # Parse exclude patterns (comma or pipe separated)
+        exclude_patterns_raw = request.form.get('exclude_patterns', '').strip()
+        exclude_patterns = []
+        if exclude_patterns_raw:
+            exclude_patterns = [p.strip() for p in exclude_patterns_raw.replace('|', ',').split(',') if p.strip()]
+
+        def _is_excluded(filename, patterns):
+            if not patterns or not filename:
+                return False
+            fn_lower = filename.lower()
+            return any(p.lower() in fn_lower for p in patterns)
+
         from database import get_db_connection
         from utilities.settings import get_nas_paths, is_nas_path
         nas_paths = get_nas_paths()
         conn = get_db_connection()
         cursor = conn.cursor()
-        
+
         # Find all items with filled_by_file that have duplicates
         # Filter out Sample.mkv files
         cursor.execute("""
@@ -5238,6 +5250,13 @@ def remove_duplicate_items():
                     # Mixed states (no Collected) - keep oldest
                     keep_item = items[0]
                     delete_items = items[1:]
+
+            # Apply exclude patterns — protect matching items from deletion
+            if exclude_patterns:
+                protected = [item for item in delete_items if _is_excluded(item['filled_by_file'] or '', exclude_patterns)]
+                delete_items = [item for item in delete_items if not _is_excluded(item['filled_by_file'] or '', exclude_patterns)]
+                if protected:
+                    logging.debug(f"[CLEANUP_DUPES] Protected {len(protected)} items via exclude patterns")
             
             total_duplicates += len(delete_items)
             items_to_delete.extend([item['id'] for item in delete_items])
@@ -6866,10 +6885,23 @@ def cleanup_failed_upgrades():
                         'action': action,
                     }
 
-                group_keep_items = [_fmt_item(v, 'keep') for v in collected]
-                group_delete_items = [_fmt_item(v, 'delete') for v in stale]
-
+                # Apply exclude patterns — protect matching stale items from deletion
+                stale_to_delete = []
+                stale_protected = []
                 for v in stale:
+                    is_excl, _ = should_exclude_item(v, exclude_patterns)
+                    if is_excl:
+                        stale_protected.append(v)
+                    else:
+                        stale_to_delete.append(v)
+
+                group_keep_items = [_fmt_item(v, 'keep') for v in collected] + [_fmt_item(v, 'exclude') for v in stale_protected]
+                group_delete_items = [_fmt_item(v, 'delete') for v in stale_to_delete]
+
+                if not group_delete_items:
+                    continue
+
+                for v in stale_to_delete:
                     if not dry_run:
                         cursor.execute("DELETE FROM media_items WHERE id = ?", (v['id'],))
                     total_deleted += 1

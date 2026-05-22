@@ -3,7 +3,7 @@
 {% block head %}
 <script>
     (function() {
-        const theme = document.cookie.split('; ').find(row => row.startsWith('selectedTheme='))?.split('=')[1] || 'classic';
+        const theme = document.cookie.split('; ').find(row => row.startsWith('selectedTheme='))?.split('=')[1] || 'tangerine';
         const cssFile = theme === 'tangerine' ? 'css/tangerine/tangerine_symlink_tools.css' : 'css/symlink_tools.css';
         const link = document.createElement('link');
         link.rel = 'stylesheet';

@@ -53,6 +53,12 @@ body.tangerine-theme {
 .j2-num { color:#fb923c; }
 .j2-bool { color:#a78bfa; }
 .j2-null { color:var(--tmd-text3); }
+.j2-badge { display:inline-block; padding:1px 7px; border-radius:3px; font-size:11px; font-weight:600; font-family:'JetBrains Mono',monospace; }
+.j2-badge-plex { background:#1f2f1f; color:#4ade80; border:1px solid #22c55e44; }
+.j2-badge-imdb { background:#2a1f0e; color:#fbbf24; border:1px solid #f59e0b44; }
+.j2-badge-tmdb { background:#0e1f2a; color:#60a5fa; border:1px solid #3b82f644; }
+.j2-badge-tvdb { background:#1a0e2a; color:#c084fc; border:1px solid #a855f744; }
+.j2-badge-null { background:var(--tmd-surface3); color:var(--tmd-text3); border:1px solid var(--tmd-border2); }
 .j2-bracket { color:var(--tmd-text3); }
 .j2-row { display:flex; align-items:flex-start; flex-wrap:wrap; }
 .j2-nested { margin-left:20px; border-left:1px solid var(--tmd-border2); padding-left:10px; }
@@ -363,6 +369,16 @@ function tmdSortKeys(obj) {
     return ac ? 1 : -1;
   });
 }
+// Special-key badge renderer for ID fields
+const _tmdBadgeCls = { plex_guid:'j2-badge-plex', imdb_id:'j2-badge-imdb', tmdb_id:'j2-badge-tmdb', tvdb_id:'j2-badge-tvdb' };
+function tmdSpecialVal(key, val) {
+  if (!_tmdBadgeCls[key]) return null;
+  if (val === null || val === undefined || val === '') {
+    return '<span class="j2-badge j2-badge-null">null</span>';
+  }
+  return '<span class="j2-badge '+_tmdBadgeCls[key]+'">' + tmdEsc(String(val)) + '</span>';
+}
+
 // Unified recursive builder — rootArr=true means skip toggle on direct array items (top-level seasons)
 function tmdBuildNode(val, rootArr) {
   if (Array.isArray(val)) {
@@ -387,6 +403,10 @@ function tmdBuildNode(val, rootArr) {
     const rows = keys.map((k, i) => {
       const comma = i < keys.length-1 ? '<span class="j2-bracket">,</span>' : '';
       const v = val[k];
+      const special = tmdSpecialVal(k, v);
+      if (special) {
+        return '<div class="j2-row"><span class="j2-key">"'+tmdEsc(k)+'"</span><span class="j2-colon">:</span>' + special + comma + '</div>';
+      }
       if (tmdIsComplex(v)) {
         const cid = 'u' + (++_tmdUid);
         return '<div class="j2-row">'

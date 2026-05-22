@@ -13,6 +13,28 @@ from utilities.settings import get_setting
 from PTT import parse_title as ptt_parse
 from rapidfuzz import fuzz as _fuzz
 
+def _get_retention_days() -> int:
+    """Get configured usenet retention days. 0 = disabled."""
+    try:
+        return int(get_setting('Usenet Provider', 'retention_days', 1500))
+    except (ValueError, TypeError):
+        return 1500
+
+
+def _is_within_retention_days(pub_date_str: str, retention_days: int) -> bool:
+    """Return True if pub_date_str is within retention_days. True if no date or retention=0."""
+    if not pub_date_str or not retention_days:
+        return True
+    try:
+        pub_dt = parsedate_to_datetime(pub_date_str)
+        if pub_dt.tzinfo is None:
+            pub_dt = pub_dt.replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - pub_dt).days
+        return age_days <= retention_days
+    except Exception:
+        return True
+
+
 # Newznab category IDs
 # Explicit subcategories are required — many indexers do not return subcategory
 # items when querying only the parent (e.g. 2000 won't return 2030/HD results
@@ -148,13 +170,19 @@ def scrape_newznab_instance(
             logging.info(f"Newznab '{instance}' full request URL: {r.url}")
             if r.status_code != 200:
                 logging.error(f"Newznab '{instance}' HTTP {r.status_code}: {r.text[:200]}")
+                # Cache empty on rate limit or server errors to avoid hammering
+                if r.status_code in (429, 503, 502, 500):
+                    _cache_set(ck, [])
                 return []
             results = _parse_newznab_xml(r.text, instance)
-            if results:
-                _cache_set(ck, results)
+            _cache_set(ck, results)  # Cache even empty results to avoid hammering indexer
             return results
         except Exception as exc:
             logging.error(f"Newznab '{instance}' request error: {exc}")
+            # Cache empty result on rate limit or server errors to avoid immediate retry
+            _exc_str = str(exc)
+            if any(code in _exc_str for code in ('429', '503', '502', '500')):
+                _cache_set(ck, [])
             return []
 
     # Run both queries in parallel if there are 2, otherwise just run one
@@ -198,7 +226,19 @@ def scrape_newznab_instance(
         elif not guid:
             deduped.append(r)
 
-    logging.info(f"Newznab '{instance}': {len(all_results)} total results, {len(deduped)} after dedup")
+    # Filter by retention age
+    _retention = _get_retention_days()
+    _retention_filtered = 0
+    if _retention:
+        before = len(deduped)
+        deduped = [r for r in deduped if _is_within_retention_days(
+            r.get('parsed_info', {}).get('publish_date', ''), _retention)]
+        _retention_filtered = before - len(deduped)
+
+    _msg = f"Newznab '{instance}': {len(all_results)} total results, {len(deduped)} after dedup"
+    if _retention_filtered:
+        _msg += f", {_retention_filtered} filtered by retention ({_retention}d)"
+    logging.info(_msg)
     return deduped
 
 
@@ -330,8 +370,9 @@ def scrape_newznab_season_aggregate(
     title: str,
     year: int,
     season: int,
-    episode_count: int,
+    episode_count: int = 0,
     timeout: int = 20,
+    episode_numbers: Optional[List[int]] = None,  # explicit list overrides range(1, episode_count+1)
 ) -> List[Dict[str, Any]]:
     """
     Search each episode individually across all indexers in parallel.
@@ -339,8 +380,19 @@ def scrape_newznab_season_aggregate(
     Only return groups that cover ALL episodes — no partial packs.
     Each returned result is a virtual season pack with episode_nzb_urls
     containing {episode_number: nzb_url} and fallback_urls {episode_number: [alt_url, ...]}.
+
+    episode_numbers: if provided, searches exactly those episode numbers (arbitrary range/gaps).
+                     If not provided, searches range(1, episode_count+1).
     """
-    if not scrapers or not episode_count:
+    # Resolve the list of episodes to fetch
+    if episode_numbers:
+        _ep_list = sorted(set(episode_numbers))
+    elif episode_count:
+        _ep_list = list(range(1, episode_count + 1))
+    else:
+        return []
+
+    if not scrapers or not _ep_list:
         return []
 
     cats = _CAT_TV
@@ -368,9 +420,10 @@ def scrape_newznab_season_aggregate(
                     r = api.get(ep_endpoint, params=id_params, timeout=timeout)
                     if r.status_code == 200:
                         parsed = _parse_newznab_xml(r.text, instance)
-                        if parsed:
-                            _cache_set(ck, parsed)
+                        _cache_set(ck, parsed)  # Cache even empty
                         results.extend(parsed)
+                    elif r.status_code == 429:
+                        _cache_set(ck, [])  # Cache 429 to avoid retry
                 except Exception:
                     pass
         # Title text search
@@ -385,9 +438,10 @@ def scrape_newznab_season_aggregate(
                 r = api.get(ep_endpoint, params=txt_params, timeout=timeout)
                 if r.status_code == 200:
                     parsed = _parse_newznab_xml(r.text, instance)
-                    if parsed:
-                        _cache_set(ck, parsed)
+                    _cache_set(ck, parsed)  # Cache even empty
                     results.extend(parsed)
+                elif r.status_code == 429:
+                    _cache_set(ck, [])  # Cache 429 to avoid retry
             except Exception:
                 pass
         # Deduplicate by guid
@@ -400,10 +454,10 @@ def scrape_newznab_season_aggregate(
         return deduped
 
     # Build all tasks: (ep_num, instance, cfg)
-    tasks = [(ep, inst, cfg) for ep in range(1, episode_count + 1) for inst, cfg in scrapers]
+    tasks = [(ep, inst, cfg) for ep in _ep_list for inst, cfg in scrapers]
 
     # ep_results: {ep_num: [result, ...]}
-    ep_results: Dict[int, List[Dict]] = {ep: [] for ep in range(1, episode_count + 1)}
+    ep_results: Dict[int, List[Dict]] = {ep: [] for ep in _ep_list}
 
     with ThreadPoolExecutor(max_workers=min(len(tasks), 16)) as ex:
         future_map = {ex.submit(_fetch_episode, ep, inst, cfg): ep for ep, inst, cfg in tasks}
@@ -414,24 +468,16 @@ def scrape_newznab_season_aggregate(
             except Exception:
                 pass
 
-    logging.info(f'[NZBAggregate] {title} S{season:02d}: fetched results for {episode_count} episodes')
+    logging.info(f'[NZBAggregate] {title} S{season:02d}: fetched results for {len(_ep_list)} episodes')
 
     # Title similarity threshold — reject results whose parsed title doesn't match target
     _norm_target = _NORM_RE.sub('', title.lower())
 
-    # Retention cutoff — skip NZBs older than usenet_retention_days setting (default 1500 days)
-    _retention_days = int(get_setting('Scraping', 'usenet_retention_days', 1500))
-    _now = datetime.now(timezone.utc)
+    # Retention cutoff — uses shared helper and Usenet Provider setting
+    _retention_days = _get_retention_days()
 
     def _is_within_retention(pub_date_str: str) -> bool:
-        if not pub_date_str or not _retention_days:
-            return True
-        try:
-            pub_dt = parsedate_to_datetime(pub_date_str)
-            age_days = (_now - pub_dt).days
-            return age_days <= _retention_days
-        except Exception:
-            return True  # unknown date — don't reject
+        return _is_within_retention_days(pub_date_str, _retention_days)
 
     # Group by key across episodes
     # group_data[key] = {ep_num: [result, ...]}
@@ -468,8 +514,8 @@ def scrape_newznab_season_aggregate(
     virtual_packs = []
     for key, ep_map in group_data.items():
         # Must cover every episode
-        if len(ep_map) < episode_count:
-            logging.debug(f'[NZBAggregate] Skipping incomplete group {key!r}: {len(ep_map)}/{episode_count} eps')
+        if len(ep_map) < len(_ep_list):
+            logging.debug(f'[NZBAggregate] Skipping incomplete group {key!r}: {len(ep_map)}/{len(_ep_list)} eps')
             continue
 
         pi = group_meta[key]
@@ -482,7 +528,7 @@ def scrape_newznab_season_aggregate(
         # Use the median episode's result as representative (avoids outliers)
         rep_result = ep_map[sorted(ep_map.keys())[len(ep_map) // 2]][0]
 
-        for ep_num in range(1, episode_count + 1):
+        for ep_num in _ep_list:
             ep_list = ep_map[ep_num]
             ep_result = ep_list[0]
             episode_nzb_urls[ep_num] = ep_result.get('nzb_url', '')
@@ -524,9 +570,9 @@ def scrape_newznab_season_aggregate(
                 ep_stripped = re.sub(r'([Ss]\d{1,2})[Ee]\d{1,2}', lambda m: m.group(1), rep_orig).strip(' .-_')
         else:
             ep_stripped = rep_orig.strip(' .-_')
-        display_title = f"{ep_stripped} [NZB Pack · {episode_count} eps]" if ep_stripped else (
+        display_title = f"{ep_stripped} [NZB Pack · {len(_ep_list)} eps]" if ep_stripped else (
             f"{pi.get('title', title)} S{season:02d} "
-            f"[NZB Pack · {episode_count} eps · "
+            f"[NZB Pack · {len(_ep_list)} eps · "
             f"{pi.get('resolution', '') or 'unknown res'}"
             f"{' · ' + pi.get('group', '') if pi.get('group') else ''}]"
         )
@@ -574,7 +620,7 @@ def scrape_newznab_season_aggregate(
             'fallback_nzb_urls': fallback_urls,
             'episode_sizes': episode_sizes,
             'episode_filenames': episode_filenames,
-            'episode_count': episode_count,
+            'episode_count': len(_ep_list),
             'parsed_info': enriched_pi,
         })
 

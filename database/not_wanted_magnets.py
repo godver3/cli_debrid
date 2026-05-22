@@ -27,6 +27,7 @@ DB_CONTENT_DIR = os.environ.get('USER_DB_CONTENT', '/user/db_content')
 NOT_WANTED_MAGNETS_FILE = os.path.join(DB_CONTENT_DIR, 'not_wanted_magnets.pkl')
 NOT_WANTED_URLS_FILE = os.path.join(DB_CONTENT_DIR, 'not_wanted_urls.pkl')
 NOT_WANTED_NZB_SEGMENTS_FILE = os.path.join(DB_CONTENT_DIR, 'not_wanted_nzb_segments.pkl')
+NOT_WANTED_NZB_GUIDS_FILE = os.path.join(DB_CONTENT_DIR, 'not_wanted_nzb_guids.pkl')
 
 
 def extract_nzb_segment_id(nzb_xml: str) -> str:
@@ -82,6 +83,81 @@ def is_nzb_segment_not_wanted(nzb_xml: str) -> bool:
         logging.info(f'[NZB] Filtering out NZB — segment ID {seg_id!r} is in not-wanted list')
         return True
     return False
+
+
+def extract_nzb_guid(url_or_guid: str) -> str:
+    """Extract the indexer GUID from an NZB URL or guid string.
+    Handles formats:
+      - https://api.nzbgeek.info/api?t=get&id=ed914f26...
+      - https://nzbgeek.info/geekseek.php?guid=ed914f26...
+      - https://api.althub.co.za/getnzb/ed914f26...nzb
+      - Plain guid string: ed914f26add1db0a7cc6a19c6358e5b0
+    Returns normalized lowercase guid or empty string.
+    """
+    if not url_or_guid:
+        return ''
+    try:
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(url_or_guid)
+        qs = parse_qs(parsed.query)
+        # ?id=... or ?guid=...
+        for key in ('id', 'guid'):
+            if key in qs:
+                return qs[key][0].strip().lower()
+        # Path-based: /getnzb/GUID.nzb or /getnzb/GUID&...
+        path = parsed.path.rstrip('/')
+        last = path.split('/')[-1]
+        # Strip .nzb extension
+        last = re.sub(r'\.nzb$', '', last, flags=re.IGNORECASE)
+        # Strip query string remnants (althub appends &i=... to path)
+        last = last.split('&')[0].split('?')[0]
+        if last and re.match(r'^[0-9a-f]{16,}$', last, re.IGNORECASE):
+            return last.lower()
+    except Exception:
+        pass
+    # If it looks like a plain guid already
+    if re.match(r'^[0-9a-f]{16,}$', url_or_guid.strip(), re.IGNORECASE):
+        return url_or_guid.strip().lower()
+    return ''
+
+
+def load_not_wanted_nzb_guids():
+    try:
+        with open(NOT_WANTED_NZB_GUIDS_FILE, 'rb') as f:
+            return pickle.load(f)
+    except (EOFError, pickle.UnpicklingError, FileNotFoundError):
+        return set()
+
+
+def save_not_wanted_nzb_guids(s):
+    os.makedirs(os.path.dirname(NOT_WANTED_NZB_GUIDS_FILE), exist_ok=True)
+    with open(NOT_WANTED_NZB_GUIDS_FILE, 'wb') as f:
+        pickle.dump(s, f)
+
+
+def add_to_not_wanted_nzb_guid(url_or_guid: str):
+    guid = extract_nzb_guid(url_or_guid)
+    if not guid:
+        return
+    s = load_not_wanted_nzb_guids()
+    if guid not in s:
+        s.add(guid)
+        save_not_wanted_nzb_guids(s)
+        logging.info(f'[NZB] Added broken NZB guid {guid!r} to not-wanted list')
+
+
+def is_nzb_guid_not_wanted(url_or_guid: str) -> bool:
+    if get_setting('Debug', 'disable_not_wanted_check', False):
+        return False
+    guid = extract_nzb_guid(url_or_guid)
+    if not guid:
+        return False
+    s = load_not_wanted_nzb_guids()
+    if guid in s:
+        logging.info(f'[NZB] Filtering out NZB — guid {guid!r} is in not-wanted list')
+        return True
+    return False
+
 
 def load_not_wanted_magnets():
     try:
