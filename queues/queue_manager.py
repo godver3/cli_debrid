@@ -439,17 +439,26 @@ class QueueManager:
         # Update the queue contents before processing
         self.queues["Scraping"].update()
 
-        # Now process items if any exist
+        # Process up to SCRAPING_BATCH_SIZE items per tick
+        SCRAPING_BATCH_SIZE = 5
         queue_items = self.queues["Scraping"].items
-        if queue_items:
-            item_to_process = queue_items[0] # Peek at the first item
-            # Process the queue safely (catches exceptions, including RateLimitError)
-            result = self._process_queue_safely("Scraping", with_result=True) # process method handles the single item
-            logging.debug(f"Scraping queue process result for one item: {result}")
-            return result # Return True if item was processed, False otherwise
+        if not queue_items:
+            return False
 
-        # Return False if queue was empty after update
-        return False
+        processed = 0
+        for _ in range(min(SCRAPING_BATCH_SIZE, len(queue_items))):
+            if self.paused:
+                break
+            if not self.queues["Scraping"].items:
+                break
+            result = self._process_queue_safely("Scraping", with_result=True)
+            if result:
+                processed += 1
+            else:
+                break  # Stop if an item failed (e.g. rate limit)
+
+        logging.debug(f"Scraping queue processed {processed} item(s) this tick")
+        return processed > 0
 
     def process_adding(self):
         self._process_queue_safely("Adding")

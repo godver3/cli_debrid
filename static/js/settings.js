@@ -1067,13 +1067,17 @@ export function updateSettings() {
     const usenetToken = document.getElementById('usenet_provider-api_token');
     const usenetFolder = document.getElementById('usenet_provider-download_folder');
     const usenetDataPath = document.getElementById('usenet_provider-data_path');
-    if (usenetEnabled || usenetUrl || usenetToken || usenetFolder || usenetDataPath) {
+    const usenetNzbNaming = document.getElementById('usenet_provider-enable_nzb_naming');
+    const usenetRetentionDays = document.getElementById('usenet_provider-retention_days');
+    if (usenetEnabled || usenetUrl || usenetToken || usenetFolder || usenetDataPath || usenetNzbNaming || usenetRetentionDays) {
         if (!settingsData['Usenet Provider']) settingsData['Usenet Provider'] = {};
         if (usenetEnabled) settingsData['Usenet Provider']['enabled'] = usenetEnabled.checked;
         if (usenetUrl) settingsData['Usenet Provider']['url'] = usenetUrl.value;
         if (usenetToken) settingsData['Usenet Provider']['api_token'] = usenetToken.value;
         if (usenetFolder) settingsData['Usenet Provider']['download_folder'] = usenetFolder.value;
         if (usenetDataPath) settingsData['Usenet Provider']['data_path'] = usenetDataPath.value;
+        if (usenetNzbNaming) settingsData['Usenet Provider']['enable_nzb_naming'] = usenetNzbNaming.checked;
+        if (usenetRetentionDays) settingsData['Usenet Provider']['retention_days'] = parseInt(usenetRetentionDays.value) || 1500;
     }
 
     const updatePlexOnFileDiscovery = document.getElementById('plex-update_plex_on_file_discovery');

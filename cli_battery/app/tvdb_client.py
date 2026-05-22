@@ -280,6 +280,66 @@ def _cache_tvdb_mapping(tvdb_id: str, imdb_id: str, media_type: str):
         logger.debug(f"Could not cache TVDB mapping {tvdb_id}→{imdb_id}: {e}")
 
 
+def get_season_poster_url(imdb_id: str, season_number: int) -> Optional[str]:
+    """Return the best English season poster URL from TVDB for a TV show season.
+
+    Requires TVDB API key in settings. Returns None if unavailable.
+    Filters for type=7 (season poster) and language='eng', ignores score.
+    """
+    if not is_available():
+        return None
+    try:
+        tvdb_series_id = _resolve_tvdb_id(imdb_id, 'show')
+        if not tvdb_series_id:
+            logger.debug(f"[TVDB] Could not resolve series ID for {imdb_id}")
+            return None
+
+        # Get season list to find the TVDB season ID for the target season
+        # Use Aired Order (type.id=1) to match standard season numbering
+        series_resp = _make_request(f"{TVDB_BASE_URL}/series/{tvdb_series_id}/extended?meta=episodes,translations")
+        if not series_resp or series_resp.status_code != 200:
+            return None
+
+        seasons = series_resp.json().get('data', {}).get('seasons', [])
+        tvdb_season_id = None
+        for s in seasons:
+            if s.get('number') == season_number and s.get('type', {}).get('id') == 1:
+                tvdb_season_id = s.get('id')
+                break
+        # Fallback: any season with matching number if no Aired Order found
+        if tvdb_season_id is None:
+            for s in seasons:
+                if s.get('number') == season_number:
+                    tvdb_season_id = s.get('id')
+                    break
+
+        if not tvdb_season_id:
+            logger.debug(f"[TVDB] No season {season_number} found for series {tvdb_series_id}")
+            return None
+
+        # Fetch season extended to get artwork
+        season_resp = _make_request(f"{TVDB_BASE_URL}/seasons/{tvdb_season_id}/extended")
+        if not season_resp or season_resp.status_code != 200:
+            return None
+
+        artwork = season_resp.json().get('data', {}).get('artwork', [])
+        # Filter: type 7 = season poster, language = eng
+        eng_posters = [a for a in artwork if a.get('type') == 7 and a.get('language') == 'eng']
+        if not eng_posters:
+            logger.debug(f"[TVDB] No English season posters for series {tvdb_series_id} season {season_number}")
+            return None
+
+        # Sort by score descending, take first
+        eng_posters.sort(key=lambda a: a.get('score', 0), reverse=True)
+        poster_url = eng_posters[0].get('image')
+        logger.info(f"[TVDB] Found English season poster for {imdb_id} S{season_number:02d}: {poster_url}")
+        return poster_url
+
+    except Exception as e:
+        logger.debug(f"[TVDB] get_season_poster_url error for {imdb_id} S{season_number}: {e}")
+        return None
+
+
 def _convert_lang3_to_lang2(lang3: str) -> str:
     """Convert 3-letter language code to 2-letter country code."""
     if not lang3:

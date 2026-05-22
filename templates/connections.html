@@ -260,6 +260,42 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
                 <span class="conn-card-spinner"></span><span>Checking…</span>
             </div>
         </div>
+
+        <!-- TVDB -->
+        <div class="connection-card" data-service="tvdb" {% if not tvdb_status %}style="display:none"{% endif %}>
+            <div class="connection-header">
+                <i class="fas fa-tv"></i>
+                <span class="connection-title">TVDB</span>
+                <div class="status-indicator {% if tvdb_status %}{{ 'connected' if tvdb_status.connected else 'disconnected' }}{% else %}checking{% endif %}"></div>
+            </div>
+            <div class="conn-card-footer" data-ts="">
+                <span class="conn-card-spinner"></span><span>Checking…</span>
+            </div>
+        </div>
+
+        <!-- TMDB -->
+        <div class="connection-card" data-service="tmdb" {% if not tmdb_status %}style="display:none"{% endif %}>
+            <div class="connection-header">
+                <i class="fas fa-film"></i>
+                <span class="connection-title">TMDB</span>
+                <div class="status-indicator {% if tmdb_status %}{{ 'connected' if tmdb_status.connected else 'disconnected' }}{% else %}checking{% endif %}"></div>
+            </div>
+            <div class="conn-card-footer" data-ts="">
+                <span class="conn-card-spinner"></span><span>Checking…</span>
+            </div>
+        </div>
+
+        <!-- Decypharr -->
+        <div class="connection-card" data-service="decypharr" {% if not decypharr_status %}style="display:none"{% endif %}>
+            <div class="connection-header">
+                <i class="fas fa-newspaper"></i>
+                <span class="connection-title">Decypharr</span>
+                <div class="status-indicator {% if decypharr_status %}{{ 'connected' if decypharr_status.connected else 'disconnected' }}{% else %}checking{% endif %}"></div>
+            </div>
+            <div class="conn-card-footer" data-ts="">
+                <span class="conn-card-spinner"></span><span>Checking…</span>
+            </div>
+        </div>
     </div>
 
     <!-- Scraper Cards -->
@@ -459,6 +495,9 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
                 'jellyfin_status': 'jellyfin',
                 'mounted_files_status': 'mounted-files',
                 'phalanx_db_status': 'phalanx-db',
+                'tvdb_status': 'tvdb',
+                'tmdb_status': 'tmdb',
+                'decypharr_status': 'decypharr',
             };
             for (const [key, service] of Object.entries(map)) {
                 if (data[key]) {

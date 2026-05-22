@@ -59,17 +59,27 @@ def _similar(a, b):
     """Helper function for string similarity"""
     return SequenceMatcher(None, a, b).ratio()
 
-def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str, plex_rating_key: Optional[str] = None) -> bool:
+def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str,
+                          plex_rating_key: Optional[str] = None,
+                          imdb_id: Optional[str] = None,
+                          media_type: Optional[str] = None,
+                          season: Optional[int] = None,
+                          episode: Optional[int] = None,
+                          max_attempts: int = 5) -> bool:
     """
-    Force matches a Plex item with a specific TMDB ID using the best available match result.
-    If the item contains multiple movies (based on our database records), it will attempt to split them first.
-    Logs attempts to prevent re-processing.
+    Force matches a Plex item with a specific TMDB ID.
+
+    Tries a Plex GUID fast-path first (from Trakt ids.plex.guid) — applies the
+    match directly without trial-and-error.  Falls back to the original
+    title/year search loop if the GUID fast-path fails or is unavailable.
 
     Args:
         db_title (str): The correct title from our database.
         db_year (Optional[str]): The correct year from our database.
         tmdb_id (str): The TMDB ID to match with (used for verification post-match).
         plex_rating_key (Optional[str]): The Plex rating key of the item to fix.
+        imdb_id (Optional[str]): IMDb ID used to look up Plex GUID from battery.
+        media_type (Optional[str]): 'movie' or 'show' — used for GUID lookup.
 
     Returns:
         bool: True if successful, False otherwise
@@ -238,6 +248,68 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str, p
 
             logging.info(f"Item '{item.title}' (Current IDs: TMDB={current_tmdb_id}, IMDB={current_imdb_id}) needs matching to TMDB ID {tmdb_id}.")
 
+            # --- GUID Fast-Path (Phase 2) ---
+            # Use the most specific Plex GUID available: episode → season → show → movie
+            # This handles cases where episode/season titles mismatch Plex's metadata.
+            if imdb_id and media_type:
+                try:
+                    from cli_battery.app.direct_api import DirectAPI
+                    guid_result = DirectAPI.get_plex_guid(imdb_id, media_type,
+                                                          season=season, episode=episode)
+                    # Pick most specific GUID available
+                    plex_guid = None
+                    guid_level = None
+                    if guid_result:
+                        if episode is not None and guid_result.get('episode_guid'):
+                            plex_guid = guid_result['episode_guid']
+                            guid_level = 'episode'
+                        elif season is not None and guid_result.get('season_guid'):
+                            plex_guid = guid_result['season_guid']
+                            guid_level = 'season'
+                        elif guid_result.get('show_guid'):
+                            plex_guid = guid_result['show_guid']
+                            guid_level = 'show' if media_type == 'show' else 'movie'
+                    if plex_guid:
+                        type_prefix = guid_level if guid_level in ('show', 'movie', 'season', 'episode') else media_type
+                        # Plex GUID URI uses 'show'/'movie'/'season'/'episode' prefixes
+                        full_guid = f'plex://{type_prefix}/{plex_guid}'
+                        logging.info(f"[PlexGUID] Attempting fast-path match with {guid_level} GUID {full_guid} for '{db_title}'")
+                        try:
+                            from types import SimpleNamespace
+                            fake_result = SimpleNamespace(guid=full_guid, name=db_title)
+                            item.fixMatch(searchResult=fake_result)
+                            time.sleep(4)
+                            item.reload()
+                            # Verify TMDB/IMDb ID after applying
+                            matched_tmdb_id = None
+                            for guid_obj in getattr(item, 'guids', []):
+                                guid_str = str(guid_obj)
+                                if 'tmdb://' in guid_str:
+                                    m = re.search(r'tmdb://(?:tv/)?(\d+)', guid_str)
+                                    if m:
+                                        matched_tmdb_id = m.group(1)
+                                        break
+                            if matched_tmdb_id and matched_tmdb_id == str(tmdb_id):
+                                logging.info(f"[PlexGUID] Fast-path SUCCESS for '{db_title}' (TMDB {tmdb_id})")
+                                _add_to_rematch_log(plex_rating_key, rematch_log)
+                                attempt_logged = True
+                                return True
+                            else:
+                                logging.warning(
+                                    f"[PlexGUID] Fast-path verification failed "
+                                    f"(got TMDB {matched_tmdb_id}, expected {tmdb_id}) — unmatching and falling back"
+                                )
+                                try:
+                                    item.unmatch()
+                                    time.sleep(3)
+                                    item.reload()
+                                except Exception:
+                                    pass
+                        except Exception as guid_match_e:
+                            logging.warning(f"[PlexGUID] Fast-path fixMatch failed: {guid_match_e} — falling back to trial-and-error")
+                except Exception as guid_lookup_e:
+                    logging.debug(f"[PlexGUID] GUID lookup failed: {guid_lookup_e} — falling back to trial-and-error")
+
             # --- Find Match by Trial-and-Error ---
             target_match_found = False
             try:
@@ -269,12 +341,15 @@ def force_match_with_tmdb(db_title: str, db_year: Optional[str], tmdb_id: str, p
                     return False
 
                 # Loop through each result, try matching, verify, and unmatch if wrong
-                # This loop naturally processes from the top (index 0) of the 'matches' list
+                # Capped at max_attempts to avoid blocking for minutes on bad matches
                 for idx, match_result in enumerate(matches, 1):
+                    if idx > max_attempts:
+                        logging.warning(f"Reached max_attempts ({max_attempts}) for '{db_title}' — stopping trial-and-error")
+                        break
                     result_name = getattr(match_result, 'name', 'N/A')
                     result_year = getattr(match_result, 'year', 'N/A')
                     result_guid = getattr(match_result, 'guid', 'N/A') # This is likely plex://
-                    logging.info(f"--- Attempting Match {idx}/{len(matches)}: Name='{result_name}', Year='{result_year}', ResultGUID='{result_guid}' ---")
+                    logging.info(f"--- Attempting Match {idx}/{min(len(matches), max_attempts)}: Name='{result_name}', Year='{result_year}', ResultGUID='{result_guid}' ---")
 
                     try:
                         # Apply this match result
@@ -527,8 +602,10 @@ def check_and_fix_unmatched_items(collected_content: Dict[str, List[Dict[str, An
                     db_title = db_item['title'] or plex_title # Use DB title or fallback
                     db_year = str(db_item['year']) if db_item['year'] else None
                     db_tmdb_id = str(db_item['tmdb_id'])
+                    db_imdb_id = db_item['imdb_id'] if db_item else None
                     logging.info(f"Attempting to fix match for '{plex_filename}' using DB info: Title='{db_title}', Year={db_year}, TMDB ID={db_tmdb_id}")
-                    if force_match_with_tmdb(db_title, db_year, db_tmdb_id, plex_rating_key):
+                    if force_match_with_tmdb(db_title, db_year, db_tmdb_id, plex_rating_key,
+                                             imdb_id=db_imdb_id, media_type='movie'):
                         logging.info(f"Successfully fixed match for movie '{db_title}'.")
                         # Assume fixed, add to matched (or re-query Plex state if needed)
                     else:
@@ -576,7 +653,8 @@ def check_and_fix_unmatched_items(collected_content: Dict[str, List[Dict[str, An
                     if provider_tmdb_id:
                         match_tmdb_id = str(provider_tmdb_id)
                         logging.info(f"Attempting to fix match for '{plex_filename}' using provider info: Title='{provider_title}', Year={provider_year}, TMDB ID={match_tmdb_id}")
-                        if force_match_with_tmdb(provider_title, provider_year, match_tmdb_id, plex_rating_key):
+                        if force_match_with_tmdb(provider_title, provider_year, match_tmdb_id, plex_rating_key,
+                                                 imdb_id=provider_imdb_id, media_type='movie'):
                             logging.info(f"Successfully fixed match for movie '{provider_title}' using provider fallback.")
                         else:
                             logging.error(f"Failed to fix match for movie '{provider_title}' using provider fallback.")
@@ -646,6 +724,7 @@ def check_and_fix_unmatched_items(collected_content: Dict[str, List[Dict[str, An
                         'db_title': db_show_title,
                         'db_year': db_show_year,
                         'db_tmdb_id': db_show_tmdb_id,
+                        'db_imdb_id': db_item['imdb_id'] if db_item else None,
                         'plex_show_title': plex_show_title # For logging
                     }
                     # Don't add episode to matched list yet, handle after show fix attempt
@@ -666,7 +745,9 @@ def check_and_fix_unmatched_items(collected_content: Dict[str, List[Dict[str, An
                  fix_info['db_title'],
                  fix_info['db_year'],
                  fix_info['db_tmdb_id'],
-                 str(show_rating_key) # Pass rating key as string
+                 str(show_rating_key),
+                 imdb_id=fix_info.get('db_imdb_id'),
+                 media_type='show',
              )
              processed_show_rating_keys.add(show_rating_key) # Mark as processed regardless of outcome
 

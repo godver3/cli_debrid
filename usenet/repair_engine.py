@@ -404,21 +404,17 @@ def _delete_from_plex(item: dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def _blacklist_broken_segment(nzb_url: str) -> str:
-    """Fetch NZB XML and add its segment ID to not-wanted. Returns segment ID or ''."""
+    """Add broken NZB guid to not-wanted and optionally also segment ID. Returns guid or ''."""
     if not nzb_url:
         return ''
+    # Add guid immediately — no download needed
     try:
-        r = requests.get(nzb_url, timeout=15, allow_redirects=True,
-                         headers={'User-Agent': 'Sabnzbd/3.0.0'})
-        if r.status_code == 200 and '<nzb' in r.text.lower():
-            seg_id = extract_nzb_segment_id(r.text)
-            if seg_id:
-                add_to_not_wanted_nzb_segment(seg_id)
-                logger.info(f'[NZBRepair] Blacklisted segment ID: {seg_id}')
-                return seg_id
+        from database.not_wanted_magnets import add_to_not_wanted_nzb_guid
+        add_to_not_wanted_nzb_guid(nzb_url)
+        logger.info(f'[NZBRepair] Blacklisted NZB guid from URL: {nzb_url[:80]}')
     except Exception as e:
-        logger.debug(f'[NZBRepair] Segment blacklist error: {e}')
-    return ''
+        logger.debug(f'[NZBRepair] Guid blacklist error: {e}')
+    return nzb_url
 
 
 # ---------------------------------------------------------------------------

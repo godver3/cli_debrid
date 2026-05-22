@@ -328,6 +328,9 @@ def migrate_schema():
         if 'ms_hdr_format' not in columns:
             conn.execute("ALTER TABLE media_items ADD COLUMN ms_hdr_format TEXT DEFAULT NULL")
             logging.info("Added ms_hdr_format column.")
+        if 'plex_guid' not in columns:
+            conn.execute("ALTER TABLE media_items ADD COLUMN plex_guid TEXT DEFAULT NULL")
+            logging.info("Added plex_guid column to media_items.")
         if 'ms_audio_codec' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN ms_audio_codec TEXT')
             logging.info("Added ms_audio_codec column.")
@@ -704,7 +707,7 @@ def migrate_schema():
                 logging.info("Successfully added is_up_to_date column to tv_show_version_status table.")
             # Add checks for other columns here if needed in the future
 
-        # Add total_seasons to tv_shows if missing
+        # Add total_seasons, plex_guid, season_guids to tv_shows if missing
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tv_shows'")
         if cursor.fetchone():
             cursor.execute("PRAGMA table_info(tv_shows)")
@@ -712,6 +715,12 @@ def migrate_schema():
             if 'total_seasons' not in columns:
                 cursor.execute('ALTER TABLE tv_shows ADD COLUMN total_seasons INTEGER')
                 logging.info("Successfully added total_seasons column to tv_shows table.")
+            if 'plex_guid' not in columns:
+                cursor.execute('ALTER TABLE tv_shows ADD COLUMN plex_guid TEXT DEFAULT NULL')
+                logging.info("Added plex_guid column to tv_shows table.")
+            if 'season_guids' not in columns:
+                cursor.execute('ALTER TABLE tv_shows ADD COLUMN season_guids TEXT DEFAULT NULL')
+                logging.info("Added season_guids column to tv_shows table (JSON dict of season_number -> plex_guid).")
 
         # Rename plex_overlay_state → media_overlay_state (media-server-agnostic naming)
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='plex_overlay_state'")
@@ -811,6 +820,36 @@ def migrate_schema():
                 logging.info("[Migration] Running VACUUM to reclaim disk space...")
                 conn.execute("VACUUM")
                 logging.info("[Migration] VACUUM complete.")
+            # Second pass — catch items that accumulated after the first migration
+            # ran (fix was incomplete; now covered by update_media_item_state too)
+            cursor.execute("SELECT 1 FROM schema_cleanup_flags WHERE flag='clear_scrape_results_terminal_states_v2'")
+            if not cursor.fetchone():
+                cur2 = conn.execute("""
+                    UPDATE media_items SET scrape_results = NULL
+                    WHERE scrape_results IS NOT NULL
+                      AND scrape_results != ''
+                      AND state IN ('Collected', 'Blacklisted', 'Ghostlisted', 'Unreleased')
+                """)
+                if cur2.rowcount > 0:
+                    logging.info(f"[Migration v2] Cleared scrape_results for {cur2.rowcount} additional items.")
+                conn.execute(
+                    "INSERT INTO schema_cleanup_flags (flag, applied_at) VALUES ('clear_scrape_results_terminal_states_v2', datetime('now'))"
+                )
+                conn.commit()
+                logging.info("[Migration v2] Running VACUUM to reclaim disk space...")
+                conn.execute("VACUUM")
+                logging.info("[Migration v2] VACUUM complete.")
+
+            # v3 — one-time VACUUM for installs where v2 ran without VACUUM
+            cursor.execute("SELECT 1 FROM schema_cleanup_flags WHERE flag='clear_scrape_results_vacuum_v3'")
+            if not cursor.fetchone():
+                logging.info("[Migration v3] Running VACUUM to reclaim disk space from scrape_results cleanup...")
+                conn.execute("VACUUM")
+                conn.execute(
+                    "INSERT INTO schema_cleanup_flags (flag, applied_at) VALUES ('clear_scrape_results_vacuum_v3', datetime('now'))"
+                )
+                conn.commit()
+                logging.info("[Migration v3] VACUUM complete.")
         except Exception as _ce:
             logging.warning(f"[Migration] scrape_results cleanup failed: {_ce}")
 

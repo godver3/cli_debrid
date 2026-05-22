@@ -1505,6 +1505,20 @@ def get_library_size_api():
     is_cached_value = False
     calculation_error = None # Store the specific error if calculation fails
 
+    # Decypharr mode — reset nzbs size cache and re-run statvfs
+    from utilities.settings import get_setting as _gs_lib
+    if not _gs_lib('Debrid Provider', 'api_key', default='').strip():
+        try:
+            from database.statistics import _dcy_nzbs_size_cache, download_stats_cache
+            _dcy_nzbs_size_cache['last_update'] = 0  # force refresh
+            download_stats_cache['last_update'] = 0  # force stats re-fetch
+            from database import get_cached_download_stats
+            active, _ = get_cached_download_stats()
+            size_str = (active or {}).get('library_size', 'N/A')
+        except Exception as _e:
+            size_str = 'N/A'
+        return jsonify({'total_library_size': size_str})
+
     try:
         provider = get_debrid_provider()
         # Gate behavior using capability flags rather than concrete type

@@ -96,11 +96,12 @@
 <div class="statistics-wrapper {% if compact_view %}compact-view{% endif %}">
     <div class="toggle-container" id="toggle_container">
       <div class="topbar-inner">
+        {% set _is_dcy = stats.active_downloads_data and stats.active_downloads_data.get('source') == 'decypharr' %}
         {% if not limited_env %}
         <div class="tb-pill">
             <i class="fas fa-server" style="color:var(--st-accent)"></i>
             <span class="tb-label">Library:</span>
-            <span class="tb-val" id="library-size-display">{{ stats.total_library_size | default('Click Refresh') }}</span>
+            <span class="tb-val" id="library-size-display">{% if _is_dcy %}{{ stats.active_downloads_data.get('library_size', 'N/A') }}{% else %}{{ stats.total_library_size | default('Click Refresh') }}{% endif %}</span>
             <button id="refresh-library-size-btn" class="tb-refresh" title="Refresh Library Size"><i class="fas fa-rotate"></i></button>
         </div>
         <div class="tb-sep"></div>
@@ -110,9 +111,16 @@
         </div>
         <div class="tb-break"></div>
         <div class="tb-pill">
-            <i class="fas fa-crown" style="color:var(--st-yellow)"></i>
-            <span class="tb-label">Sub:</span>
-            <span class="tb-val {% if stats.subscription_status and stats.subscription_status.days_remaining is not none and stats.subscription_status.days_remaining < 10 %}critical{% endif %}" id="subscription-days-toggle">{% if stats.subscription_status and stats.subscription_status.days_remaining is not none %}{{ stats.subscription_status.days_remaining }} days{% else %}N/A{% endif %}</span>
+            {% if _is_dcy %}
+                {% set _broken = stats.active_downloads_data.get('broken_nzbs', 0) %}
+                <i class="fas fa-triangle-exclamation" style="color:{% if _broken > 0 %}var(--st-red){% else %}var(--st-yellow){% endif %};line-height:1;display:flex;align-items:center"></i>
+                <span class="tb-label">Broken:</span>
+                <span class="tb-val {% if _broken > 0 %}critical{% endif %}" id="subscription-days-toggle">{{ _broken }}</span>
+            {% else %}
+                <i class="fas fa-crown" style="color:var(--st-yellow)"></i>
+                <span class="tb-label">Sub:</span>
+                <span class="tb-val {% if stats.subscription_status and stats.subscription_status.days_remaining is not none and stats.subscription_status.days_remaining < 10 %}critical{% endif %}" id="subscription-days-toggle">{% if stats.subscription_status and stats.subscription_status.days_remaining is not none %}{{ stats.subscription_status.days_remaining }} days{% else %}N/A{% endif %}</span>
+            {% endif %}
         </div>
         <div class="tb-sep"></div>
         {% endif %}
@@ -129,16 +137,6 @@
                 <input type="checkbox" id="compact-toggle">
                 <span class="toggle-slider"></span>
             </label>
-        </div>
-        <div class="tb-sep"></div>
-        <div class="tb-theme">
-            <i class="fas fa-palette" style="color:var(--st-accent);font-size:11px"></i>
-            <span class="tb-label hide-mobile-text">Theme:</span>
-            <div class="tb-swatch"></div>
-            <select id="theme-selector" class="theme-selector">
-                <option value="classic">Classic</option>
-                <option value="tangerine">Tangerine</option>
-            </select>
         </div>
         <div class="tb-break"></div>
         <div class="tb-search" id="stats-search-box" style="display: none;">
@@ -159,24 +157,10 @@
                 document.querySelector('.statistics-wrapper').classList.add('compact-view');
             }
 
-            // Show/hide search box based on theme
-            function toggleSearchBox() {
-                const currentTheme = localStorage.getItem('selectedTheme') || 'classic';
-                const searchBox = document.getElementById('stats-search-box');
-                if (searchBox) {
-                    searchBox.style.display = currentTheme === 'tangerine' ? 'block' : 'none';
-                }
-            }
-
-            // Initial check
-            toggleSearchBox();
-
-            // Listen for theme changes
-            const themeSelector = document.getElementById('theme-selector');
-            if (themeSelector) {
-                themeSelector.addEventListener('change', function() {
-                    setTimeout(toggleSearchBox, 100);
-                });
+            // Show search box (tangerine is the only theme now)
+            const searchBox = document.getElementById('stats-search-box');
+            if (searchBox) {
+                searchBox.style.display = 'block';
             }
 
             // Handle search form submission
@@ -951,36 +935,32 @@
                     </div>
                 </div>
                 {% if not limited_env %}
-                <div class="stat-item stat-item-clickable status-{{ stats.active_downloads_data.status }}" id="kpi-active" onclick="window.location.href='/debrid_manager/?tab=active'">
+                {% set is_decypharr = stats.active_downloads_data and stats.active_downloads_data.get('source') == 'decypharr' %}
+                <div class="stat-item {% if not is_decypharr %}stat-item-clickable{% endif %} status-{{ stats.active_downloads_data.status }}" id="kpi-active" {% if not is_decypharr %}onclick="window.location.href='/debrid_manager/?tab=active'"{% endif %}>
                     <div class="stat-content">
                         <div class="stat-icon">
-                            <i class="fas fa-download"></i>
+                            <i class="fas fa-{% if is_decypharr %}newspaper{% else %}download{% endif %}"></i>
                         </div>
                         <div class="stat-text-content">
-                            <div class="stat-label">Active</div>
+                            <div class="stat-label">{% if is_decypharr %}Connections{% else %}Active{% endif %}</div>
                             <div class="stat-number {{ stats.active_downloads_data.status }}">
-                                <span id="active_downloads">{{ stats.active_downloads_data.count|default(0) }}</span>/<span id="download_limit">{{ stats.active_downloads_data.limit|default(25) }}</span>
+                                <span id="active_downloads">{{ stats.active_downloads_data.count|default(0) }}</span>{% if not is_decypharr %}/<span id="download_limit">{{ stats.active_downloads_data.limit|default(25) }}</span>{% endif %}
                             </div>
                         </div>
                     </div>
                 </div>
-                <div class="stat-item stat-item-clickable" onclick="window.location.href='/debrid_manager/?tab=usage'">
+                <div class="stat-item {% if not is_decypharr %}stat-item-clickable{% endif %}" {% if not is_decypharr %}onclick="window.location.href='/debrid_manager/?tab=usage'"{% endif %}>
                     <div class="stat-content">
                         <div class="stat-icon">
                             <i class="fas fa-chart-line"></i>
                         </div>
                         <div class="stat-text-content">
-                            <div class="stat-label">Usage</div>
+                            <div class="stat-label">{% if is_decypharr %}Pool Usage{% else %}Usage{% endif %}</div>
                             <div class="stat-number">
                                 <span id="daily_usage">{{ stats.usage_stats_data.percentage }}%</span>
                             </div>
                         </div>
                     </div>
-                    <!-- <div class="stat-badges">
-                        <span class="stat-badge episodes">{{ stats.active_downloads_data.count|default(0) }}/{{ stats.active_downloads_data.limit|default(25) }} active</span>
-                        <span class="stat-badge warning">{{ stats.usage_stats_data.used }} used</span>
-                        <span class="stat-badge warning">{{ stats.usage_stats_data.limit }} limit</span>
-                    </div> -->
                 </div>
                 {% endif %}
                 <div class="stat-item stat-item-clickable" id="kpi-uptime" onclick="window.location.href='/performance/dashboard'">

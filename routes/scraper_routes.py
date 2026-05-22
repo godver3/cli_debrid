@@ -1704,6 +1704,54 @@ def select_media():
         logging.error(f"Error in select_media: {str(e)}", exc_info=True)
         return jsonify({'error': 'An error occurred while processing your request'}), 500
 
+def _build_nzb_title(title, year, imdb_id, version, original_scraped_torrent_title,
+                     media_type=None, season=None, episode=None, episode_title=None):
+    """
+    Build a structured NZB job title when 'Enable NZB File Naming' is on.
+    This becomes both the Decypharr folder name and filename.
+    Falls back to original_scraped_torrent_title if setting is off or data missing.
+    """
+    from utilities.settings import get_setting as _gs
+    if not _gs('Usenet Provider', 'enable_nzb_naming', False):
+        return original_scraped_torrent_title
+
+    import re as _re
+    # Sanitize components for use in filenames
+    def _san(s):
+        return _re.sub(r'[\\/*?:"<>|]', '', str(s or '')).strip()
+
+    _title = _san(title)
+    _year = _san(year)
+    _imdb = _san(imdb_id) if imdb_id else ''
+    _version = _san(version).strip('*') if version else ''
+    _orig = _san(os.path.splitext(original_scraped_torrent_title or '')[0])
+
+    is_episode = media_type in ('tv', 'show', 'episode') and season is not None and episode is not None
+
+    if is_episode:
+        _ep_title = _san(episode_title or '')
+        parts = [f'{_title} ({_year})']
+        parts.append(f'S{int(season):02d}E{int(episode):02d}')
+        if _ep_title:
+            parts.append(_ep_title)
+        if _imdb:
+            parts.append(f'{{imdb-{_imdb}}}')
+        if _version:
+            parts.append(_version)
+        if _orig:
+            parts.append(f'({_orig})')
+        return ' - '.join(parts)
+    else:
+        parts = [f'{_title} ({_year})']
+        if _imdb:
+            parts.append(f'{{imdb-{_imdb}}}')
+        if _version:
+            parts.append(_version)
+        if _orig:
+            parts.append(f'({_orig})')
+        return ' - '.join(parts)
+
+
 def _submit_single_episode_nzb(client, nzb_url, ep_label):
     """Fetch + submit one episode NZB.
     Returns (job_id, nzb_text, missing_segments) where missing_segments=True means
@@ -1733,8 +1781,14 @@ def _submit_single_episode_nzb(client, nzb_url, ep_label):
 def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, media_type,
                              season, version, tmdb_id, original_scraped_torrent_title=None,
                              genres=None, current_score=0.0,
-                             selected_folder=None, selected_folder_is_custom=False):
-    """Submit a virtual NZB season pack — one NZB per episode with health-check + retry."""
+                             selected_folder=None, selected_folder_is_custom=False,
+                             existing_items=None):
+    """Submit a virtual NZB season pack — one NZB per episode with health-check + retry.
+
+    existing_items: optional dict {ep_num: item_dict} of existing DB items to reuse instead of
+                    creating new ones. When provided, those items are updated in-place (state →
+                    Adding) preserving their IDs and history. Used by scraping_queue batch path.
+    """
     from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
     from database.not_wanted_magnets import add_to_not_wanted_nzb_segment, extract_nzb_segment_id
     from metadata.metadata import get_metadata, get_release_date
@@ -1748,6 +1802,7 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
     # Resolve metadata once
     imdb_id = None
     episode_titles = {}
+    episode_imdb_ids = {}
     try:
         meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
         imdb_id = meta.get('imdb_id')
@@ -1759,7 +1814,7 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
                 imdb_id = get_imdb_id_if_missing({'tmdb_id': int(tmdb_id), 'media_type': _api_type})
             except Exception as _ie:
                 logging.warning(f'[NZBPack] imdb_id fallback failed: {_ie}')
-        # Episode titles via DirectAPI (has full season data)
+        # Episode titles and IMDb IDs via DirectAPI (has full season data)
         if imdb_id:
             try:
                 from metadata.metadata import DirectAPI
@@ -1768,6 +1823,9 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
                               (show_meta.get('seasons') or {}).get(season, {})
                 episode_titles = {int(k): v.get('title', f'Episode {k}')
                                  for k, v in (season_data.get('episodes') or {}).items()}
+                episode_imdb_ids = {int(k): v['imdb_id']
+                                    for k, v in (season_data.get('episodes') or {}).items()
+                                    if v.get('imdb_id')}
             except Exception:
                 pass
     except Exception as _me:
@@ -1843,7 +1901,12 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
         _clean_title = _re_label.sub(r'\s*\[NZB Pack[^\]]*\]', '', original_scraped_torrent_title or title).strip()
         # Also replace S01 with S01E01 style — remove any existing season-only marker first
         _clean_title = _re_label.sub(r'\.S\d{2}\.', '.', _clean_title).strip(' .')
-        ep_label = f'{_clean_title}.S{season:02d}E{ep_num:02d}'
+        ep_label = _build_nzb_title(
+            title=title, year=year, imdb_id=imdb_id,
+            version=version, original_scraped_torrent_title=_clean_title,
+            media_type='episode', season=season, episode=ep_num,
+            episode_title=episode_titles.get(ep_num),
+        ) or f'{_clean_title}.S{season:02d}E{ep_num:02d}'
         primary_url = episode_nzb_urls[ep_num]
         fallbacks = fallback_nzb_urls.get(ep_num, [])
 
@@ -1867,11 +1930,10 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
                 health = client.check_entry_health(ep_label)
                 if health == 'broken':
                     logging.warning(f'[NZBPack] {ep_label}: broken — removing and trying next')
-                    # Add to not-wanted
+                    # Add to not-wanted (guid-based, works at scrape time)
                     try:
-                        seg = extract_nzb_segment_id(nzb_text)
-                        if seg:
-                            add_to_not_wanted_nzb_segment(seg)
+                        from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid
+                        _add_guid(primary_url)
                     except Exception:
                         pass
                     # Delete from Decypharr
@@ -1919,25 +1981,33 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
                 checking_id = f"nzb:{job_id}" if not str(job_id).startswith('nzb:') else str(job_id)
                 # ep_label is what was submitted to Decypharr — adding_queue uses
                 # filled_by_file to look up the entry, so it must match exactly
-                ep_item = {
-                    'title': title, 'year': year, 'type': 'episode',
-                    'version': version, 'tmdb_id': tmdb_id, 'imdb_id': imdb_id,
-                    'season_number': season, 'episode_number': ep_num,
-                    'episode_title': episode_titles.get(ep_num, f'Episode {ep_num}'),
-                    'release_date': 'Unknown',
-                    'genres': json.dumps(genres or []),
-                    'current_score': current_score,
-                    'original_scraped_torrent_title': ep_label,
-                    'content_source': 'content_requester',
-                    'selected_folder': selected_folder,
-                    'selected_folder_is_custom': selected_folder_is_custom,
-                }
-                item_id = add_media_item(ep_item)
+                # Reuse existing item if provided (scraping_queue batch path)
+                # otherwise create a new item (scraper UI path)
+                existing_item = (existing_items or {}).get(ep_num)
+                if existing_item:
+                    item_id = existing_item['id']
+                    update_media_item_state(item_id, 'Adding')
+                else:
+                    ep_item = {
+                        'title': title, 'year': year, 'type': 'episode',
+                        'version': version, 'tmdb_id': tmdb_id, 'imdb_id': imdb_id,
+                        'season_number': season, 'episode_number': ep_num,
+                        'episode_title': episode_titles.get(ep_num, f'Episode {ep_num}'),
+                        'release_date': 'Unknown',
+                        'genres': json.dumps(genres or []),
+                        'current_score': current_score,
+                        'original_scraped_torrent_title': ep_label,
+                        'content_source': 'content_requester',
+                        'selected_folder': selected_folder,
+                        'selected_folder_is_custom': selected_folder_is_custom,
+                    }
+                    item_id = add_media_item(ep_item)
                 if item_id:
                     update_media_item_state(item_id, 'Adding')
                     update_media_item(item_id,
                         filled_by_torrent_id=checking_id,
                         filled_by_file=ep_label,
+                        filled_by_magnet=primary_url,  # Store NZB URL for reference
                         original_scraped_torrent_title=ep_label,
                     )
             except Exception as _qe:
@@ -1995,15 +2065,36 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
         return jsonify({'error': f'This NZB is known broken and has been blacklisted: {title}'}), 400
 
     logging.info(f'[NZB] Submitting to Decypharr: {title} ({year})')
+
+    # Build job title — uses structured naming template when enabled
+    _imdb_id_for_title = None
+    _ep_title = None
+    if tmdb_id:
+        try:
+            _title_meta = get_metadata(tmdb_id=int(tmdb_id), item_media_type=media_type)
+            _imdb_id_for_title = _title_meta.get('imdb_id')
+            if media_type in ('tv', 'show') and season is not None and episode is not None:
+                _s = ((_title_meta.get('seasons') or {}).get(season) or
+                      (_title_meta.get('seasons') or {}).get(str(season)) or {})
+                _ep_title = ((_s.get('episodes') or {}).get(episode) or
+                             (_s.get('episodes') or {}).get(str(episode)) or {}).get('title')
+        except Exception:
+            pass
+    _job_title = _build_nzb_title(
+        title=title, year=year, imdb_id=_imdb_id_for_title,
+        version=version, original_scraped_torrent_title=original_scraped_torrent_title,
+        media_type=media_type, season=season, episode=episode, episode_title=_ep_title,
+    )
+
     # Submit — use pre-fetched content directly if available to avoid double-fetch
     if _nzb_xml:
-        job_id = client.add_nzb_content(nzb_content=_nzb_xml, title=str(original_scraped_torrent_title or title or ''))
+        job_id = client.add_nzb_content(nzb_content=_nzb_xml, title=str(_job_title or title or ''))
         if not job_id and client.last_missing_segments:
             logging.warning(f'[NZB] Decypharr server missing segments for {title!r}')
         elif job_id:
             logging.info(f'[NZB] Submitted via content upload: {title}')
     else:
-        job_id = client.add_nzb(nzb_url=nzb_url, title=str(original_scraped_torrent_title or title or ''))
+        job_id = client.add_nzb(nzb_url=nzb_url, title=str(_job_title or title or ''))
 
     if not job_id:
         return jsonify({'error': 'Failed to submit NZB to Decypharr'}), 500
@@ -2012,7 +2103,7 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
 
     # --- Queue tracking: create media item and move through queue like debrid ---
     try:
-        nzb_title = original_scraped_torrent_title or title or ''
+        nzb_title = _job_title or original_scraped_torrent_title or title or ''
         checking_id = f"nzb:{job_id}" if not str(job_id).startswith('nzb:') else str(job_id)
 
         # Get metadata
@@ -2060,6 +2151,7 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
             update_media_item(item_id_to_place,
                 filled_by_torrent_id=checking_id,
                 filled_by_file=nzb_title,
+                filled_by_magnet=nzb_url,  # Store NZB URL so it can be reused if needed
                 original_scraped_torrent_title=nzb_title,
             )
             logging.info(f'[NZB] Item {item_id_to_place} placed in Adding queue for health check (checking_id={checking_id})')

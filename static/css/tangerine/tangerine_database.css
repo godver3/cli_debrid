@@ -1710,7 +1710,7 @@
     /* Back to top / row 1 button */
     #db-back-top {
         position: fixed;
-        left: 16px;
+        left: 115px;
         bottom: 32px;
         z-index: 1100;
         width: 40px;

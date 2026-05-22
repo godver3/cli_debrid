@@ -5,6 +5,11 @@ import time as _time
 # Suppress repeated "unmatched Plex item" warnings for the same filename (1 hour)
 _unmatched_warned: dict = {}
 _UNMATCHED_SUPPRESS_SECS = 3600
+
+# Serialize concurrent calls to add_collected_items — prevents "database is locked"
+# when multiple tasks (reconciliation, Plex check, content source) call simultaneously
+import threading
+_add_collected_lock = threading.Lock()
 import os
 from datetime import datetime, timezone, timedelta
 import json
@@ -122,6 +127,11 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
         backfill: True when updating file sizes/metadata for existing items
         data_source: Source of the data ('plex' or 'filesystem')
     """
+    with _add_collected_lock:
+        return _add_collected_items_impl(media_items_batch, recent=recent, backfill=backfill, data_source=data_source)
+
+
+def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, data_source='plex'):
     from datetime import datetime, timedelta
     from utilities.settings import get_setting
     from queues.upgrading_queue import log_successful_upgrade
@@ -439,6 +449,63 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                     if _now - _unmatched_warned.get(_key, 0) > _UNMATCHED_SUPPRESS_SECS:
                         logging.warning(f"Skipping unmatched Plex item: {item.get('title', 'Unknown')} from location(s): {plex_locations}")
                         _unmatched_warned[_key] = _now
+                        # Attempt Plex GUID fix-match for this unmatched item.
+                        # Look up the DB item by filename, then apply the GUID fast-path.
+                        _plex_rating_key = str(plex_ms_item_id) if plex_ms_item_id else None
+                        if _plex_rating_key and plex_locations:
+                            try:
+                                _filename = os.path.basename(plex_locations[0])
+                                _db_conn = conn
+                                _db_row = _db_conn.execute(
+                                    "SELECT id, title, year, imdb_id, tmdb_id, type, season_number, episode_number FROM media_items "
+                                    "WHERE (filled_by_file LIKE ? OR location_on_disk LIKE ?) "
+                                    "AND state IN ('Checking', 'Collected') LIMIT 1",
+                                    (f'%{_filename}%', f'%{_filename}%')
+                                ).fetchone()
+                                if _db_row and _db_row['tmdb_id']:
+                                    _imdb_id = _db_row['imdb_id']
+                                    # If imdb_id missing, try to resolve via battery tmdb→imdb mapping
+                                    if not _imdb_id and _db_row['tmdb_id']:
+                                        try:
+                                            from cli_battery.app.direct_api import DirectAPI
+                                            _resolved, _ = DirectAPI.tmdb_to_imdb(
+                                                str(_db_row['tmdb_id']),
+                                                media_type='show' if _db_row['type'] == 'episode' else 'movie'
+                                            )
+                                            if _resolved:
+                                                _imdb_id = _resolved
+                                        except Exception:
+                                            pass
+                                    _media_type = 'show' if _db_row['type'] == 'episode' else 'movie'
+                                    _season = _db_row['season_number'] if _db_row['type'] == 'episode' else None
+                                    _episode = _db_row['episode_number'] if _db_row['type'] == 'episode' else None
+                                    logging.info(
+                                        f"[PlexGUID] Unmatched Plex item '{item.get('title')}' — "
+                                        f"attempting fix-match via GUID for DB item '{_db_row['title']}' "
+                                        f"(imdb={_imdb_id}, ratingKey={_plex_rating_key})"
+                                    )
+                                    import threading as _fmt_thread
+                                    def _run_fix_match(_title, _year, _tmdb, _rk, _imdb, _mtype, _s, _ep):
+                                        try:
+                                            from utilities.plex_matching_functions import force_match_with_tmdb
+                                            force_match_with_tmdb(
+                                                _title, _year, _tmdb, _rk,
+                                                imdb_id=_imdb, media_type=_mtype,
+                                                season=_s, episode=_ep,
+                                            )
+                                        except Exception as _e:
+                                            logging.debug(f"[PlexGUID] Background fix-match failed: {_e}")
+                                    _fmt_thread.Thread(
+                                        target=_run_fix_match,
+                                        args=(_db_row['title'],
+                                              str(_db_row['year']) if _db_row['year'] else None,
+                                              str(_db_row['tmdb_id']),
+                                              _plex_rating_key, _imdb_id,
+                                              _media_type, _season, _episode),
+                                        daemon=True
+                                    ).start()
+                            except Exception as _guid_fix_err:
+                                logging.debug(f"[PlexGUID] Fix-match attempt failed for unmatched item: {_guid_fix_err}")
                     continue
 
                 # Items tagged by plex_functions with their source library.
@@ -593,6 +660,132 @@ def add_collected_items(media_items_batch, recent=False, backfill=False, data_so
                             ''', (new_state, datetime.now(), collected_at, existing_collected_at,
                                   new_location, is_upgrade, item.get('resolution'), item.get('size_gb'),
                                   new_ms_item_id, db_item_id))
+
+                            # If the Plex episode has a local:// guid (episode-level mismatch),
+                            # schedule a GUID fix-match in background — show is matched but
+                            # episode metadata is unresolved.
+                            _ep_guid_str = str(item.get('guid') or '')
+                            if _ep_guid_str.startswith('local://') and existing_db_item.get('type') == 'episode':
+                                try:
+                                    _fix_imdb  = existing_db_item.get('imdb_id')
+                                    _fix_tmdb  = existing_db_item.get('tmdb_id')
+                                    _fix_s     = existing_db_item.get('season_number')
+                                    _fix_ep    = existing_db_item.get('episode_number')
+                                    _fix_rk    = str(item.get('ratingKey') or '')
+                                    _fix_show_rk = str(item.get('grandparentRatingKey') or _fix_rk)
+                                    if (_fix_imdb or _fix_tmdb) and _fix_rk:
+                                        # Check if show uses absolute numbering (anime) via battery
+                                        _ci_is_absolute = False
+                                        try:
+                                            from cli_battery.app.database import Session as _BatSession, Item as _BatItem, Season as _BatSeason, Episode as _BatEp
+                                            from sqlalchemy.orm import selectinload as _sil
+                                            with _BatSession() as _bs:
+                                                _bi = _bs.query(_BatItem).filter_by(imdb_id=_fix_imdb).first() if _fix_imdb else None
+                                                if _bi:
+                                                    _abs_check = _bs.query(_BatEp).join(_BatSeason).filter(
+                                                        _BatSeason.item_id == _bi.id,
+                                                        _BatEp.absolute_episode > 0
+                                                    ).first()
+                                                    _ci_is_absolute = _abs_check is not None
+                                        except Exception:
+                                            pass
+
+                                        if not _ci_is_absolute:
+                                            # Regular show — use show-level fix via force_match_with_tmdb
+                                            logging.info(
+                                                f"[PlexGUID] Episode {db_item_id} regular show local:// guid "
+                                                f"— scheduling show-level fix-match (ratingKey={_fix_show_rk})"
+                                            )
+                                            import threading as _ci_thread
+                                            def _ci_show_fix(_rk, _title, _year, _tmdb, _imdb, _s, _ep):
+                                                try:
+                                                    from utilities.plex_matching_functions import force_match_with_tmdb
+                                                    force_match_with_tmdb(
+                                                        _title,
+                                                        str(_year) if _year else None,
+                                                        str(_tmdb) if _tmdb else '0',
+                                                        _rk,
+                                                        imdb_id=_imdb,
+                                                        media_type='show',
+                                                        season=_s,
+                                                        episode=_ep,
+                                                    )
+                                                except Exception as _fe:
+                                                    logging.debug(f"[PlexGUID] Show fix-match failed: {_fe}")
+                                            _ci_thread.Thread(
+                                                target=_ci_show_fix,
+                                                args=(_fix_show_rk, existing_db_item.get('title', ''),
+                                                      existing_db_item.get('year'), _fix_tmdb, _fix_imdb,
+                                                      _fix_s, _fix_ep),
+                                                daemon=True
+                                            ).start()
+                                        else:
+                                            logging.info(
+                                                f"[PlexGUID] Episode {db_item_id} absolute show local:// guid "
+                                                f"— scheduling episode fix-match (ratingKey={_fix_rk}, "
+                                                f"S{_fix_s}E{_fix_ep})"
+                                            )
+
+                                        import threading as _ci_thread
+                                        def _ci_fix(_rk, _title, _year, _tmdb, _imdb, _s, _ep):
+                                            try:
+                                                from cli_battery.app.direct_api import DirectAPI
+                                                from utilities.settings import get_setting as _gs
+                                                from plexapi.server import PlexServer as _PS
+                                                _gu = _gs('Plex', 'url', '').rstrip('/')
+                                                _gt = _gs('Plex', 'token', '')
+                                                if not _gu or not _gt:
+                                                    return
+                                                _gplex = _PS(_gu, _gt, timeout=30)
+                                                _gitem = _gplex.fetchItem(int(_rk))
+                                                _gr = DirectAPI.get_plex_guid(_imdb, 'show', season=_s, episode=_ep) if _imdb else None
+                                                _ep_guid  = (_gr or {}).get('episode_guid')
+                                                _s_guid   = (_gr or {}).get('season_guid')
+                                                _sh_guid  = (_gr or {}).get('show_guid')
+                                                if _ep_guid:
+                                                    _full_guid = f'plex://episode/{_ep_guid}'
+                                                    _gname = f'{_title} S{_s:02d}E{_ep:02d}'
+                                                elif _s_guid:
+                                                    _full_guid = f'plex://season/{_s_guid}'
+                                                    _gname = f'{_title} Season {_s}'
+                                                elif _sh_guid:
+                                                    _full_guid = f'plex://show/{_sh_guid}'
+                                                    _gname = _title
+                                                else:
+                                                    logging.debug(f"[PlexGUID] No GUID for {_imdb} S{_s}E{_ep}")
+                                                    return
+                                                logging.info(f"[PlexGUID] Applying {_full_guid} to ratingKey={_rk}")
+                                                import time as _t
+                                                import requests as _req2
+                                                from urllib.parse import quote as _uq2
+
+                                                _match_url2 = (
+                                                    f"{_gu}/library/metadata/{_rk}/match"
+                                                    f"?guid={_uq2(_full_guid)}&name={_uq2(_gname)}"
+                                                    f"&X-Plex-Token={_gt}"
+                                                )
+                                                _resp2 = _req2.put(_match_url2, timeout=15)
+                                                _t.sleep(2)
+                                                _req2.put(f"{_gu}/library/metadata/{_rk}/refresh?X-Plex-Token={_gt}", timeout=15)
+                                                _t.sleep(4)
+                                                _gitem.reload()
+                                                _new_guid = str(getattr(_gitem, 'guid', ''))
+                                                if not _new_guid.startswith('local://'):
+                                                    logging.info(f"[PlexGUID] Episode fix SUCCESS '{_title}' S{_s}E{_ep} → {_new_guid}")
+                                                else:
+                                                    logging.warning(f"[PlexGUID] Episode fix failed (HTTP {_resp2.status_code}) '{_title}' S{_s}E{_ep} still local://")
+                                            except Exception as _fe:
+                                                logging.debug(f"[PlexGUID] Episode fix failed: {_fe}")
+                                        if _ci_is_absolute:
+                                            _ci_thread.Thread(
+                                                target=_ci_fix,
+                                                args=(_fix_rk, existing_db_item.get('title', ''),
+                                                      existing_db_item.get('year'), _fix_tmdb, _fix_imdb,
+                                                      _fix_s, _fix_ep),
+                                                daemon=True
+                                            ).start()
+                                except Exception as _guid_err:
+                                    logging.debug(f"[PlexGUID] Fix scheduling failed: {_guid_err}")
 
                             # Queue items for post-processing AFTER transaction commits
                             # This prevents database lock issues when post-processing tries to write to DB

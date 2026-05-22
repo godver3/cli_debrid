@@ -1941,10 +1941,11 @@ def api_usenet_migrate():
                             logging.debug(f'[UsenetMigrate] Candidate {_cand_idx+1} fetch failed: {_ve} — trying next')
                             continue
 
-                        # Skip if segment already known broken
+                        # Skip if guid already known broken
                         try:
-                            if is_nzb_segment_not_wanted(_nzb_text):
-                                logging.info(f'[UsenetMigrate] Candidate {_cand_idx+1} segment in not-wanted — trying next')
+                            from database.not_wanted_magnets import is_nzb_guid_not_wanted as _is_guid_nw
+                            if _is_guid_nw(nzb_url):
+                                logging.info(f'[UsenetMigrate] Candidate {_cand_idx+1} guid in not-wanted — trying next')
                                 continue
                         except Exception:
                             pass
@@ -1965,9 +1966,8 @@ def api_usenet_migrate():
                         if health == 'broken':
                             logging.warning(f'[UsenetMigrate] Candidate {_cand_idx+1} for {name!r} is BROKEN — blacklisting and trying next')
                             try:
-                                _seg = extract_nzb_segment_id(_nzb_text)
-                                if _seg:
-                                    add_to_not_wanted_nzb_segment(_seg)
+                                from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid
+                                _add_guid(nzb_url)
                             except Exception:
                                 pass
                             # Delete broken entry from Decypharr
@@ -2005,11 +2005,18 @@ def api_usenet_migrate():
                         else:
                             logging.info(f'[UsenetMigrate] NZB {name!r} health check inconclusive — keeping (candidate {_cand_idx+1})')
 
-                        logging.info(f'[UsenetMigrate] Submitted: {name} -> job {job_id} (candidate {_cand_idx+1}/{len(candidate_urls)})')
+                        logging.info(f'[UsenetMigrate] Submitted: {name} -> job {job_id} url={nzb_url} (candidate {_cand_idx+1}/{len(candidate_urls)})')
                         already_submitted.add(dedup_key)
                         try:
                             with open(submitted_path, 'a', encoding='utf-8') as _sf:
                                 _sf.write(dedup_key + '\n')
+                        except Exception:
+                            pass
+                        # Write name|url to .urls file for backfilling filled_by_magnet
+                        try:
+                            _urls_path = submitted_path.replace('.migrated', '.urls')
+                            with open(_urls_path, 'a', encoding='utf-8') as _uf:
+                                _uf.write(f'{name}|{nzb_url}\n')
                         except Exception:
                             pass
                         submitted += 1

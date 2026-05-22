@@ -543,6 +543,19 @@ class OverlayManager:
             import hashlib as _hl
             _upload_sha1 = _hl.sha1(overlay_bytes).hexdigest()
 
+            # Fetch the new thumb URL from Plex so we can detect future deselections.
+            # Retry a few times since Plex may take a moment to index the new upload.
+            _plex_thumb_url = None
+            try:
+                import time as _t
+                for _ti in range(3):
+                    _plex_thumb_url = self.client.get_thumb_url(plex_rating_key)
+                    if _plex_thumb_url:
+                        break
+                    _t.sleep(1)
+            except Exception:
+                pass
+
             # Update overlay state
             self._update_overlay_state(
                 media_item_id,
@@ -554,6 +567,7 @@ class OverlayManager:
                 content_hash=content_hash,
                 plex_upload_hash=_upload_sha1,
                 textless_poster_used=media_info.get('textless_poster_used', False),
+                plex_thumb_url=_plex_thumb_url,
             )
 
             result['success'] = True
@@ -2176,7 +2190,8 @@ class OverlayManager:
     def _update_overlay_state(self, media_item_id: int, status: str, reason: str = None,
                              poster_hash: str = None, metadata_hash: str = None,
                              layout_hash: str = None, content_hash: str = None,
-                             plex_upload_hash: str = None, textless_poster_used: bool = None):
+                             plex_upload_hash: str = None, textless_poster_used: bool = None,
+                             plex_thumb_url: str = None):
         """Update or insert overlay state in database (single ON CONFLICT upsert)."""
         import time as _time
         last_exc = None
@@ -2188,12 +2203,12 @@ class OverlayManager:
                     INSERT INTO media_overlay_state
                         (media_item_id, status, reason,
                          last_poster_hash, last_metadata_hash, last_layout_hash, last_content_hash,
-                         last_plex_upload_hash, textless_poster_used,
+                         last_plex_upload_hash, textless_poster_used, plex_thumb_url,
                          overlay_applied_at, last_retry, retry_count,
                          created_at, updated_at)
                     VALUES (?, ?, ?,
                             ?, ?, ?, ?,
-                            ?, ?,
+                            ?, ?, ?,
                             CASE WHEN ? = 'applied' THEN CURRENT_TIMESTAMP ELSE NULL END,
                             CASE WHEN ? = 'failed'  THEN CURRENT_TIMESTAMP ELSE NULL END,
                             CASE WHEN ? IN ('failed', 'analyzing') THEN 1 ELSE 0 END,
@@ -2207,6 +2222,7 @@ class OverlayManager:
                         last_content_hash     = COALESCE(excluded.last_content_hash,     last_content_hash),
                         last_plex_upload_hash = COALESCE(excluded.last_plex_upload_hash, last_plex_upload_hash),
                         textless_poster_used  = COALESCE(excluded.textless_poster_used,  textless_poster_used),
+                        plex_thumb_url        = COALESCE(excluded.plex_thumb_url,        plex_thumb_url),
                         overlay_applied_at = CASE WHEN excluded.status = 'applied'
                                                   THEN CURRENT_TIMESTAMP
                                                   ELSE overlay_applied_at END,
@@ -2219,7 +2235,7 @@ class OverlayManager:
                         updated_at         = CURRENT_TIMESTAMP
                 ''', (media_item_id, status, reason,
                       poster_hash, metadata_hash, layout_hash, content_hash,
-                      plex_upload_hash, _textless_int,
+                      plex_upload_hash, _textless_int, plex_thumb_url,
                       status, status, status))
                 conn.commit()
                 conn.close()
@@ -2864,12 +2880,34 @@ class OverlayManager:
                     self.logger.info(
                         f"Using backed-up season poster for {season_plex_rating_key}")
             else:
-                # No backup — try TMDB season images (English-only) first, then fall back to media server.
+                # No backup — try TVDB (if key configured) → TMDB → media server.
                 poster_image = None
                 from utilities.settings import get_setting as _get_setting
-                _resolved_tmdb_id = show_tmdb_id
+
+                # TVDB season poster — primary source when API key is present
+                if show_imdb_id:
+                    try:
+                        from cli_battery.app.tvdb_client import get_season_poster_url as _tvdb_season_poster
+                        from cli_battery.app.tvdb_client import is_available as _tvdb_available
+                        if _tvdb_available():
+                            _tvdb_url = _tvdb_season_poster(show_imdb_id, season_number)
+                            if _tvdb_url:
+                                import requests as _tvdb_rq
+                                from PIL import Image as _Image
+                                from io import BytesIO as _BytesIO
+                                _tvdb_resp = _tvdb_rq.get(_tvdb_url, timeout=15)
+                                _tvdb_resp.raise_for_status()
+                                poster_image = _Image.open(_BytesIO(_tvdb_resp.content))
+                                poster_image.load()
+                                self.logger.info(
+                                    f"Using TVDB English season poster for {season_plex_rating_key} "
+                                    f"(season {season_number}, imdb={show_imdb_id})")
+                    except Exception as _tvdb_err:
+                        self.logger.debug(f"TVDB season poster fetch failed: {_tvdb_err}")
+                # TMDB season poster — fallback when TVDB unavailable or no English poster found
+                _resolved_tmdb_id = show_tmdb_id if not poster_image else None
                 # If tmdb_id is missing from DB but we have imdb_id, resolve via TMDB find API.
-                if not _resolved_tmdb_id and show_imdb_id:
+                if not poster_image and not _resolved_tmdb_id and show_imdb_id:
                     try:
                         import requests as _rq_find
                         _find_api_key = _get_setting('TMDB', 'api_key', default='')
@@ -2889,7 +2927,7 @@ class OverlayManager:
                     except Exception as _find_err:
                         self.logger.debug(f"TMDB find lookup failed for {show_imdb_id}: {_find_err}")
 
-                if _resolved_tmdb_id:
+                if not poster_image and _resolved_tmdb_id:
                     try:
                         import requests as _requests
                         from PIL import Image as _Image
