@@ -273,7 +273,7 @@ def update_torrent_tracking(
         return True
         
     except Exception as e:
-        logging.error(f"Error updating torrent tracking record: {e}")
+        logging.debug(f"Error updating torrent tracking record: {e}")
         raise
     finally:
-        conn.close() 
+        conn.close()

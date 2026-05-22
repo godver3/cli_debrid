@@ -217,6 +217,21 @@
                    placeholder="/decypharr_data">
             <p class="settings-description">Path to Decypharr's data directory inside the container. Add <code>- /path/to/decypharr/appdata:/decypharr_data</code> to your docker-compose volumes, then set this to <code>/decypharr_data</code>. Required for Decypharr DB backup, restore, and cleanup tools.</p>
         </div>
+        <div class="settings-form-group">
+            <label for="usenet_provider-retention_days" class="settings-title">Usenet Retention Days:</label>
+            <input type="number" id="usenet_provider-retention_days" name="Usenet Provider.retention_days"
+                   value="{{ settings.get('Usenet Provider', {}).get('retention_days', 1500) }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="retention_days"
+                   min="0" placeholder="1500">
+            <p class="settings-description">Maximum age of NZB results in days. Results older than this are filtered out at search time and never submitted to Decypharr. Set to 0 to disable. Applies everywhere NZB indexers are searched (queue, scraper results, upgrade hub, repair).</p>
+        </div>
+        <div class="settings-form-group">   
+            <label for="usenet_provider-enable_nzb_naming" class="settings-title">Enable NZB File Naming:</label>
+            <input type="checkbox" id="usenet_provider-enable_nzb_naming" name="Usenet Provider.enable_nzb_naming"
+                   data-section="Usenet Provider" data-key="enable_nzb_naming"
+                   {% if settings.get('Usenet Provider', {}).get('enable_nzb_naming') %}checked{% endif %}>
+            <p class="settings-description">Names NZB jobs submitted to Decypharr using a structured format: <code>{title} ({year}) - {imdb-id} - {version} - (original)</code> for movies and <code>{title} ({year}) - SxxExx - {episode title} - {imdb-id} - {version} - (original)</code> for episodes. This becomes the folder and filename in Decypharr.</p>
+        </div>
     </div>
 </div>
 

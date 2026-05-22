@@ -516,26 +516,51 @@ class TorrentProcessor:
             logging.warning(f'[{item_identifier}] NZB result has no URL, skipping')
             return None
 
+        # Build structured job title if NZB naming is enabled.
+        # Must happen BEFORE the dedup check so we check the actual submitted name.
+        try:
+            from routes.scraper_routes import _build_nzb_title
+            _item_type = (item or {}).get('type', '')
+            _media_type = 'tv' if _item_type == 'episode' else _item_type
+            # Season packs (one NZB for whole season) must NOT include SxxExx in the job title.
+            # All episodes in Scraping that share the same pack NZB must produce the identical
+            # Decypharr job name so they land in a single folder and the dedup check fires.
+            # Detection: parsed_info has seasons but no episodes (PTT leaves episodes empty for packs).
+            _parsed = result.get('parsed_info', {}) or {}
+            _parsed_seasons = _parsed.get('seasons') or []
+            _parsed_episodes = _parsed.get('episodes') or []
+            _is_season_pack = bool(_parsed_seasons) and not _parsed_episodes
+            job_title = _build_nzb_title(
+                title=(item or {}).get('title', '') or title,
+                year=(item or {}).get('year', ''),
+                imdb_id=(item or {}).get('imdb_id'),
+                version=(item or {}).get('version', ''),
+                original_scraped_torrent_title=title,
+                media_type=_media_type,
+                season=(item or {}).get('season_number'),
+                episode=None if _is_season_pack else (item or {}).get('episode_number'),
+                episode_title=None if _is_season_pack else (item or {}).get('episode_title'),
+            ) or title
+        except Exception:
+            job_title = title
+
         # Check if same NZB title already in Decypharr to avoid duplicates
         try:
-            existing_status = client.get_job_status(title)
-            if not existing_status or existing_status.get('state') != 'completed':
-                # Also check browse API for existing entry
-                from routes.api_tracker import api as _check_api
-                from utilities.settings import get_setting as _gs_check
-                _dcy_url = _gs_check('Usenet Provider', 'url', default='').rstrip('/')
-                _dcy_token = _gs_check('Usenet Provider', 'api_token', default='')
-                _ch = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
-                _er = _check_api.get(f'{_dcy_url}/api/browse/torrents', headers=_ch,
-                                     params={'search': title[:50]}, timeout=5)
-                if _er.status_code == 200:
-                    _existing = _er.json().get('entries', [])
-                    for _e in _existing:
-                        if _e.get('name', '') == title:
-                            logging.info(f'[{item_identifier}] NZB already in Decypharr: {title} — reusing job')
-                            return {'id': _e.get('info_hash', ''), 'filename': title, 'original_title': title,
-                                    'status': 'downloading', 'files': [], 'progress': 0,
-                                    '_provider': 'Decypharr', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+            from routes.api_tracker import api as _check_api
+            from utilities.settings import get_setting as _gs_check
+            _dcy_url = _gs_check('Usenet Provider', 'url', default='').rstrip('/')
+            _dcy_token = _gs_check('Usenet Provider', 'api_token', default='')
+            _ch = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
+            _er = _check_api.get(f'{_dcy_url}/api/browse/torrents', headers=_ch,
+                                 params={'search': job_title[:50]}, timeout=5)
+            if _er.status_code == 200:
+                _existing = _er.json().get('entries', [])
+                for _e in _existing:
+                    if _e.get('name', '') == job_title:
+                        logging.info(f'[{item_identifier}] NZB already in Decypharr: {job_title} — reusing job')
+                        return {'id': _e.get('info_hash', ''), 'filename': job_title, 'original_title': job_title,
+                                'status': 'downloading', 'files': [], 'progress': 0,
+                                '_provider': 'Decypharr', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
         except Exception:
             pass
 
@@ -553,28 +578,28 @@ class TorrentProcessor:
         except Exception as _nzb_check_err:
             logging.debug(f'[{item_identifier}] Could not pre-check NZB segment: {_nzb_check_err}')
 
-        logging.info(f'[{item_identifier}] Submitting NZB to Decypharr: {title}')
+        logging.info(f'[{item_identifier}] Submitting NZB to Decypharr: {job_title}')
         if _nzb_xml:
-            job_id = client.add_nzb_content(nzb_content=_nzb_xml, title=title)
+            job_id = client.add_nzb_content(nzb_content=_nzb_xml, title=job_title)
             if not job_id and client.last_missing_segments:
-                logging.warning(f'[{item_identifier}] Decypharr server missing segments for {title!r} — check Decypharr Usenet server config')
+                logging.warning(f'[{item_identifier}] Decypharr server missing segments for {job_title!r} — check Decypharr Usenet server config')
                 return None
         else:
-            job_id = client.add_nzb(nzb_url=nzb_url, title=title)
+            job_id = client.add_nzb(nzb_url=nzb_url, title=job_title)
 
         if not job_id:
             # Fallback: download NZB and upload directly
-            logging.info(f'[{item_identifier}] URL submission failed, trying direct upload: {title}')
+            logging.info(f'[{item_identifier}] URL submission failed, trying direct upload: {job_title}')
             try:
                 from routes.api_tracker import api as _nzb_api
                 _r = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
                 if _r.status_code == 200 and '<nzb' in _r.text.lower():
-                    job_id = client.add_nzb_content(nzb_content=_r.text, title=title)
+                    job_id = client.add_nzb_content(nzb_content=_r.text, title=job_title)
                     if not job_id and client.last_missing_segments:
-                        logging.warning(f'[{item_identifier}] Decypharr server missing segments on fallback for {title!r}')
+                        logging.warning(f'[{item_identifier}] Decypharr server missing segments on fallback for {job_title!r}')
                         return None
                     if job_id:
-                        logging.info(f'[{item_identifier}] Direct upload succeeded: {title}')
+                        logging.info(f'[{item_identifier}] Direct upload succeeded: {job_title}')
             except Exception as _fe:
                 logging.warning(f'[{item_identifier}] Direct upload fallback failed: {_fe}')
 
@@ -583,7 +608,7 @@ class TorrentProcessor:
             return None
 
         # Verify job is actually in Decypharr's queue — brief wait for processing
-        time.sleep(3)
+        time.sleep(1)
         status = client.get_job_status(job_id)
         if status and status.get('state') == 'failed':
             logging.warning(f'[{item_identifier}] Decypharr failed NZB immediately after submission: {title} (job_id={job_id})')
@@ -603,8 +628,8 @@ class TorrentProcessor:
         # Return a synthetic torrent_info dict so the caller can treat this like a torrent result
         torrent_info = {
             'id': job_id,
-            'filename': title,
-            'original_title': title,  # NZB release name — used as original_scraped_torrent_title
+            'filename': job_title,
+            'original_title': title,  # original NZB release name preserved for reference
             'status': 'downloading',
             'files': [],
             'progress': 0,

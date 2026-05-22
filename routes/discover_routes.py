@@ -3502,6 +3502,15 @@ def trakt_mylist(slug):
         return jsonify({'success': False, 'results': [], 'error': str(e)}), 500
 
 
+@discover_bp.route('/api/flixpatrol/cache/clear', methods=['POST'])
+@user_required
+def flixpatrol_cache_clear():
+    """Clear the FlixPatrol in-memory cache."""
+    with _flixpatrol_cache_lock:
+        _flixpatrol_cache.clear()
+    return jsonify({'success': True, 'message': 'FlixPatrol cache cleared'})
+
+
 @discover_bp.route('/api/flixpatrol/platforms')
 @user_required
 def flixpatrol_platforms():
@@ -3671,12 +3680,13 @@ def flixpatrol_top10(platform):
             'total_results': len(enriched_items)
         }
 
-        # Store in cache
-        with _flixpatrol_cache_lock:
-            _flixpatrol_cache[fp_cache_key] = {
-                'data': response_data,
-                'expires': datetime.now() + _FLIXPATROL_TTL,
-            }
+        # Only cache if we actually got results — don't poison cache with empty/error responses
+        if enriched_items:
+            with _flixpatrol_cache_lock:
+                _flixpatrol_cache[fp_cache_key] = {
+                    'data': response_data,
+                    'expires': datetime.now() + _FLIXPATROL_TTL,
+                }
 
         return jsonify(response_data)
 
@@ -3786,11 +3796,12 @@ def flixpatrol_top10_weekly(platform):
             'results': enriched_items,
             'total_results': len(enriched_items),
         }
-        with _flixpatrol_cache_lock:
-            _flixpatrol_cache[fp_cache_key] = {
-                'data': response_data,
-                'expires': datetime.now() + _FLIXPATROL_WEEKLY_TTL,
-            }
+        if enriched_items:
+            with _flixpatrol_cache_lock:
+                _flixpatrol_cache[fp_cache_key] = {
+                    'data': response_data,
+                    'expires': datetime.now() + _FLIXPATROL_WEEKLY_TTL,
+                }
         return jsonify(response_data)
 
     except Exception as e:
@@ -4111,11 +4122,12 @@ def _prewarm_discover_cache():
                         'results': enriched_items,
                         'total_results': len(enriched_items),
                     }
-                    with _flixpatrol_cache_lock:
-                        _flixpatrol_cache[fp_cache_key] = {
-                            'data': response_data,
-                            'expires': datetime.now() + _FLIXPATROL_TTL,
-                        }
+                    if enriched_items:
+                        with _flixpatrol_cache_lock:
+                            _flixpatrol_cache[fp_cache_key] = {
+                                'data': response_data,
+                                'expires': datetime.now() + _FLIXPATROL_TTL,
+                            }
                     logging.info(f"[Prewarm] FlixPatrol {platform_key}: {len(enriched_items)} items cached")
                 except Exception as e:
                     logging.warning(f"[Prewarm] FlixPatrol {platform_key} failed: {e}")

@@ -227,7 +227,15 @@ def fetch_top10(
     try:
         logging.info(f"[FlixPatrol] Fetching {platform_name} Top 10 from: {url}")
 
-        response = requests.get(url, headers=HEADERS, timeout=15, allow_redirects=True)
+        # Use a session to carry cookies — FlixPatrol requires a homepage visit first
+        session = requests.Session()
+        session.headers.update(HEADERS)
+        try:
+            session.get('https://flixpatrol.com/', timeout=10, allow_redirects=True)
+        except Exception:
+            pass
+        session.headers.update({'Referer': 'https://flixpatrol.com/'})
+        response = session.get(url, timeout=15, allow_redirects=True)
         response.raise_for_status()
 
         # Parse HTML
@@ -272,7 +280,7 @@ def fetch_top10(
             else:
                 logging.info(f"[FlixPatrol] No US results for {platform_name}, falling back to global")
                 try:
-                    fb_resp = requests.get(fallback_url, headers=HEADERS, timeout=15, allow_redirects=True)
+                    fb_resp = session.get(fallback_url, timeout=15, allow_redirects=True)
                     fb_resp.raise_for_status()
                     fb_soup = BeautifulSoup(fb_resp.text, 'html.parser')
                     if media_type in ['all', 'movie']:

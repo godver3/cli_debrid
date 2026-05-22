@@ -154,6 +154,11 @@ def _parse_items(items: List[ET.Element], instance: str) -> List[Dict]:
             'original_title': title,
         }
 
+        # Skip results outside usenet retention window
+        from scraper.newznab import _get_retention_days, _is_within_retention_days
+        if not _is_within_retention_days(pub_date, _get_retention_days()):
+            continue
+
         results.append({
             'title': title,
             'original_title': title,
