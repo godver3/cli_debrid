@@ -153,16 +153,31 @@ class DecypharrClient:
             logging.error(f'[Decypharr] add_nzb exception: {exc}')
             return None
 
-    def _find_nzb_folder(self, job_norm: str) -> Optional[str]:
-        """Paginate /api/browse/nzbs to find a folder matching job_norm."""
+    def _find_nzb_folder(self, job_norm: str, original_name: str = '') -> Optional[str]:
+        """Find a Decypharr NZB folder by name.
+        Tries direct URL lookup first (fast, single request).
+        Falls back to paginated search only if direct lookup fails.
+        """
         def _norm(s):
             return re.sub(r'[^a-z0-9]', '', s.lower())
+
+        # Fast path: try direct URL with the original (un-normalised) name
+        if original_name:
+            try:
+                r = api.get(f'{self.base_url}/api/browse/nzbs/{original_name}',
+                            headers=self._headers(), timeout=10)
+                if r.status_code == 200:
+                    return original_name
+            except Exception:
+                pass
+
+        # Slow path: paginate /api/browse/nzbs (only reached if direct lookup missed)
         try:
             page = 1
             while True:
                 r = api.get(f'{self.base_url}/api/browse/nzbs',
                             headers=self._headers(), timeout=15,
-                            params={'page': page})
+                            params={'page': page, 'limit': 100})
                 if r.status_code != 200:
                     break
                 data = r.json()
@@ -214,7 +229,7 @@ class DecypharrClient:
         job_norm = _norm(job_name)
 
         try:
-            folder_name = self._find_nzb_folder(job_norm)
+            folder_name = self._find_nzb_folder(job_norm, original_name=job_name)
             if not folder_name:
                 logging.debug(f'[Decypharr] No folder found for job {job_name!r}')
                 return None
@@ -258,7 +273,7 @@ class DecypharrClient:
 
         job_norm = _norm(job_name)
         try:
-            folder_name = self._find_nzb_folder(job_norm)
+            folder_name = self._find_nzb_folder(job_norm, original_name=job_name)
             if not folder_name:
                 return None
             video_files = sorted([name for name, _ in self._list_nzb_folder_files(folder_name)])

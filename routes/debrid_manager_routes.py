@@ -2132,6 +2132,8 @@ def api_usage():
     try:
         from datetime import datetime
         provider = get_debrid_provider()
+        if not provider:
+            return jsonify({'error': 'No debrid provider configured'}), 503
         sub = provider.get_subscription_status()
 
         # Get traffic data via provider abstraction (handles RD and AllDebrid differences)
@@ -5148,6 +5150,68 @@ def usenet_repair_progress():
         is_running=is_running,
         **_repair_progress,
     )
+
+
+@debrid_manager_bp.route('/api/usenet/repair/delete_all_broken', methods=['POST'])
+def usenet_delete_all_broken():
+    """Delete all broken NZBs from Decypharr, Plex, and reset CLI DB items to Wanted."""
+    try:
+        from usenet.repair_engine import (
+            fetch_broken_items, _find_db_items_by_entry_name,
+            _delete_from_decypharr, _delete_from_plex,
+        )
+        from database.database_writing import update_media_item_state
+        from database.not_wanted_magnets import add_to_not_wanted_nzb_guid
+
+        broken = fetch_broken_items()
+        if not broken:
+            return jsonify(success=True, message='No broken items found', deleted_decypharr=0, deleted_plex=0, reset_db=0)
+
+        deleted_decypharr = 0
+        deleted_plex = 0
+        reset_db = 0
+
+        for entry in broken:
+            info_hash = entry.get('info_hash', '')
+            entry_name = entry.get('entry_name', '') or entry.get('name', '')
+
+            # Delete from Decypharr first
+            if _delete_from_decypharr(info_hash, entry_name):
+                deleted_decypharr += 1
+
+            # Find matching DB items
+            db_items = _find_db_items_by_entry_name(entry_name) if entry_name else []
+
+            if db_items:
+                for item in db_items:
+                    # Delete from Plex
+                    if _delete_from_plex(item):
+                        deleted_plex += 1
+                    # Reset to Wanted so it re-scrapes
+                    try:
+                        update_media_item_state(item['id'], 'Wanted')
+                        reset_db += 1
+                    except Exception as _dbe:
+                        logging.warning(f'[DeleteBroken] DB reset failed for item {item.get("id")}: {_dbe}')
+                    # Blacklist broken NZB URL so it won't be re-submitted
+                    nzb_url = item.get('filled_by_magnet') or item.get('link', '')
+                    if nzb_url:
+                        try:
+                            add_to_not_wanted_nzb_guid(nzb_url)
+                        except Exception:
+                            pass
+
+        msg = (f'Deleted {deleted_decypharr} from Decypharr, '
+               f'{deleted_plex} from Plex, '
+               f'{reset_db} items reset to Wanted.')
+        logging.info(f'[DeleteBroken] {msg}')
+        return jsonify(success=True, message=msg,
+                       deleted_decypharr=deleted_decypharr,
+                       deleted_plex=deleted_plex,
+                       reset_db=reset_db)
+    except Exception as e:
+        logging.error(f'[DeleteBroken] Error: {e}', exc_info=True)
+        return jsonify(success=False, error=str(e))
 
 
 @debrid_manager_bp.route('/api/usenet/repair/settings', methods=['GET'])

@@ -3103,15 +3103,14 @@ class OverlayManager:
                 f"show={show_plex_rating_key} season={season_number}")
 
         except Exception as e:
-            self.logger.error(
-                f"Failed to generate season overlay for {season_plex_rating_key}: {e}",
-                exc_info=True)
             result['status'] = 'error'
             result['message'] = str(e)
             # 404 means the Plex ratingKey no longer exists (stale after library rescan).
             # Delete the row so it stops being retried — it will be re-registered with
             # the new ratingKey on the next sync.
             if '404' in str(e):
+                self.logger.warning(
+                    f"Season overlay skipped for {season_plex_rating_key} — stale Plex key (404), will re-sync")
                 try:
                     from database.core import get_db_connection
                     _conn = get_db_connection()
@@ -3125,6 +3124,9 @@ class OverlayManager:
                 except Exception:
                     pass
             else:
+                self.logger.error(
+                    f"Failed to generate season overlay for {season_plex_rating_key}: {e}",
+                    exc_info=True)
                 try:
                     self._update_season_overlay_state(
                         show_plex_rating_key, season_plex_rating_key, season_number,

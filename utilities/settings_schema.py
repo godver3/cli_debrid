@@ -442,6 +442,13 @@ SETTINGS_SCHEMA = {
             "description": "Enable pausing the queue during a scheduled time frame",
             "default": False
         },
+        "queue_pool_workers": {
+            "type": "integer",
+            "description": "Number of concurrent worker threads for queue processing tasks (Adding, Checking, Scraping etc.). Higher values process more items in parallel but use more CPU/memory. Recommended: 1 for slow/older machines, 2 for normal, 3 for fast machines. Takes effect after saving (no restart required).",
+            "default": 2,
+            "min": 1,
+            "max": 3
+        },
         "pause_start_time": {
             "type": "string",
             "description": "Start time for scheduled queue pause (HH:MM format)",

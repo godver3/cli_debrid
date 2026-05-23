@@ -225,13 +225,15 @@
                    min="0" placeholder="1500">
             <p class="settings-description">Maximum age of NZB results in days. Results older than this are filtered out at search time and never submitted to Decypharr. Set to 0 to disable. Applies everywhere NZB indexers are searched (queue, scraper results, upgrade hub, repair).</p>
         </div>
-        <div class="settings-form-group">   
+        {% if settings.get('File Management', {}).get('file_collection_management', '') != 'Symlinked/Local' %}
+        <div class="settings-form-group">
             <label for="usenet_provider-enable_nzb_naming" class="settings-title">Enable NZB File Naming:</label>
             <input type="checkbox" id="usenet_provider-enable_nzb_naming" name="Usenet Provider.enable_nzb_naming"
                    data-section="Usenet Provider" data-key="enable_nzb_naming"
                    {% if settings.get('Usenet Provider', {}).get('enable_nzb_naming') %}checked{% endif %}>
             <p class="settings-description">Names NZB jobs submitted to Decypharr using a structured format: <code>{title} ({year}) - {imdb-id} - {version} - (original)</code> for movies and <code>{title} ({year}) - SxxExx - {episode title} - {imdb-id} - {version} - (original)</code> for episodes. This becomes the folder and filename in Decypharr.</p>
         </div>
+        {% endif %}
     </div>
 </div>
 
