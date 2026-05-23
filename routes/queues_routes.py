@@ -118,29 +118,18 @@ def get_queue_contents_with_progressive_fallback(queue_manager, max_time=20):
             elif hasattr(queue, '__len__'):
                 count = len(queue)
             else:
-                # For database-backed queues, try to get count with timeout protection
+                # For database-backed queues, use a non-blocking read so a locked DB
+                # (e.g. add_collected_items holding BEGIN IMMEDIATE) never stalls the page load
                 if queue_name in ['Wanted', 'Blacklisted', 'Unreleased']:
-                    count_start = time.time()
-                    from database.database_reading import get_item_count_by_state
-                    count = get_item_count_by_state(queue_name)
-                    count_time = time.time() - count_start
-
-                    # Log timing for debugging
-                    if count_time > 0.1:  # Log queries that take more than 100ms
-                        logging.debug(f"[QUEUE_ROUTES] Count query for {queue_name} took {count_time:.3f}s (result: {count})")
-
-                    # If a single count query takes too long, skip database counts entirely
-                    if count_time > 1.0:  # More than 1 second for one count
-                        logging.warning(f"[QUEUE_ROUTES] Count query for {queue_name} took {count_time:.3f}s, skipping remaining database counts")
-                        # Return what we have so far and mark as minimal
-                        for remaining_queue in ['Wanted', 'Blacklisted', 'Unreleased']:
-                            if remaining_queue not in quick_summary:
-                                quick_summary[remaining_queue] = {'count': 0, 'loaded': False, 'items': []}
-                        # Convert to expected format - empty lists for all queues
-                        minimal_result = {}
-                        for queue_name in quick_summary.keys():
-                            minimal_result[queue_name] = []
-                        return minimal_result, "minimal"
+                    try:
+                        import sqlite3 as _sqlite3, os as _os
+                        _db_path = _os.path.join(_os.environ.get('USER_DB_CONTENT', '/user/db_content'), 'media_items.db')
+                        _rc = _sqlite3.connect(_db_path, timeout=0)
+                        _rc.row_factory = _sqlite3.Row
+                        count = _rc.execute("SELECT COUNT(*) FROM media_items WHERE state=?", (queue_name,)).fetchone()[0]
+                        _rc.close()
+                    except Exception:
+                        count = 0
                 else:
                     count = 0
 
@@ -178,13 +167,17 @@ def get_queue_contents_with_progressive_fallback(queue_manager, max_time=20):
                 continue
 
             # Get full contents for in-memory queues
-            items = queue.get_contents()
+            # Checking queue: skip live API calls on page render — SSE stream handles live progress
+            if queue_name == 'Checking' and hasattr(queue, 'get_contents'):
+                items = queue.get_contents(raw=True)
+            else:
+                items = queue.get_contents()
             quick_summary[queue_name]['items'] = items
             quick_summary[queue_name]['loaded'] = True
 
             queue_time = time.time() - queue_start
-            if queue_time > 2.0:  # Log slow queues
-                logging.debug(f"[QUEUE_ROUTES] Queue {queue_name} took {queue_time:.3f}s ({len(items)} items)")
+            if queue_time > 0.5:
+                logging.info(f"[QUEUE_ROUTES] Queue {queue_name} took {queue_time:.3f}s ({len(items)} items)")
 
             # Check if we're approaching the time limit
             elapsed = time.time() - start_time
@@ -200,7 +193,7 @@ def get_queue_contents_with_progressive_fallback(queue_manager, max_time=20):
     full_load_time = time.time() - full_load_start
     total_time = time.time() - start_time
 
-    logging.debug(f"[QUEUE_ROUTES] Full queue loading took {full_load_time:.3f}s (total: {total_time:.3f}s)")
+    logging.info(f"[QUEUE_ROUTES] Full queue loading took {full_load_time:.3f}s (total: {total_time:.3f}s)")
 
     # Convert to the expected format for compatibility
     final_result = {}
@@ -250,7 +243,13 @@ def can_check_torrent_status(torrent_id: str) -> bool:
         last_check = _torrent_status_rate_limiter['last_check'][torrent_id]
         min_interval = get_torrent_status_check_interval()
         current_time = time.time()
-        
+
+        if last_check == 0.0:
+            # Never checked — register now but skip this cycle so the first SSE
+            # cycle doesn't make N simultaneous API calls and stall for 30s.
+            _torrent_status_rate_limiter['last_check'][torrent_id] = current_time
+            return False
+
         if current_time - last_check >= min_interval:
             _torrent_status_rate_limiter['last_check'][torrent_id] = current_time
             return True
@@ -262,14 +261,11 @@ def get_torrent_status_with_rate_limiting(torrent_id: str, queue_manager) -> Dic
     cached_status = get_cached_torrent_status(torrent_id, queue_manager)
     if cached_status:
         return cached_status
-    
-    # Check rate limiting
+
+    # Check rate limiting — on cache miss with no rate limit token, return defaults
+    # immediately rather than making a live API call. This prevents the first SSE
+    # cycle from making N simultaneous API calls and stalling for 30s.
     if not can_check_torrent_status(torrent_id):
-        # Return cached data even if expired, or default values
-        if cached_status:
-            logging.debug(f"Rate limited torrent status check for {torrent_id}, using cached data")
-            return cached_status
-        logging.debug(f"Rate limited torrent status check for {torrent_id}, using default values")
         return {'progress': 0, 'state': 'unknown'}
     
     try:
@@ -313,6 +309,24 @@ def get_rate_limiting_stats() -> Dict:
 
 queues_bp = Blueprint('queues', __name__)
 queue_manager = QueueManager()
+
+
+@queues_bp.route('/api/queue_workers', methods=['POST'])
+@onboarding_required
+def save_queue_workers():
+    """Save queue_pool_workers setting and reinitialize only the APScheduler — no full restart."""
+    try:
+        data = request.get_json(silent=True) or {}
+        workers = int(data.get('workers', 2))
+        workers = max(1, min(3, workers))
+
+        from utilities.settings import set_setting
+        set_setting('Queue', 'queue_pool_workers', workers)
+        logging.info(f'[QueueWorkers] queue_pool_workers saved as {workers} — takes effect on next restart')
+        return jsonify(success=True, workers=workers, message=f'Queue workers set to {workers}. Takes effect on next restart.')
+    except Exception as e:
+        logging.error(f'[QueueWorkers] Error: {e}')
+        return jsonify(success=False, error=str(e))
 
 # Cache settings to avoid repeated database/file reads
 _settings_cache = {}
@@ -481,22 +495,14 @@ def index():
                 item['upgrades_found'] = item.get('upgrades_found', 0)
         elif queue_name == 'Checking':
             for item in items:
-                # Skip if item is not a dictionary
                 if not isinstance(item, dict):
-                    logging.warning(f"[QUEUE_ROUTES] Skipping non-dict item in {queue_name}: {type(item)}")
                     continue
-
                 item['time_added'] = item.get('time_added', datetime.now())
                 item['filled_by_file'] = item.get('filled_by_file', 'Unknown')
                 item['filled_by_torrent_id'] = item.get('filled_by_torrent_id', 'Unknown')
+                # Don't make live API calls on page render — SSE stream populates progress
                 item['progress'] = item.get('progress', 0)
                 item['state'] = item.get('state', 'unknown')
-                # Use the cached progress information instead of making direct API calls
-                if item.get('filled_by_torrent_id') and item['filled_by_torrent_id'] != 'Unknown':
-                    # Use rate-limited function to prevent API bombardment
-                    status_data = get_torrent_status_with_rate_limiting(item['filled_by_torrent_id'], queue_manager)
-                    item['progress'] = status_data['progress']
-                    item['state'] = status_data['state']
         elif queue_name == 'Sleeping':
             for item in items:
                 # Skip if item is not a dictionary
@@ -566,7 +572,9 @@ def index():
 
     template_start = time.time()
     upgrading_queue = queue_contents.get('Upgrading', [])
-    response = render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue, program_status=program_status)
+    from utilities.settings import get_setting as _qs
+    _queue_pool_workers = int(_qs('Queue', 'queue_pool_workers', 2))
+    response = render_template('queues.html', queue_contents=queue_contents, upgrading_queue=upgrading_queue, program_status=program_status, queue_pool_workers=_queue_pool_workers)
     template_time = time.time() - template_start
     logging.debug(f"[QUEUE_ROUTES] Template rendering took {template_time:.3f}s")
     

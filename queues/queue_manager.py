@@ -325,7 +325,11 @@ class QueueManager:
         """
         contents = OrderedDict()
         for state, queue in self.queues.items():
-            contents[state] = queue.get_contents()
+            # Checking queue: skip live API calls — SSE stream handles progress separately
+            if state == 'Checking' and hasattr(queue, 'get_contents'):
+                contents[state] = queue.get_contents(raw=True)
+            else:
+                contents[state] = queue.get_contents()
         return contents
 
     @staticmethod

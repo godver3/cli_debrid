@@ -150,8 +150,13 @@ def get_cached_download_stats():
         try:
             # Add timeout protection for provider initialization
             provider = get_debrid_provider()
+            if not provider:
+                download_stats_cache['active_downloads'] = {'count': 0, 'limit': 0, 'percentage': 0, 'status': 'error', 'error': 'no_provider'}
+                download_stats_cache['usage_stats'] = {'used': '0', 'limit': '0', 'percentage': 0, 'error': 'no_provider'}
+                download_stats_cache['last_update'] = current_time
+                return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
             logging.debug("Debrid provider initialized successfully")
-            
+
             # Get active downloads with timeout protection
             try:
                 logging.debug("Fetching active downloads...")
@@ -271,8 +276,8 @@ def get_cached_download_stats():
             download_stats_cache['last_update'] = current_time
             logging.debug("Download stats cache updated successfully")
             
-        except ProviderUnavailableError as e:
-            logging.error(f"Provider unavailable: {str(e)}")
+        except ProviderUnavailableError:
+            pass  # No debrid key configured — expected on usenet-only setups
             if download_stats_cache['active_downloads'] is None:
                 download_stats_cache['active_downloads'] = {
                     'count': 0,
@@ -329,9 +334,10 @@ def get_cached_subscription_status() -> Dict:
         # If we have never populated subscription, or our overall cache TTL expired, refresh
         if (download_stats_cache.get('subscription') is None or
             download_stats_cache['last_update'] + 1800 < current_time):
-            provider = get_debrid_provider()
+            _debrid_key = get_setting('Debrid Provider', 'api_key', default='').strip()
+            provider = get_debrid_provider() if _debrid_key else None
             # Get fresh subscription status from provider
-            subscription = provider.get_subscription_status() if hasattr(provider, 'get_subscription_status') else {
+            subscription = provider.get_subscription_status() if provider and hasattr(provider, 'get_subscription_status') else {
                 'days_remaining': None,
                 'expiration': None,
                 'premium': None

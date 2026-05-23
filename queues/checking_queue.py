@@ -87,6 +87,7 @@ class CheckingQueue:
         self.checking_times = {}
         self.last_check_time = datetime.now()
         self.last_report_time = datetime.now()
+        self._nzb_missing_counts = {}  # tracks consecutive not-found polls per torrent_id
 
     def update(self):
         from database import get_all_media_items
@@ -113,6 +114,8 @@ class CheckingQueue:
             logging.debug(f"New torrent IDs added: {added_torrents}")
         if removed_torrents:
             logging.debug(f"Torrent IDs no longer present: {removed_torrents}")
+            for _tid in removed_torrents:
+                self._nzb_missing_counts.pop(_tid, None)
         
         # Initialize checking times for new items
         for item in self.items:
@@ -120,7 +123,10 @@ class CheckingQueue:
                 self.checking_queue_times[item['id']] = time.time()
                 logging.debug(f"Initialized checking time for item {item['id']} with torrent ID {item.get('filled_by_torrent_id')}")
 
-    def get_contents(self):
+    def get_contents(self, raw=False):
+        # raw=True: skip live API calls, return items as-is (for page render, not SSE stream)
+        if raw:
+            return list(self.items)
         # Add progress and state information to each item
         items_with_info = []
         items_to_remove = []
@@ -457,15 +463,16 @@ class CheckingQueue:
             if not status:
                 # Job not found in Decypharr — track consecutive misses
                 # After 3 consecutive misses declare it missing so handle_missing_torrent fires
-                _key = f'_nzb_missing_{torrent_id}'
-                _count = getattr(self, _key, 0) + 1
-                setattr(self, _key, _count)
+                _count = self._nzb_missing_counts.get(torrent_id, 0) + 1
                 if _count >= 3:
                     logging.warning(f'[NZB] Job {job_id} not found in Decypharr after {_count} checks — declaring missing')
-                    setattr(self, _key, 0)
+                    self._nzb_missing_counts.pop(torrent_id, None)
                     return PROGRESS_RESULT_MISSING
+                self._nzb_missing_counts[torrent_id] = _count
                 logging.debug(f'[NZB] Job {job_id} not found in Decypharr (miss {_count}/3)')
                 return None
+            # Job found — clear any miss counter
+            self._nzb_missing_counts.pop(torrent_id, None)
             raw = status.get('raw', {})
             state = str(raw.get('state', status.get('state', 'unknown'))).lower()
             inner_status = str(raw.get('status', '')).lower()

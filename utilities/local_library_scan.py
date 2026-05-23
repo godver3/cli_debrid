@@ -1356,24 +1356,35 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                 old_filename = item.get('upgrading_from') # Filename of the file being replaced
 
                 if old_torrent_id:
-                    logging.info(f"[UPGRADE] Attempting to remove old torrent {old_torrent_id} via debrid API.")
-                    try:
-                        from debrid import get_debrid_provider
-                        debrid_provider = get_debrid_provider()
-                        # Assuming remove_torrent returns True/False or raises Exception
-                        debrid_provider.remove_torrent(
-                            old_torrent_id,
-                            removal_reason="Removed old torrent after successful upgrade"
-                        )
-                        removal_successful = True # Assume success if no exception
-                        logging.info(f"[UPGRADE] Successfully initiated removal of old torrent {old_torrent_id} via debrid API.")
-                    except Exception as remove_err:
-                        # Check if it's a 404 (Not Found), which might mean it was already deleted
-                        if '404' in str(remove_err):
-                             logging.warning(f"[UPGRADE] Old torrent {old_torrent_id} not found on debrid (likely already removed). Proceeding.")
-                             removal_successful = True # Treat as success
-                        else:
-                            logging.error(f"[UPGRADE] Failed to remove old torrent {old_torrent_id} via debrid API: {remove_err}")
+                    if str(old_torrent_id).startswith('nzb:'):
+                        # NZB jobs are managed by Decypharr, not debrid — skip debrid removal
+                        logging.debug(f"[UPGRADE] Old torrent {old_torrent_id} is an NZB job — skipping debrid removal")
+                        removal_successful = True
+                    else:
+                        logging.info(f"[UPGRADE] Attempting to remove old torrent {old_torrent_id} via debrid API.")
+                        try:
+                            from debrid import get_debrid_provider, ProviderUnavailableError
+                            debrid_provider = get_debrid_provider()
+                            if not debrid_provider:
+                                logging.debug(f"[UPGRADE] No debrid provider configured — skipping torrent removal for {old_torrent_id}")
+                                removal_successful = True
+                            else:
+                                debrid_provider.remove_torrent(
+                                    old_torrent_id,
+                                    removal_reason="Removed old torrent after successful upgrade"
+                                )
+                                removal_successful = True
+                                logging.info(f"[UPGRADE] Successfully initiated removal of old torrent {old_torrent_id} via debrid API.")
+                        except ProviderUnavailableError:
+                            logging.debug(f"[UPGRADE] Debrid provider unavailable — skipping torrent removal for {old_torrent_id}")
+                            removal_successful = True
+                        except Exception as remove_err:
+                            # Check if it's a 404 (Not Found), which might mean it was already deleted
+                            if '404' in str(remove_err):
+                                logging.warning(f"[UPGRADE] Old torrent {old_torrent_id} not found on debrid (likely already removed). Proceeding.")
+                                removal_successful = True
+                            else:
+                                logging.error(f"[UPGRADE] Failed to remove old torrent {old_torrent_id} via debrid API: {remove_err}")
                 else:
                     old_file_path_from_item = item.get('original_path_for_symlink') # Get path from item dict
                     logging.warning(f"[UPGRADE] Old torrent ID is missing for item {item['id']}. Attempting local file deletion using item's original path: '{old_file_path_from_item}'")
@@ -1600,7 +1611,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
                                 from debrid import get_debrid_provider as _get_debrid
                                 from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
                                 import os as _os_scan
-                                _debrid = _get_debrid()
+                                _debrid = _get_debrid()  # May be None in symlink/usenet-only mode
                                 new_torrent_id = item.get('filled_by_torrent_id')
                                 _scan_paths = set()
 

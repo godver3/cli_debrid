@@ -329,13 +329,37 @@ def _delete_from_plex(item: dict) -> bool:
     media_type = item.get('type', 'movie')
     season = item.get('season_number')
     episode = item.get('episode_number')
+    ms_item_id = item.get('ms_item_id')  # Plex ratingKey stored in DB
+    location_on_disk = item.get('location_on_disk')
 
     params = {'X-Plex-Token': plex_token}
     hdrs = {'Accept': 'application/json'}
 
     try:
+        # --- Priority 1: ms_item_id (direct ratingKey — most precise) ---
+        if ms_item_id:
+            r = requests.delete(
+                f'{plex_url}/library/metadata/{ms_item_id}',
+                params=params, timeout=10,
+            )
+            if r.status_code in (200, 204):
+                logger.info(f'[NZBRepair] Deleted from Plex via ms_item_id={ms_item_id}: {title}')
+                return True
+            logger.debug(f'[NZBRepair] ms_item_id delete returned {r.status_code} for {title}, trying fallbacks')
+
+        # --- Priority 2: location_on_disk (file path match via Plex search) ---
+        if location_on_disk:
+            try:
+                from utilities.plex_functions import remove_file_from_plex
+                ep_title = item.get('episode_title') if media_type != 'movie' else None
+                if remove_file_from_plex(title, location_on_disk, ep_title):
+                    logger.info(f'[NZBRepair] Deleted from Plex via location_on_disk: {title} ({location_on_disk})')
+                    return True
+            except Exception as _loc_err:
+                logger.debug(f'[NZBRepair] location_on_disk Plex delete failed for {title!r}: {_loc_err}')
+
+        # --- Priority 3: title + season/episode number (last resort) ---
         if media_type == 'movie':
-            # Search movies
             r = requests.get(
                 f'{plex_url}/library/all',
                 params={**params, 'title': title, 'type': 1},
@@ -346,30 +370,22 @@ def _delete_from_plex(item: dict) -> bool:
                 for m in items:
                     key = m.get('ratingKey', '')
                     if key:
-                        requests.delete(
-                            f'{plex_url}/library/metadata/{key}',
-                            params=params, timeout=10,
-                        )
-                        logger.info(f'[NZBRepair] Deleted from Plex (movie): {title}')
+                        requests.delete(f'{plex_url}/library/metadata/{key}', params=params, timeout=10)
+                        logger.info(f'[NZBRepair] Deleted from Plex via title (movie): {title}')
                         return True
         else:
-            # Search shows → find episode
             r = requests.get(
                 f'{plex_url}/library/all',
                 params={**params, 'title': title, 'type': 2},
                 headers=hdrs, timeout=10,
             )
             if r.status_code == 200:
-                shows = r.json().get('MediaContainer', {}).get('Metadata', [])
-                for show in shows:
+                for show in r.json().get('MediaContainer', {}).get('Metadata', []):
                     show_key = show.get('ratingKey', '')
                     if not show_key:
                         continue
-                    # Get seasons
-                    rs = requests.get(
-                        f'{plex_url}/library/metadata/{show_key}/children',
-                        params=params, headers=hdrs, timeout=10,
-                    )
+                    rs = requests.get(f'{plex_url}/library/metadata/{show_key}/children',
+                                      params=params, headers=hdrs, timeout=10)
                     if rs.status_code != 200:
                         continue
                     for season_meta in rs.json().get('MediaContainer', {}).get('Metadata', []):
@@ -378,21 +394,17 @@ def _delete_from_plex(item: dict) -> bool:
                         season_key = season_meta.get('ratingKey', '')
                         if not season_key:
                             continue
-                        re_ = requests.get(
-                            f'{plex_url}/library/metadata/{season_key}/children',
-                            params=params, headers=hdrs, timeout=10,
-                        )
+                        re_ = requests.get(f'{plex_url}/library/metadata/{season_key}/children',
+                                           params=params, headers=hdrs, timeout=10)
                         if re_.status_code != 200:
                             continue
                         for ep in re_.json().get('MediaContainer', {}).get('Metadata', []):
                             if ep.get('index') == episode:
                                 ep_key = ep.get('ratingKey', '')
                                 if ep_key:
-                                    requests.delete(
-                                        f'{plex_url}/library/metadata/{ep_key}',
-                                        params=params, timeout=10,
-                                    )
-                                    logger.info(f'[NZBRepair] Deleted from Plex (episode): {title} S{season:02d}E{episode:02d}')
+                                    requests.delete(f'{plex_url}/library/metadata/{ep_key}',
+                                                    params=params, timeout=10)
+                                    logger.info(f'[NZBRepair] Deleted from Plex via title (episode): {title} S{season:02d}E{episode:02d}')
                                     return True
     except Exception as e:
         logger.warning(f'[NZBRepair] Plex delete error for {title!r}: {e}')

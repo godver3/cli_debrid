@@ -103,7 +103,7 @@ class RealDebridProvider(DebridProvider):
             from .api import get_api_key
             return get_api_key()
         except Exception as e:
-            logging.error(f"Failed to load API key: {str(e)}", exc_info=True)
+            logging.debug(f"Failed to load API key: {str(e)}")
             raise ProviderUnavailableError(f"Failed to load API key: {str(e)}")
 
     @property
@@ -177,6 +177,8 @@ class RealDebridProvider(DebridProvider):
                 'locale': user_info.get('locale', ''),
                 'type': user_info.get('type', ''),
             }
+        except ProviderUnavailableError:
+            return {'days_remaining': None, 'expiration': None, 'premium': None}
         except Exception as e:
             logging.error(f"Error fetching subscription status: {str(e)}")
             return {
@@ -716,6 +718,8 @@ class RealDebridProvider(DebridProvider):
             
         except TooManyDownloadsError:
             raise
+        except ProviderUnavailableError:
+            raise
         except Exception as e:
             logging.error(f"Error getting active downloads: {str(e)}", exc_info=True)
             raise ProviderUnavailableError(f"Failed to get active downloads: {str(e)}")
@@ -778,6 +782,8 @@ class RealDebridProvider(DebridProvider):
                 logging.exception("Full traceback:")
                 return {'downloaded': 0, 'limit': 2000}
 
+        except ProviderUnavailableError:
+            raise
         except Exception as e:
             logging.error(f"Error getting user traffic: {str(e)}")
             raise ProviderUnavailableError(f"Failed to get user traffic: {str(e)}")
@@ -959,6 +965,8 @@ class RealDebridProvider(DebridProvider):
                 if hash_value in self._all_torrent_ids:
                     del self._all_torrent_ids[hash_value]
 
+        except ProviderUnavailableError:
+            raise
         except Exception as e:
             if "404" in str(e):
                 logging.warning(f"Torrent {torrent_id} already removed from Real-Debrid")
