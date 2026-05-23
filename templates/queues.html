@@ -30,6 +30,15 @@
         <strong>Items per Hour:</strong> <span id="stats-items-per-hour">N/A</span>
         &nbsp;|&nbsp;
         <strong>Estimated Remaining Scrape Time:</strong> <span id="stats-remaining-time">N/A</span>
+        &nbsp;|&nbsp;
+        <strong>Queue Workers:</strong>
+        <select id="queue-workers-select" style="background:#1e1e1e;color:#ccc;border:1px solid #444;border-radius:4px;padding:1px 4px;font-size:12px;">
+            <option value="1">1 (Slow machine)</option>
+            <option value="2" selected>2 (Default)</option>
+            <option value="3">3 (Fast machine)</option>
+        </select>
+        <button id="queue-workers-save-btn" onclick="saveQueueWorkers()" style="background:#e8601c;color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer;margin-left:4px;">Save</button>
+        <span id="queue-workers-status" style="font-size:11px;color:#888;margin-left:4px;"></span>
     </div>
     <!-- Subtle connection status notification -->
     <div id="connection-status" class="connection-status"></div>
@@ -1081,6 +1090,33 @@
     }
 
     // Use it in your setup
+    // Initialize queue workers select from server-rendered value
+    (function() {
+        const sel = document.getElementById('queue-workers-select');
+        if (sel) sel.value = '{{ queue_pool_workers }}';
+    })();
+
+    window.saveQueueWorkers = async function saveQueueWorkers() {
+        const btn = document.getElementById('queue-workers-save-btn');
+        const status = document.getElementById('queue-workers-status');
+        const val = parseInt(document.getElementById('queue-workers-select').value);
+        btn.disabled = true;
+        status.textContent = 'Saving…';
+        try {
+            const r = await fetch('/queues/api/queue_workers', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({'workers': val})
+            });
+            const d = await r.json();
+            status.textContent = d.success ? `✓ Saved — restart to apply` : '✗ Failed: ' + (d.error || '');
+        } catch(e) {
+            status.textContent = '✗ Error';
+        }
+        btn.disabled = false;
+        setTimeout(() => { status.textContent = ''; }, 4000);
+    }
+
     document.addEventListener('DOMContentLoaded', function() {
         console.log('DOMContentLoaded event fired');
         

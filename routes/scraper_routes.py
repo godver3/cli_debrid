@@ -254,15 +254,18 @@ def add_torrent_to_debrid():
         nzb_url = request.form.get('nzb_url', '')
         episode_nzb_urls_raw = request.form.get('episode_nzb_urls', '')
         fallback_nzb_urls_raw = request.form.get('fallback_nzb_urls', '')
+        episode_filenames_raw = request.form.get('episode_filenames', '')
         if protocol == 'nzb' or (nzb_url and not magnet_link) or episode_nzb_urls_raw:
             # Virtual season pack — per-episode NZB URLs
             if episode_nzb_urls_raw:
                 try:
                     episode_nzb_urls = {int(k): v for k, v in json.loads(episode_nzb_urls_raw).items()}
                     fallback_nzb_urls = {int(k): v for k, v in json.loads(fallback_nzb_urls_raw).items()} if fallback_nzb_urls_raw else {}
+                    episode_filenames_ui = {int(k): v for k, v in json.loads(episode_filenames_raw).items()} if episode_filenames_raw else {}
                 except Exception:
                     episode_nzb_urls = {}
                     fallback_nzb_urls = {}
+                    episode_filenames_ui = {}
                 if episode_nzb_urls:
                     return _add_nzb_pack_to_usenet(
                         episode_nzb_urls=episode_nzb_urls,
@@ -271,6 +274,7 @@ def add_torrent_to_debrid():
                         season=season_number,
                         version=final_version_for_item, tmdb_id=tmdb_id,
                         original_scraped_torrent_title=original_scraped_torrent_title,
+                        episode_filenames=episode_filenames_ui,
                         genres=genres, current_score=current_score,
                         selected_folder=selected_folder,
                         selected_folder_is_custom=selected_folder_is_custom,
@@ -1705,11 +1709,17 @@ def select_media():
         return jsonify({'error': 'An error occurred while processing your request'}), 500
 
 def _build_nzb_title(title, year, imdb_id, version, original_scraped_torrent_title,
-                     media_type=None, season=None, episode=None, episode_title=None):
+                     media_type=None, season=None, episode=None, episode_title=None,
+                     pack_original=None):
     """
     Build a structured NZB job title when 'Enable NZB File Naming' is on.
     This becomes both the Decypharr folder name and filename.
     Falls back to original_scraped_torrent_title if setting is off or data missing.
+
+    pack_original: if provided, used for the (original) bracket instead of
+                   original_scraped_torrent_title. Used by NZB aggregate packs so
+                   the bracket always shows the pack quality tags regardless of
+                   per-episode filename availability.
     """
     from utilities.settings import get_setting as _gs
     if not _gs('Usenet Provider', 'enable_nzb_naming', False):
@@ -1724,32 +1734,57 @@ def _build_nzb_title(title, year, imdb_id, version, original_scraped_torrent_tit
     _year = _san(year)
     _imdb = _san(imdb_id) if imdb_id else ''
     _version = _san(version).strip('*') if version else ''
-    _orig = _san(os.path.splitext(original_scraped_torrent_title or '')[0])
+    # (original) bracket uses pack_original when provided, else original_scraped_torrent_title
+    _orig = _san(pack_original or original_scraped_torrent_title or '')
 
     is_episode = media_type in ('tv', 'show', 'episode') and season is not None and episode is not None
 
+    _MAX_TITLE = 220  # leave room for path prefix + .nzb.processing suffix
+
+    def _assemble(*p):
+        return ' - '.join(x for x in p if x)
+
     if is_episode:
         _ep_title = _san(episode_title or '')
-        parts = [f'{_title} ({_year})']
-        parts.append(f'S{int(season):02d}E{int(episode):02d}')
-        if _ep_title:
-            parts.append(_ep_title)
-        if _imdb:
-            parts.append(f'{{imdb-{_imdb}}}')
-        if _version:
-            parts.append(_version)
+        base = _assemble(f'{_title} ({_year})', f'S{int(season):02d}E{int(episode):02d}')
+        _imdb_part = f'{{imdb-{_imdb}}}' if _imdb else ''
+
+        # Try full title first
+        full = _assemble(base, _ep_title, _imdb_part, _version, f'({_orig})' if _orig else '')
+        if len(full) <= _MAX_TITLE:
+            return full
+
+        # Drop episode title, keep (original)
+        without_ep = _assemble(base, _imdb_part, _version, f'({_orig})' if _orig else '')
+        if len(without_ep) <= _MAX_TITLE:
+            return without_ep
+
+        # Truncate (original) to fit — always keep it, just shorter
         if _orig:
-            parts.append(f'({_orig})')
-        return ' - '.join(parts)
+            fixed_part = _assemble(base, _imdb_part, _version)
+            # " - (" prefix + ")" suffix = 4 chars overhead
+            available = _MAX_TITLE - len(fixed_part) - 4
+            if available > 10:
+                truncated_orig = _orig[:available]
+                return f'{fixed_part} - ({truncated_orig})'
+
+        # Last resort: no (original)
+        without_orig = _assemble(base, _imdb_part, _version)
+        if len(without_orig) <= _MAX_TITLE:
+            return without_orig
+        return base[:_MAX_TITLE]
     else:
-        parts = [f'{_title} ({_year})']
-        if _imdb:
-            parts.append(f'{{imdb-{_imdb}}}')
-        if _version:
-            parts.append(_version)
-        if _orig:
-            parts.append(f'({_orig})')
-        return ' - '.join(parts)
+        _season_part = f'S{int(season):02d}' if season is not None else ''
+        base = _assemble(f'{_title} ({_year})', _season_part)
+        for attempt in [
+            _assemble(base, f'{{imdb-{_imdb}}}' if _imdb else '', _version, f'({_orig})' if _orig else ''),
+            _assemble(base, f'{{imdb-{_imdb}}}' if _imdb else '', _version),
+            _assemble(base, f'{{imdb-{_imdb}}}' if _imdb else ''),
+            base,
+        ]:
+            if len(attempt) <= _MAX_TITLE:
+                return attempt
+        return base[:_MAX_TITLE]
 
 
 def _submit_single_episode_nzb(client, nzb_url, ep_label):
@@ -1780,6 +1815,7 @@ def _submit_single_episode_nzb(client, nzb_url, ep_label):
 
 def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, media_type,
                              season, version, tmdb_id, original_scraped_torrent_title=None,
+                             episode_filenames=None,
                              genres=None, current_score=0.0,
                              selected_folder=None, selected_folder_is_custom=False,
                              existing_items=None):
@@ -1896,17 +1932,23 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
             logging.info(f'[NZBPack] Skipping S{season:02d}E{ep_num:02d} — already Collected')
             continue
 
-        # Strip the virtual pack label from the title so Decypharr gets a clean name
         import re as _re_label
-        _clean_title = _re_label.sub(r'\s*\[NZB Pack[^\]]*\]', '', original_scraped_torrent_title or title).strip()
-        # Also replace S01 with S01E01 style — remove any existing season-only marker first
-        _clean_title = _re_label.sub(r'\.S\d{2}\.', '.', _clean_title).strip(' .')
+        # Aggregate pack display title — always has quality tags, used for (original) bracket
+        _pack_orig = _re_label.sub(r'\s*\[NZB Pack[^\]]*\]', '', original_scraped_torrent_title or title).strip()
+
+        # Per-episode raw filename — used only for the Decypharr job name (has SxxExx)
+        _ep_raw = (episode_filenames or {}).get(ep_num, '') or ''
+        _ep_raw_clean = _re_label.sub(r'\.(mkv|mp4|avi|m4v|nfo|nzb)$', '', _ep_raw, flags=_re_label.IGNORECASE).strip()
+        if not _ep_raw_clean:
+            _ep_raw_clean = _pack_orig  # fallback job name still has quality tags
+
         ep_label = _build_nzb_title(
             title=title, year=year, imdb_id=imdb_id,
-            version=version, original_scraped_torrent_title=_clean_title,
+            version=version, original_scraped_torrent_title=f'{_ep_raw_clean}-[NZB Pack]',
             media_type='episode', season=season, episode=ep_num,
             episode_title=episode_titles.get(ep_num),
-        ) or f'{_clean_title}.S{season:02d}E{ep_num:02d}'
+            pack_original=f'{_pack_orig}-[NZB Pack]',
+        ) or f'{_ep_raw_clean}-[NZB Pack]'
         primary_url = episode_nzb_urls[ep_num]
         fallbacks = fallback_nzb_urls.get(ep_num, [])
 

@@ -284,14 +284,16 @@ class ScrapingQueue:
                     try:
                         from database import get_db_connection as _gdb
                         _cconn = _gdb()
-                        _sibling_nzb = _cconn.execute(
-                            "SELECT filled_by_torrent_id, filled_by_file, filled_by_magnet "
-                            "FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode' "
-                            "AND state IN ('Adding','Checking') "
-                            "AND filled_by_torrent_id LIKE 'nzb:%' LIMIT 1",
-                            (_coalesce_imdb, _coalesce_season)
-                        ).fetchone()
-                        _cconn.close()
+                        try:
+                            _sibling_nzb = _cconn.execute(
+                                "SELECT filled_by_torrent_id, filled_by_file, filled_by_magnet "
+                                "FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode' "
+                                "AND state IN ('Adding','Checking') "
+                                "AND filled_by_torrent_id LIKE 'nzb:%' LIMIT 1",
+                                (_coalesce_imdb, _coalesce_season)
+                            ).fetchone()
+                        finally:
+                            _cconn.close()
                         if _sibling_nzb:
                             _job_id = _sibling_nzb[0]
                             _job_file = _sibling_nzb[1] or ''
@@ -639,6 +641,7 @@ class ScrapingQueue:
                                         year=item_to_process.get('year', ''),
                                         season=_curr_season,
                                         episode_numbers=_ep_nums,
+                                        version_settings=version_settings,
                                     )
                                     if _agg_results:
                                         _best = _agg_results[0]
@@ -661,6 +664,7 @@ class ScrapingQueue:
                                                     version=_curr_version,
                                                     tmdb_id=item_to_process.get('tmdb_id'),
                                                     original_scraped_torrent_title=_best.get('title', ''),
+                                                    episode_filenames=_best.get('episode_filenames', {}),
                                                     genres=json.loads(item_to_process.get('genres', '[]') or '[]'),
                                                     current_score=item_to_process.get('current_score', 0.0),
                                                     existing_items=_existing,

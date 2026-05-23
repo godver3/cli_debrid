@@ -2004,7 +2004,12 @@ def process_torrent_selection(torrent_index: int, torrent_results: List[Dict[str
         if magnet_link:
             logging.info(f"Selected torrent: {selected_torrent}")
             logging.info(f"Magnet link: {magnet_link}")
-            debrid_provider = get_debrid_provider()
+            try:
+                debrid_provider = get_debrid_provider()
+            except Exception:
+                debrid_provider = None
+            if not debrid_provider:
+                return {"success": False, "message": "No debrid provider configured"}
             result = debrid_provider.add_to_debrid(magnet_link)
             if result:
                 logging.info(f"Torrent result: {result}")

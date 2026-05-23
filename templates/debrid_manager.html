@@ -639,6 +639,9 @@
                     <button id="usenet-fix-btn" onclick="usenetRunRepair()" class="un-btn">
                         <i class="fa-solid fa-wrench" style="color:#e8601c"></i> Fix Broken
                     </button>
+                    <button id="usenet-delete-broken-btn" onclick="usenetDeleteAllBroken()" class="un-btn">
+                        <i class="fa-solid fa-trash" style="color:#ef4444"></i> Delete All Broken
+                    </button>
                 </div>
             </div>
 
@@ -4404,6 +4407,44 @@ async function usenetRunRepair() {
         btn.disabled = false;
         btn.innerHTML = orig;
         console.error('[Usenet] run repair error', e);
+    }
+}
+
+async function usenetDeleteAllBroken() {
+    const btn = document.getElementById('usenet-delete-broken-btn');
+    const orig = btn.innerHTML;
+    const brokenCount = parseInt(document.getElementById('usenet-stat-broken')?.textContent || '0') || 0;
+    const label = brokenCount > 0 ? `${brokenCount} broken` : 'all broken';
+    if (!confirm(`Delete ${label} NZBs?\n\nThis will:\n• Delete from Decypharr\n• Delete from Plex\n• Reset items to Wanted (will re-scrape)\n\nContinue?`)) return;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Deleting…';
+    try {
+        const r = await fetch('/debrid_manager/api/usenet/repair/delete_all_broken', {method: 'POST'});
+        const d = await r.json();
+        if (d.success) {
+            btn.innerHTML = '<i class="fa-solid fa-check" style="color:#4ade80"></i> Done';
+            setTimeout(() => { btn.disabled = false; btn.innerHTML = orig; }, 3000);
+            // Refresh stats
+            fetch('/debrid_manager/api/usenet/repair/stats').then(r => r.json()).then(sd => {
+                if (sd.success) _usenetRenderStats(sd.health || {}, sd.activity || {}, sd.versions || [], sd.repair_version || '');
+            }).catch(() => {});
+            // Show result
+            const msg = d.message || 'Done';
+            const statusEl = document.getElementById('usenet-repair-status-text');
+            const runningEl = document.getElementById('usenet-repair-running');
+            if (statusEl && runningEl) {
+                runningEl.style.display = 'block';
+                statusEl.textContent = msg;
+            }
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = orig;
+            alert('Delete failed: ' + (d.error || 'Unknown error'));
+        }
+    } catch(e) {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+        console.error('[Usenet] delete all broken error', e);
     }
 }
 

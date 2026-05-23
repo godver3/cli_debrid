@@ -390,6 +390,10 @@
       cbs.forEach(cb => cb.checked = this.checked);
       updateSeasonSummary(wrap);
       markUnsaved();
+      // Auto-expand season list when unchecking All Seasons so user can pick specific seasons
+      if (!this.checked && list.style.display === 'none') {
+        chevron.click();
+      }
     });
 
     chevron.addEventListener('click', async function() {
@@ -549,14 +553,23 @@
 
   // ── Save all ──
   async function saveAll() {
-    // De-dupe by imdb id — table and card both have wraps for the same item
-    const seen = new Set();
-    const wraps = Array.from(document.querySelectorAll('.bl-season-wrap')).filter(w => {
+    // De-dupe by imdb id — table and card both have wraps for the same item.
+    // Prefer the wrap that already has season checkboxes loaded (desktop table row)
+    // over one that hasn't been expanded yet (mobile card).
+    const byId = {};
+    document.querySelectorAll('.bl-season-wrap').forEach(w => {
       const id = w.dataset.imdb;
-      if (seen.has(id)) return false;
-      seen.add(id);
-      return true;
+      if (!byId[id]) {
+        byId[id] = w;
+      } else {
+        // Prefer whichever has season checkboxes loaded
+        const existing = byId[id];
+        if (w.querySelectorAll('.bl-season-cb').length > existing.querySelectorAll('.bl-season-cb').length) {
+          byId[id] = w;
+        }
+      }
     });
+    const wraps = Object.values(byId);
     let success = true;
 
     for (const wrap of wraps) {
