@@ -164,9 +164,10 @@ class ProgramRunner:
             from metadata.metadata import _get_local_timezone # Added import
             tz = _get_local_timezone()
             logging.info(f"Initializing APScheduler with timezone: {tz.key}")
+            _queue_workers = max(1, min(3, int(get_setting('Queue', 'queue_pool_workers', 2))))
             executors = {
                 'default': ThreadPoolExecutor(max_workers=1),  # scheduled/maintenance tasks — sequential
-                'queue': ThreadPoolExecutor(max_workers=2),    # queue processing tasks — Scraping/Adding + Checking run simultaneously
+                'queue': ThreadPoolExecutor(max_workers=_queue_workers),
             }
             job_defaults = {
                 'coalesce': True,
@@ -174,12 +175,13 @@ class ProgramRunner:
                 'misfire_grace_time': None
             }
             self.scheduler = BackgroundScheduler(jobstores=_jobstores, executors=executors, job_defaults=job_defaults, timezone=tz)
-            logging.info("APScheduler configured with separate thread pools: queue(3) and default(2).")
+            logging.info(f"APScheduler configured with separate thread pools: queue({_queue_workers}) and default(1).")
         except Exception as e:
             logging.error(f"Failed to get local timezone for scheduler, using system default: {e}")
+            _queue_workers = max(1, min(3, int(get_setting('Queue', 'queue_pool_workers', 2))))
             executors = {
                 'default': ThreadPoolExecutor(max_workers=1),
-                'queue': ThreadPoolExecutor(max_workers=2),
+                'queue': ThreadPoolExecutor(max_workers=_queue_workers),
             }
             job_defaults = {
                 'coalesce': True,
@@ -2531,7 +2533,7 @@ class ProgramRunner:
                 try:
                     logging.info("Attempting to shut down APScheduler...")
                     if self.scheduler.running:
-                        self.scheduler.shutdown(wait=True) 
+                        self.scheduler.shutdown(wait=True)
                         logging.info("APScheduler shut down successfully.")
                     else:
                         logging.info("APScheduler was not running when stop was called.")
@@ -3196,10 +3198,24 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f'[DEBRID_CLEANUP] Scheduled task error: {e}', exc_info=True)
 
+    # Track last health check duration to implement skip-if-slow guard
+    _nzb_health_last_duration: float = 0.0
+    _NZB_HEALTH_MAX_JOBS_PER_TICK = 15   # cap jobs polled per tick
+    _NZB_HEALTH_JOB_TIMEOUT = 8          # seconds per job poll before giving up
+    _NZB_HEALTH_SKIP_THRESHOLD = 8.0     # if last run took this long, skip next tick
+
     def task_nzb_health_check(self):
         """Poll NZB items in Adding state, run health checks, move to Checking or back to Wanted.
-        Runs as a dedicated scheduled task so it doesn't block the Adding/Scraping queue threads."""
+        Runs as a dedicated scheduled task so it doesn't block the Adding/Scraping queue threads.
+        Guards: skips tick if previous run was slow; caps jobs per tick; per-job timeout."""
+        import time as _time
         try:
+            # Option 2: skip this tick if previous run took too long
+            if self._nzb_health_last_duration >= self._NZB_HEALTH_SKIP_THRESHOLD:
+                logging.debug(f'[NZBHealthCheck] Skipping tick — previous run took {self._nzb_health_last_duration:.1f}s')
+                self._nzb_health_last_duration = 0.0  # reset so next tick runs
+                return
+
             if not self.queue_manager:
                 return
             adding_queue = self.queue_manager.queues.get('Adding')
@@ -3212,6 +3228,8 @@ class ProgramRunner:
             ]
             if not _nzb_items:
                 return
+
+            _tick_start = _time.monotonic()
 
             from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
             from utilities.settings import get_setting as _gs
@@ -3226,6 +3244,11 @@ class ProgramRunner:
             for _ni in _nzb_items:
                 _jid = _ni.get('filled_by_torrent_id', '')[4:]
                 _job_groups[_jid].append(_ni)
+
+            # Option 3: cap jobs per tick — process oldest first (preserve order)
+            _unique_jobs = list(_job_groups.keys())[:self._NZB_HEALTH_MAX_JOBS_PER_TICK]
+            if len(_job_groups) > self._NZB_HEALTH_MAX_JOBS_PER_TICK:
+                logging.debug(f'[NZBHealthCheck] Capping to {self._NZB_HEALTH_MAX_JOBS_PER_TICK}/{len(_job_groups)} jobs this tick')
 
             def _poll_job(job_id):
                 try:
@@ -3261,13 +3284,26 @@ class ProgramRunner:
                 except Exception as exc:
                     return job_id, None, None, exc
 
-            _unique_jobs = list(_job_groups.keys())
+            # Option 3: cap workers at 5, per-job timeout
             _job_results = {}
-            with _TPE(max_workers=min(len(_unique_jobs), 10)) as _pool:
+            with _TPE(max_workers=min(len(_unique_jobs), 5)) as _pool:
                 _futures = {_pool.submit(_poll_job, jid): jid for jid in _unique_jobs}
-                for _fut in _ac(_futures):
-                    jid, prog, entry, err = _fut.result()
-                    _job_results[jid] = (prog, entry, err)
+                try:
+                    for _fut in _ac(_futures, timeout=self._NZB_HEALTH_JOB_TIMEOUT * len(_unique_jobs)):
+                        try:
+                            jid, prog, entry, err = _fut.result(timeout=self._NZB_HEALTH_JOB_TIMEOUT)
+                            _job_results[jid] = (prog, entry, err)
+                        except Exception:
+                            pass
+                except Exception:
+                    # Timeout — process whatever completed so far, skip the rest
+                    for _fut, jid in _futures.items():
+                        if _fut.done():
+                            try:
+                                _, prog, entry, err = _fut.result()
+                                _job_results[jid] = (prog, entry, err)
+                            except Exception:
+                                pass
 
             # Health check completed entries in parallel
             _entries_to_check = {}
@@ -3284,9 +3320,21 @@ class ProgramRunner:
                         return entry_name, None
                 with _TPE(max_workers=min(len(_entries_to_check), 5)) as _hpool:
                     _hfutures = {_hpool.submit(_check_health, en): en for en in _entries_to_check}
-                    for _hfut in _ac(_hfutures):
-                        en, health = _hfut.result()
-                        _health_results[en] = health
+                    try:
+                        for _hfut in _ac(_hfutures, timeout=self._NZB_HEALTH_JOB_TIMEOUT * len(_entries_to_check)):
+                            try:
+                                en, health = _hfut.result(timeout=self._NZB_HEALTH_JOB_TIMEOUT)
+                                _health_results[en] = health
+                            except Exception:
+                                pass
+                    except Exception:
+                        for _hfut in _hfutures:
+                            if _hfut.done():
+                                try:
+                                    en, health = _hfut.result()
+                                    _health_results[en] = health
+                                except Exception:
+                                    pass
 
             # Process results per item
             for item in _nzb_items:
@@ -3429,8 +3477,12 @@ class ProgramRunner:
                 except Exception as _exc:
                     logging.error(f'[NZB] Error in health check for {torrent_id}: {_exc}', exc_info=True)
 
+            self._nzb_health_last_duration = _time.monotonic() - _tick_start
+            logging.debug(f'[NZBHealthCheck] Tick completed in {self._nzb_health_last_duration:.1f}s ({len(_unique_jobs)} jobs)')
+
         except Exception as e:
             logging.error(f'[NZBHealthCheck] Task error: {e}', exc_info=True)
+            self._nzb_health_last_duration = 0.0
 
     def task_backfill_nzb_torrent_ids(self):
         """Backfill filled_by_torrent_id for collected items on Decypharr mount that have no torrent ID.
@@ -4039,7 +4091,7 @@ class ProgramRunner:
         with self.scheduler_lock:
             if self.scheduler and self.scheduler.running:
                 logging.info("Shutting down scheduler for reinitialization...")
-                self.scheduler.shutdown(wait=True) # Wait for jobs to finish if possible
+                self.scheduler.shutdown(wait=True)
                 logging.info("Scheduler stopped.")
 
         self._initialized_runner_attributes = False
@@ -4240,7 +4292,6 @@ class ProgramRunner:
         
         if thread.is_alive():
             logging.error("Download stats refresh timed out after 30 seconds")
-            # Note: The thread will continue running in the background as a daemon thread
         elif exception[0]:
             logging.error(f"Download stats refresh failed: {str(exception[0])}")
 
@@ -5860,6 +5911,9 @@ class ProgramRunner:
 
         logging.info(f"[StuckPlex] Found {len(stuck)} stuck item(s): {stuck}")
 
+        # Symlink mode detection
+        _is_symlink_mode = get_setting('File Management', 'file_collection_management', default='') == 'Symlinked/Local'
+
         # Decypharr config
         from utilities.settings import get_setting as _gs
         decypharr_url = _gs('Usenet Provider', 'url', default='').rstrip('/')
@@ -5897,10 +5951,67 @@ class ProgramRunner:
                 logging.warning(f"[StuckPlex] Decypharr delete failed for {name}: {e}")
             return False
 
+        def delete_source_by_torrent_id(torrent_id, display):
+            """Delete the source (Decypharr NZB or debrid torrent) by filled_by_torrent_id."""
+            if not torrent_id:
+                return
+            try:
+                if str(torrent_id).startswith('nzb:'):
+                    # NZB — delete from Decypharr by hash
+                    if not decypharr_enabled or not decypharr_url:
+                        return
+                    nzb_hash = torrent_id[4:]  # strip 'nzb:' prefix
+                    d = _req.delete(f'{decypharr_url}/api/torrents',
+                                    params={'hashes': nzb_hash},
+                                    headers=decypharr_headers(), timeout=10)
+                    if d.status_code in (200, 204):
+                        logging.info(f"[StuckPlex] Deleted NZB source from Decypharr: {display} ({nzb_hash})")
+                    else:
+                        logging.debug(f"[StuckPlex] Decypharr NZB delete returned {d.status_code} for {display} — likely already gone")
+                else:
+                    # Debrid torrent
+                    try:
+                        from debrid import get_debrid_provider, ProviderUnavailableError
+                        provider = get_debrid_provider()
+                        if provider:
+                            provider.remove_torrent(torrent_id, removal_reason='Stuck Plex item cleanup')
+                            logging.info(f"[StuckPlex] Deleted debrid source: {display} ({torrent_id})")
+                    except Exception as _de:
+                        logging.debug(f"[StuckPlex] Debrid source delete for {display} — likely already gone: {_de}")
+            except Exception as e:
+                logging.debug(f"[StuckPlex] Source delete failed for {display} — likely already gone: {e}")
+
+        def find_db_item_by_path(file_path):
+            """Find CLI DB item matching a file path (works for both Plex and symlink mode)."""
+            symlink_path = file_path
+            if not symlink_path:
+                return None
+            try:
+                from database import get_db_connection as _gdb
+                conn = _gdb()
+                try:
+                    row = conn.execute(
+                        "SELECT * FROM media_items WHERE location_on_disk = ? LIMIT 1",
+                        (symlink_path,)
+                    ).fetchone()
+                    if not row:
+                        # Try basename match
+                        basename = os.path.basename(symlink_path)
+                        row = conn.execute(
+                            "SELECT * FROM media_items WHERE location_on_disk LIKE ? LIMIT 1",
+                            (f'%{basename}',)
+                        ).fetchone()
+                    return dict(row) if row else None
+                finally:
+                    conn.close()
+            except Exception as e:
+                logging.debug(f"[StuckPlex] DB lookup failed for {symlink_path}: {e}")
+                return None
+
         for item_id in stuck:
             try:
                 r = _req.get(f'{plex_url}/library/metadata/{item_id}',
-                             params={'X-Plex-Token': plex_token}, timeout=10)
+                             params={'X-Plex-Token': plex_token}, timeout=30)
                 if r.status_code == 404:
                     # Already gone — unstuck itself or was deleted, nothing to do
                     logging.info(f"[StuckPlex] Item {item_id} already gone from Plex (404) — skipping")
@@ -5949,13 +6060,58 @@ class ProgramRunner:
                     search_name = grandparent or title
                     delete_from_decypharr(search_name)
 
+                # Always delete source from Decypharr/debrid via DB filled_by_torrent_id
+                # so the file disappears from the mount and Plex can't re-scan it stuck
+                _part_path = next((p for p in parts if p), None)
+                _db_item_for_source = find_db_item_by_path(_part_path) if _part_path else None
+                if _db_item_for_source:
+                    delete_source_by_torrent_id(_db_item_for_source.get('filled_by_torrent_id'), display)
+
                 # Always delete from Plex
-                dr = _req.delete(f'{plex_url}/library/metadata/{item_id}',
-                                 params={'X-Plex-Token': plex_token}, timeout=10)
-                if dr.status_code == 200:
-                    logging.info(f"[StuckPlex] Deleted from Plex: {display} (id={item_id})")
-                else:
-                    logging.warning(f"[StuckPlex] Plex delete failed for {display}: HTTP {dr.status_code}")
+                try:
+                    dr = _req.delete(f'{plex_url}/library/metadata/{item_id}',
+                                     params={'X-Plex-Token': plex_token}, timeout=30)
+                    if dr.status_code == 200:
+                        logging.info(f"[StuckPlex] Deleted from Plex: {display} (id={item_id})")
+                    else:
+                        logging.warning(f"[StuckPlex] Plex delete failed for {display}: HTTP {dr.status_code}")
+                except Exception as _plex_del_err:
+                    logging.warning(f"[StuckPlex] Plex delete timed out or failed for {display} — Plex may be busy: {_plex_del_err}")
+
+                # Symlink mode: delete symlink, delete source, reset DB to Wanted
+                if _is_symlink_mode:
+                    # Use first valid part path as the symlink
+                    symlink_path = next((p for p in parts if p), None)
+                    db_item = find_db_item_by_path(symlink_path) if symlink_path else None
+
+                    # 1. Delete symlink from disk
+                    if symlink_path and os.path.islink(symlink_path):
+                        try:
+                            os.remove(symlink_path)
+                            logging.info(f"[StuckPlex] Deleted symlink: {symlink_path}")
+                        except Exception as _se:
+                            logging.debug(f"[StuckPlex] Symlink delete failed — likely already gone: {_se}")
+                    elif symlink_path:
+                        logging.debug(f"[StuckPlex] Symlink not found on disk (already gone): {symlink_path}")
+
+                    # 2. Delete source from Decypharr/debrid using filled_by_torrent_id
+                    if db_item:
+                        torrent_id = db_item.get('filled_by_torrent_id')
+                        delete_source_by_torrent_id(torrent_id, display)
+
+                        # 3. Reset DB item to Wanted
+                        try:
+                            from database.database_writing import update_media_item_state, update_media_item
+                            update_media_item_state(db_item['id'], 'Wanted')
+                            update_media_item(db_item['id'],
+                                filled_by_torrent_id=None, filled_by_file=None,
+                                filled_by_magnet=None, location_on_disk=None,
+                                filled_by_title=None)
+                            logging.info(f"[StuckPlex] Reset to Wanted: {display} (db_id={db_item['id']})")
+                        except Exception as _dbe:
+                            logging.warning(f"[StuckPlex] DB reset failed for {display}: {_dbe}")
+                    else:
+                        logging.debug(f"[StuckPlex] No DB item found for {display} — skipping source/DB cleanup")
 
             except Exception as e:
                 logging.error(f"[StuckPlex] Error processing item {item_id}: {e}", exc_info=True)
@@ -8470,9 +8626,10 @@ def _setup_scheduler_listeners(runner_instance):
             logging.error(f"[_setup_scheduler_listeners] Failed to get local timezone for scheduler, using UTC fallback: {e_tz}")
             tz = pytz.utc
 
+        _queue_workers = max(1, min(3, int(get_setting('Queue', 'queue_pool_workers', 2))))
         executors = {
             'default': ThreadPoolExecutor(max_workers=1),
-            'queue': ThreadPoolExecutor(max_workers=2),
+            'queue': ThreadPoolExecutor(max_workers=_queue_workers),
         }
         job_defaults = {'coalesce': True, 'max_instances': 1}
 

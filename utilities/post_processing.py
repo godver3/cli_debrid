@@ -28,7 +28,10 @@ def replace_cleanup_after_collect(item_dict):
         from utilities.plex_functions import remove_file_from_plex, scan_and_empty_plex_trash
         import os as _os
 
-        _debrid_prov = _get_debrid_prov()
+        try:
+            _debrid_prov = _get_debrid_prov()
+        except Exception:
+            _debrid_prov = None
         conn = get_db_connection()
         cur = conn.cursor()
 

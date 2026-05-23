@@ -465,6 +465,8 @@ class DebridLinkProvider(DebridProvider):
                                         if tid != torrent_id}
             logger.info(f"Debrid-Link torrent {torrent_id} deleted ({removal_reason})")
             return True
+        except ProviderUnavailableError:
+            return False
         except Exception as e:
             logger.error(f"Debrid-Link remove_torrent error for {torrent_id}: {e}")
             return False
@@ -504,6 +506,8 @@ class DebridLinkProvider(DebridProvider):
             active = sum(1 for t in torrents
                          if not self._is_complete(t) and not self._is_error(t))
             return active, self.MAX_DOWNLOADS
+        except ProviderUnavailableError:
+            raise
         except Exception as e:
             raise ProviderUnavailableError(f"Failed to get Debrid-Link active downloads: {e}")
 

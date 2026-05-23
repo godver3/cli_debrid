@@ -356,12 +356,26 @@ def _parse_newznab_xml(xml_text: str, instance: str) -> List[Dict[str, Any]]:
 _NORM_RE = re.compile(r'[^a-z0-9]')
 
 
-def _norm_group_key(title: str, resolution: str, group: str) -> str:
-    """Normalise title+res+group into a stable grouping key."""
+def _norm_group_key(title: str, resolution: str, group: str, hdr_flag: str = '') -> str:
+    """Normalise title+res+hdr+group into a stable grouping key."""
     t = _NORM_RE.sub('', (title or '').lower())
     r = _NORM_RE.sub('', (resolution or '').lower())
     g = _NORM_RE.sub('', (group or '').lower())
-    return f'{t}|{r}|{g}'
+    h = _NORM_RE.sub('', (hdr_flag or '').lower())
+    return f'{t}|{r}|{h}|{g}'
+
+
+def _hdr_flag(hdr_list) -> str:
+    """Normalise HDR tags to a consistent flag for grouping.
+    DV > HDR10 > HDR > SDR — captures the highest tier present."""
+    tags = [h.lower() for h in (hdr_list or [])]
+    if any(t in ('dv', 'dolby vision', 'dovi') for t in tags):
+        return 'dv'
+    if any(t in ('hdr10+', 'hdr10plus') for t in tags):
+        return 'hdr10plus'
+    if any(t in ('hdr10', 'hdr') for t in tags):
+        return 'hdr'
+    return 'sdr'
 
 
 def scrape_newznab_season_aggregate(
@@ -373,6 +387,7 @@ def scrape_newznab_season_aggregate(
     episode_count: int = 0,
     timeout: int = 20,
     episode_numbers: Optional[List[int]] = None,  # explicit list overrides range(1, episode_count+1)
+    version_settings: Optional[Dict] = None,      # version filter settings for resolution/quality
 ) -> List[Dict[str, Any]]:
     """
     Search each episode individually across all indexers in parallel.
@@ -481,6 +496,7 @@ def scrape_newznab_season_aggregate(
 
     # Group by key across episodes
     # group_data[key] = {ep_num: [result, ...]}
+    # Each result also stored in broader keys for waterfall fallback
     group_data: Dict[str, Dict[int, List[Dict]]] = {}
     group_meta: Dict[str, Dict] = {}  # key -> first result's parsed fields
 
@@ -503,19 +519,52 @@ def scrape_newznab_season_aggregate(
                 if _sim < 0.6:
                     logging.debug(f'[NZBAggregate] Rejecting title mismatch: {parsed_title!r} vs {title!r} (sim={_sim:.2f})')
                     continue
-            key = _norm_group_key(parsed_title, pi.get('resolution', ''), pi.get('group', ''))
-            if not key.replace('|', ''):
-                continue
-            if key not in group_data:
-                group_data[key] = {}
-                group_meta[key] = pi
-            group_data[key].setdefault(ep_num, []).append(res)
+            res_hdr = _hdr_flag(pi.get('hdr', []))
+            res_resolution = pi.get('resolution', '')
+            res_group = pi.get('group', '')
+            # Store under all waterfall key levels
+            for key in [
+                _norm_group_key(parsed_title, res_resolution, res_group, res_hdr),  # level 1: res+hdr+group
+                _norm_group_key(parsed_title, res_resolution, '',        res_hdr),  # level 2: res+hdr
+                _norm_group_key(parsed_title, res_resolution, '',        ''),       # level 3: res only
+            ]:
+                if not key.replace('|', ''):
+                    continue
+                if key not in group_data:
+                    group_data[key] = {}
+                    group_meta[key] = pi
+                group_data[key].setdefault(ep_num, []).append(res)
+
+    # Waterfall: try each level in order, stop at first level that yields complete packs.
+    # Level 1: (title, resolution, hdr, group) — most specific
+    # Level 2: (title, resolution, hdr)        — any group, same quality tier
+    # Level 3: (title, resolution)             — any group, any HDR variant
+    def _key_level(k: str) -> int:
+        parts = k.split('|')
+        # parts = [title, resolution, hdr, group]
+        if len(parts) == 4 and parts[3]:  # group present
+            return 1
+        if len(parts) == 4 and parts[2]:  # hdr present, no group
+            return 2
+        return 3  # resolution only
+
+    complete_keys_by_level: Dict[int, list] = {1: [], 2: [], 3: []}
+    for key, ep_map in group_data.items():
+        if len(ep_map) >= len(_ep_list):
+            complete_keys_by_level[_key_level(key)].append(key)
+
+    # Pick the best level that has complete packs
+    active_keys = []
+    for lvl in (1, 2, 3):
+        if complete_keys_by_level[lvl]:
+            active_keys = complete_keys_by_level[lvl]
+            logging.info(f'[NZBAggregate] {title} S{season:02d}: using waterfall level {lvl} ({len(active_keys)} complete group(s))')
+            break
 
     virtual_packs = []
-    for key, ep_map in group_data.items():
-        # Must cover every episode
+    for key in active_keys:
+        ep_map = group_data[key]
         if len(ep_map) < len(_ep_list):
-            logging.debug(f'[NZBAggregate] Skipping incomplete group {key!r}: {len(ep_map)}/{len(_ep_list)} eps')
             continue
 
         pi = group_meta[key]
@@ -536,7 +585,26 @@ def scrape_newznab_season_aggregate(
             ep_size = ep_result.get('size', 0.0)
             episode_sizes[ep_num] = ep_size
             total_size += ep_size
-            episode_filenames[ep_num] = ep_result.get('original_title') or ep_result.get('title') or ''
+            _raw_title = ep_result.get('original_title') or ep_result.get('title') or ''
+            # If the title doesn't contain this episode's SxxExx (e.g. PTT couldn't parse
+            # episode numbers so a season-pack-style title was accepted for all episodes),
+            # inject the correct SxxExx so quality tags are preserved but episode is correct.
+            if _raw_title and not re.search(
+                    rf'[Ss]{season:02d}[Ee]{ep_num:02d}', _raw_title):
+                _ep_marker = re.search(r'[Ss]\d{1,2}[Ee]\d{1,2}', _raw_title)
+                if _ep_marker:
+                    # Replace existing SxxExx with correct one
+                    _raw_title = _raw_title[:_ep_marker.start()] + \
+                                 f'S{season:02d}E{ep_num:02d}' + \
+                                 _raw_title[_ep_marker.end():]
+                else:
+                    # No SxxExx at all — inject after season marker if present
+                    _s_marker = re.search(r'([Ss]\d{1,2})(?![Ee]\d)', _raw_title)
+                    if _s_marker:
+                        _raw_title = _raw_title[:_s_marker.end()] + \
+                                     f'E{ep_num:02d}' + \
+                                     _raw_title[_s_marker.end():]
+            episode_filenames[ep_num] = _raw_title
 
         # Build display title: strip episode number AND episode title words,
         # keeping show title + season + quality tags only.
@@ -625,4 +693,27 @@ def scrape_newznab_season_aggregate(
         })
 
     logging.info(f'[NZBAggregate] {title} S{season:02d}: {len(virtual_packs)} complete virtual packs found')
+
+    # Apply version resolution filter and sort by quality preference
+    if version_settings and virtual_packs:
+        from scraper.functions.filter_results import get_resolution_value, resolution_filter
+        max_res = version_settings.get('max_resolution', '2160p')
+        res_wanted = version_settings.get('resolution_wanted', '<=')
+
+        before = len(virtual_packs)
+        virtual_packs = [
+            p for p in virtual_packs
+            if resolution_filter(p.get('resolution') or p.get('parsed_info', {}).get('resolution') or '', max_res, res_wanted)
+        ]
+        if len(virtual_packs) < before:
+            logging.info(f'[NZBAggregate] {title} S{season:02d}: filtered {before - len(virtual_packs)} packs by resolution ({res_wanted} {max_res}), {len(virtual_packs)} remaining')
+
+        # Sort highest resolution first for both <= and >= — user always wants the best
+        # quality that passes the filter. == is already exact so order doesn't matter.
+        if virtual_packs and res_wanted != '==':
+            virtual_packs.sort(
+                key=lambda p: get_resolution_value(p.get('resolution') or p.get('parsed_info', {}).get('resolution') or ''),
+                reverse=True
+            )
+
     return virtual_packs
