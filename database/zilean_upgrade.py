@@ -1338,20 +1338,28 @@ def scan_for_upgrades(max_workers: int = 20, scan_limit: Optional[int] = None,
 
     used_db = False
     try:
-        zilean_info = get_zilean_config()
-        if not zilean_info:
-            return {'error': 'Zilean scraper not enabled or URL not configured'}
-
-        zilean_instance, zilean_settings = zilean_info
-        zilean_url = zilean_settings.get('url', '')
-        db_cfg = _get_db_config(zilean_settings)
-        threshold = float(get_setting('Scraping', 'upgrading_percentage_threshold', 0.1))
-        pack_threshold = float(get_setting('Debug', 'zilean_pack_threshold', 0.5))
-        default_version = get_default_version()
         upgrade_source = get_setting('Upgrade Hub', 'upgrade_source', 'both') or 'both'
         use_zilean = upgrade_source in ('both', 'zilean_only')
         use_nzb    = upgrade_source in ('both', 'nzb_only')
         logger.info(f'[UPGRADE_HUB] Upgrade source: {upgrade_source} (zilean={use_zilean}, nzb={use_nzb})')
+
+        zilean_info = get_zilean_config()
+        if use_zilean and not zilean_info:
+            if not use_nzb:
+                return {'error': 'Zilean scraper not enabled or URL not configured'}
+            # Zilean wanted but not configured — fall back to NZB only
+            use_zilean = False
+            logger.warning('[UPGRADE_HUB] Zilean not configured — falling back to NZB-only scan')
+
+        zilean_instance = zilean_settings = zilean_url = db_cfg = None
+        if zilean_info:
+            zilean_instance, zilean_settings = zilean_info
+            zilean_url = zilean_settings.get('url', '')
+            db_cfg = _get_db_config(zilean_settings)
+
+        threshold = float(get_setting('Scraping', 'upgrading_percentage_threshold', 0.1))
+        pack_threshold = float(get_setting('Debug', 'zilean_pack_threshold', 0.5))
+        default_version = get_default_version()
 
         # Compute after_date if show_recent_only is enabled
         after_date = None

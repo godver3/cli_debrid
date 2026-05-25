@@ -282,11 +282,25 @@ def _parse_newznab_xml(xml_text: str, instance: str) -> List[Dict[str, Any]]:
                 size_bytes = int(enclosure_el.get('length', 0))
             except (ValueError, TypeError):
                 pass
+        nzb_files_count = 0
         if not size_bytes:
             for attr in item.findall('newznab:attr', ns):
-                if attr.get('name') == 'size':
+                name = attr.get('name')
+                if name == 'size':
                     try:
                         size_bytes = int(attr.get('value', 0))
+                    except (ValueError, TypeError):
+                        pass
+                elif name == 'files':
+                    try:
+                        nzb_files_count = int(attr.get('value', 0))
+                    except (ValueError, TypeError):
+                        pass
+        else:
+            for attr in item.findall('newznab:attr', ns):
+                if attr.get('name') == 'files':
+                    try:
+                        nzb_files_count = int(attr.get('value', 0))
                     except (ValueError, TypeError):
                         pass
                     break
@@ -342,6 +356,7 @@ def _parse_newznab_xml(xml_text: str, instance: str) -> List[Dict[str, Any]]:
             'magnet_link': None,
             'nzb_url': nzb_url,
             'protocol': 'nzb',
+            'nzb_files': nzb_files_count,
         }
         results.append(result)
 

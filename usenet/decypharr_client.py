@@ -370,46 +370,51 @@ class DecypharrClient:
             logging.debug(f'[Decypharr] get_job_status exception: {exc}')
             return None
 
-    def check_entry_health(self, entry_name: str) -> Optional[str]:
-        """
-        Trigger a repair health check for a specific entry and return its status.
-        Returns: 'healthy', 'broken', or None on error/not found.
-        Uses POST /api/repair/health/{name}/check then GET /api/repair/health/{name}.
-        """
+    def trigger_health_check(self, entry_name: str) -> bool:
+        """POST to start a repair health check. Returns True if accepted, False otherwise."""
         try:
             import urllib.parse
             encoded = urllib.parse.quote(entry_name, safe='')
-            # Trigger the check
             r = api.post(
                 f'{self.base_url}/api/repair/health/{encoded}/check',
                 headers=self._headers(), timeout=5,
             )
-            if r.status_code not in (200, 202):
-                # 400 = entry no longer exists in Decypharr (already downloaded/cleaned up) — normal, not an error
-                log_fn = logging.debug if r.status_code == 400 else logging.warning
-                log_fn(f'[Decypharr] health check trigger failed for {entry_name!r}: HTTP {r.status_code}')
-                return None
-            # Poll for result — try up to 3 times with no sleep, fast return
-            import time as _time
-            for _ in range(3):
-                r2 = api.get(
-                    f'{self.base_url}/api/repair/health/{encoded}',
-                    headers=self._headers(), timeout=4,
-                )
-                if r2.status_code == 200:
-                    data = r2.json()
-                    status = data.get('status') if isinstance(data, dict) else None
-                    if status in ('healthy', 'broken'):
-                        logging.info(f'[Decypharr] health check for {entry_name!r}: {status}')
-                        return status
-            logging.debug(f'[Decypharr] health check inconclusive for {entry_name!r} — proceeding')
-            return None
+            if r.status_code in (200, 202):
+                return True
+            log_fn = logging.debug if r.status_code == 400 else logging.warning
+            log_fn(f'[Decypharr] health check trigger failed for {entry_name!r}: HTTP {r.status_code}')
+            return False
         except Exception as exc:
-            # 400 errors raised as HTTPError are expected for completed/cleaned-up entries
             _msg = str(exc)
             _log = logging.debug if '400' in _msg else logging.warning
-            _log(f'[Decypharr] check_entry_health error for {entry_name!r}: {exc}')
+            _log(f'[Decypharr] trigger_health_check error for {entry_name!r}: {exc}')
+            return False
+
+    def poll_health_result(self, entry_name: str) -> Optional[str]:
+        """GET the current health check result. Returns 'healthy', 'broken', or None if not ready."""
+        try:
+            import urllib.parse
+            encoded = urllib.parse.quote(entry_name, safe='')
+            r = api.get(
+                f'{self.base_url}/api/repair/health/{encoded}',
+                headers=self._headers(), timeout=4,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                status = data.get('status') if isinstance(data, dict) else None
+                if status in ('healthy', 'broken'):
+                    logging.info(f'[Decypharr] health check for {entry_name!r}: {status}')
+                    return status
             return None
+        except Exception as exc:
+            logging.debug(f'[Decypharr] poll_health_result error for {entry_name!r}: {exc}')
+            return None
+
+    def check_entry_health(self, entry_name: str) -> Optional[str]:
+        """Trigger + poll in one call (legacy, used by non-health-check paths)."""
+        if self.trigger_health_check(entry_name):
+            return self.poll_health_result(entry_name)
+        return None
 
     def wait_for_completion(self, job_id: str, timeout: int = 3600, poll_interval: int = 10) -> bool:
         """Poll until the job completes or timeout. Returns True on success."""

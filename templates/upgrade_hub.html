@@ -1669,8 +1669,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         const res = await fetch('/upgrade_hub/api/status');
         const s = await res.json();
 
-        if (!s.zilean_configured) {
-            showStatus('error', 'Zilean scraper not configured — enable it in Settings → Scrapers');
+        if (!s.any_source_configured) {
+            showStatus('error', 'No upgrade source configured — enable Zilean or a Newznab indexer in Settings → Scrapers');
             document.getElementById('scan-btn').disabled = true;
         }
 
