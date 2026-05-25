@@ -465,12 +465,20 @@ def _scrape_for_replacement(item: dict, broken_nzb_title: str, version_override:
         # NZB-only
         nzb_results = [r for r in (results or []) if r.get('protocol') == 'nzb']
 
-        # Remove the broken release
+        # Remove the broken release — compare against raw indexer title AND
+        # the (original) part extracted from a structured NZB file-named title
         if broken_nzb_title:
+            # Extract raw release name from structured title: "Show (2024) - S01E01 - ... - (raw.title)"
+            _raw_broken = broken_nzb_title
+            _orig_match = re.search(r'\(([^)]+)\)\s*$', broken_nzb_title)
+            if _orig_match:
+                _raw_broken = _orig_match.group(1).replace('-[NZB Pack]', '').strip()
             nzb_results = [
                 r for r in nzb_results
                 if r.get('title') != broken_nzb_title
                 and r.get('original_title') != broken_nzb_title
+                and r.get('title') != _raw_broken
+                and r.get('original_title') != _raw_broken
             ]
 
         # Filter out segment-blacklisted NZBs and pre-fetch for known problem hosts
@@ -502,7 +510,7 @@ def _scrape_for_replacement(item: dict, broken_nzb_title: str, version_override:
 # Submit replacement to Decypharr
 # ---------------------------------------------------------------------------
 
-def _submit_replacement(result: dict, title: str) -> Optional[str]:
+def _submit_replacement(result: dict, title: str, item: dict = None) -> Optional[str]:
     """Submit the best NZB to Decypharr. Returns new job_id or None."""
     try:
         from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
@@ -513,17 +521,41 @@ def _submit_replacement(result: dict, title: str) -> Optional[str]:
         nzb_url = result.get('nzb_url') or result.get('magnet', '')
         release_title = result.get('title') or title
 
+        # Apply NZB file naming if enabled — same as torrent_processor path
+        if item:
+            try:
+                from routes.scraper_routes import _build_nzb_title
+                _item_type = item.get('type', '')
+                _media_type = 'tv' if _item_type == 'episode' else _item_type
+                _parsed = result.get('parsed_info', {}) or {}
+                _is_season_pack = bool(_parsed.get('seasons')) and not _parsed.get('episodes')
+                named = _build_nzb_title(
+                    title=item.get('title', '') or title,
+                    year=item.get('year', ''),
+                    imdb_id=item.get('imdb_id'),
+                    version=item.get('version', ''),
+                    original_scraped_torrent_title=release_title,
+                    media_type=_media_type,
+                    season=item.get('season_number'),
+                    episode=None if _is_season_pack else item.get('episode_number'),
+                    episode_title=item.get('episode_title'),
+                )
+                if named:
+                    release_title = named
+            except Exception:
+                pass
+
         if nzb_content:
             job_id = client.add_nzb_content(nzb_content=nzb_content, title=release_title)
         elif nzb_url:
             job_id = client.add_nzb(nzb_url=nzb_url, title=release_title)
         else:
-            return None
+            return None, None
 
-        return job_id
+        return job_id, release_title
     except Exception as e:
         logger.error(f'[NZBRepair] _submit_replacement error: {e}')
-        return None
+        return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -696,7 +728,10 @@ def run_repair(triggered_by: str = 'scheduled', version_override: str = None) ->
 
             # 5. Pick best candidate and submit once
             best = candidates[0] if candidates else None
-            new_job_id = _submit_replacement(best, rep.get('title', '')) if best else None
+            new_job_id, _named_title = _submit_replacement(best, rep.get('title', ''), item=rep) if best else (None, None)
+            if best and _named_title:
+                best = dict(best)  # don't mutate original
+                best['title'] = _named_title
 
             for db_item in db_items:
                 item_id = db_item['id']

@@ -1091,12 +1091,14 @@ class ProgramRunner:
                         # Queue-processing tasks get their own executor so they don't
                         # block scheduled maintenance tasks and vice versa.
                         _QUEUE_TASKS = {
-                            'Adding', 'Checking', 'Sleeping', 'Unreleased',
+                            'Adding', 'Checking', 'Scraping', 'Wanted',
+                            'Sleeping', 'Unreleased',
                             'Blacklisted', 'Pending Uncached', 'Upgrading',
                             'final_check_queue', 'Pre_release',
                             'task_check_plex_files', 'task_send_notifications',
                             'task_update_queue_views', 'task_fix_stuck_plex_items',
                             'task_regulate_system_load',
+                            'task_nzb_health_check',
                         }
                         _executor = 'queue' if job_id in _QUEUE_TASKS else 'default'
 
@@ -3200,9 +3202,13 @@ class ProgramRunner:
 
     # Track last health check duration to implement skip-if-slow guard
     _nzb_health_last_duration: float = 0.0
-    _NZB_HEALTH_MAX_JOBS_PER_TICK = 15   # cap jobs polled per tick
+    _NZB_HEALTH_MAX_JOBS_PER_TICK = 30   # cap jobs polled per tick
     _NZB_HEALTH_JOB_TIMEOUT = 8          # seconds per job poll before giving up
     _NZB_HEALTH_SKIP_THRESHOLD = 8.0     # if last run took this long, skip next tick
+    _nzb_folder_wait_counts: dict = {}   # job_id → consecutive ticks where folder not found
+    _NZB_FOLDER_WAIT_MAX = 10            # after this many ticks (~100s) treat as broken
+    _nzb_health_triggered: dict = {}     # entry_name → tick count since trigger (0 = not yet triggered)
+    _NZB_HEALTH_MAX_POLL_TICKS = 6       # give up polling after ~60s (6 ticks × 10s)
 
     def task_nzb_health_check(self):
         """Poll NZB items in Adding state, run health checks, move to Checking or back to Wanted.
@@ -3231,12 +3237,11 @@ class ProgramRunner:
 
             _tick_start = _time.monotonic()
 
-            from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
+            from usenet.decypharr_client import get_decypharr_client
             from utilities.settings import get_setting as _gs
             from collections import defaultdict as _dd
             from concurrent.futures import ThreadPoolExecutor as _TPE, as_completed as _ac
 
-            reset_decypharr_client()
             _nzb_client = get_decypharr_client()
 
             # Group items by job_id
@@ -3249,6 +3254,10 @@ class ProgramRunner:
             _unique_jobs = list(_job_groups.keys())[:self._NZB_HEALTH_MAX_JOBS_PER_TICK]
             if len(_job_groups) > self._NZB_HEALTH_MAX_JOBS_PER_TICK:
                 logging.debug(f'[NZBHealthCheck] Capping to {self._NZB_HEALTH_MAX_JOBS_PER_TICK}/{len(_job_groups)} jobs this tick')
+
+            # Shared folder-wait counter dict (closure captures this)
+            _job_folder_wait_counts = self._nzb_folder_wait_counts
+            _folder_wait_max = self._NZB_FOLDER_WAIT_MAX
 
             def _poll_job(job_id):
                 try:
@@ -3279,7 +3288,26 @@ class ProgramRunner:
                         except Exception:
                             pass
                         if not entry_name:
-                            entry_name = nzb_title or None
+                            # If job was not found in Decypharr queue (raw={}) and folder
+                            # also missing — dead job, treat as broken immediately, no waiting.
+                            _job_not_found = not status.get('raw')
+                            if _job_not_found:
+                                logging.warning(f'[NZB] job {job_id} not found in Decypharr and no folder — treating as broken immediately')
+                                _job_folder_wait_counts.pop(job_id, None)
+                                progress = -1
+                            else:
+                                # Job completed normally but folder not yet visible — wait up to max ticks.
+                                wait_count = _job_folder_wait_counts.get(job_id, 0) + 1
+                                _job_folder_wait_counts[job_id] = wait_count
+                                if wait_count >= _folder_wait_max:
+                                    logging.warning(f'[NZB] job {job_id} folder never appeared after {wait_count} ticks — treating as broken')
+                                    _job_folder_wait_counts.pop(job_id, None)
+                                    progress = -1
+                                else:
+                                    logging.debug(f'[NZB] job {job_id} complete but folder not found (tick {wait_count}/{_folder_wait_max}) — waiting')
+                                    progress = 99
+                        else:
+                            _job_folder_wait_counts.pop(job_id, None)
                     return job_id, progress, entry_name, None
                 except Exception as exc:
                     return job_id, None, None, exc
@@ -3305,45 +3333,163 @@ class ProgramRunner:
                             except Exception:
                                 pass
 
-            # Health check completed entries in parallel
+            # Health check completed entries — trigger once, poll on subsequent ticks.
+            # This avoids re-POSTing the trigger every 10s (Decypharr needs time to compute).
             _entries_to_check = {}
             for jid, (prog, entry, err) in _job_results.items():
                 if prog == 100 and entry and entry not in _entries_to_check:
                     _entries_to_check[entry] = jid
 
             _health_results = {}
+            _triggered = self._nzb_health_triggered
+            _max_poll = self._NZB_HEALTH_MAX_POLL_TICKS
+
             if _entries_to_check:
-                def _check_health(entry_name):
-                    try:
-                        return entry_name, _nzb_client.check_entry_health(entry_name)
-                    except Exception:
-                        return entry_name, None
-                with _TPE(max_workers=min(len(_entries_to_check), 5)) as _hpool:
-                    _hfutures = {_hpool.submit(_check_health, en): en for en in _entries_to_check}
-                    try:
-                        for _hfut in _ac(_hfutures, timeout=self._NZB_HEALTH_JOB_TIMEOUT * len(_entries_to_check)):
+                # Step 1: trigger any entries not yet triggered
+                _to_trigger = [en for en in _entries_to_check if en not in _triggered]
+                if _to_trigger:
+                    def _do_trigger(entry_name):
+                        ok = _nzb_client.trigger_health_check(entry_name)
+                        return entry_name, ok
+                    with _TPE(max_workers=min(len(_to_trigger), 5)) as _tpool:
+                        for _fut in _ac({_tpool.submit(_do_trigger, en): en for en in _to_trigger},
+                                        timeout=self._NZB_HEALTH_JOB_TIMEOUT * len(_to_trigger)):
                             try:
-                                en, health = _hfut.result(timeout=self._NZB_HEALTH_JOB_TIMEOUT)
-                                _health_results[en] = health
+                                en, ok = _fut.result(timeout=self._NZB_HEALTH_JOB_TIMEOUT)
+                                if ok:
+                                    _triggered[en] = 1  # tick 1 = triggered, not yet polled
+                                    logging.debug(f'[NZBHealthCheck] Triggered health check for {en!r}')
                             except Exception:
                                 pass
-                    except Exception:
-                        for _hfut in _hfutures:
-                            if _hfut.done():
-                                try:
-                                    en, health = _hfut.result()
+
+                # Step 2: poll entries that were already triggered
+                _to_poll = [en for en in _entries_to_check if en in _triggered]
+                if _to_poll:
+                    def _do_poll(entry_name):
+                        return entry_name, _nzb_client.poll_health_result(entry_name)
+                    with _TPE(max_workers=min(len(_to_poll), 5)) as _ppool:
+                        for _fut in _ac({_ppool.submit(_do_poll, en): en for en in _to_poll},
+                                        timeout=self._NZB_HEALTH_JOB_TIMEOUT * len(_to_poll)):
+                            try:
+                                en, health = _fut.result(timeout=self._NZB_HEALTH_JOB_TIMEOUT)
+                                tick = _triggered.get(en, 1)
+                                if health in ('healthy', 'broken'):
                                     _health_results[en] = health
-                                except Exception:
-                                    pass
+                                    _triggered.pop(en, None)  # done — clean up
+                                elif tick >= _max_poll:
+                                    # Gave up waiting — proceed as inconclusive
+                                    logging.debug(f'[NZBHealthCheck] {en!r} health check inconclusive after {tick} ticks — proceeding')
+                                    _health_results[en] = None
+                                    _triggered.pop(en, None)
+                                else:
+                                    _triggered[en] = tick + 1
+                            except Exception:
+                                pass
 
             # Process results per item
+            _moved_as_sibling = set()  # item IDs already batch-moved with their initiator
             for item in _nzb_items:
                 torrent_id = item.get('filled_by_torrent_id', '')
                 item_id = item.get('id')
+                if item_id in _moved_as_sibling:
+                    continue
                 nzb_title = item.get('filled_by_file', '') or item.get('original_scraped_torrent_title', '')
                 try:
+                    # If this episode+version is already Collected under a different DB entry, remove
+                    # this stale Adding entry rather than processing it.
+                    if item.get('type') == 'episode' and item.get('episode_number') is not None:
+                        try:
+                            import re as _re_stale
+                            from database.core import get_db_connection as _get_dbc_stale
+                            _item_file = item.get('filled_by_file') or item.get('original_scraped_torrent_title') or ''
+                            _is_individual = bool(_re_stale.search(r'[Ss]\d{2}[Ee]\d{2}', _item_file))
+                            with _get_dbc_stale() as _sc:
+                                if _is_individual:
+                                    # Individual episode — match on same file under different entry
+                                    _already_collected = _sc.execute(
+                                        "SELECT COUNT(*) FROM media_items "
+                                        "WHERE imdb_id=? AND season_number=? AND episode_number=? "
+                                        "AND version=? AND type='episode' AND state='Collected' AND id!=? "
+                                        "AND (filled_by_file=? OR original_scraped_torrent_title=?)",
+                                        (item.get('imdb_id'), item.get('season_number'),
+                                         item.get('episode_number'), item.get('version'), item_id,
+                                         _item_file, _item_file)
+                                    ).fetchone()[0]
+                                else:
+                                    # Season pack — check if THIS item was previously Collected
+                                    # (has collected_at set) but got reset to Adding by sibling pull.
+                                    # Also check for duplicate Collected entry with same pack source.
+                                    _pack_match = _re_stale.search(r'\(([^)]+)\)\s*$', _item_file)
+                                    _pack_orig = _pack_match.group(1) if _pack_match else ''
+                                    # Check 1: same item previously collected
+                                    _self_collected = _sc.execute(
+                                        "SELECT COUNT(*) FROM media_items WHERE id=? AND collected_at IS NOT NULL",
+                                        (item_id,)
+                                    ).fetchone()[0]
+                                    # Check 2: different entry with same pack source
+                                    _other_collected = _sc.execute(
+                                        "SELECT COUNT(*) FROM media_items "
+                                        "WHERE imdb_id=? AND season_number=? AND episode_number=? "
+                                        "AND version=? AND type='episode' AND state='Collected' AND id!=? "
+                                        "AND original_scraped_torrent_title=?",
+                                        (item.get('imdb_id'), item.get('season_number'),
+                                         item.get('episode_number'), item.get('version'), item_id,
+                                         _pack_orig)
+                                    ).fetchone()[0] if _pack_orig else 0
+                                    _already_collected = _self_collected or _other_collected
+                            if _already_collected:
+                                logging.info(f'[NZB] Item {item_id} already Collected (self_collected={_self_collected if not _is_individual else "n/a"}) — removing stale Adding entry')
+                                from database.database_writing import update_media_item_state as _umis_stale
+                                _umis_stale(item_id, 'Collected')
+                                adding_queue.remove_item(item)
+                                continue
+                        except Exception:
+                            pass
+
                     job_id = torrent_id[4:]
                     if job_id not in _job_results:
+                        # Job wasn't polled this tick (capped) — but still run stale check
+                        if item.get('type') == 'episode' and item.get('episode_number') is not None:
+                            try:
+                                import re as _re_stale2
+                                from database.core import get_db_connection as _get_dbc_stale2
+                                _item_file2 = item.get('filled_by_file') or item.get('original_scraped_torrent_title') or ''
+                                _is_individual2 = bool(_re_stale2.search(r'[Ss]\d{2}[Ee]\d{2}', _item_file2))
+                                with _get_dbc_stale2() as _sc2:
+                                    if _is_individual2:
+                                        _stale2 = _sc2.execute(
+                                            "SELECT COUNT(*) FROM media_items "
+                                            "WHERE imdb_id=? AND season_number=? AND episode_number=? "
+                                            "AND version=? AND type='episode' AND state='Collected' AND id!=? "
+                                            "AND (filled_by_file=? OR original_scraped_torrent_title=?)",
+                                            (item.get('imdb_id'), item.get('season_number'),
+                                             item.get('episode_number'), item.get('version'), item_id,
+                                             _item_file2, _item_file2)
+                                        ).fetchone()[0]
+                                    else:
+                                        _pack_m2 = _re_stale2.search(r'\(([^)]+)\)\s*$', _item_file2)
+                                        _pack_o2 = _pack_m2.group(1) if _pack_m2 else ''
+                                        _self2 = _sc2.execute(
+                                            "SELECT COUNT(*) FROM media_items WHERE id=? AND collected_at IS NOT NULL",
+                                            (item_id,)
+                                        ).fetchone()[0]
+                                        _other2 = _sc2.execute(
+                                            "SELECT COUNT(*) FROM media_items "
+                                            "WHERE imdb_id=? AND season_number=? AND episode_number=? "
+                                            "AND version=? AND type='episode' AND state='Collected' AND id!=? "
+                                            "AND original_scraped_torrent_title=?",
+                                            (item.get('imdb_id'), item.get('season_number'),
+                                             item.get('episode_number'), item.get('version'), item_id, _pack_o2)
+                                        ).fetchone()[0] if _pack_o2 else 0
+                                        _stale2 = _self2 or _other2
+                                if _stale2:
+                                    logging.info(f'[NZB] Item {item_id} already Collected — removing stale Adding entry')
+                                    from database.database_writing import update_media_item_state as _umis2
+                                    _umis2(item_id, 'Collected')
+                                    adding_queue.remove_item(item)
+                                    continue
+                            except Exception:
+                                pass
                         continue
                     _prog, _entry, _err = _job_results[job_id]
                     if _err:
@@ -3355,22 +3501,263 @@ class ProgramRunner:
                         logging.debug(f'[NZB] {torrent_id} still queued/unknown — waiting')
                         continue
                     elif progress == -1:
-                        logging.warning(f'[NZB] {torrent_id} failed in Decypharr — moving back to Wanted')
-                        adding_queue._handle_failed_item(item, 'NZB failed in Decypharr', self.queue_manager)
+                        logging.warning(f'[NZB] {torrent_id} failed in Decypharr — adding to not-wanted and moving back to Scraping')
+                        try:
+                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid
+                            _nzb_url = item.get('filled_by_magnet', '')
+                            if _nzb_url:
+                                _add_guid(_nzb_url)
+                                logging.info(f'[NZB] Added {_nzb_url[:60]}... to not-wanted guids')
+                        except Exception as _nw_err:
+                            logging.debug(f'[NZB] Could not add to not-wanted: {_nw_err}')
+                        # Clean up all siblings sharing this dead job — add their URLs to not-wanted
+                        # and move them back to Wanted so they re-scrape fresh without the dead job
+                        try:
+                            _dead_siblings = [
+                                s for s in adding_queue.items[:]
+                                if s.get('filled_by_torrent_id') == torrent_id and s.get('id') != item_id
+                            ]
+                            for _ds in _dead_siblings:
+                                try:
+                                    _ds_url = _ds.get('filled_by_magnet', '')
+                                    if _ds_url:
+                                        _add_guid(_ds_url)
+                                    self.queue_manager.move_to_wanted(_ds, 'Adding')
+                                    logging.info(f'[NZB] Cleaned up dead sibling {_ds["id"]} from Adding')
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+                        # Try next result from scrape_results directly in Adding (debrid-style flow).
+                        # Clear torrent_id so the Adding queue process() loop picks this item up
+                        # and tries the next available result — no health check cycle, no Scraping round-trip.
+                        _has_more_results = False
+                        try:
+                            import json as _json
+                            _sr = item.get('scrape_results', [])
+                            if isinstance(_sr, str):
+                                _sr = _json.loads(_sr)
+                            # Filter out the bad URL from remaining results
+                            _remaining = [r for r in (_sr or [])
+                                          if (r.get('nzb_url') or r.get('magnet', '')) != item.get('filled_by_magnet', '')]
+                            if _remaining:
+                                _has_more_results = True
+                                from database.database_writing import update_media_item as _umi_retry
+                                _umi_retry(item_id,
+                                    filled_by_torrent_id=None,
+                                    filled_by_file=None,
+                                    filled_by_title=None,
+                                    filled_by_magnet=None,
+                                    scrape_results=_json.dumps(_remaining),
+                                )
+                                item['filled_by_torrent_id'] = None
+                                item['filled_by_magnet'] = None
+                                adding_queue._nzb_submitted_ids.discard(item_id)
+                                logging.info(f'[NZB] {torrent_id} failed — {len(_remaining)} results remain, retrying in Adding')
+                        except Exception as _retry_err:
+                            logging.debug(f'[NZB] Could not prepare retry: {_retry_err}')
+                        if not _has_more_results:
+                            adding_queue._handle_failed_item(item, 'NZB failed in Decypharr', self.queue_manager)
                         continue
                     elif progress < 100:
-                        logging.debug(f'[NZB] {torrent_id} progress={progress}% — waiting')
+                        # Check if this job has been downloading too long without finishing.
+                        # Uses last_updated timestamp (set when NZB was submitted) so timeout
+                        # survives app restarts. Default cap: 2 hours.
+                        _download_timeout_hours = float(_gs('Usenet Provider', 'nzb_download_timeout_hours', 2.0))
+                        _lu = item.get('last_updated')
+                        _timed_out_dl = False
+                        if _lu and _download_timeout_hours > 0:
+                            try:
+                                from datetime import datetime as _dt2
+                                _lu_dt = _dt2.fromisoformat(str(_lu).replace('Z', '+00:00').split('+')[0])
+                                _age_hours = (_dt2.now() - _lu_dt).total_seconds() / 3600.0
+                                if _age_hours > _download_timeout_hours:
+                                    _timed_out_dl = True
+                            except Exception:
+                                pass
+                        if not _timed_out_dl:
+                            logging.debug(f'[NZB] {torrent_id} progress={progress}% — waiting')
+                            continue
+                        # Download timed out — treat like a failed job: add URL to not-wanted,
+                        # delete from Decypharr, try next scrape result or move to Wanted.
+                        logging.warning(
+                            f'[NZB] {torrent_id} stalled at {progress}% after >{_download_timeout_hours:.1f}h — '
+                            f'adding to not-wanted and requeuing'
+                        )
+                        try:
+                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid_to
+                            _nzb_url_to = item.get('filled_by_magnet', '')
+                            if _nzb_url_to:
+                                _add_guid_to(_nzb_url_to)
+                                logging.info(f'[NZB] Added stalled URL to not-wanted')
+                        except Exception:
+                            pass
+                        # Delete the stalled job from Decypharr
+                        try:
+                            import requests as _req_to
+                            _dcy_url_to = _gs('Usenet Provider', 'url', default='').rstrip('/')
+                            _dcy_token_to = _gs('Usenet Provider', 'api_token', default='')
+                            _headers_to = {'Authorization': f'Bearer {_dcy_token_to}'} if _dcy_token_to else {}
+                            _search_to = (entry_name or nzb_title or '').strip()
+                            _real_hash_to = None
+                            _page_to = 1
+                            while not _real_hash_to:
+                                _tr_to = _req_to.get(f'{_dcy_url_to}/api/torrents',
+                                                     params={'page': _page_to, 'limit': 50, 'sort_by': 'added_on', 'sort_order': 'desc'},
+                                                     headers=_headers_to, timeout=10)
+                                if _tr_to.status_code != 200:
+                                    break
+                                _data_to = _tr_to.json()
+                                for _t_to in _data_to.get('torrents', []):
+                                    if _t_to.get('name', '').strip() == _search_to:
+                                        _real_hash_to = _t_to.get('info_hash', '')
+                                        break
+                                if _real_hash_to or not _data_to.get('has_next'):
+                                    break
+                                _page_to += 1
+                            if _real_hash_to:
+                                _dr_to = _req_to.delete(f'{_dcy_url_to}/api/torrents',
+                                                        headers=_headers_to,
+                                                        params={'hashes': _real_hash_to}, timeout=10)
+                                if _dr_to.status_code == 200:
+                                    logging.info(f'[NZB] Deleted stalled job {_real_hash_to} from Decypharr')
+                                else:
+                                    logging.warning(f'[NZB] Could not delete stalled job: HTTP {_dr_to.status_code}')
+                        except Exception as _del_to_err:
+                            logging.debug(f'[NZB] Could not delete stalled job from Decypharr: {_del_to_err}')
+                        # Handle siblings sharing this stalled job
+                        try:
+                            _stalled_siblings = [
+                                s for s in adding_queue.items[:]
+                                if s.get('filled_by_torrent_id') == torrent_id and s.get('id') != item_id
+                            ]
+                            for _ss in _stalled_siblings:
+                                _ss_url = _ss.get('filled_by_magnet', '')
+                                if _ss_url:
+                                    try:
+                                        _add_guid_to(_ss_url)
+                                    except Exception:
+                                        pass
+                                self.queue_manager.move_to_wanted(_ss, 'Adding')
+                                logging.info(f'[NZB] Moved stalled sibling {_ss["id"]} to Wanted')
+                        except Exception:
+                            pass
+                        # Try next result from scrape_results (same as progress=-1 retry flow)
+                        _has_more_to = False
+                        try:
+                            import json as _json_to
+                            _sr_to = item.get('scrape_results', [])
+                            if isinstance(_sr_to, str):
+                                _sr_to = _json_to.loads(_sr_to)
+                            _remaining_to = [r for r in (_sr_to or [])
+                                             if (r.get('nzb_url') or r.get('magnet', '')) != item.get('filled_by_magnet', '')]
+                            if _remaining_to:
+                                _has_more_to = True
+                                from database.database_writing import update_media_item as _umi_to
+                                _umi_to(item_id,
+                                    filled_by_torrent_id=None,
+                                    filled_by_file=None,
+                                    filled_by_title=None,
+                                    filled_by_magnet=None,
+                                    scrape_results=_json_to.dumps(_remaining_to),
+                                )
+                                item['filled_by_torrent_id'] = None
+                                item['filled_by_magnet'] = None
+                                adding_queue._nzb_submitted_ids.discard(item_id)
+                                logging.info(f'[NZB] Stalled job — {len(_remaining_to)} results remain, retrying in Adding')
+                        except Exception as _retry_to_err:
+                            logging.debug(f'[NZB] Could not prepare stall retry: {_retry_to_err}')
+                        if not _has_more_to:
+                            adding_queue._handle_failed_item(item, 'NZB stalled in Decypharr (download timeout)', self.queue_manager)
                         continue
 
                     logging.info(f'[NZB] {torrent_id} complete — running health check')
+
+                    # If this is a season pack initiator, wait until all siblings have
+                    # coalesced into Adding before moving to Checking. This ensures
+                    # _resolve_nzb_file_info sees all episodes as a pack and assigns
+                    # correct per-episode filenames, preventing Plex duplicate rows.
+                    _imdb_wait = item.get('imdb_id')
+                    _season_wait = item.get('season_number')
+                    # Only wait for siblings when this is a season pack NZB.
+                    # Individual episode NZBs (title contains SxxExx) are self-contained —
+                    # their sibling episodes each have their own job and don't need to
+                    # coalesce before _resolve_nzb_file_info runs.
+                    _is_individual_ep = bool(__import__('re').search(r'[Ss]\d{2}[Ee]\d{2}', nzb_title or ''))
+                    if _imdb_wait and _season_wait is not None and not _is_individual_ep:
+                        try:
+                            from database.core import get_db_connection as _get_dbc
+                            with _get_dbc() as _wconn:
+                                # Only count Scraping siblings that are recently updated (within 10 min).
+                                # A sibling stuck in Scraping with no results will have a stale
+                                # last_updated and should not block the pack indefinitely.
+                                _scraping_siblings = _wconn.execute(
+                                    "SELECT COUNT(*) FROM media_items "
+                                    "WHERE imdb_id=? AND season_number=? AND type='episode' "
+                                    "AND state='Scraping' AND id!=? "
+                                    "AND (filled_by_torrent_id IS NULL OR filled_by_torrent_id!=?) "
+                                    "AND last_updated >= datetime('now', '-10 minutes')",
+                                    (_imdb_wait, _season_wait, item_id, torrent_id)
+                                ).fetchone()[0]
+                            if _scraping_siblings > 0:
+                                logging.debug(
+                                    f'[NZB] {torrent_id} complete but {_scraping_siblings} siblings still Scraping — waiting one tick'
+                                )
+                                # While waiting for Scraping siblings, pull any Wanted/Sleeping
+                                # siblings into Adding now so they don't wait behind the throttle.
+                                _is_pack_early = not __import__('re').search(r'[Ss]\d{2}[Ee]\d{2}', nzb_title or '')
+                                if _is_pack_early:
+                                    try:
+                                        from database.core import get_db_connection as _get_dbc_e
+                                        from database.database_writing import update_media_item as _umi_e
+                                        from database.database_writing import update_media_item_state as _umis_e
+                                        _nzb_url_e = item.get('filled_by_magnet', '') or item.get('link', '')
+                                        _orig_e = item.get('original_scraped_torrent_title', nzb_title)
+                                        with _get_dbc_e() as _ec:
+                                            _wanted_e = _ec.execute(
+                                                "SELECT id FROM media_items "
+                                                "WHERE imdb_id=? AND season_number=? AND type='episode' "
+                                                "AND state IN ('Wanted','Sleeping') AND id!=? "
+                                                "AND collected_at IS NULL "
+                                                "AND episode_number NOT IN ("
+                                                "  SELECT episode_number FROM media_items "
+                                                "  WHERE imdb_id=? AND season_number=? "
+                                                "  AND type='episode' AND state='Collected'"
+                                                ")",
+                                                (_imdb_wait, _season_wait, item_id,
+                                                 _imdb_wait, _season_wait)
+                                            ).fetchall()
+                                        _folder_e = entry_name or nzb_title
+                                        for _we in _wanted_e:
+                                            try:
+                                                _umi_e(_we[0], filled_by_torrent_id=torrent_id,
+                                                       filled_by_file=_folder_e,
+                                                       filled_by_magnet=_nzb_url_e,
+                                                       filled_by_title=nzb_title,
+                                                       original_scraped_torrent_title=_orig_e)
+                                                _umis_e(_we[0], 'Adding')
+                                                logging.info(f'[NZB] Pulled Wanted sibling {_we[0]} into Adding (pack waiting for Scraping)')
+                                            except Exception:
+                                                pass
+                                        if _wanted_e:
+                                            adding_queue.update()
+                                    except Exception:
+                                        pass
+                                continue
+                        except Exception:
+                            pass
+
                     if not entry_name:
-                        logging.warning(f'[NZB] {torrent_id} could not determine entry name — proceeding to Checking anyway')
-                        health = None
+                        # Should not happen — poll_job now keeps progress at 99 until folder found.
+                        # Guard: stay in Adding rather than moving to Checking with no folder.
+                        logging.warning(f'[NZB] {torrent_id} has no entry_name at health check — waiting for folder')
+                        continue
                     else:
                         health = _health_results.get(entry_name)
 
                     if health == 'broken':
                         logging.warning(f'[NZB] {torrent_id} entry {entry_name!r} is BROKEN — deleting and moving back to Wanted')
+                        self._nzb_health_triggered.pop(entry_name, None)
                         # Add NZB guid to not-wanted so it's filtered at scrape time in future
                         try:
                             from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid
@@ -3455,6 +3842,38 @@ class ProgramRunner:
                         except Exception as _re:
                             logging.warning(f'[NZB] Could not remove broken result: {_re}')
                             self.queue_manager.move_to_wanted(item, 'Adding')
+
+                        # Clean up all coalesced siblings sharing this broken job.
+                        # They are stuck in Adding with the same filled_by_torrent_id.
+                        # Add their NZB URL to not-wanted, reset their fields, move to Wanted.
+                        _broken_siblings = [
+                            s for s in adding_queue.items[:]
+                            if s.get('filled_by_torrent_id') == torrent_id
+                            and s.get('id') != item_id
+                        ]
+                        if _broken_siblings:
+                            logging.warning(f'[NZB] Cleaning up {len(_broken_siblings)} coalesced siblings of broken job {torrent_id}')
+                            from database.database_writing import update_media_item as _umi2
+                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid2
+                            for _sib in _broken_siblings:
+                                try:
+                                    _sib_url = _sib.get('filled_by_magnet', '')
+                                    if _sib_url:
+                                        try:
+                                            _add_guid2(_sib_url)
+                                        except Exception:
+                                            pass
+                                    _umi2(_sib['id'],
+                                          filled_by_torrent_id=None,
+                                          filled_by_file=None,
+                                          filled_by_title=None,
+                                          filled_by_magnet=None,
+                                          debrid_folder_name=None,
+                                          fall_back_to_single_scraper=False)
+                                    self.queue_manager.move_to_wanted(_sib, 'Adding')
+                                    logging.info(f'[NZB] Moved broken sibling {_sib["id"]} back to Wanted')
+                                except Exception as _sib_err:
+                                    logging.warning(f'[NZB] Could not clean up sibling {_sib.get("id")}: {_sib_err}')
                     else:
                         if health == 'healthy':
                             logging.info(f'[NZB] {torrent_id} health check passed — moving to Checking')
@@ -3462,15 +3881,87 @@ class ProgramRunner:
                             logging.warning(f'[NZB] {torrent_id} health check inconclusive — proceeding to Checking anyway')
                         nzb_url = item.get('filled_by_magnet', '') or item.get('link', '')
                         nzb_original_title = item.get('original_scraped_torrent_title', nzb_title)
+
+                        # Pull any Wanted/Sleeping siblings for this season directly into Adding
+                        # bypassing the Scraping queue and throttle — the pack is already confirmed
+                        # working so there's no need to scrape them individually.
+                        _imdb_pull = item.get('imdb_id')
+                        _season_pull = item.get('season_number')
+                        _is_pack = not __import__('re').search(r'[Ss]\d{2}[Ee]\d{2}', nzb_title or '')
+                        if _imdb_pull and _season_pull is not None and _is_pack:
+                            try:
+                                from database.core import get_db_connection as _get_dbc2
+                                from database.database_writing import update_media_item as _umi_pull
+                                with _get_dbc2() as _pconn:
+                                    _wanted_sibs = _pconn.execute(
+                                        "SELECT id FROM media_items "
+                                        "WHERE imdb_id=? AND season_number=? AND type='episode' "
+                                        "AND state IN ('Wanted','Sleeping') AND id!=? "
+                                        "AND collected_at IS NULL "
+                                        "AND episode_number NOT IN ("
+                                        "  SELECT episode_number FROM media_items "
+                                        "  WHERE imdb_id=? AND season_number=? "
+                                        "  AND type='episode' AND state='Collected'"
+                                        ")",
+                                        (_imdb_pull, _season_pull, item_id,
+                                         _imdb_pull, _season_pull)
+                                    ).fetchall()
+                                _folder_pull = entry_name or nzb_title
+                                for _ws in _wanted_sibs:
+                                    try:
+                                        _umi_pull(_ws[0],
+                                            filled_by_torrent_id=torrent_id,
+                                            filled_by_file=_folder_pull,
+                                            filled_by_magnet=nzb_url,
+                                            filled_by_title=nzb_title,
+                                            original_scraped_torrent_title=nzb_original_title,
+                                        )
+                                        from database.database_writing import update_media_item_state as _umis_pull
+                                        _umis_pull(_ws[0], 'Adding')
+                                        logging.info(f'[NZB] Pulled Wanted sibling {_ws[0]} directly into Adding for pack {torrent_id}')
+                                    except Exception as _pull_err:
+                                        logging.debug(f'[NZB] Could not pull sibling {_ws[0]}: {_pull_err}')
+                                if _wanted_sibs:
+                                    # Reload Adding queue so new siblings are visible this tick
+                                    adding_queue.update()
+                            except Exception as _pull_ex:
+                                logging.debug(f'[NZB] Wanted sibling pull failed: {_pull_ex}')
                         try:
+                            _folder_name = entry_name or nzb_title
                             self.queue_manager.move_to_checking(
                                 item, 'Adding',
                                 title=nzb_title,
                                 link=nzb_url,
-                                filled_by_file=entry_name or nzb_title,
+                                filled_by_file=_folder_name,
                                 torrent_id=torrent_id,
+                                debrid_folder_name=_folder_name,
                                 original_scraped_torrent_title=nzb_original_title,
                             )
+                            # Move all coalesced siblings (same torrent_id, still in Adding,
+                            # no filled_by_file yet) to Checking together with the initiator.
+                            # _resolve_nzb_file_info will assign per-episode filenames to all
+                            # of them once they're in Checking.
+                            _siblings = [
+                                s for s in adding_queue.items[:]
+                                if s.get('filled_by_torrent_id') == torrent_id
+                                and s.get('id') != item_id
+                                and s.get('filled_by_file') is None
+                            ]
+                            for _sib in _siblings:
+                                try:
+                                    self.queue_manager.move_to_checking(
+                                        _sib, 'Adding',
+                                        title=nzb_title,
+                                        link=nzb_url,
+                                        filled_by_file=None,  # _resolve_nzb_file_info will set per-episode filename
+                                        torrent_id=torrent_id,
+                                        debrid_folder_name=_folder_name,
+                                        original_scraped_torrent_title=nzb_original_title,
+                                    )
+                                    _moved_as_sibling.add(_sib['id'])
+                                    logging.info(f'[NZB] Moved coalesced sibling {_sib["id"]} to Checking with initiator')
+                                except Exception as _se:
+                                    logging.warning(f'[NZB] Could not move sibling {_sib.get("id")} to Checking: {_se}')
                         except Exception as _ce:
                             logging.warning(f'[NZB] Could not move {torrent_id} to Checking: {_ce}')
                             adding_queue._handle_failed_item(item, f'NZB health passed but queue move failed: {_ce}', self.queue_manager)
@@ -3997,6 +4488,78 @@ class ProgramRunner:
                 except Exception as _replace_err:
                     logging.error(f"[REPLACE] Error in reconciliation replace hook: {_replace_err}")
             # --- End Step 1b ---
+
+            # --- Step 1c: Collect stranded NZB coalesced items in Adding state ---
+            # When a season pack NZB is submitted, only the initiator episode goes through
+            # health check → Checking → _resolve_nzb_file_info → Collected.
+            # The coalesced siblings sit in Adding with filled_by_torrent_id=nzb:xxx but no
+            # filled_by_file. If a sibling is already Collected (via Plex scan), collect them
+            # immediately with proper file info copied from the Collected sibling.
+            try:
+                stranded_rows = cursor.execute("""
+                    SELECT a.id, a.imdb_id, a.season_number, a.episode_number, a.title
+                    FROM media_items a
+                    WHERE a.state = 'Adding'
+                      AND a.filled_by_torrent_id LIKE 'nzb:%'
+                      AND a.filled_by_file IS NULL
+                      AND a.imdb_id IS NOT NULL
+                      AND (a.ghostlisted IS NULL OR a.ghostlisted = 0)
+                """).fetchall()
+
+                if stranded_rows:
+                    stranded_collected = []
+                    for row in stranded_rows:
+                        # Prefer the initiator row (has nzb torrent_id + folder info),
+                        # fall back to any Collected sibling with a filled_by_file.
+                        sibling = cursor.execute("""
+                            SELECT id, filled_by_file, filled_by_title, debrid_folder_name,
+                                   location_basename, original_scraped_torrent_title,
+                                   real_debrid_original_title, filled_by_torrent_id
+                            FROM media_items
+                            WHERE imdb_id = ? AND season_number = ? AND type = 'episode'
+                              AND state = 'Collected'
+                              AND filled_by_file IS NOT NULL
+                              AND id != ?
+                            ORDER BY (filled_by_torrent_id LIKE 'nzb:%') DESC
+                            LIMIT 1
+                        """, (row['imdb_id'], row['season_number'], row['id'])).fetchone()
+                        if sibling:
+                            stranded_collected.append((row['id'], dict(sibling), dict(row)))
+
+                    if stranded_collected:
+                        for item_id, sib, item in stranded_collected:
+                            # Use filled_by_title as location_basename (folder name) — sibling's
+                            # location_basename may be a filename if set before the fix.
+                            folder_name = sib['filled_by_title'] or sib['debrid_folder_name'] or sib['location_basename']
+                            cursor.execute("""
+                                UPDATE media_items SET
+                                    state = 'Collected',
+                                    collected_at = ?,
+                                    filled_by_torrent_id = ?,
+                                    filled_by_title = ?,
+                                    debrid_folder_name = ?,
+                                    location_basename = ?,
+                                    original_scraped_torrent_title = ?,
+                                    real_debrid_original_title = ?
+                                WHERE id = ?
+                            """, (
+                                now_str,
+                                sib['filled_by_torrent_id'],
+                                folder_name,
+                                folder_name,
+                                folder_name,
+                                sib['original_scraped_torrent_title'],
+                                sib['real_debrid_original_title'],
+                                item_id,
+                            ))
+                            reconciliation_logger.info(
+                                f"[NZBCoalesce] Collected stranded Adding item {item_id} "
+                                f"'{item['title']}' S{item['season_number']}E{item['episode_number']} "
+                                f"— sibling {sib['id']} already Collected"
+                            )
+            except Exception as _sc_err:
+                logging.error(f"[NZBCoalesce] Step 1c error: {_sc_err}", exc_info=True)
+            # --- End Step 1c ---
 
             # --- Step 2: New deduplication for Wanted, Scraping, Unreleased states ---
             reconciliation_logger.info("Starting semantic deduplication for 'Wanted', 'Scraping', 'Unreleased' items (IMDB ID, S/E, Version - with '*' trimmed from version)...")
@@ -5896,15 +6459,50 @@ class ProgramRunner:
             logging.error(f"[StuckPlex] Failed to read Plex log: {e}")
             return
 
-        tail_text = ''.join(tail)
+        # Time-windowed burst detection: a stuck item is one that appears
+        # 4+ times within any 60-second window. Normal Plex analysis hits the
+        # same item 1-2 times spread over minutes; a stuck scan hammers it
+        # repeatedly within seconds.
+        #
+        # Log line format:
+        #   May 25, 2026 10:00:20.530 [.../JobRunner] Job running: ... --item 146592
+        import time as _time
+        from collections import defaultdict as _dd
 
-        # Count JobRunner item hits
-        counts = {}
-        for m in re.finditer(r'JobRunner.*?item (\d+)', tail_text):
-            item_id = m.group(1)
-            counts[item_id] = counts.get(item_id, 0) + 1
+        _BURST_WINDOW = 60      # seconds
+        _BURST_THRESHOLD = 4    # hits within the window to be considered stuck
 
-        stuck = [item_id for item_id, cnt in counts.items() if cnt >= 4]
+        # Parse (timestamp_epoch, item_id) from JobRunner lines
+        _item_hits = _dd(list)  # item_id -> [epoch, ...]
+        _ts_pattern = re.compile(
+            r'^(\w+ \d+, \d+ \d+:\d+:\d+\.\d+).*?JobRunner.*?--item (\d+)'
+        )
+        for line in tail:
+            m = _ts_pattern.search(line)
+            if not m:
+                continue
+            ts_str, item_id = m.group(1), m.group(2)
+            try:
+                import datetime as _dt
+                # "May 25, 2026 10:00:20.530"
+                epoch = _dt.datetime.strptime(ts_str, '%b %d, %Y %H:%M:%S.%f').timestamp()
+                _item_hits[item_id].append(epoch)
+            except Exception:
+                pass
+
+        # Find items with a burst: sliding window max hits
+        stuck = []
+        for item_id, timestamps in _item_hits.items():
+            if len(timestamps) < _BURST_THRESHOLD:
+                continue
+            ts_sorted = sorted(timestamps)
+            # Sliding window: for each hit, count how many fall within the next 60s
+            for i, t_start in enumerate(ts_sorted):
+                window_count = sum(1 for t in ts_sorted[i:] if t - t_start <= _BURST_WINDOW)
+                if window_count >= _BURST_THRESHOLD:
+                    stuck.append(item_id)
+                    break
+
         if not stuck:
             logging.info("[StuckPlex] No stuck items found.")
             return

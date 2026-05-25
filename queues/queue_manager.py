@@ -527,7 +527,10 @@ class QueueManager:
         wake_count = get_wake_count(item['id'])
         logging.debug(f"Wake count before moving to Wanted: {wake_count}")
 
-        updated_item = self._move_item_to_queue(item, from_queue, "Wanted", "Wanted", new_version=new_version, filled_by_title=None, filled_by_magnet=None)
+        updated_item = self._move_item_to_queue(item, from_queue, "Wanted", "Wanted", new_version=new_version,
+                                                filled_by_title=None, filled_by_magnet=None,
+                                                filled_by_torrent_id=None, filled_by_file=None,
+                                                debrid_folder_name=None)
         
         if updated_item:
             # No additional processing needed for Wanted queue itself

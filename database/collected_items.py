@@ -638,6 +638,36 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                                 
                             existing_collected_at = existing_db_item.get('collected_at') or collected_at
 
+                            # Health page replacement cleanup: if the file location is changing
+                            # (new replacement file vs old bad file), remove the old Plex entry.
+                            # This is separate from the upgrade path — no upgrading_from needed.
+                            _old_location = existing_db_item.get('location_on_disk') or ''
+                            _new_location_check = current_plex_location or ''
+                            if (is_primary_library
+                                    and _old_location
+                                    and _new_location_check
+                                    and _old_location != _new_location_check
+                                    and existing_db_item.get('collected_at') is not None
+                                    and not existing_db_item.get('upgrading_from')):  # not already an upgrade
+                                try:
+                                    _removal_item = {
+                                        'type': existing_db_item['type'],
+                                        'title': existing_db_item['title'],
+                                        'imdb_id': existing_db_item.get('imdb_id'),
+                                        'upgrading_from': existing_db_item.get('filled_by_file', ''),
+                                        'filled_by_torrent_id': existing_db_item.get('filled_by_torrent_id'),
+                                        'version': existing_db_item.get('version'),
+                                        'season_number': existing_db_item.get('season_number'),
+                                        'episode_number': existing_db_item.get('episode_number'),
+                                        'filled_by_file': existing_db_item.get('filled_by_file'),
+                                        'resolution': existing_db_item.get('resolution'),
+                                        'location_on_disk': _old_location,
+                                    }
+                                    logging.info(f"[Collection] Replacement detected for {db_item_id} — removing old Plex entry at {_old_location!r}")
+                                    remove_original_item_from_plex(_removal_item)
+                                except Exception as _rep_cleanup_err:
+                                    logging.debug(f"[Collection] Replacement Plex cleanup failed for {db_item_id}: {_rep_cleanup_err}")
+
                             # Secondary libraries share physical files — don't overwrite
                             # location_on_disk or ms_item_id that belong to the primary library.
                             if is_primary_library or not existing_db_item.get('location_on_disk'):
@@ -907,7 +937,7 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                             f"Plex item {item_identifier} (location: {current_plex_location}, filename: {filename}) not found in existing_file_map. "
                             f"Proceeding to insert as new DB entry."
                         )
-                        
+
                         # Check if there are any items in 'Checking' state with matching identifiers
                         if checking_items_count > 0:
                             # Get the first checking item to use its version
@@ -1027,15 +1057,41 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                                     airtime_cache[imdb_id] = '19:00'
                             
                             airtime = airtime_cache[imdb_id]
+
+                            # Inherit NZB fields from a Collected sibling of the same season pack.
+                            # Prevents new Plex-inserted episodes from re-entering the pipeline
+                            # and submitting duplicate NZB jobs to Decypharr.
+                            _sibling_torrent_id = None
+                            _sibling_magnet = None
+                            _sibling_orig_title = None
+                            _sibling_dfn = None
+                            try:
+                                _sib = conn.execute(
+                                    "SELECT filled_by_torrent_id, filled_by_magnet, original_scraped_torrent_title, debrid_folder_name "
+                                    "FROM media_items "
+                                    "WHERE imdb_id=? AND season_number=? AND type='episode' AND state='Collected' "
+                                    "AND filled_by_torrent_id IS NOT NULL LIMIT 1",
+                                    (imdb_id, item['season_number'])
+                                ).fetchone()
+                                if _sib:
+                                    _sibling_torrent_id = _sib['filled_by_torrent_id']
+                                    _sibling_magnet = _sib['filled_by_magnet']
+                                    _sibling_orig_title = _sib['original_scraped_torrent_title']
+                                    _sibling_dfn = _sib['debrid_folder_name']
+                                    logging.debug(f"[CollectedItems] Inheriting NZB fields from sibling for {item_identifier}")
+                            except Exception:
+                                pass
+
                             cursor = conn.execute('''
                                 INSERT OR REPLACE INTO media_items
-                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution, size, ms_item_id)
-                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number, episode_title, last_updated, metadata_updated, version, airtime, collected_at, original_collected_at, genres, filled_by_file, runtime, location_on_disk, upgraded, country, resolution, size, ms_item_id, filled_by_torrent_id, filled_by_magnet, original_scraped_torrent_title, debrid_folder_name)
+                                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                             ''', (
                                 imdb_id, tmdb_id, normalized_title, item.get('year'),
                                 item.get('release_date'), 'Collected', 'episode',
                                 item['season_number'], item['episode_number'], item.get('episode_title', ''),
-                                datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime'), current_plex_location, False, item.get('country', '').lower(), item.get('resolution'), item.get('size_gb'), plex_ms_item_id
+                                datetime.now(), datetime.now(), version, airtime, collected_at, collected_at, genres, filename, item.get('runtime'), current_plex_location, False, item.get('country', '').lower(), item.get('resolution'), item.get('size_gb'), plex_ms_item_id,
+                                _sibling_torrent_id, _sibling_magnet, _sibling_orig_title, _sibling_dfn
                             ))
                         # logging.debug(f"Inserting new item {item_identifier} (from Plex file: {filename}, location: {current_plex_location}) took {time.time() - start_insert_time:.4f} seconds.")
                         logging.info(f"Added new item {item_identifier} (file: {filename}) to collection.")
