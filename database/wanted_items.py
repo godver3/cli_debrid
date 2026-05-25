@@ -326,6 +326,15 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
         pending_secondary_labels = []  # [(existing_id, source_name, source_detail)] — Collected items needing label from second source
         pending_source_records = []   # [(existing_id, source_name, source_detail)] — not-yet-Collected items needing source recorded
 
+        # Build O(1) lookup: set of (imdb_id, season_number) pairs that have at least one
+        # Collected/Upgrading episode — used for fast season pack sibling detection.
+        _collected_seasons = set()
+        for (eid, seas, _epnum), vs in existing_episodes.items():
+            for _, st, _ in vs:
+                if st in ('Collected', 'Upgrading'):
+                    _collected_seasons.add((eid, seas))
+                    break
+
         filtered_media_items_batch_after_existence_check = []
         for item in media_items_batch:
             imdb_id = item.get('imdb_id')
@@ -456,6 +465,13 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                 for _, state, _ in existing_versions_states_check_collected:
                     if state in ('Collected', 'Upgrading'):
                         is_collected_or_upgrading_in_db = True; break
+
+                # If no per-episode entry found, check if ANY sibling episode of the same
+                # season is Collected — season pack means all episodes are available.
+                # Uses pre-built O(1) set lookup instead of iterating all existing_episodes.
+                if not is_collected_or_upgrading_in_db and imdb_id and season_number_check_collected is not None:
+                    if (str(imdb_id), season_number_check_collected) in _collected_seasons:
+                        is_collected_or_upgrading_in_db = True
 
             if is_collected_or_upgrading_in_db:
                 if not enable_granular_versions:

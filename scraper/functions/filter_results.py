@@ -1181,6 +1181,17 @@ def filter_results(
                             result['filter_reason'] = f"Season pack not containing the requested season: {season}"
                             logging.info(f"Rejected: Season pack missing season {season} for '{original_title}' (Size: {result['size']:.2f}GB)")
                             continue
+                    # NZB-specific: reject incomplete season packs using the indexer's file count.
+                    # If the indexer reports fewer files than the expected episode count, the pack
+                    # is missing episodes and must be rejected — no partial packs allowed.
+                    _nzb_files = result.get('nzb_files', 0)
+                    if _nzb_files and season and season_episode_counts:
+                        _expected_eps = season_episode_counts.get(season, 0)
+                        if _expected_eps > 0 and _nzb_files < _expected_eps:
+                            result['filter_reason'] = f"Incomplete NZB season pack: {_nzb_files} files but season has {_expected_eps} episodes"
+                            logging.info(f"Rejected: Incomplete NZB pack ({_nzb_files}/{_expected_eps} files) for '{original_title}' (Size: {result['size']:.2f}GB)")
+                            continue
+
                     #logging.debug("✓ Passed multi-episode checks")
                 else: # Single episode mode
                     #logging.debug(f"Single episode mode: S{season}E{episode}")

@@ -511,6 +511,7 @@ def migrate_schema():
             AFTER INSERT ON media_items
             FOR EACH ROW
             WHEN NEW.location_on_disk IS NOT NULL
+              AND (NEW.filled_by_torrent_id IS NULL OR NEW.filled_by_torrent_id NOT LIKE 'nzb:%')
             BEGIN
                 UPDATE media_items
                 SET location_basename = REPLACE(NEW.location_on_disk, RTRIM(NEW.location_on_disk, REPLACE(NEW.location_on_disk, '/', '')), '')
@@ -523,7 +524,9 @@ def migrate_schema():
             CREATE TRIGGER trigger_media_items_update_location_basename
             AFTER UPDATE OF location_on_disk ON media_items
             FOR EACH ROW
-            WHEN NEW.location_on_disk IS NOT NULL AND (OLD.location_on_disk IS NULL OR NEW.location_on_disk != OLD.location_on_disk)
+            WHEN NEW.location_on_disk IS NOT NULL
+              AND (OLD.location_on_disk IS NULL OR NEW.location_on_disk != OLD.location_on_disk)
+              AND (NEW.filled_by_torrent_id IS NULL OR NEW.filled_by_torrent_id NOT LIKE 'nzb:%')
             BEGIN
                 UPDATE media_items
                 SET location_basename = REPLACE(NEW.location_on_disk, RTRIM(NEW.location_on_disk, REPLACE(NEW.location_on_disk, '/', '')), '')
@@ -789,11 +792,10 @@ def migrate_schema():
             )
         ''')
 
-        # ── One-time cleanup: clear scrape_results for terminal states ──────────
+        # ── Recurring startup cleanup: clear scrape_results for terminal states ──
         # scrape_results is only needed while an item is being added/checked.
-        # For Collected/Blacklisted/Ghostlisted/Unreleased items it accumulates
-        # indefinitely and can grow to several GB. Clear it once and prevent
-        # future growth via collected_items.py (scrape_results = NULL on collect).
+        # Clear on every startup if any terminal-state items still have data,
+        # and VACUUM if a significant amount was freed.
         try:
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_cleanup_flags'")
             if not cursor.fetchone():
@@ -803,53 +805,18 @@ def migrate_schema():
                         applied_at TEXT NOT NULL
                     )
                 ''')
-            cursor.execute("SELECT 1 FROM schema_cleanup_flags WHERE flag='clear_scrape_results_terminal_states'")
-            if not cursor.fetchone():
-                logging.info("[Migration] Clearing scrape_results for terminal-state items (one-time cleanup)...")
-                cur = conn.execute("""
-                    UPDATE media_items SET scrape_results = NULL
-                    WHERE scrape_results IS NOT NULL
-                      AND scrape_results != ''
-                      AND state IN ('Collected', 'Blacklisted', 'Ghostlisted', 'Unreleased')
-                """)
-                logging.info(f"[Migration] Cleared scrape_results for {cur.rowcount} items.")
-                conn.execute(
-                    "INSERT INTO schema_cleanup_flags (flag, applied_at) VALUES ('clear_scrape_results_terminal_states', datetime('now'))"
-                )
                 conn.commit()
-                logging.info("[Migration] Running VACUUM to reclaim disk space...")
-                conn.execute("VACUUM")
-                logging.info("[Migration] VACUUM complete.")
-            # Second pass — catch items that accumulated after the first migration
-            # ran (fix was incomplete; now covered by update_media_item_state too)
-            cursor.execute("SELECT 1 FROM schema_cleanup_flags WHERE flag='clear_scrape_results_terminal_states_v2'")
-            if not cursor.fetchone():
-                cur2 = conn.execute("""
-                    UPDATE media_items SET scrape_results = NULL
-                    WHERE scrape_results IS NOT NULL
-                      AND scrape_results != ''
-                      AND state IN ('Collected', 'Blacklisted', 'Ghostlisted', 'Unreleased')
-                """)
-                if cur2.rowcount > 0:
-                    logging.info(f"[Migration v2] Cleared scrape_results for {cur2.rowcount} additional items.")
-                conn.execute(
-                    "INSERT INTO schema_cleanup_flags (flag, applied_at) VALUES ('clear_scrape_results_terminal_states_v2', datetime('now'))"
-                )
+            cur_sr = conn.execute("""
+                UPDATE media_items SET scrape_results = NULL
+                WHERE scrape_results IS NOT NULL
+                  AND scrape_results != ''
+                  AND state IN ('Collected', 'Blacklisted', 'Ghostlisted', 'Unreleased')
+            """)
+            if cur_sr.rowcount > 0:
                 conn.commit()
-                logging.info("[Migration v2] Running VACUUM to reclaim disk space...")
+                logging.info(f"[Startup] Cleared scrape_results for {cur_sr.rowcount} terminal-state items — running VACUUM")
                 conn.execute("VACUUM")
-                logging.info("[Migration v2] VACUUM complete.")
-
-            # v3 — one-time VACUUM for installs where v2 ran without VACUUM
-            cursor.execute("SELECT 1 FROM schema_cleanup_flags WHERE flag='clear_scrape_results_vacuum_v3'")
-            if not cursor.fetchone():
-                logging.info("[Migration v3] Running VACUUM to reclaim disk space from scrape_results cleanup...")
-                conn.execute("VACUUM")
-                conn.execute(
-                    "INSERT INTO schema_cleanup_flags (flag, applied_at) VALUES ('clear_scrape_results_vacuum_v3', datetime('now'))"
-                )
-                conn.commit()
-                logging.info("[Migration v3] VACUUM complete.")
+                logging.info("[Startup] VACUUM complete.")
         except Exception as _ce:
             logging.warning(f"[Migration] scrape_results cleanup failed: {_ce}")
 

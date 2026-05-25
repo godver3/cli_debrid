@@ -286,25 +286,29 @@ class ScrapingQueue:
                         _cconn = _gdb()
                         try:
                             _sibling_nzb = _cconn.execute(
-                                "SELECT filled_by_torrent_id, filled_by_file, filled_by_magnet "
+                                "SELECT filled_by_torrent_id, filled_by_file, filled_by_magnet, "
+                                "filled_by_title, original_scraped_torrent_title "
                                 "FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode' "
-                                "AND state IN ('Adding','Checking') "
+                                "AND state IN ('Adding','Checking','Collected','Upgrading') "
                                 "AND filled_by_torrent_id LIKE 'nzb:%' LIMIT 1",
                                 (_coalesce_imdb, _coalesce_season)
                             ).fetchone()
                         finally:
                             _cconn.close()
-                        if _sibling_nzb:
+                        import re as _re_coal
+                        if _sibling_nzb and not _re_coal.search(r'[Ss]\d{2}[Ee]\d{2}', _sibling_nzb[1] or ''):
                             _job_id = _sibling_nzb[0]
-                            _job_file = _sibling_nzb[1] or ''
                             _job_url = _sibling_nzb[2] or ''
+                            _job_title = _sibling_nzb[3] or ''
+                            _job_orig = _sibling_nzb[4] or ''
                             logging.info(f'[NZBPack] {item_identifier}: season pack already submitted (job={_job_id}), coalescing into same job')
                             from database.database_writing import update_media_item, update_media_item_state
                             update_media_item_state(item_to_process['id'], 'Adding')
                             update_media_item(item_to_process['id'],
                                 filled_by_torrent_id=_job_id,
-                                filled_by_file=_job_file,
                                 filled_by_magnet=_job_url,
+                                filled_by_title=_job_title,
+                                original_scraped_torrent_title=_job_orig,
                             )
                             self.remove_item(item_to_process)
                             return True
@@ -632,61 +636,63 @@ class ScrapingQueue:
                                     if isinstance(cfg, dict) and cfg.get('type') == 'Newznab'
                                     and cfg.get('enabled') and cfg.get('url') and cfg.get('api_key', '').strip()
                                 ]
-                                if _newznab_scrapers:
-                                    from scraper.newznab import scrape_newznab_season_aggregate
-                                    _agg_results = scrape_newznab_season_aggregate(
-                                        scrapers=_newznab_scrapers,
-                                        imdb_id=_curr_imdb,
-                                        title=item_to_process.get('title', ''),
-                                        year=item_to_process.get('year', ''),
-                                        season=_curr_season,
-                                        episode_numbers=_ep_nums,
-                                        version_settings=version_settings,
-                                    )
-                                    if _agg_results:
-                                        _best = _agg_results[0]
-                                        _ep_nzb_urls = _best.get('episode_nzb_urls', {})
-                                        _fallback_urls = _best.get('fallback_nzb_urls', {})
-                                        if _ep_nzb_urls:
-                                            # Build existing_items dict {ep_num: item}
-                                            _existing = {it['episode_number']: it for it in _batch}
-                                            from routes.scraper_routes import _add_nzb_pack_to_usenet
-                                            from routes.extensions import app as _flask_app
-                                            _pack_resp = None
-                                            with _flask_app.test_request_context():
-                                                _pack_resp = _add_nzb_pack_to_usenet(
-                                                    episode_nzb_urls=_ep_nzb_urls,
-                                                    fallback_nzb_urls=_fallback_urls,
-                                                    title=item_to_process.get('title', ''),
-                                                    year=item_to_process.get('year', ''),
-                                                    media_type='tv',
-                                                    season=_curr_season,
-                                                    version=_curr_version,
-                                                    tmdb_id=item_to_process.get('tmdb_id'),
-                                                    original_scraped_torrent_title=_best.get('title', ''),
-                                                    episode_filenames=_best.get('episode_filenames', {}),
-                                                    genres=json.loads(item_to_process.get('genres', '[]') or '[]'),
-                                                    current_score=item_to_process.get('current_score', 0.0),
-                                                    existing_items=_existing,
+                                # For season pack: all episodes of the season are in batch → scrape as pack
+                                # For partial batch: fewer than full season → scrape each individually
+                                # but process all of them in this one tick instead of one per tick.
+                                from database.core import get_db_connection as _bconn_fn
+                                try:
+                                    with _bconn_fn() as _bconn:
+                                        _season_total = (_bconn.execute(
+                                            "SELECT COUNT(*) FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode'",
+                                            (_curr_imdb, _curr_season)
+                                        ).fetchone() or [0])[0]
+                                except Exception:
+                                    _season_total = 0
+
+                                _all_eps_requested = (
+                                    _season_total > 0 and
+                                    len(_batch_candidates) >= _season_total
+                                )
+
+                                if _all_eps_requested and is_multi_pack:
+                                    # Full season in batch and multi-pack mode — current item will
+                                    # scrape as season pack; siblings will coalesce onto its job.
+                                    # No special handling needed here; fall through to normal scrape.
+                                    logging.info(f'[NZBBatch] Full season ({len(_batch_candidates)}/{_season_total} eps) — season pack path handles this')
+                                else:
+                                    # Partial batch or individual mode — scrape each episode in the
+                                    # batch right now so they all move to Adding in one tick.
+                                    # Each gets its own Decypharr job and independent health check.
+                                    _batch_submitted = 0
+                                    _batch_ids_to_remove = set()
+                                    # Process all siblings except current item (it falls through to normal scrape below)
+                                    _siblings_to_batch = [it for it in _batch if it.get('id') != item_to_process.get('id')]
+                                    for _bep in _siblings_to_batch:
+                                        try:
+                                            _bep_id = f"{_bep.get('title')} S{_curr_season:02d}E{_bep.get('episode_number', 0):02d}"
+                                            _bep_results, _ = self.scrape_with_fallback(
+                                                _bep, False, queue_manager,
+                                                check_pack_wantedness=False
+                                            )
+                                            if _bep_results:
+                                                _bep_best = _bep_results[0]
+                                                queue_manager.move_to_adding(
+                                                    _bep, 'Scraping',
+                                                    _bep_best['title'],
+                                                    _bep_results
                                                 )
-                                            # Check how many were actually submitted
-                                            _submitted_count = 0
-                                            try:
-                                                import json as _pjson
-                                                _resp_data = _pjson.loads(_pack_resp.get_data(as_text=True))
-                                                _submitted_count = _resp_data.get('submitted', 0)
-                                            except Exception:
-                                                pass
-                                            if _submitted_count > 0:
-                                                logging.info(f'[NZBBatch] Submitted {_submitted_count} episodes as aggregate pack')
-                                                # Remove batch items from in-memory queue immediately
-                                                # so next tick doesn't re-submit them before DB update propagates
-                                                _batch_ids = {it['id'] for it in _batch}
-                                                self.items = [it for it in self.items if it.get('id') not in _batch_ids]
-                                                self._item_ids -= _batch_ids
-                                                _nzb_batch_handled = True
+                                                self.reset_not_wanted_check(_bep['id'])
+                                                _batch_submitted += 1
+                                                _batch_ids_to_remove.add(_bep['id'])
+                                                logging.info(f'[NZBBatch] Batched sibling {_bep_id} → Adding')
                                             else:
-                                                logging.info(f'[NZBBatch] 0 episodes submitted (all already collected) — falling back to individual scrape')
+                                                logging.info(f'[NZBBatch] No results for sibling {_bep_id} — will retry individually')
+                                        except Exception as _bep_err:
+                                            logging.warning(f'[NZBBatch] Error processing sibling {_bep.get("id")}: {_bep_err}')
+                                    if _batch_ids_to_remove:
+                                        self.items = [it for it in self.items if it.get('id') not in _batch_ids_to_remove]
+                                        self._item_ids -= _batch_ids_to_remove
+                                        logging.info(f'[NZBBatch] Batched {_batch_submitted} siblings to Adding; current item continues normally')
                         except Exception as _be:
                             logging.warning(f'[NZBBatch] Batch processing failed, falling back to individual scrape: {_be}', exc_info=True)
 
@@ -882,6 +888,41 @@ class ScrapingQueue:
 
                         if get_setting("Debug", "enable_reverse_order_scraping", default=False):
                             filtered_results.reverse()
+
+                        # Check if this item is already Collected with the same NZB URL (same file).
+                        # If so, this is a duplicate — delete the DB entry entirely rather than adding to queue.
+                        _nzb_url_check = best_result.get('nzb_url') or best_result.get('magnet') or ''
+                        _is_duplicate = False
+                        if _nzb_url_check and item_to_process.get('type') == 'episode':
+                            try:
+                                from database import get_db_connection as _gdb_sc
+                                _conn_sc = _gdb_sc()
+                                try:
+                                    _dup = _conn_sc.execute(
+                                        "SELECT id FROM media_items "
+                                        "WHERE imdb_id=? AND season_number=? AND episode_number=? "
+                                        "AND type='episode' AND state='Collected' "
+                                        "AND filled_by_magnet=?",
+                                        (item_to_process.get('imdb_id'),
+                                         item_to_process.get('season_number'),
+                                         item_to_process.get('episode_number'),
+                                         _nzb_url_check)
+                                    ).fetchone()
+                                finally:
+                                    _conn_sc.close()
+                                if _dup:
+                                    logging.info(f"[ScrapingQueue] {item_identifier} already Collected with same NZB URL — deleting duplicate DB entry {item_to_process['id']}")
+                                    from database.database_writing import update_media_item_state
+                                    update_media_item_state(item_to_process['id'], 'Collected')
+                                    self.remove_item(item_to_process)
+                                    processed_successfully_or_moved = True
+                                    processed_count += 1
+                                    _is_duplicate = True
+                            except Exception as _dup_err:
+                                logging.debug(f"[ScrapingQueue] Duplicate check error: {_dup_err}")
+
+                        if _is_duplicate:
+                            return True
 
                         logging.info(f"Moving {item_identifier} to Adding queue with {len(filtered_results)} results")
                         try:
