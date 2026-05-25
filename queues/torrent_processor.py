@@ -498,7 +498,7 @@ class TorrentProcessor:
                 except Exception as e:
                     logging.error(f"Error cleaning up temp file {temp_file}: {e}")
                     
-    def _process_nzb_result(self, result: Dict, item: Optional[Dict] = None) -> Optional[Tuple]:
+    def _process_nzb_result(self, result: Dict, item: Optional[Dict] = None, adding_queue_items: Optional[list] = None) -> Optional[Tuple]:
         """Submit an NZB result to Decypharr and return a synthetic torrent_info tuple."""
         from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
         reset_decypharr_client()
@@ -515,6 +515,90 @@ class TorrentProcessor:
         if not nzb_url:
             logging.warning(f'[{item_identifier}] NZB result has no URL, skipping')
             return None
+
+        # Equivalent of debrid's _all_torrent_ids check: if another episode of the same
+        # show/season already has an NZB job (in any active or completed state), reuse it
+        # instead of submitting a duplicate season pack NZB.
+        if item and item.get('type') == 'episode':
+            _imdb = item.get('imdb_id')
+            _season = item.get('season_number')
+            _parsed = result.get('parsed_info', {}) or {}
+            _is_pack = bool(_parsed.get('seasons')) and not _parsed.get('episodes')
+            if _imdb and _season is not None:
+                # In-memory check: scan Adding queue items for same imdb+season with nzb: job.
+                # This catches jobs submitted this tick before they're written to DB.
+                import re as _re_mem
+                if adding_queue_items:
+                    _item_version = (item or {}).get('version', 'Default')
+                    for _mem_item in adding_queue_items:
+                        if (_mem_item.get('id') == item.get('id') or
+                                _mem_item.get('imdb_id') != _imdb or
+                                _mem_item.get('season_number') != _season or
+                                _mem_item.get('version', 'Default') != _item_version or
+                                not str(_mem_item.get('filled_by_torrent_id', '')).startswith('nzb:')):
+                            continue
+                        _mem_file = _mem_item.get('filled_by_file') or ''
+                        _mem_is_pack = not _re_mem.search(r'[Ss]\d{2}[Ee]\d{2}', _mem_file)
+                        _mem_job = _mem_item.get('filled_by_torrent_id')
+                        _mem_id = _mem_job[4:] if _mem_job and _mem_job.startswith('nzb:') else _mem_job
+                        if _is_pack and _mem_is_pack:
+                            logging.info(f'[{item_identifier}] [Memory] Season pack already submitted for S{_season:02d} '
+                                         f'(job={_mem_job}) — reusing')
+                            return {'id': _mem_id, 'filename': title, 'original_title': title,
+                                    'status': 'downloading', 'files': [], 'progress': 0,
+                                    '_provider': 'Decypharr', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+                        elif not _is_pack and _mem_is_pack:
+                            logging.info(f'[{item_identifier}] [Memory] Season pack already submitted for S{_season:02d} '
+                                         f'(job={_mem_job}) — skipping individual episode submission')
+                            return {'id': _mem_id, 'filename': title, 'original_title': title,
+                                    'status': 'downloading', 'files': [], 'progress': 0,
+                                    '_provider': 'Decypharr', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+                        elif _is_pack and not _mem_is_pack:
+                            # New result is a pack, existing job is individual — fall through to submit pack
+                            break
+
+                try:
+                    from database import get_db_connection as _gdb
+                    _conn = _gdb()
+                    import re as _re_dedup
+                    try:
+                        _sibling = _conn.execute(
+                            "SELECT filled_by_torrent_id, filled_by_file FROM media_items "
+                            "WHERE imdb_id=? AND season_number=? AND type='episode' "
+                            "AND id!=? AND filled_by_torrent_id LIKE 'nzb:%' "
+                            "AND state IN ('Adding','Checking','Collected','Upgrading') LIMIT 1",
+                            (_imdb, _season, item.get('id', -1))
+                        ).fetchone()
+                    finally:
+                        _conn.close()
+                    if _sibling:
+                        _sibling_is_pack = not _re_dedup.search(r'[Ss]\d{2}[Ee]\d{2}', _sibling[1] or '')
+                        if _is_pack and _sibling_is_pack:
+                            # New result is a pack, existing job is a pack — reuse existing
+                            _existing_job = _sibling[0]
+                            _existing_file = title
+                            _existing_id = _existing_job[4:] if _existing_job.startswith('nzb:') else _existing_job
+                            logging.info(f'[{item_identifier}] Season pack already submitted for S{_season:02d} '
+                                         f'(job={_existing_job}) — reusing instead of duplicate submission')
+                            return {'id': _existing_id, 'filename': _existing_file,
+                                    'original_title': _existing_file, 'status': 'downloading',
+                                    'files': [], 'progress': 0,
+                                    '_provider': 'Decypharr', '_is_nzb': True,
+                                    '_nzb_url': nzb_url}, nzb_url, result
+                        elif not _is_pack and _sibling_is_pack:
+                            # New result is individual episode, existing job is a season pack — skip individual
+                            _existing_job = _sibling[0]
+                            _existing_id = _existing_job[4:] if _existing_job.startswith('nzb:') else _existing_job
+                            logging.info(f'[{item_identifier}] Season pack already submitted for S{_season:02d} '
+                                         f'(job={_existing_job}) — skipping individual episode submission')
+                            return {'id': _existing_id, 'filename': title,
+                                    'original_title': title, 'status': 'downloading',
+                                    'files': [], 'progress': 0,
+                                    '_provider': 'Decypharr', '_is_nzb': True,
+                                    '_nzb_url': nzb_url}, nzb_url, result
+                        # If existing job is individual and new result is a pack, fall through and submit the pack
+                except Exception as _se:
+                    logging.debug(f'[{item_identifier}] Season pack DB dedup check failed: {_se}')
 
         # Build structured job title if NZB naming is enabled.
         # Must happen BEFORE the dedup check so we check the actual submitted name.
@@ -544,23 +628,52 @@ class TorrentProcessor:
         except Exception:
             job_title = title
 
-        # Check if same NZB title already in Decypharr to avoid duplicates
+        # Check if same NZB title already in Decypharr to avoid duplicates.
+        # Uses /api/torrents (paginated) — /api/browse/torrents search is broken.
+        #
+        # Two match levels:
+        #   1. Exact title match — catches same release resubmitted
+        #   2. Prefix match — catches same show/episode submitted with a different
+        #      release group (e.g. RAWR vs Kitsune). The structured title format is:
+        #      "Show (year) - SxxExx - Title - {imdb-ttXXX} - Version - (release.title)"
+        #      Stripping the trailing " - (release.title)" gives a stable prefix.
+        import re as _re_dc
+        def _title_prefix(t):
+            return _re_dc.sub(r'\s*-\s*\([^)]*\)\s*$', '', t).strip()
+
+        _job_prefix = _title_prefix(job_title)
         try:
             from routes.api_tracker import api as _check_api
             from utilities.settings import get_setting as _gs_check
             _dcy_url = _gs_check('Usenet Provider', 'url', default='').rstrip('/')
             _dcy_token = _gs_check('Usenet Provider', 'api_token', default='')
             _ch = {'Authorization': f'Bearer {_dcy_token}'} if _dcy_token else {}
-            _er = _check_api.get(f'{_dcy_url}/api/browse/torrents', headers=_ch,
-                                 params={'search': job_title[:50]}, timeout=5)
-            if _er.status_code == 200:
-                _existing = _er.json().get('entries', [])
-                for _e in _existing:
-                    if _e.get('name', '') == job_title:
-                        logging.info(f'[{item_identifier}] NZB already in Decypharr: {job_title} — reusing job')
-                        return {'id': _e.get('info_hash', ''), 'filename': job_title, 'original_title': job_title,
-                                'status': 'downloading', 'files': [], 'progress': 0,
+            _page_dc = 1
+            _found_dc = False
+            while not _found_dc:
+                _er = _check_api.get(f'{_dcy_url}/api/torrents', headers=_ch,
+                                     params={'page': _page_dc, 'limit': 100,
+                                             'sort_by': 'added_on', 'sort_order': 'desc'},
+                                     timeout=5)
+                if _er.status_code != 200:
+                    break
+                _data_dc = _er.json()
+                _torrents_dc = _data_dc.get('torrents', [])
+                for _t in _torrents_dc:
+                    _t_name = _t.get('name', '')
+                    _exact = (_t_name == job_title or _t.get('original_filename', '') == job_title)
+                    _prefix = (bool(_job_prefix) and _title_prefix(_t_name) == _job_prefix)
+                    if _exact or _prefix:
+                        _existing_hash = _t.get('info_hash', '')
+                        _match_type = 'exact' if _exact else 'prefix'
+                        logging.info(f'[{item_identifier}] NZB already in Decypharr ({_match_type} match): {_t_name} (hash={_existing_hash}) — reusing job')
+                        _found_dc = True
+                        return {'id': _existing_hash, 'filename': job_title, 'original_title': job_title,
+                                'status': _t.get('status', 'downloading'), 'files': [], 'progress': 0,
                                 '_provider': 'Decypharr', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+                if not _data_dc.get('has_next'):
+                    break
+                _page_dc += 1
         except Exception:
             pass
 
@@ -582,7 +695,14 @@ class TorrentProcessor:
         if _nzb_xml:
             job_id = client.add_nzb_content(nzb_content=_nzb_xml, title=job_title)
             if not job_id and client.last_missing_segments:
-                logging.warning(f'[{item_identifier}] Decypharr server missing segments for {job_title!r} — check Decypharr Usenet server config')
+                logging.warning(f'[{item_identifier}] Decypharr server missing segments for {job_title!r} — adding NZB URL to not-wanted')
+                try:
+                    from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nw_seg
+                    if nzb_url:
+                        _add_nw_seg(nzb_url)
+                        logging.info(f'[{item_identifier}] Added missing-segments NZB URL to not-wanted')
+                except Exception:
+                    pass
                 return None
         else:
             job_id = client.add_nzb(nzb_url=nzb_url, title=job_title)
@@ -644,7 +764,8 @@ class TorrentProcessor:
         self,
         results: list[Dict],
         accept_uncached: bool = False,
-        item: Optional[Dict] = None
+        item: Optional[Dict] = None,
+        adding_queue_items: Optional[list] = None,
     ) -> Tuple[Optional[Dict], Optional[str], Optional[Dict]]:
         """
         Process a list of results to find the best match
@@ -665,7 +786,7 @@ class TorrentProcessor:
             try:
                 # NZB results are handled by Decypharr, not debrid — route them separately
                 if result.get('protocol') == 'nzb' or result.get('nzb_url'):
-                    nzb_result = self._process_nzb_result(result, item)
+                    nzb_result = self._process_nzb_result(result, item, adding_queue_items=adding_queue_items)
                     if nzb_result:
                         return nzb_result
                     continue

@@ -25,6 +25,8 @@ class AddingQueue:
         self.media_matcher = MediaMatcher(relaxed_matching=get_setting('Matching', 'relaxed_matching', False))
         self.items: List[Dict] = []
         self.last_process_time = {}
+        self._nzb_submitted_ids: set = set()  # IDs submitted to Decypharr; guards concurrent process() calls
+        self._adding_ticks: dict = {}  # item_id → tick count in Adding; at 3 → not-wanted + Wanted
 
     def reinitialize_provider(self):
         """Reinitialize the debrid provider and processors"""
@@ -45,6 +47,9 @@ class AddingQueue:
             logging.info(f"Added items to queue during update: {added}")
         if removed:
             logging.info(f"Removed items from queue during update: {removed}")
+            self._nzb_submitted_ids -= removed
+            for _rid in removed:
+                self._adding_ticks.pop(_rid, None)
         if len(self.items) > 0:
             logging.debug(f"Queue now contains {len(self.items)} items")
         
@@ -73,6 +78,8 @@ class AddingQueue:
             self.items = [i for i in self.items if i['id'] != item_id]
             if len(self.items) < old_len:
                 logging.info(f"Removed item {item_id} from queue")
+                self._nzb_submitted_ids.discard(item_id)
+                self._adding_ticks.pop(item_id, None)
             else:
                 logging.debug(f"Attempted to remove item {item_id} but it was not in queue")
         else:
@@ -202,10 +209,80 @@ class AddingQueue:
             if not item_id:
                 logging.warning(f"Skipping item without ID in AddingQueue: {item.get('title')}")
                 continue
-            # Skip NZB items already submitted to Decypharr — handled by health check loop above
+
+            # Skip NZB items already submitted to Decypharr — handled by health check loop above.
+            # Tick counter only increments for items NOT yet submitted (no nzb: torrent_id).
             if str(item.get('filled_by_torrent_id', '')).startswith('nzb:'):
                 logging.debug(f"Skipping item {item_id} — already submitted as NZB, awaiting health check")
                 continue
+
+            # --- Timeout: items with no torrent_id AND no scrape_results stuck in Adding → Wanted ---
+            # Only fires for truly empty items (nothing to try). Items WITH scrape_results
+            # are allowed to cycle through them naturally → _handle_failed_item → Sleeping/Blacklisted.
+            # Uses last_updated timestamp so the check survives app restarts.
+            self._adding_ticks[item_id] = self._adding_ticks.get(item_id, 0) + 1
+            _has_scrape_results = bool(item.get('scrape_results'))
+            _is_timed_out = False
+            if not _has_scrape_results:
+                _last_updated = item.get('last_updated')
+                if _last_updated:
+                    try:
+                        from datetime import datetime as _dt
+                        _lu = _dt.fromisoformat(str(_last_updated).replace('Z', '+00:00').split('+')[0])
+                        _age_minutes = (_dt.now() - _lu).total_seconds() / 60
+                        if _age_minutes > 2:
+                            _is_timed_out = True
+                    except Exception:
+                        pass
+                if not _is_timed_out and self._adding_ticks[item_id] >= 15:
+                    _is_timed_out = True
+            if _is_timed_out:
+                logging.warning(f"[AddingQueue] Item {item_id} ({item_identifier}) timed out in Adding (no torrent_id) — adding NZB URL to not-wanted and moving to Wanted")
+                try:
+                    nzb_url = item.get('filled_by_magnet', '')
+                    if nzb_url:
+                        from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nw_tick
+                        _add_nw_tick(nzb_url)
+                        logging.info(f"[AddingQueue] Added {nzb_url[:60]}... to not-wanted")
+                except Exception:
+                    pass
+                self._adding_ticks.pop(item_id, None)
+                queue_manager.move_to_wanted(item, 'Adding')
+                continue
+
+            # If item has no torrent_id and is an episode already Collected under any
+            # entry with same imdb+season+episode+version, restore to Collected directly.
+            if not item.get('filled_by_torrent_id') and item.get('type') == 'episode' and item.get('episode_number') is not None:
+                try:
+                    from database import get_db_connection as _gdb_aq
+                    _conn_aq = _gdb_aq()
+                    try:
+                        _cnt_aq = _conn_aq.execute(
+                            "SELECT COUNT(*) FROM media_items "
+                            "WHERE imdb_id=? AND season_number=? AND episode_number=? "
+                            "AND version=? AND type='episode' AND state='Collected'",
+                            (item.get('imdb_id'), item.get('season_number'),
+                             item.get('episode_number'), item.get('version'))
+                        ).fetchone()[0]
+                    finally:
+                        _conn_aq.close()
+                    if _cnt_aq:
+                        logging.info(f"Item {item_id} ({item.get('title')} S{item.get('season_number')}E{item.get('episode_number')}) already Collected under different entry — restoring state")
+                        from database.database_writing import update_media_item_state
+                        update_media_item_state(item_id, 'Collected')
+                        self.remove_item(item)
+                        continue
+                except Exception:
+                    pass
+            # Guard against concurrent process() calls: also check the shared submitted set.
+            # If the item is in the submitted set but has no torrent_id, it was reset — clear it.
+            if item_id in self._nzb_submitted_ids:
+                if not str(item.get('filled_by_torrent_id', '')).startswith('nzb:'):
+                    logging.debug(f"Item {item_id} in submitted set but has no nzb torrent_id — clearing stale entry")
+                    self._nzb_submitted_ids.discard(item_id)
+                else:
+                    logging.debug(f"Skipping item {item_id} — in submitted set, awaiting health check")
+                    continue
             logging.info(f"Processing item {item_id}: {item_identifier}")
             processed_this_item = False # Flag for applying delay
 
@@ -386,10 +463,18 @@ class AddingQueue:
                     update_media_item(item['id'],
                         filled_by_torrent_id=checking_id,
                         filled_by_file=nzb_title,
+                        filled_by_title=nzb_title,
+                        filled_by_magnet=nzb_url,
                         original_scraped_torrent_title=nzb_original_title,
                     )
+                    # Update in-memory dict so next Adding tick skips this item (line 206 check)
+                    item['filled_by_torrent_id'] = checking_id
+                    item['filled_by_file'] = nzb_title
+                    item['filled_by_title'] = nzb_title
+                    item['filled_by_magnet'] = nzb_url
                     # Keep segment ID in memory on the item dict for health check failure handling
                     item['_nzb_segment_id'] = nzb_segment_id
+                    self._nzb_submitted_ids.add(item['id'])
                     logging.info(f"[NZB] Item '{item_identifier}' submitted to Decypharr (checking_id={checking_id}). Staying in Adding for health check.")
                     processed_this_item = True
                     continue
@@ -602,7 +687,8 @@ class AddingQueue:
             torrent_info, magnet, chosen_result = self.torrent_processor.process_results(
                 results,
                 accept_uncached=accept_uncached,
-                item=item
+                item=item,
+                adding_queue_items=self.items,
             )
 
             return torrent_info, magnet, chosen_result # Return all three

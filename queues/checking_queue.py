@@ -201,14 +201,18 @@ class CheckingQueue:
         
         logging.info(f"Found {len(items)} items for missing torrent {torrent_id}")
 
-        # NZB jobs — skip debrid magnet/not-wanted logic, just move items back to Wanted
+        # NZB jobs — add NZB URL to not-wanted then move items back to Wanted
         if str(torrent_id).startswith('nzb:'):
-            logging.info(f"[NZB] Decypharr job {torrent_id} failed/missing. Moving {len(items)} item(s) back to Wanted.")
+            logging.info(f"[NZB] Decypharr job {torrent_id} failed/missing. Adding to not-wanted and moving {len(items)} item(s) back to Wanted.")
             from queues.queue_manager import QueueManager
             from database.database_writing import update_media_item_state
+            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nzb_guid
             qm = QueueManager()
             for item in items:
                 try:
+                    _nzb_url = item.get('filled_by_magnet', '')
+                    if _nzb_url:
+                        _add_nzb_guid(_nzb_url)
                     if item.get('ghostlisted'):
                         logging.warning(f"[NZB] Item {item['id']} is ghostlisted — setting Blacklisted instead of Wanted")
                         update_media_item_state(item['id'], 'Blacklisted')
@@ -352,6 +356,18 @@ class CheckingQueue:
         sample_item = items[0]
         job_name = sample_item.get('filled_by_title') or sample_item.get('original_scraped_torrent_title') or ''
         if not job_name:
+            # Fallback: look up the job name directly from Decypharr using the job_id
+            try:
+                from usenet.decypharr_client import get_decypharr_client as _get_dcy
+                _job_id_raw = torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id
+                _dcy_status = _get_dcy().get_job_status(_job_id_raw)
+                if _dcy_status:
+                    job_name = _dcy_status.get('name') or _dcy_status.get('raw', {}).get('name') or ''
+                    if job_name:
+                        logging.info(f'[NZB] Resolved job_name from Decypharr API for {torrent_id}: {job_name!r}')
+            except Exception:
+                pass
+        if not job_name:
             logging.warning(f'[NZB] Cannot resolve file info for {torrent_id}: no job_name')
             return
 
@@ -363,7 +379,7 @@ class CheckingQueue:
         # Skip if already resolved (filled_by_file has a video extension)
         import os as _os
         _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
-        if _os.path.splitext(sample_item.get('filled_by_file', ''))[1].lower() in _VIDEO_EXTS:
+        if _os.path.splitext(sample_item.get('filled_by_file') or '')[1].lower() in _VIDEO_EXTS:
             logging.debug(f'[NZB] {torrent_id} already has video filename, skipping resolve')
             return
 
@@ -381,6 +397,26 @@ class CheckingQueue:
                 if not video_files:
                     logging.warning(f'[NZB] Found folder {folder_name!r} but no video files for pack {torrent_id}')
                     video_files = []
+
+                # Single-file pack with multiple episodes — can't serve individual episodes.
+                # Add NZB URL to not-wanted and send all items back to Wanted.
+                if len(video_files) == 1 and len(items) > 1:
+                    logging.warning(f'[NZB] Pack {torrent_id} has only 1 file but {len(items)} episodes — single-file pack, sending back to Wanted')
+                    from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nw
+                    from queues.queue_manager import QueueManager as _QM
+                    _qm = _QM()
+                    for _item in items:
+                        try:
+                            _url = _item.get('filled_by_magnet', '')
+                            if _url:
+                                _add_nw(_url)
+                        except Exception:
+                            pass
+                        try:
+                            _qm.move_to_wanted(_item, 'Checking')
+                        except Exception:
+                            pass
+                    return
 
                 import re as _re_ep
                 for item in items:
@@ -408,12 +444,14 @@ class CheckingQueue:
                         'filled_by_file': matched_file,
                         'filled_by_title': folder_name,
                         'debrid_folder_name': folder_name,
+                        'location_basename': folder_name,
                         'original_scraped_torrent_title': orig_scraped,
                         'real_debrid_original_title': orig_scraped,
                     })
                     item['filled_by_file'] = matched_file
                     item['filled_by_title'] = folder_name
                     item['debrid_folder_name'] = folder_name
+                    item['location_basename'] = folder_name
                     item['original_scraped_torrent_title'] = orig_scraped
                     item['real_debrid_original_title'] = orig_scraped
                     logging.info(f'[NZB] Pack item {item["id"]} S{season:02d}E{ep:02d} → {matched_file!r}')
@@ -437,12 +475,14 @@ class CheckingQueue:
                         'filled_by_file': video_file,
                         'filled_by_title': folder_name,
                         'debrid_folder_name': folder_name,
+                        'location_basename': folder_name,
                         'original_scraped_torrent_title': orig_scraped,
                         'real_debrid_original_title': orig_scraped,
                     })
                     item['filled_by_file'] = video_file
                     item['filled_by_title'] = folder_name
                     item['debrid_folder_name'] = folder_name
+                    item['location_basename'] = folder_name
                     item['original_scraped_torrent_title'] = orig_scraped
                     item['real_debrid_original_title'] = orig_scraped
                     logging.info(f'[NZB] Updated item {item["id"]} with resolved file info')
@@ -1031,6 +1071,22 @@ class CheckingQueue:
                 if int(current_progress) == 100:
                     # --- NZB: resolve actual folder/file names from Decypharr before symlink/Plex checks ---
                     if str(torrent_id).startswith('nzb:'):
+                        # Guard: if no filled_by_file on any item in this group, we have nothing
+                        # to look up in Decypharr — add to not-wanted and send back to Wanted.
+                        _any_file = any(i.get('filled_by_file') for i in current_items_for_torrent)
+                        if not _any_file:
+                            logging.warning(f'[NZB] {torrent_id} has no filled_by_file on any item — adding to not-wanted and moving group back to Wanted')
+                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nzb_guid_f
+                            for _item in list(current_items_for_torrent):
+                                try:
+                                    _nzb_url = _item.get('filled_by_magnet', '')
+                                    if _nzb_url:
+                                        _add_nzb_guid_f(_nzb_url)
+                                except Exception:
+                                    pass
+                                if self.contains_item_id(_item['id']):
+                                    queue_manager.move_to_wanted(_item, 'Checking')
+                            continue
                         self._resolve_nzb_file_info(torrent_id, current_items_for_torrent)
                         # Reload items from DB so updated fields are visible to symlink/plex checks
                         from database import get_all_media_items
@@ -1041,7 +1097,7 @@ class CheckingQueue:
                         # If resolve still hasn't found the file after multiple attempts, move back to Wanted
                         import os as _os
                         _sample = current_items_for_torrent[0] if current_items_for_torrent else {}
-                        _fbf = _sample.get('filled_by_file', '')
+                        _fbf = _sample.get('filled_by_file') or ''
                         _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
                         if _fbf and _os.path.splitext(_fbf)[1].lower() not in _VIDEO_EXTS:
                             # filled_by_file has no video extension — resolve hasn't succeeded
@@ -1051,10 +1107,17 @@ class CheckingQueue:
                             failures = self.progress_checks[torrent_id]['nzb_resolve_failures']
                             logging.warning(f'[NZB] {torrent_id} resolve failure #{failures} — folder not found in Decypharr')
                             if failures >= 5:
-                                logging.warning(f'[NZB] {torrent_id} failed to resolve after {failures} attempts — moving back to Wanted')
+                                logging.warning(f'[NZB] {torrent_id} failed to resolve after {failures} attempts — adding to not-wanted and moving back to Wanted')
                                 self.progress_checks[torrent_id]['nzb_resolve_failures'] = 0
+                                from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nzb_guid_r
                                 for item_to_move in list(current_items_for_torrent):
                                     if self.contains_item_id(item_to_move['id']):
+                                        try:
+                                            _nzb_url = item_to_move.get('filled_by_magnet', '')
+                                            if _nzb_url:
+                                                _add_nzb_guid_r(_nzb_url)
+                                        except Exception:
+                                            pass
                                         # If ghostlisted, can't move to Wanted — set Blacklisted and remove from queue
                                         if item_to_move.get('ghostlisted'):
                                             logging.warning(f'[NZB] {torrent_id} item {item_to_move["id"]} is ghostlisted — setting Blacklisted and removing from Checking')
@@ -1172,7 +1235,15 @@ class CheckingQueue:
                     
                     if time_in_queue > checking_queue_limit:
                         if str(torrent_id).startswith('nzb:'):
-                            logging.info(f"NZB {torrent_id} content not found within {checking_queue_limit}s — moving back to Wanted (no debrid removal)")
+                            logging.info(f"NZB {torrent_id} content not found within {checking_queue_limit}s — adding to not-wanted and moving back to Wanted")
+                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nzb_guid_t
+                            for _item_nw in current_items_for_torrent:
+                                try:
+                                    _nzb_url = _item_nw.get('filled_by_magnet', '')
+                                    if _nzb_url:
+                                        _add_nzb_guid_t(_nzb_url)
+                                except Exception:
+                                    pass
                         else:
                             logging.info(f"Removing torrent {torrent_id} from debrid service as content was not found within {checking_queue_limit} seconds (dynamic limit for {len(current_items_for_torrent)} items)")
                             try:
