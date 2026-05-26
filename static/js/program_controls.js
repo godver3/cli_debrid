@@ -41,7 +41,7 @@ export function initializeProgramControls() {
                     errorMessage += "<li>No content sources are enabled. Please enable at least one content source.</li>";
                 }
                 if (!conditions.requiredSettingsComplete) {
-                    errorMessage += "<li>Some required settings are missing. Please fill in all fields in the Required Settings tab (Plex, Debrid Provider, and Metadata Battery settings).</li>";
+                    errorMessage += "<li>Some required settings are missing. Please configure either a Debrid Provider or a Usenet Provider in the Required Settings tab.</li>";
                 }
                 errorMessage += "</ul>";
                 showErrorPopup(errorMessage);
@@ -169,23 +169,16 @@ export function initializeProgramControls() {
         }
 
         // Check required settings
-        const requiredFields = [
-            //'Plex.url',
-            //'Plex.token',
-            'Debrid Provider.provider',
-            'Debrid Provider.api_key',
-            'Metadata Battery.url'
-        ];
-
-        console.log(currentSettings);
-        console.log(requiredFields);
-
-        requiredFields.forEach(field => {
-            const [section, key] = field.split('.');
-            if (!currentSettings[section] || !currentSettings[section][key]) {
-                requiredSettingsComplete = false;
-            }
-        });
+        // Either a Debrid Provider (provider + api_key) OR a Usenet Provider (enabled + url) must be configured
+        const hasDebrid = currentSettings['Debrid Provider'] &&
+                          currentSettings['Debrid Provider']['provider'] &&
+                          currentSettings['Debrid Provider']['api_key'];
+        const hasUsenet = currentSettings['Usenet Provider'] &&
+                          currentSettings['Usenet Provider']['enabled'] &&
+                          currentSettings['Usenet Provider']['url'];
+        if (!hasDebrid && !hasUsenet) {
+            requiredSettingsComplete = false;
+        }
 
         return {
             canRun: scrapersEnabled && contentSourcesEnabled && requiredSettingsComplete,
