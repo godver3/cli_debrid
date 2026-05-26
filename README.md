@@ -150,7 +150,7 @@ Thanks to:
 
 - Various other projects that have come before this one, and likely do things better in many ways
 - Specific thanks to the NyaaPy, PTT/Parsett, and downsub libraries (https://github.com/JuanjoSalvador/NyaaPy, https://github.com/dreulavelle/PTT, and https://github.com/ericvlog/Downsub)
-- The original creator of plex_debrid
+- The original creator of plex_debrid.
 - Helpful communities of content creators
 
 ## Caveat
