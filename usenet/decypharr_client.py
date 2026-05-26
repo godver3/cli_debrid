@@ -450,12 +450,27 @@ def _map_state(raw: str) -> str:
         return 'downloading'
     return 'unknown'
 
+# ---- Provider-switch factory (nzbdav-compat patch 2026-05-26) ----
+# Delegates to nzbdav_client when 'Usenet Provider.provider' == 'nzbdav'.
+# The DecypharrClient class above is unchanged.
 
-_client_instance: Optional[DecypharrClient] = None
+_client_instance = None
 
 
-def get_decypharr_client() -> DecypharrClient:
+def _provider_key() -> str:
+    try:
+        from utilities.settings import get_setting
+        cfg = get_setting('Usenet Provider') or {}
+        return (cfg.get('provider') or 'decypharr').strip().lower()
+    except Exception:
+        return 'decypharr'
+
+
+def get_decypharr_client():
     global _client_instance
+    if _provider_key() == 'nzbdav':
+        from .nzbdav_client import get_nzbdav_client
+        return get_nzbdav_client()
     if _client_instance is None:
         _client_instance = DecypharrClient()
     return _client_instance
@@ -464,3 +479,6 @@ def get_decypharr_client() -> DecypharrClient:
 def reset_decypharr_client() -> None:
     global _client_instance
     _client_instance = None
+    if _provider_key() == 'nzbdav':
+        from .nzbdav_client import reset_nzbdav_client
+        reset_nzbdav_client()

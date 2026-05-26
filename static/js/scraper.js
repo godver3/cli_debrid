@@ -12,9 +12,9 @@ function addToRealDebrid(magnetLink, torrent) {
     const isNzb = (torrent.protocol === 'nzb') || (torrent.nzb_url && !magnetLink);
     const isNzbPack = isNzb && !!torrent.is_nzb_season_pack;
     const confirmMsg = isNzbPack
-        ? `Submit ${torrent.episode_count} individual episode NZBs to Decypharr as a season pack? Each episode will be health-checked independently.`
+        ? `Submit ${torrent.episode_count} individual episode NZBs to ${window.USENET_PROVIDER_NAME || "Usenet provider"} as a season pack? Each episode will be health-checked independently.`
         : isNzb
-        ? 'Submit this NZB to Decypharr (Usenet) for download?'
+        ? `Submit this NZB to ${window.USENET_PROVIDER_NAME || "Usenet provider"} for download?`
         : 'Are you sure you want to add this torrent to your Debrid Provider?';
 
     showPopup({
@@ -853,7 +853,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     <div class="card-sources">${torrent.source || 'N/A'}</div>
                     <div class="card-footer">
                         ${isNzbCard
-                            ? `<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via Decypharr">NZB</span>`
+                            ? `<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via ${window.USENET_PROVIDER_NAME || "Usenet provider"}">NZB</span>`
                             : (multiCacheBadge || `<span class="cache-status badge ${badgeClass}" data-index="${index}"><i class="fa-solid ${badgeIcon}"></i> ${badgeLabel}</span>`)
                         }
                         <div class="assign-magnet-icon" title="Assign Magnet Link">
@@ -1223,7 +1223,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 // NZB results show a usenet badge instead of cache status
                 const isNzbResult = (torrent.protocol === 'nzb') || !!torrent.nzb_url;
                 const cacheIconHtml = isNzbResult
-                    ? '<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via Decypharr">NZB</span>'
+                    ? `<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via ${window.USENET_PROVIDER_NAME || "Usenet provider"}">NZB</span>`
                     : (createCacheProviderBadges(torrent) || createCacheIcon(cacheStatus));
 
                 const row = document.createElement('tr');
@@ -1563,7 +1563,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
 
                     const isNzbResult2 = (torrent.protocol === 'nzb') || !!torrent.nzb_url;
                     const cacheIconHtml = isNzbResult2
-                        ? '<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via Decypharr">NZB</span>'
+                        ? `<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via ${window.USENET_PROVIDER_NAME || "Usenet provider"}">NZB</span>`
                         : (createCacheProviderBadges(torrent) || createCacheIcon(cacheStatus));
 
                     const row = document.createElement('tr');

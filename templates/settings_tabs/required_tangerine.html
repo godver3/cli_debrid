@@ -178,7 +178,7 @@
             <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
             </svg>
-            <div class="info-banner-content">Connect to Decypharr for usenet downloads. Decypharr handles NNTP connections and serves files via the rclone mount.</div>
+            <div class="info-banner-content">Connect a usenet backend — <strong>Decypharr</strong> (custom API, default port 8888) or <strong>NzbDAV</strong> (SAB-compatible API, default port 3000). Both handle NNTP and serve files via the rclone mount.</div>
         </div>
         <div class="settings-form-group">
             <label for="usenet_provider-enabled" class="settings-title">Enable Usenet:</label>
@@ -186,12 +186,23 @@
                    data-section="Usenet Provider" data-key="enabled"
                    {% if settings.get('Usenet Provider', {}).get('enabled') %}checked{% endif %}>
         </div>
+        {% set _provider = settings.get('Usenet Provider', {}).get('provider', 'decypharr') %}
         <div class="settings-form-group">
-            <label for="usenet_provider-url" class="settings-title">Decypharr URL:</label>
+            <label for="usenet_provider-provider" class="settings-title">Provider:</label>
+            <select id="usenet_provider-provider" name="Usenet Provider.provider"
+                    data-section="Usenet Provider" data-key="provider"
+                    class="settings-input">
+                <option value="decypharr" {% if _provider == 'decypharr' %}selected{% endif %}>Decypharr</option>
+                <option value="nzbdav"    {% if _provider == 'nzbdav' %}selected{% endif %}>NzbDAV</option>
+            </select>
+            <p class="settings-description">Backend type. Decypharr uses custom endpoints (<code>/api/add</code>, <code>/api/browse/nzbs</code>); NzbDAV uses standard SAB query-string API (<code>?mode=…</code>). Both expose the same client interface internally.</p>
+        </div>
+        <div class="settings-form-group">
+            <label for="usenet_provider-url" class="settings-title">Provider URL:</label>
             <input type="text" id="usenet_provider-url" name="Usenet Provider.url"
                    value="{{ settings.get('Usenet Provider', {}).get('url', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="url"
-                   placeholder="e.g. http://192.168.1.x:8888 or http://decypharr:8888">
+                   placeholder="e.g. http://192.168.1.x:8888 (decypharr) or http://192.168.1.x:3000 (nzbdav)">
             <p class="settings-description">Do not use localhost:8888 — that conflicts with Phalanx DB. Use the Decypharr host IP or container name.</p>
         </div>
         <div class="settings-form-group">
@@ -209,7 +220,7 @@
                    placeholder="Leave empty for Decypharr default">
             <p class="settings-description">Category/folder in Decypharr for downloads. Leave empty to use Decypharr's default download folder.</p>
         </div>
-        <div class="settings-form-group">
+        <div class="settings-form-group" data-provider-only="decypharr">
             <label for="usenet_provider-data_path" class="settings-title">Decypharr Data Path:</label>
             <input type="text" id="usenet_provider-data_path" name="Usenet Provider.data_path"
                    value="{{ settings.get('Usenet Provider', {}).get('data_path', '/decypharr_data') }}"
@@ -217,13 +228,21 @@
                    placeholder="/decypharr_data">
             <p class="settings-description">Path to Decypharr's data directory inside the container. Add <code>- /path/to/decypharr/appdata:/decypharr_data</code> to your docker-compose volumes, then set this to <code>/decypharr_data</code>. Required for Decypharr DB backup, restore, and cleanup tools.</p>
         </div>
+        <div class="settings-form-group" data-provider-only="nzbdav">
+            <label for="usenet_provider-mounted_file_location" class="settings-title">Mount Path <span style="color: #888; font-size: 0.85em;">(optional)</span>:</label>
+            <input type="text" id="usenet_provider-mounted_file_location" name="Usenet Provider.mounted_file_location"
+                   value="{{ settings.get('Usenet Provider', {}).get('mounted_file_location', '') }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="mounted_file_location"
+                   placeholder="/mnt/remote/nzbdav/__all__">
+            <p class="settings-description">Path inside this container where the NzbDAV rclone-mount appears. Required only when provider is NzbDAV — used for filesystem-based folder lookups (NzbDAV has no <code>/browse</code> API). Bind-mount your nzbdav-rclone mount path into the container with the same path.</p>
+        </div>
         <div class="settings-form-group">
             <label for="usenet_provider-retention_days" class="settings-title">Usenet Retention Days:</label>
             <input type="number" id="usenet_provider-retention_days" name="Usenet Provider.retention_days"
                    value="{{ settings.get('Usenet Provider', {}).get('retention_days', 1500) }}"
                    class="settings-input" data-section="Usenet Provider" data-key="retention_days"
                    min="0" placeholder="1500">
-            <p class="settings-description">Maximum age of NZB results in days. Results older than this are filtered out at search time and never submitted to Decypharr. Set to 0 to disable. Applies everywhere NZB indexers are searched (queue, scraper results, upgrade hub, repair).</p>
+            <p class="settings-description">Maximum age of NZB results in days. Results older than this are filtered out at search time and never submitted to the Usenet provider. Set to 0 to disable. Applies everywhere NZB indexers are searched (queue, scraper results, upgrade hub, repair).</p>
         </div>
         {% if settings.get('File Management', {}).get('file_collection_management', '') != 'Symlinked/Local' %}
         <div class="settings-form-group">
@@ -231,9 +250,24 @@
             <input type="checkbox" id="usenet_provider-enable_nzb_naming" name="Usenet Provider.enable_nzb_naming"
                    data-section="Usenet Provider" data-key="enable_nzb_naming"
                    {% if settings.get('Usenet Provider', {}).get('enable_nzb_naming') %}checked{% endif %}>
-            <p class="settings-description">Names NZB jobs submitted to Decypharr using a structured format: <code>{title} ({year}) - {imdb-id} - {version} - (original)</code> for movies and <code>{title} ({year}) - SxxExx - {episode title} - {imdb-id} - {version} - (original)</code> for episodes. This becomes the folder and filename in Decypharr.</p>
+            <p class="settings-description">Names NZB jobs submitted to the Usenet provider using a structured format: <code>{title} ({year}) - {imdb-id} - {version} - (original)</code> for movies and <code>{title} ({year}) - SxxExx - {episode title} - {imdb-id} - {version} - (original)</code> for episodes. This becomes the folder and filename in the provider.</p>
         </div>
         {% endif %}
+        <script>
+        // Provider-aware field visibility (decypharr vs nzbdav).
+        // Watches the Provider <select> and hides fields tagged data-provider-only=*.
+        (function() {
+            const sel = document.getElementById('usenet_provider-provider');
+            if (!sel) return;
+            const apply = () => {
+                document.querySelectorAll('[data-provider-only]').forEach(el => {
+                    el.style.display = (el.dataset.providerOnly === sel.value) ? '' : 'none';
+                });
+            };
+            sel.addEventListener('change', apply);
+            apply();
+        })();
+        </script>
     </div>
 </div>
 

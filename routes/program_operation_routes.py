@@ -490,27 +490,30 @@ def check_service_connectivity():
             failed_services_details.append({"service": "Debrid Provider API", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)})
 
     if usenet_enabled and usenet_url:
-        # Check Usenet (Decypharr) connectivity
+        # Provider-agnostic connectivity check via usenet-client factory.
+        # Supports Decypharr (default) and NzbDAV via 'Usenet Provider.provider'.
         try:
-            from routes.api_tracker import api as _usenet_api
-            _r = _usenet_api.get(f"{usenet_url.rstrip('/')}/version", timeout=10)
-            if _r.status_code != 200:
+            from usenet.decypharr_client import get_decypharr_client
+            _client = get_decypharr_client()
+            _provider_label = getattr(_client, 'PROVIDER_NAME', 'Usenet Provider')
+            _ok, _err = _client.check_connectivity()
+            if not _ok:
                 services_reachable = False
                 failed_services_details.append({
-                    "service": "Usenet Provider (Decypharr)",
+                    "service": f"Usenet Provider ({_provider_label})",
                     "type": "CONNECTION_ERROR",
-                    "status_code": _r.status_code,
-                    "message": f"Cannot reach Decypharr at {usenet_url} (HTTP {_r.status_code})"
+                    "status_code": None,
+                    "message": f"Cannot reach {_provider_label} at {usenet_url}: {_err}"
                 })
             else:
-                logging.info(f"Usenet provider (Decypharr) reachable at {usenet_url}")
+                logging.info(f"Usenet provider ({_provider_label}) reachable at {usenet_url}")
         except Exception as _ue:
             services_reachable = False
             failed_services_details.append({
-                "service": "Usenet Provider (Decypharr)",
+                "service": "Usenet Provider",
                 "type": "CONNECTION_ERROR",
                 "status_code": None,
-                "message": f"Cannot reach Decypharr at {usenet_url}: {_ue}"
+                "message": f"Connectivity check error: {_ue}"
             })
 
     # Check Metadata Battery connectivity and Trakt authorization

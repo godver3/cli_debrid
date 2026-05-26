@@ -314,7 +314,7 @@ SETTINGS_SCHEMA = {
         },
         "enable_nzb_naming": {
             "type": "boolean",
-            "description": "Name NZB jobs submitted to Decypharr using a structured format with title, year, IMDb ID, version and original filename. Applies to movies, episodes, season packs and virtual aggregate packs.",
+            "description": "Name NZB jobs submitted to the Usenet provider using a structured format with title, year, IMDb ID, version and original filename. Applies to movies, episodes, season packs and virtual aggregate packs.",
             "default": False
         },
         "retention_days": {

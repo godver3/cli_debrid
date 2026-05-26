@@ -1,6 +1,7 @@
 from flask import jsonify, request, render_template, session, Blueprint
 import copy
 import logging
+from usenet import get_usenet_provider_display_name as _usenet_pname
 from debrid import get_debrid_provider
 # Provider-agnostic: avoid direct Real-Debrid import
 from .models import user_required, onboarding_required, admin_required, scraper_permission_required, scraper_view_access_required
@@ -2062,7 +2063,7 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
     if pack_expired:
         msg = f'Pack aborted — missing segments detected (Usenet retention exceeded). {len(submitted)}/{ep_total} episodes submitted before abort.'
     else:
-        msg = f'{len(submitted)}/{ep_total} episodes submitted to Decypharr.'
+        msg = f'{len(submitted)}/{ep_total} episodes submitted to {_usenet_pname()}.'
     if failed_eps and not pack_expired:
         msg += f' Episodes {failed_eps} not found — will be filled by normal queue.'
 
@@ -2106,7 +2107,7 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
         logging.info(f'[NZB] Skipping {title!r} — segment ID in not-wanted list (previously broken)')
         return jsonify({'error': f'This NZB is known broken and has been blacklisted: {title}'}), 400
 
-    logging.info(f'[NZB] Submitting to Decypharr: {title} ({year})')
+    logging.info(f'[NZB] Submitting to {_usenet_pname()}: {title} ({year})')
 
     # Build job title — uses structured naming template when enabled
     _imdb_id_for_title = None
@@ -2225,7 +2226,7 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
 
     return jsonify({
         'success': True,
-        'message': f'NZB submitted to Decypharr (job: {job_id}). Tracking through queue.',
+        'message': f'NZB submitted to {_usenet_pname()} (job: {job_id}). Tracking through queue.',
         'job_id': job_id,
         'provider': 'Decypharr',
     })

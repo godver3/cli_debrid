@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 
+{% set _provider_name = usenet_provider_name|default('Decypharr') %}
 {% block title %}Debrid Manager{% endblock %}
 
 {% block head %}
@@ -860,13 +861,13 @@
                             <button class="dm-btn dm-btn-secondary dm-btn-sm" id="pt-select-in-usenet">Select All</button>
                         </div>
                     </div>
-                    <p class="dm-pt-group-desc">These items were downloaded via Usenet and are tracked by Decypharr. Use Re-NZB to resubmit the original download or find a replacement.</p>
+                    <p class="dm-pt-group-desc">These items were downloaded via {{ _provider_name }}. Use Re-NZB to resubmit the original download or find a replacement.</p>
                     <div class="dm-pt-bulk-bar">
                         <button class="dm-pt-bulk-btn dm-pt-bulk-scan" id="pt-bulk-scan-in-usenet" title="Trigger Plex directory scan on all in-Usenet items">
                             <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
                             Scan All
                         </button>
-                        <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-renzb-in" title="Re-submit all in-Usenet items to Decypharr">
+                        <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-renzb-in" title="Re-submit all in-Usenet items to {{ _provider_name }}">
                             <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"/></svg>
                             Re-NZB All
                         </button>
@@ -911,7 +912,7 @@
                             <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
                             Scan All
                         </button>
-                        <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-renzb-not" title="Re-scrape and re-submit all not-in-Usenet items to Decypharr">
+                        <button class="dm-pt-bulk-btn dm-pt-bulk-reinsert" id="pt-bulk-renzb-not" title="Re-scrape and re-submit all not-in-Usenet items to {{ _provider_name }}">
                             <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z"/></svg>
                             Re-NZB All
                         </button>
@@ -3192,7 +3193,7 @@ function _bkRenderSlots(status) {
         </button>
         <button class="dm-btn dm-btn-secondary dm-btn-sm"
                 onclick="usenetMigrateStart('${filename}', this)"
-                title="Search Newznab indexers for each torrent and submit to Decypharr">
+                title="Search Newznab indexers for each torrent and submit to {{ _provider_name }}">
             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/></svg>
             → Usenet
         </button>
@@ -3755,7 +3756,7 @@ async function usenetMigrateStart(filename, btn) {
     showPopup({
         type: POPUP_TYPES.CONFIRM,
         title: 'Migrate to Usenet',
-        message: `Search all enabled Newznab indexers for each torrent in "${filename}" and submit found NZBs to Decypharr?\n\nVersion filter: ${version || 'Default version'}\nStrategy: hash lookup first, then name search (version filter applied to non-group queries).`,
+        message: `Search all enabled Newznab indexers for each torrent in "${filename}" and submit found NZBs to ${window.USENET_PROVIDER_NAME || "Usenet provider"}?\n\nVersion filter: ${version || 'Default version'}\nStrategy: hash lookup first, then name search (version filter applied to non-group queries).`,
         confirmText: 'Start',
         cancelText: 'Cancel',
         onConfirm: async () => {
@@ -4415,7 +4416,7 @@ async function usenetDeleteAllBroken() {
     const orig = btn.innerHTML;
     const brokenCount = parseInt(document.getElementById('usenet-stat-broken')?.textContent || '0') || 0;
     const label = brokenCount > 0 ? `${brokenCount} broken` : 'all broken';
-    if (!confirm(`Delete ${label} NZBs?\n\nThis will:\n• Delete from Decypharr\n• Delete from Plex\n• Reset items to Wanted (will re-scrape)\n\nContinue?`)) return;
+    if (!confirm(`Delete ${label} NZBs?\n\nThis will:\n• Delete from ${window.USENET_PROVIDER_NAME || "Usenet provider"}\n• Delete from Plex\n• Reset items to Wanted (will re-scrape)\n\nContinue?`)) return;
     btn.disabled = true;
     btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Deleting…';
     try {
@@ -5082,7 +5083,7 @@ function _ptRenderUsenetGroup(tbodyId, items) {
                 + `</span>`;
             // Good file row: Re-NZB enabled + Delete
             const goodBtns = `<span class="dm-pt-file-btns">`
-                + `<button class="dm-btn dm-btn-xs dm-pt-fbtn" data-faction="renzb-file" data-idx="${idx}" data-tbody="${tbodyId}" title="Re-submit this item to Decypharr">Re-NZB</button>`
+                + `<button class="dm-btn dm-btn-xs dm-pt-fbtn" data-faction="renzb-file" data-idx="${idx}" data-tbody="${tbodyId}" title="Re-submit this item to ${window.USENET_PROVIDER_NAME || "Usenet provider"}">Re-NZB</button>`
                 + `<button class="dm-btn dm-btn-xs dm-pt-fbtn dm-pt-fbtn-del" data-faction="delete-part" data-rk="${rk}" data-mid="${goodMid}" data-pid="${goodPid}" data-protected="1" title="Remove this file from Plex">Delete</button>`
                 + `</span>`;
             filesHtml = `<div class="dm-pt-file-row"><span class="dm-pt-file-bad" title="${escHtml(item.bad_file)}">${escHtml(item.bad_file)}</span>${orphanLabel}${badBtns}</div>`
@@ -5098,7 +5099,7 @@ function _ptRenderUsenetGroup(tbodyId, items) {
             filesHtml = `<div class="dm-pt-file-row"><span class="dm-pt-folder" title="${releaseTitle}">${releaseTitle}</span>${urlBadge}</div>`;
         }
 
-        const action = `<button class="dm-btn dm-btn-secondary dm-btn-sm dm-pt-action-btn" data-action="renzb" data-idx="${idx}" data-group="${tbodyId}" title="Re-submit to Decypharr">Re-NZB</button>`;
+        const action = `<button class="dm-btn dm-btn-secondary dm-btn-sm dm-pt-action-btn" data-action="renzb" data-idx="${idx}" data-group="${tbodyId}" title="Re-submit to ${window.USENET_PROVIDER_NAME || "Usenet provider"}">Re-NZB</button>`;
         return `<tr>
             <td class="dm-col-check"><input type="checkbox" data-rk="${rk}" data-group="usenet" ${checked}></td>
             <td><span class="dm-pt-title">${escHtml(item.title)}${escHtml(year)}</span></td>
@@ -5281,7 +5282,7 @@ async function _ptBulkReNzb(items, label) {
     showPopup({
         type: 'confirm',
         title: 'Re-NZB All',
-        message: `Re-submit ${items.length} ${label} item${items.length !== 1 ? 's' : ''} to Decypharr?\n\nItems without a stored URL will fall back to re-scraping.`,
+        message: `Re-submit ${items.length} ${label} item${items.length !== 1 ? 's' : ''} to ${window.USENET_PROVIDER_NAME || "Usenet provider"}?\n\nItems without a stored URL will fall back to re-scraping.`,
         confirmText: 'Re-NZB All',
         cancelText: 'Cancel',
         onConfirm: async function() {
