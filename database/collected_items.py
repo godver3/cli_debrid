@@ -1349,9 +1349,9 @@ def plex_collection_disabled(media_items_batch: List[Dict[str, Any]]) -> bool:
             
             if item.get('type') == 'episode':
                 query = f'''
-                    SELECT id FROM media_items 
+                    SELECT id FROM media_items
                     WHERE ({id_query})
-                    AND version = ? 
+                    AND REPLACE(version, '*', '') = REPLACE(?, '*', '')
                     AND state = 'Collected'
                     AND type = 'episode'
                     AND season_number = ?
@@ -1361,9 +1361,9 @@ def plex_collection_disabled(media_items_batch: List[Dict[str, Any]]) -> bool:
             else:
                 # Movie case
                 query = f'''
-                    SELECT id FROM media_items 
+                    SELECT id FROM media_items
                     WHERE ({id_query})
-                    AND version = ? 
+                    AND REPLACE(version, '*', '') = REPLACE(?, '*', '')
                     AND state = 'Collected'
                     AND type = 'movie'
                 '''

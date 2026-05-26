@@ -3203,12 +3203,13 @@ class ProgramRunner:
     # Track last health check duration to implement skip-if-slow guard
     _nzb_health_last_duration: float = 0.0
     _NZB_HEALTH_MAX_JOBS_PER_TICK = 30   # cap jobs polled per tick
-    _NZB_HEALTH_JOB_TIMEOUT = 8          # seconds per job poll before giving up
-    _NZB_HEALTH_SKIP_THRESHOLD = 8.0     # if last run took this long, skip next tick
+    _NZB_HEALTH_JOB_TIMEOUT = 20         # seconds per job poll before giving up
+    _NZB_HEALTH_SKIP_THRESHOLD = 20.0   # if last run took this long, skip next tick
     _nzb_folder_wait_counts: dict = {}   # job_id → consecutive ticks where folder not found
     _NZB_FOLDER_WAIT_MAX = 10            # after this many ticks (~100s) treat as broken
     _nzb_health_triggered: dict = {}     # entry_name → tick count since trigger (0 = not yet triggered)
     _NZB_HEALTH_MAX_POLL_TICKS = 6       # give up polling after ~60s (6 ticks × 10s)
+    _nzb_confirmed_complete: dict = {}   # job_id → entry_name for jobs confirmed complete+folder found
 
     def task_nzb_health_check(self):
         """Poll NZB items in Adding state, run health checks, move to Checking or back to Wanted.
@@ -3278,35 +3279,48 @@ class ProgramRunner:
                         progress = 100
                     entry_name = None
                     if progress == 100:
-                        items_for_job = _job_groups[job_id]
-                        nzb_title = items_for_job[0].get('filled_by_file', '') or items_for_job[0].get('original_scraped_torrent_title', '')
-                        search_name = nzb_title or job_id
-                        try:
-                            result = _nzb_client.get_nzb_file_info(search_name)
-                            if result:
-                                entry_name, _ = result
-                        except Exception:
-                            pass
-                        if not entry_name:
-                            # If job was not found in Decypharr queue (raw={}) and folder
-                            # also missing — dead job, treat as broken immediately, no waiting.
-                            _job_not_found = not status.get('raw')
-                            if _job_not_found:
-                                logging.warning(f'[NZB] job {job_id} not found in Decypharr and no folder — treating as broken immediately')
+                        # If raw is empty the job isn't in Decypharr's queue.
+                        # Wait a few ticks before declaring ghost — a brand-new submission
+                        # may not appear in the queue API immediately.
+                        # If the job was previously confirmed complete+folder found, Decypharr
+                        # removed it after completion — treat as progress=100 not a ghost.
+                        if not status.get('raw'):
+                            if job_id in self._nzb_confirmed_complete:
+                                logging.debug(f'[NZB] job {job_id} removed from Decypharr after completion — proceeding to Checking')
+                                entry_name = self._nzb_confirmed_complete[job_id]
+                                progress = 100
+                            else:
+                                _ghost_wait = _job_folder_wait_counts.get(job_id, 0) + 1
+                                _job_folder_wait_counts[job_id] = _ghost_wait
+                                if _ghost_wait >= 3:
+                                    logging.warning(f'[NZB] job {job_id} not in Decypharr queue after {_ghost_wait} ticks — treating as ghost')
+                                    _job_folder_wait_counts.pop(job_id, None)
+                                    progress = -2
+                                else:
+                                    logging.debug(f'[NZB] job {job_id} not in queue yet (tick {_ghost_wait}/3) — waiting')
+                                    progress = 99
+                        if progress == 100:
+                            items_for_job = _job_groups[job_id]
+                            nzb_title = items_for_job[0].get('filled_by_file', '') or items_for_job[0].get('original_scraped_torrent_title', '')
+                            search_name = nzb_title or job_id
+                            try:
+                                result = _nzb_client.get_nzb_file_info(search_name)
+                                if result:
+                                    entry_name, _ = result
+                            except Exception:
+                                pass
+                        if not entry_name and progress == 100:
+                            # Job completed (exists in queue) but folder not yet visible — wait up to max ticks.
+                            wait_count = _job_folder_wait_counts.get(job_id, 0) + 1
+                            _job_folder_wait_counts[job_id] = wait_count
+                            if wait_count >= _folder_wait_max:
+                                logging.warning(f'[NZB] job {job_id} folder never appeared after {wait_count} ticks — treating as broken')
                                 _job_folder_wait_counts.pop(job_id, None)
                                 progress = -1
                             else:
-                                # Job completed normally but folder not yet visible — wait up to max ticks.
-                                wait_count = _job_folder_wait_counts.get(job_id, 0) + 1
-                                _job_folder_wait_counts[job_id] = wait_count
-                                if wait_count >= _folder_wait_max:
-                                    logging.warning(f'[NZB] job {job_id} folder never appeared after {wait_count} ticks — treating as broken')
-                                    _job_folder_wait_counts.pop(job_id, None)
-                                    progress = -1
-                                else:
-                                    logging.debug(f'[NZB] job {job_id} complete but folder not found (tick {wait_count}/{_folder_wait_max}) — waiting')
-                                    progress = 99
-                        else:
+                                logging.debug(f'[NZB] job {job_id} complete but folder not found (tick {wait_count}/{_folder_wait_max}) — waiting')
+                                progress = 99
+                        elif progress == 100:
                             _job_folder_wait_counts.pop(job_id, None)
                     return job_id, progress, entry_name, None
                 except Exception as exc:
@@ -3333,60 +3347,20 @@ class ProgramRunner:
                             except Exception:
                                 pass
 
-            # Health check completed entries — trigger once, poll on subsequent ticks.
-            # This avoids re-POSTing the trigger every 10s (Decypharr needs time to compute).
-            _entries_to_check = {}
-            for jid, (prog, entry, err) in _job_results.items():
-                if prog == 100 and entry and entry not in _entries_to_check:
-                    _entries_to_check[entry] = jid
-
+            # Mark all completed entries as ready to move to Checking.
+            # Decypharr's repair/health endpoint can stay in "repairing" indefinitely
+            # and blocks items from reaching Checking. Since the folder is confirmed
+            # present (entry_name is set), proceed immediately without waiting.
             _health_results = {}
-            _triggered = self._nzb_health_triggered
-            _max_poll = self._NZB_HEALTH_MAX_POLL_TICKS
-
-            if _entries_to_check:
-                # Step 1: trigger any entries not yet triggered
-                _to_trigger = [en for en in _entries_to_check if en not in _triggered]
-                if _to_trigger:
-                    def _do_trigger(entry_name):
-                        ok = _nzb_client.trigger_health_check(entry_name)
-                        return entry_name, ok
-                    with _TPE(max_workers=min(len(_to_trigger), 5)) as _tpool:
-                        for _fut in _ac({_tpool.submit(_do_trigger, en): en for en in _to_trigger},
-                                        timeout=self._NZB_HEALTH_JOB_TIMEOUT * len(_to_trigger)):
-                            try:
-                                en, ok = _fut.result(timeout=self._NZB_HEALTH_JOB_TIMEOUT)
-                                if ok:
-                                    _triggered[en] = 1  # tick 1 = triggered, not yet polled
-                                    logging.debug(f'[NZBHealthCheck] Triggered health check for {en!r}')
-                            except Exception:
-                                pass
-
-                # Step 2: poll entries that were already triggered
-                _to_poll = [en for en in _entries_to_check if en in _triggered]
-                if _to_poll:
-                    def _do_poll(entry_name):
-                        return entry_name, _nzb_client.poll_health_result(entry_name)
-                    with _TPE(max_workers=min(len(_to_poll), 5)) as _ppool:
-                        for _fut in _ac({_ppool.submit(_do_poll, en): en for en in _to_poll},
-                                        timeout=self._NZB_HEALTH_JOB_TIMEOUT * len(_to_poll)):
-                            try:
-                                en, health = _fut.result(timeout=self._NZB_HEALTH_JOB_TIMEOUT)
-                                tick = _triggered.get(en, 1)
-                                if health in ('healthy', 'broken'):
-                                    _health_results[en] = health
-                                    _triggered.pop(en, None)  # done — clean up
-                                elif tick >= _max_poll:
-                                    # Gave up waiting — proceed as inconclusive
-                                    logging.debug(f'[NZBHealthCheck] {en!r} health check inconclusive after {tick} ticks — proceeding')
-                                    _health_results[en] = None
-                                    _triggered.pop(en, None)
-                                else:
-                                    _triggered[en] = tick + 1
-                            except Exception:
-                                pass
+            for jid, (prog, entry, err) in _job_results.items():
+                if prog == 100 and entry:
+                    _health_results[entry] = None  # None = inconclusive, proceed to Checking
+                    self._nzb_confirmed_complete[jid] = entry  # remember this job was complete+folder found
 
             # Process results per item
+            _ghost_job_ids = [jid for jid, (prog, _, _) in _job_results.items() if prog == -2]
+            if _ghost_job_ids:
+                logging.warning(f'[NZB] Ghost job IDs detected in results: {_ghost_job_ids}')
             _moved_as_sibling = set()  # item IDs already batch-moved with their initiator
             for item in _nzb_items:
                 torrent_id = item.get('filled_by_torrent_id', '')
@@ -3499,6 +3473,35 @@ class ProgramRunner:
                     entry_name = _entry
                     if progress is None:
                         logging.debug(f'[NZB] {torrent_id} still queued/unknown — waiting')
+                        continue
+                    elif progress == -2:
+                        # Ghost job — never existed in Decypharr or already purged.
+                        # Move primary item AND all siblings to Wanted (not retry in Adding)
+                        # so they re-scrape fresh. Do NOT retry from scrape_results here
+                        # because the dedup check would just re-assign the same dead hash.
+                        logging.warning(f'[NZB] {torrent_id} is a ghost job — moving all items with this job to Wanted')
+                        try:
+                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid_g
+                            _nzb_url_g = item.get('filled_by_magnet', '')
+                            if _nzb_url_g:
+                                _add_guid_g(_nzb_url_g)
+                        except Exception:
+                            pass
+                        # Move all items sharing this ghost torrent_id to Wanted
+                        _ghost_items = [
+                            s for s in adding_queue.items[:]
+                            if s.get('filled_by_torrent_id') == torrent_id
+                        ]
+                        logging.warning(f'[NZB] Ghost job {torrent_id}: found {len(_ghost_items)} item(s) to move to Wanted')
+                        for _gi in _ghost_items:
+                            try:
+                                _gi_url = _gi.get('filled_by_magnet', '')
+                                if _gi_url and _gi_url != item.get('filled_by_magnet', ''):
+                                    _add_guid_g(_gi_url)
+                                self.queue_manager.move_to_wanted(_gi, 'Adding')
+                                logging.info(f'[NZB] Moved ghost job item {_gi["id"]} to Wanted')
+                            except Exception as _gi_err:
+                                logging.error(f'[NZB] Failed to move ghost item {_gi.get("id")} to Wanted: {_gi_err}')
                         continue
                     elif progress == -1:
                         logging.warning(f'[NZB] {torrent_id} failed in Decypharr — adding to not-wanted and moving back to Scraping')
@@ -3717,7 +3720,7 @@ class ProgramRunner:
                                             _wanted_e = _ec.execute(
                                                 "SELECT id FROM media_items "
                                                 "WHERE imdb_id=? AND season_number=? AND type='episode' "
-                                                "AND state IN ('Wanted','Sleeping') AND id!=? "
+                                                "AND (state IN ('Wanted','Sleeping') OR (state='Adding' AND (filled_by_torrent_id IS NULL OR filled_by_torrent_id=''))) AND id!=? "
                                                 "AND collected_at IS NULL "
                                                 "AND episode_number NOT IN ("
                                                 "  SELECT episode_number FROM media_items "
@@ -3896,7 +3899,7 @@ class ProgramRunner:
                                     _wanted_sibs = _pconn.execute(
                                         "SELECT id FROM media_items "
                                         "WHERE imdb_id=? AND season_number=? AND type='episode' "
-                                        "AND state IN ('Wanted','Sleeping') AND id!=? "
+                                        "AND (state IN ('Wanted','Sleeping') OR (state='Adding' AND (filled_by_torrent_id IS NULL OR filled_by_torrent_id=''))) AND id!=? "
                                         "AND collected_at IS NULL "
                                         "AND episode_number NOT IN ("
                                         "  SELECT episode_number FROM media_items "
@@ -4623,6 +4626,34 @@ class ProgramRunner:
                     cursor.execute(delete_sql_semantic, final_semantic_delete_ids)
                     deleted_count_semantic = cursor.rowcount
                     reconciliation_logger.info(f"Deleted {deleted_count_semantic} items based on semantic duplication (IMDB ID, S/E, Version - with '*' trimmed). IDs: {final_semantic_delete_ids}")
+
+            # Step 3: Delete Wanted/Scraping/Unreleased items that have a Collected counterpart
+            # with the same imdb_id + season + episode + version (ignoring * suffix).
+            # This cleans up duplicates created by Plex scan inserting Default* Collected rows
+            # while the original Default Wanted row still exists.
+            deleted_count_collected_dup = 0
+            try:
+                cursor.execute("""
+                    DELETE FROM media_items
+                    WHERE state IN ('Wanted', 'Scraping', 'Unreleased')
+                      AND imdb_id IS NOT NULL
+                      AND (ghostlisted IS NULL OR ghostlisted = 0)
+                      AND EXISTS (
+                          SELECT 1 FROM media_items c
+                          WHERE c.state = 'Collected'
+                            AND c.imdb_id = media_items.imdb_id
+                            AND c.type = media_items.type
+                            AND (c.season_number = media_items.season_number OR (c.season_number IS NULL AND media_items.season_number IS NULL))
+                            AND (c.episode_number = media_items.episode_number OR (c.episode_number IS NULL AND media_items.episode_number IS NULL))
+                            AND REPLACE(COALESCE(c.version,''), '*', '') = REPLACE(COALESCE(media_items.version,''), '*', '')
+                            AND (c.ghostlisted IS NULL OR c.ghostlisted = 0)
+                      )
+                """)
+                deleted_count_collected_dup = cursor.rowcount
+                if deleted_count_collected_dup:
+                    reconciliation_logger.info(f"Deleted {deleted_count_collected_dup} Wanted/Scraping items that have a Collected counterpart (version star mismatch cleanup).")
+            except Exception as _cd_err:
+                reconciliation_logger.error(f"Collected-dup cleanup error: {_cd_err}")
 
             conn.commit()
 
@@ -6638,7 +6669,7 @@ class ProgramRunner:
                 # Bad file rules (no file extension rule per spec)
                 has_m2ts = any(p.lower().endswith('.m2ts') for p in parts)
                 is_movie_multi_part = (item_type == 'movie' and len(parts) > 2)
-                dead_item = f'item {item_id}' in tail_text and 'dead item count' in tail_text
+                dead_item = False  # dead item detection now handled by burst detection above
 
                 bad_file = has_m2ts or is_movie_multi_part or dead_item
 

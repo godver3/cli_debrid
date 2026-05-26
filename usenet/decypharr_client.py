@@ -338,13 +338,14 @@ class DecypharrClient:
     def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
         """
         Poll Decypharr queue for a single job by its ID/hash.
-        Uses ?hash= parameter to avoid fetching all torrents (fixes pagination bug).
+        Uses ?search= param which correctly filters by info_hash.
+        The ?hash= param is unreliable and ignored by some Decypharr versions.
         Returns a dict with 'state' key: 'downloading' | 'completed' | 'failed' | 'unknown'.
         """
         try:
             r = api.get(
                 f'{self.base_url}/api/torrents',
-                params={'hash': job_id, 'limit': 1},
+                params={'search': job_id, 'limit': 1},
                 headers=self._headers(),
                 timeout=10,
             )
@@ -353,7 +354,7 @@ class DecypharrClient:
             data = r.json()
             torrents = data.get('torrents', data) if isinstance(data, dict) else data
             for t in (torrents or []):
-                tid = str(t.get('id') or t.get('nzo_id') or t.get('hash', ''))
+                tid = str(t.get('info_hash') or t.get('id') or t.get('nzo_id') or t.get('hash', ''))
                 if tid == job_id:
                     state = str(t.get('state', t.get('status', ''))).lower()
                     raw_progress = t.get('progress', 0)
@@ -364,7 +365,7 @@ class DecypharrClient:
                         'name': t.get('name', ''),
                         'raw': t,
                     }
-            # Not found in queue — may have completed and been removed
+            # Not found — may have completed and been removed
             return {'state': 'completed', 'progress': 100, 'raw': {}}
         except Exception as exc:
             logging.debug(f'[Decypharr] get_job_status exception: {exc}')
