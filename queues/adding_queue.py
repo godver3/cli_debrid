@@ -285,6 +285,7 @@ class AddingQueue:
                     continue
             logging.info(f"Processing item {item_id}: {item_identifier}")
             processed_this_item = False # Flag for applying delay
+            _nzb_attempt_made = False  # Flag: NZB item was attempted this tick
 
             try:
                 # --- Load scrape_results ---
@@ -369,6 +370,11 @@ class AddingQueue:
                     else: # Hybrid mode is the default if not None or Full
                         accept_uncached = False # Start with cached only for hybrid
 
+                # Mark if this is an NZB item — one attempt per tick to keep queue flowing
+                _first_res = results[0] if results else {}
+                if isinstance(_first_res, dict) and (_first_res.get('protocol') == 'nzb' or _first_res.get('nzb_url')):
+                    _nzb_attempt_made = True
+
                 # Now returns torrent_info, magnet, and chosen_result_info
                 torrent_info, magnet, chosen_result_info = self._process_results_with_mode(
                     results, item_identifier, accept_uncached, item=item
@@ -395,6 +401,22 @@ class AddingQueue:
                        item['torrent_id'] = torrent_info.get('id')
                     elif chosen_result_info:
                         pass
+                    # NZB item: if results remain, stay in Adding and retry next tick.
+                    # Re-read from item dict since process_results may have popped result[0].
+                    _remaining_sr = item.get('scrape_results', [])
+                    if isinstance(_remaining_sr, str):
+                        try:
+                            import json as _json_aq2
+                            _remaining_sr = _json_aq2.loads(_remaining_sr)
+                        except Exception:
+                            _remaining_sr = []
+                    _is_nzb_item = any(
+                        (r.get('protocol') == 'nzb' or r.get('nzb_url'))
+                        for r in _remaining_sr
+                    ) if _remaining_sr else False
+                    if _is_nzb_item:
+                        logging.info(f"[AddingQueue] NZB attempt failed for {item_identifier}, {len(_remaining_sr)} result(s) remaining — retrying next tick")
+                        continue
                     self._handle_failed_item(item, "No valid results found after cache/uncached processing", queue_manager)
                     continue
 
@@ -666,6 +688,11 @@ class AddingQueue:
                 if processed_this_item and delay_seconds > 0:
                     logging.debug(f"Adding Queue: Applying {delay_seconds}s delay after processing item {item_id}.")
                     time.sleep(delay_seconds)
+
+            # NZB items: one attempt per tick so all items in Adding get a turn.
+            # The item stays in Adding with its updated scrape_results for next tick.
+            if _nzb_attempt_made:
+                break
 
         return success
 
