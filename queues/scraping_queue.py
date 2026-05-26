@@ -693,6 +693,7 @@ class ScrapingQueue:
                                         self.items = [it for it in self.items if it.get('id') not in _batch_ids_to_remove]
                                         self._item_ids -= _batch_ids_to_remove
                                         logging.info(f'[NZBBatch] Batched {_batch_submitted} siblings to Adding; current item continues normally')
+                                    _nzb_batch_handled = (_batch_submitted > 0)
                         except Exception as _be:
                             logging.warning(f'[NZBBatch] Batch processing failed, falling back to individual scrape: {_be}', exc_info=True)
 

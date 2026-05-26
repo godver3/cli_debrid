@@ -596,7 +596,39 @@ class TorrentProcessor:
                                     'files': [], 'progress': 0,
                                     '_provider': 'Decypharr', '_is_nzb': True,
                                     '_nzb_url': nzb_url}, nzb_url, result
-                        # If existing job is individual and new result is a pack, fall through and submit the pack
+                        elif _is_pack and not _sibling_is_pack:
+                            # New result is a pack, existing jobs are individual episodes.
+                            # Cancel the individual Decypharr jobs so we don't end up with
+                            # both individual files AND a season pack folder on disk.
+                            try:
+                                from database import get_db_connection as _gdb2
+                                _conn2 = _gdb2()
+                                try:
+                                    _individuals = _conn2.execute(
+                                        "SELECT id, filled_by_torrent_id FROM media_items "
+                                        "WHERE imdb_id=? AND season_number=? AND type='episode' "
+                                        "AND filled_by_torrent_id LIKE 'nzb:%' "
+                                        "AND state IN ('Adding','Checking')",
+                                        (_imdb, _season)
+                                    ).fetchall()
+                                finally:
+                                    _conn2.close()
+                                if _individuals:
+                                    from usenet.decypharr_client import get_decypharr_client as _get_dc
+                                    _dc = _get_dc()
+                                    _cancelled = set()
+                                    for _ind_id, _ind_tid in _individuals:
+                                        _ind_hash = _ind_tid[4:] if _ind_tid.startswith('nzb:') else _ind_tid
+                                        if _ind_hash not in _cancelled:
+                                            try:
+                                                _dc.remove_nzb(_ind_hash)
+                                                _cancelled.add(_ind_hash)
+                                                logging.info(f'[{item_identifier}] Cancelled individual episode job {_ind_hash} — season pack will replace it')
+                                            except Exception:
+                                                pass
+                            except Exception as _ce:
+                                logging.debug(f'[{item_identifier}] Could not cancel individual jobs: {_ce}')
+                            # Fall through to submit the pack
                 except Exception as _se:
                     logging.debug(f'[{item_identifier}] Season pack DB dedup check failed: {_se}')
 
@@ -789,7 +821,23 @@ class TorrentProcessor:
                     nzb_result = self._process_nzb_result(result, item, adding_queue_items=adding_queue_items)
                     if nzb_result:
                         return nzb_result
-                    continue
+                    # NZB rejected — pop this result from scrape_results in DB so the next
+                    # tick tries the next candidate, then return so the Adding queue can
+                    # move on to other items immediately (one attempt per item per tick).
+                    if item:
+                        try:
+                            import json as _json_tp
+                            from database.database_writing import update_media_item as _umi_tp
+                            _sr = item.get('scrape_results', [])
+                            if isinstance(_sr, str):
+                                _sr = _json_tp.loads(_sr)
+                            if isinstance(_sr, list) and _sr:
+                                _sr = _sr[1:]
+                                item['scrape_results'] = _sr
+                                _umi_tp(item['id'], scrape_results=_json_tp.dumps(_sr))
+                        except Exception:
+                            pass
+                    return None, None, None
 
                 original_link = result.get('magnet') or result.get('link')
                 if not original_link:
