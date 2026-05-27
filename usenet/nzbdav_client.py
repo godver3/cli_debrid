@@ -44,6 +44,49 @@ from routes.api_tracker import api
 _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
 
 
+# Title-based category detection.
+# nzbdav (unlike decypharr) does NO post-categorization. To make files land
+# in Plex-visible paths (mirroring zurg's category layout) rather than an
+# invisible /content/cli_debrid/ bucket, we derive the SAB-API cat from the
+# release title heuristically. Centralized here so ALL call sites benefit
+# (including manual UI submits in debrid_manager/magnet/scraper routes) —
+# they all flow through add_nzb_content / add_nzb.
+# Order matters: SHOW > MUSIC > MOVIE (most specific first).
+_SHOW_PATTERN   = re.compile(r'\bS\d{1,2}E\d{1,3}\b|\bS\d{1,2}\b|\bSeason[.\s_]\d+\b', re.IGNORECASE)
+_MUSIC_PATTERN  = re.compile(r'\b(FLAC|MP3|320[\s_-]?kbps|hi-?res|discography)\b', re.IGNORECASE)
+_MOVIE_YEAR     = re.compile(r'\b(19[5-9]\d|20[0-3]\d)\b')
+_QUALITY_1080P  = re.compile(r'\b1080p\b', re.IGNORECASE)
+_CODEC_H264     = re.compile(r'\b(?:x264|h\.?264|avc)\b', re.IGNORECASE)
+
+
+def _detect_category_from_title(title: str) -> str:
+    """Heuristic: derives nzbdav category from a scene-style release title.
+
+    Mirrors zurg's naming convention 1:1:
+      movies / shows / music                  general buckets (all qualities)
+      movies_1080p_264 / shows_1080p_264      specialized bucket for 1080p+H264 (zurg-filter mirror)
+      __unplayable__                          fallback for non-classified items (default_category)
+
+    Quality split is NON-exclusive: 1080p-H264 items land in the _1080p_264 cat.
+    Plex's main Movies section should include BOTH paths (movies + movies_1080p_264)
+    so items appear there too. Movies_1080p section should include only movies_1080p_264
+    (exclusive filter view). Mirrors how zurg's __all__/movies/movies_1080p_264 overlap.
+
+    Returns the matched category name, or empty string if no match (caller falls
+    back to self.default_category).
+    """
+    if not title:
+        return ''
+    is_1080p_h264 = bool(_QUALITY_1080P.search(title) and _CODEC_H264.search(title))
+    if _SHOW_PATTERN.search(title):
+        return 'shows_1080p_264' if is_1080p_h264 else 'shows'
+    if _MUSIC_PATTERN.search(title):
+        return 'music'
+    if _MOVIE_YEAR.search(title):
+        return 'movies_1080p_264' if is_1080p_h264 else 'movies'
+    return ''
+
+
 class NzbdavClient:
     """Submits NZBs to nzbdav and polls for completion.
 
@@ -58,8 +101,9 @@ class NzbdavClient:
         self.base_url = cfg.get('url', 'http://localhost:3000').rstrip('/')
         # nzbdav uses ?apikey= for SAB-API auth — not Bearer headers.
         self.api_key = cfg.get('api_token', '')
-        # category to default to when caller passes none
-        self.default_category = cfg.get('download_folder', '') or 'cli_debrid'
+        # category to default to when caller passes none AND title-heuristic fails.
+        # Convention: '__unplayable__' mirrors zurg's catch-all bucket name.
+        self.default_category = cfg.get('download_folder', '') or '__unplayable__'
         self.enabled = cfg.get('enabled', False)
         # Host-side filesystem path to where the nzbdav WebDAV mount appears
         # (used for browse helpers since nzbdav has no /browse API). Default to
@@ -115,7 +159,7 @@ class NzbdavClient:
             logging.warning('[NzbDAV] Usenet provider is disabled or not configured')
             return None
 
-        cat = category or self.default_category
+        cat = category or _detect_category_from_title(title) or self.default_category
         # nzbdav uses `nzbname` for the resulting folder name; default to title
         nzbname = title or 'download'
         filename = f'{nzbname}.nzb'
@@ -156,7 +200,7 @@ class NzbdavClient:
             logging.warning('[NzbDAV] Usenet provider is disabled or not configured')
             return None
 
-        cat = category or self.default_category
+        cat = category or _detect_category_from_title(title) or self.default_category
         nzbname = title or 'download'
 
         try:
