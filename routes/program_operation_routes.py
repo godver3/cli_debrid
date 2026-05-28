@@ -1510,3 +1510,170 @@ def _format_task_display_name(task_name, queue_map, content_sources_map):
     # Default fallback if no rule matches (should be rare)
     return task_name.replace('_', ' ').capitalize()
 # --- END EDIT ---
+
+
+# ---------------------------------------------------------------------------
+# NzbDAV setup helper — backs the in-app "Test connection & ensure categories"
+# button (Settings → Usenet Provider and onboarding). NzbDAV exposes:
+#   GET  /api?mode=version            reachability (no key needed)
+#   GET  /api?mode=get_cats&apikey=   the SAB category list cli-debrid sees
+#   POST /api/get-config              read config  (form field config-keys)
+#   POST /api/update-config           write config (form field config=JSON);
+#                                     applied live via ConfigManager — no restart
+# The config API is reachable without the SAB key when NzbDAV runs with
+# DISABLE_FRONTEND_AUTH=true (the documented cli-debrid setup). If it is gated by
+# the frontend login we report that categories must be added in the NzbDAV UI.
+# ---------------------------------------------------------------------------
+
+# Categories cli-debrid's title heuristic routes grabs into; these must exist in
+# NzbDAV or submits are rejected (items loop in "Wanted"). Mirrors nzbdav_migrate.py.
+NZBDAV_REQUIRED_CATEGORIES = ['movies', 'shows', 'movies_1080p_264', 'shows_1080p_264', '__unplayable__']
+NZBDAV_RECOMMENDED_CATEGORIES = ['music']
+
+
+def _nzbdav_base_url(raw):
+    """Normalise a user-entered NzbDAV URL to its API root (no trailing slash, no /api)."""
+    url = (raw or '').strip().rstrip('/')
+    if url.endswith('/api'):
+        url = url[:-4].rstrip('/')
+    return url
+
+
+def _nzbdav_required_categories(download_folder=''):
+    cats = list(NZBDAV_REQUIRED_CATEGORIES)
+    df = (download_folder or '').strip()
+    if df and df not in cats:
+        cats.append(df)
+    return cats
+
+
+def _nzbdav_get_categories_via_config(base_url, timeout=10):
+    """Read api.categories through NzbDAV's config API.
+    Returns (categories_list | None, config_api_reachable_bool)."""
+    import requests
+    try:
+        r = requests.post(f"{base_url}/api/get-config",
+                          files={'config-keys': (None, 'api.categories')}, timeout=timeout)
+        if r.status_code != 200:
+            return None, False
+        data = r.json()
+        if not data.get('status'):
+            return None, False
+        for item in data.get('configItems', []):
+            if item.get('configName') == 'api.categories':
+                return [c.strip() for c in (item.get('configValue') or '').split(',') if c.strip()], True
+        return [], True
+    except (RequestException, ValueError):
+        return None, False
+
+
+@program_operation_bp.route('/api/nzbdav/check', methods=['POST'])
+@admin_required
+def nzbdav_check():
+    """Probe an NzbDAV instance for the in-app setup helper: reachability, version,
+    SAB key validity, and which categories cli-debrid needs are missing."""
+    import requests
+    payload = request.get_json(silent=True) or request.form
+    url = _nzbdav_base_url(payload.get('url') or get_setting('Usenet Provider', 'url', ''))
+    token = (payload.get('api_token') or get_setting('Usenet Provider', 'api_token', '') or '').strip()
+    download_folder = payload.get('download_folder') or get_setting('Usenet Provider', 'download_folder', '')
+    required = _nzbdav_required_categories(download_folder)
+
+    result = {'url': url, 'reachable': False, 'version': None, 'key_valid': None,
+              'categories_present': [], 'categories_missing': [], 'recommended_missing': [],
+              'can_autofix': False, 'required': required,
+              'recommended': NZBDAV_RECOMMENDED_CATEGORIES}
+    if not url:
+        return jsonify({'success': False, 'error': 'No NzbDAV URL provided.'}), 400
+
+    # 1) reachability + version (SAB mode=version, no key needed)
+    try:
+        r = requests.get(f"{url}/api", params={'mode': 'version'}, timeout=10)
+        if r.status_code == 200:
+            try:
+                result['version'] = r.json().get('version')
+            except ValueError:
+                result['version'] = None
+            result['reachable'] = True
+    except RequestException as e:
+        return jsonify({'success': False, 'error': f'Cannot reach NzbDAV at {url}: {e}', 'result': result}), 200
+
+    if not result['reachable']:
+        return jsonify({'success': False,
+                        'error': f'NzbDAV at {url} did not respond to mode=version.',
+                        'result': result}), 200
+
+    # 2) categories cli-debrid sees via SAB get_cats (uses the key) + key validity
+    present = None
+    try:
+        r = requests.get(f"{url}/api", params={'mode': 'get_cats', 'apikey': token}, timeout=10)
+        if r.status_code == 200:
+            cats = (r.json() or {}).get('categories')
+            if isinstance(cats, list):
+                present = [c if isinstance(c, str) else c.get('name', '') for c in cats]
+                result['key_valid'] = True
+            else:
+                result['key_valid'] = False
+        else:
+            result['key_valid'] = False
+    except (RequestException, ValueError):
+        result['key_valid'] = False
+
+    # Config API gives the authoritative list and tells us whether auto-fix is possible
+    cfg_cats, cfg_reachable = _nzbdav_get_categories_via_config(url)
+    result['can_autofix'] = cfg_reachable
+    if present is None and cfg_cats is not None:
+        present = cfg_cats
+
+    present = present or []
+    result['categories_present'] = present
+    result['categories_missing'] = [c for c in required if c not in present]
+    result['recommended_missing'] = [c for c in NZBDAV_RECOMMENDED_CATEGORIES if c not in present]
+    return jsonify({'success': True, 'result': result}), 200
+
+
+@program_operation_bp.route('/api/nzbdav/ensure_categories', methods=['POST'])
+@admin_required
+def nzbdav_ensure_categories():
+    """Create any missing cli-debrid categories in NzbDAV via its config API
+    (read api.categories, append the missing ones, write back). Applied live."""
+    import requests
+    payload = request.get_json(silent=True) or request.form
+    url = _nzbdav_base_url(payload.get('url') or get_setting('Usenet Provider', 'url', ''))
+    download_folder = payload.get('download_folder') or get_setting('Usenet Provider', 'download_folder', '')
+    include_recommended = str(payload.get('include_recommended', 'true')).lower() in ('1', 'true', 'yes', 'on')
+    required = _nzbdav_required_categories(download_folder)
+    if include_recommended:
+        required = required + [c for c in NZBDAV_RECOMMENDED_CATEGORIES if c not in required]
+
+    if not url:
+        return jsonify({'success': False, 'error': 'No NzbDAV URL provided.'}), 400
+
+    current, reachable = _nzbdav_get_categories_via_config(url)
+    if not reachable or current is None:
+        return jsonify({'success': False,
+                        'error': "NzbDAV config API not reachable. If NzbDAV runs with frontend "
+                                 "authentication enabled, add the categories manually in "
+                                 "NzbDAV → Settings → Categories, or set DISABLE_FRONTEND_AUTH=true."}), 200
+
+    to_add = [c for c in required if c not in current]
+    if not to_add:
+        return jsonify({'success': True, 'created': [], 'all_present': True, 'categories': current}), 200
+
+    new_list = current + to_add
+    try:
+        r = requests.post(f"{url}/api/update-config",
+                          files={'config': (None, json.dumps({'api.categories': ','.join(new_list)}))},
+                          timeout=15)
+        if r.status_code != 200 or not (r.json() or {}).get('status', False):
+            return jsonify({'success': False,
+                            'error': f'update-config failed: HTTP {r.status_code} {r.text[:200]}'}), 200
+    except (RequestException, ValueError) as e:
+        return jsonify({'success': False, 'error': f'update-config error: {e}'}), 200
+
+    verify, _ = _nzbdav_get_categories_via_config(url)
+    verify = verify or new_list
+    still_missing = [c for c in required if c not in verify]
+    return jsonify({'success': len(still_missing) == 0, 'created': to_add,
+                    'all_present': len(still_missing) == 0, 'still_missing': still_missing,
+                    'categories': verify}), 200

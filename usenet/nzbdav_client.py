@@ -43,6 +43,14 @@ from routes.api_tracker import api
 # Video-file extensions used for "is this a media file" checks in browse helpers.
 _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
 
+# Default set of nzbdav categories cli-debrid considers "its own" for repair/health.
+# These mirror the video categories _detect_category_from_title can emit. 'music' is
+# intentionally excluded: cli-debrid manages video, and a shared nzbdav typically
+# serves music via Lidarr — repair must not purge another app's history. Users with
+# custom layouts (e.g. also pointing Radarr/Sonarr at nzbdav) override per-instance
+# via the `Usenet Provider.owned_categories` config key (comma-separated).
+_DEFAULT_OWNED_CATEGORIES = {'movies', 'shows', 'movies_1080p_264', 'shows_1080p_264', '__unplayable__'}
+
 
 # Title-based category detection.
 # nzbdav (unlike decypharr) does NO post-categorization. To make files land
@@ -105,6 +113,15 @@ class NzbdavClient:
         # Convention: '__unplayable__' mirrors zurg's catch-all bucket name.
         self.default_category = cfg.get('download_folder', '') or '__unplayable__'
         self.enabled = cfg.get('enabled', False)
+        # Which nzbdav categories repair/health may act on. nzbdav history is SHARED
+        # with other SAB clients (Lidarr music, optionally Radarr/Sonarr), and repair
+        # can only re-acquire content cli-debrid manages — so it must never touch
+        # another app's entries. Resolution (all setup-agnostic, no hard-coding of
+        # one user's layout):
+        #   include = `owned_categories` config if set, else the heuristic's video
+        #             categories + the configured fallback (auto-picked default)
+        #   then subtract `exclude_categories` config (deny-list, optional)
+        self.owned_categories = self._resolve_owned_categories(cfg)
         # Host-side filesystem path to where the nzbdav WebDAV mount appears
         # (used for browse helpers since nzbdav has no /browse API). Default to
         # the standard rclone-sidecar mount point shipped with nzbdav docs.
@@ -118,6 +135,30 @@ class NzbdavClient:
         self.last_missing_segments = False
 
     # -- internal helpers ---------------------------------------------------
+
+    @staticmethod
+    def _parse_cat_list(value) -> set:
+        """Accept a comma-separated string or a list; return a lowercased set."""
+        if not value:
+            return set()
+        if isinstance(value, str):
+            value = value.split(',')
+        return {str(c).strip().lower() for c in value if str(c).strip()}
+
+    def _resolve_owned_categories(self, cfg: dict) -> set:
+        """Determine which nzbdav categories repair/health may act on.
+
+        include (allow-list) = config 'owned_categories' if set, else the
+        auto-picked default (heuristic video cats + configured fallback).
+        Then subtract config 'exclude_categories' (deny-list).
+        """
+        include = self._parse_cat_list(cfg.get('owned_categories'))
+        if not include:
+            include = set(_DEFAULT_OWNED_CATEGORIES)
+            if self.default_category:
+                include.add(self.default_category.lower())
+        include -= self._parse_cat_list(cfg.get('exclude_categories'))
+        return include
 
     def _sab_params(self, **extra) -> Dict[str, str]:
         """Build query params for nzbdav SAB-API calls. apikey is always added."""
@@ -251,14 +292,38 @@ class NzbdavClient:
             logging.debug(f'[NzbDAV] content root not found: {content_root}')
             return None
 
-        # Fast path: stat the direct path for each category subdir
-        if original_name:
+        # Exact + nzbdav dedup-suffix matches ("Name", "Name (2)", "Name (3)").
+        # nzbdav appends " (N)" when a folder of that name already exists, so on a
+        # re-grab/upgrade the freshly-downloaded copy carries the newest mtime.
+        # Picking the newest avoids resolving to a stale older copy (which the old
+        # fast-path did by returning the bare exact name). The match is precise —
+        # only true dedup variants of original_name — so it cannot grab an
+        # unrelated folder.
+        dedup_re = re.compile(r'^' + re.escape(original_name) + r' \(\d+\)$') if original_name else None
+        dedup_matches = []  # (entry, mtime)
+        try:
             for cat_dir in os.listdir(content_root):
-                cand = os.path.join(content_root, cat_dir, original_name)
-                if os.path.isdir(cand):
-                    return original_name
+                cat_path = os.path.join(content_root, cat_dir)
+                if not os.path.isdir(cat_path):
+                    continue
+                for entry in os.listdir(cat_path):
+                    if original_name and (entry == original_name or (dedup_re and dedup_re.match(entry))):
+                        try:
+                            mt = os.path.getmtime(os.path.join(cat_path, entry))
+                        except OSError:
+                            mt = 0
+                        dedup_matches.append((entry, mt))
+        except Exception as exc:
+            logging.warning(f'[NzbDAV] _find_nzb_folder scan error: {exc}')
+        if dedup_matches:
+            dedup_matches.sort(key=lambda c: c[1], reverse=True)
+            best = dedup_matches[0][0]
+            if len(dedup_matches) > 1:
+                logging.info(f'[NzbDAV] _find_nzb_folder: {len(dedup_matches)} name-collision variants '
+                             f'for {original_name!r}, picked newest {best!r}')
+            return best
 
-        # Slow path: scan all subdirs and fuzzy-match the normalised name
+        # Fuzzy fallback: normalised match (unchanged behaviour).
         try:
             for cat_dir in os.listdir(content_root):
                 cat_path = os.path.join(content_root, cat_dir)
@@ -361,8 +426,11 @@ class NzbdavClient:
     def remove_nzb(self, info_hash: str, entry_name: str = '') -> bool:
         """Delete a history entry from nzbdav.
 
-        info_hash here is the nzo_id (UUID). nzbdav's SAB-compatible delete:
-          /api?mode=history&name=delete&value=<nzo_id>
+        info_hash here is the nzo_id (UUID). nzbdav implements the SABnzbd
+        convention, which uses a GET query (NOT the HTTP DELETE verb):
+          GET /api?mode=history&name=delete&value=<nzo_id>&del_files=1
+        IMPORTANT: an HTTP DELETE to the same URL returns 200 but does NOT
+        delete anything — the entry silently survives. Use GET.
         Returns True if removed (or already gone), False on hard error.
         """
         if not self.is_enabled():
@@ -371,14 +439,21 @@ class NzbdavClient:
             logging.debug(f'[NzbDAV] remove_nzb called without info_hash for {entry_name!r}')
             return False
         try:
-            r = api.delete(
+            r = api.get(
                 self._sab_url(),
-                params=self._sab_params(mode='history', name='delete', value=info_hash),
+                params=self._sab_params(mode='history', name='delete', value=info_hash, del_files=1),
                 timeout=15,
             )
-            if r.status_code in (200, 204):
-                logging.info(f'[NzbDAV] Removed NZB job {info_hash}')
-                return True
+            if r.status_code == 200:
+                try:
+                    ok = (r.json() or {}).get('status', True)
+                except Exception:
+                    ok = True
+                if ok:
+                    logging.info(f'[NzbDAV] Removed NZB job {info_hash}')
+                    return True
+                logging.warning(f'[NzbDAV] remove_nzb status=false for {info_hash}: {r.text[:200]}')
+                return False
             if r.status_code == 404:
                 logging.info(f'[NzbDAV] NZB job {info_hash} already gone (404)')
                 return True
@@ -462,6 +537,81 @@ class NzbdavClient:
     def check_entry_health(self, entry_name: str) -> Optional[str]:
         """Legacy wrapper — returns None for nzbdav (no user-driven health-API)."""
         return None
+
+    # -- repair-support (history-based) -------------------------------------
+    # nzbdav has NO /api/repair endpoint. The only failure signal it exposes is
+    # history slots with status='Failed' (download-time NNTP failures, or items
+    # cli-debrid marked Collected that never actually landed). The repair engine
+    # treats these as 'broken' entries: orphans get purged from history, items
+    # still mapped to a live DB row get re-scraped. There is no rot/health-scan
+    # to trigger — failures are already live in history.
+
+    def _history_slots(self, limit: int = 1000) -> List[dict]:
+        try:
+            r = api.get(self._sab_url(), params=self._sab_params(mode='history', limit=limit), timeout=30)
+            if r.status_code != 200:
+                return []
+            data = r.json()
+            return (data.get('history', {}) or {}).get('slots', []) or []
+        except Exception as exc:
+            logging.debug(f'[NzbDAV] _history_slots error: {exc}')
+            return []
+
+    def fetch_broken_items(self) -> list:
+        """Return failed history entries as repair-engine entry dicts."""
+        if not self.is_enabled():
+            return []
+        broken = []
+        for s in self._history_slots():
+            if str(s.get('status', '')).lower() != 'failed':
+                continue
+            if str(s.get('category', '')).lower() not in self.owned_categories:
+                continue  # shared provider — skip other apps' entries (e.g. Lidarr music)
+            name = s.get('name') or (s.get('nzb_name') or '').rsplit('.nzb', 1)[0]
+            broken.append({
+                'entry_name': name,
+                'name': name,
+                'info_hash': s.get('nzo_id', ''),
+                # nzo_id is exactly the value cli-debrid stores as
+                # filled_by_torrent_id ('nzb:'+nzo_id) — so the hash is an
+                # authoritative ownership test. repair skips its fuzzy
+                # title-match fallback when this is set (avoids false positives).
+                'hash_is_authoritative': True,
+                'status': 'broken',
+                'nzb_url': '',
+                'fail_message': s.get('fail_message', ''),
+                'broken_files': [],
+            })
+        logging.info(f'[NzbDAV] fetch_broken_items: {len(broken)} failed history entr(ies)')
+        return broken
+
+    def get_health_summary(self) -> dict:
+        """Counts by health state derived from history (Failed→broken, Completed→healthy)."""
+        if not self.is_enabled():
+            return {}
+        counts: Dict[str, int] = {}
+        for s in self._history_slots():
+            if str(s.get('category', '')).lower() not in self.owned_categories:
+                continue  # shared provider — only count cli-debrid's own categories
+            st = str(s.get('status', 'unknown')).lower()
+            key = 'broken' if st == 'failed' else ('healthy' if st == 'completed' else st)
+            counts[key] = counts.get(key, 0) + 1
+        return counts
+
+    def trigger_health_scan(self) -> bool:
+        """No-op: nzbdav runs health checks internally; failures already live in history."""
+        logging.debug('[NzbDAV] trigger_health_scan no-op (history is the live failure source)')
+        return True
+
+    def resolve_job_id(self, entry_name: str) -> str:
+        """Resolve an nzo_id from history by release name (repair fallback)."""
+        if not self.is_enabled() or not entry_name:
+            return ''
+        target = entry_name.strip()
+        for s in self._history_slots():
+            if (s.get('name') or '').strip() == target:
+                return s.get('nzo_id', '')
+        return ''
 
     def wait_for_completion(self, job_id: str, timeout: int = 3600, poll_interval: int = 10) -> bool:
         """Poll until the job completes or timeout."""

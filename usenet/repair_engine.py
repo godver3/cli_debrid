@@ -55,6 +55,19 @@ def _dcy_cfg():
     return url, token, enabled
 
 
+def _client():
+    """Active usenet client (decypharr or nzbdav) via the provider factory.
+
+    Repair is fully provider-agnostic: all provider HTTP lives in the client
+    classes, which expose fetch_broken_items / get_health_summary /
+    trigger_health_scan / resolve_job_id / remove_nzb. nzbdav derives "broken"
+    from history status=Failed (no /api/repair endpoint); decypharr uses
+    /api/repair/health. See usenet/{nzbdav,decypharr}_client.py.
+    """
+    from usenet import get_usenet_client
+    return get_usenet_client()
+
+
 # ---------------------------------------------------------------------------
 # Decypharr health scan
 # ---------------------------------------------------------------------------
@@ -70,64 +83,27 @@ def _entry_name(entry: dict) -> str:
 
 
 def fetch_broken_items() -> list:
-    """Return list of broken entry dicts from Decypharr /api/repair/health."""
-    dcy_url, dcy_token, enabled = _dcy_cfg()
-    if not enabled or not dcy_url:
-        return []
+    """Return list of broken entry dicts from the active usenet provider."""
     try:
-        r = requests.get(
-            f'{dcy_url}/api/repair/health',
-            headers=_dcy_headers(dcy_token),
-            timeout=60,
-        )
-        if r.status_code != 200:
-            logger.warning(f'[NZBRepair] /api/repair/health returned HTTP {r.status_code}')
-            return []
-        broken = [e for e in _parse_health_entries(r.json()) if (e.get('status') or '').lower() == 'broken']
-        logger.info(f'[NZBRepair] Found {len(broken)} broken item(s)')
-        return broken
+        return _client().fetch_broken_items()
     except Exception as e:
         logger.error(f'[NZBRepair] fetch_broken_items error: {e}')
         return []
 
 
 def trigger_health_scan() -> bool:
-    """POST to Decypharr to trigger a fresh health scan. Returns True if accepted."""
-    dcy_url, dcy_token, enabled = _dcy_cfg()
-    if not enabled or not dcy_url:
-        return False
+    """Trigger a fresh health scan on the active provider. Returns True if accepted."""
     try:
-        r = requests.post(
-            f'{dcy_url}/api/repair/run',
-            headers=_dcy_headers(dcy_token),
-            timeout=30,
-        )
-        ok = r.status_code in (200, 202, 204)
-        logger.info(f'[NZBRepair] trigger_health_scan: HTTP {r.status_code} → {"ok" if ok else "failed"}')
-        return ok
+        return _client().trigger_health_scan()
     except Exception as e:
         logger.warning(f'[NZBRepair] trigger_health_scan error: {e}')
         return False
 
 
 def get_health_summary() -> dict:
-    """Return counts: healthy/broken/repairing/stale/unknown from Decypharr."""
-    dcy_url, dcy_token, enabled = _dcy_cfg()
-    if not enabled or not dcy_url:
-        return {}
+    """Return health-state counts from the active provider."""
     try:
-        r = requests.get(
-            f'{dcy_url}/api/repair/health',
-            headers=_dcy_headers(dcy_token),
-            timeout=60,
-        )
-        if r.status_code != 200:
-            return {}
-        counts = {}
-        for entry in _parse_health_entries(r.json()):
-            s = (entry.get('status') or 'unknown').lower()
-            counts[s] = counts.get(s, 0) + 1
-        return counts
+        return _client().get_health_summary()
     except Exception as e:
         logger.debug(f'[NZBRepair] get_health_summary error: {e}')
         return {}
@@ -139,26 +115,16 @@ def get_health_summary() -> dict:
 
 def _resolve_info_hash_from_decypharr(entry_name: str) -> str:
     """
-    When the health API returns hash='', look up the job UUID from /api/torrents by name.
-    Returns the UUID string (which is the info_hash used in filled_by_torrent_id) or ''.
+    When the broken entry has no job id, resolve it from the provider by name.
+    Returns the id string (used in filled_by_torrent_id) or ''.
     """
-    dcy_url, dcy_token, enabled = _dcy_cfg()
-    if not enabled or not dcy_url or not entry_name:
+    if not entry_name:
         return ''
     try:
-        r = requests.get(
-            f'{dcy_url}/api/torrents',
-            params={'search': entry_name[:60]},
-            headers=_dcy_headers(dcy_token),
-            timeout=10,
-        )
-        if r.status_code == 200:
-            for t in r.json().get('torrents', []):
-                if t.get('name', '').strip() == entry_name.strip():
-                    return t.get('info_hash', '')
+        return _client().resolve_job_id(entry_name)
     except Exception as e:
         logger.debug(f'[NZBRepair] _resolve_info_hash_from_decypharr error: {e}')
-    return ''
+        return ''
 
 
 def _find_db_item_by_info_hash(info_hash: str) -> Optional[dict]:
@@ -267,53 +233,12 @@ def _find_db_items_by_entry_name(entry_name: str) -> list:
 # ---------------------------------------------------------------------------
 
 def _delete_from_decypharr(info_hash: str, entry_name: str) -> bool:
-    dcy_url, dcy_token, _ = _dcy_cfg()
-    if not dcy_url:
+    """Delete a broken entry from the active provider (decypharr or nzbdav)."""
+    try:
+        return _client().remove_nzb(info_hash, entry_name)
+    except Exception as e:
+        logger.debug(f'[NZBRepair] _delete_from_decypharr error: {e}')
         return False
-    hdrs = _dcy_headers(dcy_token)
-
-    # Primary: DELETE /api/torrents?hashes={uuid}
-    if info_hash:
-        try:
-            r = requests.delete(
-                f'{dcy_url}/api/torrents',
-                params={'hashes': info_hash},
-                headers=hdrs, timeout=15,
-            )
-            if r.status_code in (200, 204):
-                logger.info(f'[NZBRepair] Deleted from Decypharr: {info_hash}')
-                return True
-            if r.status_code == 404:
-                logger.info(f'[NZBRepair] NZB {info_hash} already gone from Decypharr')
-                return True
-        except Exception as e:
-            logger.debug(f'[NZBRepair] Direct delete failed: {e}')
-
-    # Fallback: search /api/torrents by name
-    if entry_name:
-        try:
-            r = requests.get(
-                f'{dcy_url}/api/torrents',
-                params={'search': entry_name[:60]},
-                headers=hdrs, timeout=10,
-            )
-            if r.status_code == 200:
-                for t in r.json().get('torrents', []):
-                    h = t.get('info_hash', '')
-                    if h:
-                        rd = requests.delete(
-                            f'{dcy_url}/api/torrents',
-                            params={'hashes': h},
-                            headers=hdrs, timeout=10,
-                        )
-                        if rd.status_code in (200, 204, 404):
-                            logger.info(f'[NZBRepair] Deleted from Decypharr by name: {entry_name!r}')
-                            return True
-        except Exception as e:
-            logger.debug(f'[NZBRepair] Name-search delete failed: {e}')
-
-    logger.warning(f'[NZBRepair] Could not delete {entry_name!r} from Decypharr')
-    return False
 
 
 # ---------------------------------------------------------------------------
@@ -684,12 +609,28 @@ def run_repair(triggered_by: str = 'scheduled', version_override: str = None) ->
                 single = _find_db_item_by_info_hash(info_hash)
                 if single:
                     db_items = [single]
-            if not db_items and entry_name:
+            # Fuzzy name/title fallback only when the hash is NOT authoritative.
+            # For nzbdav the job id (nzo_id) IS the value stored in
+            # filled_by_torrent_id, so a hash non-match means cli-debrid genuinely
+            # doesn't own this entry → treat as orphan. Skipping the fuzzy fallback
+            # there avoids matching a now-working item that merely shares
+            # title+SxxEyy with an OLD failed download (which would wrongly delete
+            # the good item from Plex and re-scrape it). Decypharr health entries
+            # don't set this flag, so their fuzzy fallback is preserved.
+            if not db_items and entry_name and not entry.get('hash_is_authoritative'):
                 db_items = _find_db_items_by_entry_name(entry_name)
 
+            # Only repair items in a live, repairable state. An item that is
+            # Blacklisted / Wanted / Unreleased but happens to reference this job
+            # must NOT be resurrected — drop it here so it's handled as an orphan
+            # (the dead provider entry is purged, the item is left as-is).
+            # _find_db_item_by_info_hash has no state filter, so this guard matters.
+            db_items = [i for i in db_items
+                        if i.get('state') in ('Collected', 'Checking', 'Upgrading', 'Adding')]
+
             if not db_items:
-                # Orphan entry — CLI has no record of it. Delete from Decypharr so it stops showing as broken.
-                logger.warning(f'[NZBRepair] No DB items found for {entry_name!r} — orphan entry, deleting from Decypharr')
+                # Orphan (or only non-repairable matches) — purge the dead entry from the provider.
+                logger.warning(f'[NZBRepair] No repairable DB items for {entry_name!r} — orphan entry, deleting from provider')
                 _delete_from_decypharr(info_hash, entry_name)
                 log_repair_activity(
                     broken_nzb_id=info_hash,

@@ -197,13 +197,38 @@
             </select>
             <p class="settings-description">Backend type. Decypharr uses custom endpoints (<code>/api/add</code>, <code>/api/browse/nzbs</code>); NzbDAV uses standard SAB query-string API (<code>?mode=…</code>). Both expose the same client interface internally.</p>
         </div>
+        <details data-provider-only="nzbdav" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
+            <summary style="cursor:pointer;font-weight:600;">How to set up NzbDAV (click to expand)</summary>
+            <p class="settings-description" style="margin-top:8px;"><strong>Two containers, one backend (same pattern as zurg + zurg_rclone):</strong> the <code>nzbdav</code> container is the downloader + WebDAV server; an <code>rclone</code> container mounts that WebDAV as a normal folder (e.g. <code>/mnt/nzbdav</code>) so Plex and cli-debrid can read the files as a path. You need both — Decypharr only looked simpler because it bundled the mount internally.</p>
+            <p class="settings-description"><strong>Don't write these by hand:</strong> use the <strong>setup helper</strong> below — it generates the <code>docker-compose.yml</code> (both containers) + <code>rclone.conf</code> + the config block for you, and can test the connection and create the required categories. The steps below are what it sets up:</p>
+            <ol class="settings-description" style="margin-top:8px;line-height:1.6;">
+                <li><strong>Deploy the NzbDAV stack</strong> (nzbdav + rclone) — copy the files from the setup helper below, then <code>docker compose up -d</code>.</li>
+                <li><strong>In NzbDAV:</strong> add your usenet (NNTP) provider + indexers, then copy the SAB <strong>API key</strong> (NzbDAV → Settings → API).</li>
+                <li><strong>Add the categories cli-debrid uses</strong> — NzbDAV → Settings → Categories: <code>movies</code>, <code>shows</code>, <code>movies_1080p_264</code>, <code>shows_1080p_264</code>, <code>__unplayable__</code>. Missing categories ⇒ grabs are rejected and loop in "Wanted".</li>
+                <li><strong>Fill the fields below:</strong> Provider URL (e.g. <code>http://host:3000</code>), API Token (the key from step 2), Download Folder = <code>__unplayable__</code>, NzbDAV Mount Path (where the rclone mount appears in this container, e.g. <code>/mnt/nzbdav</code>).</li>
+                <li><strong>Bind the mount + Plex:</strong> bind the nzbdav rclone mount into this container at that path, and add the <code>content/movies</code>, <code>content/shows</code> (+ <code>_1080p_264</code>) folders to your Plex libraries.</li>
+                <li><strong>Verify</strong> with the helper's <em>Test connection &amp; ensure categories</em> button below, then toggle <em>Enable Usenet</em> above.</li>
+            </ol>
+            <p class="settings-description" style="margin-top:4px;"><strong>Switching from Decypharr?</strong> Just set Provider to NzbDAV and update the URL/Token here — your existing Decypharr files don't move. Run NzbDAV in parallel and let new grabs fill it (a hard mount-swap can make Plex purge "missing" items). See <code>nzbdav_setup.py migrate-files</code> for an optional best-effort .nzb replay.</p>
+        </details>
+        {% include '_nzbdav_setup_helper.html' %}
+        <details data-provider-only="decypharr" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
+            <summary style="cursor:pointer;font-weight:600;">How to set up Decypharr (click to expand)</summary>
+            <ol class="settings-description" style="margin-top:8px;line-height:1.6;">
+                <li>Run Decypharr with its rclone mount; configure your usenet provider + indexers in Decypharr.</li>
+                <li>Fill below: Decypharr URL (host:8888 — not localhost, conflicts with Phalanx DB), API Token (if auth enabled), Download Folder (leave empty for Decypharr's default).</li>
+                <li>Set the Decypharr Data Path (bind Decypharr's appdata to <code>/decypharr_data</code>) if you want backup/restore/cleanup tools.</li>
+                <li>Toggle <em>Enable Usenet</em> above.</li>
+            </ol>
+        </details>
         <div class="settings-form-group">
             <label for="usenet_provider-url" class="settings-title">Provider URL:</label>
             <input type="text" id="usenet_provider-url" name="Usenet Provider.url"
                    value="{{ settings.get('Usenet Provider', {}).get('url', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="url"
                    placeholder="e.g. http://192.168.1.x:8888 (decypharr) or http://192.168.1.x:3000 (nzbdav)">
-            <p class="settings-description">Do not use localhost:8888 — that conflicts with Phalanx DB. Use the Decypharr host IP or container name.</p>
+            <p class="settings-description" data-provider-only="decypharr">Do not use localhost:8888 — that conflicts with Phalanx DB. Use the Decypharr host IP or container name.</p>
+            <p class="settings-description" data-provider-only="nzbdav">Use the NzbDAV host IP or container name with its port (default 3000), e.g. <code>http://192.168.1.x:3000</code>. Do not append <code>/sabnzbd</code> — NzbDAV serves its SAB-compatible API at the root <code>/api</code>.</p>
         </div>
         <div class="settings-form-group">
             <label for="usenet_provider-api_token" class="settings-title">API Token:</label>
@@ -213,12 +238,13 @@
                    placeholder="Leave empty if auth is disabled">
         </div>
         <div class="settings-form-group">
-            <label for="usenet_provider-download_folder" class="settings-title">Download Folder:</label>
+            <label for="usenet_provider-download_folder" class="settings-title"><span data-provider-only="nzbdav">Fallback Category <span style="color:#888;font-size:0.85em;">(rarely used)</span></span><span data-provider-only="decypharr">Download Folder / Category</span>:</label>
             <input type="text" id="usenet_provider-download_folder" name="Usenet Provider.download_folder"
                    value="{{ settings.get('Usenet Provider', {}).get('download_folder', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="download_folder"
-                   placeholder="Leave empty for Decypharr default">
-            <p class="settings-description">Category/folder in Decypharr for downloads. Leave empty to use Decypharr's default download folder.</p>
+                   placeholder="decypharr: blank for default · nzbdav: __unplayable__">
+            <p class="settings-description" data-provider-only="decypharr">Category/folder in Decypharr for downloads. Leave empty to use Decypharr's default download folder.</p>
+            <p class="settings-description" data-provider-only="nzbdav">This is <strong>not</strong> a download destination — it's the <strong>fallback category</strong> used only if the per-release title heuristic can't classify a grab. In practice the heuristic classifies everything (it auto-routes to <code>movies</code> / <code>shows</code> / <code>music</code> and the <code>*_1080p_264</code> variants), so this almost never fires. Recommended value: <code>__unplayable__</code> — a category Plex doesn't scan, so any unclassifiable grab parks there harmlessly instead of polluting a library. This name (and every category the heuristic emits) must exist in NzbDAV's <code>api.categories</code> — use the setup helper's "ensure categories" button above, or add them in NzbDAV → Settings → Categories.</p>
         </div>
         <div class="settings-form-group" data-provider-only="decypharr">
             <label for="usenet_provider-data_path" class="settings-title">Decypharr Data Path:</label>
@@ -229,12 +255,28 @@
             <p class="settings-description">Path to Decypharr's data directory inside the container. Add <code>- /path/to/decypharr/appdata:/decypharr_data</code> to your docker-compose volumes, then set this to <code>/decypharr_data</code>. Required for Decypharr DB backup, restore, and cleanup tools.</p>
         </div>
         <div class="settings-form-group" data-provider-only="nzbdav">
-            <label for="usenet_provider-mounted_file_location" class="settings-title">Mount Path <span style="color: #888; font-size: 0.85em;">(optional)</span>:</label>
+            <label for="usenet_provider-mounted_file_location" class="settings-title">NzbDAV Mount Path:</label>
             <input type="text" id="usenet_provider-mounted_file_location" name="Usenet Provider.mounted_file_location"
                    value="{{ settings.get('Usenet Provider', {}).get('mounted_file_location', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="mounted_file_location"
-                   placeholder="/mnt/remote/nzbdav/__all__">
-            <p class="settings-description">Path inside this container where the NzbDAV rclone-mount appears. Required only when provider is NzbDAV — used for filesystem-based folder lookups (NzbDAV has no <code>/browse</code> API). Bind-mount your nzbdav-rclone mount path into the container with the same path.</p>
+                   placeholder="/mnt/nzbdav">
+            <p class="settings-description">Path inside <em>this</em> container where the NzbDAV rclone-mount appears. NzbDAV has no <code>/browse</code> API, so folder lookups walk the filesystem under <code>&lt;this path&gt;/content/&lt;category&gt;/</code>. Bind-mount the nzbdav-rclone mount into the cli-debrid container at this same path. A trailing <code>/__all__</code> is stripped automatically (zurg-path compatibility). Effectively required when provider is NzbDAV.</p>
+        </div>
+        <div class="settings-form-group" data-provider-only="nzbdav">
+            <label for="usenet_provider-owned_categories" class="settings-title">Repair: Owned Categories <span style="color: #888; font-size: 0.85em;">(advanced)</span>:</label>
+            <input type="text" id="usenet_provider-owned_categories" name="Usenet Provider.owned_categories"
+                   value="{{ settings.get('Usenet Provider', {}).get('owned_categories', '') }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="owned_categories"
+                   placeholder="auto: movies,shows,movies_1080p_264,shows_1080p_264,__unplayable__">
+            <p class="settings-description">Comma-separated NzbDAV categories the broken-NZB repair tool may act on. NzbDAV history is shared with other SAB clients (e.g. Lidarr music) — repair only re-acquires content cli-debrid manages, so it must never touch another app's entries. Leave empty to auto-pick the categories cli-debrid grabs into (plus the Download Folder fallback). Set only if your category names differ.</p>
+        </div>
+        <div class="settings-form-group" data-provider-only="nzbdav">
+            <label for="usenet_provider-exclude_categories" class="settings-title">Repair: Exclude Categories <span style="color: #888; font-size: 0.85em;">(advanced)</span>:</label>
+            <input type="text" id="usenet_provider-exclude_categories" name="Usenet Provider.exclude_categories"
+                   value="{{ settings.get('Usenet Provider', {}).get('exclude_categories', '') }}"
+                   class="settings-input" data-section="Usenet Provider" data-key="exclude_categories"
+                   placeholder="e.g. music,lidarr (optional)">
+            <p class="settings-description">Comma-separated NzbDAV categories the repair tool must ignore (subtracted from the owned set). Use this if you point Radarr/Sonarr at the same NzbDAV and don't want cli-debrid touching their categories.</p>
         </div>
         <div class="settings-form-group">
             <label for="usenet_provider-retention_days" class="settings-title">Usenet Retention Days:</label>

@@ -1,0 +1,423 @@
+{# ---------------------------------------------------------------------------
+   NzbDAV setup helper — reusable partial included in Settings → Usenet Provider
+   and in onboarding step 2. Two parts:
+     1. Generator  — client-side; renders docker-compose.yml + rclone.conf
+        (+ optional mergerfs union for multi-provider setups) + the cli-debrid
+        config block, all copyable. cli-debrid runs in a container and cannot
+        write/start a stack on the host, so it shows the files to copy.
+     2. Live check — calls /program_operation/api/nzbdav/{check,ensure_categories}
+        to verify reachability + create any missing categories via NzbDAV's
+        config API (no restart needed).
+   Prefilled from the saved Usenet Provider settings where available.
+   --------------------------------------------------------------------------- #}
+<div id="nzbdav-helper" data-provider-only="nzbdav" class="settings-form-group"
+     style="border:1px solid #3a6ea5;border-radius:8px;padding:12px 14px;margin-top:8px;background:rgba(58,110,165,0.06);">
+  <div style="font-weight:700;font-size:1.02em;margin-bottom:4px;">NzbDAV setup helper</div>
+  <p class="settings-description" style="margin-top:0;"><strong>What you do vs. what's automatic:</strong> you type your paths/URL below and the tool <em>writes the config files for you</em> — but you copy them to your host and run the shown <code>docker compose</code> commands yourself (cli-debrid runs in a container and can't create other containers). The <strong>only</strong> step this tool performs automatically is checking/creating the NzbDAV categories in <em>section 2</em>. Fields are prefilled from your saved settings; blank fields fall back to the placeholders.</p>
+
+  {# ---- 1. Generator inputs ---- #}
+  <details open style="border:1px solid #444;border-radius:6px;padding:8px 12px;margin-top:8px;">
+    <summary style="cursor:pointer;font-weight:600;">1. Generate config files</summary>
+
+    <p class="settings-description" style="margin-top:8px;"><input type="checkbox" id="nh-use-union" style="vertical-align:middle;margin-right:6px;"><label for="nh-use-union" style="font-weight:600;">I also use a debrid provider (Real-Debrid / zurg)</label> — most setups run both. Adds a small mergerfs "union" so cli-debrid sees debrid + usenet files under one path.</p>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin-top:8px;">
+      <div><label class="settings-title">NzbDAV URL (as cli-debrid reaches it)</label>
+        <input type="text" id="nh-url" class="settings-input" placeholder="http://192.168.1.50:3000"></div>
+      <div><label class="settings-title">SAB API Token</label>
+        <input type="text" id="nh-token" class="settings-input" placeholder="from NzbDAV → Settings → API"></div>
+      <div><label class="settings-title">Container mount path (where cli-debrid sees NzbDAV)</label>
+        <input type="text" id="nh-cmount" class="settings-input" placeholder="/mnt/nzbdav"></div>
+      <div><label class="settings-title">Host mount base (parent dir, mapped to /mnt/remote)</label>
+        <input type="text" id="nh-mountbase" class="settings-input" placeholder="/srv/DUMB/mnt"></div>
+      <div><label class="settings-title">rclone VFS cache (host path)</label>
+        <input type="text" id="nh-vfscache" class="settings-input" placeholder="/mnt/cache/nzbdav-vfs"></div>
+      <div><label class="settings-title">VFS cache max size</label>
+        <input type="text" id="nh-vfssize" class="settings-input" placeholder="30G"></div>
+      <div><label class="settings-title">WebDAV user (for rclone)</label>
+        <input type="text" id="nh-wuser" class="settings-input" placeholder="rclone"></div>
+      <div><label class="settings-title">WebDAV password</label>
+        <input type="text" id="nh-wpass" class="settings-input" placeholder="(set in NzbDAV → WebDAV)"></div>
+      <div><label class="settings-title">PUID</label><input type="text" id="nh-puid" class="settings-input" placeholder="1000"></div>
+      <div><label class="settings-title">PGID</label><input type="text" id="nh-pgid" class="settings-input" placeholder="1000"></div>
+      <div><label class="settings-title">Timezone</label><input type="text" id="nh-tz" class="settings-input" placeholder="Etc/UTC"></div>
+    </div>
+
+    <div id="nh-union-fields" style="display:none;border-top:1px dashed #555;margin-top:10px;padding-top:8px;">
+      <p class="settings-description" style="margin-top:0;"><strong>Union (debrid + usenet → one mount):</strong> point both providers' rclone mounts under one host dir, and bind the union output into cli-debrid.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;">
+        <div><label class="settings-title">Debrid (zurg) source branch</label>
+          <input type="text" id="nh-debridbranch" class="settings-input" placeholder="/source/zurg/__all__"></div>
+        <div><label class="settings-title">Union output (host path)</label>
+          <input type="text" id="nh-uniontarget" class="settings-input" placeholder="/srv/DUMB/debrid-usenet-union/mnt"></div>
+        <div><label class="settings-title">Union path inside cli-debrid (= Plex.mounted_file_location)</label>
+          <input type="text" id="nh-unioncmount" class="settings-input" placeholder="/mnt/debrid-usenet-union"></div>
+      </div>
+    </div>
+
+    <button type="button" id="nh-generate" class="btn-primary add-version-link" style="margin-top:10px;">Generate files</button>
+
+    <div id="nh-output" style="display:none;margin-top:10px;"></div>
+  </details>
+
+  {# ---- 2. Live check ---- #}
+  <details open style="border:1px solid #444;border-radius:6px;padding:8px 12px;margin-top:10px;">
+    <summary style="cursor:pointer;font-weight:600;">2. Test connection &amp; ensure categories</summary>
+    <p class="settings-description" style="margin-top:8px;">Once NzbDAV is running, verify cli-debrid can reach it and that the required categories exist (missing categories make grabs loop in "Wanted"). Uses the URL + token above.</p>
+    <button type="button" id="nh-check" class="btn-primary add-version-link">Test connection &amp; check categories</button>
+    <div id="nh-check-result" style="margin-top:10px;"></div>
+  </details>
+</div>
+
+<script>
+(function () {
+  var root = document.getElementById('nzbdav-helper');
+  if (!root || root.dataset.nhInit) return;   // guard against double-include on one page
+  root.dataset.nhInit = '1';
+
+  var D = {
+    url:   {{ (settings.get('Usenet Provider', {}).get('url') or '') | tojson }},
+    token: {{ (settings.get('Usenet Provider', {}).get('api_token') or '') | tojson }},
+    cmount:{{ (settings.get('Usenet Provider', {}).get('mounted_file_location') or '/mnt/nzbdav') | tojson }},
+    dl:    {{ (settings.get('Usenet Provider', {}).get('download_folder') or '__unplayable__') | tojson }},
+    plexMount: {{ (settings.get('Plex', {}).get('mounted_file_location') or '') | tojson }}
+  };
+  function $(id){ return document.getElementById(id); }
+  function setval(id, v){ var e=$(id); if(e && v) e.value = v; }
+
+  // Prefill
+  setval('nh-url', D.url);
+  setval('nh-token', D.token);
+  setval('nh-cmount', D.cmount || '/mnt/nzbdav');
+  setval('nh-mountbase', '/srv/DUMB/mnt');
+  setval('nh-vfscache', '/mnt/cache/nzbdav-vfs');
+  setval('nh-vfssize', '30G');
+  setval('nh-wuser', 'rclone');
+  setval('nh-puid', '1000'); setval('nh-pgid', '1000'); setval('nh-tz', 'Etc/UTC');
+  setval('nh-debridbranch', '/source/zurg/__all__');
+  setval('nh-uniontarget', '/srv/DUMB/debrid-usenet-union/mnt');
+  setval('nh-unioncmount', D.plexMount || '/mnt/debrid-usenet-union');
+
+  $('nh-use-union').addEventListener('change', function () {
+    $('nh-union-fields').style.display = this.checked ? '' : 'none';
+  });
+
+  function v(id, dflt){ var e=$(id); return (e && e.value.trim()) ? e.value.trim() : (dflt||''); }
+  // Prefer the helper's own field; fall back to the page's provider URL/token
+  // field (settings: #usenet_provider-url, onboarding: #usenet_url) so the user
+  // doesn't have to type it twice.
+  function fieldChain(ids){ for (var i=0;i<ids.length;i++){ var e=$(ids[i]); if (e && e.value.trim()) return e.value.trim(); } return ''; }
+  function getUrl(){ return fieldChain(['nh-url', 'usenet_provider-url', 'usenet_url']); }
+  function getToken(){ return fieldChain(['nh-token', 'usenet_provider-api_token', 'usenet_api_token']); }
+  function portFromUrl(url, dflt){
+    try { var u = new URL(url); return u.port || dflt; } catch(e){ return dflt; }
+  }
+
+  var CATS = ['movies', 'shows', 'movies_1080p_264', 'shows_1080p_264', '__unplayable__', 'music'];
+
+  function buildCompose(p){
+    return [
+'# NzbDAV usenet backend for cli-debrid — generated by the in-app setup helper.',
+'# Two services: nzbdav (SAB-compatible API + WebDAV) and an rclone sidecar that',
+'# mounts NzbDAV\'s WebDAV so cli-debrid/Plex can read the files.',
+'services:',
+'  nzbdav:',
+'    image: nzbdav/nzbdav:latest',
+'    container_name: nzbdav',
+'    restart: unless-stopped',
+'    ports:',
+'      - "' + p.port + ':3000"',
+'    environment:',
+'      - PUID=' + p.puid,
+'      - PGID=' + p.pgid,
+'      - TZ=' + p.tz,
+'      # Lets SAB clients (cli-debrid, Lidarr, ...) hit /api?apikey=... without the',
+'      # React frontend redirecting to /login. Required for the in-app category check.',
+'      - DISABLE_FRONTEND_AUTH=true',
+'    volumes:',
+'      - ./config:/config',
+'      - ' + p.mountbase + ':/mnt/remote:rshared',
+'    healthcheck:',
+'      test: curl -f http://localhost:3000/health || exit 1',
+'      interval: 1m',
+'      retries: 3',
+'      start_period: 30s',
+'      timeout: 5s',
+'',
+'  nzbdav_rclone:',
+'    image: rclone/rclone:latest',
+'    container_name: nzbdav_rclone',
+'    restart: unless-stopped',
+'    environment:',
+'      - PUID=' + p.puid,
+'      - PGID=' + p.pgid,
+'      - TZ=' + p.tz,
+'    volumes:',
+'      - ' + p.mountbase + ':/mnt/remote:rshared',
+'      - ./rclone.conf:/config/rclone/rclone.conf',
+'      - ' + p.vfscache + ':/cache',
+'    cap_add:',
+'      - SYS_ADMIN',
+'    security_opt:',
+'      - apparmor:unconfined',
+'    devices:',
+'      - /dev/fuse:/dev/fuse:rwm',
+'    depends_on:',
+'      nzbdav:',
+'        condition: service_healthy',
+'    command: >',
+'      mount nzbdav: /mnt/remote/nzbdav',
+'        --uid=' + p.puid + ' --gid=' + p.pgid,
+'        --allow-other --links --use-cookies',
+'        --vfs-cache-mode=full',
+'        --vfs-cache-max-size=' + p.vfssize,
+'        --vfs-cache-max-age=24h',
+'        --buffer-size=0M',
+'        --vfs-read-ahead=128M',
+'        --vfs-read-chunk-size=8M',
+'        --vfs-read-chunk-size-limit=64M',
+'        --dir-cache-time=20s',
+'        --cache-dir=/cache',
+'        --log-level=INFO'
+    ].join('\n');
+  }
+
+  function buildRclone(p){
+    return [
+'[nzbdav]',
+'type = webdav',
+'url = http://nzbdav:3000/',
+'vendor = other',
+'user = ' + p.wuser,
+'pass = ' + (p.wpass ? ('RUN: rclone obscure ' + p.wpass) : 'RUN: rclone obscure <your-webdav-pass>')
+    ].join('\n');
+  }
+
+  function buildUnionDockerfile(){
+    return [
+'# Minimal mergerfs image (debian-slim + the Bookworm mergerfs package).',
+'FROM debian:bookworm-slim',
+'RUN apt-get update \\',
+'    && apt-get install -y --no-install-recommends mergerfs fuse3 ca-certificates \\',
+'    && rm -rf /var/lib/apt/lists/*',
+'ENTRYPOINT ["/usr/bin/mergerfs", "-f"]'
+    ].join('\n');
+  }
+
+  function buildUnionCompose(p){
+    var branches = [p.debridbranch,
+      '/source/nzbdav/content/movies',
+      '/source/nzbdav/content/movies_1080p_264',
+      '/source/nzbdav/content/shows',
+      '/source/nzbdav/content/shows_1080p_264',
+      '/source/nzbdav/content/music',
+      '/source/nzbdav/content/__unplayable__'].join(':');
+    return [
+'# debrid-usenet-union: mergerfs aggregate so cli-debrid\'s single file-presence',
+'# path sees both debrid (zurg) and usenet (nzbdav) files. Read-only.',
+'# Build the image from the Dockerfile above (same folder).',
+'services:',
+'  debrid-usenet-union:',
+'    build:',
+'      context: .',
+'      dockerfile: Dockerfile',
+'    image: debrid-usenet-union/mergerfs:bookworm',
+'    container_name: debrid-usenet-union',
+'    restart: unless-stopped',
+'    cap_add:',
+'      - SYS_ADMIN',
+'    security_opt:',
+'      - apparmor:unconfined',
+'    devices:',
+'      - /dev/fuse:/dev/fuse',
+'    environment:',
+'      - TZ=' + p.tz,
+'    volumes:',
+'      # both providers\' rclone mounts live under this host dir (zurg + nzbdav)',
+'      - ' + p.mountbase + ':/source:rslave',
+'      - ' + p.uniontarget + ':/target:rshared',
+'    command:',
+'      - "-o"',
+'      - "category.create=ff,cache.files=off,allow_other,use_ino,ro,uid=' + p.puid + ',gid=' + p.pgid + ',minfreespace=0,fsname=debrid-usenet-union"',
+'      - "' + branches + '"',
+'      - "/target"',
+'    healthcheck:',
+'      test: ["CMD-SHELL", "mountpoint -q /target && ls /target > /dev/null"]',
+'      interval: 60s',
+'      timeout: 5s',
+'      retries: 3',
+'      start_period: 10s'
+    ].join('\n');
+  }
+
+  function buildConfigBlock(p){
+    var mfl = p.useUnion ? p.unioncmount : p.cmount;
+    var obj = {
+      "Usenet Provider": {
+        "enabled": true,
+        "provider": "nzbdav",
+        "url": p.url,
+        "api_token": p.token || "<nzbdav SAB api.key>",
+        "download_folder": "__unplayable__",
+        "mounted_file_location": p.cmount,
+        "retention_days": 1500,
+        "enable_nzb_naming": false
+      }
+    };
+    if (p.useUnion) {
+      obj["Plex"] = { "mounted_file_location": p.unioncmount };
+    }
+    return JSON.stringify(obj, null, 2);
+  }
+
+  function buildSteps(p){
+    var cm = p.useUnion ? p.unioncmount : p.cmount;
+    var li = [];
+    li.push('Create a folder <code>nzbdav/</code> on your host and save the <code>docker-compose.yml</code> + <code>rclone.conf</code> below into it. In <code>rclone.conf</code>, replace the <code>RUN: rclone obscure …</code> line with the output of <code>rclone obscure ' + esc(p.wpass || '&lt;your-webdav-pass&gt;') + '</code>.');
+    li.push('Start it: <code>cd nzbdav &amp;&amp; docker compose up -d</code> — this launches NzbDAV + the rclone mount (the files appear under <code>' + esc(p.mountbase) + '/nzbdav</code> on the host).');
+    li.push('In the NzbDAV web UI add your usenet (NNTP) provider + indexers. (Categories are handled automatically in section 2 below.)');
+    if (p.useUnion) {
+      li.push('<strong>Create the union mount:</strong> make a folder <code>debrid-usenet-union/</code>, save the <code>Dockerfile</code> + <code>docker-compose.yml</code> below into it, then run <code>cd debrid-usenet-union &amp;&amp; docker compose up -d --build</code>. The <code>--build</code> builds a tiny mergerfs image; mergerfs then merges your debrid (zurg) + NzbDAV folders into one read-only mount at <code>' + esc(p.uniontarget) + '</code>. <em>That folder is the union — it\'s created by this compose, you don\'t make it by hand.</em>');
+      li.push('Check it populated: <code>ls ' + esc(p.uniontarget) + '</code> should list your merged content.');
+      li.push('Bind the union into cli-debrid and point Plex\'s file location at it: add <code>- ' + esc(p.uniontarget) + ':' + esc(cm) + ':rshared</code> to cli-debrid\'s compose, set the config block below (it sets <code>Plex.mounted_file_location = ' + esc(cm) + '</code>), then <code>docker compose up -d --force-recreate cli_debrid</code>.');
+    } else {
+      li.push('Bind the NzbDAV mount into cli-debrid: add <code>- ' + esc(p.mountbase) + '/nzbdav:' + esc(cm) + ':rshared</code> to cli-debrid\'s compose, apply the config block below, then <code>docker compose up -d --force-recreate cli_debrid</code>.');
+    }
+    li.push('Add the content folders to your Plex libraries (<code>' + esc(cm) + '/content/movies</code>, <code>/content/shows</code>, + the <code>_1080p_264</code> variants) and disable Plex auto-scan on them (cli-debrid triggers scans itself).');
+    return '<div style="margin-top:8px;"><strong>Deploy steps (run these on your host):</strong><ol class="settings-description" style="line-height:1.6;margin-top:4px;">'
+      + li.map(function(s){ return '<li>' + s + '</li>'; }).join('') + '</ol></div>';
+  }
+
+  function block(title, filename, body, lang){
+    var id = 'nh-out-' + Math.random().toString(36).slice(2, 8);
+    var hint = filename ? ('<code>' + filename + '</code>') : '';
+    return '<div style="margin-top:10px;">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;">'
+      + '<span style="font-weight:600;">' + title + ' ' + hint + '</span>'
+      + '<button type="button" class="btn-primary" style="padding:2px 10px;font-size:0.85em;" data-copy="' + id + '">Copy</button>'
+      + '</div>'
+      + '<pre id="' + id + '" style="white-space:pre;overflow:auto;max-height:320px;background:#1b1b1b;color:#ddd;padding:10px;border-radius:6px;margin-top:4px;font-size:0.82em;line-height:1.4;"></pre>'
+      + '</div>';
+  }
+
+  $('nh-generate').addEventListener('click', function () {
+    var p = {
+      url: getUrl() || 'http://NZBDAV_HOST:3000',
+      token: getToken(),
+      cmount: v('nh-cmount', '/mnt/nzbdav'),
+      mountbase: v('nh-mountbase', '/srv/DUMB/mnt'),
+      vfscache: v('nh-vfscache', '/mnt/cache/nzbdav-vfs'),
+      vfssize: v('nh-vfssize', '30G'),
+      wuser: v('nh-wuser', 'rclone'),
+      wpass: v('nh-wpass', ''),
+      puid: v('nh-puid', '1000'),
+      pgid: v('nh-pgid', '1000'),
+      tz: v('nh-tz', 'Etc/UTC'),
+      useUnion: $('nh-use-union').checked,
+      debridbranch: v('nh-debridbranch', '/source/zurg/__all__'),
+      uniontarget: v('nh-uniontarget', '/srv/DUMB/debrid-usenet-union/mnt'),
+      unioncmount: v('nh-unioncmount', '/mnt/debrid-usenet-union')
+    };
+    p.port = portFromUrl(p.url, '3000');
+
+    var out = $('nh-output');
+    var html = '';
+    html += buildSteps(p);
+    html += '<div style="margin-top:8px;"><strong>Files (copy each to the path shown):</strong></div>';
+    html += block('docker-compose.yml', 'nzbdav/docker-compose.yml');
+    html += block('rclone.conf', 'nzbdav/rclone.conf');
+    if (p.useUnion) {
+      html += block('Dockerfile', 'debrid-usenet-union/Dockerfile');
+      html += block('docker-compose.yml', 'debrid-usenet-union/docker-compose.yml');
+    }
+    html += block('cli-debrid config block', 'config.json (Usenet Provider' + (p.useUnion ? ' + Plex.mounted_file_location' : '') + ')');
+    out.innerHTML = html;
+    out.style.display = '';
+
+    // fill the <pre> bodies (textContent avoids HTML-escaping issues)
+    var pres = out.querySelectorAll('pre');
+    var bodies = [buildCompose(p), buildRclone(p)];
+    if (p.useUnion) { bodies.push(buildUnionDockerfile()); bodies.push(buildUnionCompose(p)); }
+    bodies.push(buildConfigBlock(p));
+    pres.forEach(function (pre, i) { pre.textContent = bodies[i] || ''; });
+
+    out.querySelectorAll('[data-copy]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var pre = $(btn.getAttribute('data-copy'));
+        if (!pre) return;
+        navigator.clipboard.writeText(pre.textContent).then(function () {
+          var t = btn.textContent; btn.textContent = 'Copied!';
+          setTimeout(function () { btn.textContent = t; }, 1200);
+        });
+      });
+    });
+  });
+
+  // ---- Live check ----
+  function esc(s){ return String(s).replace(/[&<>]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); }
+
+  function renderCheck(res){
+    var box = $('nh-check-result');
+    var h = '';
+    var okIcon = '<span style="color:#4caf50;">&#10003;</span>';
+    var badIcon = '<span style="color:#e57373;">&#10007;</span>';
+    var warnIcon = '<span style="color:#ffb74d;">&#9888;</span>';
+    h += '<div>' + (res.reachable ? okIcon : badIcon) + ' NzbDAV reachable at <code>' + esc(res.url) + '</code>' + (res.version ? (' (v' + esc(res.version) + ')') : '') + '</div>';
+    if (res.reachable) {
+      h += '<div>' + (res.key_valid ? okIcon + ' SAB API token valid' : warnIcon + ' SAB token not validated (ok if NzbDAV auth is off; category read still works)') + '</div>';
+      var missing = res.categories_missing || [];
+      var recMissing = res.recommended_missing || [];
+      if (missing.length === 0) {
+        h += '<div>' + okIcon + ' all required categories present' + (recMissing.length ? (' (' + warnIcon + ' recommended missing: <code>' + esc(recMissing.join(', ')) + '</code>)') : '') + '</div>';
+      } else {
+        h += '<div>' + warnIcon + ' missing categories: <code>' + esc(missing.join(', ')) + '</code></div>';
+        if (res.can_autofix) {
+          h += '<button type="button" id="nh-fix" class="btn-primary add-version-link" style="margin-top:6px;">Create missing categories</button>';
+        } else {
+          h += '<div class="settings-description">Config API not reachable — add them in NzbDAV &rarr; Settings &rarr; Categories, or set <code>DISABLE_FRONTEND_AUTH=true</code>.</div>';
+        }
+      }
+    }
+    box.innerHTML = h;
+    var fix = $('nh-fix');
+    if (fix) fix.addEventListener('click', ensureCategories);
+  }
+
+  function payload(){
+    return { url: getUrl(), api_token: getToken() };
+  }
+
+  $('nh-check').addEventListener('click', function () {
+    var box = $('nh-check-result');
+    if (!getUrl()) { box.innerHTML = '<div class="settings-description">Enter the NzbDAV URL above first.</div>'; return; }
+    box.innerHTML = '<div class="settings-description">Checking…</div>';
+    fetch('/program_operation/api/nzbdav/check', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload())
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.success && d.result) renderCheck(d.result);
+      else if (d.result) renderCheck(d.result);
+      else box.innerHTML = '<div style="color:#e57373;">&#10007; ' + esc(d.error || 'check failed') + '</div>';
+    }).catch(function (e) {
+      box.innerHTML = '<div style="color:#e57373;">&#10007; ' + esc(e) + '</div>';
+    });
+  });
+
+  function ensureCategories(){
+    var fix = $('nh-fix');
+    if (fix) { fix.disabled = true; fix.textContent = 'Creating…'; }
+    fetch('/program_operation/api/nzbdav/ensure_categories', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload())
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      var box = $('nh-check-result');
+      if (d.success) {
+        var created = (d.created && d.created.length) ? ('created: ' + d.created.join(', ')) : 'nothing to create';
+        box.innerHTML = '<div><span style="color:#4caf50;">&#10003;</span> categories ensured (' + esc(created) + '). All required present.</div>';
+      } else {
+        box.innerHTML = '<div style="color:#e57373;">&#10007; ' + esc(d.error || 'failed') + '</div>';
+      }
+    }).catch(function (e) {
+      $('nh-check-result').innerHTML = '<div style="color:#e57373;">&#10007; ' + esc(e) + '</div>';
+    });
+  }
+})();
+</script>

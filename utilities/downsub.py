@@ -207,15 +207,66 @@ def download_subtitles_with_provider(video, languages, provider_name, provider_c
             logging.error("- Network connectivity issues")
         raise
 
-def download_subtitles_for_video(video_path):
+def upload_subtitle_to_plex(rating_key, content, lang_code, fmt='srt'):
+    """Upload a subtitle to a Plex item via the Plex API (no filesystem write).
+
+    Used when the media lives on a read-only mount (Plex mode over a debrid/
+    usenet rclone/WebDAV mount), where a sidecar .srt cannot be written. This is
+    storage-agnostic — keyed on the Plex ratingKey — so it works identically for
+    zurg, nzbdav, decypharr and any future backend. Returns True on success.
     """
-    Download subtitles for a single video file using name-only parsing
-    
+    import requests as _rq
+    from utilities.settings import get_setting
+    plex_url = (get_setting('Plex', 'url', '') or '').rstrip('/')
+    plex_token = get_setting('Plex', 'token', '') or ''
+    if not (plex_url and plex_token and rating_key):
+        logging.warning(f"[Plex subs] missing url/token/ratingKey — cannot upload (rk={rating_key})")
+        return False
+    data = content if isinstance(content, bytes) else (content or '').encode('utf-8')
+    if not data:
+        return False
+    try:
+        url = f"{plex_url}/library/metadata/{rating_key}/subtitles"
+        # Plex REJECTS state-changing POSTs with HTTP 500 unless an
+        # X-Plex-Client-Identifier header is present. Language is detected by Plex
+        # from the title's ".<lang>." token (the bare 'language' param alone is
+        # unreliable), so encode it in the title too. Upload subtitles is a free
+        # Plex feature (no Plex Pass required).
+        params = {
+            'title': f'subtitle.{lang_code}.{fmt}',
+            'format': fmt,
+            'language': lang_code,
+            'X-Plex-Token': plex_token,
+        }
+        headers = {
+            'Accept': 'text/plain, */*',
+            'X-Plex-Client-Identifier': 'cli-debrid-subtitles',
+            'X-Plex-Product': 'cli_debrid',
+            'X-Plex-Version': '1.0',
+        }
+        r = _rq.post(url, params=params, data=data, headers=headers, timeout=30)
+        if r.status_code in (200, 201):
+            logging.info(f"[Plex subs] uploaded {lang_code} subtitle to ratingKey {rating_key}")
+            return True
+        logging.warning(f"[Plex subs] upload failed rk={rating_key} lang={lang_code}: HTTP {r.status_code} {r.text[:200]}")
+        return False
+    except Exception as e:
+        logging.error(f"[Plex subs] upload error rk={rating_key}: {e}")
+        return False
+
+
+def download_subtitles_for_video(video_path, rating_key=None):
+    """
+    Download subtitles for a single video file using name-only parsing.
+
     Args:
         video_path (str): Path to the video file
-        
+        rating_key (str, optional): Plex ratingKey. When the media directory is
+            NOT writable (read-only mount), subtitles are uploaded to this Plex
+            item via API instead of being written as a sidecar.
+
     Returns:
-        bool: True if any subtitles were downloaded successfully
+        bool: True if any subtitles were downloaded/uploaded successfully
     """
     try:
         video_path = Path(video_path)
@@ -274,10 +325,13 @@ def download_subtitles_for_video(video_path):
             # Region already configured or other cache setup issue, which is fine
             pass
         
-        # Create video object from symlink name (more information for parsing)
-        symlink_name = original_path.name
-        logging.info(f"🎬 Processing: {symlink_name}")
-        video = Video.fromname(symlink_name)
+        # Create video object from the most descriptive name available. The raw
+        # file on a debrid/usenet mount is often obfuscated (e.g. "tGcr.mkv"), so
+        # callers pass name_hint = the release folder name for reliable matching.
+        # In symlink mode the symlink filename is already descriptive.
+        parse_name = name_hint or original_path.name
+        logging.info(f"🎬 Processing: {original_path.name} (parsing as: {parse_name})")
+        video = Video.fromname(parse_name)
         video.path = original_path  # Set to original path so subtitles are saved alongside the symlink
         
         # Build provider configurations
@@ -360,20 +414,40 @@ def download_subtitles_for_video(video_path):
         # Check results and save subtitles
         if subtitles[video]:
             logging.info(f"✅ Found {len(subtitles[video])} subtitle(s): {subtitles[video]}")
-            # --- Manually save subtitles to symlink directory ---
             symlink_dir = original_path.parent
             base_name = original_path.stem
+            # Save mode is decided by WRITABILITY, not by provider:
+            #   - media dir writable (symlink/local mode, Jellyfin/Emby, …)
+            #       → write a sidecar .srt next to the file (media-server-neutral).
+            #   - media dir NOT writable (read-only debrid/usenet mount in Plex mode)
+            #       → upload to Plex via API keyed on rating_key (storage-agnostic;
+            #         works the same for zurg/nzbdav/decypharr/future backends).
+            can_write_sidecar = os.access(str(symlink_dir), os.W_OK)
+            use_plex_upload = (not can_write_sidecar) and bool(rating_key)
+            saved = 0
             for sub in subtitles[video]:
                 lang = getattr(sub.language, 'ietf', None) or str(sub.language)
-                symlink_srt = symlink_dir / f"{base_name}.{lang}.srt"
-                try:
-                    with open(symlink_srt, 'wb') as f:
-                        f.write(sub.content)
-                    logging.info(f"Saved subtitle: {symlink_srt}")
-                except Exception as e:
-                    logging.error(f"Failed to save subtitle {symlink_srt}: {e}")
-            logging.info(f"💾 Subtitles now in: {symlink_dir}")
-            return True
+                content = sub.content if isinstance(sub.content, bytes) else (sub.content or '').encode('utf-8')
+                if not content:
+                    continue
+                if use_plex_upload:
+                    lang3 = getattr(sub.language, 'alpha3', None) or lang
+                    if upload_subtitle_to_plex(rating_key, content, lang3):
+                        saved += 1
+                elif can_write_sidecar:
+                    symlink_srt = symlink_dir / f"{base_name}.{lang}.srt"
+                    try:
+                        with open(symlink_srt, 'wb') as f:
+                            f.write(content)
+                        logging.info(f"Saved subtitle: {symlink_srt}")
+                        saved += 1
+                    except Exception as e:
+                        logging.error(f"Failed to save subtitle {symlink_srt}: {e}")
+                else:
+                    logging.warning(f"[subs] {base_name}: media dir not writable and no Plex ratingKey — cannot save {lang} subtitle")
+            logging.info(f"💾 Saved/uploaded {saved}/{len(subtitles[video])} subtitle(s) for {base_name} "
+                         f"({'Plex API' if use_plex_upload else 'sidecar' if can_write_sidecar else 'no target'})")
+            return saved > 0
         else:
             logging.warning("❌ No subtitles found")
             return False
@@ -388,12 +462,16 @@ def download_subtitles_for_video(video_path):
             logging.error("   - Consider using alternative subtitle sources")
         return False
 
-def main(specific_file=None):
+def main(specific_file=None, rating_key=None, name_hint=None):
     """
     Main function that processes a single video file using simplified name-only parsing.
 
     Args:
         specific_file (str, optional): Path to a specific file to process. Required.
+        rating_key (str, optional): Plex ratingKey — used to upload subtitles via
+            the Plex API when the media directory is read-only (Plex mode).
+        name_hint (str, optional): Descriptive release name used for subtitle
+            matching when the on-disk filename is obfuscated (debrid/usenet mounts).
     """
     if not SUBLIMINAL_AVAILABLE:
         logging.warning("Subliminal not available, skipping subtitle download.")
@@ -416,7 +494,7 @@ def main(specific_file=None):
     setup_subliminal_credentials()
     
     # Download subtitles
-    if download_subtitles_for_video(specific_file):
+    if download_subtitles_for_video(specific_file, rating_key=rating_key, name_hint=name_hint):
         logging.info(f"✅ Successfully processed: {specific_file}")
     else:
         logging.error(f"🚨 Failed to download subtitles for: {specific_file}")

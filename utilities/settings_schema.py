@@ -198,7 +198,7 @@ SETTINGS_SCHEMA = {
         },
         "mounted_file_location": {
             "type": "string",
-            "description": "Mounted file location (in Zurg use the /__all__ folder)",
+            "description": "The single path cli-debrid checks for file presence (in Zurg use the /__all__ folder). When you run more than one provider (e.g. Real-Debrid via zurg AND Usenet via NzbDAV), point this at one combined mount that contains all of them — e.g. a mergerfs union of the providers' mounts — so file checks succeed regardless of which provider holds the item. May differ from the per-provider mount path set under Usenet Provider.",
             "default": "/mnt/zurg/__all__"
         },
         "disable_plex_library_checks": {
@@ -321,6 +321,16 @@ SETTINGS_SCHEMA = {
             "type": "integer",
             "description": "Maximum age of NZB results in days. Results older than this are filtered out before submission. Set to 0 to disable. Applies everywhere NZB indexers are searched.",
             "default": 1500
+        },
+        "owned_categories": {
+            "type": "string",
+            "description": "NzbDAV only. Comma-separated list of nzbdav categories the repair/health tool may act on. nzbdav history is shared with other SAB clients (e.g. Lidarr music), and repair can only re-acquire content cli-debrid manages — so it must never touch another app's entries. Leave empty to auto-pick the categories cli-debrid grabs into (movies, shows, movies_1080p_264, shows_1080p_264, plus the download-folder fallback). Set this only if your category names differ.",
+            "default": ""
+        },
+        "exclude_categories": {
+            "type": "string",
+            "description": "NzbDAV only. Comma-separated nzbdav categories the repair/health tool must ignore, subtracted from the included set. Use this if you point Radarr/Sonarr at the same nzbdav and don't want cli-debrid touching their categories.",
+            "default": ""
         }
     },
     "TMDB": {

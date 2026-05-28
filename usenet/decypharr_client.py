@@ -417,6 +417,74 @@ class DecypharrClient:
             return self.poll_health_result(entry_name)
         return None
 
+    # -- repair-support (decypharr /api/repair/* + /api/torrents) ------------
+    # Provider-agnostic repair interface (mirrored by NzbdavClient). Lets
+    # repair_engine delegate instead of issuing raw HTTP itself.
+
+    def _parse_health_entries(self, data) -> list:
+        return data if isinstance(data, list) else data.get('entries', data.get('items', []))
+
+    def fetch_broken_items(self) -> list:
+        """Return broken entries from Decypharr /api/repair/health."""
+        if not self.is_enabled():
+            return []
+        try:
+            r = api.get(f'{self.base_url}/api/repair/health', headers=self._headers(), timeout=60)
+            if r.status_code != 200:
+                logging.warning(f'[Decypharr] /api/repair/health HTTP {r.status_code}')
+                return []
+            broken = [e for e in self._parse_health_entries(r.json())
+                      if (e.get('status') or '').lower() == 'broken']
+            logging.info(f'[Decypharr] fetch_broken_items: {len(broken)} broken')
+            return broken
+        except Exception as exc:
+            logging.error(f'[Decypharr] fetch_broken_items error: {exc}')
+            return []
+
+    def get_health_summary(self) -> dict:
+        """Counts by status from Decypharr /api/repair/health."""
+        if not self.is_enabled():
+            return {}
+        try:
+            r = api.get(f'{self.base_url}/api/repair/health', headers=self._headers(), timeout=60)
+            if r.status_code != 200:
+                return {}
+            counts: Dict[str, int] = {}
+            for e in self._parse_health_entries(r.json()):
+                s = (e.get('status') or 'unknown').lower()
+                counts[s] = counts.get(s, 0) + 1
+            return counts
+        except Exception as exc:
+            logging.debug(f'[Decypharr] get_health_summary error: {exc}')
+            return {}
+
+    def trigger_health_scan(self) -> bool:
+        """POST /api/repair/run to start a fresh Decypharr health scan."""
+        if not self.is_enabled():
+            return False
+        try:
+            r = api.post(f'{self.base_url}/api/repair/run', headers=self._headers(), timeout=30)
+            return r.status_code in (200, 202, 204)
+        except Exception as exc:
+            logging.warning(f'[Decypharr] trigger_health_scan error: {exc}')
+            return False
+
+    def resolve_job_id(self, entry_name: str) -> str:
+        """Resolve a job UUID from /api/torrents by exact name match."""
+        if not self.is_enabled() or not entry_name:
+            return ''
+        try:
+            r = api.get(f'{self.base_url}/api/torrents',
+                        params={'search': entry_name[:60]},
+                        headers=self._headers(), timeout=10)
+            if r.status_code == 200:
+                for t in r.json().get('torrents', []):
+                    if t.get('name', '').strip() == entry_name.strip():
+                        return t.get('info_hash', '')
+        except Exception as exc:
+            logging.debug(f'[Decypharr] resolve_job_id error: {exc}')
+        return ''
+
     def wait_for_completion(self, job_id: str, timeout: int = 3600, poll_interval: int = 10) -> bool:
         """Poll until the job completes or timeout. Returns True on success."""
         if job_id in ('submitted', ''):
