@@ -1677,3 +1677,77 @@ def nzbdav_ensure_categories():
     return jsonify({'success': len(still_missing) == 0, 'created': to_add,
                     'all_present': len(still_missing) == 0, 'still_missing': still_missing,
                     'categories': verify}), 200
+
+
+# ---------------------------------------------------------------------------
+# Provider transfer — migrate downloads between usenet backends (Debug -> Library)
+# Engine lives in utilities/provider_transfer.py (HTTP/mounted-path, no docker).
+# ---------------------------------------------------------------------------
+
+@program_operation_bp.route('/api/provider_transfer/config', methods=['GET'])
+@admin_required
+def provider_transfer_config():
+    """The configured Usenet Provider, used to prefill the transfer UI (it lives
+    in Debug -> Library where the settings context isn't available)."""
+    data_path = get_setting('Usenet Provider', 'data_path', '') or '/decypharr_data'
+    return jsonify({
+        'provider': get_setting('Usenet Provider', 'provider', '') or '',
+        'url': get_setting('Usenet Provider', 'url', '') or '',
+        'token': get_setting('Usenet Provider', 'api_token', '') or '',
+        'data_path': data_path,
+        'nzb_path_guess': data_path.rstrip('/') + '/usenet/nzbs',
+    }), 200
+
+
+@program_operation_bp.route('/api/provider_transfer/list', methods=['POST'])
+@admin_required
+def provider_transfer_list():
+    """Preview the source: how many items are transferable + a sample of names."""
+    from utilities import provider_transfer
+    p = request.get_json(silent=True) or request.form
+    items, err = provider_transfer.list_source_items(
+        p.get('direction', ''), p.get('source_url', ''), p.get('source_token', ''),
+        p.get('source_nzb_path', ''))
+    if err:
+        return jsonify({'success': False, 'error': err}), 200
+    return jsonify({'success': True, 'count': len(items),
+                    'sample': [it['name'] for it in items[:50]]}), 200
+
+
+@program_operation_bp.route('/api/provider_transfer/start', methods=['POST'])
+@admin_required
+def provider_transfer_start():
+    """Kick off a background transfer job. Returns a job_id to poll."""
+    from utilities import provider_transfer
+    p = request.get_json(silent=True) or request.form
+    if p.get('direction') not in ('decypharr_to_nzbdav', 'nzbdav_to_decypharr'):
+        return jsonify({'success': False, 'error': 'invalid direction'}), 400
+    if not (p.get('target_url') or '').strip():
+        return jsonify({'success': False, 'error': 'target URL required'}), 400
+    job_id = provider_transfer.start_job({
+        'direction': p.get('direction'),
+        'source_url': p.get('source_url', ''), 'source_token': p.get('source_token', ''),
+        'source_nzb_path': p.get('source_nzb_path', ''),
+        'target_url': p.get('target_url', ''), 'target_token': p.get('target_token', ''),
+        'target_category': p.get('target_category', ''),
+        'skip_existing': p.get('skip_existing', True),
+        'max_queue': p.get('max_queue', 3), 'limit': p.get('limit', 0),
+    })
+    return jsonify({'success': True, 'job_id': job_id}), 202
+
+
+@program_operation_bp.route('/api/provider_transfer/status/<job_id>', methods=['GET'])
+@admin_required
+def provider_transfer_status(job_id):
+    from utilities import provider_transfer
+    st = provider_transfer.get_status(job_id)
+    if not st:
+        return jsonify({'success': False, 'error': 'unknown job'}), 404
+    return jsonify({'success': True, 'status': st}), 200
+
+
+@program_operation_bp.route('/api/provider_transfer/cancel/<job_id>', methods=['POST'])
+@admin_required
+def provider_transfer_cancel(job_id):
+    from utilities import provider_transfer
+    return jsonify({'success': provider_transfer.cancel_job(job_id)}), 200

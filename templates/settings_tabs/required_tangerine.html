@@ -209,7 +209,7 @@
                 <li><strong>Bind the mount + Plex:</strong> bind the nzbdav rclone mount into this container at that path, and add the <code>content/movies</code>, <code>content/shows</code> (+ <code>_1080p_264</code>) folders to your Plex libraries.</li>
                 <li><strong>Verify</strong> with the helper's <em>Test connection &amp; ensure categories</em> button below, then toggle <em>Enable Usenet</em> above.</li>
             </ol>
-            <p class="settings-description" style="margin-top:4px;"><strong>Switching from Decypharr?</strong> Just set Provider to NzbDAV and update the URL/Token here — your existing Decypharr files don't move. Run NzbDAV in parallel and let new grabs fill it (a hard mount-swap can make Plex purge "missing" items). See <code>nzbdav_setup.py migrate-files</code> for an optional best-effort .nzb replay.</p>
+            <p class="settings-description" style="margin-top:4px;"><strong>Switching from Decypharr?</strong> Just set Provider to NzbDAV and update the URL/Token here — your existing Decypharr files don't move. Run NzbDAV in parallel and let new grabs fill it (a hard mount-swap can make Plex purge "missing" items). To move existing downloads across, use <strong>Debug → Library → "Migrate between usenet providers"</strong> (in-app, both directions). For the Decypharr→NzbDAV direction it reads Decypharr's stored <code>.nzb</code> files, so bind Decypharr's appdata into cli-debrid (set <em>Decypharr Data Path</em> below) and the tool reads them from <code>&lt;data_path&gt;/usenet/nzbs</code>. (The host CLI <code>nzbdav_setup.py migrate-files</code> does the same from the shell.)</p>
         </details>
         {% include '_nzbdav_setup_helper.html' %}
         <details data-provider-only="decypharr" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
@@ -252,7 +252,7 @@
                    value="{{ settings.get('Usenet Provider', {}).get('data_path', '/decypharr_data') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="data_path"
                    placeholder="/decypharr_data">
-            <p class="settings-description">Path to Decypharr's data directory inside the container. Add <code>- /path/to/decypharr/appdata:/decypharr_data</code> to your docker-compose volumes, then set this to <code>/decypharr_data</code>. Required for Decypharr DB backup, restore, and cleanup tools.</p>
+            <p class="settings-description">Path to Decypharr's data directory inside the container. Add <code>- /path/to/decypharr/appdata:/decypharr_data</code> to your docker-compose volumes, then set this to <code>/decypharr_data</code>. Required for Decypharr DB backup, restore, and cleanup tools — and lets the in-app provider migration (<strong>Debug → Library</strong>) read Decypharr's stored <code>.nzb</code> files from <code>&lt;data_path&gt;/usenet/nzbs</code>.</p>
         </div>
         <div class="settings-form-group" data-provider-only="nzbdav">
             <label for="usenet_provider-mounted_file_location" class="settings-title">NzbDAV Mount Path:</label>

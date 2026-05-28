@@ -383,6 +383,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
     'Clean Up Old Decypharr Backup Files':'database',
     'Manage Duplicate Versions':'database',
     'Fix Episode Numbers':'database',
+    'Migrate between usenet providers':'library',
     'Get Collected from Library (Plex)':'library',
     'Cleanup My Plex Watchlist and Other Plex Watchlists':'library',
     'Get Wanted Content':'library',
@@ -1298,6 +1299,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
     <!-- Library Tab -->
     <div id="library-tab" class="debug-tab-content">
         <div class="debug_items">
+        {% include '_provider_transfer.html' %}
         <div class="debug_item">
             <h3>Get Collected from Library (Plex)</h3>
             <form action="{{ url_for('debug.get_collected_from_plex') }}" method="POST" id="get-collected-form">
