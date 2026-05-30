@@ -31,9 +31,19 @@ Caller migration path:
       client = get_usenet_client()
 """
 
+import logging
 from typing import Union, Optional
 
 from utilities.settings import get_setting
+
+
+# Marker prefixed onto `filled_by_torrent_id` at grab time (adding_queue) for
+# every usenet download. It is the single authoritative signal that an item
+# was filled via the usenet path rather than a debrid torrent, and it is the
+# SAME marker the DB location-triggers key on (schema_management: 'nzb:%').
+# Debrid torrent ids are RD/magnet hashes and never carry this prefix, so the
+# test cannot collide. Keep this as the one place the convention is defined.
+USENET_ID_PREFIX = 'nzb:'
 
 
 # Type alias for any concrete usenet client.
@@ -78,6 +88,47 @@ def get_usenet_provider_display_name() -> str:
         'decypharr': 'Decypharr',
         'nzbdav': 'NzbDAV',
     }.get(provider, 'Usenet provider')
+
+
+def is_usenet_id(value) -> bool:
+    """True if `value` is a `filled_by_torrent_id` minted by the usenet path.
+
+    Single source of truth for the `nzb:` convention so call sites stop
+    repeating the raw `startswith('nzb:')` literal. See USENET_ID_PREFIX.
+    """
+    return bool(value) and str(value).startswith(USENET_ID_PREFIX)
+
+
+def usenet_raw_id(value) -> str:
+    """Strip the `nzb:` marker, returning the provider-native job/nzo id."""
+    s = str(value or '')
+    return s[len(USENET_ID_PREFIX):] if s.startswith(USENET_ID_PREFIX) else s
+
+
+def remove_usenet_item(filled_by_torrent_id, entry_name: str = '') -> bool:
+    """Remove a usenet-filled library item from the *active* usenet provider.
+
+    Provider-agnostic replacement for the historical hardcoded
+    `get_decypharr_client().remove_nzb(...)` in deletion_manager. Routes to
+    whichever backend `Usenet Provider.provider` selects (decypharr | nzbdav),
+    so library deletions actually reach the live provider instead of a retired
+    one.
+
+    Returns True if the provider removed it (or reports it already gone),
+    False if the id is not a usenet id, no provider is enabled, or removal
+    failed.
+    """
+    if not is_usenet_id(filled_by_torrent_id):
+        return False
+    client = get_usenet_client()
+    if not client.is_enabled():
+        logging.warning(
+            "[Usenet] remove_usenet_item: no usenet provider enabled — "
+            f"cannot remove {filled_by_torrent_id!r}"
+        )
+        return False
+    raw_id = usenet_raw_id(filled_by_torrent_id)
+    return client.remove_nzb(raw_id, entry_name)
 
 
 def reset_usenet_client() -> None:

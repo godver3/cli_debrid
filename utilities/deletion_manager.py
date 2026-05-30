@@ -2064,25 +2064,30 @@ class DeletionManager:
             if delete_from_debrid and not skip_physical_operations:
                 torrent_id = item.get('filled_by_torrent_id')
                 item_title = item.get('title', 'Unknown')
-                is_nzb = str(torrent_id or '').startswith('nzb:')
+                from usenet import is_usenet_id, usenet_raw_id, remove_usenet_item, get_usenet_provider_display_name
+                is_nzb = is_usenet_id(torrent_id)
                 logging.info(f"[DEBRID_REMOVAL] Removal requested. is_nzb={is_nzb}, torrent_id={torrent_id}")
                 if is_nzb:
-                    # NZB item — delete from Decypharr
+                    # NZB item — route to the active usenet provider (decypharr|nzbdav)
+                    provider_name = get_usenet_provider_display_name()
                     try:
-                        from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
-                        reset_decypharr_client()
-                        client = get_decypharr_client()
-                        info_hash = torrent_id[4:]  # strip 'nzb:'
-                        removed = client.remove_nzb(info_hash, item.get('filled_by_file') or item_title)
+                        info_hash = usenet_raw_id(torrent_id)
+                        # Pass the scene release name (location_basename) as the
+                        # fallback match key: it equals the provider's history
+                        # entry name and carries quality/codec, so a stale id on
+                        # a migrated item resolves to the right entry. filled_by_file
+                        # is often an opaque blob name and title is too loose.
+                        nzb_match_name = item.get('location_basename') or item.get('filled_by_file') or item_title
+                        removed = remove_usenet_item(torrent_id, nzb_match_name)
                         result['debrid_removed'] = removed
                         result['debrid_nzb_removed'] = 1 if removed else 0
                         if removed:
-                            logging.info(f"[DEBRID_REMOVAL] Successfully removed NZB {info_hash} from Decypharr for '{item_title}'")
+                            logging.info(f"[DEBRID_REMOVAL] Successfully removed NZB {info_hash} from {provider_name} for '{item_title}'")
                         else:
-                            logging.warning(f"[DEBRID_REMOVAL] Decypharr removal returned False for {info_hash}")
+                            logging.warning(f"[DEBRID_REMOVAL] {provider_name} removal returned False for {info_hash}")
                     except Exception as e:
-                        logging.error(f"[DEBRID_REMOVAL] Failed to remove NZB {torrent_id} from Decypharr: {e}")
-                        result['errors'].append(f"Decypharr removal failed: {str(e)}")
+                        logging.error(f"[DEBRID_REMOVAL] Failed to remove NZB {torrent_id} from {provider_name}: {e}")
+                        result['errors'].append(f"{provider_name} removal failed: {str(e)}")
                 elif self.debrid and torrent_id:
                     logging.info(f"[DEBRID_REMOVAL] Attempting to remove torrent {torrent_id} for '{item_title}'")
                     try:
@@ -2487,44 +2492,44 @@ class DeletionManager:
         if delete_from_debrid:
             from database.database_reading import get_item_by_id
 
+            from usenet import is_usenet_id, usenet_raw_id, remove_usenet_item, get_usenet_provider_display_name
+
             # Collect unique torrent/NZB IDs from all items, split by type
             unique_torrent_ids = {}   # torrent_id -> first item title (debrid provider)
-            unique_nzb_ids = {}       # info_hash -> (filled_by_file, title) (Decypharr)
+            unique_nzb_ids = {}       # nzb-id -> (match_name, title) (active usenet provider)
             for item_id in item_ids:
                 try:
                     item = get_item_by_id(item_id)
                     if item and item.get('filled_by_torrent_id'):
                         tid = item['filled_by_torrent_id']
                         title = item.get('title', 'Unknown')
-                        if str(tid).startswith('nzb:'):
+                        if is_usenet_id(tid):
                             if tid not in unique_nzb_ids:
-                                unique_nzb_ids[tid] = (item.get('filled_by_file') or title, title)
+                                # location_basename = scene release name, the
+                                # exact-name fallback key (see delete_single_item).
+                                match_name = item.get('location_basename') or item.get('filled_by_file') or title
+                                unique_nzb_ids[tid] = (match_name, title)
                         elif tid not in unique_torrent_ids:
                             unique_torrent_ids[tid] = title
                 except Exception as e:
                     logging.warning(f"[DELETE_MULTIPLE] Could not get item {item_id} for dedup: {e}")
 
-            # Remove NZB items from Decypharr
+            # Remove NZB items from the active usenet provider (decypharr|nzbdav)
             if unique_nzb_ids:
-                logging.info(f"[DELETE_MULTIPLE] Phase 0: Removing {len(unique_nzb_ids)} NZB(s) from Decypharr")
-                try:
-                    from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
-                    reset_decypharr_client()
-                    dcy_client = get_decypharr_client()
-                    for tid, (file_name, title) in unique_nzb_ids.items():
-                        info_hash = tid[4:]
-                        try:
-                            removed = dcy_client.remove_nzb(info_hash, file_name or title)
-                            if removed:
-                                debrid_removed_ids.add(tid)
-                                logging.info(f"[DELETE_MULTIPLE] Removed NZB {info_hash} from Decypharr")
-                            else:
-                                logging.warning(f"[DELETE_MULTIPLE] Decypharr remove returned False for {info_hash}")
-                        except Exception as e:
-                            logging.error(f"[DELETE_MULTIPLE] Failed to remove NZB {info_hash}: {e}")
-                            aggregate_result['errors'].append(f"Decypharr removal failed for {tid}: {str(e)}")
-                except Exception as e:
-                    logging.error(f"[DELETE_MULTIPLE] Decypharr client error: {e}")
+                provider_name = get_usenet_provider_display_name()
+                logging.info(f"[DELETE_MULTIPLE] Phase 0: Removing {len(unique_nzb_ids)} NZB(s) from {provider_name}")
+                for tid, (file_name, title) in unique_nzb_ids.items():
+                    info_hash = usenet_raw_id(tid)
+                    try:
+                        removed = remove_usenet_item(tid, file_name or title)
+                        if removed:
+                            debrid_removed_ids.add(tid)
+                            logging.info(f"[DELETE_MULTIPLE] Removed NZB {info_hash} from {provider_name}")
+                        else:
+                            logging.warning(f"[DELETE_MULTIPLE] {provider_name} remove returned False for {info_hash}")
+                    except Exception as e:
+                        logging.error(f"[DELETE_MULTIPLE] Failed to remove NZB {info_hash}: {e}")
+                        aggregate_result['errors'].append(f"{provider_name} removal failed for {tid}: {str(e)}")
 
             # Remove torrent items from debrid provider
             if unique_torrent_ids and self.debrid:

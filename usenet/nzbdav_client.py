@@ -43,6 +43,23 @@ from routes.api_tracker import api
 # Video-file extensions used for "is this a media file" checks in browse helpers.
 _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
 
+
+def _release_name_key(s: str) -> str:
+    """Normalize a release/file name for EXACT matching.
+
+    Drops a trailing video extension (so a `filled_by_file` like
+    `X-GROUP.mkv` matches the history folder `X-GROUP`), lowercases, and strips
+    every non-alphanumeric character. Mirrors the folder-match normalization
+    used by the browse helpers. Callers compare the FULL key for equality —
+    never as a substring — so quality/codec/group tokens (1080p vs 2160p,
+    x264 vs x265) keep distinct releases apart.
+    """
+    s = os.path.basename(str(s or ''))
+    root, ext = os.path.splitext(s)
+    if ext.lower() in _VIDEO_EXTS:
+        s = root
+    return re.sub(r'[^a-z0-9]', '', s.lower())
+
 # Default set of nzbdav categories cli-debrid considers "its own" for repair/health.
 # These mirror the video categories _detect_category_from_title can emit. 'music' is
 # intentionally excluded: cli-debrid manages video, and a shared nzbdav typically
@@ -423,21 +440,22 @@ class NzbdavClient:
 
     # -- queue / removal ----------------------------------------------------
 
-    def remove_nzb(self, info_hash: str, entry_name: str = '') -> bool:
-        """Delete a history entry from nzbdav.
+    def _id_in_history(self, info_hash: str) -> bool:
+        """True iff `info_hash` is a real nzo_id currently in nzbdav's history."""
+        for s in self._history_slots(nzo_ids=info_hash):
+            if str(s.get('nzo_id', '')) == str(info_hash):
+                return True
+        return False
 
-        info_hash here is the nzo_id (UUID). nzbdav implements the SABnzbd
-        convention, which uses a GET query (NOT the HTTP DELETE verb):
+    def _raw_delete_by_id(self, info_hash: str) -> bool:
+        """Delete one history entry by nzo_id via the SABnzbd GET convention.
+
           GET /api?mode=history&name=delete&value=<nzo_id>&del_files=1
         IMPORTANT: an HTTP DELETE to the same URL returns 200 but does NOT
         delete anything — the entry silently survives. Use GET.
-        Returns True if removed (or already gone), False on hard error.
+        Returns True only on confirmed removal (or 404 already-gone); False
+        otherwise (incl. status=false, which means the id was not present).
         """
-        if not self.is_enabled():
-            return False
-        if not info_hash:
-            logging.debug(f'[NzbDAV] remove_nzb called without info_hash for {entry_name!r}')
-            return False
         try:
             r = api.get(
                 self._sab_url(),
@@ -452,16 +470,82 @@ class NzbdavClient:
                 if ok:
                     logging.info(f'[NzbDAV] Removed NZB job {info_hash}')
                     return True
-                logging.warning(f'[NzbDAV] remove_nzb status=false for {info_hash}: {r.text[:200]}')
+                logging.info(f'[NzbDAV] delete-by-id status=false for {info_hash} (id not present)')
                 return False
             if r.status_code == 404:
                 logging.info(f'[NzbDAV] NZB job {info_hash} already gone (404)')
                 return True
-            logging.warning(f'[NzbDAV] remove_nzb returned HTTP {r.status_code}: {r.text[:200]}')
+            logging.info(f'[NzbDAV] delete-by-id HTTP {r.status_code} for {info_hash}: {r.text[:200]}')
             return False
         except Exception as exc:
-            logging.debug(f'[NzbDAV] remove_nzb error: {exc}')
+            logging.debug(f'[NzbDAV] _raw_delete_by_id error: {exc}')
             return False
+
+    def _delete_by_exact_name(self, entry_name: str) -> bool:
+        """Remove a history entry matched by EXACT, full normalized name.
+
+        Used as a last-resort fallback when the stored job-id is not a live
+        nzbdav nzo_id (e.g. a decypharr-era id on a library item migrated
+        between providers — see usenet/provider_transfer.py). Matching is on
+        the *whole* normalized name, never a substring: a `1080p` release must
+        never resolve to its `2160p` sibling. If the name is ambiguous (more
+        than one history entry normalizes equal) we refuse rather than guess.
+        """
+        key = _release_name_key(entry_name)
+        if not key:
+            return False
+        matches = []
+        for s in self._history_slots():
+            nm = s.get('name') or s.get('nzb_name') or ''
+            if _release_name_key(nm) == key:
+                nzo = str(s.get('nzo_id') or '')
+                if nzo:
+                    matches.append(nzo)
+        matches = list(dict.fromkeys(matches))  # dedup, keep order
+        if len(matches) == 1:
+            logging.info(f'[NzbDAV] exact-name fallback matched {entry_name!r} -> {matches[0]}')
+            return self._raw_delete_by_id(matches[0])
+        if not matches:
+            logging.warning(
+                f'[NzbDAV] exact-name fallback: no history entry matches {entry_name!r}; '
+                'cannot confirm removal'
+            )
+            return False
+        logging.warning(
+            f'[NzbDAV] exact-name fallback: {len(matches)} history entries match '
+            f'{entry_name!r}; refusing to guess which to delete'
+        )
+        return False
+
+    def remove_nzb(self, info_hash: str, entry_name: str = '') -> bool:
+        """Delete a library item's NZB from nzbdav.
+
+        Primary path: delete by nzo_id (info_hash). If the id is not a live
+        nzbdav id — which happens for items migrated from another provider,
+        whose `filled_by_torrent_id` still holds the old provider's id — fall
+        back to an EXACT-name match (see _delete_by_exact_name). Without this,
+        a library delete would leave the file in nzbdav and Plex would re-import
+        it, writing the item straight back into cli's DB.
+
+        Returns True if removed (or confirmed already gone), False otherwise.
+        """
+        if not self.is_enabled():
+            return False
+        if info_hash and self._raw_delete_by_id(info_hash):
+            return True
+        # Delete-by-id didn't confirm. Distinguish "id genuinely absent" (safe to
+        # try a name fallback) from "id present but delete errored" (a real
+        # failure — must NOT start guessing by name).
+        if info_hash and self._id_in_history(info_hash):
+            logging.warning(
+                f'[NzbDAV] job {info_hash} is in history but could not be deleted — '
+                'treating as failure (not guessing by name)'
+            )
+            return False
+        if entry_name:
+            return self._delete_by_exact_name(entry_name)
+        logging.info(f'[NzbDAV] remove_nzb: id {info_hash!r} absent and no name to match')
+        return False
 
     def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Poll nzbdav for a single job's state.
@@ -546,9 +630,13 @@ class NzbdavClient:
     # still mapped to a live DB row get re-scraped. There is no rot/health-scan
     # to trigger — failures are already live in history.
 
-    def _history_slots(self, limit: int = 1000) -> List[dict]:
+    def _history_slots(self, limit: int = 1000, **filters) -> List[dict]:
+        # nzbdav ignores `limit` (returns the full history regardless — verified),
+        # so callers needing the complete list are safe. Extra `**filters` (e.g.
+        # nzo_ids=<id>) are passed through for callers that want server-side
+        # narrowing; call sites still verify matches, so it's correct either way.
         try:
-            r = api.get(self._sab_url(), params=self._sab_params(mode='history', limit=limit), timeout=30)
+            r = api.get(self._sab_url(), params=self._sab_params(mode='history', limit=limit, **filters), timeout=30)
             if r.status_code != 200:
                 return []
             data = r.json()
