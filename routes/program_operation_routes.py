@@ -1567,6 +1567,26 @@ def _nzbdav_get_categories_via_config(base_url, timeout=10):
         return None, False
 
 
+def _nzbdav_get_config_value(base_url, key, timeout=10):
+    """Read a single NzbDAV config value through its config API.
+    Returns (value_str | None, config_api_reachable_bool)."""
+    import requests
+    try:
+        r = requests.post(f"{base_url}/api/get-config",
+                          files={'config-keys': (None, key)}, timeout=timeout)
+        if r.status_code != 200:
+            return None, False
+        data = r.json()
+        if not data.get('status'):
+            return None, False
+        for item in data.get('configItems', []):
+            if item.get('configName') == key:
+                return (item.get('configValue') or ''), True
+        return None, True   # reachable, key simply unset (uses NzbDAV's default)
+    except (RequestException, ValueError):
+        return None, False
+
+
 @program_operation_bp.route('/api/nzbdav/check', methods=['POST'])
 @admin_required
 def nzbdav_check():
@@ -1582,7 +1602,8 @@ def nzbdav_check():
     result = {'url': url, 'reachable': False, 'version': None, 'key_valid': None,
               'categories_present': [], 'categories_missing': [], 'recommended_missing': [],
               'can_autofix': False, 'required': required,
-              'recommended': NZBDAV_RECOMMENDED_CATEGORIES}
+              'recommended': NZBDAV_RECOMMENDED_CATEGORIES,
+              'enforce_readonly': None, 'delete_enabled': None}
     if not url:
         return jsonify({'success': False, 'error': 'No NzbDAV URL provided.'}), 400
 
@@ -1629,6 +1650,15 @@ def nzbdav_check():
     result['categories_present'] = present
     result['categories_missing'] = [c for c in required if c not in present]
     result['recommended_missing'] = [c for c in NZBDAV_RECOMMENDED_CATEGORIES if c not in present]
+
+    # WebDAV read-only state — governs whether Plex (or any WebDAV client) can
+    # delete files. NzbDAV defaults to enforce-readonly=true, where a DELETE
+    # returns 403 and Plex's "Delete" silently fails; 'false' lets Plex remove
+    # the file and the underlying NZB item natively. Reported so the helper can
+    # show the status and offer the toggle (see /api/nzbdav/set_delete_mode).
+    enforce, _ = _nzbdav_get_config_value(url, 'webdav.enforce-readonly')
+    result['enforce_readonly'] = enforce            # 'true' | 'false' | None (default=on)
+    result['delete_enabled'] = (enforce == 'false')
     return jsonify({'success': True, 'result': result}), 200
 
 
@@ -1677,6 +1707,50 @@ def nzbdav_ensure_categories():
     return jsonify({'success': len(still_missing) == 0, 'created': to_add,
                     'all_present': len(still_missing) == 0, 'still_missing': still_missing,
                     'categories': verify}), 200
+
+
+@program_operation_bp.route('/api/nzbdav/set_delete_mode', methods=['POST'])
+@admin_required
+def nzbdav_set_delete_mode():
+    """Enable/disable deleting NzbDAV files from Plex (and any WebDAV client) by
+    toggling NzbDAV's `webdav.enforce-readonly` via its config API. Applied live
+    (no restart). enabled=true → enforce-readonly=false → Plex's "Delete" removes
+    the file and the underlying NZB item natively instead of failing with 403.
+
+    Trade-off (left to the caller): with delete enabled the entire NzbDAV /content
+    tree is removable by any WebDAV/rclone client, so a stray Plex "Empty Trash"
+    or a mis-scoped scan can purge items. This endpoint only flips the flag on an
+    explicit request; it is never toggled implicitly by the category-ensure flow."""
+    import requests
+    payload = request.get_json(silent=True) or request.form
+    url = _nzbdav_base_url(payload.get('url') or get_setting('Usenet Provider', 'url', ''))
+    enabled = str(payload.get('enabled', 'true')).lower() in ('1', 'true', 'yes', 'on')
+    if not url:
+        return jsonify({'success': False, 'error': 'No NzbDAV URL provided.'}), 400
+
+    # Confirm the config API is reachable before claiming success.
+    _, reachable = _nzbdav_get_config_value(url, 'webdav.enforce-readonly')
+    if not reachable:
+        return jsonify({'success': False,
+                        'error': "NzbDAV config API not reachable. If NzbDAV runs with frontend "
+                                 "authentication enabled, toggle it in NzbDAV → Settings → WebDAV "
+                                 "→ Enforce Read-Only, or set DISABLE_FRONTEND_AUTH=true."}), 200
+
+    enforce_value = 'false' if enabled else 'true'   # stored as a string ('true'/'false')
+    try:
+        r = requests.post(f"{url}/api/update-config",
+                          files={'config': (None, json.dumps({'webdav.enforce-readonly': enforce_value}))},
+                          timeout=15)
+        if r.status_code != 200 or not (r.json() or {}).get('status', False):
+            return jsonify({'success': False,
+                            'error': f'update-config failed: HTTP {r.status_code} {r.text[:200]}'}), 200
+    except (RequestException, ValueError) as e:
+        return jsonify({'success': False, 'error': f'update-config error: {e}'}), 200
+
+    verify, _ = _nzbdav_get_config_value(url, 'webdav.enforce-readonly')
+    ok = (verify == enforce_value)
+    return jsonify({'success': ok, 'delete_enabled': (verify == 'false'),
+                    'enforce_readonly': verify}), 200
 
 
 # ---------------------------------------------------------------------------

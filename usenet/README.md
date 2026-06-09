@@ -216,6 +216,24 @@ WHERE state='Collected' AND collected_at > '<timestamp-before-patch>'
 
 Each subsection here is independent — skip any you don't need.
 
+### Delete usenet items natively from Plex
+
+By default nzbdav serves its WebDAV read-only (`webdav.enforce-readonly = true`), so
+Plex's "Delete" silently fails: the file DELETE that rclone forwards is answered with
+`403`. To delete straight from the Plex UI, set `webdav.enforce-readonly = false`.
+
+- **In-app (recommended):** Settings → Usenet Provider → NzbDAV setup helper →
+  section 2 → **Enable delete-from-Plex**. Backed by `POST /program_operation/api/nzbdav/set_delete_mode`
+  (writes via nzbdav's `update-config`, applied live, no restart). The same panel's
+  **Test connection** now reports the current delete state.
+- **In nzbdav:** Settings → WebDAV → uncheck **Enforce Read-Only**.
+
+A Plex delete then removes the file **and** its underlying DavItem — unlike the
+SAB-history-delete path (see *Interface differences*), which leaves orphan DavItem
+shells. Trade-off: with read-only off the whole nzbdav `/content` tree is deletable
+by any WebDAV/rclone client, so mind Plex's trash / "empty trash" / scan settings.
+Requires `DISABLE_FRONTEND_AUTH=true` for the in-app button (same as the category check).
+
 ### Mergerfs-union for robust direct file detection
 
 cli_debrid's `Plex.mounted_file_location` is a single path. To let cli_debrid verify both debrid- and Usenet-side grabs through one path, you need a flat aggregate view. mergerfs is the standard tool. The companion compose at `../debrid-usenet-union/docker-compose.yml` builds one.
@@ -423,3 +441,106 @@ The patch can be contributed back to [Jauntiness's PR #425](https://github.com/g
 ### Acknowledgement
 
 This patch builds on Jauntiness's PR #425. Title-heuristic and zurg-naming mirror added 2026-05-27.
+
+---
+
+# Repair / health (provider-agnostic, 2026-05-28)
+
+The NZB repair engine (`usenet/repair_engine.py`) previously issued raw HTTP to
+Decypharr-only endpoints (`/api/repair/health`, `/api/repair/run`,
+`/api/torrents`). On nzbdav those 404, so the whole auto-repair feature became a
+silent no-op. It is now delegated to the provider client via the factory, so it
+works for whichever backend is configured.
+
+New client interface methods (on both `DecypharrClient` and `NzbdavClient`):
+`fetch_broken_items()`, `get_health_summary()`, `trigger_health_scan()`,
+`resolve_job_id()` — plus the existing `remove_nzb()`. `repair_engine.py` calls
+these instead of building URLs itself.
+
+How "broken" is determined per provider:
+- **decypharr**: `/api/repair/health` entries with `status=broken` (rot detection).
+- **nzbdav**: there is NO repair/health API. The only failure signal is history
+  slots with `status=Failed` (`mode=history`). The client maps those to broken
+  entries; repair then re-scrapes any that still map to a live cli-debrid item
+  and purges the orphaned failed-history entries.
+
+### Category scoping (shared-provider safety)
+
+nzbdav history is shared with other SAB clients (Lidarr music, optionally
+Radarr/Sonarr). cli-debrid repair can only re-acquire content **it** manages, so
+`NzbdavClient` only considers its own categories for health/repair — it never
+purges another app's entries. Resolution:
+
+- include = `Usenet Provider.owned_categories` (comma list) if set, else the
+  auto-default `movies, shows, movies_1080p_264, shows_1080p_264, __unplayable__`
+  plus the configured `download_folder`.
+- minus `Usenet Provider.exclude_categories` (comma list, optional).
+
+`music` is intentionally excluded by default (cli-debrid manages video; Lidarr
+owns music and self-heals its own grabs).
+
+`task_repair_broken_nzbs` is disabled by default — repair only runs when you
+enable the scheduled task or click the manual button in the Debrid Manager.
+
+### NZB file naming + nzbdav (Plex mode)
+
+Verified with `enable_nzb_naming`: the title heuristic classifies structured
+names correctly (`Title (Year) - {imdb-…} - version - (original)` → movies /
+shows / `*_1080p_264`), and nzbdav stores folder names verbatim so cli-debrid's
+title→folder lookup resolves. Caveat: nzbdav appends a ` (2)`/`(3)` suffix on
+name collisions; structured names are more deterministic, so re-grabs of the
+same title can collide. The robust hardening (future) is to resolve the file
+from the completed job's history `storage` path keyed by `nzo_id` rather than
+fuzzy-matching by title.
+
+---
+
+# Migration doctor (`nzbdav_migrate.py`)
+
+Standalone, stdlib-only preflight checker so you don't rediscover the setup
+gotchas by hand. Read-only by default; works for any install.
+
+```bash
+python3 nzbdav_migrate.py                                  # auto-detect config, probe nzbdav
+python3 nzbdav_migrate.py --url http://host:3000 --apikey KEY
+python3 nzbdav_migrate.py --nzbdav-db /path/db.sqlite --fix # add missing categories
+```
+
+Checks: nzbdav reachability, which cli-debrid categories are missing from
+nzbdav's `api.categories` (the #1 cause of grabs looping in Wanted), the
+`Usenet Provider` config, mount visibility, and the Plex-mode subtitle note.
+It does **not** bulk-replay your old Decypharr library — that proved unreliable
+(trimmed .nzb files, double-nested folders, Plex purging "missing" items on a
+hard mount-swap). Run nzbdav in parallel and let new grabs fill it instead.
+
+---
+
+# Setup & migration assistant (`nzbdav_setup.py`)
+
+Standalone, stdlib-only assistant that scaffolds an NzbDAV backend for a **fresh**
+install or a **migration from Decypharr**. It writes templated files into an output
+directory and prints exact next steps — it never starts containers or edits your
+live config unless you ask. Generic: prompts for your paths/credentials.
+
+```bash
+python3 nzbdav_setup.py wizard                 # interactive (fresh or migrate)
+python3 nzbdav_setup.py generate \             # non-interactive file generation
+    --nzbdav-host 192.168.1.50 --apikey KEY \
+    --mount-base /srv/DUMB/mnt --out ./nzbdav-generated
+python3 nzbdav_setup.py migrate-files \        # replay Decypharr .nzb → NzbDAV (best-effort)
+    --nzbdav-host 192.168.1.50 --apikey KEY --decypharr-container decypharr
+```
+
+`generate` / `wizard` produce:
+- `nzbdav/docker-compose.yml` — nzbdav + rclone sidecar (production read-ahead, WebDAV mount)
+- `nzbdav/rclone.conf` — WebDAV remote (password auto-obscured if `rclone` is on PATH)
+- `cli_debrid.usenet_provider.json` — the `Usenet Provider` config block to merge
+  (`--write-config --cli-debrid-config <path>` merges it for you, with a backup)
+- `SETUP_NOTES.md` — step-by-step: start stack → add categories → bind mount →
+  set config → Plex library paths → verify with `nzbdav_migrate.py`
+
+`migrate-files` is the **best-effort file move**: it copies each Decypharr `.nzb`
+out of the container and replays it to NzbDAV via `mode=addfile` (resumable state
+file, queue-depth throttle, configurable category map). It deliberately does NOT
+hard-swap mounts. Heed the same caveat: many old `.nzb` files are gone from
+Decypharr's store, so parallel-fill is usually the better migration path.

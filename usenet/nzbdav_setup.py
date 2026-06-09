@@ -287,6 +287,16 @@ cli-debrid.
 Disable Plex auto-scan on these FUSE paths (inotify doesn't propagate); cli-debrid
 triggers scans itself.
 
+## 5b. (Optional) Delete usenet items straight from Plex
+NzbDAV is read-only by default, so Plex's "Delete" silently fails (NzbDAV returns
+403 on the file DELETE). To allow native deletion, set
+`webdav.enforce-readonly = false` — either in the NzbDAV UI
+(**Settings -> WebDAV -> uncheck Enforce Read-Only**) or with the in-app helper's
+**Enable delete-from-Plex** button (Settings -> Usenet Provider). Deleting in Plex
+then removes the file *and* its underlying NZB item. Trade-off: the whole NzbDAV
+content becomes deletable by any WebDAV/rclone client, so be careful with Plex's
+trash / "empty trash" / scan settings.
+
 ## 6. Verify
 ```
 python3 nzbdav_migrate.py --config <cli-debrid config.json>

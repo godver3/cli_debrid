@@ -284,6 +284,7 @@
       li.push('Bind the NzbDAV mount into cli-debrid: add <code>- ' + esc(p.mountbase) + '/nzbdav:' + esc(cm) + ':rshared</code> to cli-debrid\'s compose, apply the config block below, then <code>docker compose up -d --force-recreate cli_debrid</code>.');
     }
     li.push('Add the content folders to your Plex libraries (<code>' + esc(cm) + '/content/movies</code>, <code>/content/shows</code>, + the <code>_1080p_264</code> variants) and disable Plex auto-scan on them (cli-debrid triggers scans itself).');
+    li.push('<em>Optional — delete from Plex:</em> NzbDAV is read-only by default, so Plex\'s "Delete" silently fails. To remove usenet items straight from the Plex UI, click <strong>Enable delete-from-Plex</strong> in section 2 below (or in NzbDAV: <strong>Settings &rarr; WebDAV &rarr; uncheck Enforce Read-Only</strong>). This makes all NzbDAV content deletable by any WebDAV client, so mind your Plex trash/scan settings.');
     return '<div style="margin-top:8px;"><strong>Deploy steps (run these on your host):</strong><ol class="settings-description" style="line-height:1.6;margin-top:4px;">'
       + li.map(function(s){ return '<li>' + s + '</li>'; }).join('') + '</ol></div>';
   }
@@ -377,10 +378,35 @@
           h += '<div class="settings-description">Config API not reachable — add them in NzbDAV &rarr; Settings &rarr; Categories, or set <code>DISABLE_FRONTEND_AUTH=true</code>.</div>';
         }
       }
+      // Delete-from-Plex status (NzbDAV webdav.enforce-readonly). Default is
+      // read-only, where Plex's "Delete" silently fails (NzbDAV returns 403).
+      if (res.delete_enabled === true) {
+        h += '<div style="margin-top:4px;">' + okIcon + ' delete-from-Plex enabled (NzbDAV read-only off) '
+          + '<button type="button" id="nh-del-off" class="add-version-link" style="padding:1px 8px;font-size:0.8em;margin-left:6px;">disable</button></div>';
+      } else if (res.delete_enabled === false) {
+        h += '<div style="margin-top:4px;">' + warnIcon + ' delete-from-Plex <strong>disabled</strong> — Plex\'s "Delete" silently fails (403). '
+          + '<button type="button" id="nh-del-on" class="btn-primary add-version-link" style="padding:1px 8px;font-size:0.8em;margin-left:6px;">Enable delete-from-Plex</button>'
+          + '<div class="settings-description" style="margin-top:2px;">Lets Plex remove the file <em>and</em> the underlying usenet item natively. Trade-off: the whole NzbDAV content becomes deletable by any WebDAV client, so be careful with Plex trash/scan settings.</div></div>';
+      }
     }
     box.innerHTML = h;
     var fix = $('nh-fix');
     if (fix) fix.addEventListener('click', ensureCategories);
+    var delOn = $('nh-del-on');   if (delOn)  delOn.addEventListener('click',  function(){ setDeleteMode(true); });
+    var delOff = $('nh-del-off'); if (delOff) delOff.addEventListener('click', function(){ setDeleteMode(false); });
+  }
+
+  function setDeleteMode(enabled){
+    var box = $('nh-check-result');
+    fetch('/program_operation/api/nzbdav/set_delete_mode', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ url: getUrl(), enabled: enabled })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.success) { $('nh-check').click(); }   // re-run the check to refresh the status line
+      else { box.insertAdjacentHTML('beforeend', '<div style="color:#e57373;">&#10007; ' + esc(d.error || 'failed') + '</div>'); }
+    }).catch(function (e) {
+      box.insertAdjacentHTML('beforeend', '<div style="color:#e57373;">&#10007; ' + esc(e) + '</div>');
+    });
   }
 
   function payload(){
