@@ -113,7 +113,18 @@
     try { var u = new URL(url); return u.port || dflt; } catch(e){ return dflt; }
   }
 
-  var CATS = ['movies', 'shows', 'movies_1080p_264', 'shows_1080p_264', '__unplayable__', 'music'];
+  // Categories cli-debrid manages, derived from the configured category map
+  // (injected by the inject_nzbdav_categories context processor) so the scaffold
+  // matches what the submit-router emits and the check helper expects. 'music' is
+  // appended as a recommended extra for shared-with-Lidarr setups.
+  var CATS = (function(){
+    var managed = {{ (nzbdav_managed_categories or []) | tojson }};
+    if (!managed || !managed.length) {
+      managed = ['movies', 'shows', 'movies_1080p', 'shows_1080p', '__unplayable__'];
+    }
+    if (managed.indexOf('music') === -1) managed = managed.concat(['music']);
+    return managed;
+  })();
 
   function buildCompose(p){
     return [
@@ -205,13 +216,9 @@
   }
 
   function buildUnionCompose(p){
-    var branches = [p.debridbranch,
-      '/source/nzbdav/content/movies',
-      '/source/nzbdav/content/movies_1080p_264',
-      '/source/nzbdav/content/shows',
-      '/source/nzbdav/content/shows_1080p_264',
-      '/source/nzbdav/content/music',
-      '/source/nzbdav/content/__unplayable__'].join(':');
+    var branches = [p.debridbranch].concat(
+      CATS.map(function(c){ return '/source/nzbdav/content/' + c; })
+    ).join(':');
     return [
 '# debrid-usenet-union: mergerfs aggregate so cli-debrid\'s single file-presence',
 '# path sees both debrid (zurg) and usenet (nzbdav) files. Read-only.',
@@ -283,7 +290,7 @@
     } else {
       li.push('Bind the NzbDAV mount into cli-debrid: add <code>- ' + esc(p.mountbase) + '/nzbdav:' + esc(cm) + ':rshared</code> to cli-debrid\'s compose, apply the config block below, then <code>docker compose up -d --force-recreate cli_debrid</code>.');
     }
-    li.push('Add the content folders to your Plex libraries (<code>' + esc(cm) + '/content/movies</code>, <code>/content/shows</code>, + the <code>_1080p_264</code> variants) and disable Plex auto-scan on them (cli-debrid triggers scans itself).');
+    li.push('Add the content folders to your Plex libraries (one per managed category — ' + CATS.map(function(c){ return '<code>' + esc(cm) + '/content/' + esc(c) + '</code>'; }).join(', ') + ') and disable Plex auto-scan on them (cli-debrid triggers scans itself).');
     return '<div style="margin-top:8px;"><strong>Deploy steps (run these on your host):</strong><ol class="settings-description" style="line-height:1.6;margin-top:4px;">'
       + li.map(function(s){ return '<li>' + s + '</li>'; }).join('') + '</ol></div>';
   }

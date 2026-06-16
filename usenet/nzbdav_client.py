@@ -43,19 +43,105 @@ from routes.api_tracker import api
 # Video-file extensions used for "is this a media file" checks in browse helpers.
 _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
 
-# Default set of nzbdav categories cli-debrid considers "its own" for repair/health.
-# '__all__' is included so repair acts on everything regardless of category.
-# 'music' is intentionally excluded — a shared nzbdav typically serves music via
-# Lidarr and repair must not purge another app's history.
-# Users can override via `Usenet Provider.owned_categories` config key (comma-separated).
-_DEFAULT_OWNED_CATEGORIES = {
-    'movies', 'shows',
-    'movies_1080p', 'shows_1080p',
-    'movies_2160p', 'shows_2160p',
-    'movies_1080p_remux', 'movies_2160p_remux',
-    'anime_movies', 'anime_shows',
-    '__unplayable__',
+# ── Category taxonomy (single source of truth) ─────────────────────────────
+#
+# nzbdav (unlike Decypharr) does NO post-categorisation: whatever SAB category a
+# job is submitted under becomes the folder, verbatim. If cli-debrid submits a
+# category that the instance hasn't created (and that no Plex section maps), the
+# item is invisible to Plex and loops in "Wanted". So the set of categories the
+# submit-router can emit, the set the setup-helper tells the user to create, and
+# the set repair/health is allowed to act on MUST be identical. Historically
+# these were three independent hard-coded lists that drifted apart.
+#
+# They now all derive from ONE place: the taxonomy below + an optional per-user
+# `Usenet Provider.nzbdav_category_map`.
+#
+# `_CATEGORY_PARENT` is the specificity ladder: each detailed bucket falls back
+# to a less-detailed parent when the user hasn't mapped it, e.g.
+#   movies_2160p_remux → movies_2160p → movies
+# Base buckets (movies/shows) and music have no parent.
+_CATEGORY_PARENT = {
+    'movies_2160p_remux': 'movies_2160p',
+    'movies_1080p_remux': 'movies_1080p',
+    'movies_2160p':       'movies',
+    'movies_1080p':       'movies',
+    'anime_movies':       'movies',
+    'shows_2160p':        'shows',
+    'shows_1080p':        'shows',
+    'anime_shows':        'shows',
 }
+
+# Every category the title heuristic can emit.
+_ALL_CATEGORIES = set(_CATEGORY_PARENT) | {'movies', 'shows', 'music', '__unplayable__'}
+
+# Default "managed" set when no category map is configured. 'music' is excluded —
+# a shared nzbdav typically serves music via Lidarr and repair must never purge
+# another app's history. This is what repair/health and the setup helper use by
+# default; the submit-router uses identity routing (stock names) when unmapped.
+_DEFAULT_MANAGED_CATEGORIES = set(_ALL_CATEGORIES) - {'music'}
+
+# Pseudo-bucket key in the category map: the catch-all used when nothing in a
+# bucket's parent chain is mapped (e.g. an unmapped 'music', or an unstructured
+# title the heuristic couldn't classify).
+_FALLBACK_KEY = 'fallback'
+
+# Back-compat alias: external callers referenced _DEFAULT_OWNED_CATEGORIES.
+_DEFAULT_OWNED_CATEGORIES = _DEFAULT_MANAGED_CATEGORIES
+
+
+def _parse_category_map(value) -> dict:
+    """Parse a `bucket=name, bucket=name` string into a {bucket: name} dict.
+
+    Tolerant of surrounding whitespace and malformed/empty entries. Accepts a
+    dict unchanged. Empty/falsey input → {} (identity routing = stock behaviour).
+    """
+    if not value:
+        return {}
+    if isinstance(value, dict):
+        return {str(k).strip(): str(v).strip()
+                for k, v in value.items() if str(k).strip() and str(v).strip()}
+    out = {}
+    for part in str(value).split(','):
+        part = part.strip()
+        if not part or '=' not in part:
+            continue
+        k, v = part.split('=', 1)
+        k, v = k.strip(), v.strip()
+        if k and v:
+            out[k] = v
+    return out
+
+
+def _resolve_category(bucket: str, cat_map: dict) -> str:
+    """Map a heuristic bucket onto a real nzbdav category name via `cat_map`.
+
+    Walks the specificity ladder (movies_2160p_remux → movies_2160p → movies) to
+    the first bucket present in `cat_map`. If none match, uses the explicit
+    'fallback' mapping; else returns '' (caller applies self.default_category).
+    An empty `cat_map` means identity: the bucket name is used verbatim — this is
+    exactly the stock taxonomy, so existing setups are unaffected.
+    """
+    if not cat_map:
+        return bucket or ''
+    node = bucket
+    while node:
+        if node in cat_map:
+            return cat_map[node]
+        node = _CATEGORY_PARENT.get(node)
+    return cat_map.get(_FALLBACK_KEY, '')
+
+
+def managed_categories(cat_map: dict) -> set:
+    """The distinct real category names cli-debrid manages on this instance.
+
+    With a map: the set of its values (the actual category names, incl. the
+    fallback's). Without a map: the default taxonomy (music excluded). This one
+    function feeds the setup-helper required list AND the repair owned-set, so
+    they cannot disagree with what the submit-router emits.
+    """
+    if cat_map:
+        return set(cat_map.values())
+    return set(_DEFAULT_MANAGED_CATEGORIES)
 
 
 # Title-based category detection patterns.
@@ -162,6 +248,9 @@ class NzbdavClient:
         #   include = `owned_categories` config if set, else the heuristic's video
         #             categories + the configured fallback (auto-picked default)
         #   then subtract `exclude_categories` config (deny-list, optional)
+        # Optional user map: heuristic bucket -> real category name on this
+        # instance (see _resolve_category). Empty = stock identity routing.
+        self.category_map = _parse_category_map(cfg.get('nzbdav_category_map'))
         self.owned_categories = self._resolve_owned_categories(cfg)
         # Host-side filesystem path to where the nzbdav WebDAV mount appears
         # (used for browse helpers since nzbdav has no /browse API). Default to
@@ -195,7 +284,10 @@ class NzbdavClient:
         """
         include = self._parse_cat_list(cfg.get('owned_categories'))
         if not include:
-            include = set(_DEFAULT_OWNED_CATEGORIES)
+            # Derive from the same source the submit-router and setup-helper use,
+            # so repair never owns a category the router can't emit (and never a
+            # category another app, e.g. Lidarr's music, manages).
+            include = managed_categories(_parse_category_map(cfg.get('nzbdav_category_map')))
             if self.default_category:
                 include.add(self.default_category.lower())
         # Add any tag categories defined in content sources
@@ -212,6 +304,12 @@ class NzbdavClient:
             pass
         include -= self._parse_cat_list(cfg.get('exclude_categories'))
         return include
+
+    def _route_category(self, title: str, **kw) -> str:
+        """Detect the release bucket from the title, then resolve it to a real
+        category name on this instance via the configured category map."""
+        bucket = _detect_category_from_title(title, **kw)
+        return _resolve_category(bucket, self.category_map)
 
     def _sab_params(self, **extra) -> Dict[str, str]:
         """Build query params for nzbdav SAB-API calls. apikey is always added."""
@@ -255,8 +353,8 @@ class NzbdavClient:
             logging.warning('[NzbDAV] Usenet provider is disabled or not configured')
             return None
 
-        cat = category or _detect_category_from_title(title, is_anime=is_anime, media_type=media_type,
-                                                       tags=tags, tags_exclusive=tags_exclusive) or self.default_category
+        cat = category or self._route_category(title, is_anime=is_anime, media_type=media_type,
+                                               tags=tags, tags_exclusive=tags_exclusive) or self.default_category
         # nzbdav uses `nzbname` for the resulting folder name; default to title
         nzbname = title or 'download'
         filename = f'{nzbname}.nzb'
@@ -299,8 +397,8 @@ class NzbdavClient:
             logging.warning('[NzbDAV] Usenet provider is disabled or not configured')
             return None
 
-        cat = category or _detect_category_from_title(title, is_anime=is_anime, media_type=media_type,
-                                                       tags=tags, tags_exclusive=tags_exclusive) or self.default_category
+        cat = category or self._route_category(title, is_anime=is_anime, media_type=media_type,
+                                               tags=tags, tags_exclusive=tags_exclusive) or self.default_category
         nzbname = title or 'download'
 
         try:
