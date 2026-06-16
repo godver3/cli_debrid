@@ -474,6 +474,73 @@ class LayoutManager:
 
         return {'loaded': loaded, 'skipped': skipped, 'errors': errors}
 
+    def restore_from_filesystem(self, skip_existing: bool = True) -> Dict[str, Any]:
+        """
+        Restore user layouts from filesystem backup at self.layout_dir.
+        Called on startup when the DB was wiped to recover user-created layouts.
+
+        The filesystem files only contain layout_json (no name/media_type metadata),
+        so we infer metadata from the filename.
+        """
+        loaded = 0
+        skipped = 0
+        errors = []
+
+        _media_type_hints = {
+            'movie': 'movie', 'movies': 'movie',
+            'show': 'tv', 'shows': 'tv', 'tv': 'tv',
+            'season': 'tv', 'seasons': 'tv',
+            'episode': 'tv', 'episodes': 'tv',
+        }
+
+        for json_file in sorted(self.layout_dir.glob('*.json')):
+            try:
+                with open(json_file, 'r') as f:
+                    layout_json = json.load(f)
+
+                # Derive name from filename stem
+                name = json_file.stem
+
+                # Skip if already in DB
+                if skip_existing and self.get_layout_by_name(name):
+                    self.logger.debug(f"Layout '{name}' already in DB, skipping restore.")
+                    skipped += 1
+                    continue
+
+                # Infer media_type from name
+                name_lower = name.lower()
+                media_type = 'both'
+                for keyword, mtype in _media_type_hints.items():
+                    if keyword in name_lower:
+                        media_type = mtype
+                        break
+
+                # layout_json may be the full dict or wrapped under 'layout_json' key
+                if 'layout_json' in layout_json:
+                    actual_layout = layout_json['layout_json']
+                    description = layout_json.get('description', f'Restored from {json_file.name}')
+                    media_type = layout_json.get('media_type', media_type)
+                else:
+                    actual_layout = layout_json
+                    description = f'Restored from {json_file.name}'
+
+                self.create_layout(
+                    name=name,
+                    description=description,
+                    media_type=media_type,
+                    layout_json=actual_layout,
+                    is_default=True,
+                    is_system=False,
+                )
+                self.logger.info(f"Restored layout '{name}' from filesystem backup.")
+                loaded += 1
+
+            except Exception as e:
+                self.logger.error(f"Failed to restore layout {json_file.name}: {e}")
+                errors.append(f"{json_file.name}: {e}")
+
+        return {'loaded': loaded, 'skipped': skipped, 'errors': errors}
+
     def export_layout_to_file(self, layout_id: int, output_path: str) -> bool:
         """
         Export layout to JSON file.

@@ -90,7 +90,18 @@ def rank_result_key(
         resolution = parsed_info.get('resolution', '').lower()
         if resolution == 'unknown':
             resolution_score = 1
-    
+
+    # Cap resolution_score to the version's max_resolution rank.
+    # Without this, a 2160p wrong-title result outscores a 1080p correct-title
+    # result when max_resolution is 1080p, because the 1000-pt resolution gap
+    # (rank 4→3) exceeds the title similarity score difference.
+    _max_res = (version_settings.get('max_resolution') or '').lower()
+    _max_res_rank_map = {'2160p': 4, '4k': 4, '1080p': 3, '1080i': 3, '720p': 2, '576p': 1, '480p': 1, 'sd': 1}
+    if _max_res and _max_res in _max_res_rank_map:
+        _max_rank = _max_res_rank_map[_max_res]
+        if resolution_score > _max_rank:
+            resolution_score = _max_rank
+
     hdr_score = 1 if parsed_info.get('is_hdr', False) and version_settings.get('enable_hdr', True) else 0
 
     media_country = result.get('media_country_code')

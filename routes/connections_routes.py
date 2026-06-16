@@ -561,19 +561,24 @@ def check_tmdb_connection():
 
 
 def check_decypharr_connection():
-    """Check Decypharr connection if usenet is enabled and URL is set."""
+    """Check usenet provider connection if usenet is enabled and URL is set.
+
+    Uses the provider factory so NzbDAV is checked (and its ensure_categories()
+    side-effect runs) when NzbDAV is the active provider.
+    """
     enabled = get_setting('Usenet Provider', 'enabled', default=False)
     url = get_setting('Usenet Provider', 'url', '').strip().rstrip('/')
     if not enabled or not url:
         return None
     try:
-        from usenet.decypharr_client import get_decypharr_client
-        client = get_decypharr_client()
+        from usenet import get_usenet_client, get_usenet_provider_display_name
+        client = get_usenet_client()
         ok, err = client.check_connectivity()
-        return {'name': 'Decypharr', 'connected': ok,
+        display_name = get_usenet_provider_display_name()
+        return {'name': display_name, 'connected': ok,
                 'error': err, 'details': {'url': url}}
     except Exception as e:
-        return {'name': 'Decypharr', 'connected': False, 'error': str(e), 'details': {}}
+        return {'name': 'Usenet Provider', 'connected': False, 'error': str(e), 'details': {}}
 
 
 def check_scraper_connection(scraper_id, scraper_config):

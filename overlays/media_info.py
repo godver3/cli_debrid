@@ -252,7 +252,9 @@ class MediaInfoExtractor:
         """
         info = {
             'audio_codec': None,
-            'audio_channels': None
+            'audio_channels': None,
+            'audio_track': None,
+            'subtitle_track': None,
         }
 
         try:
@@ -268,6 +270,26 @@ class MediaInfoExtractor:
 
             part = parts[0]
             streams = part.get('Stream', [])
+
+            # Extract audio language tags (all audio tracks)
+            audio_langs = []
+            for stream in streams:
+                if stream.get('streamType') == 2:
+                    lang = stream.get('languageTag') or stream.get('language') or ''
+                    if lang and lang not in audio_langs:
+                        audio_langs.append(lang.lower())
+            if audio_langs:
+                info['audio_track'] = ','.join(audio_langs)
+
+            # Extract subtitle language tags (all subtitle tracks)
+            sub_langs = []
+            for stream in streams:
+                if stream.get('streamType') == 3:
+                    lang = stream.get('languageTag') or stream.get('language') or ''
+                    if lang and lang not in sub_langs:
+                        sub_langs.append(lang.lower())
+            if sub_langs:
+                info['subtitle_track'] = ','.join(sub_langs)
 
             # Find audio stream (prefer first audio track)
             audio_stream = None
@@ -383,6 +405,8 @@ class MediaInfoExtractor:
             'hdr_format': None,
             'audio_codec': None,
             'audio_channels': None,
+            'audio_track': None,
+            'subtitle_track': None,
             'video_codec': None,
             'container': None,
             'bitrate': None,
@@ -529,6 +553,21 @@ class MediaInfoExtractor:
                     info['audio_channels'] = '2.0'
                 elif channels == 1:
                     info['audio_channels'] = '1.0'
+
+            # ── Audio / subtitle language tracks ──────────────────────────
+            audio_langs = []
+            sub_langs = []
+            for s in streams:
+                stype = (s.get('Type') or '').lower()
+                lang = s.get('Language') or ''
+                if stype == 'audio' and lang and lang not in audio_langs:
+                    audio_langs.append(lang.lower())
+                elif stype == 'subtitle' and lang and lang not in sub_langs:
+                    sub_langs.append(lang.lower())
+            if audio_langs:
+                info['audio_track'] = ','.join(audio_langs)
+            if sub_langs:
+                info['subtitle_track'] = ','.join(sub_langs)
 
             # ── Series / studio / content rating ──────────────────────────
             info['network'] = (metadata.get('Studios') or [{}])[0].get('Name') if metadata.get('Studios') else None

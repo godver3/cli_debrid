@@ -1062,7 +1062,48 @@ class QueueManager:
         
         from datetime import datetime
         collected_at = datetime.now()
-        
+
+        # DUPLICATE PREVENTION: Check if another Collected row already exists for this media
+        # This handles the case where two NZBs for the same episode both complete simultaneously
+        _item_type = item.get('type')
+        _imdb_id = item.get('imdb_id')
+        _item_version = (item.get('version') or '').rstrip('*')
+        _dup_id = None
+        if _imdb_id and _item_type:
+            try:
+                from database import get_db_connection as _get_db_conn
+                _conn = _get_db_conn()
+                if _item_type == 'episode':
+                    _sn = item.get('season_number')
+                    _en = item.get('episode_number')
+                    if _sn is not None and _en is not None:
+                        _row = _conn.execute(
+                            "SELECT id FROM media_items WHERE imdb_id=? AND type='episode' "
+                            "AND season_number=? AND episode_number=? AND state='Collected' "
+                            "AND REPLACE(version,'*','')=? AND id!=?",
+                            (_imdb_id, _sn, _en, _item_version, item['id'])
+                        ).fetchone()
+                        _dup_id = _row[0] if _row else None
+                else:
+                    _row = _conn.execute(
+                        "SELECT id FROM media_items WHERE imdb_id=? AND type='movie' "
+                        "AND state='Collected' AND REPLACE(version,'*','')=? AND id!=?",
+                        (_imdb_id, _item_version, item['id'])
+                    ).fetchone()
+                    _dup_id = _row[0] if _row else None
+                _conn.close()
+            except Exception as _e:
+                logging.warning(f"Duplicate check failed for {item_identifier}: {_e}")
+        if _dup_id:
+            logging.warning(
+                f"[DupPrevention] Skipping Collected for {item_identifier} (ID: {item['id']}) — "
+                f"already Collected as ID {_dup_id} (same imdb/season/episode/version). "
+                f"Removing from {from_queue} without creating duplicate."
+            )
+            if from_queue in self.queues:
+                self.queues[from_queue].remove_item(item)
+            return
+
         # Update the item state in the database - no need to add to a queue since Collected is a state, not a queue
         update_media_item_state(item['id'], 'Collected', collected_at=collected_at)
         

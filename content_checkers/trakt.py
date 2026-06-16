@@ -1539,12 +1539,28 @@ def get_wanted_from_trakt_collection(versions: Dict[str, bool], unblacklist: boo
 
     all_wanted_items = []
 
-    # Get collection items
-    response = make_trakt_request('get', "/sync/collection/movies")
-    movie_items = response.json() if response else []
+    def _fetch_all_collection_pages(endpoint):
+        """Fetch all pages from a paginated Trakt collection endpoint."""
+        all_items = []
+        page = 1
+        while True:
+            resp = make_trakt_request('get', f"{endpoint}?page={page}&limit=1000")
+            if not resp:
+                break
+            batch = resp.json()
+            if not batch:
+                break
+            all_items.extend(batch)
+            page_count = int(resp.headers.get('X-Pagination-Page-Count', 1))
+            logging.debug(f"[Trakt] {endpoint} page {page}/{page_count} ({len(batch)} items)")
+            if page >= page_count:
+                break
+            page += 1
+        return all_items
 
-    response = make_trakt_request('get', "/sync/collection/shows")
-    show_items = response.json() if response else []
+    # Get collection items with pagination (default limit is 100, collection can have thousands)
+    movie_items = _fetch_all_collection_pages("/sync/collection/movies")
+    show_items = _fetch_all_collection_pages("/sync/collection/shows")
 
     collection_items = movie_items + show_items
     processed_items = process_trakt_items(collection_items, unblacklist=unblacklist)

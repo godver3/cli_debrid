@@ -12,9 +12,9 @@ function addToRealDebrid(magnetLink, torrent) {
     const isNzb = (torrent.protocol === 'nzb') || (torrent.nzb_url && !magnetLink);
     const isNzbPack = isNzb && !!torrent.is_nzb_season_pack;
     const confirmMsg = isNzbPack
-        ? `Submit ${torrent.episode_count} individual episode NZBs to Decypharr as a season pack? Each episode will be health-checked independently.`
+        ? `Submit ${torrent.episode_count} individual episode NZBs to ${window.USENET_PROVIDER_NAME || "Usenet provider"} as a season pack? Each episode will be health-checked independently.`
         : isNzb
-        ? 'Submit this NZB to Decypharr (Usenet) for download?'
+        ? `Submit this NZB to ${window.USENET_PROVIDER_NAME || "Usenet provider"} for download?`
         : 'Are you sure you want to add this torrent to your Debrid Provider?';
 
     showPopup({
@@ -57,13 +57,14 @@ function addToRealDebrid(magnetLink, torrent) {
             if (folderSelect && folderSelect.value) {
                 const selectedOption = folderSelect.options[folderSelect.selectedIndex];
                 const isCustom = selectedOption.getAttribute('data-is-custom') === 'true';
-
                 formData.append('selected_folder', folderSelect.value);
                 formData.append('selected_folder_is_custom', isCustom);
-                if (window.DEBUG) console.log('📁 Sending selected folder to backend:', {
-                    folder: folderSelect.value,
-                    isCustom: isCustom
-                });
+            }
+
+            // Get selected tags (Plex mode)
+            const _tagPillsSc = document.querySelectorAll('.torrent-tag-pill.active');
+            if (_tagPillsSc.length > 0) {
+                formData.append('selected_tags', Array.from(_tagPillsSc).map(p => p.dataset.tag).join(','));
             }
 
             fetch('/scraper/add_to_debrid', {
@@ -781,6 +782,23 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 if (window.DEBUG) console.error('Error fetching symlink folders:', error);
             }
 
+            // Tags dropdown for mobile — Plex mode only
+            let mobileTagsHTML = '';
+            try {
+                const cfgR = await fetch('/settings/api/config');
+                const cfgD = await cfgR.json();
+                const mTags = (cfgD['Tags'] || {})['tags_list'] || [];
+                const mMode = (cfgD['File Management'] || {})['file_collection_management'] || '';
+                if (mMode === 'Plex' && mTags.length > 0) {
+                    const mOpts = mTags.map(t => `<option value="${t}">${t}</option>`).join('');
+                    mobileTagsHTML = `
+                    <div class="tr-filter-row" style="flex-wrap:wrap;gap:6px;">
+                        <span class="tr-filter-label">Tags</span>
+                        ${mTags.map(t => `<span class="torrent-tag-pill" data-tag="${t}" onclick="this.classList.toggle('active');this.style.background=this.classList.contains('active')?'#e8651a':'#333';this.style.color='#fff';" style="padding:3px 10px;border-radius:12px;background:#333;color:#ddd;font-size:11px;cursor:pointer;user-select:none;">${t}</span>`).join('')}
+                    </div>`;
+                }
+            } catch(e) {}
+
             // Create mobile controls section
             const resultCount = allDisplayItems.length;
             const mobileControls = document.createElement('div');
@@ -791,7 +809,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     <select id="torrent-version-select-mobile" class="tr-fsel torrent-version-select">
                         ${versionOptionsHTML}
                     </select>
-                    ${!folderDropdownHTML ? `<span class="tr-result-count">${resultCount} results</span>` : ''}
+                    ${!folderDropdownHTML && !mobileTagsHTML ? `<span class="tr-result-count">${resultCount} results</span>` : ''}
                 </div>
                 ${folderDropdownHTML ? `
                 <div class="tr-filter-row">
@@ -799,8 +817,9 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     <select id="torrent-folder-select-mobile" class="tr-fsel torrent-folder-select">
                         ${(() => { const tmp = document.createElement('div'); tmp.innerHTML = folderDropdownHTML; return tmp.querySelector('select')?.innerHTML || ''; })()}
                     </select>
-                    <span class="tr-result-count">${resultCount} results</span>
+                    ${!mobileTagsHTML ? `<span class="tr-result-count">${resultCount} results</span>` : ''}
                 </div>` : ''}
+                ${mobileTagsHTML}
             `;
             overlayContent.appendChild(mobileControls);
 
@@ -853,7 +872,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     <div class="card-sources">${torrent.source || 'N/A'}</div>
                     <div class="card-footer">
                         ${isNzbCard
-                            ? `<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via Decypharr">NZB</span>`
+                            ? `<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via ${window.USENET_PROVIDER_NAME || "Usenet provider"}">NZB</span>`
                             : (multiCacheBadge || `<span class="cache-status badge ${badgeClass}" data-index="${index}"><i class="fa-solid ${badgeIcon}"></i> ${badgeLabel}</span>`)
                         }
                         <div class="assign-magnet-icon" title="Assign Magnet Link">
@@ -1121,6 +1140,23 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 // Continue without folder dropdown if there's an error
             }
 
+            // Tags dropdown — Plex mode only
+            let tagsDropdownHTML = '';
+            try {
+                const cfgResp = await fetch('/settings/api/config');
+                const cfgData = await cfgResp.json();
+                const globalTags = (cfgData['Tags'] || {})['tags_list'] || [];
+                const fileMode = (cfgData['File Management'] || {})['file_collection_management'] || '';
+                if (fileMode === 'Plex' && globalTags.length > 0) {
+                    const opts = globalTags.map(t => `<option value="${t}">${t}</option>`).join('');
+                    tagsDropdownHTML = `
+                        <div class="torrent-tags-dropdown-wrapper" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+                            <span style="font-size:12px;color:#aaa;margin-right:4px;">Tags:</span>
+                            ${globalTags.map(t => `<span class="torrent-tag-pill" data-tag="${t}" onclick="this.classList.toggle('active');this.style.background=this.classList.contains('active')?'#e8651a':'#333';this.style.color='#fff';" style="padding:3px 10px;border-radius:12px;background:#333;color:#ddd;font-size:11px;cursor:pointer;user-select:none;">${t}</span>`).join('')}
+                        </div>`;
+                }
+            } catch(e) {}
+
             filterSection.innerHTML = `
                 <div class="torrent-filter-input-wrapper">
                     ${createSearchIcon()}
@@ -1133,6 +1169,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     </select>
                 </div>
                 ${folderDropdownHTML}
+                ${tagsDropdownHTML}
                 <div class="torrent-filter-toggles">
                     <label class="torrent-filter-checkbox">
                         <input type="checkbox" id="show-filtered-checkbox">
@@ -1223,7 +1260,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                 // NZB results show a usenet badge instead of cache status
                 const isNzbResult = (torrent.protocol === 'nzb') || !!torrent.nzb_url;
                 const cacheIconHtml = isNzbResult
-                    ? '<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via Decypharr">NZB</span>'
+                    ? `<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via ${window.USENET_PROVIDER_NAME || "Usenet provider"}">NZB</span>`
                     : (createCacheProviderBadges(torrent) || createCacheIcon(cacheStatus));
 
                 const row = document.createElement('tr');
@@ -1476,6 +1513,23 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                     }
                 } catch(e) { /* folder dropdown optional */ }
 
+                // Tags dropdown — Plex mode only
+                let tagsDropdownHTML3 = '';
+                try {
+                    const cfgR3 = await fetch('/settings/api/config');
+                    const cfgD3 = await cfgR3.json();
+                    const tags3 = (cfgD3['Tags'] || {})['tags_list'] || [];
+                    const mode3 = (cfgD3['File Management'] || {})['file_collection_management'] || '';
+                    if (mode3 === 'Plex' && tags3.length > 0) {
+                        const opts3 = tags3.map(t => `<option value="${t}">${t}</option>`).join('');
+                        tagsDropdownHTML3 = `
+                            <div class="torrent-tags-dropdown-wrapper" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+                                <span style="font-size:12px;color:#aaa;margin-right:4px;">Tags:</span>
+                                ${tags3.map(t => `<span class="torrent-tag-pill" data-tag="${t}" onclick="this.classList.toggle('active');this.style.background=this.classList.contains('active')?'#e8651a':'#333';this.style.color='#fff';" style="padding:3px 10px;border-radius:12px;background:#333;color:#ddd;font-size:11px;cursor:pointer;user-select:none;">${t}</span>`).join('')}
+                            </div>`;
+                    }
+                } catch(e3) {}
+
                 filterSection.innerHTML = `
                     <div class="torrent-filter-input-wrapper">
                         ${createSearchIcon()}
@@ -1488,6 +1542,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
                         </select>
                     </div>
                     ${folderDropdownHTML}
+                    ${tagsDropdownHTML3}
                     <div class="torrent-filter-toggles">
                         <label class="torrent-filter-checkbox">
                             <input type="checkbox" id="show-filtered-checkbox">
@@ -1563,7 +1618,7 @@ async function displayTorrentResults(data, title, year, version, mediaId, mediaT
 
                     const isNzbResult2 = (torrent.protocol === 'nzb') || !!torrent.nzb_url;
                     const cacheIconHtml = isNzbResult2
-                        ? '<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via Decypharr">NZB</span>'
+                        ? `<span class="quality-badge usenet-badge" title="Usenet / NZB — downloads via ${window.USENET_PROVIDER_NAME || "Usenet provider"}">NZB</span>`
                         : (createCacheProviderBadges(torrent) || createCacheIcon(cacheStatus));
 
                     const row = document.createElement('tr');

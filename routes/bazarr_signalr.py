@@ -246,10 +246,6 @@ def notify_media_collected(media_item: Dict[str, Any], media_type: str):
     """
     from utilities.settings import get_setting
 
-    # Bazarr integration only works in Symlinked/Local mode
-    if get_setting('File Management', 'file_collection_management', 'Plex') != 'Symlinked/Local':
-        return
-
     # Only notify if Bazarr integration is enabled
     if not get_setting('Bazarr Integration', 'enabled', False):
         return

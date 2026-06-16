@@ -189,6 +189,18 @@
                    class="settings-input" data-section="UI Settings" data-key="upcoming_releases_end_limit">
             <p class="settings-description">How many days forward should be displayed on statistics page</p>
         </div>
+
+        <!-- Stats Provider Priority -->
+        <div class="settings-form-group">
+            <label for="ui-settings-stats_provider_priority" class="settings-title">Stats Provider Priority:</label>
+            <select id="ui-settings-stats_provider_priority" name="UI Settings.stats_provider_priority"
+                    class="settings-input" data-section="UI Settings" data-key="stats_provider_priority">
+                <option value="auto" {% if settings.get('UI Settings', {}).get('stats_provider_priority', 'auto') == 'auto' %}selected{% endif %}>Auto (debrid if configured, otherwise usenet)</option>
+                <option value="debrid" {% if settings.get('UI Settings', {}).get('stats_provider_priority') == 'debrid' %}selected{% endif %}>Debrid</option>
+                <option value="usenet" {% if settings.get('UI Settings', {}).get('stats_provider_priority') == 'usenet' %}selected{% endif %}>Usenet</option>
+            </select>
+            <p class="settings-description">Choose which provider's download stats to display on the Statistics page. Usenet shows Decypharr connection stats even when a debrid provider is also configured.</p>
+        </div>
     </div>
 </div>
 

@@ -567,6 +567,21 @@ def index():
                     item['content_source_display'] = display_name
                 if queue_name in ['Adding', 'Checking']:
                     item['provider_display'] = _get_provider_display(item)
+                if queue_name == 'Adding':
+                    _tid = str(item.get('filled_by_torrent_id', ''))
+                    if _tid.startswith('nzb:'):
+                        _lu = item.get('last_updated')
+                        _is_dl = False
+                        if _lu:
+                            try:
+                                from datetime import datetime as _dt_ui
+                                _lu_dt = _dt_ui.fromisoformat(str(_lu).replace('Z', '+00:00').split('+')[0])
+                                if (_dt_ui.now() - _lu_dt).total_seconds() >= 60:
+                                    _is_dl = True
+                            except Exception:
+                                pass
+                        if _is_dl:
+                            item['display_state'] = 'Downloading'
     display_names_time = time.time() - display_names_start
     logging.debug(f"[QUEUE_ROUTES] Display names processing took {display_names_time:.3f}s")
 
@@ -752,6 +767,21 @@ def api_queue_contents():
                     item['content_source_display'] = display_name
                 if queue_name in ['Adding', 'Checking']:
                     item['provider_display'] = _get_provider_display(item)
+                if queue_name == 'Adding':
+                    _tid = str(item.get('filled_by_torrent_id', ''))
+                    if _tid.startswith('nzb:'):
+                        _lu = item.get('last_updated')
+                        _is_dl = False
+                        if _lu:
+                            try:
+                                from datetime import datetime as _dt_ui2
+                                _lu_dt2 = _dt_ui2.fromisoformat(str(_lu).replace('Z', '+00:00').split('+')[0])
+                                if (_dt_ui2.now() - _lu_dt2).total_seconds() >= 60:
+                                    _is_dl = True
+                            except Exception:
+                                pass
+                        if _is_dl:
+                            item['display_state'] = 'Downloading'
     display_names_time = time.time() - display_names_start
     logging.debug(f"[QUEUE_ROUTES] API display names processing took {display_names_time:.3f}s")
 

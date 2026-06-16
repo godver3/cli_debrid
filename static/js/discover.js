@@ -9112,6 +9112,103 @@ function showVersionModal(content) {
         versionCheckboxes.appendChild(row);
     });
 
+    // Folder dropdown — symlink mode only, loaded asynchronously
+    const folderContainer = document.createElement('div');
+    folderContainer.id = 'request-folder-container';
+    versionCheckboxes.appendChild(folderContainer);
+    (async () => {
+        try {
+            const fRes = await fetch('/scraper/get_symlink_folders');
+            const fData = await fRes.json();
+            if (!fData.enabled || !fData.folders || !fData.folders.length) return;
+
+            const genreList = (content.genres || []).map(g => String(g).trim().toLowerCase());
+            const fs = fData.folder_settings || {};
+            const isAnime = genreList.some(g => g.includes('anime') || g.includes('animation') || g === '16');
+            const isDoc = genreList.some(g => g.includes('documentary') || g === '99');
+            let autoFolder = null;
+            if (content.mediaType === 'movie') {
+                autoFolder = (isAnime && fs.enable_separate_anime_folders) ? fs.anime_movies_folder_name
+                    : (isDoc && fs.enable_separate_documentary_folders) ? fs.documentary_movies_folder_name
+                    : fs.movies_folder_name;
+            } else {
+                autoFolder = (isAnime && fs.enable_separate_anime_folders) ? fs.anime_tv_shows_folder_name
+                    : (isDoc && fs.enable_separate_documentary_folders) ? fs.documentary_tv_shows_folder_name
+                    : fs.tv_shows_folder_name;
+            }
+
+            const divider = document.createElement('div');
+            divider.className = 'vm-divider';
+            folderContainer.appendChild(divider);
+
+            const label = document.createElement('div');
+            label.className = 'section-label';
+            label.textContent = 'Folder';
+            folderContainer.appendChild(label);
+
+            // Filter folders by media type — same logic as scraper.js
+            const mediaType = content.mediaType === 'movie' ? 'movie' : 'tv';
+            const filteredFolders = fData.folders.filter(folder => {
+                if (folder.is_custom) return true; // custom folders show for both
+                const nameLower = folder.name.toLowerCase();
+                if (mediaType === 'movie') {
+                    return nameLower.includes('movie') || nameLower === (fs.movies_folder_name || '').toLowerCase();
+                } else {
+                    return nameLower.includes('show') || nameLower.includes('tv') || nameLower === (fs.tv_shows_folder_name || '').toLowerCase();
+                }
+            });
+            if (!filteredFolders.length) return;
+
+            const select = document.createElement('select');
+            select.id = 'request-folder-select';
+            select.style.cssText = 'width:100%;padding:8px 10px;background:#1a1a1a;color:#fff;border:1px solid #333;border-radius:6px;font-size:12px;margin-top:4px;';
+            filteredFolders.forEach(folder => {
+                const opt = document.createElement('option');
+                opt.value = folder.name;
+                opt.dataset.isCustom = folder.is_custom ? 'true' : 'false';
+                const displayName = folder.is_custom
+                    ? `${folder.name} (${mediaType === 'movie' ? fs.movies_folder_name : fs.tv_shows_folder_name})`
+                    : folder.name;
+                opt.textContent = displayName;
+                if (folder.name === autoFolder) opt.selected = true;
+                select.appendChild(opt);
+            });
+            folderContainer.appendChild(select);
+        } catch (e) {
+            // not symlink mode or fetch failed — silently ignore
+        }
+    })();
+
+    // Tags multi-select — Plex mode only
+    const tagsContainer = document.createElement('div');
+    tagsContainer.id = 'request-tags-container';
+    versionCheckboxes.appendChild(tagsContainer);
+    (async () => {
+        try {
+            const cfgR = await fetch('/settings/api/config');
+            const cfgD = await cfgR.json();
+            const globalTags = (cfgD['Tags'] || {})['tags_list'] || [];
+            const fileMode = (cfgD['File Management'] || {})['file_collection_management'] || '';
+            if (fileMode !== 'Plex' || !globalTags.length) return;
+            const divider = document.createElement('div'); divider.className = 'vm-divider'; tagsContainer.appendChild(divider);
+            const lbl = document.createElement('div'); lbl.className = 'section-label'; lbl.textContent = 'Tags'; tagsContainer.appendChild(lbl);
+            const pillWrap = document.createElement('div');
+            pillWrap.id = 'request-tags-pills';
+            pillWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;';
+            globalTags.forEach(tag => {
+                const pill = document.createElement('div');
+                pill.className = 'option-row';
+                pill.dataset.value = tag;
+                pill.dataset.type = 'tag';
+                pill.style.cssText = 'padding:5px 14px;border-radius:14px;cursor:pointer;font-size:12px;flex:none;';
+                pill.innerHTML = `<span class="option-label">${tag}</span>`;
+                pill.addEventListener('click', () => pill.classList.toggle('checked'));
+                pillWrap.appendChild(pill);
+            });
+            tagsContainer.appendChild(pillWrap);
+        } catch(e) {}
+    })();
+
     document.body.classList.add('modal-open');
     modal.style.display = 'flex';
 }
@@ -9205,12 +9302,23 @@ async function handleVersionConfirm() {
         }
     }
 
+    // Read folder selection if dropdown is present (symlink mode)
+    const folderSelect = document.getElementById('request-folder-select');
+    const selectedFolder = folderSelect ? folderSelect.value : null;
+    const selectedFolderIsCustom = folderSelect
+        ? (folderSelect.options[folderSelect.selectedIndex]?.dataset?.isCustom === 'true')
+        : false;
+
+    // Read tags selection if present (Plex mode)
+    const _tagPills = document.querySelectorAll('#request-tags-pills .option-row.checked[data-type="tag"]');
+    const selectedTags = _tagPills.length ? Array.from(_tagPills).map(p=>p.dataset.value).join(',') : null;
+
     closeVersionModal();
-    await requestContent(selectedContent, selectedVersions);
+    await requestContent(selectedContent, selectedVersions, selectedFolder, selectedFolderIsCustom, selectedTags);
 }
 
 // Request content from backend
-async function requestContent(content, selectedVersions) {
+async function requestContent(content, selectedVersions, selectedFolder = null, selectedFolderIsCustom = false, selectedTags = null) {
     showLoadingMessage('Requesting content, please wait...');
     try {
         const requestData = {
@@ -9223,6 +9331,17 @@ async function requestContent(content, selectedVersions) {
         // Add seasons if specified for TV shows
         if (content.mediaType === 'tv' && content.seasons) {
             requestData.seasons = content.seasons;
+        }
+
+        // Add folder selection if provided (symlink mode)
+        if (selectedFolder) {
+            requestData.selected_folder = selectedFolder;
+            requestData.selected_folder_is_custom = selectedFolderIsCustom;
+        }
+
+        // Add tags if provided (Plex mode)
+        if (selectedTags) {
+            requestData.selected_tags = selectedTags;
         }
 
         const response = await fetch('/content/request', {

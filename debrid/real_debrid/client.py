@@ -568,15 +568,34 @@ class RealDebridProvider(DebridProvider):
                         # Get list of file IDs for video files
                         video_file_ids = []
                         selected_files = []
+
+                        # First pass: collect all candidate video files with sizes
+                        candidates = []
                         for i, file_info in enumerate(files, start=1):
                             filename = file_info.get('path', '') or file_info.get('name', '')
                             if filename and is_video_file(filename) and not is_unwanted_file(filename):
-                                video_file_ids.append(str(i))
-                                selected_files.append({
-                                    'path': filename,
-                                    'bytes': file_info.get('bytes', 0),
-                                    'selected': True
-                                })
+                                candidates.append((i, file_info, filename))
+
+                        # Size-based extras filtering: if multiple video files exist and
+                        # there's a clear largest file, drop files that are tiny relative
+                        # to it (< 5% of the largest). This catches trailers/extras
+                        # (typically <2% of main feature) without affecting legitimate
+                        # short episodes or bonus content (typically >10% of main file).
+                        if len(candidates) > 1:
+                            max_bytes = max(f[1].get('bytes', 0) for f in candidates)
+                            if max_bytes > 0:
+                                candidates = [
+                                    c for c in candidates
+                                    if c[1].get('bytes', 0) >= max_bytes * 0.05
+                                ]
+
+                        for i, file_info, filename in candidates:
+                            video_file_ids.append(str(i))
+                            selected_files.append({
+                                'path': filename,
+                                'bytes': file_info.get('bytes', 0),
+                                'selected': True
+                            })
                                 
                         if video_file_ids:
                             data = {'files': ','.join(video_file_ids)}

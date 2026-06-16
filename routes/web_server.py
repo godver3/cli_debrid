@@ -59,6 +59,19 @@ def inject_program_status():
     return dict(program_is_running=program_is_running, get_program_status=get_program_status)
 
 @app.context_processor
+def inject_usenet_provider_name():
+    """Make `usenet_provider_name` available to all Jinja templates.
+
+    Returns the display name of the configured usenet backend so base.html
+    can inject window.USENET_PROVIDER_NAME for JS dialogs.
+    """
+    try:
+        from usenet import get_usenet_provider_display_name
+        return dict(usenet_provider_name=get_usenet_provider_display_name())
+    except Exception:
+        return dict(usenet_provider_name='Decypharr')
+
+@app.context_processor
 def inject_logo_selection():
     from utilities.settings import get_setting
     # Get the logo selection from settings

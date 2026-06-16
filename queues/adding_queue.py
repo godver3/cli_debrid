@@ -27,6 +27,7 @@ class AddingQueue:
         self.last_process_time = {}
         self._nzb_submitted_ids: set = set()  # IDs submitted to Decypharr; guards concurrent process() calls
         self._adding_ticks: dict = {}  # item_id → tick count in Adding; at 3 → not-wanted + Wanted
+        self._nzb_downloading_job_ids: set = set()  # job IDs confirmed actively downloading; skip in Adding loop
 
     def reinitialize_provider(self):
         """Reinitialize the debrid provider and processors"""
@@ -50,6 +51,13 @@ class AddingQueue:
             self._nzb_submitted_ids -= removed
             for _rid in removed:
                 self._adding_ticks.pop(_rid, None)
+            # Clean up downloading set: remove job IDs no longer referenced by any remaining item
+            _active_job_ids = {
+                str(item.get('filled_by_torrent_id', ''))[4:]
+                for item in self.items
+                if str(item.get('filled_by_torrent_id', '')).startswith('nzb:')
+            }
+            self._nzb_downloading_job_ids &= _active_job_ids
         if len(self.items) > 0:
             logging.debug(f"Queue now contains {len(self.items)} items")
         
@@ -168,6 +176,11 @@ class AddingQueue:
              if is_locked:
                  item_identifier_log = f"{item.get('title', 'N/A')} ({item.get('type', 'N/A')})"
                  logging.debug(f"[{item_identifier_log}] Skipping processing for item {item_id} - locked by upgrade process.")
+                 continue
+
+             # Skip items whose NZB job is confirmed actively downloading — health check owns them
+             _tid = str(item.get('filled_by_torrent_id', ''))
+             if _tid.startswith('nzb:') and _tid[4:] in self._nzb_downloading_job_ids:
                  continue
 
              items_to_process.append(item)
@@ -417,7 +430,14 @@ class AddingQueue:
                     if _is_nzb_item:
                         logging.info(f"[AddingQueue] NZB attempt failed for {item_identifier}, {len(_remaining_sr)} result(s) remaining — retrying next tick")
                         continue
-                    self._handle_failed_item(item, "No valid results found after cache/uncached processing", queue_manager)
+                    # All NZB candidates exhausted — distinguish missing-segments (expired usenet)
+                    # from general failure so _handle_failed_item can route to Sleeping instead of Blacklist
+                    _nzb_exhausted_error = (
+                        "NZB exhausted: all candidates had missing segments (expired usenet)"
+                        if item.get('_nzb_all_missing_segments')
+                        else "No valid results found after cache/uncached processing"
+                    )
+                    self._handle_failed_item(item, _nzb_exhausted_error, queue_manager)
                     continue
 
                 # --- Apply filename filters ---
@@ -482,18 +502,21 @@ class AddingQueue:
 
                     # Store the checking_id on the item so we can poll it next tick
                     from database.database_writing import update_media_item
+                    _seg_id_kwargs = {'nzb_segment_id': nzb_segment_id} if nzb_segment_id else {}
                     update_media_item(item['id'],
                         filled_by_torrent_id=checking_id,
                         filled_by_file=nzb_title,
                         filled_by_title=nzb_title,
                         filled_by_magnet=nzb_url,
                         original_scraped_torrent_title=nzb_original_title,
+                        **_seg_id_kwargs,
                     )
                     # Update in-memory dict so next Adding tick skips this item (line 206 check)
                     item['filled_by_torrent_id'] = checking_id
                     item['filled_by_file'] = nzb_title
                     item['filled_by_title'] = nzb_title
                     item['filled_by_magnet'] = nzb_url
+                    item['nzb_segment_id'] = nzb_segment_id
                     # Keep segment ID in memory on the item dict for health check failure handling
                     item['_nzb_segment_id'] = nzb_segment_id
                     self._nzb_submitted_ids.add(item['id'])
@@ -855,6 +878,17 @@ class AddingQueue:
 
                 queue_manager.move_to_scraping(item, "Adding")
                 # move_to_scraping handles removal from self.items
+                return
+
+            # --- Missing segments: always move to Sleeping (never Blacklist) ---
+            # When all NZBs failed due to ARTICLE_NOT_FOUND (expired usenet), the content
+            # may become available again via re-posts. Sleeping lets it retry later.
+            if 'missing segments' in error or item.get('_nzb_all_missing_segments'):
+                logging.warning(
+                    f"[AddingQueue] All NZBs had missing segments for {item_identifier} — "
+                    f"moving to Sleeping (will retry, not blacklisting)"
+                )
+                queue_manager.move_to_sleeping(item, "Adding")
                 return
 
             # --- Blacklisting logic for old items (Keep existing) ---
