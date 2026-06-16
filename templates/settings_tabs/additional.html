@@ -5,7 +5,7 @@
 </div>
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" %}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" and section != "Tags" %}
     <div class="settings-section">
         <div class="settings-section-header">
             <h4>{{ section }}</h4>
@@ -443,7 +443,7 @@
         <span class="settings-toggle-icon">+</span>
     </div>
     <div class="settings-section-content">
-        {% if settings.get('File Management', {}).get('file_collection_management') != 'Symlinked/Local' %}
+        {% if settings.get('File Management', {}).get('file_collection_management') not in ('Symlinked/Local', 'Plex') %}
         <!-- Unavailable Warning -->
         <div class="settings-form-group">
             <div style="background: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 4px;">

@@ -639,7 +639,8 @@ export function updateSettings() {
                             const weight = parseInt(item.querySelector('.filter-weight')?.value) || 1;
                             versionData[filterType].push([term, weight]);
                         } else {
-                            versionData[filterType].push(term);
+                            const source = item.querySelector('.filter-source')?.value || 'both';
+                            versionData[filterType].push({pattern: term, source: source});
                         }
                     }
                 });
@@ -839,12 +840,18 @@ export function updateSettings() {
     }
 
     // Handle Disable Content Source Caching
-    const disableContentSourceCaching = document.getElementById('debug-disable_content_source_caching'); 
-    
+    const disableContentSourceCaching = document.getElementById('debug-disable_content_source_caching');
+
     if (disableContentSourceCaching) {
         settingsData['Debug']['disable_content_source_caching'] = disableContentSourceCaching.checked;
 
     } else {
+    }
+
+    const emphasizeNumberOfItemsOverQuality = document.getElementById('debug-emphasize_number_of_items_over_quality');
+
+    if (emphasizeNumberOfItemsOverQuality) {
+        settingsData['Debug']['emphasize_number_of_items_over_quality'] = emphasizeNumberOfItemsOverQuality.checked;
     }
 
     const enableUpgrading = document.getElementById('scraping-enable_upgrading');

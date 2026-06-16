@@ -473,6 +473,20 @@ def init_overlay_tables(db_path: str = None):
         except Exception as _layout_err:
             logger.warning(f"Failed to seed default layouts: {_layout_err}")
 
+        # Restore user layouts from filesystem backup if DB was just wiped.
+        # User-created layouts are saved to /user/config/overlay_layouts/ on every
+        # create/update. On a fresh DB the table is empty — restore those files now.
+        try:
+            from overlays.layout_manager import LayoutManager
+            lm = LayoutManager()
+            restore_result = lm.restore_from_filesystem(skip_existing=True)
+            if restore_result['loaded']:
+                logger.info(f"Restored {restore_result['loaded']} user layout(s) from filesystem backup.")
+            if restore_result['errors']:
+                logger.warning(f"Layout restore errors: {restore_result['errors']}")
+        except Exception as _restore_err:
+            logger.warning(f"Failed to restore layouts from filesystem: {_restore_err}")
+
         logger.info("Overlay database tables initialized successfully")
         return True
 

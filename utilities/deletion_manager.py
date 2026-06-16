@@ -2067,22 +2067,22 @@ class DeletionManager:
                 is_nzb = str(torrent_id or '').startswith('nzb:')
                 logging.info(f"[DEBRID_REMOVAL] Removal requested. is_nzb={is_nzb}, torrent_id={torrent_id}")
                 if is_nzb:
-                    # NZB item — delete from Decypharr
+                    # NZB item — delete from usenet provider (Decypharr or NzbDAV)
                     try:
-                        from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
-                        reset_decypharr_client()
-                        client = get_decypharr_client()
+                        from usenet import get_usenet_client, reset_usenet_client
+                        reset_usenet_client()
+                        client = get_usenet_client()
                         info_hash = torrent_id[4:]  # strip 'nzb:'
                         removed = client.remove_nzb(info_hash, item.get('filled_by_file') or item_title)
                         result['debrid_removed'] = removed
                         result['debrid_nzb_removed'] = 1 if removed else 0
                         if removed:
-                            logging.info(f"[DEBRID_REMOVAL] Successfully removed NZB {info_hash} from Decypharr for '{item_title}'")
+                            logging.info(f"[DEBRID_REMOVAL] Successfully removed NZB {info_hash} from usenet provider for '{item_title}'")
                         else:
-                            logging.warning(f"[DEBRID_REMOVAL] Decypharr removal returned False for {info_hash}")
+                            logging.warning(f"[DEBRID_REMOVAL] Usenet provider removal returned False for {info_hash}")
                     except Exception as e:
-                        logging.error(f"[DEBRID_REMOVAL] Failed to remove NZB {torrent_id} from Decypharr: {e}")
-                        result['errors'].append(f"Decypharr removal failed: {str(e)}")
+                        logging.error(f"[DEBRID_REMOVAL] Failed to remove NZB {torrent_id} from usenet provider: {e}")
+                        result['errors'].append(f"Usenet provider removal failed: {str(e)}")
                 elif self.debrid and torrent_id:
                     logging.info(f"[DEBRID_REMOVAL] Attempting to remove torrent {torrent_id} for '{item_title}'")
                     try:
@@ -2504,27 +2504,27 @@ class DeletionManager:
                 except Exception as e:
                     logging.warning(f"[DELETE_MULTIPLE] Could not get item {item_id} for dedup: {e}")
 
-            # Remove NZB items from Decypharr
+            # Remove NZB items from usenet provider (Decypharr or NzbDAV)
             if unique_nzb_ids:
-                logging.info(f"[DELETE_MULTIPLE] Phase 0: Removing {len(unique_nzb_ids)} NZB(s) from Decypharr")
+                logging.info(f"[DELETE_MULTIPLE] Phase 0: Removing {len(unique_nzb_ids)} NZB(s) from usenet provider")
                 try:
-                    from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
-                    reset_decypharr_client()
-                    dcy_client = get_decypharr_client()
+                    from usenet import get_usenet_client, reset_usenet_client
+                    reset_usenet_client()
+                    dcy_client = get_usenet_client()
                     for tid, (file_name, title) in unique_nzb_ids.items():
                         info_hash = tid[4:]
                         try:
                             removed = dcy_client.remove_nzb(info_hash, file_name or title)
                             if removed:
                                 debrid_removed_ids.add(tid)
-                                logging.info(f"[DELETE_MULTIPLE] Removed NZB {info_hash} from Decypharr")
+                                logging.info(f"[DELETE_MULTIPLE] Removed NZB {info_hash} from usenet provider")
                             else:
-                                logging.warning(f"[DELETE_MULTIPLE] Decypharr remove returned False for {info_hash}")
+                                logging.warning(f"[DELETE_MULTIPLE] Usenet provider remove returned False for {info_hash}")
                         except Exception as e:
                             logging.error(f"[DELETE_MULTIPLE] Failed to remove NZB {info_hash}: {e}")
-                            aggregate_result['errors'].append(f"Decypharr removal failed for {tid}: {str(e)}")
+                            aggregate_result['errors'].append(f"Usenet provider removal failed for {tid}: {str(e)}")
                 except Exception as e:
-                    logging.error(f"[DELETE_MULTIPLE] Decypharr client error: {e}")
+                    logging.error(f"[DELETE_MULTIPLE] Usenet provider client error: {e}")
 
             # Remove torrent items from debrid provider
             if unique_torrent_ids and self.debrid:

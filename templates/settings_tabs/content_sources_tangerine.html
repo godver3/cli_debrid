@@ -33,9 +33,78 @@
     // Initialize with value from Jinja template
     window.currentFileManagementModeForSymlinkVisibility = "{{ settings.get('File Management', {}).get('file_collection_management', '') }}";
 
+    // ── Virtual Folder Creator ───────────────────────────────────────────────
+    let _csVfSourceId = null;
+    function csVfOpen(sourceId) {
+        _csVfSourceId = sourceId;
+        const tags = window._csTags || [];
+        const modal = document.getElementById('cs-vf-modal');
+        if (!modal) return;
+        // Populate tag checkboxes
+        const cbs = document.getElementById('cs-vf-tags');
+        cbs.innerHTML = tags.length ? tags.map(t =>
+            `<label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;">
+                <input type="checkbox" class="cs-vf-tag-cb" value="${t}"> <span>${t}</span>
+            </label>`
+        ).join('') : '<p style="opacity:.6;font-size:13px;">No global tags defined yet.</p>';
+        document.getElementById('cs-vf-name').value = '';
+        document.getElementById('cs-vf-combined').checked = true;
+        csVfToggleMode();
+        modal.style.display = 'flex';
+    }
+    function csVfClose() { const m = document.getElementById('cs-vf-modal'); if(m) m.style.display='none'; }
+    function csVfToggleMode() {
+        const combined = document.getElementById('cs-vf-combined').checked;
+        document.getElementById('cs-vf-name-row').style.display = combined ? '' : 'none';
+    }
+    async function csVfSubmit() {
+        const combined = document.getElementById('cs-vf-combined').checked;
+        const folderName = document.getElementById('cs-vf-name').value.trim();
+        const selectedTags = Array.from(document.querySelectorAll('.cs-vf-tag-cb:checked')).map(cb => cb.value);
+        if (!selectedTags.length) { alert('Select at least one tag.'); return; }
+        if (combined && !folderName) { alert('Enter a folder name.'); return; }
+        const btn = document.getElementById('cs-vf-submit');
+        btn.disabled = true; btn.textContent = 'Creating...';
+        try {
+            const r = await fetch('/settings/api/create_virtual_folder', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ folder_name: folderName, tags: selectedTags, mode: combined ? 'combined' : 'per_tag' })
+            });
+            const d = await r.json();
+            if (d.success) {
+                csVfClose();
+                if (window.showPopup) window.showPopup({ type: 'success', title: 'Virtual Folder Created', message: d.message });
+                else alert(d.message);
+            } else {
+                if (window.showPopup) window.showPopup({ type: 'error', title: 'Error', message: d.error });
+                else alert('Error: ' + d.error);
+            }
+        } catch(e) {
+            alert('Request failed: ' + e);
+        }
+        btn.disabled = false; btn.textContent = 'Create';
+    }
+    // ── End Virtual Folder Creator ───────────────────────────────────────────
+
     document.addEventListener('DOMContentLoaded', function() {
         loadSettings();
+        // Tags pill UI init
+        fetch('/settings/api/config').then(r=>r.json()).then(cfg=>{
+            window._csTags=(cfg['Tags']||{})['tags_list']||[];
+        }).catch(()=>{ window._csTags=[]; });
+        document.addEventListener('click',function(e){
+            if(!e.target.closest('.cs-tags-pill-input')) document.querySelectorAll('.cs-tags-dropdown').forEach(d=>d.style.display='none');
+        });
     });
+
+    function csTgGet(sid){const h=document.getElementById('cs-tags-hidden-'+sid);return h&&h.value.trim()?h.value.split(',').map(t=>t.trim()).filter(Boolean):[];}
+    function csTgSet(sid,tags){const h=document.getElementById('cs-tags-hidden-'+sid);if(h){h.value=tags.join(',');h.dispatchEvent(new Event('change',{bubbles:true}));}}
+    function csTgRender(sid){const c=document.getElementById('cs-tags-pill-input-'+sid);if(!c)return;c.querySelectorAll('.cs-tag-pill').forEach(p=>p.remove());const tags=csTgGet(sid),w=c.querySelector('.cs-tags-input-wrapper');tags.forEach(tag=>{const p=document.createElement('span');p.className='cs-tag-pill';p.innerHTML=tag+'<button type="button" onclick="csTgRemove(\''+sid+'\',\''+tag+'\')">&times;</button>';c.insertBefore(p,w);});}
+    function csTgAdd(sid,tag){tag=tag.trim();if(!tag)return;const tags=csTgGet(sid);if(tags.includes(tag))return;tags.push(tag);if(!(window._csTags||[]).includes(tag)){(window._csTags=window._csTags||[]).push(tag);fetch('/settings/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({Tags:{tags_list:window._csTags}})}).catch(()=>{});}csTgSet(sid,tags);csTgRender(sid);const i=document.getElementById('cs-tags-search-'+sid);if(i){i.value='';csTgFilter(sid);}}
+    function csTgRemove(sid,tag){csTgSet(sid,csTgGet(sid).filter(t=>t!==tag));csTgRender(sid);}
+    function csTgFilter(sid){const i=document.getElementById('cs-tags-search-'+sid),d=document.getElementById('cs-tags-dropdown-'+sid);if(!i||!d)return;const q=i.value.trim().toLowerCase(),cur=csTgGet(sid),all=window._csTags||[],matches=all.filter(t=>t.toLowerCase().includes(q)&&!cur.includes(t));d.innerHTML='';if(q&&!all.map(t=>t.toLowerCase()).includes(q)&&!cur.includes(i.value.trim())){const c=document.createElement('div');c.className='cs-tags-dd-item cs-tags-dd-create';c.textContent='+ Create "'+i.value.trim()+'"';c.onclick=()=>{csTgAdd(sid,i.value.trim());d.style.display='none';};d.appendChild(c);}matches.forEach(tag=>{const item=document.createElement('div');item.className='cs-tags-dd-item';item.textContent=tag;item.onclick=()=>{csTgAdd(sid,tag);d.style.display='none';};d.appendChild(item);});d.style.display=d.children.length?'block':'none';}
+    function csTgKeydown(e,sid){if(e.key==='Enter'){e.preventDefault();const i=document.getElementById('cs-tags-search-'+sid);if(i&&i.value.trim())csTgAdd(sid,i.value.trim());}else if(e.key==='Escape'){const d=document.getElementById('cs-tags-dropdown-'+sid);if(d)d.style.display='none';}}
 
     function loadSettings() {
         Promise.all([
@@ -92,7 +161,13 @@
         const containers = document.querySelectorAll(`.symlink-subfolder-container[data-source-id="${sourceId}"]`);
         containers.forEach(container => {
             if (container) {
-                container.style.display = (fileManagementValue === 'Symlinked/Local') ? 'block' : 'none';
+                const show = (fileManagementValue === 'Symlinked/Local');
+                container.style.display = show ? 'block' : 'none';
+                // Also hide/show the parent settings-form-group to prevent empty gap
+                const parent = container.parentElement;
+                if (parent && parent.classList.contains('settings-form-group')) {
+                    parent.style.display = show ? '' : 'none';
+                }
             }
         });
     }
@@ -108,6 +183,21 @@
         const show = !(fm === 'Symlinked/Local' && ms === 'jellyfin');
         document.querySelectorAll('.plex-only-section').forEach(el => {
             el.style.display = show ? '' : 'none';
+            // Also hide/show parent settings-form-group to prevent empty gap
+            const parent = el.parentElement;
+            if (parent && parent.classList.contains('settings-form-group')) {
+                parent.style.display = show ? '' : 'none';
+            }
+        });
+        // Tags visible only in Plex mode
+        const isPlex = (fm === 'Plex');
+        document.querySelectorAll('.cs-tags-plex-only').forEach(el => {
+            el.style.display = isPlex ? '' : 'none';
+            // Also hide/show parent settings-form-group to prevent empty gap
+            const parent = el.parentElement;
+            if (parent && parent.classList.contains('settings-form-group')) {
+                parent.style.display = isPlex ? '' : 'none';
+            }
         });
     }
 
@@ -1110,6 +1200,14 @@
 </script>
 
 <style>
+    .cs-tags-pill-input{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-height:38px;padding:6px 10px;background:#1a1a1a;border:1px solid #444;border-radius:6px;cursor:text;}
+    .cs-tag-pill{display:inline-flex;align-items:center;gap:4px;background:#e8651a;color:#fff;border-radius:12px;padding:2px 10px;font-size:12px;}
+    .cs-tag-pill button{background:none;border:none;color:#fff;cursor:pointer;padding:0;font-size:14px;line-height:1;opacity:.8;}.cs-tag-pill button:hover{opacity:1;}
+    .cs-tags-input-wrapper{position:relative;flex:1;min-width:120px;}
+    .cs-tags-search{width:100%;background:transparent;border:none;outline:none;color:#fff;font-size:13px;padding:2px 0;}
+    .cs-tags-dropdown{position:absolute;top:100%;left:0;right:0;z-index:9999;background:#222;border:1px solid #444;border-radius:6px;max-height:160px;overflow-y:auto;margin-top:4px;}
+    .cs-tags-dd-item{padding:8px 12px;cursor:pointer;font-size:13px;color:#ddd;}.cs-tags-dd-item:hover{background:#333;}
+    .cs-tags-dd-create{color:#e8651a;font-style:italic;}
     /* Add your custom styles here */
     .versions-checkboxes {
         display: flex;
@@ -1475,6 +1573,29 @@
                             <p class="settings-description">Choose which seasons to grab when Seasons Per TV Show is limited: First (oldest), Latest (newest by number), or Most recently aired (by air date).</p>
                         </div>
 
+                        {# Tags — Plex mode only #}
+                        {% set tags_val = config.get('tags', []) %}
+                        {% set tags_str = tags_val | join(',') if tags_val is iterable and tags_val is not string else (tags_val or '') %}
+                        <div class="cs-tags-plex-only">
+                            <div class="settings-form-group">
+                                <label class="settings-title">Tags:</label>
+                                <div class="cs-tags-pill-input" id="cs-tags-pill-input-{{ source_id }}">
+                                    {% for tag in tags_val %}
+                                    <span class="cs-tag-pill">{{ tag }}<button type="button" onclick="csTgRemove('{{ source_id }}','{{ tag }}')">&times;</button></span>
+                                    {% endfor %}
+                                    <div class="cs-tags-input-wrapper">
+                                        <input type="text" class="cs-tags-search" id="cs-tags-search-{{ source_id }}" placeholder="Search or add..." autocomplete="off" oninput="csTgFilter('{{ source_id }}')" onkeydown="csTgKeydown(event,'{{ source_id }}')">
+                                        <div class="cs-tags-dropdown" id="cs-tags-dropdown-{{ source_id }}" style="display:none;"></div>
+                                    </div>
+                                </div>
+                                <input type="hidden" id="cs-tags-hidden-{{ source_id }}" name="Content Sources.{{ source_id }}.tags" data-section="Content Sources" data-key="{{ source_id }}.tags" value="{{ tags_str }}">
+                                <p class="settings-description" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                                    <span>Plex mode only: Tags embedded in NZB filenames for Decypharr virtual folder routing.</span>
+                                    <button type="button" onclick="csVfOpen('{{ source_id }}')" style="background:#e8651a;color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">+ Create Virtual Folder</button>
+                                </p>
+                            </div>
+                        </div>
+
                         {# Custom Symlink Subfolder #}
                         {% set key = 'custom_symlink_subfolder' %}
                         {% set value = config.get(key, '') %}
@@ -1697,6 +1818,29 @@
                              {% endif %}
                         </div>
 
+                        {# Tags — Plex mode only #}
+                        {% set tags_val2 = config.get('tags', []) %}
+                        {% set tags_str2 = tags_val2 | join(',') if tags_val2 is iterable and tags_val2 is not string else (tags_val2 or '') %}
+                        <div class="cs-tags-plex-only">
+                            <div class="settings-form-group">
+                                <label class="settings-title">Tags:</label>
+                                <div class="cs-tags-pill-input" id="cs-tags-pill-input-{{ source_id }}">
+                                    {% for tag in tags_val %}
+                                    <span class="cs-tag-pill">{{ tag }}<button type="button" onclick="csTgRemove('{{ source_id }}','{{ tag }}')">&times;</button></span>
+                                    {% endfor %}
+                                    <div class="cs-tags-input-wrapper">
+                                        <input type="text" class="cs-tags-search" id="cs-tags-search-{{ source_id }}" placeholder="Search or add..." autocomplete="off" oninput="csTgFilter('{{ source_id }}')" onkeydown="csTgKeydown(event,'{{ source_id }}')">
+                                        <div class="cs-tags-dropdown" id="cs-tags-dropdown-{{ source_id }}" style="display:none;"></div>
+                                    </div>
+                                </div>
+                                <input type="hidden" id="cs-tags-hidden-{{ source_id }}" name="Content Sources.{{ source_id }}.tags" data-section="Content Sources" data-key="{{ source_id }}.tags" value="{{ tags_str2 }}">
+                                <p class="settings-description" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                                    <span>Plex mode only: Tags embedded in NZB filenames for Decypharr virtual folder routing.</span>
+                                    <button type="button" onclick="csVfOpen('{{ source_id }}')" style="background:#e8651a;color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">+ Create Virtual Folder</button>
+                                </p>
+                            </div>
+                        </div>
+
                         {# Custom Symlink Subfolder - ADDED FOR 'Other Plex Watchlist' #}
                         {% set key = 'custom_symlink_subfolder' %}
                         {% set value = config.get(key, '') %}
@@ -1851,7 +1995,7 @@
                         {% for key, value in config.items() %}
                             {# Skip standard 'type' field and any empty/invalid keys #}
                             {% if key and key != 'type' %}
-                                {% set _skip = key in ['enabled', 'plex_labels', 'label_mode', 'fixed_label', 'label_template', 'allow_specials', 'unblacklist_on_source_run', 'plex_collection', 'allowed_requesters', 'seasons_per_show', 'season_grab_order'] or (key == 'ignore_tags' and config.type == 'Overseerr') %}
+                                {% set _skip = key in ['enabled', 'plex_labels', 'label_mode', 'fixed_label', 'label_template', 'allow_specials', 'unblacklist_on_source_run', 'plex_collection', 'allowed_requesters', 'seasons_per_show', 'season_grab_order', 'tags', 'tags_exclusive'] or (key == 'ignore_tags' and config.type == 'Overseerr') %}
                                 {% if not _skip %}
                                 <div class="settings-form-group">
                                     {% if key == 'versions' %}
@@ -1952,6 +2096,31 @@
                                                 <p class="settings-description">Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.</p>
                                             {% endif %}
                                         </div>
+                                    {% elif key == 'tags' %}
+                                        {% set tv = value if value is iterable and value is not string else [] %}
+                                        {% set ts = tv | join(',') if tv else (value or '') %}
+                                        {% set tags_excl_value = config.get('tags_exclusive', False) %}
+                                        <div class="cs-tags-plex-only">
+                                            <label class="settings-title">Tags:</label>
+                                            <div class="cs-tags-pill-input" id="cs-tags-pill-input-{{ source_id }}">
+                                                {% for tag in tv %}<span class="cs-tag-pill">{{ tag }}<button type="button" onclick="csTgRemove('{{ source_id }}','{{ tag }}')">&times;</button></span>{% endfor %}
+                                                <div class="cs-tags-input-wrapper">
+                                                    <input type="text" class="cs-tags-search" id="cs-tags-search-{{ source_id }}" placeholder="Search or add..." autocomplete="off" oninput="csTgFilter('{{ source_id }}')" onkeydown="csTgKeydown(event,'{{ source_id }}')">
+                                                    <div class="cs-tags-dropdown" id="cs-tags-dropdown-{{ source_id }}" style="display:none;"></div>
+                                                </div>
+                                            </div>
+                                            <input type="hidden" id="cs-tags-hidden-{{ source_id }}" name="Content Sources.{{ source_id }}.tags" data-section="Content Sources" data-key="{{ source_id }}.tags" value="{{ ts }}">
+                                            <div style="margin-top:6px;display:flex;align-items:center;gap:8px;">
+                                                <input type="checkbox" id="tags-exclusive-{{ source_id }}"
+                                                       name="Content Sources.{{ source_id }}.tags_exclusive"
+                                                       data-section="Content Sources"
+                                                       data-key="{{ source_id }}.tags_exclusive"
+                                                       {% if tags_excl_value %}checked{% endif %}>
+                                                <label for="tags-exclusive-{{ source_id }}" style="font-size:12px;cursor:pointer;">NzbDAV only: route exclusively to tag category (skip resolution detection)</label>
+                                            </div>
+                                        </div>
+                                    {% elif key == 'tags_exclusive' %}
+                                        {# Rendered inline with 'tags' above — skip standalone render #}
                                     {% elif key == 'monitor_mode' and settings_schema['Content Sources'].schema is defined and config.type in settings_schema['Content Sources'].schema and key in settings_schema['Content Sources'].schema[config.type] %}
                                          {% set field_schema = settings_schema['Content Sources'].schema[config.type][key] %}
                                          <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
@@ -2022,7 +2191,7 @@
                                          {% if settings_schema['Content Sources'].schema is defined and
                                                config.type in settings_schema['Content Sources'].schema and
                                                key in settings_schema['Content Sources'].schema[config.type] and
-                                               key != 'allow_specials' and key != 'unblacklist_on_source_run' and key != 'custom_symlink_subfolder' and key != 'monitor_mode' and
+                                               key != 'allow_specials' and key != 'unblacklist_on_source_run' and key != 'custom_symlink_subfolder' and key != 'monitor_mode' and key != 'tags' and key != 'tags_exclusive' and
                                                settings_schema['Content Sources'].schema[config.type][key].description is defined %}
                                              <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
                                          {% endif %}
@@ -2031,6 +2200,25 @@
                                 {% endif %} {# End .settings-form-group for general fields #}
                             {% endif %} {# End if key != 'type' #}
                         {% endfor %}
+
+                        {# Tags — rendered explicitly so it always appears even if key missing from saved config #}
+                        {% set tags_val3 = config.get('tags', []) %}
+                        {% set tags_str3 = tags_val3 | join(',') if tags_val3 is iterable and tags_val3 is not string else (tags_val3 or '') %}
+                        <div class="settings-form-group cs-tags-plex-only">
+                            <label class="settings-title">Tags:</label>
+                            <div class="cs-tags-pill-input" id="cs-tags-pill-input-{{ source_id }}">
+                                {% for tag in tags_val3 %}<span class="cs-tag-pill">{{ tag }}<button type="button" onclick="csTgRemove('{{ source_id }}','{{ tag }}')">&times;</button></span>{% endfor %}
+                                <div class="cs-tags-input-wrapper">
+                                    <input type="text" class="cs-tags-search" id="cs-tags-search-{{ source_id }}" placeholder="Search or add..." autocomplete="off" oninput="csTgFilter('{{ source_id }}')" onkeydown="csTgKeydown(event,'{{ source_id }}')">
+                                    <div class="cs-tags-dropdown" id="cs-tags-dropdown-{{ source_id }}" style="display:none;"></div>
+                                </div>
+                            </div>
+                            <input type="hidden" id="cs-tags-hidden-{{ source_id }}" name="Content Sources.{{ source_id }}.tags" data-section="Content Sources" data-key="{{ source_id }}.tags" value="{{ tags_str3 }}">
+                            <p class="settings-description" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                                <span>Plex mode only: Tags embedded in NZB filenames for Decypharr virtual folder routing.</span>
+                                <button type="button" class="btn-sm" onclick="csVfOpen('{{ source_id }}')" style="background:#e8651a;color:#fff;border:none;border-radius:6px;padding:4px 12px;font-size:12px;cursor:pointer;white-space:nowrap;">+ Create Virtual Folder</button>
+                            </p>
+                        </div>
 
                         {# Requesters — Overseerr only, rendered explicitly so it always appears even if key missing from saved config #}
                         {% if config.type == 'Overseerr' %}
@@ -2479,6 +2667,38 @@
             </div>
         {% endif %}
     {% endfor %}
+{# Virtual Folder Creator Modal #}
+<div id="cs-vf-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:10000;align-items:center;justify-content:center;">
+    <div style="background:#1a1a1a;border:1px solid #444;border-radius:12px;padding:24px;width:min(460px,95vw);max-height:85vh;overflow-y:auto;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <h4 style="margin:0;color:#fff;font-size:16px;">Create Decypharr Virtual Folder</h4>
+            <button onclick="csVfClose()" style="background:none;border:none;color:#aaa;font-size:20px;cursor:pointer;">&times;</button>
+        </div>
+        <div class="vm-divider"></div>
+
+        <div class="section-label" style="margin-top:12px;">Mode</div>
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer;">
+            <input type="radio" name="cs-vf-mode" id="cs-vf-combined" value="combined" onchange="csVfToggleMode()"> One folder for all selected tags
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 0;cursor:pointer;">
+            <input type="radio" name="cs-vf-mode" id="cs-vf-per-tag" value="per_tag" onchange="csVfToggleMode()"> One folder per tag (folder name = tag name)
+        </label>
+
+        <div id="cs-vf-name-row" style="margin-top:12px;">
+            <div class="section-label">Folder Name</div>
+            <input type="text" id="cs-vf-name" placeholder="e.g. SciFi" style="width:100%;padding:8px 10px;background:#111;color:#fff;border:1px solid #444;border-radius:6px;font-size:13px;margin-top:6px;box-sizing:border-box;">
+        </div>
+
+        <div class="section-label" style="margin-top:16px;">Tags</div>
+        <div id="cs-vf-tags" style="margin-top:6px;max-height:160px;overflow-y:auto;border:1px solid #333;border-radius:6px;padding:8px 12px;"></div>
+
+        <div style="display:flex;gap:10px;margin-top:20px;justify-content:flex-end;">
+            <button onclick="csVfClose()" style="background:#333;color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;">Cancel</button>
+            <button id="cs-vf-submit" onclick="csVfSubmit()" style="background:#e8651a;color:#fff;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-weight:600;">Create</button>
+        </div>
+    </div>
+</div>
+
 {% else %}
     <p>No Content Sources configured or invalid configuration.</p>
 {% endif %}

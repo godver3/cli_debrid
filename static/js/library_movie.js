@@ -564,6 +564,20 @@ function createFileRow(file, rowNumber, movie) {
             ${isMissingFromPlex ? `<span class="episode-broken-badge" title="Collected/Upgrading but missing from Plex (no ms_item_id)">Broken</span>` : ''}
             <span class="file-version">${version}</span>
             ${sizeText ? `<span class="file-version">${sizeText}</span>` : ''}
+            ${(() => {
+                const at = file.ms_audio_track;
+                if (!at) return '';
+                const langs = at.split(',').map(l => l.trim()).filter(Boolean);
+                const label = langs.length > 1 ? `${langs[0]} +${langs.length - 1}` : langs[0];
+                return `<span class="episode-track-badge" title="${langs.join(', ')}"><i class="fa-solid fa-volume-high"></i> ${label}</span>`;
+            })()}
+            ${(() => {
+                const st = file.ms_subtitle_track;
+                if (!st) return '';
+                const langs = st.split(',').map(l => l.trim()).filter(Boolean);
+                const label = langs.length > 1 ? `${langs[0]} +${langs.length - 1}` : langs[0];
+                return `<span class="episode-track-badge" title="${langs.join(', ')}"><i class="fa-solid fa-closed-captioning"></i> ${label}</span>`;
+            })()}
             <span>•</span>
             <span>${statusLabel}: ${statusValue}</span>
         </div>
@@ -659,6 +673,34 @@ function createFileRow(file, rowNumber, movie) {
             }
         });
         actions.appendChild(notWantedBtn);
+    }
+
+    // Subtitle download button — only for collected files
+    if (file.state === 'Collected') {
+        const downsubBtn = document.createElement('button');
+        downsubBtn.className = 'file-action-btn';
+        downsubBtn.title = 'Download Subtitles';
+        downsubBtn.dataset.fileId = file.id;
+        downsubBtn.style.cssText = `
+            display: flex; align-items: center; justify-content: center;
+            padding: 0.5rem; background: transparent;
+            border: 1px solid rgba(255,255,255,0.2); border-radius: 0.375rem;
+            color: rgba(255,255,255,0.7); cursor: pointer; transition: all 0.2s ease; gap: 2px;
+        `;
+        downsubBtn.innerHTML = `<i class="fa-solid fa-closed-captioning" style="font-size:14px;"></i><i class="fa-solid fa-arrow-down" style="font-size:8px;vertical-align:middle;"></i>`;
+        downsubBtn.addEventListener('click', async () => {
+            downsubBtn.disabled = true;
+            try {
+                const resp = await fetch(`/library/download_subtitles/item/${file.id}`, {method: 'POST'});
+                const result = await resp.json();
+                showPopup({ type: result.success ? window.POPUP_TYPES.SUCCESS : window.POPUP_TYPES.ERROR, message: result.success ? result.message : (result.error || 'Failed'), autoClose: 4000 });
+            } catch(e) {
+                showPopup({ type: window.POPUP_TYPES.ERROR, message: 'Error starting subtitle download', autoClose: 4000 });
+            } finally {
+                downsubBtn.disabled = false;
+            }
+        });
+        actions.appendChild(downsubBtn);
     }
 
     // Individual file delete button - only for admins
@@ -1087,6 +1129,67 @@ function showVersionModal(versions) {
         if (versions.length === 1) row.classList.add('checked');
     });
 
+    // Folder dropdown — symlink mode only (always movie type here)
+    const folderContainer = document.createElement('div');
+    folderContainer.id = 'request-folder-container';
+    versionCheckboxes.appendChild(folderContainer);
+    (async () => {
+        try {
+            const fRes = await fetch('/scraper/get_symlink_folders');
+            const fData = await fRes.json();
+            if (!fData.enabled || !fData.folders || !fData.folders.length) return;
+            const fs = fData.folder_settings || {};
+            const genreStr = (movieData.genres || '').toLowerCase();
+            const isAnime = genreStr.includes('anime') || genreStr.includes('animation');
+            const isDoc = genreStr.includes('documentary');
+            let autoFolder = (isAnime && fs.enable_separate_anime_folders) ? fs.anime_movies_folder_name
+                : (isDoc && fs.enable_separate_documentary_folders) ? fs.documentary_movies_folder_name
+                : fs.movies_folder_name;
+            const filtered = fData.folders.filter(f => {
+                if (f.is_custom) return true;
+                const n = f.name.toLowerCase();
+                return n.includes('movie') || n === (fs.movies_folder_name||'').toLowerCase();
+            });
+            if (!filtered.length) return;
+            const divEl = document.createElement('div'); divEl.className = 'vm-divider'; folderContainer.appendChild(divEl);
+            const lbl = document.createElement('div'); lbl.className = 'section-label'; lbl.textContent = 'Folder'; folderContainer.appendChild(lbl);
+            const sel = document.createElement('select'); sel.id = 'request-folder-select';
+            sel.style.cssText = 'width:100%;padding:8px 10px;background:#1a1a1a;color:#fff;border:1px solid #333;border-radius:6px;font-size:12px;margin-top:4px;';
+            filtered.forEach(f => { const o = document.createElement('option'); o.value = f.name; o.dataset.isCustom = f.is_custom ? 'true' : 'false'; o.textContent = f.is_custom ? `${f.name} (${fs.movies_folder_name})` : f.name; if (f.name === autoFolder) o.selected = true; sel.appendChild(o); });
+            folderContainer.appendChild(sel);
+        } catch(e) {}
+    })();
+
+    // Tags multi-select — Plex mode only
+    const tagsContainer = document.createElement('div');
+    tagsContainer.id = 'request-tags-container';
+    versionCheckboxes.appendChild(tagsContainer);
+    (async () => {
+        try {
+            const cfgR = await fetch('/settings/api/config');
+            const cfgD = await cfgR.json();
+            const globalTags = (cfgD['Tags'] || {})['tags_list'] || [];
+            const fileMode = (cfgD['File Management'] || {})['file_collection_management'] || '';
+            if (fileMode !== 'Plex' || !globalTags.length) return;
+            const div2 = document.createElement('div'); div2.className = 'vm-divider'; tagsContainer.appendChild(div2);
+            const lbl2 = document.createElement('div'); lbl2.className = 'section-label'; lbl2.textContent = 'Tags'; tagsContainer.appendChild(lbl2);
+            const pillWrap2 = document.createElement('div');
+            pillWrap2.id = 'request-tags-pills';
+            pillWrap2.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;';
+            globalTags.forEach(tag => {
+                const pill = document.createElement('div');
+                pill.className = 'option-row';
+                pill.dataset.value = tag;
+                pill.dataset.type = 'tag';
+                pill.style.cssText = 'padding:5px 14px;border-radius:14px;cursor:pointer;font-size:12px;flex:none;';
+                pill.innerHTML = `<span class="option-label">${tag}</span>`;
+                pill.addEventListener('click', () => pill.classList.toggle('checked'));
+                pillWrap2.appendChild(pill);
+            });
+            tagsContainer.appendChild(pillWrap2);
+        } catch(e) {}
+    })();
+
     // Show modal
     modal.style.display = 'flex';
 
@@ -1105,6 +1208,14 @@ function showVersionModal(versions) {
             });
             return;
         }
+
+        const folderSelect = document.getElementById('request-folder-select');
+        const selectedFolder = folderSelect ? folderSelect.value : null;
+        const selectedFolderIsCustom = folderSelect ? (folderSelect.options[folderSelect.selectedIndex]?.dataset?.isCustom === 'true') : false;
+        if (selectedFolder) { window._requestSelectedFolder = selectedFolder; window._requestSelectedFolderIsCustom = selectedFolderIsCustom; }
+        else { window._requestSelectedFolder = null; window._requestSelectedFolderIsCustom = false; }
+        const _tp4 = document.querySelectorAll('#request-tags-pills .option-row.checked[data-type="tag"]');
+        window._requestSelectedTags = _tp4.length ? Array.from(_tp4).map(p=>p.dataset.value).join(',') : null;
 
         await submitRequest(selectedVersions);
         modal.style.display = 'none';
@@ -1139,17 +1250,25 @@ async function submitRequest(selectedVersions) {
     try {
         Loading.show('Requesting movie...');
 
+        const reqBody = {
+            id: movieData.tmdb_id,
+            mediaType: 'movie',
+            title: movieData.title,
+            versions: selectedVersions
+        };
+        if (window._requestSelectedFolder) {
+            reqBody.selected_folder = window._requestSelectedFolder;
+            reqBody.selected_folder_is_custom = window._requestSelectedFolderIsCustom || false;
+        }
+        if (window._requestSelectedTags) {
+            reqBody.selected_tags = window._requestSelectedTags;
+        }
         const response = await fetch('/content/request', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                id: movieData.tmdb_id,
-                mediaType: 'movie',
-                title: movieData.title,
-                versions: selectedVersions
-            })
+            body: JSON.stringify(reqBody)
         });
 
         const data = await response.json();

@@ -591,6 +591,11 @@
         } else {
             newItem.innerHTML = `
                 <input type="text" id="${uniqueId}" class="filter-term" placeholder="Term">
+                <select class="filter-source">
+                    <option value="both" selected>Both</option>
+                    <option value="nzb">NZB</option>
+                    <option value="debrid">Debrid</option>
+                </select>
                 <button type="button" class="remove-filter">Remove</button>
             `;
         }
@@ -1073,10 +1078,15 @@ document.addEventListener('scrapingContentLoaded', function() {
             <button type="button" class="add-filter-btn" data-version-id="{{ version }}" data-filter-type="filter_in">Add Filter In</button>
             <div class="filter-list" data-version="{{ version }}" data-filter-type="filter_in">
                 {% for filter in config.filter_in %}
+                {% set pattern = filter.pattern if filter is mapping else filter %}
+                {% set source = filter.source if filter is mapping else 'both' %}
                 <div class="filter-item">
-                    <input type="text" class="filter-term" value="{{ filter }}"
-                            data-section="Scraping"
-                            data-key="versions.{{ version }}.filter_in.{{ loop.index0 }}">
+                    <input type="text" class="filter-term" value="{{ pattern }}">
+                    <select class="filter-source">
+                        <option value="both" {% if source == 'both' %}selected{% endif %}>Both</option>
+                        <option value="nzb" {% if source == 'nzb' %}selected{% endif %}>NZB</option>
+                        <option value="debrid" {% if source == 'debrid' %}selected{% endif %}>Debrid</option>
+                    </select>
                     <button type="button" class="remove-filter">Remove</button>
                 </div>
                 {% endfor %}
@@ -1084,10 +1094,15 @@ document.addEventListener('scrapingContentLoaded', function() {
             <button type="button" class="add-filter-btn" data-version-id="{{ version }}" data-filter-type="filter_out">Add Filter Out</button>
             <div class="filter-list" data-version="{{ version }}" data-filter-type="filter_out">
                 {% for filter in config.filter_out %}
+                {% set pattern = filter.pattern if filter is mapping else filter %}
+                {% set source = filter.source if filter is mapping else 'both' %}
                 <div class="filter-item">
-                    <input type="text" class="filter-term" value="{{ filter }}"
-                            data-section="Scraping"
-                            data-key="versions.{{ version }}.filter_out.{{ loop.index0 }}">
+                    <input type="text" class="filter-term" value="{{ pattern }}">
+                    <select class="filter-source">
+                        <option value="both" {% if source == 'both' %}selected{% endif %}>Both</option>
+                        <option value="nzb" {% if source == 'nzb' %}selected{% endif %}>NZB</option>
+                        <option value="debrid" {% if source == 'debrid' %}selected{% endif %}>Debrid</option>
+                    </select>
                     <button type="button" class="remove-filter">Remove</button>
                 </div>
                 {% endfor %}

@@ -302,7 +302,7 @@ def _calculate_match_score(filename: str, ptt_data: dict, version_name: str, ver
         f"{ptt_data.get('group','')}"
     )
     for term_obj in version_config.get("filter_out", []):
-        term = str(term_obj) 
+        term = term_obj['pattern'] if isinstance(term_obj, dict) else str(term_obj)
         if smart_search(term, combined_text_for_filter_out):
             term_display = (term[:15] + '...') if len(term) > 18 else term
             details = f"DQ: filter_out '{term_display}'"
@@ -326,7 +326,7 @@ def _calculate_match_score(filename: str, ptt_data: dict, version_name: str, ver
         found_mandatory_filter_in = False
         matched_filter_in_term_for_log = ""
         for term_obj in filter_in_terms:
-            term = str(term_obj)
+            term = term_obj['pattern'] if isinstance(term_obj, dict) else str(term_obj)
             if any(smart_search(term, field_val) for field_val in ptt_matchable_fields_str):
                 found_mandatory_filter_in = True
                 matched_filter_in_term_for_log = term # For logging

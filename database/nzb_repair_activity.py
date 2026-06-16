@@ -7,6 +7,13 @@ logger = logging.getLogger(__name__)
 
 _PRUNE_DAYS = 90
 
+# Max repair attempts before giving up (requires manual intervention)
+MAX_REPAIR_ATTEMPTS = 3
+
+# Backoff formula: BASE_BACKOFF_HOURS * 2^(attempts-1), capped at MAX_BACKOFF_HOURS
+BASE_BACKOFF_HOURS = 1
+MAX_BACKOFF_HOURS = 24
+
 
 def create_nzb_repair_activity_table() -> None:
     conn = get_db_connection()
@@ -25,6 +32,9 @@ def create_nzb_repair_activity_table() -> None:
                 replacement_title    TEXT,
                 outcome              TEXT NOT NULL DEFAULT 'unknown',
                 triggered_by         TEXT NOT NULL DEFAULT 'scheduled',
+                repair_attempts      INTEGER DEFAULT 0,
+                last_repair_at       TIMESTAMP,
+                next_repair_at       TIMESTAMP,
                 created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE INDEX IF NOT EXISTS idx_nzb_repair_created
@@ -33,7 +43,22 @@ def create_nzb_repair_activity_table() -> None:
                 ON nzb_repair_activity (outcome);
             CREATE INDEX IF NOT EXISTS idx_nzb_repair_item
                 ON nzb_repair_activity (item_id);
+            CREATE INDEX IF NOT EXISTS idx_nzb_repair_broken_id
+                ON nzb_repair_activity (broken_nzb_id);
         """)
+        # Migrate existing tables that lack the new columns
+        try:
+            conn.execute("ALTER TABLE nzb_repair_activity ADD COLUMN repair_attempts INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE nzb_repair_activity ADD COLUMN last_repair_at TIMESTAMP")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE nzb_repair_activity ADD COLUMN next_repair_at TIMESTAMP")
+        except Exception:
+            pass
         conn.commit()
     except Exception as e:
         logger.warning(f"[NZBRepair] Could not create activity table: {e}")
@@ -54,19 +79,24 @@ def log_repair_activity(
     replacement_title: str = None,
     outcome: str,
     triggered_by: str = 'scheduled',
+    repair_attempts: int = 0,
+    next_repair_at=None,
 ) -> None:
-    """outcome: 'replaced' | 'not_found' | 'plex_deleted' | 'error'"""
+    """outcome: 'replaced' | 'not_found' | 'no_replacement' | 'submission_failed' |
+                'plex_deleted' | 'error' | 'skipped_backoff' | 'skipped_max_attempts'"""
     try:
+        from datetime import datetime as _dt
+        now = _dt.utcnow().strftime('%Y-%m-%d %H:%M:%S')
         conn = get_db_connection()
         conn.execute(
             """INSERT INTO nzb_repair_activity
                (item_id, title, media_type, season_number, episode_number,
                 broken_nzb_id, broken_nzb_title, replacement_nzb_id, replacement_title,
-                outcome, triggered_by)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                outcome, triggered_by, repair_attempts, last_repair_at, next_repair_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (item_id, title, media_type, season_number, episode_number,
              broken_nzb_id, broken_nzb_title, replacement_nzb_id, replacement_title,
-             outcome, triggered_by),
+             outcome, triggered_by, repair_attempts, now, next_repair_at),
         )
         conn.commit()
         conn.execute(
@@ -76,6 +106,55 @@ def log_repair_activity(
         conn.close()
     except Exception as e:
         logger.debug(f"[NZBRepair] log_repair_activity error: {e}")
+
+
+def get_repair_state(broken_nzb_id: str) -> dict:
+    """Return repair state for a broken NZB ID: attempts count, last attempt time, next allowed time."""
+    if not broken_nzb_id:
+        return {'attempts': 0, 'last_repair_at': None, 'next_repair_at': None, 'give_up': False}
+    try:
+        conn = get_db_connection()
+        row = conn.execute(
+            """SELECT repair_attempts, last_repair_at, next_repair_at
+               FROM nzb_repair_activity
+               WHERE broken_nzb_id = ?
+               ORDER BY created_at DESC LIMIT 1""",
+            (broken_nzb_id,),
+        ).fetchone()
+        conn.close()
+        if not row:
+            return {'attempts': 0, 'last_repair_at': None, 'next_repair_at': None, 'give_up': False}
+        attempts = row[0] or 0
+        return {
+            'attempts': attempts,
+            'last_repair_at': row[1],
+            'next_repair_at': row[2],
+            'give_up': attempts >= MAX_REPAIR_ATTEMPTS,
+        }
+    except Exception as e:
+        logger.debug(f"[NZBRepair] get_repair_state error: {e}")
+        return {'attempts': 0, 'last_repair_at': None, 'next_repair_at': None, 'give_up': False}
+
+
+def calculate_next_repair_at(attempts: int) -> str:
+    """Calculate next_repair_at timestamp using exponential backoff."""
+    from datetime import datetime as _dt, timedelta as _td
+    backoff_hours = min(BASE_BACKOFF_HOURS * (2 ** max(0, attempts - 1)), MAX_BACKOFF_HOURS)
+    next_at = _dt.utcnow() + _td(hours=backoff_hours)
+    return next_at.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def is_in_backoff(broken_nzb_id: str) -> bool:
+    """Return True if this broken NZB is still in backoff period (too soon to retry)."""
+    state = get_repair_state(broken_nzb_id)
+    if not state['next_repair_at']:
+        return False
+    try:
+        from datetime import datetime as _dt
+        next_at = _dt.strptime(state['next_repair_at'], '%Y-%m-%d %H:%M:%S')
+        return _dt.utcnow() < next_at
+    except Exception:
+        return False
 
 
 def get_repair_activity(limit: int = 100, offset: int = 0, outcome: str = None):
@@ -117,12 +196,17 @@ def get_repair_stats(days: int = 30) -> dict:
         return {
             'replaced': stats.get('replaced', 0),
             'not_found': stats.get('not_found', 0),
+            'no_replacement': stats.get('no_replacement', 0),
+            'submission_failed': stats.get('submission_failed', 0),
             'plex_deleted': stats.get('plex_deleted', 0),
+            'skipped_backoff': stats.get('skipped_backoff', 0),
+            'skipped_max_attempts': stats.get('skipped_max_attempts', 0),
             'error': stats.get('error', 0),
             'total': sum(stats.values()),
         }
     except Exception as e:
         logger.debug(f"[NZBRepair] get_repair_stats error: {e}")
-        return {'replaced': 0, 'not_found': 0, 'plex_deleted': 0, 'error': 0, 'total': 0}
+        return {k: 0 for k in ('replaced', 'not_found', 'no_replacement', 'submission_failed',
+                                'plex_deleted', 'skipped_backoff', 'skipped_max_attempts', 'error', 'total')}
     finally:
         conn.close()

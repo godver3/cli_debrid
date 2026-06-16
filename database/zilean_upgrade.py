@@ -497,8 +497,10 @@ def _apply_version_hard_filters(candidates: List[Dict], version_settings: Dict) 
 
     max_resolution = version_settings.get('max_resolution', '1080p') or '1080p'
     resolution_wanted = version_settings.get('resolution_wanted', '==') or '=='
-    filter_in_patterns  = version_settings.get('filter_in',  []) or []
-    filter_out_patterns = version_settings.get('filter_out', []) or []
+    def _pat(item):
+        return item['pattern'] if isinstance(item, dict) else item
+    filter_in_patterns  = [_pat(x) for x in (version_settings.get('filter_in',  []) or [])]
+    filter_out_patterns = [_pat(x) for x in (version_settings.get('filter_out', []) or [])]
 
     # Nothing to filter — skip the loop entirely (2160p/<= is the most permissive combination)
     if not filter_in_patterns and not filter_out_patterns and max_resolution == '2160p' and resolution_wanted == '<=':

@@ -209,8 +209,13 @@ def get_show_data(imdb_id: str) -> Optional[dict]:
 
     # Aliases
     slug = show_data.get('ids', {}).get('slug')
+    tmdb_id = show_data.get('ids', {}).get('tmdb')
+    trakt_title = show_data.get('title', '')
     if slug:
-        aliases = get_show_aliases(slug)
+        aliases = get_show_aliases(slug) or {}
+        # Enrich with TMDB alternative titles + primary TMDB title if different from Trakt
+        tmdb_alts = _fetch_tmdb_alternative_titles(tmdb_id, 'tv', trakt_title)
+        aliases = _merge_tmdb_aliases(aliases, tmdb_alts)
         if aliases:
             show_data['aliases'] = aliases
 
@@ -294,8 +299,13 @@ def get_movie_data(imdb_id: str) -> Optional[dict]:
         return None
 
     slug = data.get('ids', {}).get('slug')
+    tmdb_id = data.get('ids', {}).get('tmdb')
+    trakt_title = data.get('title', '')
     if slug:
-        aliases = get_movie_aliases(slug)
+        aliases = get_movie_aliases(slug) or {}
+        # Enrich with TMDB alternative titles + primary TMDB title if different from Trakt
+        tmdb_alts = _fetch_tmdb_alternative_titles(tmdb_id, 'movie', trakt_title)
+        aliases = _merge_tmdb_aliases(aliases, tmdb_alts)
         if aliases:
             data['aliases'] = aliases
 
@@ -304,6 +314,70 @@ def get_movie_data(imdb_id: str) -> Optional[dict]:
             data['release_dates'] = releases
 
     return data
+
+
+def _fetch_tmdb_alternative_titles(tmdb_id, media_type: str, trakt_title: str = '') -> dict:
+    """Fetch English alternative titles from TMDB and return as {country: [titles]} dict.
+
+    Also includes the TMDB primary title if it differs from the Trakt title
+    (e.g. Trakt has "187" but TMDB has "One Eight Seven").
+
+    Backwards-compatible: returns empty dict on any failure (missing API key,
+    network error, TMDB unavailable). Never raises.
+    media_type: 'movie' or 'tv'
+    """
+    try:
+        from utilities.settings import get_setting as _gs
+        api_key = _gs('TMDB', 'api_key', '')
+        if not api_key or not tmdb_id:
+            return {}
+        result: defaultdict = defaultdict(list)
+
+        # Single TMDB call with append_to_response for efficiency
+        url = (f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}"
+               f"?api_key={api_key}&append_to_response=alternative_titles")
+        resp = requests.get(url, timeout=REQUEST_TIMEOUT)
+        if resp.status_code != 200:
+            return {}
+        data = resp.json()
+
+        # Primary TMDB title — add as 'us' alias if different from Trakt title
+        for field in ('title', 'name'):
+            tmdb_title = data.get(field, '')
+            if tmdb_title and tmdb_title.lower() != (trakt_title or '').lower():
+                result['us'].append(tmdb_title)
+                break
+
+        # Alternative titles — movies use 'titles', TV shows use 'results'
+        alt_data = data.get('alternative_titles') or {}
+        items = alt_data.get('titles') or alt_data.get('results') or []
+        for item in items:
+            iso = (item.get('iso_3166_1') or '').lower()
+            title = item.get('title') or item.get('name') or ''
+            if title and iso:
+                result[iso].append(title)
+
+        return dict(result)
+    except Exception:
+        return {}
+
+
+def _merge_tmdb_aliases(aliases: dict, tmdb_alts: dict) -> dict:
+    """Merge TMDB alternative titles into existing Trakt aliases dict.
+
+    Only adds titles not already present. Returns merged dict.
+    Backwards-compatible: if tmdb_alts is empty, returns aliases unchanged.
+    """
+    if not tmdb_alts:
+        return aliases
+    merged: defaultdict = defaultdict(list, {k: list(v) for k, v in aliases.items()})
+    for country, titles in tmdb_alts.items():
+        existing_lower = {t.lower() for t in merged[country]}
+        for title in titles:
+            if title and title.lower() not in existing_lower:
+                merged[country].append(title)
+                existing_lower.add(title.lower())
+    return dict(merged)
 
 
 def get_movie_aliases(slug: str) -> Optional[dict]:

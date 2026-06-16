@@ -10,6 +10,7 @@ from queues.checking_queue import CheckingQueue
 from datetime import datetime, timezone
 from queues.media_matcher import MediaMatcher
 import logging
+from usenet import get_usenet_provider_display_name as _usenet_pname
 from cli_battery.app.direct_api import DirectAPI
 from cli_battery.app import trakt_client
 import os
@@ -597,7 +598,7 @@ def prepare_manual_assignment():
                     update_media_item_state(item_id, 'Adding')
                     logging.info(f'[NZB] Item {item_id} placed in Adding queue for health check (checking_id={checking_id})')
                 _nzb_redirect = f'/library/show/{tmdb_id}' if tmdb_id else '/library'
-                return jsonify({'success': True, 'message': f'NZB file submitted to Decypharr (job: {job_id}). Tracking through queue.',
+                return jsonify({'success': True, 'message': f'NZB file submitted to {_usenet_pname()} (job: {job_id}). Tracking through queue.',
                                 'job_id': job_id, 'provider': 'Decypharr', 'redirect_url': _nzb_redirect})
             else:
                 # NZB URL — use full _add_nzb_to_usenet flow then add redirect_url

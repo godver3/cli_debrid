@@ -63,13 +63,18 @@ def request_content():
         media_type = data.get('mediaType', '').lower()
         selected_versions = data.get('versions', [])  # Get selected versions as a list
         selected_seasons = data.get('seasons', [])  # Get selected seasons if provided
-        
+        selected_folder = data.get('selected_folder')  # Custom folder for symlink mode
+        selected_folder_is_custom = data.get('selected_folder_is_custom', False)
+        selected_tags = data.get('selected_tags') or None  # Tags for Plex mode NZB routing
+
         # Convert selected versions to dictionary format
         versions = {version: True for version in selected_versions}
-                  
+
         logging.info(f"Received versions: {versions}")
         if selected_seasons:
             logging.info(f"Received seasons: {selected_seasons}")
+        if selected_folder:
+            logging.info(f"Received folder: {selected_folder} (custom={selected_folder_is_custom})")
 
         # Convert TMDB ID to IMDB ID with media type hint
         if media_type == 'movie':
@@ -215,6 +220,11 @@ def request_content():
         for item in all_items:
             item['content_source'] = 'content_requester'
             item['content_source_detail'] = source_detail
+            if selected_folder:
+                item['selected_folder'] = selected_folder
+                item['selected_folder_is_custom'] = selected_folder_is_custom
+            if selected_tags:
+                item['tags'] = selected_tags
 
         # Pass versions dictionary to add_wanted_items
         items_added = add_wanted_items(all_items, versions)
@@ -231,6 +241,11 @@ def request_content():
                     for item in all_items:
                         item['content_source'] = 'content_requester'
                         item['content_source_detail'] = source_detail
+                        if selected_folder:
+                            item['selected_folder'] = selected_folder
+                            item['selected_folder_is_custom'] = selected_folder_is_custom
+                        if selected_tags:
+                            item['tags'] = selected_tags
                     items_added = add_wanted_items(all_items, versions)
                     logging.info(f"After refresh, added {items_added} items for {imdb_id}")
             except Exception as e_refresh:

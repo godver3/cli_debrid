@@ -32,8 +32,14 @@ PROCESS_START_TIME = datetime.now(timezone.utc)
 # ============================================================================
 
 def is_symlinked_mode() -> bool:
-    """Check if file collection management is set to Symlinked/Local mode."""
-    return get_setting('File Management', 'file_collection_management', 'Plex') == 'Symlinked/Local'
+    """Check if file collection management is Symlinked/Local or Plex mode (both support Bazarr)."""
+    mode = get_setting('File Management', 'file_collection_management', 'Plex')
+    return mode in ('Symlinked/Local', 'Plex')
+
+
+@bazarr_bp.before_request
+def log_bazarr_request():
+    logging.debug(f"[Bazarr] {request.method} {request.path} args={dict(request.args)} json={request.get_json(silent=True)}")
 
 
 def require_bazarr_auth(f):
@@ -76,17 +82,17 @@ def generate_api_key():
 def get_collected_movies() -> List[Dict[str, Any]]:
     """Get all collected movies from the database."""
     conn = get_db_connection()
+    conn.execute('PRAGMA query_only = ON')
     try:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, imdb_id, tmdb_id, title, year, file_path,
                    location_on_disk, genres, runtime, collected_at, version,
-                   filled_by_file, resolution
+                   filled_by_file, resolution, size
             FROM media_items
             WHERE state = 'Collected'
             AND type = 'movie'
             AND (file_path IS NOT NULL OR location_on_disk IS NOT NULL)
-            ORDER BY title
         """)
 
         movies = []
@@ -104,7 +110,8 @@ def get_collected_movies() -> List[Dict[str, Any]]:
                 'collected_at': row[9],
                 'version': row[10],
                 'filled_by_file': row[11],
-                'resolution': row[12]
+                'resolution': row[12],
+                'size': row[13]
             })
         return movies
     finally:
@@ -114,6 +121,7 @@ def get_collected_movies() -> List[Dict[str, Any]]:
 def get_collected_series() -> List[Dict[str, Any]]:
     """Get all collected TV series from the database (grouped by show)."""
     conn = get_db_connection()
+    conn.execute('PRAGMA query_only = ON')
     try:
         cursor = conn.cursor()
         # Get unique shows with their metadata
@@ -126,7 +134,6 @@ def get_collected_series() -> List[Dict[str, Any]]:
             AND type = 'episode'
             AND (file_path IS NOT NULL OR location_on_disk IS NOT NULL)
             GROUP BY COALESCE(imdb_id, tmdb_id), title
-            ORDER BY title
         """)
 
         series_list = []
@@ -148,19 +155,19 @@ def get_collected_series() -> List[Dict[str, Any]]:
 def get_episodes_for_series(show_id: str) -> List[Dict[str, Any]]:
     """Get all collected episodes for a specific series."""
     conn = get_db_connection()
+    conn.execute('PRAGMA query_only = ON')
     try:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, imdb_id, tmdb_id, title, episode_title, year,
                    season_number, episode_number, file_path,
                    location_on_disk, collected_at, version,
-                   filled_by_file, resolution
+                   filled_by_file, resolution, size
             FROM media_items
             WHERE state = 'Collected'
             AND type = 'episode'
             AND (imdb_id = ? OR tmdb_id = ?)
             AND (file_path IS NOT NULL OR location_on_disk IS NOT NULL)
-            ORDER BY season_number, episode_number
         """, (show_id, show_id))
 
         episodes = []
@@ -179,7 +186,48 @@ def get_episodes_for_series(show_id: str) -> List[Dict[str, Any]]:
                 'collected_at': row[10],
                 'version': row[11],
                 'filled_by_file': row[12],
-                'resolution': row[13]
+                'resolution': row[13],
+                'size': row[14]
+            })
+        return episodes
+    finally:
+        conn.close()
+
+
+def get_all_collected_episodes() -> List[Dict[str, Any]]:
+    """Get all collected episodes in one query for bulk series listing."""
+    conn = get_db_connection()
+    conn.execute('PRAGMA query_only = ON')
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, imdb_id, tmdb_id, title, episode_title, year,
+                   season_number, episode_number, file_path,
+                   location_on_disk, collected_at, version,
+                   filled_by_file, resolution, size
+            FROM media_items
+            WHERE state = 'Collected'
+            AND type = 'episode'
+            AND (file_path IS NOT NULL OR location_on_disk IS NOT NULL)
+        """)
+        episodes = []
+        for row in cursor.fetchall():
+            episodes.append({
+                'id': row[0],
+                'imdb_id': row[1],
+                'tmdb_id': row[2],
+                'title': row[3],
+                'episode_title': row[4],
+                'year': row[5],
+                'season_number': row[6],
+                'episode_number': row[7],
+                'file_path': row[8],
+                'location_on_disk': row[9],
+                'collected_at': row[10],
+                'version': row[11],
+                'filled_by_file': row[12],
+                'resolution': row[13],
+                'size': row[14]
             })
         return episodes
     finally:
@@ -343,19 +391,51 @@ def generate_tvdb_id(tmdb_id: Any, title: str, episode_info: Optional[Dict[str, 
     return int(hashlib.md5(base.encode()).hexdigest()[:8], 16)
 
 
+def _get_mount_base() -> str:
+    """No remapping — return empty so paths are passed through as-is from DB."""
+    return ''
+
+
+def _remap_plex_path(path: str) -> str:
+    """Replace the /debrid prefix in DB paths with the actual mount path."""
+    if not path:
+        return path
+    mount_base = _get_mount_base()
+    if not mount_base:
+        return path
+    # DB paths look like /debrid/movies/... or /debrid/shows/...
+    # Split off /debrid and replace with mount_base
+    parts = path.split('/', 3)  # ['', 'debrid', 'movies'|'shows', 'rest']
+    if len(parts) >= 3 and parts[1] == 'debrid':
+        return mount_base + '/' + '/'.join(parts[2:])
+    return path
+
+
 def get_file_path(item: Dict[str, Any]) -> str:
-    """Get the best available file path for an item."""
-    return item.get('location_on_disk') or item.get('file_path') or ''
+    """Get the full file path for an item.
+    Uses same logic as downsub: location_on_disk joined with filled_by_file if not already ending with it.
+    """
+    location = (item.get('location_on_disk') or item.get('file_path') or '').rstrip('/')
+    filled_by_file = (item.get('filled_by_file') or '').strip()
+    if location and filled_by_file:
+        if not location.endswith('/' + filled_by_file):
+            full_path = location + '/' + filled_by_file
+        else:
+            full_path = location
+    else:
+        full_path = location
+    return _remap_plex_path(full_path)
 
 
-def get_file_size(file_path: str) -> int:
-    """Get file size in bytes, returns 0 if file doesn't exist."""
+def get_file_size(file_path: str, db_size: int = None) -> int:
+    """Get file size in bytes. Uses DB size when available to avoid FUSE stat calls."""
+    if db_size:
+        return db_size
     try:
         if file_path and os.path.exists(file_path):
             return os.path.getsize(file_path)
     except Exception:
         pass
-    # Return a reasonable default size (1GB for movies, 500MB for episodes)
     return 1073741824  # 1GB default
 
 
@@ -454,12 +534,15 @@ def create_media_info(parsed: Dict[str, Any], file_path: str = '') -> Dict[str, 
     }
 
 
-def create_movie_resource(item: Dict[str, Any]) -> Dict[str, Any]:
+def create_movie_resource(item: Dict[str, Any], full: bool = False) -> Dict[str, Any]:
     """Create a Radarr-compatible MovieResource from database item."""
-    tmdb_id = int(item.get('tmdb_id') or 0) if item.get('tmdb_id') else 0
+    try:
+        tmdb_id = int(item.get('tmdb_id') or 0)
+    except (ValueError, TypeError):
+        tmdb_id = 0
     movie_id = tmdb_id or generate_unique_id(item.get('id'), 'movie')
     file_path = get_file_path(item)
-    file_size = get_file_size(file_path)
+    file_size = get_file_size(file_path, item.get('size'))
 
     collected_at = item.get('collected_at')
     if isinstance(collected_at, str):
@@ -472,16 +555,19 @@ def create_movie_resource(item: Dict[str, Any]) -> Dict[str, Any]:
 
     movie_file_id = generate_unique_id(item.get('id'), 'moviefile')
     quality = detect_quality_from_version(item.get('version', ''))
-
-    # Parse media info from filename
     filename = item.get('filled_by_file', '') or os.path.basename(file_path)
-    media_info_parsed = parse_media_info(filename, item.get('version', ''))
-    media_info = create_media_info(media_info_parsed, file_path)
 
-    # Use database resolution if available, otherwise from parsed
-    db_resolution = item.get('resolution', '')
-    if db_resolution:
-        media_info['resolution'] = db_resolution
+    # Skip expensive media info parsing for list endpoint
+    if full:
+        media_info_parsed = parse_media_info(filename, item.get('version', ''))
+        media_info = create_media_info(media_info_parsed, file_path)
+        db_resolution = item.get('resolution', '')
+        if db_resolution:
+            media_info['resolution'] = db_resolution
+        release_group = media_info_parsed.get('release_group', '')
+    else:
+        media_info = {'subtitles': ''}
+        release_group = ''
 
     # Build movie file object
     movie_file = {
@@ -494,7 +580,7 @@ def create_movie_resource(item: Dict[str, Any]) -> Dict[str, Any]:
         'quality': quality,
         'languages': [{'id': 1, 'name': 'English'}],
         'sceneName': filename,
-        'releaseGroup': media_info_parsed.get('release_group', ''),
+        'releaseGroup': release_group,
         'mediaInfo': media_info
     }
 
@@ -509,7 +595,7 @@ def create_movie_resource(item: Dict[str, Any]) -> Dict[str, Any]:
         'year': item.get('year') or 0,
         'hasFile': True,
         'movieFileId': movie_file_id,
-        'path': os.path.dirname(file_path) if file_path else '',
+        'path': os.path.dirname(file_path),
         'qualityProfileId': 1,
         'monitored': True,
         'minimumAvailability': 'released',
@@ -533,7 +619,10 @@ def create_movie_resource(item: Dict[str, Any]) -> Dict[str, Any]:
 
 def create_series_resource(item: Dict[str, Any], episodes: List[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Create a Sonarr-compatible SeriesResource from database item."""
-    tmdb_id = int(item.get('tmdb_id') or 0) if item.get('tmdb_id') else 0
+    try:
+        tmdb_id = int(item.get('tmdb_id') or 0)
+    except (ValueError, TypeError):
+        tmdb_id = 0
     series_id = tmdb_id or generate_unique_id(item.get('show_id'), 'series')
     title = item.get('title', 'Unknown')
 
@@ -544,11 +633,11 @@ def create_series_resource(item: Dict[str, Any], episodes: List[Dict[str, Any]] 
     seasons = []
     total_size_on_disk = 0
     if episodes:
-        season_numbers = set(ep.get('season_number', 0) for ep in episodes)
+        season_numbers = set(ep.get('season_number') or 0 for ep in episodes)
         for season_num in sorted(season_numbers):
             season_episodes = [ep for ep in episodes if ep.get('season_number') == season_num]
             # Calculate size for this season
-            season_size = sum(get_file_size(get_file_path(ep)) for ep in season_episodes)
+            season_size = sum(get_file_size(get_file_path(ep), ep.get('size')) for ep in season_episodes)
             total_size_on_disk += season_size
             seasons.append({
                 'seasonNumber': season_num,
@@ -675,7 +764,7 @@ def create_episode_resource(item: Dict[str, Any], series_id: int, series_title: 
 
     # Build episode file object for inclusion
     file_path = get_file_path(item)
-    file_size = get_file_size(file_path)
+    file_size = get_file_size(file_path, item.get('size'))
 
     # Parse media info from filename
     filename = item.get('filled_by_file', '') or os.path.basename(file_path)
@@ -735,7 +824,7 @@ def create_episode_file_resource(item: Dict[str, Any], series_id: int) -> Dict[s
     """Create a Sonarr-compatible EpisodeFileResource from database item."""
     episode_file_id = generate_unique_id(item.get('id'), 'episodefile')
     file_path = get_file_path(item)
-    file_size = get_file_size(file_path)
+    file_size = get_file_size(file_path, item.get('size'))
     quality = detect_quality_from_version(item.get('version', ''))
 
     collected_at = item.get('collected_at')
@@ -840,13 +929,31 @@ def health():
 @require_bazarr_auth
 def root_folder():
     """Return root folders."""
-    # Get paths from settings
-    symlink_path = get_setting('File Management', 'symlinked_files_path', '/mnt/symlinked')
-
-    folders = [
-        {'id': 1, 'path': os.path.join(symlink_path, 'Movies')},
-        {'id': 2, 'path': os.path.join(symlink_path, 'TV Shows')}
-    ]
+    mode = get_setting('File Management', 'file_collection_management', 'Plex')
+    if mode == 'Plex':
+        mount_path = ''
+        try:
+            from utilities.settings import load_config
+            import json as _json
+            cfg = load_config()
+            data_path = (cfg.get('Usenet Provider', {}).get('data_path') or '').strip()
+            if data_path:
+                dc_config_path = os.path.join(data_path, 'config.json')
+                with open(dc_config_path, 'r') as _f:
+                    dc_cfg = _json.load(_f)
+                mount_path = (dc_cfg.get('mount', {}).get('mount_path') or '').strip()
+        except Exception:
+            pass
+        folders = [
+            {'id': 1, 'path': os.path.join(mount_path, 'movies')},
+            {'id': 2, 'path': os.path.join(mount_path, 'shows')}
+        ] if mount_path else []
+    else:
+        symlink_path = get_setting('File Management', 'symlinked_files_path', '/mnt/symlinked')
+        folders = [
+            {'id': 1, 'path': os.path.join(symlink_path, 'Movies')},
+            {'id': 2, 'path': os.path.join(symlink_path, 'TV Shows')}
+        ]
 
     return jsonify(folders)
 
@@ -929,7 +1036,7 @@ def get_movie(movie_id: int):
     try:
         movie = get_movie_by_id(movie_id)
         if movie:
-            return jsonify(create_movie_resource(movie))
+            return jsonify(create_movie_resource(movie, full=True))
         return jsonify({'error': 'Movie not found'}), 404
     except Exception as e:
         logging.error(f"Error getting movie {movie_id} for Bazarr: {e}")
@@ -995,9 +1102,17 @@ def get_series():
 
     try:
         series_list = get_collected_series()
+        # Load all episodes in one query and group by show_id
+        all_episodes = get_all_collected_episodes()
+        ep_map = {}
+        for ep in all_episodes:
+            key = ep.get('imdb_id') or ep.get('tmdb_id') or ''
+            ep_map.setdefault(key, []).append(ep)
+
         result = []
         for s in series_list:
-            episodes = get_episodes_for_series(s.get('show_id', ''))
+            show_id = s.get('show_id', '')
+            episodes = ep_map.get(show_id, [])
             result.append(create_series_resource(s, episodes))
         return jsonify(result)
     except Exception as e:
@@ -1085,6 +1200,34 @@ def notifications():
 def download_clients():
     """Return download client settings."""
     return jsonify([])
+
+
+@bazarr_bp.route('/api/v3/filesystem', methods=['GET'])
+@bazarr_bp.route('/api/v3/filesystem/', methods=['GET'])
+@require_bazarr_auth
+def filesystem():
+    """Return filesystem directory listing for path browsing."""
+    path = request.args.get('path', '/')
+    include_files = request.args.get('includeFiles', 'false').lower() == 'true'
+    try:
+        if not path or path in ('', '/'):
+            # Return top-level directories
+            dirs = [{'path': '/mnt', 'name': 'mnt', 'lastModified': '2024-01-01T00:00:00Z'}]
+        else:
+            dirs = []
+            files = []
+            if os.path.isdir(path):
+                for entry in sorted(os.scandir(path), key=lambda e: e.name):
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            dirs.append({'path': entry.path, 'name': entry.name, 'lastModified': '2024-01-01T00:00:00Z'})
+                        elif include_files and entry.is_file(follow_symlinks=False):
+                            files.append({'path': entry.path, 'name': entry.name, 'lastModified': '2024-01-01T00:00:00Z', 'size': entry.stat().st_size})
+                    except Exception:
+                        continue
+        return jsonify({'directories': dirs, 'files': files if include_files else []})
+    except Exception as e:
+        return jsonify({'directories': [], 'files': [], 'error': str(e)})
 
 
 @bazarr_bp.route('/api/v3/indexer', methods=['GET'])
@@ -1194,23 +1337,27 @@ def check_signalr_auth() -> Optional[tuple]:
     Returns:
         None if authentication passes, or (response, status_code) tuple on failure
     """
-    # Bazarr integration only works in Symlinked/Local mode
     if not is_symlinked_mode():
         return jsonify({'error': 'Not found'}), 404
 
     if not get_setting('Bazarr Integration', 'enabled', False):
         return jsonify({'error': 'Not found'}), 404
 
-    # Get API key from header or query param
-    api_key = request.headers.get('X-Api-Key') or request.args.get('apikey')
-
-    if not api_key:
-        logging.warning(f"SignalR auth failed: missing API key for {request.path}")
-        return jsonify({'error': 'Unauthorized'}), 401
+    # Get API key from header, query param, or negotiate token
+    api_key = (request.headers.get('X-Api-Key')
+               or request.args.get('apikey')
+               or request.args.get('access_token'))
 
     configured_key = get_setting('Bazarr Integration', 'api_key', '')
+
+    logging.debug(f"[SignalR] auth check path={request.path} has_key={bool(api_key)} headers={dict(request.headers)} args={dict(request.args)}")
+
+    if not api_key:
+        logging.warning(f"[SignalR] auth failed: missing API key for {request.path}")
+        return jsonify({'error': 'Unauthorized'}), 401
+
     if not configured_key or api_key != configured_key:
-        logging.warning(f"SignalR auth failed: invalid API key for {request.path}")
+        logging.warning(f"[SignalR] auth failed: invalid API key for {request.path}")
         return jsonify({'error': 'Unauthorized'}), 401
 
     return None
@@ -1220,9 +1367,10 @@ def check_signalr_auth() -> Optional[tuple]:
 @bazarr_bp.route('/signalr/negotiate', methods=['GET', 'POST'])
 def signalr_negotiate():
     """Handle SignalR negotiation."""
-    auth_error = check_signalr_auth()
-    if auth_error:
-        return auth_error
+    # Bazarr's signalrcore library does not send the API key during negotiate,
+    # only check that the integration is enabled rather than validating the key here.
+    if not is_symlinked_mode() or not get_setting('Bazarr Integration', 'enabled', False):
+        return jsonify({'error': 'Not found'}), 404
 
     connection_id = f"cli_debrid-{int(time.time() * 1000)}"
 
@@ -1251,9 +1399,8 @@ def signalr_negotiate():
 @bazarr_bp.route('/signalr', methods=['GET'])
 def signalr_messages():
     """Handle SignalR message stream (WebSocket or Server-Sent Events fallback)."""
-    auth_error = check_signalr_auth()
-    if auth_error:
-        return auth_error
+    if not is_symlinked_mode() or not get_setting('Bazarr Integration', 'enabled', False):
+        return jsonify({'error': 'Not found'}), 404
 
     # Check if this is a WebSocket upgrade request
     if request.headers.get('Upgrade', '').lower() == 'websocket':
@@ -1422,7 +1569,7 @@ def test_bazarr_connection():
     # Determine status
     if not symlinked_mode:
         status = 'unavailable'
-        status_message = 'Bazarr integration requires Symlinked/Local file management mode'
+        status_message = 'Bazarr integration requires Symlinked/Local or Plex file management mode'
     elif not enabled:
         status = 'disabled'
         status_message = 'Bazarr integration is disabled'

@@ -320,6 +320,18 @@ def _refresh_show(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
         logger.warning(f"All sources returned no show data for {imdb_id}")
         return None
 
+    # Enrich aliases with TMDB alternative titles + primary TMDB title if different.
+    try:
+        from .trakt_client import _fetch_tmdb_alternative_titles, _merge_tmdb_aliases
+        tmdb_id = (show_data.get('ids') or {}).get('tmdb')
+        trakt_title = show_data.get('title', '')
+        tmdb_alts = _fetch_tmdb_alternative_titles(tmdb_id, 'tv', trakt_title)
+        if tmdb_alts:
+            existing = show_data.get('aliases') or {}
+            show_data['aliases'] = _merge_tmdb_aliases(existing, tmdb_alts)
+    except Exception as _e:
+        logger.debug(f"TMDB alias enrichment failed for {imdb_id}: {_e}")
+
     show_data.setdefault('type', 'show')
     _ensure_plex_guids_in_data(imdb_id, show_data, 'show')
     _persist_item(imdb_id, dict(show_data), session)
@@ -336,6 +348,19 @@ def _refresh_movie(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
     if not movie_data:
         logger.warning(f"All sources returned no movie data for {imdb_id}")
         return None
+
+    # Enrich aliases with TMDB alternative titles + primary TMDB title if different.
+    # Applied here so it works regardless of whether Trakt or TVDB is the primary client.
+    try:
+        from .trakt_client import _fetch_tmdb_alternative_titles, _merge_tmdb_aliases
+        tmdb_id = (movie_data.get('ids') or {}).get('tmdb')
+        trakt_title = movie_data.get('title', '')
+        tmdb_alts = _fetch_tmdb_alternative_titles(tmdb_id, 'movie', trakt_title)
+        if tmdb_alts:
+            existing = movie_data.get('aliases') or {}
+            movie_data['aliases'] = _merge_tmdb_aliases(existing, tmdb_alts)
+    except Exception as _e:
+        logger.debug(f"TMDB alias enrichment failed for {imdb_id}: {_e}")
 
     movie_data.setdefault('type', 'movie')
     _ensure_plex_guids_in_data(imdb_id, movie_data, 'movie')
