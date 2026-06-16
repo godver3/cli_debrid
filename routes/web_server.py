@@ -72,6 +72,23 @@ def inject_usenet_provider_name():
         return dict(usenet_provider_name='Decypharr')
 
 @app.context_processor
+def inject_nzbdav_categories():
+    """Expose the managed NzbDAV category list to templates.
+
+    The NzbDAV setup helper's scaffold generator (compose/rclone/union examples)
+    uses this so it lists the SAME categories cli-debrid actually submits to and
+    that repair/the check helper expect — derived from the optional
+    `Usenet Provider.nzbdav_category_map`. Keeps all category surfaces in sync.
+    """
+    try:
+        from usenet.nzbdav_client import _parse_category_map, managed_categories
+        from utilities.settings import get_setting
+        cm = _parse_category_map(get_setting('Usenet Provider', 'nzbdav_category_map', ''))
+        return dict(nzbdav_managed_categories=sorted(managed_categories(cm)))
+    except Exception:
+        return dict(nzbdav_managed_categories=[])
+
+@app.context_processor
 def inject_logo_selection():
     from utilities.settings import get_setting
     # Get the logo selection from settings
