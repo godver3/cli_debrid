@@ -2073,7 +2073,13 @@ class DeletionManager:
                         reset_usenet_client()
                         client = get_usenet_client()
                         info_hash = torrent_id[4:]  # strip 'nzb:'
-                        removed = client.remove_nzb(info_hash, item.get('filled_by_file') or item_title)
+                        # Pass location_basename (the scene release name) as the
+                        # fallback match key: it equals the provider's history entry
+                        # name and carries quality/codec, so a stale id on a migrated
+                        # item resolves to the right entry. filled_by_file is often an
+                        # opaque blob name; title is too loose.
+                        nzb_match_name = item.get('location_basename') or item.get('filled_by_file') or item_title
+                        removed = client.remove_nzb(info_hash, nzb_match_name)
                         result['debrid_removed'] = removed
                         result['debrid_nzb_removed'] = 1 if removed else 0
                         if removed:
@@ -2498,7 +2504,10 @@ class DeletionManager:
                         title = item.get('title', 'Unknown')
                         if str(tid).startswith('nzb:'):
                             if tid not in unique_nzb_ids:
-                                unique_nzb_ids[tid] = (item.get('filled_by_file') or title, title)
+                                # location_basename = scene release name = the provider's
+                                # history entry name (the exact-name fallback key).
+                                match_name = item.get('location_basename') or item.get('filled_by_file') or title
+                                unique_nzb_ids[tid] = (match_name, title)
                         elif tid not in unique_torrent_ids:
                             unique_torrent_ids[tid] = title
                 except Exception as e:
