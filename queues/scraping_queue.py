@@ -287,7 +287,7 @@ class ScrapingQueue:
                         try:
                             _sibling_nzb = _cconn.execute(
                                 "SELECT filled_by_torrent_id, filled_by_file, filled_by_magnet, "
-                                "filled_by_title, original_scraped_torrent_title "
+                                "filled_by_title, original_scraped_torrent_title, nzb_segment_id "
                                 "FROM media_items WHERE imdb_id=? AND season_number=? AND type='episode' "
                                 "AND state IN ('Adding','Checking','Collected','Upgrading') "
                                 "AND filled_by_torrent_id LIKE 'nzb:%' LIMIT 1",
@@ -301,14 +301,17 @@ class ScrapingQueue:
                             _job_url = _sibling_nzb[2] or ''
                             _job_title = _sibling_nzb[3] or ''
                             _job_orig = _sibling_nzb[4] or ''
+                            _job_seg = _sibling_nzb[5] or ''
                             logging.info(f'[NZBPack] {item_identifier}: season pack already submitted (job={_job_id}), coalescing into same job')
                             from database.database_writing import update_media_item, update_media_item_state
                             update_media_item_state(item_to_process['id'], 'Adding')
+                            _coal_seg_kwargs = {'nzb_segment_id': _job_seg} if _job_seg else {}
                             update_media_item(item_to_process['id'],
                                 filled_by_torrent_id=_job_id,
                                 filled_by_magnet=_job_url,
                                 filled_by_title=_job_title,
                                 original_scraped_torrent_title=_job_orig,
+                                **_coal_seg_kwargs,
                             )
                             self.remove_item(item_to_process)
                             return True
@@ -924,6 +927,41 @@ class ScrapingQueue:
 
                         if _is_duplicate:
                             return True
+
+                        # Block submitting a second NZB for the same episode already in Adding/Checking.
+                        # This prevents two different files for the same episode being submitted simultaneously
+                        # (e.g. a season pack and an individual episode NZB both in-flight at once).
+                        if item_to_process.get('type') == 'episode':
+                            _inf_imdb = item_to_process.get('imdb_id')
+                            _inf_sn = item_to_process.get('season_number')
+                            _inf_en = item_to_process.get('episode_number')
+                            _inf_ver = (item_to_process.get('version') or 'Default').rstrip('*')
+                            if _inf_imdb and _inf_sn is not None and _inf_en is not None:
+                                try:
+                                    from database import get_db_connection as _gdb_inf
+                                    _conn_inf = _gdb_inf()
+                                    try:
+                                        _inflight = _conn_inf.execute(
+                                            "SELECT id FROM media_items "
+                                            "WHERE imdb_id=? AND season_number=? AND episode_number=? "
+                                            "AND type='episode' AND state IN ('Adding','Checking') "
+                                            "AND REPLACE(version,'*','')=? AND id!=?",
+                                            (_inf_imdb, _inf_sn, _inf_en, _inf_ver, item_to_process['id'])
+                                        ).fetchone()
+                                    finally:
+                                        _conn_inf.close()
+                                    if _inflight:
+                                        logging.warning(
+                                            f"[ScrapingQueue] {item_identifier} already in-flight as ID {_inflight[0]} "
+                                            f"(Adding/Checking, same imdb/season/episode/version) — sending back to Wanted to avoid duplicate NZB"
+                                        )
+                                        queue_manager.move_to_wanted(item_to_process, "Scraping")
+                                        self.remove_item(item_to_process)
+                                        processed_successfully_or_moved = True
+                                        processed_count += 1
+                                        return True
+                                except Exception as _inf_err:
+                                    logging.debug(f"[ScrapingQueue] In-flight dedup check failed: {_inf_err}")
 
                         logging.info(f"Moving {item_identifier} to Adding queue with {len(filtered_results)} results")
                         try:

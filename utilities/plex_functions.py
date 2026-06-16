@@ -1258,8 +1258,29 @@ async def process_recent_movie(movie: Dict[str, Any]) -> List[Dict[str, Any]]:
                 movie_data['tmdb_id'] = guid['id'].split('://')[1]
 
     if not movie_data['imdb_id'] and not movie_data['tmdb_id']:
-        logger.warning(f"No IMDb ID or TMDB ID found for movie: {movie_data['title']}. Skipping metadata retrieval.")
-        movie_data['release_date'] = None
+        # Fallback: search Battery (Trakt) by title+year — same source used for file naming
+        try:
+            from cli_battery.app.direct_api import DirectAPI
+            _title = movie_data['title']
+            _year = movie_data.get('year')
+            _results, _source = DirectAPI.search_media(_title, year=_year, media_type='movie')
+            if _results:
+                _first = _results[0] if isinstance(_results[0], dict) else None
+                if _first:
+                    movie_data['imdb_id'] = _first.get('imdb_id')
+                    movie_data['tmdb_id'] = str(_first.get('tmdb_id')) if _first.get('tmdb_id') else None
+                    if movie_data['imdb_id']:
+                        logger.info(f"Resolved IMDb ID {movie_data['imdb_id']} for '{_title}' ({_year}) via Battery title search")
+                    else:
+                        logger.warning(f"Battery title search returned no IMDb ID for '{_title}' ({_year})")
+                else:
+                    logger.warning(f"Battery title search returned unexpected result type for '{_title}' ({_year}): {type(_results[0])}")
+            else:
+                logger.warning(f"No IMDb ID or TMDB ID found for movie: {movie_data['title']}. Battery title search also returned no results.")
+                movie_data['release_date'] = None
+        except Exception as _e:
+            logger.warning(f"No IMDb ID or TMDB ID found for movie: {movie_data['title']}. Battery fallback failed: {_e}")
+            movie_data['release_date'] = None
 
     movie_entries = []
     if 'Media' in movie and movie['Media']:

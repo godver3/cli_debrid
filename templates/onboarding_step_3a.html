@@ -52,7 +52,9 @@
                             <div class="filter-list">
                                 <label>Filter In:</label>
                                 {% for filter in config.filter_in %}
-                                    <div class="filter-item">{{ filter }}</div>
+                                {% set pattern = filter.pattern if filter is mapping else filter %}
+                                {% set source = filter.source if filter is mapping else 'both' %}
+                                    <div class="filter-item">{{ pattern }}{% if source != 'both' %} ({{ source }}){% endif %}</div>
                                 {% endfor %}
                             </div>
                         {% endif %}
@@ -60,7 +62,9 @@
                             <div class="filter-list">
                                 <label>Filter Out:</label>
                                 {% for filter in config.filter_out %}
-                                    <div class="filter-item">{{ filter }}</div>
+                                {% set pattern = filter.pattern if filter is mapping else filter %}
+                                {% set source = filter.source if filter is mapping else 'both' %}
+                                    <div class="filter-item">{{ pattern }}{% if source != 'both' %} ({{ source }}){% endif %}</div>
                                 {% endfor %}
                             </div>
                         {% endif %}

@@ -271,6 +271,37 @@
             displayItems = Array.from(seen.values());
         }
 
+        // For Adding queue: split active items from those waiting on a download in Decypharr
+        if (queueName === 'Adding') {
+            const activeItems = displayItems.filter(item => item.display_state !== 'Downloading');
+            const downloadingItems = displayItems.filter(item => item.display_state === 'Downloading');
+            let html = '';
+            if (activeItems.length > 0) {
+                html += activeItems.map(item => generateSingleItem(item, queueName)).join('');
+            }
+            if (downloadingItems.length > 0) {
+                html += '<div class="checking-group"><h5>Downloading</h5>';
+                // Group by torrent_id so season packs show as one entry
+                const grouped = {};
+                downloadingItems.forEach(item => {
+                    const tid = item.filled_by_torrent_id || 'unknown';
+                    if (!grouped[tid]) grouped[tid] = [];
+                    grouped[tid].push(item);
+                });
+                Object.entries(grouped).forEach(([tid, groupItems]) => {
+                    if (groupItems.length > 1) {
+                        html += `<div class="download-group">`;
+                        html += groupItems.map(item => generateSingleItem(item, queueName)).join('');
+                        html += `</div>`;
+                    } else {
+                        html += generateSingleItem(groupItems[0], queueName);
+                    }
+                });
+                html += '</div>';
+            }
+            return html;
+        }
+
         const htmlChunks = [];
         for (let i = 0; i < displayItems.length; i++) {
             htmlChunks.push(generateSingleItem(displayItems[i], queueName));

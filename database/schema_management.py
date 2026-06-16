@@ -270,6 +270,9 @@ def migrate_schema():
         if 'selected_folder_is_custom' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN selected_folder_is_custom BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added selected_folder_is_custom column to media_items table.")
+        if 'tags' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN tags TEXT')
+            logging.info("Successfully added tags column to media_items table.")
         if 'manual_replace' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN manual_replace BOOLEAN DEFAULT FALSE')
             logging.info("Successfully added manual_replace column to media_items table.")
@@ -358,6 +361,12 @@ def migrate_schema():
         if 'ms_content_rating' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN ms_content_rating TEXT')
             logging.info("Added ms_content_rating column.")
+        if 'ms_audio_track' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ms_audio_track TEXT')
+            logging.info("Added ms_audio_track column.")
+        if 'ms_subtitle_track' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN ms_subtitle_track TEXT')
+            logging.info("Added ms_subtitle_track column.")
         if 'source_position' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN source_position INTEGER')
             logging.info("Added source_position column to media_items table.")
@@ -367,6 +376,9 @@ def migrate_schema():
         if 'tmdb_collection_name' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN tmdb_collection_name TEXT')
             logging.info("Added tmdb_collection_name column to media_items table.")
+        if 'nzb_segment_id' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN nzb_segment_id TEXT')
+            logging.info("Added nzb_segment_id column to media_items table.")
 
         # Migrate data from legacy plex_* columns to ms_* columns (one-time migration)
         # Only runs when plex_rating_key data exists AND ms_item_id is completely unpopulated

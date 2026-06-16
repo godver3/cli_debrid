@@ -295,6 +295,7 @@ class ProgramRunner:
             'task_cleanup_title_year_suffixes': 24 * 60 * 60,  # Run every 24 hours
             # 'task_generate_airtime_report': 3600,  # Run every hour
             'task_run_library_maintenance': 12 * 60 * 60, # Run every twelve hours (if enabled)
+            'task_sync_library_metadata': 24 * 60 * 60,  # Run every 24 hours (if enabled)
             'task_get_plex_watch_history': 24 * 60 * 60,  # Run every 24 hours (if enabled)
             'task_refresh_plex_tokens': 24 * 60 * 60,   # Run every 24 hours
             'task_sync_plex_labels': 30 * 60,           # Run every 30 minutes
@@ -547,6 +548,7 @@ class ProgramRunner:
             # --- END EDIT ---
             # 'task_artificial_long_run',
             'task_trim_memory',
+            'task_sync_library_metadata',
         }
         logging.info("Initialized base enabled tasks.")
         # (The accurate default snapshot will be captured later, after content-source and conditional tasks.)
@@ -1365,6 +1367,24 @@ class ProgramRunner:
                 logging.error(f"[Tracemalloc Heartbeat] Error processing snapshot comparison: {e_trace_hb}")
         # *** END EDIT ***
 
+        # Watchdog: ensure critical queue tasks are still scheduled.
+        # APScheduler can silently drop jobs when misfire_grace_time=None and the thread
+        # pool is saturated (e.g. task_nzb_health_check consuming 99% of runtime).
+        try:
+            _CRITICAL_QUEUES = {
+                'Scraping': 1,
+                'Adding': 1,
+                'Checking': 30,
+                'Wanted': 30,
+            }
+            _scheduled_job_ids = {job.id for job in self.scheduler.get_jobs()}
+            for _task_name, _interval in _CRITICAL_QUEUES.items():
+                if _task_name not in _scheduled_job_ids and _task_name in self.enabled_tasks:
+                    logging.warning(f'[Heartbeat] Watchdog: {_task_name!r} missing from scheduler — rescheduling')
+                    self._schedule_task(_task_name, _interval)
+        except Exception as _wd_err:
+            logging.debug(f'[Heartbeat] Watchdog error: {_wd_err}')
+
     def get_content_sources(self, force_refresh=False):
         if self.content_sources is None or force_refresh:
             settings = get_all_settings()
@@ -1481,7 +1501,7 @@ class ProgramRunner:
     def task_check_service_connectivity(self):
         """Check connectivity to required services"""
         from routes.program_operation_routes import check_service_connectivity
-        
+
         # Log current state before checking
         if self.connectivity_failure_time:
             time_since_failure = time.time() - self.connectivity_failure_time
@@ -2055,13 +2075,14 @@ class ProgramRunner:
                                             # Handle comma-separated string format
                                             item_genres = [genre.strip() for genre in item_genres.split(',') if genre.strip()]
                                         
-                                        # Check if any of the item's genres are in the exclude list
-                                        excluded_genre_found = any(genre in exclude_genres for genre in item_genres)
+                                        # Check if any of the item's genres are in the exclude list (case-insensitive)
+                                        _excl_lower = [g.lower() for g in exclude_genres]
+                                        excluded_genre_found = any(genre.lower() in _excl_lower for genre in item_genres)
                                         if not excluded_genre_found:
                                             items_filtered_genre.append(item)
                                         else:
                                             batch_genre_skipped += 1
-                                            logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to excluded genre(s): {[g for g in item_genres if g in exclude_genres]}")
+                                            logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to excluded genre(s): {[g for g in item_genres if g.lower() in _excl_lower]}")
                                     
                                     all_items = items_filtered_genre
                                     if batch_genre_skipped > 0:
@@ -2171,13 +2192,14 @@ class ProgramRunner:
                                         # Handle comma-separated string format
                                         item_genres = [genre.strip() for genre in item_genres.split(',') if genre.strip()]
                                     
-                                    # Check if any of the item's genres are in the exclude list
-                                    excluded_genre_found = any(genre in exclude_genres for genre in item_genres)
+                                    # Check if any of the item's genres are in the exclude list (case-insensitive)
+                                    _excl_lower = [g.lower() for g in exclude_genres]
+                                    excluded_genre_found = any(genre.lower() in _excl_lower for genre in item_genres)
                                     if not excluded_genre_found:
                                         items_filtered_genre.append(item)
                                     else:
                                         genre_skipped += 1
-                                        logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to excluded genre(s): {[g for g in item_genres if g in exclude_genres]}")
+                                        logging.debug(f"Item {item.get('title', 'Unknown')} skipped due to excluded genre(s): {[g for g in item_genres if g.lower() in _excl_lower]}")
                                 
                                 all_items = items_filtered_genre
                                 if genre_skipped > 0:
@@ -3133,34 +3155,31 @@ class ProgramRunner:
     def task_backup_database(self):
         """
         Scheduled task to backup the database daily.
-        Only runs when the system is idle to avoid performance impact.
+        Decypharr DB backup always runs (lightweight file copy).
+        CLI media_items.db backup only runs when system is idle.
         """
         try:
-            # Check if system is idle before running backup
+            # Decypharr DB backup: always run — just a file copy, no performance impact
+            try:
+                from main import backup_decypharr_databases
+                backup_decypharr_databases()
+            except Exception as _dcy_err:
+                logging.warning(f"[DATABASE_BACKUP] Decypharr backup skipped: {_dcy_err}")
+
+            # CLI DB backup: only run when system is idle to avoid performance impact
             if not self._is_system_idle_for_backup():
-                logging.info("[DATABASE_BACKUP] System is busy, skipping scheduled backup")
+                logging.info("[DATABASE_BACKUP] System is busy, skipping CLI database backup")
                 return
 
             logging.info("[DATABASE_BACKUP] Starting scheduled database backup (system is idle)")
 
-            # Import here to avoid circular import
             from main import backup_database
-
-            # Run backup with tiered retention (1 weekly + 1 daily + 2 recent)
-            # Scheduled backups always run (skip_if_recent=False)
             success = backup_database(skip_if_recent=False)
 
             if success:
                 logging.info("[DATABASE_BACKUP] Scheduled database backup completed successfully")
             else:
                 logging.warning("[DATABASE_BACKUP] Scheduled database backup failed")
-
-            # Also back up Decypharr databases if data_path is configured
-            try:
-                from main import backup_decypharr_databases
-                backup_decypharr_databases()
-            except Exception as _dcy_err:
-                logging.warning(f"[DATABASE_BACKUP] Decypharr backup skipped: {_dcy_err}")
 
         except Exception as e:
             logging.error(f"[DATABASE_BACKUP] Error in scheduled backup task: {e}", exc_info=True)
@@ -3238,12 +3257,12 @@ class ProgramRunner:
 
             _tick_start = _time.monotonic()
 
-            from usenet.decypharr_client import get_decypharr_client
+            from usenet import get_usenet_client
             from utilities.settings import get_setting as _gs
             from collections import defaultdict as _dd
             from concurrent.futures import ThreadPoolExecutor as _TPE, as_completed as _ac
 
-            _nzb_client = get_decypharr_client()
+            _nzb_client = get_usenet_client()
 
             # Group items by job_id
             _job_groups: dict = _dd(list)
@@ -3356,6 +3375,7 @@ class ProgramRunner:
                 if prog == 100 and entry:
                     _health_results[entry] = None  # None = inconclusive, proceed to Checking
                     self._nzb_confirmed_complete[jid] = entry  # remember this job was complete+folder found
+                    adding_queue._nzb_downloading_job_ids.discard(jid)  # no longer downloading
 
             # Process results per item
             _ghost_job_ids = [jid for jid, (prog, _, _) in _job_results.items() if prog == -2]
@@ -3506,11 +3526,16 @@ class ProgramRunner:
                     elif progress == -1:
                         logging.warning(f'[NZB] {torrent_id} failed in Decypharr — adding to not-wanted and moving back to Scraping')
                         try:
-                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid
+                            from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_guid, add_to_not_wanted_nzb_segment as _add_seg
                             _nzb_url = item.get('filled_by_magnet', '')
                             if _nzb_url:
                                 _add_guid(_nzb_url)
                                 logging.info(f'[NZB] Added {_nzb_url[:60]}... to not-wanted guids')
+                            # Also blacklist segment ID so same content from any indexer is filtered next scrape
+                            _seg_id = item.get('nzb_segment_id', '')
+                            if _seg_id:
+                                _add_seg(_seg_id)
+                                logging.debug(f'[NZB] Added segment {_seg_id!r} to not-wanted segments')
                         except Exception as _nw_err:
                             logging.debug(f'[NZB] Could not add to not-wanted: {_nw_err}')
                         # Clean up all siblings sharing this dead job — add their URLs to not-wanted
@@ -3545,6 +3570,15 @@ class ProgramRunner:
                                           if (r.get('nzb_url') or r.get('magnet', '')) != item.get('filled_by_magnet', '')]
                             if _remaining:
                                 _has_more_results = True
+                                # Delete the broken job from Decypharr so prefix-match in
+                                # torrent_processor won't reuse it on the next retry attempt
+                                try:
+                                    from usenet.repair_engine import _delete_from_provider as _dfp
+                                    _broken_hash = torrent_id.replace('nzb:', '') if torrent_id else ''
+                                    _dfp(_broken_hash, item.get('filled_by_file', '') or '')
+                                    logging.debug(f'[NZB] Deleted broken job {_broken_hash} from provider before retry')
+                                except Exception as _del_err:
+                                    logging.debug(f'[NZB] Could not delete broken job from provider: {_del_err}')
                                 from database.database_writing import update_media_item as _umi_retry
                                 _umi_retry(item_id,
                                     filled_by_torrent_id=None,
@@ -3556,11 +3590,23 @@ class ProgramRunner:
                                 item['filled_by_torrent_id'] = None
                                 item['filled_by_magnet'] = None
                                 adding_queue._nzb_submitted_ids.discard(item_id)
+                                adding_queue._nzb_downloading_job_ids.discard(torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id)
                                 logging.info(f'[NZB] {torrent_id} failed — {len(_remaining)} results remain, retrying in Adding')
                         except Exception as _retry_err:
                             logging.debug(f'[NZB] Could not prepare retry: {_retry_err}')
                         if not _has_more_results:
-                            adding_queue._handle_failed_item(item, 'NZB failed in Decypharr', self.queue_manager)
+                            # Move back to Wanted for fresh re-scrape rather than blacklisting.
+                            # NZB failures exhaust scrape_results quickly (not-wanted list filters them),
+                            # but new results may be available on indexers — don't blacklist prematurely.
+                            logging.info(f'[NZB] {torrent_id} no remaining results — moving to Wanted for fresh scrape')
+                            try:
+                                from database.database_writing import update_media_item as _umi_nw
+                                _umi_nw(item_id, filled_by_torrent_id=None, filled_by_file=None,
+                                        filled_by_title=None, filled_by_magnet=None,
+                                        scrape_results=None, fall_back_to_single_scraper=False)
+                            except Exception:
+                                pass
+                            self.queue_manager.move_to_wanted(item, 'Adding')
                         continue
                     elif progress < 100:
                         # Check if this job has been downloading too long without finishing.
@@ -3579,6 +3625,19 @@ class ProgramRunner:
                             except Exception:
                                 pass
                         if not _timed_out_dl:
+                            # Mark job as actively downloading after 1 minute so Adding queue skips it
+                            _job_id_dl = torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id
+                            try:
+                                from datetime import datetime as _dt_dl
+                                _lu_dl = item.get('last_updated')
+                                if _lu_dl:
+                                    _lu_dl_dt = _dt_dl.fromisoformat(str(_lu_dl).replace('Z', '+00:00').split('+')[0])
+                                    _age_mins = (_dt_dl.now() - _lu_dl_dt).total_seconds() / 60.0
+                                    if _age_mins >= 1.0 and _job_id_dl not in adding_queue._nzb_downloading_job_ids:
+                                        adding_queue._nzb_downloading_job_ids.add(_job_id_dl)
+                                        logging.info(f'[NZB] {torrent_id} downloading ({progress}%) >1min — marked as Downloading, Adding queue will skip')
+                            except Exception:
+                                pass
                             logging.debug(f'[NZB] {torrent_id} progress={progress}% — waiting')
                             continue
                         # Download timed out — treat like a failed job: add URL to not-wanted,
@@ -3667,11 +3726,20 @@ class ProgramRunner:
                                 item['filled_by_torrent_id'] = None
                                 item['filled_by_magnet'] = None
                                 adding_queue._nzb_submitted_ids.discard(item_id)
+                                adding_queue._nzb_downloading_job_ids.discard(torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id)
                                 logging.info(f'[NZB] Stalled job — {len(_remaining_to)} results remain, retrying in Adding')
                         except Exception as _retry_to_err:
                             logging.debug(f'[NZB] Could not prepare stall retry: {_retry_to_err}')
                         if not _has_more_to:
-                            adding_queue._handle_failed_item(item, 'NZB stalled in Decypharr (download timeout)', self.queue_manager)
+                            logging.info(f'[NZB] {torrent_id} stalled, no remaining results — moving to Wanted for fresh scrape')
+                            try:
+                                from database.database_writing import update_media_item as _umi_st
+                                _umi_st(item_id, filled_by_torrent_id=None, filled_by_file=None,
+                                        filled_by_title=None, filled_by_magnet=None,
+                                        scrape_results=None, fall_back_to_single_scraper=False)
+                            except Exception:
+                                pass
+                            self.queue_manager.move_to_wanted(item, 'Adding')
                         continue
 
                     logging.info(f'[NZB] {torrent_id} complete — running health check')
@@ -3731,13 +3799,16 @@ class ProgramRunner:
                                                  _imdb_wait, _season_wait)
                                             ).fetchall()
                                         _folder_e = entry_name or nzb_title
+                                        _seg_e = item.get('nzb_segment_id', '') or ''
                                         for _we in _wanted_e:
                                             try:
+                                                _seg_e_kw = {'nzb_segment_id': _seg_e} if _seg_e else {}
                                                 _umi_e(_we[0], filled_by_torrent_id=torrent_id,
                                                        filled_by_file=_folder_e,
                                                        filled_by_magnet=_nzb_url_e,
                                                        filled_by_title=nzb_title,
-                                                       original_scraped_torrent_title=_orig_e)
+                                                       original_scraped_torrent_title=_orig_e,
+                                                       **_seg_e_kw)
                                                 _umis_e(_we[0], 'Adding')
                                                 logging.info(f'[NZB] Pulled Wanted sibling {_we[0]} into Adding (pack waiting for Scraping)')
                                             except Exception:
@@ -3910,14 +3981,17 @@ class ProgramRunner:
                                          _imdb_pull, _season_pull)
                                     ).fetchall()
                                 _folder_pull = entry_name or nzb_title
+                                _pull_seg_id = item.get('nzb_segment_id', '') or ''
                                 for _ws in _wanted_sibs:
                                     try:
+                                        _pull_seg_kwargs = {'nzb_segment_id': _pull_seg_id} if _pull_seg_id else {}
                                         _umi_pull(_ws[0],
                                             filled_by_torrent_id=torrent_id,
                                             filled_by_file=_folder_pull,
                                             filled_by_magnet=nzb_url,
                                             filled_by_title=nzb_title,
                                             original_scraped_torrent_title=nzb_original_title,
+                                            **_pull_seg_kwargs,
                                         )
                                         from database.database_writing import update_media_item_state as _umis_pull
                                         _umis_pull(_ws[0], 'Adding')
@@ -3974,6 +4048,214 @@ class ProgramRunner:
             self._nzb_health_last_duration = _time.monotonic() - _tick_start
             logging.debug(f'[NZBHealthCheck] Tick completed in {self._nzb_health_last_duration:.1f}s ({len(_unique_jobs)} jobs)')
 
+            # --- ARTICLE_NOT_FOUND / broken item detection ---
+            # After each health check tick, poll provider for broken items.
+            # Rate-limited: only run every 5 minutes to avoid hammering the API.
+            # Safety guard: skip items whose info_hash matches something currently
+            # in Adding or Checking state — those are new submissions still in flight,
+            # not genuinely broken collected items.
+            try:
+                _now_ts = _time.monotonic()
+                if not hasattr(self, '_last_broken_check_ts'):
+                    self._last_broken_check_ts = 0.0
+                if _now_ts - self._last_broken_check_ts >= 300:  # 5 minutes
+                    self._last_broken_check_ts = _now_ts
+                    from usenet.repair_engine import fetch_broken_items, run_repair
+                    _broken = fetch_broken_items()
+                    if _broken:
+                        # Build set of in-flight hashes (Adding + Checking) to exclude
+                        try:
+                            from database.core import get_db_connection as _get_dbc_hc
+                            with _get_dbc_hc() as _hc_conn:
+                                _inflight_rows = _hc_conn.execute(
+                                    "SELECT filled_by_torrent_id FROM media_items "
+                                    "WHERE state IN ('Adding','Checking') "
+                                    "AND filled_by_torrent_id LIKE 'nzb:%'"
+                                ).fetchall()
+                            _inflight_hashes = {r[0][4:] for r in _inflight_rows if r[0]}
+                        except Exception:
+                            _inflight_hashes = set()
+                        # Filter out in-flight items — they're not genuinely broken
+                        _truly_broken = [
+                            e for e in _broken
+                            if (e.get('info_hash') or e.get('hash') or '') not in _inflight_hashes
+                        ]
+                        if _truly_broken:
+                            logging.warning(
+                                f'[NZBHealthCheck] Detected {len(_truly_broken)} broken item(s) '
+                                f'(excluded {len(_broken)-len(_truly_broken)} in-flight) — triggering repair'
+                            )
+                            run_repair(triggered_by='auto_detected')
+                        elif _broken:
+                            logging.debug(
+                                f'[NZBHealthCheck] {len(_broken)} broken item(s) all in-flight — skipping repair'
+                            )
+            except Exception as _broken_err:
+                logging.debug(f'[NZBHealthCheck] Broken item check error: {_broken_err}')
+
+            # --- Decypharr log watcher: ARTICLE_NOT_FOUND + cache warm failures ---
+            # Tails Decypharr's log for two dead-file signals:
+            #   1. [webdav] Error streaming file: ... ARTICLE_NOT_FOUND
+            #   2. [manager] cache warm failed ... input/output error
+            # Both mean the same thing: segments expired, file is unreadable.
+            # Acting early (before Plex analyzes the file) prevents the Plex SQLite
+            # WAL deadlock caused by --analyze processes stuck in kernel D-state.
+            # Rate-limited to every 30s.
+            try:
+                _now_watcher = _time.monotonic()
+                if not hasattr(self, '_last_webdav_check_ts'):
+                    self._last_webdav_check_ts = 0.0
+                    self._last_webdav_log_pos = -1  # -1 = uninitialized, seek to EOF on first run
+                    self._webdav_repaired_entries = set()  # entries processed this session
+                if _now_watcher - self._last_webdav_check_ts >= 30:
+                    self._last_webdav_check_ts = _now_watcher
+                    import re as _re_wv, os as _os_wv
+                    from utilities.settings import get_setting as _gs_wv
+                    _dcy_data = _gs_wv('Usenet Provider', 'data_path', '/decypharr_data').rstrip('/')
+                    _dcy_log = f'{_dcy_data}/logs/decypharr.log'
+                    if _os_wv.path.isfile(_dcy_log):
+                        _fsize = _os_wv.path.getsize(_dcy_log)
+                        # On first run, skip to end of log — don't reprocess old errors
+                        if self._last_webdav_log_pos < 0:
+                            self._last_webdav_log_pos = _fsize
+                        # Reset position if log was rotated
+                        if _fsize < self._last_webdav_log_pos:
+                            self._last_webdav_log_pos = 0
+                        if _fsize > self._last_webdav_log_pos:
+                            with open(_dcy_log, 'r', errors='replace') as _lf:
+                                _lf.seek(self._last_webdav_log_pos)
+                                _new_lines = _lf.read()
+                                self._last_webdav_log_pos = _lf.tell()
+                            # Pattern 1: [webdav] streaming errors with ARTICLE_NOT_FOUND
+                            _webdav_pattern = _re_wv.compile(
+                                r'\[webdav\] Error streaming file: (.+?) error="NNTP ARTICLE_NOT_FOUND'
+                            )
+                            # Pattern 2: cache warm failures (file unreadable, I/O error)
+                            # Format: [manager] cache warm failed error="read default/cli_debrid/<entry>/<file>: input/output error"
+                            _cache_warm_pattern = _re_wv.compile(
+                                r'\[manager\] cache warm failed error="read [^/]+/[^/]+/(.+?)(?:/[^/]+)?: input/output error"'
+                            )
+                            _broken_entries = {}
+                            for _m in _webdav_pattern.finditer(_new_lines):
+                                _full_path = _m.group(1).strip()
+                                _parts = _full_path.rsplit('/', 1)
+                                _entry_name = _parts[0].strip() if len(_parts) > 1 else _full_path
+                                if _entry_name and _entry_name not in _broken_entries and _entry_name not in self._webdav_repaired_entries:
+                                    _broken_entries[_entry_name] = True
+                            for _m in _cache_warm_pattern.finditer(_new_lines):
+                                _entry_name = _m.group(1).strip()
+                                if _entry_name and _entry_name not in _broken_entries and _entry_name not in self._webdav_repaired_entries:
+                                    _broken_entries[_entry_name] = 'cache_warm'
+
+                            if _broken_entries:
+                                _webdav_count = sum(1 for v in _broken_entries.values() if v is True)
+                                _cache_count = sum(1 for v in _broken_entries.values() if v == 'cache_warm')
+                                logging.warning(
+                                    f'[NZBHealthCheck] Detected {len(_broken_entries)} dead entry(ies) '
+                                    f'from Decypharr log ({_webdav_count} ARTICLE_NOT_FOUND, {_cache_count} cache warm I/O error) '
+                                    f'— triggering immediate repair'
+                                )
+                                # Trigger repair immediately for these specific entries
+                                try:
+                                    from usenet.repair_engine import (
+                                        _find_db_items_by_entry_name,
+                                        _delete_from_plex,
+                                        _delete_from_provider,
+                                        _move_to_wanted,
+                                        _blacklist_broken_nzb,
+                                        _resolve_info_hash_from_provider,
+                                    )
+                                    from database.nzb_repair_activity import log_repair_activity
+                                    from usenet.repair_engine import _backfill_hash_for_item
+                                    for _ename in _broken_entries:
+                                        try:
+                                            # Resolve info_hash for provider deletion
+                                            _ihash = _resolve_info_hash_from_provider(_ename)
+                                            # Find DB items
+                                            _items = _find_db_items_by_entry_name(_ename)
+                                            _items = [i for i in _items
+                                                      if i.get('state') in ('Collected', 'Checking', 'Upgrading')]
+                                            if not _items:
+                                                # Also try hash lookup
+                                                if _ihash:
+                                                    from usenet.repair_engine import _find_db_item_by_info_hash
+                                                    _single = _find_db_item_by_info_hash(_ihash)
+                                                    if _single and _single.get('state') in ('Collected', 'Checking', 'Upgrading'):
+                                                        _items = [_single]
+                                            # If hash still empty but we have DB items, run targeted backfill
+                                            if not _ihash and _items:
+                                                _ihash = _backfill_hash_for_item(_items[0])
+                                                if _ihash:
+                                                    logging.info(f'[NZBHealthCheck] Targeted backfill resolved hash for {_ename!r}: {_ihash!r}')
+                                            if not _items:
+                                                logging.debug(f'[NZBHealthCheck] No DB items for broken webdav entry {_ename!r} — deleting from provider only')
+                                                _delete_from_provider(_ihash, _ename)
+                                                self._webdav_repaired_entries.add(_ename)
+                                                continue
+                                            logging.warning(
+                                                f'[NZBHealthCheck] Immediate repair: {_ename!r} — '
+                                                f'{len(_items)} item(s), hash={_ihash!r}'
+                                            )
+                                            # Blacklist all unique NZB URLs + segment IDs across all items in this entry
+                                            _seen_urls = set()
+                                            for _bi in _items:
+                                                _nzb_url = _bi.get('filled_by_magnet', '') or ''
+                                                _seg_id = _bi.get('nzb_segment_id', '') or ''
+                                                if _nzb_url and _nzb_url not in _seen_urls:
+                                                    _blacklist_broken_nzb(_nzb_url, segment_id=_seg_id)
+                                                    _seen_urls.add(_nzb_url)
+                                                elif _seg_id and _nzb_url in _seen_urls:
+                                                    # URL already seen but still blacklist segment if different item
+                                                    from database.not_wanted_magnets import add_to_not_wanted_nzb_segment as _add_seg
+                                                    _add_seg(_seg_id)
+                                            # Bulk delete all items from Plex in ONE request, then provider, then move to Wanted
+                                            from usenet.repair_engine import _bulk_delete_from_plex
+                                            _plex_results = _bulk_delete_from_plex(_items)
+                                            # Delete from provider once (hash → name search → path fallback)
+                                            _provider_deleted = _delete_from_provider(_ihash, _ename)
+                                            if not _provider_deleted:
+                                                # Path-based deletion fallback: remove file directly from mount
+                                                for _dbi in _items:
+                                                    _loc = _dbi.get('location_on_disk', '') or ''
+                                                    if _loc and not _provider_deleted:
+                                                        try:
+                                                            import os as _os
+                                                            from utilities.settings import get_setting as _gs
+                                                            _mount = _gs('Usenet Provider', 'mount_path', default='').rstrip('/')
+                                                            if _mount and _loc.startswith('/debrid/'):
+                                                                _rel = _loc[len('/debrid/'):]
+                                                                _full = f'{_mount}/{_rel}'
+                                                                if _os.path.exists(_full):
+                                                                    _os.remove(_full)
+                                                                    logging.info(f'[NZBHealthCheck] Path-deleted broken file: {_full!r}')
+                                                                    _provider_deleted = True
+                                                                else:
+                                                                    logging.debug(f'[NZBHealthCheck] Path delete: file not found at {_full!r}')
+                                                        except Exception as _pd_err:
+                                                            logging.debug(f'[NZBHealthCheck] Path delete error for {_loc!r}: {_pd_err}')
+                                            for _dbi in _items:
+                                                _move_to_wanted(_dbi)
+                                                log_repair_activity(
+                                                    item_id=_dbi.get('id'),
+                                                    title=_dbi.get('title'),
+                                                    media_type=_dbi.get('type'),
+                                                    season_number=_dbi.get('season_number'),
+                                                    episode_number=_dbi.get('episode_number'),
+                                                    broken_nzb_id=_ihash,
+                                                    broken_nzb_title=_ename,
+                                                    outcome='plex_deleted',
+                                                    triggered_by='cache_warm_error' if _broken_entries.get(_ename) == 'cache_warm' else 'webdav_error',
+                                                )
+                                            # Mark as handled — avoid infinite re-processing this session
+                                            self._webdav_repaired_entries.add(_ename)
+                                        except Exception as _ename_err:
+                                            logging.error(f'[NZBHealthCheck] Webdav repair error for {_ename!r}: {_ename_err}')
+                                            self._webdav_repaired_entries.add(_ename)
+                                except Exception as _wr_err:
+                                    logging.error(f'[NZBHealthCheck] Webdav repair import error: {_wr_err}')
+            except Exception as _watcher_err:
+                logging.debug(f'[NZBHealthCheck] Webdav log watcher error: {_watcher_err}')
+
         except Exception as e:
             logging.error(f'[NZBHealthCheck] Task error: {e}', exc_info=True)
             self._nzb_health_last_duration = 0.0
@@ -4000,11 +4282,22 @@ class ProgramRunner:
             name_to_hash = {}
             page = 1
             while True:
-                r = _req.get(f'{dcy_url}/api/torrents',
-                             params={'page': page, 'limit': 100, 'sort_by': 'added_on', 'sort_order': 'desc'},
-                             headers=headers, timeout=15)
+                for attempt in range(3):
+                    try:
+                        r = _req.get(f'{dcy_url}/api/torrents',
+                                     params={'page': page, 'limit': 100, 'sort_by': 'added_on', 'sort_order': 'desc'},
+                                     headers=headers, timeout=30)
+                        if r.status_code == 200:
+                            break
+                        logging.warning(f'[NZBBackfill] Decypharr API HTTP {r.status_code} on page {page} (attempt {attempt+1})')
+                    except Exception as _pe:
+                        logging.warning(f'[NZBBackfill] Decypharr API error on page {page} (attempt {attempt+1}): {_pe}')
+                    if attempt == 2:
+                        logging.error(f'[NZBBackfill] Giving up on page {page} after 3 attempts')
+                        break
+                else:
+                    break
                 if r.status_code != 200:
-                    logging.warning(f'[NZBBackfill] Decypharr API error: HTTP {r.status_code}')
                     break
                 data = r.json()
                 for t in data.get('torrents', []):
@@ -4018,9 +4311,9 @@ class ProgramRunner:
 
             logging.info(f'[NZBBackfill] Loaded {len(name_to_hash)} Decypharr entries.')
 
-            # Find collected items on /debrid mount with no torrent ID
+            # Find collected items on /debrid mount with no torrent ID or non-NZB torrent ID
             items = [dict(i) for i in get_all_media_items(state='Collected')
-                     if not (i.get('filled_by_torrent_id') or '')
+                     if not (i.get('filled_by_torrent_id') or '').startswith('nzb:')
                      and (i.get('location_on_disk') or '').startswith('/debrid/')]
 
             logging.info(f'[NZBBackfill] Found {len(items)} collected items to backfill.')
@@ -4040,13 +4333,71 @@ class ProgramRunner:
                     continue
 
                 info_hash = name_to_hash.get(folder_name)
+                # If folder is already in NZB format (contains {imdb-), extract the original
+                # release name from the trailing (...) and try that against Decypharr's old names.
+                if not info_hash and '{imdb-' in folder_name:
+                    import re as _re
+                    m = _re.search(r'\(([^)]+)\)\s*$', folder_name)
+                    if m:
+                        orig_from_folder = m.group(1)
+                        info_hash = name_to_hash.get(orig_from_folder)
+                # Try filled_by_file (with and without ext)
+                if not info_hash:
+                    fbf = item.get('filled_by_file') or ''
+                    if fbf:
+                        fbf_noext = fbf.rsplit('.', 1)[0] if '.' in fbf else fbf
+                        info_hash = name_to_hash.get(fbf) or name_to_hash.get(fbf_noext)
+                        # If fbf is also NZB format, extract its trailing original name too
+                        if not info_hash and '{imdb-' in fbf_noext:
+                            m = _re.search(r'\(([^)]+)\)\s*$', fbf_noext)
+                            if m:
+                                info_hash = name_to_hash.get(m.group(1))
+                if not info_hash:
+                    orig = item.get('original_scraped_torrent_title') or ''
+                    if orig:
+                        info_hash = name_to_hash.get(orig)
                 if info_hash:
                     update_media_item(item['id'], filled_by_torrent_id=f'nzb:{info_hash}')
                     matched += 1
                 else:
+                    if skipped < 10:
+                        fbf = item.get('filled_by_file') or ''
+                        orig = item.get('original_scraped_torrent_title') or ''
+                        logging.info(f'[NZBBackfill] Unmatched: id={item.get("id")} loc={loc!r} folder={folder_name!r} fbf={fbf!r} orig={orig!r}')
                     skipped += 1
 
             logging.info(f'[NZBBackfill] Complete: {matched} matched, {skipped} unmatched/skipped.')
+
+            # --- Phase 2: Backfill nzb_segment_id for items that have filled_by_magnet but no segment ID ---
+            # Fetches the NZB XML from the stored URL and extracts the first segment Message-ID.
+            # Rate-limited to avoid hammering indexers — 1 request per item.
+            try:
+                import requests as _req2
+                from database.not_wanted_magnets import extract_nzb_segment_id as _ext_seg
+                seg_items = [
+                    dict(i) for i in get_all_media_items(state='Collected')
+                    if (i.get('filled_by_magnet') or '').startswith('http')
+                    and not (i.get('nzb_segment_id') or '').strip()
+                ]
+                logging.info(f'[NZBBackfill] Phase 2: {len(seg_items)} items need nzb_segment_id backfill.')
+                seg_matched = seg_skipped = 0
+                for seg_item in seg_items:
+                    try:
+                        _url = seg_item.get('filled_by_magnet', '')
+                        _r = _req2.get(_url, timeout=15, allow_redirects=True,
+                                       headers={'User-Agent': 'Sabnzbd/3.0.0'})
+                        if _r.status_code == 200 and '<nzb' in _r.text.lower():
+                            _seg_id = _ext_seg(_r.text)
+                            if _seg_id:
+                                update_media_item(seg_item['id'], nzb_segment_id=_seg_id)
+                                seg_matched += 1
+                                continue
+                    except Exception:
+                        pass
+                    seg_skipped += 1
+                logging.info(f'[NZBBackfill] Phase 2 complete: {seg_matched} segment IDs backfilled, {seg_skipped} skipped.')
+            except Exception as _seg_err:
+                logging.warning(f'[NZBBackfill] Phase 2 error: {_seg_err}')
 
         except Exception as e:
             logging.error(f'[NZBBackfill] Task error: {e}', exc_info=True)
@@ -4153,6 +4504,10 @@ class ProgramRunner:
             logging.info(
                 f'[NZBRepair] Task complete — broken={summary["broken_found"]}, '
                 f'matched={summary["matched"]}, replaced={summary["replaced"]}, '
+                f'no_replacement={summary.get("no_replacement", 0)}, '
+                f'submission_failed={summary.get("submission_failed", 0)}, '
+                f'skipped_backoff={summary.get("skipped_backoff", 0)}, '
+                f'skipped_max={summary.get("skipped_max_attempts", 0)}, '
                 f'not_found={summary["not_found"]}, errors={summary["errors"]}'
             )
         except Exception as e:
@@ -5448,7 +5803,6 @@ class ProgramRunner:
 
                                 logging.debug(f"  Checking Section '{section.title}' (Type: {section.type})")
                                 for location in section.locations:
-                                    # Construct the path Plex *should* see using the folder name from the found path
                                     constructed_plex_path = os.path.join(location, folder_name_found)
                                     logging.debug(f"    Considering scan path: '{constructed_plex_path}' based on location '{location}' and found folder '{folder_name_found}'")
 
@@ -5752,10 +6106,14 @@ class ProgramRunner:
                             _conn_fb = get_db_connection()
                             _cur_fb = _conn_fb.cursor()
                             _now_fb = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                            if _plex_location:
+                            # Use Plex-confirmed path if available, otherwise fall back to
+                            # actual_file_path from mount. NULL location_on_disk causes ghost
+                            # entries in the library and repeated cleanup prompts.
+                            _location_to_store = _plex_location or actual_file_path
+                            if _location_to_store:
                                 _cur_fb.execute(
                                     'UPDATE media_items SET state = "Collected", collected_at = ?, location_on_disk = ? WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
-                                    (_now_fb, _plex_location, item_id)
+                                    (_now_fb, _location_to_store, item_id)
                                 )
                             else:
                                 _cur_fb.execute(
@@ -5765,8 +6123,62 @@ class ProgramRunner:
                             if _cur_fb.rowcount > 0:
                                 _conn_fb.commit()
                                 logging.info(f"[PlexCheck] Marked item {item_id} ({item_title_for_log}) as Collected ({_force_collect_reason}).")
-                                if _plex_location:
-                                    logging.info(f"[PlexCheck] Updated location_on_disk for item {item_id} ({item_title_for_log}): {_plex_location}")
+                                if _location_to_store:
+                                    logging.info(f"[PlexCheck] Updated location_on_disk for item {item_id} ({item_title_for_log}): {_location_to_store}")
+
+                                # Debrid File Naming: ensure the Decypharr folder is renamed
+                                # at Collected time. By this point the file is confirmed in
+                                # Decypharr so the rename succeeds immediately — no retry needed.
+                                # Covers cases where the add-time rename failed or was never
+                                # triggered (pre-existing RD torrents, closure bug, etc.).
+                                try:
+                                    _torrent_id_chk = item_dict.get('filled_by_torrent_id', '') or ''
+                                    if (not _torrent_id_chk.startswith('nzb:')
+                                            and _torrent_id_chk
+                                            and get_setting('Debrid Provider', 'enable_debrid_naming', False)):
+                                        from routes.scraper_routes import _build_debrid_title as _bdt_chk
+                                        _chk_type = item_dict.get('type', '')
+                                        _chk_mt = 'tv' if _chk_type == 'episode' else _chk_type
+                                        _chk_orig = item_dict.get('original_scraped_torrent_title') or item_dict.get('filled_by_title', '')
+                                        _chk_title = _bdt_chk(
+                                            title=item_dict.get('title', ''),
+                                            year=item_dict.get('year', ''),
+                                            imdb_id=item_dict.get('imdb_id'),
+                                            version=item_dict.get('version', ''),
+                                            original_scraped_torrent_title=_chk_orig,
+                                            media_type=_chk_mt,
+                                            season=item_dict.get('season_number'),
+                                            episode=item_dict.get('episode_number'),
+                                            episode_title=item_dict.get('episode_title'),
+                                            tags=item_dict.get('tags') or None,
+                                            content_source_display_name=item_dict.get('content_source_detail') or item_dict.get('content_source'),
+                                        )
+                                        if _chk_title and _chk_title != _chk_orig:
+                                            # Get hash from debrid provider using torrent ID
+                                            from debrid import get_debrid_provider as _gdp_chk
+                                            _dp_chk = _gdp_chk()
+                                            if _dp_chk:
+                                                _chk_info = _dp_chk.get_torrent_info(_torrent_id_chk)
+                                                _chk_hash = (_chk_info or {}).get('hash', '').lower()
+                                                if _chk_hash:
+                                                    import threading as _t_chk
+                                                    def _do_chk_rename(h, name, ident):
+                                                        import time as _t
+                                                        try:
+                                                            from usenet.decypharr_client import get_decypharr_client
+                                                            _dc = get_decypharr_client()
+                                                            for _a in range(5):
+                                                                if _dc.rename_nzb(h, name):
+                                                                    logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} (collected, attempt {_a+1})')
+                                                                    return
+                                                                _t.sleep(10)
+                                                            logging.warning(f'[DebridNaming] Could not rename {h!r} after 5 attempts (collected)')
+                                                        except Exception as _e:
+                                                            logging.debug(f'[DebridNaming] Rename error (collected): {_e}')
+                                                    _t_chk.Thread(target=_do_chk_rename, args=(_chk_hash, _chk_title, item_title_for_log), daemon=True).start()
+                                except Exception as _dbn_chk_ex:
+                                    logging.debug(f'[DebridNaming] Collected-time rename setup error for {item_id}: {_dbn_chk_ex}')
+
                                 _fb_details = get_media_item_by_id(item_id)
                                 if _fb_details:
                                     handle_state_change(dict(_fb_details))
@@ -6023,32 +6435,47 @@ class ProgramRunner:
                         allowed_library_keys = None
 
                     found_matching_section_location = False
-                    for section in sections:
-                        # Check if section type matches item type
-                        if section.type != item_type_mapped:
-                            continue
 
-                        # Filter by configured library settings (if specified)
-                        if allowed_library_keys is not None and str(section.key) not in allowed_library_keys:
-                            logging.debug(f"Skipping section '{section.title}' (key: {section.key}) - not in configured libraries")
-                            continue
-
-                        logging.debug(f"  Checking Section '{section.title}' (Type: {section.type})")
-                        for location in section.locations:
-                            # Construct the path Plex *should* see for this item within this location
-                            # Assumes the item folder name is `filled_by_title` (now `folder_name_for_plex_scan`)
-                            if folder_name_for_plex_scan:
-                                constructed_plex_path = os.path.join(location, folder_name_for_plex_scan)
-                            else: # File was found directly in plex_file_location
-                                constructed_plex_path = location # Scan the root of the section location
-                            logging.debug(f"    Considering scan path: '{constructed_plex_path}' based on location '{location}' and determined folder '{folder_name_for_plex_scan}'")
-
-                            # Add this section/path combination to our list
-                            if section.title not in paths_to_scan_by_section:
-                                paths_to_scan_by_section[section.title] = set()
-                            paths_to_scan_by_section[section.title].add(constructed_plex_path)
-                            found_matching_section_location = True
-                            # Don't break - a section might have multiple relevant locations? Unlikely, but safe not to break.
+                    # If Plex already confirmed the file location, derive the scan path
+                    # directly from Plex's own reported path — no mount assumptions needed.
+                    # This avoids scanning every section location (e.g. /debrid/ufc) when
+                    # the file only exists under one of them (e.g. /debrid/movies).
+                    if _plex_location:
+                        _plex_scan_dir = os.path.dirname(_plex_location)
+                        for section in sections:
+                            if section.type != item_type_mapped:
+                                continue
+                            if allowed_library_keys is not None and str(section.key) not in allowed_library_keys:
+                                continue
+                            # Only add the section that actually contains this path
+                            for location in section.locations:
+                                if _plex_scan_dir.startswith(location):
+                                    if section.title not in paths_to_scan_by_section:
+                                        paths_to_scan_by_section[section.title] = set()
+                                    paths_to_scan_by_section[section.title].add(_plex_scan_dir)
+                                    found_matching_section_location = True
+                                    logging.debug(f"  Scan path from Plex-confirmed location: '{_plex_scan_dir}' in section '{section.title}'")
+                                    break
+                    else:
+                        # Plex hasn't indexed the file yet — fall back to scanning all
+                        # matching section locations so Plex discovers it.
+                        for section in sections:
+                            if section.type != item_type_mapped:
+                                continue
+                            if allowed_library_keys is not None and str(section.key) not in allowed_library_keys:
+                                logging.debug(f"Skipping section '{section.title}' (key: {section.key}) - not in configured libraries")
+                                continue
+                            logging.debug(f"  Checking Section '{section.title}' (Type: {section.type})")
+                            for location in section.locations:
+                                if folder_name_for_plex_scan:
+                                    constructed_plex_path = os.path.join(location, folder_name_for_plex_scan)
+                                else:
+                                    constructed_plex_path = location
+                                logging.debug(f"    Considering scan path: '{constructed_plex_path}' based on location '{location}' and determined folder '{folder_name_for_plex_scan}'")
+                                if section.title not in paths_to_scan_by_section:
+                                    paths_to_scan_by_section[section.title] = set()
+                                paths_to_scan_by_section[section.title].add(constructed_plex_path)
+                                found_matching_section_location = True
 
                     if not found_matching_section_location:
                         logging.warning(f"Could not find any matching Plex library section (type: {item_type_mapped}) for item {item_id} based on file '{filled_by_file}'. Scan might not be triggered correctly.")
@@ -6058,20 +6485,43 @@ class ProgramRunner:
             # --- Trigger scans after checking all items ---
             if paths_to_scan_by_section:
                 logging.info(f"Triggering scans for {len(paths_to_scan_by_section)} sections based on detected files...")
-                final_updated_sections = set() # Track unique section titles updated
+                final_updated_sections = set()
                 for section_title, scan_paths in paths_to_scan_by_section.items():
                     section = sections_map.get(section_title)
                     if not section:
                         logging.error(f"Could not find section object for title '{section_title}' during scan trigger phase.")
                         continue
 
+                    # Deduplicate: if multiple episode folders share the same parent (show folder),
+                    # scan the parent once instead of each episode folder separately.
+                    # This prevents flooding Plex with N concurrent Scanner processes for season packs.
+                    deduped_paths = set()
                     for scan_path in scan_paths:
+                        parent = os.path.dirname(scan_path)
+                        siblings = [p for p in scan_paths if os.path.dirname(p) == parent and p != scan_path]
+                        if siblings:
+                            deduped_paths.add(parent)
+                        else:
+                            deduped_paths.add(scan_path)
+
+                    # Hard cap: never trigger more than 5 scans per section per run.
+                    # Remaining paths will be picked up on the next 60s run.
+                    _MAX_SCANS_PER_RUN = 5
+                    if len(deduped_paths) > _MAX_SCANS_PER_RUN:
+                        logging.warning(
+                            f"[PlexCheck] {len(deduped_paths)} scan paths for '{section.title}' — "
+                            f"capping at {_MAX_SCANS_PER_RUN} to avoid Plex DB contention. "
+                            f"Remaining will be picked up next run."
+                        )
+                        deduped_paths = set(list(deduped_paths)[:_MAX_SCANS_PER_RUN])
+
+                    for scan_path in deduped_paths:
                         try:
                             logging.info(f"Triggering Plex section '{section.title}' update scan for path: {scan_path}")
                             section.update(path=scan_path)
                             final_updated_sections.add(section.title)
                         except NotFound:
-                             logging.warning(f"Path '{scan_path}' not found by Plex server during scan trigger for section '{section.title}'. This might be expected if the folder doesn't exist yet.")
+                             logging.warning(f"Path '{scan_path}' not found by Plex server during scan trigger for section '{section.title}'.")
                         except Exception as e_scan:
                              logging.error(f"Failed to trigger update scan for Plex section '{section.title}' with path '{scan_path}': {str(e_scan)}", exc_info=True)
 
@@ -6445,6 +6895,103 @@ class ProgramRunner:
         """Run library maintenance tasks."""
         from database.maintenance import run_library_maintenance
         run_library_maintenance()
+
+    def task_sync_library_metadata(self):
+        """Sync audio/subtitle track metadata from Plex/Jellyfin for collected items."""
+        from utilities.settings import get_setting
+        from database.core import get_db_connection
+        from overlays.overlay_manager import OverlayManager
+        from overlays.media_info import MediaInfoExtractor
+
+        extractor = MediaInfoExtractor()
+        use_jellyfin = get_setting('Jellyfin', 'enabled', False)
+        plex_url = get_setting('Plex', 'url', '') if not use_jellyfin else get_setting('Jellyfin', 'url', '')
+        plex_token = get_setting('Plex', 'token', '') if not use_jellyfin else get_setting('Jellyfin', 'api_key', '')
+
+        if not plex_url or not plex_token:
+            logging.warning("[SyncLibMeta] Media server not configured — skipping.")
+            return
+
+        manager = OverlayManager(None, plex_url, plex_token)
+        client = manager.plex  # reuse already-initialized Plex/Jellyfin client
+
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            # For episodes, ms_item_id is the show's rating key — group to avoid
+            # fetching the same show metadata 20 times for 20 episodes.
+            # For movies, ms_item_id is the movie's own rating key.
+            cursor.execute("""
+                SELECT MIN(id) as id, ms_item_id, type
+                FROM media_items
+                WHERE state = 'Collected'
+                AND ms_item_id IS NOT NULL AND ms_item_id != ''
+                AND (ms_audio_track IS NULL OR ms_subtitle_track IS NULL)
+                GROUP BY ms_item_id, type
+                ORDER BY MAX(collected_at) DESC
+                LIMIT 500
+            """)
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
+
+        if not rows:
+            logging.info("[SyncLibMeta] No items need metadata sync.")
+            return
+
+        logging.info(f"[SyncLibMeta] Syncing metadata for {len(rows)} unique ms_item_ids.")
+
+        updated = 0
+        errors = 0
+        for row in rows:
+            ms_item_id = row['ms_item_id']
+            item_type = row['type']
+            try:
+                if use_jellyfin:
+                    metadata = client.get_media_metadata(ms_item_id)
+                    if not metadata:
+                        continue
+                    media_info = extractor.extract_from_jellyfin_metadata(metadata)
+                else:
+                    if item_type == 'episode':
+                        # ms_item_id is show rating key — fetch best episode for stream data
+                        metadata = client.get_show_best_episode_media(ms_item_id)
+                    else:
+                        metadata = client.get_media_metadata(ms_item_id)
+                    if not metadata:
+                        continue
+                    media_info = extractor.extract_from_plex_metadata(metadata)
+
+                audio_track = media_info.get('audio_track')
+                subtitle_track = media_info.get('subtitle_track')
+
+                if audio_track is None and subtitle_track is None:
+                    continue
+
+                # Update ALL episodes/movies sharing this ms_item_id
+                conn = get_db_connection()
+                try:
+                    conn.execute("""
+                        UPDATE media_items
+                        SET ms_audio_track = COALESCE(ms_audio_track, ?),
+                            ms_subtitle_track = COALESCE(ms_subtitle_track, ?),
+                            ms_last_scanned = CURRENT_TIMESTAMP
+                        WHERE ms_item_id = ? AND type = ?
+                        AND state = 'Collected'
+                        AND (ms_audio_track IS NULL OR ms_subtitle_track IS NULL)
+                    """, (audio_track, subtitle_track, ms_item_id, item_type))
+                    updated += conn.execute(
+                        "SELECT changes()"
+                    ).fetchone()[0]
+                    conn.commit()
+                finally:
+                    conn.close()
+
+            except Exception as e:
+                logging.debug(f"[SyncLibMeta] Failed for ms_item_id {ms_item_id}: {e}")
+                errors += 1
+
+        logging.info(f"[SyncLibMeta] Done. Updated={updated} rows. Errors={errors}")
 
     def task_fix_stuck_plex_items(self):
         """Detect and remove stuck Plex scan items, optionally also removing from Decypharr."""
@@ -7842,11 +8389,13 @@ class ProgramRunner:
             collection_type = get_setting('File Management', 'file_collection_management', 'Plex')
             
             if collection_type == 'Symlinked/Local':
-                # For symlinked/local, use the symlinks directory
                 scan_dir = get_setting('File Management', 'symlinked_files_path', '')
                 if not os.path.exists(scan_dir):
                     logging.warning(f"Symlinks directory not found: {scan_dir}")
                     return
+            elif collection_type == 'Plex':
+                self._task_process_bulk_subtitles_plex()
+                return
             else:
                 logging.warning(f"Unsupported collection type '{collection_type}' for bulk subtitle processing.")
                 return
@@ -7894,6 +8443,66 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error during bulk subtitle processing: {e}", exc_info=True)
     # --- END EDIT ---
+
+    def _get_plex_mount_base(self):
+        """Get the actual mount base path from Plex mounted_file_location, stripping /__all__."""
+        mount = get_setting('Plex', 'mounted_file_location', '').strip()
+        if mount.endswith('/__all__'):
+            mount = mount[:-len('/__all__')]
+        return mount.rstrip('/')
+
+    def _remap_debrid_path(self, path, mount_base):
+        """Replace the Plex-reported /debrid prefix with the actual mount path."""
+        if not path or not mount_base:
+            return path
+        # location_on_disk from Plex looks like /debrid/shows/FolderName or /debrid/movies/FolderName
+        # Split off the /debrid prefix and replace with mount_base
+        parts = path.split('/', 3)  # ['', 'debrid', 'shows'|'movies', 'rest...']
+        if len(parts) >= 3:
+            return mount_base + '/' + '/'.join(parts[2:])
+        return path
+
+    def _task_process_bulk_subtitles_plex(self):
+        """Process bulk subtitles for Plex mode via Decypharr sidecar injection."""
+        from database.core import get_db_connection
+        from utilities.downsub import download_subtitles_for_video
+        logging.info("[BulkSubs/Plex] Starting bulk subtitle processing for Plex mode.")
+
+        mount_base = self._get_plex_mount_base()
+        if not mount_base:
+            logging.warning("[BulkSubs/Plex] No Plex mounted_file_location configured — cannot process subtitles.")
+            return
+
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT location_on_disk, filled_by_file FROM media_items
+                WHERE state = 'Collected'
+                AND (file_path IS NOT NULL OR location_on_disk IS NOT NULL)
+                LIMIT 200
+            """)
+            rows = cursor.fetchall()
+            conn.close()
+        except Exception as e:
+            logging.error(f"[BulkSubs/Plex] DB error: {e}")
+            return
+
+        processed = 0
+        for row in rows:
+            location = row[0] or ''
+            filled_by_file = row[1] or ''
+            if not location or not filled_by_file:
+                continue
+            # Remap /debrid/... → /media/mount/...
+            location = self._remap_debrid_path(location, mount_base)
+            full_path = os.path.join(location, filled_by_file) if not location.endswith(filled_by_file) else location
+            try:
+                download_subtitles_for_video(full_path)
+                processed += 1
+            except Exception as e:
+                logging.debug(f"[BulkSubs/Plex] Skipped {full_path}: {e}")
+        logging.info(f"[BulkSubs/Plex] Processed {processed} items.")
 
     # *** START EDIT: Add the new long-running task method ***
     def task_artificial_long_run(self):

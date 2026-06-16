@@ -45,6 +45,7 @@ function attachEventListeners() {
     const btnSeasonPacks = document.getElementById('btn-season-packs');
     const btnRefreshTMDB = document.getElementById('btn-refresh-tmdb');
     const btnSettings = document.getElementById('btn-settings');
+    const btnDownsubShow = document.getElementById('btn-downsub-show');
 
     if (btnGetMissing) {
         btnGetMissing.addEventListener('click', handleGetMissing);
@@ -60,6 +61,10 @@ function attachEventListeners() {
 
     if (btnSettings) {
         btnSettings.addEventListener('click', handleSettings);
+    }
+
+    if (btnDownsubShow) {
+        btnDownsubShow.addEventListener('click', handleDownsubShow);
     }
 
     // Close overlay when pressing Escape key
@@ -793,11 +798,21 @@ function createSeasonPanel(season, isActive) {
         </button>
     ` : '';
 
+    const downsubSeasonBtnHtml = `
+        <button class="downsub-season-btn refresh-btn" type="button"
+                title="Download subtitles for Season ${season.season_number}"
+                data-imdb-id="${showData.imdb_id}"
+                data-season-number="${season.season_number}">
+            <i class="fa-solid fa-closed-captioning" style="font-size:14px;"></i><i class="fa-solid fa-arrow-down" style="font-size:8px;margin-left:1px;vertical-align:middle;"></i>
+        </button>
+    `;
+
     seasonHeader.innerHTML = `
         <h3>Season ${season.season_number}${phantomIndicator}${pendingBadge}</h3>
         <div class="season-action-buttons">
             ${magnetSeasonBtnHtml}
             ${seasonNotWantedBtnHtml}
+            ${downsubSeasonBtnHtml}
             ${replaceButtonHtml}
             ${deleteButtonHtml}
         </div>
@@ -829,6 +844,27 @@ function createSeasonPanel(season, isActive) {
         seasonNotWantedBtn.addEventListener('click', async () => {
             const itemIds = seasonNotWantedBtn.dataset.seasonItemIds.split(',').map(Number).filter(Boolean);
             await handleNotWantedMagnetDirect(seasonNotWantedBtn, itemIds, `Season ${season.season_number} pack`);
+        });
+    }
+
+    // Season subtitle download handler
+    const downsubSeasonBtn = seasonHeader.querySelector('.downsub-season-btn');
+    if (downsubSeasonBtn) {
+        downsubSeasonBtn.addEventListener('click', async () => {
+            downsubSeasonBtn.disabled = true;
+            try {
+                const resp = await fetch('/library/download_subtitles/season', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({imdb_id: showData.imdb_id, season_number: season.season_number})
+                });
+                const result = await resp.json();
+                showPopup({ type: result.success ? POPUP_TYPES.SUCCESS : POPUP_TYPES.WARNING, message: result.message || result.error || 'Failed', autoClose: 5000 });
+            } catch(e) {
+                showPopup({ type: POPUP_TYPES.ERROR, message: 'Error starting subtitle download', autoClose: 4000 });
+            } finally {
+                downsubSeasonBtn.disabled = false;
+            }
         });
     }
 
@@ -1093,6 +1129,19 @@ function createEpisodeRow(episodes, seasonNumber) {
         if (largestSize > 0) {
             metaParts.push(`<span class="episode-version">${largestSize.toFixed(2)} GB</span>`);
         }
+        // Audio / subtitle tracks
+        const audioTrack = highestQualityEp.ms_audio_track;
+        const subTrack = highestQualityEp.ms_subtitle_track;
+        if (audioTrack) {
+            const langs = audioTrack.split(',').map(l => l.trim()).filter(Boolean);
+            const label = langs.length > 1 ? `${langs[0]} +${langs.length - 1}` : langs[0];
+            metaParts.push(`<span class="episode-track-badge" title="${escapeHtml(langs.join(', '))}"><i class="fa-solid fa-volume-high"></i> ${escapeHtml(label)}</span>`);
+        }
+        if (subTrack) {
+            const langs = subTrack.split(',').map(l => l.trim()).filter(Boolean);
+            const label = langs.length > 1 ? `${langs[0]} +${langs.length - 1}` : langs[0];
+            metaParts.push(`<span class="episode-track-badge" title="${escapeHtml(langs.join(', '))}"><i class="fa-solid fa-closed-captioning"></i> ${escapeHtml(label)}</span>`);
+        }
     }
 
     // Air date
@@ -1233,7 +1282,12 @@ function createEpisodeRow(episodes, seasonNumber) {
             </svg>
         `;
 
+        const collectedEp = episodes.find(ep => ep.state === 'Collected' || ep.state === 'Upgrading') || firstEp;
         deleteIcon = `
+            <button class="downsub-episode-btn refresh-btn" type="button" title="Download subtitles"
+                    data-item-id="${collectedEp.id || ''}">
+                <i class="fa-solid fa-closed-captioning"></i><i class="fa-solid fa-arrow-down" style="font-size:8px;margin-left:1px;vertical-align:middle;"></i>
+            </button>
             <button class="delete-episode-btn" type="button" title="Delete episode"
                     data-imdb-id="${episodes[0].imdb_id || ''}"
                     data-season="${seasonNumber}"
@@ -1347,6 +1401,25 @@ function createEpisodeRow(episodes, seasonNumber) {
             const epVersion = (getHighestQualityEpisode(episodes).version || '').replace(/\*/g, '').trim();
             if (epVersion) params.set('prefill_version', epVersion);
             window.location.href = `/magnet/assign_magnet?${params.toString()}`;
+        });
+    }
+
+    // Add event listener for episode subtitle download button
+    const downsubEpisodeBtn = row.querySelector('.downsub-episode-btn');
+    if (downsubEpisodeBtn) {
+        downsubEpisodeBtn.addEventListener('click', async () => {
+            const itemId = downsubEpisodeBtn.dataset.itemId;
+            if (!itemId) return;
+            downsubEpisodeBtn.disabled = true;
+            try {
+                const resp = await fetch(`/library/download_subtitles/item/${itemId}`, {method: 'POST'});
+                const result = await resp.json();
+                showPopup({ type: result.success ? POPUP_TYPES.SUCCESS : POPUP_TYPES.WARNING, message: result.message || result.error || 'Failed', autoClose: 5000 });
+            } catch(e) {
+                showPopup({ type: POPUP_TYPES.ERROR, message: 'Error starting subtitle download', autoClose: 4000 });
+            } finally {
+                downsubEpisodeBtn.disabled = false;
+            }
         });
     }
 
@@ -1794,6 +1867,25 @@ function handleRefreshTMDB() {
         btn.disabled = false;
         btn.innerHTML = originalHTML;
     });
+}
+
+async function handleDownsubShow() {
+    if (!showData) return;
+    const btn = document.getElementById('btn-downsub-show');
+    if (btn) btn.disabled = true;
+    try {
+        const resp = await fetch('/library/download_subtitles/show', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({imdb_id: showData.imdb_id})
+        });
+        const result = await resp.json();
+        showPopup({ type: result.success ? POPUP_TYPES.SUCCESS : POPUP_TYPES.WARNING, message: result.message || result.error || 'Failed', autoClose: 5000 });
+    } catch(e) {
+        showPopup({ type: POPUP_TYPES.ERROR, message: 'Error starting subtitle download', autoClose: 4000 });
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 function handleSettings() {

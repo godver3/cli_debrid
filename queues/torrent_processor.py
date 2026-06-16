@@ -656,13 +656,12 @@ class TorrentProcessor:
                 season=(item or {}).get('season_number'),
                 episode=None if _is_season_pack else (item or {}).get('episode_number'),
                 episode_title=None if _is_season_pack else (item or {}).get('episode_title'),
+                tags=(item or {}).get('tags') or None,
             ) or title
         except Exception:
             job_title = title
 
-        # Check if same NZB title already in Decypharr to avoid duplicates.
-        # Uses /api/torrents (paginated) — /api/browse/torrents search is broken.
-        #
+        # Check if same NZB title already in Decypharr/NzbDAV to avoid duplicates.
         # Two match levels:
         #   1. Exact title match — catches same release resubmitted
         #   2. Prefix match — catches same show/episode submitted with a different
@@ -674,6 +673,37 @@ class TorrentProcessor:
             return _re_dc.sub(r'\s*-\s*\([^)]*\)\s*$', '', t).strip()
 
         _job_prefix = _title_prefix(job_title)
+
+        # DB-level dedup: check if same item already in Adding/Checking with nzb: torrent ID.
+        # Works for both Decypharr and NzbDAV since it uses the DB, not provider API.
+        try:
+            from database.core import get_db_connection as _get_dbc_dd
+            _item_imdb = (item or {}).get('imdb_id')
+            _item_type = (item or {}).get('type', '')
+            if _item_imdb and _item_type:
+                _dd_q = ("SELECT filled_by_torrent_id FROM media_items "
+                         "WHERE imdb_id=? AND type=? AND state IN ('Adding','Checking') "
+                         "AND filled_by_torrent_id LIKE 'nzb:%'")
+                _dd_p = (_item_imdb, _item_type)
+                if _item_type == 'episode':
+                    _dd_q = ("SELECT filled_by_torrent_id FROM media_items "
+                             "WHERE imdb_id=? AND type=? AND season_number=? AND episode_number=? "
+                             "AND state IN ('Adding','Checking') AND filled_by_torrent_id LIKE 'nzb:%'")
+                    _dd_p = (_item_imdb, _item_type,
+                             (item or {}).get('season_number'), (item or {}).get('episode_number'))
+                with _get_dbc_dd() as _dbc:
+                    _dd_row = _dbc.execute(_dd_q, _dd_p).fetchone()
+                if _dd_row:
+                    _existing_nzb_id = _dd_row[0][4:]  # strip 'nzb:'
+                    logging.info(f'[{item_identifier}] NZB already in-flight (DB dedup): {_existing_nzb_id} — reusing job')
+                    return {'id': _existing_nzb_id, 'filename': job_title, 'original_title': job_title,
+                            'status': 'downloading', 'files': [], 'progress': 0,
+                            '_provider': 'Usenet', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+        except Exception:
+            pass
+
+        # Decypharr-only: also check provider queue by title for exact/prefix match.
+        # NzbDAV has no /api/torrents endpoint — silently skipped via except.
         try:
             from routes.api_tracker import api as _check_api
             from utilities.settings import get_setting as _gs_check
@@ -723,9 +753,37 @@ class TorrentProcessor:
         except Exception as _nzb_check_err:
             logging.debug(f'[{item_identifier}] Could not pre-check NZB segment: {_nzb_check_err}')
 
+        _item = item or {}
+        # Derive is_anime: prefer trigger_is_anime DB flag, fall back to genres
+        # genres may be a list or a JSON string from the DB
+        _genres_raw = _item.get('genres') or _item.get('trigger_genres') or []
+        if isinstance(_genres_raw, str):
+            try:
+                import json as _json
+                _genres_raw = _json.loads(_genres_raw)
+            except Exception:
+                _genres_raw = [_genres_raw]
+        _is_anime = bool(_item.get('trigger_is_anime')) or any(
+            'anime' in (g or '').lower() for g in _genres_raw
+        )
+        _item_media_type = _item.get('type', '')
+        _tags = _item.get('tags') or None
+        # tags_exclusive: check content source config
+        _tags_exclusive = False
+        try:
+            from utilities.settings import get_setting as _gs_tags
+            _cs_id = _item.get('content_source', '')
+            if _cs_id:
+                _cs_cfg = (_gs_tags('Content Sources') or {}).get(_cs_id, {})
+                _tags_exclusive = bool(_cs_cfg.get('tags_exclusive', False))
+        except Exception:
+            pass
+
         logging.info(f'[{item_identifier}] Submitting NZB to Decypharr: {job_title}')
         if _nzb_xml:
-            job_id = client.add_nzb_content(nzb_content=_nzb_xml, title=job_title)
+            job_id = client.add_nzb_content(nzb_content=_nzb_xml, title=job_title,
+                                            is_anime=_is_anime, media_type=_item_media_type,
+                                            tags=_tags, tags_exclusive=_tags_exclusive)
             if not job_id and client.last_missing_segments:
                 logging.warning(f'[{item_identifier}] Decypharr server missing segments for {job_title!r} — adding NZB URL to not-wanted')
                 try:
@@ -735,9 +793,14 @@ class TorrentProcessor:
                         logging.info(f'[{item_identifier}] Added missing-segments NZB URL to not-wanted')
                 except Exception:
                     pass
+                # Flag on item so adding_queue knows this was a missing-segments failure
+                if item:
+                    item['_nzb_all_missing_segments'] = True
                 return None
         else:
-            job_id = client.add_nzb(nzb_url=nzb_url, title=job_title)
+            job_id = client.add_nzb(nzb_url=nzb_url, title=job_title,
+                                    is_anime=_is_anime, media_type=_item_media_type,
+                                    tags=_tags, tags_exclusive=_tags_exclusive)
 
         if not job_id:
             # Fallback: download NZB and upload directly
@@ -746,9 +809,13 @@ class TorrentProcessor:
                 from routes.api_tracker import api as _nzb_api
                 _r = _nzb_api.get(nzb_url, timeout=15, allow_redirects=True)
                 if _r.status_code == 200 and '<nzb' in _r.text.lower():
-                    job_id = client.add_nzb_content(nzb_content=_r.text, title=job_title)
+                    job_id = client.add_nzb_content(nzb_content=_r.text, title=job_title,
+                                                    is_anime=_is_anime, media_type=_item_media_type,
+                                                    tags=_tags, tags_exclusive=_tags_exclusive)
                     if not job_id and client.last_missing_segments:
                         logging.warning(f'[{item_identifier}] Decypharr server missing segments on fallback for {job_title!r}')
+                        if item:
+                            item['_nzb_all_missing_segments'] = True
                         return None
                     if job_id:
                         logging.info(f'[{item_identifier}] Direct upload succeeded: {job_title}')
@@ -1122,6 +1189,57 @@ class TorrentProcessor:
                         
                         elif item and not definitive_hash:
                              logging.warning(f"[{item_identifier}] [Result {idx}/{len(results)}] No definitive_hash in torrent info. Skipping not_wanted and tracking. Original link: {original_link if original_link else 'N/A'}")
+
+                        # Debrid File Naming: rename the Decypharr DFS folder using
+                        # the structured CLI name if the setting is enabled.
+                        # Runs asynchronously so it doesn't block the adding flow.
+                        # Retries up to 3 times with 30s delay to handle Decypharr's
+                        # periodic sync window (default 10 min).
+                        if item and definitive_hash:
+                            try:
+                                from utilities.settings import get_setting as _dbn_gs
+                                if _dbn_gs('Debrid Provider', 'enable_debrid_naming', False):
+                                    from routes.scraper_routes import _build_debrid_title
+                                    _dbn_type = item.get('type', '')
+                                    _dbn_media_type = 'tv' if _dbn_type == 'episode' else _dbn_type
+                                    _parsed_dbn = result.get('parsed_info', {}) or {}
+                                    _dbn_seasons = _parsed_dbn.get('seasons') or []
+                                    _dbn_episodes = _parsed_dbn.get('episodes') or []
+                                    _dbn_is_pack = bool(_dbn_seasons) and not _dbn_episodes
+                                    _dbn_title = _build_debrid_title(
+                                        title=item.get('title', '') or title,
+                                        year=item.get('year', ''),
+                                        imdb_id=item.get('imdb_id'),
+                                        version=item.get('version', ''),
+                                        original_scraped_torrent_title=result.get('original_title') or title,
+                                        media_type=_dbn_media_type,
+                                        season=item.get('season_number'),
+                                        episode=None if _dbn_is_pack else item.get('episode_number'),
+                                        episode_title=None if _dbn_is_pack else item.get('episode_title'),
+                                        tags=item.get('tags') or None,
+                                        content_source_display_name=item.get('content_source_detail') or item.get('content_source'),
+                                    )
+                                    if _dbn_title and _dbn_title != (result.get('original_title') or title):
+                                        import threading as _dbn_threading
+                                        _dbn_hash = definitive_hash
+                                        _dbn_name = _dbn_title
+                                        _dbn_id = item_identifier
+                                        def _do_debrid_rename(h, name, ident):
+                                            import time as _t
+                                            try:
+                                                from usenet.decypharr_client import get_decypharr_client
+                                                _dc = get_decypharr_client()
+                                                for _attempt in range(20):
+                                                    if _dc.rename_nzb(h, name):
+                                                        logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} for {ident}')
+                                                        return
+                                                    _t.sleep(30)
+                                                logging.warning(f'[DebridNaming] Could not rename {h!r} after 20 attempts for {ident}')
+                                            except Exception as _dbn_err:
+                                                logging.debug(f'[DebridNaming] Rename error for {ident}: {_dbn_err}')
+                                        _dbn_threading.Thread(target=_do_debrid_rename, args=(_dbn_hash, _dbn_name, _dbn_id), daemon=True).start()
+                            except Exception as _dbn_ex:
+                                logging.debug(f'[DebridNaming] Setup error for {item_identifier}: {_dbn_ex}')
 
                         logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Successfully processed and added")
                         chosen_result_for_return = result # Store the successful result

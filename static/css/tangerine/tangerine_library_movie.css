@@ -2862,6 +2862,18 @@ body[data-theme="tangerine"] .movie-file-meta .file-version {
     padding: 1px 6px;
 }
 
+/* Audio / subtitle track badges */
+body[data-theme="tangerine"] .movie-file-meta .episode-track-badge {
+    font-family: var(--tm-mono);
+    font-size: 11px;
+    font-weight: 500;
+    background: var(--tm-surface-3);
+    border: 1px solid var(--tm-border);
+    color: #aaa;
+    border-radius: 4px;
+    padding: 1px 6px;
+}
+
 /* Quality badges (resolution, source etc) — mono */
 body[data-theme="tangerine"] .quality-badge {
     font-family: var(--tm-mono);

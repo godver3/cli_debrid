@@ -111,9 +111,19 @@ def filter_results(
     #logging.debug(f"Version settings: resolution={max_resolution}({resolution_wanted}), size={min_size_gb}-{max_size_gb}GB, HDR={enable_hdr}")
     #logging.debug(f"Filter patterns - in: {filter_in}, out: {filter_out}")
     
-    # Pre-compile patterns
-    filter_in_patterns = filter_in if filter_in else []
-    filter_out_patterns = filter_out if filter_out else []
+    # Normalize filter items — support both plain strings (legacy) and
+    # {"pattern": "...", "source": "both|nzb|debrid"} dicts (new format).
+    def _normalize_filter_list(raw):
+        out = []
+        for item in (raw or []):
+            if isinstance(item, dict):
+                out.append({'pattern': item.get('pattern', ''), 'source': item.get('source', 'both')})
+            else:
+                out.append({'pattern': str(item), 'source': 'both'})
+        return out
+
+    filter_in_patterns = _normalize_filter_list(filter_in)
+    filter_out_patterns = _normalize_filter_list(filter_out)
     adult_pattern = re.compile('|'.join(adult_terms), re.IGNORECASE) if disable_adult else None
     
     # Determine content type specific settings
@@ -1184,13 +1194,21 @@ def filter_results(
                     # NZB-specific: reject incomplete season packs using the indexer's file count.
                     # If the indexer reports fewer files than the expected episode count, the pack
                     # is missing episodes and must be rejected — no partial packs allowed.
+                    # If nzb_files=0 (indexer didn't report file count) and we know the expected
+                    # episode count, also reject — an unverifiable pack is treated as incomplete.
                     _nzb_files = result.get('nzb_files', 0)
-                    if _nzb_files and season and season_episode_counts:
+                    _protocol = result.get('protocol', '')
+                    if _protocol == 'nzb' and season and season_episode_counts:
                         _expected_eps = season_episode_counts.get(season, 0)
-                        if _expected_eps > 0 and _nzb_files < _expected_eps:
-                            result['filter_reason'] = f"Incomplete NZB season pack: {_nzb_files} files but season has {_expected_eps} episodes"
-                            logging.info(f"Rejected: Incomplete NZB pack ({_nzb_files}/{_expected_eps} files) for '{original_title}' (Size: {result['size']:.2f}GB)")
-                            continue
+                        if _expected_eps > 0:
+                            if _nzb_files == 0:
+                                result['filter_reason'] = f"Incomplete NZB season pack: indexer reported 0 files but season has {_expected_eps} episodes"
+                                logging.info(f"Rejected: NZB pack with 0 reported files (unverifiable) for '{original_title}' — season has {_expected_eps} episodes (Size: {result['size']:.2f}GB)")
+                                continue
+                            elif _nzb_files < _expected_eps:
+                                result['filter_reason'] = f"Incomplete NZB season pack: {_nzb_files} files but season has {_expected_eps} episodes"
+                                logging.info(f"Rejected: Incomplete NZB pack ({_nzb_files}/{_expected_eps} files) for '{original_title}' (Size: {result['size']:.2f}GB)")
+                                continue
 
                     #logging.debug("✓ Passed multi-episode checks")
                 else: # Single episode mode
@@ -1782,17 +1800,22 @@ def filter_results(
             # --- NEW: Pre-Normalization Filter Out Check ---
             # Check filter_out patterns against original fields BEFORE normalization
             if filter_out_patterns:
-                # Only check content fields, exclude technical identifiers like binge_group
+                is_nzb_result = result.get('protocol') == 'nzb'
                 original_fields_to_check = [original_title, filename]
                 matched_pre_norm_pattern = None
-                for pattern in filter_out_patterns:
+                for pobj in filter_out_patterns:
+                    src = pobj['source']
+                    if src == 'nzb' and not is_nzb_result:
+                        continue
+                    if src == 'debrid' and is_nzb_result:
+                        continue
+                    pat = pobj['pattern']
                     for field_value in original_fields_to_check:
-                        # Check only if field_value exists (is not None or empty string)
-                        if field_value and smart_search(pattern, field_value):
-                            matched_pre_norm_pattern = pattern
-                            break # Found a match for this pattern, stop checking fields
+                        if field_value and smart_search(pat, field_value):
+                            matched_pre_norm_pattern = pat
+                            break
                     if matched_pre_norm_pattern:
-                        break # Found a matching pattern, stop checking patterns
+                        break
 
                 if matched_pre_norm_pattern:
                     result['filter_reason'] = f"Matching filter_out pattern(s) before normalization: {matched_pre_norm_pattern}"
@@ -1805,37 +1828,47 @@ def filter_results(
             normalized_filename = normalize_title(filename).lower() if filename else None
             normalized_binge_group = normalize_title(binge_group).lower() if binge_group else None
 
-            # Function to check patterns against multiple fields
+            # Function to check patterns against multiple fields, respecting source type
+            is_nzb_result = result.get('protocol') == 'nzb'
             def check_patterns(patterns, fields_to_check):
                 matched = []
-                for pattern in patterns:
+                for pobj in patterns:
+                    src = pobj['source']
+                    if src == 'nzb' and not is_nzb_result:
+                        continue
+                    if src == 'debrid' and is_nzb_result:
+                        continue
+                    pat = pobj['pattern']
                     for field_value in fields_to_check:
-                        if field_value and smart_search(pattern, field_value):
-                            matched.append(pattern)
-                            break # Stop checking fields for this pattern once matched
+                        if field_value and smart_search(pat, field_value):
+                            matched.append(pat)
+                            break
                 return matched
 
             # Only check content fields, exclude technical identifiers like binge_group
             fields_to_check_patterns = [normalized_filter_title, normalized_filename]
-            
+
             # Filter Out Check (on normalized fields - keep this as well)
             if filter_out_patterns:
-                # Note: This check now runs *after* the pre-normalization check
                 matched_out_patterns = check_patterns(filter_out_patterns, fields_to_check_patterns)
                 if matched_out_patterns:
-                    # Only reject if it wasn't already rejected by the pre-norm check
-                    # (This check is now slightly redundant for patterns caught pre-norm, but harmless)
                     result['filter_reason'] = f"Matching filter_out pattern(s) after normalization: {', '.join(matched_out_patterns)}"
                     logging.info(f"Rejected (post-norm): Matched filter_out patterns '{matched_out_patterns}' for '{original_title}' (Size: {result['size']:.2f}GB)")
                     continue
 
             # Filter In Check (on normalized fields - keep this)
             if filter_in_patterns:
-                matched_in_patterns = check_patterns(filter_in_patterns, fields_to_check_patterns)
-                if not matched_in_patterns: # Reject if NO patterns matched ANY field
-                    result['filter_reason'] = "Not matching any filter_in patterns (post-normalization)"
-                    logging.info(f"Rejected (post-norm): No matching filter_in patterns for '{original_title}' (Size: {result['size']:.2f}GB)")
-                    continue
+                # Only consider patterns applicable to this result's source type
+                applicable_in = [p for p in filter_in_patterns
+                                 if p['source'] == 'both'
+                                 or (p['source'] == 'nzb' and is_nzb_result)
+                                 or (p['source'] == 'debrid' and not is_nzb_result)]
+                if applicable_in:
+                    matched_in_patterns = check_patterns(applicable_in, fields_to_check_patterns)
+                    if not matched_in_patterns:
+                        result['filter_reason'] = "Not matching any filter_in patterns (post-normalization)"
+                        logging.info(f"Rejected (post-norm): No matching filter_in patterns for '{original_title}' (Size: {result['size']:.2f}GB)")
+                        continue
             # logging.debug("✓ Passed pattern checks")
             # --- End Existing Pattern Matching ---
 

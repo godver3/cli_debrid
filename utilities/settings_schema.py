@@ -165,6 +165,12 @@ SETTINGS_SCHEMA = {
             "type": "boolean",
             "description": "Enable web caching and compression for faster page loads. This improves performance by caching static assets (CSS, JavaScript, images) and compressing responses. Disable if experiencing issues with updates not appearing.",
             "default": False
+        },
+        "stats_provider_priority": {
+            "type": "string",
+            "description": "Choose which provider's stats to display on the Statistics page. Auto uses debrid if configured, otherwise usenet. Select Usenet to always show Decypharr/usenet stats even when a debrid provider is also configured.",
+            "default": "auto",
+            "choices": ["auto", "debrid", "usenet"]
         }
     },
     "Plex": {
@@ -198,7 +204,7 @@ SETTINGS_SCHEMA = {
         },
         "mounted_file_location": {
             "type": "string",
-            "description": "Mounted file location (in Zurg use the /__all__ folder)",
+            "description": "The single path cli-debrid checks for file presence (in Zurg use the /__all__ folder). When you run more than one provider (e.g. Real-Debrid via zurg AND Usenet via NzbDAV), point this at one combined mount that contains all of them — e.g. a mergerfs union of the providers' mounts — so file checks succeed regardless of which provider holds the item. May differ from the per-provider mount path set under Usenet Provider.",
             "default": "/mnt/zurg/__all__"
         },
         "disable_plex_library_checks": {
@@ -282,6 +288,21 @@ SETTINGS_SCHEMA = {
             "description": "API key for the debrid service",
             "default": "demo_key",
             "sensitive": True
+        },
+        "enable_debrid_naming": {
+            "type": "boolean",
+            "description": "Name debrid torrent folders in Decypharr's DFS mount using a structured format: {title} ({year}) - {imdb-id} - {version} - (original) for movies and {title} ({year}) - SxxExx - {episode title} - {imdb-id} - {version} - (original) for episodes. Requires Decypharr as the usenet provider (URL configured). Only renames the virtual folder in Decypharr — the actual file on the debrid service is unchanged.",
+            "default": False
+        },
+        "include_version_in_debrid_naming": {
+            "type": "boolean",
+            "description": "Include the version (e.g. Default, 4K Remux) in the debrid folder name when Debrid File Naming is enabled.",
+            "default": True
+        },
+        "include_content_source_in_debrid_naming": {
+            "type": "boolean",
+            "description": "Include the content source display name in the debrid folder name when Debrid File Naming is enabled.",
+            "default": False
         }
     },
     "Usenet Provider": {
@@ -314,14 +335,34 @@ SETTINGS_SCHEMA = {
         },
         "enable_nzb_naming": {
             "type": "boolean",
-            "description": "Name NZB jobs submitted to Decypharr using a structured format with title, year, IMDb ID, version and original filename. Applies to movies, episodes, season packs and virtual aggregate packs.",
+            "description": "Name NZB jobs submitted to the Usenet provider using a structured format with title, year, IMDb ID, version and original filename. Applies to movies, episodes, season packs and virtual aggregate packs.",
+            "default": False
+        },
+        "include_version_in_nzb_naming": {
+            "type": "boolean",
+            "description": "Include the version (e.g. Default, 4K Remux) in the NZB job title when NZB File Naming is enabled.",
+            "default": True
+        },
+        "include_content_source_in_nzb_naming": {
+            "type": "boolean",
+            "description": "Include the content source display name in the NZB job title when NZB File Naming is enabled.",
             "default": False
         },
         "retention_days": {
             "type": "integer",
             "description": "Maximum age of NZB results in days. Results older than this are filtered out before submission. Set to 0 to disable. Applies everywhere NZB indexers are searched.",
             "default": 1500
-        }
+        },
+        "owned_categories": {
+            "type": "string",
+            "description": "NzbDAV only. Comma-separated list of nzbdav categories the repair/health tool may act on. nzbdav history is shared with other SAB clients (e.g. Lidarr music), and repair can only re-acquire content cli-debrid manages — so it must never touch another app's entries. Leave empty to auto-pick the categories cli-debrid grabs into (movies, shows, movies_1080p_264, shows_1080p_264, plus the download-folder fallback). Set this only if your category names differ.",
+            "default": ""
+        },
+        "exclude_categories": {
+            "type": "string",
+            "description": "NzbDAV only. Comma-separated nzbdav categories the repair/health tool must ignore, subtracted from the included set. Use this if you point Radarr/Sonarr at the same nzbdav and don't want cli-debrid touching their categories.",
+            "default": ""
+        },
     },
     "TMDB": {
         "tab": "Additional Settings",
@@ -1165,6 +1206,16 @@ SETTINGS_SCHEMA = {
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
                 },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
+                },
                 "cutoff_date": {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
@@ -1318,6 +1369,16 @@ SETTINGS_SCHEMA = {
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
                 },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
+                },
                 "cutoff_date": {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
@@ -1364,6 +1425,16 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
+                },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
                 },
                 "cutoff_date": {
                     "type": "string",
@@ -1435,6 +1506,16 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
+                },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
                 },
                 "cutoff_date": {
                     "type": "string",
@@ -1578,6 +1659,16 @@ SETTINGS_SCHEMA = {
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
                 },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
+                },
                 "cutoff_date": {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
@@ -1649,6 +1740,16 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
+                },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
                 },
                 "cutoff_date": {
                     "type": "string",
@@ -1730,6 +1831,16 @@ SETTINGS_SCHEMA = {
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
                 },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
+                },
                 "cutoff_date": {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
@@ -1799,6 +1910,16 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
+                },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
                 },
                 "cutoff_date": {
                     "type": "string",
@@ -1872,6 +1993,16 @@ SETTINGS_SCHEMA = {
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
                 },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
+                },
                 "cutoff_date": {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
@@ -1942,6 +2073,16 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
+                },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
                 },
                 "cutoff_date": {
                     "type": "string",
@@ -2014,6 +2155,16 @@ SETTINGS_SCHEMA = {
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
                 },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
+                },
                 "cutoff_date": {
                     "type": "string",
                     "description": "Only process content with a release date greater than this date (YYYY-MM-DD format) or within the last X days (e.g., '30' for 30 days ago). Leave empty to process all content.",
@@ -2085,6 +2236,16 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
+                },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
                 },
                 "cutoff_date": {
                     "type": "string",
@@ -2159,6 +2320,16 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
+                },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
                 },
                 "cutoff_date": {
                     "type": "string",
@@ -2238,6 +2409,16 @@ SETTINGS_SCHEMA = {
                     "type": "string",
                     "description": "Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.",
                     "default": ""
+                },
+                "tags": {
+                    "type": "list",
+                    "description": "Plex mode only: Tags to embed in NZB filenames for items from this source. Requires NZB file naming to be enabled. Format: {tags-Tag1,Tag2} inserted between {imdb-...} and version.",
+                    "default": []
+                },
+                "tags_exclusive": {
+                    "type": "boolean",
+                    "description": "NzbDAV only: when enabled, items from this source are routed ONLY to the tag category (and not to resolution/type categories). Requires tags to be set.",
+                    "default": False
                 },
                 "cutoff_date": {
                     "type": "string",
@@ -2842,6 +3023,14 @@ SETTINGS_SCHEMA = {
         "poster_glow_opacity": {"type": "number", "description": "Accent glow opacity 0-100.", "default": 80},
         "poster_glow_radius": {"type": "number", "description": "Accent glow radius 10-200.", "default": 55},
         "collections": {"type": "dict", "description": "Per-collection enabled states.", "default": {}}
+    },
+    "Tags": {
+        "tab": "Additional Settings",
+        "tags_list": {
+            "type": "list",
+            "description": "Global tag list for Plex mode NZB folder routing. Tags are embedded in NZB filenames so Decypharr can route items to virtual folders.",
+            "default": []
+        }
     },
     "Plex Movie Box Sets": {
         "tab": "Additional Settings",

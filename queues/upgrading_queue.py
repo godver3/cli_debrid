@@ -1258,30 +1258,35 @@ class UpgradingQueue:
                 clean_version = new_values.get('version', '').strip('*') if new_values.get('version') else best_result.get('version', '').strip('*')
 
                 # Update the item in the database including the new score
-                conn.execute('''
+                _upg_seg_id = new_values.get('nzb_segment_id', '') or ''
+                _upg_seg_sql = ', nzb_segment_id = ?' if _upg_seg_id else ''
+                _upg_seg_vals = [_upg_seg_id] if _upg_seg_id else []
+                conn.execute(f'''
                     UPDATE media_items
                     SET upgrading_from = ?,
                         filled_by_file = ?,
                         filled_by_magnet = ?,
                         version = ?,
-                        current_score = ?,  -- Update the score
+                        current_score = ?,
                         last_updated = ?,
                         state = ?,
                         upgrading_from_torrent_id = ?,
                         upgraded = 1,
                         upgrading_from_version = ?,
-                        upgrading = 0 -- Reset upgrading flag as it's now Checking
+                        upgrading = 0
+                        {_upg_seg_sql}
                     WHERE id = ?
                 ''', (
                     upgrading_from,
                     new_values.get('filled_by_file'),
                     new_values.get('filled_by_magnet'),
                     clean_version,
-                    new_score, # Store the new score
+                    new_score,
                     datetime.now(),
-                    'Checking', # State confirmed by caller
-                    item['filled_by_torrent_id'], # Old torrent ID
-                    upgrading_from_version, # Old version
+                    'Checking',
+                    item['filled_by_torrent_id'],
+                    upgrading_from_version,
+                    *_upg_seg_vals,
                     item['id']
                 ))
 
@@ -1292,7 +1297,9 @@ class UpgradingQueue:
                 item['upgrading_from'] = upgrading_from
                 item['filled_by_file'] = new_values.get('filled_by_file')
                 item['filled_by_magnet'] = new_values.get('filled_by_magnet')
-                item['upgrading_from_torrent_id'] = item.get('filled_by_torrent_id') # Store old ID
+                item['upgrading_from_torrent_id'] = item.get('filled_by_torrent_id')
+                if _upg_seg_id:
+                    item['nzb_segment_id'] = _upg_seg_id
                 item['version'] = clean_version
                 item['current_score'] = new_score # Update local score
                 item['last_updated'] = datetime.now()

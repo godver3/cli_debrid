@@ -51,11 +51,12 @@
             settingsContainer.addEventListener('click', handleImportLikedClick);
         }
 
-        // Set initial visibility for symlink subfolder settings
+        // Set initial visibility for symlink subfolder and tags settings
         document.querySelectorAll('.settings-section[data-source-id]').forEach(section => {
             const sourceId = section.getAttribute('data-source-id');
             if (sourceId) {
                 updateSymlinkSubfolderVisibility(sourceId, window.currentFileManagementModeForSymlinkVisibility);
+                updateTagsVisibility(sourceId, window.currentFileManagementModeForSymlinkVisibility);
             }
         });
 
@@ -81,6 +82,137 @@
         });
     }
 
+    function updateTagsVisibility(sourceId, fileManagementValue) {
+        const containers = document.querySelectorAll(`.tags-container[data-source-id="${sourceId}"]`);
+        containers.forEach(container => {
+            if (container) {
+                container.style.display = (fileManagementValue === 'Plex') ? 'block' : 'none';
+            }
+        });
+    }
+
+    // ── Tags pill input ──────────────────────────────────────────────────────
+    // Global tag list fetched from config
+    let _globalTagsList = [];
+    async function loadGlobalTags() {
+        try {
+            const r = await fetch('/settings/api/config');
+            const cfg = await r.json();
+            _globalTagsList = (cfg['Tags'] || {})['tags_list'] || [];
+        } catch(e) { _globalTagsList = []; }
+    }
+
+    function getSourceTags(sourceId) {
+        const hidden = document.getElementById(`tags-hidden-${sourceId}`);
+        if (!hidden || !hidden.value.trim()) return [];
+        return hidden.value.split(',').map(t => t.trim()).filter(Boolean);
+    }
+
+    function setSourceTags(sourceId, tags) {
+        const hidden = document.getElementById(`tags-hidden-${sourceId}`);
+        if (hidden) {
+            hidden.value = tags.join(',');
+            hidden.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    }
+
+    function renderTagPills(sourceId) {
+        const container = document.getElementById(`tags-pill-input-${sourceId}`);
+        if (!container) return;
+        // Remove existing pills
+        container.querySelectorAll('.tag-pill').forEach(p => p.remove());
+        const tags = getSourceTags(sourceId);
+        const wrapper = container.querySelector('.tags-input-wrapper');
+        tags.forEach(tag => {
+            const pill = document.createElement('span');
+            pill.className = 'tag-pill';
+            pill.dataset.tag = tag;
+            pill.innerHTML = `${tag}<button type="button" class="tag-pill-remove" onclick="removeTag('${sourceId}', '${tag}')">&times;</button>`;
+            container.insertBefore(pill, wrapper);
+        });
+    }
+
+    function addTag(sourceId, tag) {
+        tag = tag.trim();
+        if (!tag) return;
+        const tags = getSourceTags(sourceId);
+        if (tags.includes(tag)) return;
+        tags.push(tag);
+        // Add to global list if new
+        if (!_globalTagsList.includes(tag)) {
+            _globalTagsList.push(tag);
+            saveGlobalTags();
+        }
+        setSourceTags(sourceId, tags);
+        renderTagPills(sourceId);
+        const input = document.getElementById(`tags-search-${sourceId}`);
+        if (input) { input.value = ''; filterTagDropdown(sourceId); }
+    }
+
+    function removeTag(sourceId, tag) {
+        const tags = getSourceTags(sourceId).filter(t => t !== tag);
+        setSourceTags(sourceId, tags);
+        renderTagPills(sourceId);
+    }
+
+    function filterTagDropdown(sourceId) {
+        const input = document.getElementById(`tags-search-${sourceId}`);
+        const dropdown = document.getElementById(`tags-dropdown-${sourceId}`);
+        if (!input || !dropdown) return;
+        const q = input.value.trim().toLowerCase();
+        const current = getSourceTags(sourceId);
+        const matches = _globalTagsList.filter(t => t.toLowerCase().includes(q) && !current.includes(t));
+        if (!q && !matches.length) { dropdown.style.display = 'none'; return; }
+        dropdown.innerHTML = '';
+        if (q && !_globalTagsList.map(t=>t.toLowerCase()).includes(q) && !current.includes(input.value.trim())) {
+            const createOpt = document.createElement('div');
+            createOpt.className = 'tags-dropdown-item tags-dropdown-create';
+            createOpt.textContent = `+ Create "${input.value.trim()}"`;
+            createOpt.onclick = () => { addTag(sourceId, input.value.trim()); dropdown.style.display = 'none'; };
+            dropdown.appendChild(createOpt);
+        }
+        matches.forEach(tag => {
+            const item = document.createElement('div');
+            item.className = 'tags-dropdown-item';
+            item.textContent = tag;
+            item.onclick = () => { addTag(sourceId, tag); dropdown.style.display = 'none'; };
+            dropdown.appendChild(item);
+        });
+        dropdown.style.display = (dropdown.children.length > 0) ? 'block' : 'none';
+    }
+
+    function handleTagKeydown(event, sourceId) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            const input = document.getElementById(`tags-search-${sourceId}`);
+            if (input && input.value.trim()) addTag(sourceId, input.value.trim());
+        } else if (event.key === 'Escape') {
+            const dropdown = document.getElementById(`tags-dropdown-${sourceId}`);
+            if (dropdown) dropdown.style.display = 'none';
+        }
+    }
+
+    async function saveGlobalTags() {
+        try {
+            await fetch('/settings/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ Tags: { tags_list: _globalTagsList } })
+            });
+        } catch(e) {}
+    }
+
+    // Close dropdowns on outside click
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('.tags-pill-input')) {
+            document.querySelectorAll('.tags-dropdown').forEach(d => d.style.display = 'none');
+        }
+    });
+
+    // Initialize tags on page load
+    loadGlobalTags();
+    // ── End Tags pill input ──────────────────────────────────────────────────
+
     // Listen for changes from other tabs (specifically required.html for file management type)
     document.addEventListener('settings-changed', function(event) {
         if (event.detail.section === 'File Management' && event.detail.key === 'file_collection_management') {
@@ -89,6 +221,7 @@
                 const sourceId = section.getAttribute('data-source-id');
                 if (sourceId) {
                     updateSymlinkSubfolderVisibility(sourceId, window.currentFileManagementModeForSymlinkVisibility);
+                    updateTagsVisibility(sourceId, window.currentFileManagementModeForSymlinkVisibility);
                 }
             });
         }
@@ -916,6 +1049,39 @@
 </script>
 
 <style>
+    /* Tags pill input */
+    .tags-pill-input {
+        display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+        min-height: 38px; padding: 6px 10px;
+        background: #1a1a1a; border: 1px solid #444; border-radius: 6px;
+        cursor: text;
+    }
+    .tag-pill {
+        display: inline-flex; align-items: center; gap: 4px;
+        background: #e8651a; color: #fff; border-radius: 12px;
+        padding: 2px 10px; font-size: 12px; white-space: nowrap;
+    }
+    .tag-pill-remove {
+        background: none; border: none; color: #fff; cursor: pointer;
+        padding: 0; font-size: 14px; line-height: 1; opacity: 0.8;
+    }
+    .tag-pill-remove:hover { opacity: 1; }
+    .tags-input-wrapper { position: relative; flex: 1; min-width: 120px; }
+    .tags-search-input {
+        width: 100%; background: transparent; border: none; outline: none;
+        color: #fff; font-size: 13px; padding: 2px 0;
+    }
+    .tags-dropdown {
+        position: absolute; top: 100%; left: 0; right: 0; z-index: 999;
+        background: #222; border: 1px solid #444; border-radius: 6px;
+        max-height: 160px; overflow-y: auto; margin-top: 4px;
+    }
+    .tags-dropdown-item {
+        padding: 8px 12px; cursor: pointer; font-size: 13px; color: #ddd;
+    }
+    .tags-dropdown-item:hover { background: #333; }
+    .tags-dropdown-create { color: #e8651a; font-style: italic; }
+
     /* Add your custom styles here */
     .versions-checkboxes {
         display: flex;
@@ -1252,6 +1418,29 @@
                                        data-key="{{ source_id }}.{{ key }}"
                                        placeholder="e.g., AdaptiveLists">
                                 <p class="settings-description">Optional: Specify a custom subfolder within the main symlink root directory for items from this source.</p>
+                            </div>
+
+                        {# Tags — Plex mode only #}
+                        {% set tags_value = config.get('tags', []) %}
+                        <div class="tags-container" data-source-id="{{ source_id }}">
+                            <div class="settings-form-group">
+                                <label class="settings-title">Tags:</label>
+                                <div class="tags-pill-input" id="tags-pill-input-{{ source_id }}" data-source-id="{{ source_id }}">
+                                    {% for tag in tags_value %}
+                                    <span class="tag-pill" data-tag="{{ tag }}">{{ tag }}<button type="button" class="tag-pill-remove" onclick="removeTag('{{ source_id }}', '{{ tag }}')">&times;</button></span>
+                                    {% endfor %}
+                                    <div class="tags-input-wrapper">
+                                        <input type="text" class="tags-search-input" id="tags-search-{{ source_id }}"
+                                               placeholder="Search or add tag..." autocomplete="off"
+                                               oninput="filterTagDropdown('{{ source_id }}')"
+                                               onkeydown="handleTagKeydown(event, '{{ source_id }}')">
+                                        <div class="tags-dropdown" id="tags-dropdown-{{ source_id }}" style="display:none;"></div>
+                                    </div>
+                                </div>
+                                <input type="hidden" id="tags-hidden-{{ source_id }}"
+                                       name="Content Sources.{{ source_id }}.tags"
+                                               value="{{ tags_value | join(',') }}">
+                                <p class="settings-description">Plex mode: Tags embedded in NZB filenames for virtual folder routing. Requires NZB file naming enabled.</p>
                             </div>
                         </div>
 
@@ -1646,6 +1835,39 @@
                                                 <p class="settings-description">Optional: Specify a custom subfolder within the main symlink root directory for items from this source. If set, items will be placed in '[Symlink Root]/[Custom Subfolder]/...' instead of directly in '[Symlink Root]/...'. Leave empty for default behavior.</p>
                                             {% endif %}
                                         </div>
+                                    {% elif key == 'tags' %}
+                                        {# Tags pill input — Plex mode only #}
+                                        {% set tags_value = value if value is iterable and value is not string else [] %}
+                                        {% set tags_excl_value = config.get('tags_exclusive', False) %}
+                                        <div class="tags-container" data-source-id="{{ source_id }}">
+                                            <label class="settings-title">Tags:</label>
+                                            <div class="tags-pill-input" id="tags-pill-input-{{ source_id }}" data-source-id="{{ source_id }}">
+                                                {% for tag in tags_value %}
+                                                <span class="tag-pill" data-tag="{{ tag }}">{{ tag }}<button type="button" class="tag-pill-remove" onclick="removeTag('{{ source_id }}', '{{ tag }}')">&times;</button></span>
+                                                {% endfor %}
+                                                <div class="tags-input-wrapper">
+                                                    <input type="text" class="tags-search-input" id="tags-search-{{ source_id }}"
+                                                           placeholder="Search or add tag..." autocomplete="off"
+                                                           oninput="filterTagDropdown('{{ source_id }}')"
+                                                           onkeydown="handleTagKeydown(event, '{{ source_id }}')">
+                                                    <div class="tags-dropdown" id="tags-dropdown-{{ source_id }}" style="display:none;"></div>
+                                                </div>
+                                            </div>
+                                            <input type="hidden" id="tags-hidden-{{ source_id }}"
+                                                   name="Content Sources.{{ source_id }}.tags"
+                                                          value="{{ tags_value | join(',') }}">
+                                            <div style="margin-top:6px;display:flex;align-items:center;gap:8px;">
+                                                <input type="checkbox" id="tags-exclusive-{{ source_id }}"
+                                                       name="Content Sources.{{ source_id }}.tags_exclusive"
+                                                       data-section="Content Sources"
+                                                       data-key="{{ source_id }}.tags_exclusive"
+                                                       {% if tags_excl_value %}checked{% endif %}>
+                                                <label for="tags-exclusive-{{ source_id }}" style="font-size:12px;cursor:pointer;">NzbDAV only: route exclusively to tag category (skip resolution detection)</label>
+                                            </div>
+                                            <p class="settings-description">Plex mode: Tags embedded in NZB filenames for virtual folder routing. Requires NZB file naming enabled.</p>
+                                        </div>
+                                    {% elif key == 'tags_exclusive' %}
+                                        {# Rendered inline with 'tags' above — skip standalone render #}
                                     {% elif key == 'monitor_mode' and settings_schema['Content Sources'].schema is defined and config.type in settings_schema['Content Sources'].schema and key in settings_schema['Content Sources'].schema[config.type] %}
                                          {% set field_schema = settings_schema['Content Sources'].schema[config.type][key] %}
                                          <label for="content-sources-{{ source_id }}-{{ key }}" class="settings-title">{{ key|replace('_', ' ')|title }}:</label>
@@ -1716,7 +1938,7 @@
                                          {% if settings_schema['Content Sources'].schema is defined and
                                                config.type in settings_schema['Content Sources'].schema and
                                                key in settings_schema['Content Sources'].schema[config.type] and
-                                               key != 'allow_specials' and key != 'unblacklist_on_source_run' and key != 'custom_symlink_subfolder' and key != 'monitor_mode' and
+                                               key != 'allow_specials' and key != 'unblacklist_on_source_run' and key != 'custom_symlink_subfolder' and key != 'monitor_mode' and key != 'tags' and key != 'tags_exclusive' and
                                                settings_schema['Content Sources'].schema[config.type][key].description is defined %}
                                              <p class="settings-description">{{ settings_schema['Content Sources'].schema[config.type][key].description }}</p>
                                          {% endif %}
@@ -1789,6 +2011,29 @@
                                 Unblacklist on Source Run
                             </label>
                             <p class="settings-description">When enabled, items in Blacklisted state (not ghostlisted) will be unblacklisted and re-queued as Wanted when this source runs.</p>
+
+                        {# Tags — Plex mode only #}
+                        {% set tags_value = config.get('tags', []) %}
+                        <div class="tags-container" data-source-id="{{ source_id }}">
+                            <div class="settings-form-group">
+                                <label class="settings-title">Tags:</label>
+                                <div class="tags-pill-input" id="tags-pill-input-{{ source_id }}" data-source-id="{{ source_id }}">
+                                    {% for tag in tags_value %}
+                                    <span class="tag-pill" data-tag="{{ tag }}">{{ tag }}<button type="button" class="tag-pill-remove" onclick="removeTag('{{ source_id }}', '{{ tag }}')">&times;</button></span>
+                                    {% endfor %}
+                                    <div class="tags-input-wrapper">
+                                        <input type="text" class="tags-search-input" id="tags-search-{{ source_id }}"
+                                               placeholder="Search or add tag..." autocomplete="off"
+                                               oninput="filterTagDropdown('{{ source_id }}')"
+                                               onkeydown="handleTagKeydown(event, '{{ source_id }}')">
+                                        <div class="tags-dropdown" id="tags-dropdown-{{ source_id }}" style="display:none;"></div>
+                                    </div>
+                                </div>
+                                <input type="hidden" id="tags-hidden-{{ source_id }}"
+                                       name="Content Sources.{{ source_id }}.tags"
+                                               value="{{ tags_value | join(',') }}">
+                                <p class="settings-description">Plex mode: Tags embedded in NZB filenames for virtual folder routing. Requires NZB file naming enabled.</p>
+                            </div>
                         </div>
 
                         {# Render Plex Labels configuration if available for this source type #}

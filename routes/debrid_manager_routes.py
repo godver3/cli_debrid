@@ -1735,8 +1735,9 @@ def api_usenet_migrate():
                 if not _version_settings:
                     return True
                 t = result_title or ''
-                filter_out = _version_settings.get('filter_out', [])
-                filter_in  = _version_settings.get('filter_in', [])
+                def _p(item): return item['pattern'] if isinstance(item, dict) else item
+                filter_out = [_p(x) for x in (_version_settings.get('filter_out', []) or [])]
+                filter_in  = [_p(x) for x in (_version_settings.get('filter_in', []) or [])]
                 for pat in filter_out:
                     try:
                         if _re_vf.search(pat, t, _re_vf.IGNORECASE):
@@ -2041,18 +2042,31 @@ def api_usenet_migrate():
                                 ).fetchall()
                             finally:
                                 _conn_rep.close()
+                            # Extract segment ID from the new NZB XML (already fetched above)
+                            _mig_seg_id = ''
+                            try:
+                                from database.not_wanted_magnets import extract_nzb_segment_id as _ext_seg_mig
+                                _mig_seg_id = _ext_seg_mig(_nzb_text)
+                            except Exception:
+                                pass
                             for _rep_item in _old_items:
                                 try:
-                                    # Blacklist old NZB URL
+                                    # Blacklist old NZB URL + segment ID
                                     _old_url = _rep_item['filled_by_magnet'] or ''
+                                    _old_seg = _rep_item.get('nzb_segment_id', '') or ''
                                     if _old_url:
                                         _add_guid_rep(_old_url)
-                                    # Update to new job, move to Checking for pipeline to handle
+                                    if _old_seg:
+                                        from database.not_wanted_magnets import add_to_not_wanted_nzb_segment as _add_seg_mig
+                                        _add_seg_mig(_old_seg)
+                                    # Update to new job with new segment ID, move to Checking
+                                    _seg_mig_kwargs = {'nzb_segment_id': _mig_seg_id} if _mig_seg_id else {}
                                     _umi_rep(_rep_item['id'],
                                         filled_by_torrent_id=_new_checking_id,
                                         filled_by_magnet=nzb_url,
                                         filled_by_file=name,
                                         filled_by_title=name,
+                                        **_seg_mig_kwargs,
                                     )
                                     _umis_rep(_rep_item['id'], 'Checking')
                                     logging.info(f'[UsenetMigrate] Updated DB item {_rep_item["id"]} → Checking with new job {_new_checking_id}')
@@ -5141,10 +5155,10 @@ def usenet_trigger_health_scan():
 
 @debrid_manager_bp.route('/api/usenet/repair/broken')
 def usenet_broken_items():
-    """Return current broken items from Decypharr health."""
+    """Return current broken items from Decypharr health with mount verification."""
     try:
         from usenet.repair_engine import fetch_broken_items
-        items = fetch_broken_items()
+        items = fetch_broken_items(annotate_mount=True)
         return jsonify(success=True, items=items, count=len(items))
     except Exception as e:
         logging.error(f'[UsenetRepair] broken items error: {e}')
@@ -5200,7 +5214,7 @@ def usenet_delete_all_broken():
     try:
         from usenet.repair_engine import (
             fetch_broken_items, _find_db_items_by_entry_name,
-            _delete_from_decypharr, _delete_from_plex,
+            _delete_from_provider, _delete_from_plex,
         )
         from database.database_writing import update_media_item_state
         from database.not_wanted_magnets import add_to_not_wanted_nzb_guid
@@ -5218,7 +5232,7 @@ def usenet_delete_all_broken():
             entry_name = entry.get('entry_name', '') or entry.get('name', '')
 
             # Delete from Decypharr first
-            if _delete_from_decypharr(info_hash, entry_name):
+            if _delete_from_provider(info_hash, entry_name):
                 deleted_decypharr += 1
 
             # Find matching DB items

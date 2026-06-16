@@ -243,6 +243,31 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                 if location_on_disk_full:
                     existing_file_map[location_on_disk_full] = dict_row
 
+        # For NZB items in Checking/Adding state, the filename in DB may be a UUID
+        # that doesn't match the real Plex filename. Build an imdb-keyed set of
+        # in-flight items so Plex scan doesn't insert duplicates for them.
+        if recent:
+            _inflight_keys = set()  # (imdb_id, type, season, episode) for items in Checking/Adding
+            _batch_imdb_ids = {item.get('imdb_id') for item in media_items_batch if item.get('imdb_id')}
+            if _batch_imdb_ids:
+                _ph = ','.join('?' * len(_batch_imdb_ids))
+                _inflight_rows = conn.execute(
+                    f"SELECT imdb_id, type, season_number, episode_number, version, state FROM media_items "
+                    f"WHERE imdb_id IN ({_ph}) AND state IN ('Checking','Adding','Collected','Upgrading')",
+                    list(_batch_imdb_ids)
+                ).fetchall()
+                for _r in _inflight_rows:
+                    if _r['state'] in ('Checking', 'Adding', 'Upgrading'):
+                        # Block same episode regardless of version — it's actively being processed
+                        _inflight_keys.add((_r['imdb_id'], _r['type'], _r['season_number'], _r['episode_number'], None))
+                    else:
+                        # Collected: block same episode+version combo to prevent duplicates
+                        # but allow different versions (legitimate multi-version collection)
+                        _ver = (_r['version'] or '').rstrip('*')  # strip asterisk for comparison
+                        _inflight_keys.add((_r['imdb_id'], _r['type'], _r['season_number'], _r['episode_number'], _ver))
+        else:
+            _inflight_keys = set()
+
         filtered_out_files = set()
         filtered_media_items_batch = []
         for item in media_items_batch:
@@ -272,13 +297,20 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                                 logging.debug(f"[Collection Filter] Allowing '{location}' - location_on_disk missing or mismatch (upgrade stale path), current='{db_location}'")
                                 is_filename_collected = False
 
+                    # Check if in-flight (Checking/Adding) by imdb_id to catch NzbDAV UUID filenames
+                    _item_imdb = item.get('imdb_id')
+                    _item_type = item.get('type')
+                    _item_season = item.get('season_number')
+                    _item_episode = item.get('episode_number')
+                    is_inflight = bool(_item_imdb and (_item_imdb, _item_type, _item_season, _item_episode) in _inflight_keys)
+
                     # If full path is NOT collected AND (filename is NOT collected OR filename not set)
                     # then include this location
-                    if not is_full_path_collected and not is_filename_collected and not is_upgrading_from:
+                    if not is_full_path_collected and not is_filename_collected and not is_upgrading_from and not is_inflight:
                         new_locations.append(location)
                     else:
                         filtered_out_files.add(location)  # Track full path, not just filename
-                        logging.debug(f"[Collection Filter] Skipping '{location}' - full_path_collected={is_full_path_collected}, filename_collected={is_filename_collected}, upgrading_from={is_upgrading_from}")
+                        logging.debug(f"[Collection Filter] Skipping '{location}' - full_path_collected={is_full_path_collected}, filename_collected={is_filename_collected}, upgrading_from={is_upgrading_from}, inflight={is_inflight}")
                 else:
                     new_locations.append(location)
 
@@ -1037,6 +1069,35 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
                             if is_watched:
                                 logging.info(f"⛔ Skipping {item_identifier} - item has been watched (watch history)")
                                 continue
+
+                        # Final dedup guard: block insert if same imdb+season+episode+version already
+                        # exists in Collected, Adding, or Checking. Plex scans can race ahead of the
+                        # queue — a file appears on the mount while the item is still in Adding/Checking,
+                        # and without this guard a duplicate Collected row gets inserted.
+                        _clean_ver = (version or '').rstrip('*')
+                        logging.debug(f"[CollectedItems] dedup guard: imdb={imdb_id} tmdb={tmdb_id} type={item_type} s={item.get('season_number')} e={item.get('episode_number')} ver={_clean_ver!r}")
+                        _dup_check = None
+                        _id_col, _id_val = ('imdb_id', imdb_id) if imdb_id else ('tmdb_id', tmdb_id)
+                        if _id_val:
+                            if item_type == 'movie':
+                                _dup_check = conn.execute(
+                                    f"SELECT id, state FROM media_items WHERE {_id_col}=? AND type='movie' "
+                                    "AND state IN ('Collected','Adding','Checking') "
+                                    "AND REPLACE(version,'*','')=?",
+                                    (_id_val, _clean_ver)
+                                ).fetchone()
+                            else:
+                                _dup_check = conn.execute(
+                                    f"SELECT id, state FROM media_items WHERE {_id_col}=? AND type='episode' "
+                                    "AND season_number=? AND episode_number=? "
+                                    "AND state IN ('Collected','Adding','Checking') "
+                                    "AND REPLACE(version,'*','')=?",
+                                    (_id_val, item.get('season_number'), item.get('episode_number'), _clean_ver)
+                                ).fetchone()
+                        if _dup_check:
+                            logging.info(f"[CollectedItems] Skipping duplicate insert for {item_identifier} "
+                                         f"(version={version}) — already exists as id={_dup_check[0]} state={_dup_check[1]}")
+                            continue
 
                         if item_type == 'movie':
                             conn.execute('''
