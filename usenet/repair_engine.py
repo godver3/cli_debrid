@@ -378,41 +378,145 @@ def _find_db_items_by_entry_name(entry_name: str) -> list:
 # File readability verification (subprocess with hard timeout — safe on FUSE)
 # ---------------------------------------------------------------------------
 
-def _verify_file_readable(location_on_disk: str, timeout: int = 10) -> bool:
+def _media_duration_seconds(file_path: str, timeout: int = 10):
+    """Best-effort media duration in seconds via ffprobe (reads header only).
+
+    Returns a float, or None if ffprobe is unavailable / the duration can't be
+    determined. Used to pick a read offset deeper into the file.
     """
-    Attempt to read the first 1MB of a file using a subprocess with a hard timeout.
-    Safe on FUSE/debrid mounts — if the file is dead the subprocess hangs in D-state,
-    not the main Python process. Returns True if readable, False if missing/timeout/error.
+    import subprocess as _sp
+    import shutil as _sh
+    if not _sh.which('ffprobe'):
+        return None
+    try:
+        r = _sp.run(
+            ['ffprobe', '-v', 'error',
+             '-show_entries', 'format=duration',
+             '-of', 'csv=p=0', file_path],
+            timeout=timeout, capture_output=True, text=True,
+        )
+        if r.returncode == 0:
+            return float((r.stdout or '').strip())
+    except Exception:
+        pass
+    return None
+
+
+def _probe_readable_once(file_path: str, offset_seconds=None, timeout: int = 10):
+    """One readability probe of a file on the (possibly lazy/FUSE/debrid) mount.
+
+    Returns:
+      True  — confirmed readable (a real packet was decoded at the probe point,
+              or the dd fallback read its block);
+      False — confidently UNreadable (the tool ran and could not get the data);
+      None  — INCONCLUSIVE (timeout / spawn error) — the mount may just be busy,
+              so the caller must NOT treat this as 'dead'.
+
+    Runs in a subprocess with a hard timeout so a hung FUSE read parks in the
+    child (D-state), never the main process. Prefers ffprobe: it seeks to
+    `offset_seconds` (deeper into the file when known) and pulls a real packet via
+    -read_intervals. Reading DEEP matters on lazy mounts — the header/first block
+    is often cached while the body is gone, so a start-only read can pass on a
+    file whose content is actually dead. Falls back to a dd first-block read when
+    ffprobe isn't installed.
+    """
+    import subprocess as _sp
+    import shutil as _sh
+    try:
+        if _sh.which('ffprobe'):
+            # Seek to the offset (if known) and read one packet from there;
+            # otherwise read one packet from the start.
+            interval = f'{offset_seconds:.0f}%+#1' if offset_seconds else '%+#1'
+            r = _sp.run(
+                ['ffprobe', '-v', 'error',
+                 '-read_intervals', interval,
+                 '-show_entries', 'packet=pos',
+                 '-of', 'csv=p=0', file_path],
+                timeout=timeout, capture_output=True, text=True,
+            )
+            if r.returncode == 0 and (r.stdout or '').strip():
+                return True
+            # ran but produced no packet — could be genuinely dead OR a transient
+            # backend blip; report a clean failure and let the caller's retry decide.
+            return False
+        # Fallback for images without ffmpeg: first-block read.
+        r = _sp.run(['dd', f'if={file_path}', 'bs=1M', 'count=1', 'of=/dev/null'],
+                    timeout=timeout, capture_output=True)
+        return r.returncode == 0
+    except _sp.TimeoutExpired:
+        return None
+    except Exception as e:
+        logger.debug(f'[NZBRepair] read probe error for {file_path!r}: {e}')
+        return None
+
+
+def _verify_file_readable(location_on_disk: str, timeout: int = 10, attempts: int = 3) -> bool:
+    """Return True if a file is confirmed-readable, False only if confidently dead.
+
+    This guards the repair pipeline: a False here lets the engine delete + re-scrape
+    the item, so the bias is deliberately CONSERVATIVE — on any inconclusive or
+    transient signal we return True (keep the item) rather than risk deleting a
+    good file. Lazy debrid/FUSE mounts routinely throw transient read errors when
+    momentarily busy/unready (e.g. "transport endpoint not connected"), and a
+    single failed read must never be read as 'dead' — that is exactly how a health
+    check turns a server hiccup into a wave of false-positive deletions.
+
+    Logic: succeed on any attempt → readable (True). Otherwise retry to ride out
+    transient blips; conclude UNreadable (False) only when every attempt failed
+    *cleanly* (the probe ran and got no data). If any attempt was inconclusive
+    (timeout/error), assume readable (True).
+
+    The read samples DEEP into the file (a random 20–80% point of its duration,
+    constant across this call's retries but varied across runs) rather than the
+    start, so a cached header can't mask a dead body and partial rot elsewhere is
+    eventually sampled. Falls back to a start/first-block read when the duration
+    is unknown or ffprobe is absent.
     """
     if not location_on_disk:
         return False
-    try:
-        import subprocess as _sp
-        # Translate /debrid/ path to the actual mount path inside the container
-        file_path = location_on_disk
-        if location_on_disk.startswith('/debrid/'):
-            mount = get_setting('Usenet Provider', 'mount_path', '/debrid').rstrip('/')
-            file_path = mount + location_on_disk[len('/debrid'):]
+    import os as _os
+    import time as _t
+    # Translate /debrid/ path to the actual mount path inside the container.
+    file_path = location_on_disk
+    if location_on_disk.startswith('/debrid/'):
+        mount = get_setting('Usenet Provider', 'mount_path', '/debrid').rstrip('/')
+        file_path = mount + location_on_disk[len('/debrid'):]
 
-        import os as _os
-        if not _os.path.exists(file_path):
-            logger.debug(f'[NZBRepair] File not on mount: {file_path!r}')
-            return False
+    if not _os.path.exists(file_path):
+        logger.debug(f'[NZBRepair] File not on mount: {file_path!r}')
+        return False
 
-        result = _sp.run(
-            ['dd', f'if={file_path}', 'bs=1M', 'count=1', 'of=/dev/null'],
-            timeout=timeout,
-            capture_output=True,
+    # Pick a read offset deeper into the file (once per call — the 3 retries below
+    # then probe the SAME spot so they only ride out transient blips, not move the
+    # goalposts). A RANDOM fraction in [0.2, 0.8] of the duration: well past the
+    # cached header, away from the very end (padding/short-reads), and varied
+    # across repair runs so partial rot elsewhere in the file is eventually
+    # sampled instead of always testing one fixed point. Falls back to a
+    # start/first-block read when the duration is unknown (or ffprobe is absent).
+    import random as _rnd
+    duration = _media_duration_seconds(file_path, timeout=timeout)
+    offset = duration * _rnd.uniform(0.2, 0.8) if (duration and duration > 1) else None
+
+    results = []
+    for attempt in range(max(1, attempts)):
+        res = _probe_readable_once(file_path, offset_seconds=offset, timeout=timeout)
+        if res is True:
+            return True
+        results.append(res)
+        if attempt < attempts - 1:
+            _t.sleep(1.0)
+
+    if any(r is None for r in results):
+        # Never got a clean answer — treat as readable so a busy/unready mount
+        # can't trigger a false-positive repair/deletion.
+        logger.info(
+            f'[NZBRepair] readability inconclusive (mount busy/unready?) for '
+            f'{file_path!r} — treating as readable to avoid a false-positive repair'
         )
-        readable = result.returncode == 0
-        logger.debug(f'[NZBRepair] Read test {"passed" if readable else "failed"} for {file_path!r}')
-        return readable
-    except _sp.TimeoutExpired:
-        logger.debug(f'[NZBRepair] Read test timed out ({timeout}s) — file is dead: {location_on_disk!r}')
-        return False
-    except Exception as e:
-        logger.debug(f'[NZBRepair] Read test error for {location_on_disk!r}: {e}')
-        return False
+        return True
+
+    logger.debug(f'[NZBRepair] read test failed across {len(results)} attempts for {file_path!r}')
+    return False
 
 
 # ---------------------------------------------------------------------------
