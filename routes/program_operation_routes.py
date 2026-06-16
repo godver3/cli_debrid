@@ -1528,7 +1528,9 @@ def _format_task_display_name(task_name, queue_map, content_sources_map):
 
 # Categories cli-debrid's title heuristic routes grabs into; these must exist in
 # NzbDAV or submits are rejected (items loop in "Wanted"). Mirrors nzbdav_migrate.py.
-NZBDAV_REQUIRED_CATEGORIES = ['movies', 'shows', 'movies_1080p_264', 'shows_1080p_264', '__unplayable__']
+# Fallback only — the live list is derived from usenet.nzbdav_client (the same
+# source the submit-router and repair scope use), see _nzbdav_required_categories.
+NZBDAV_REQUIRED_CATEGORIES = ['movies', 'shows', 'movies_1080p', 'shows_1080p', '__unplayable__']
 NZBDAV_RECOMMENDED_CATEGORIES = ['music']
 
 
@@ -1541,7 +1543,19 @@ def _nzbdav_base_url(raw):
 
 
 def _nzbdav_required_categories(download_folder=''):
-    cats = list(NZBDAV_REQUIRED_CATEGORIES)
+    """Categories cli-debrid needs on the NzbDAV instance.
+
+    Derived from the SAME source as the submit-router and repair scope
+    (usenet.nzbdav_client.managed_categories + the optional category map), so the
+    setup helper can never tell the user to create a set that disagrees with what
+    cli-debrid actually uploads to — the historical cause of invisible items.
+    """
+    try:
+        from usenet.nzbdav_client import _parse_category_map, managed_categories
+        cat_map = _parse_category_map(get_setting('Usenet Provider', 'nzbdav_category_map', ''))
+        cats = sorted(managed_categories(cat_map))
+    except Exception:
+        cats = list(NZBDAV_REQUIRED_CATEGORIES)
     df = (download_folder or '').strip()
     if df and df not in cats:
         cats.append(df)
