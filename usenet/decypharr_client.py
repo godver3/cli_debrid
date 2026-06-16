@@ -55,7 +55,9 @@ class DecypharrClient:
         except Exception as exc:
             return False, str(exc)
 
-    def add_nzb_content(self, nzb_content: str, title: str = '', category: str = '') -> Optional[str]:
+    def add_nzb_content(self, nzb_content: str, title: str = '', category: str = '',
+                        is_anime: bool = False, media_type: str = '',
+                        tags=None, tags_exclusive: bool = False) -> Optional[str]:
         """Submit NZB content directly as a file upload to avoid double-fetching."""
         self.last_missing_segments = False
         if not self.is_enabled():
@@ -98,7 +100,9 @@ class DecypharrClient:
     # Indexers known to block Decypharr's server-side URL fetches — always pre-fetch for these
     _PREFETCH_HOSTS = {'api.nzbgeek.info', 'nzbgeek.info'}
 
-    def add_nzb(self, nzb_url: str, title: str = '', category: str = '') -> Optional[str]:
+    def add_nzb(self, nzb_url: str, title: str = '', category: str = '',
+                is_anime: bool = False, media_type: str = '',
+                tags=None, tags_exclusive: bool = False) -> Optional[str]:
         """
         Submit an NZB URL to Decypharr.
         For indexers that block Decypharr's server-side fetches, pre-fetches the NZB
@@ -335,6 +339,31 @@ class DecypharrClient:
         logging.warning(f'[Decypharr] Could not remove NZB hash={info_hash!r} name={entry_name!r}')
         return False
 
+    def rename_nzb(self, info_hash: str, new_name: str) -> bool:
+        """
+        Rename a Decypharr entry (NZB or debrid torrent) by its info_hash.
+        Uses PATCH /api/browse/torrents/{hash}/rename — works for both ProtocolNZB
+        and ProtocolTorrent entries since GetEntry() is protocol-agnostic.
+        Returns True on success, False otherwise.
+        """
+        try:
+            import json as _json
+            import requests as _requests
+            r = _requests.patch(
+                f'{self.base_url}/api/browse/torrents/{info_hash}/rename',
+                headers={**self._headers(), 'Content-Type': 'application/json'},
+                data=_json.dumps({'name': new_name}),
+                timeout=15,
+            )
+            if r.status_code == 200:
+                logging.info(f'[Decypharr] Renamed entry {info_hash!r} -> {new_name!r}')
+                return True
+            logging.warning(f'[Decypharr] rename_nzb failed for {info_hash!r}: HTTP {r.status_code} {r.text[:100]}')
+            return False
+        except Exception as exc:
+            logging.warning(f'[Decypharr] rename_nzb error for {info_hash!r}: {exc}')
+            return False
+
     def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
         """
         Poll Decypharr queue for a single job by its ID/hash.
@@ -417,6 +446,74 @@ class DecypharrClient:
             return self.poll_health_result(entry_name)
         return None
 
+    # -- repair-support (decypharr /api/repair/* + /api/torrents) ------------
+    # Provider-agnostic repair interface (mirrored by NzbdavClient). Lets
+    # repair_engine delegate instead of issuing raw HTTP itself.
+
+    def _parse_health_entries(self, data) -> list:
+        return data if isinstance(data, list) else data.get('entries', data.get('items', []))
+
+    def fetch_broken_items(self) -> list:
+        """Return broken entries from Decypharr /api/repair/health."""
+        if not self.is_enabled():
+            return []
+        try:
+            r = api.get(f'{self.base_url}/api/repair/health', headers=self._headers(), timeout=60)
+            if r.status_code != 200:
+                logging.warning(f'[Decypharr] /api/repair/health HTTP {r.status_code}')
+                return []
+            broken = [e for e in self._parse_health_entries(r.json())
+                      if (e.get('status') or '').lower() == 'broken']
+            logging.info(f'[Decypharr] fetch_broken_items: {len(broken)} broken')
+            return broken
+        except Exception as exc:
+            logging.error(f'[Decypharr] fetch_broken_items error: {exc}')
+            return []
+
+    def get_health_summary(self) -> dict:
+        """Counts by status from Decypharr /api/repair/health."""
+        if not self.is_enabled():
+            return {}
+        try:
+            r = api.get(f'{self.base_url}/api/repair/health', headers=self._headers(), timeout=60)
+            if r.status_code != 200:
+                return {}
+            counts: Dict[str, int] = {}
+            for e in self._parse_health_entries(r.json()):
+                s = (e.get('status') or 'unknown').lower()
+                counts[s] = counts.get(s, 0) + 1
+            return counts
+        except Exception as exc:
+            logging.debug(f'[Decypharr] get_health_summary error: {exc}')
+            return {}
+
+    def trigger_health_scan(self) -> bool:
+        """POST /api/repair/run to start a fresh Decypharr health scan."""
+        if not self.is_enabled():
+            return False
+        try:
+            r = api.post(f'{self.base_url}/api/repair/run', headers=self._headers(), timeout=30)
+            return r.status_code in (200, 202, 204)
+        except Exception as exc:
+            logging.warning(f'[Decypharr] trigger_health_scan error: {exc}')
+            return False
+
+    def resolve_job_id(self, entry_name: str) -> str:
+        """Resolve a job UUID from /api/torrents by exact name match."""
+        if not self.is_enabled() or not entry_name:
+            return ''
+        try:
+            r = api.get(f'{self.base_url}/api/torrents',
+                        params={'search': entry_name[:60]},
+                        headers=self._headers(), timeout=10)
+            if r.status_code == 200:
+                for t in r.json().get('torrents', []):
+                    if t.get('name', '').strip() == entry_name.strip():
+                        return t.get('info_hash', '')
+        except Exception as exc:
+            logging.debug(f'[Decypharr] resolve_job_id error: {exc}')
+        return ''
+
     def wait_for_completion(self, job_id: str, timeout: int = 3600, poll_interval: int = 10) -> bool:
         """Poll until the job completes or timeout. Returns True on success."""
         if job_id in ('submitted', ''):
@@ -440,6 +537,26 @@ class DecypharrClient:
         logging.warning(f'[Decypharr] Job {job_id} timed out after {timeout}s')
         return False
 
+    def inject_sidecar_file(self, folder_name: str, filename: str, content: bytes) -> bool:
+        """Inject a static file (e.g. subtitle) into a Decypharr DFS/WebDAV folder."""
+        try:
+            import urllib.parse
+            encoded_folder = urllib.parse.quote(folder_name, safe='')
+            encoded_file = urllib.parse.quote(filename, safe='')
+            r = api.put(
+                f'{self.base_url}/api/browse/nzbs/{encoded_folder}/{encoded_file}',
+                data=content,
+                headers=self._headers(),
+                timeout=30,
+            )
+            if r.status_code == 200:
+                return True
+            logging.warning(f'[Decypharr] inject_sidecar_file failed for {folder_name!r}/{filename!r}: HTTP {r.status_code}')
+            return False
+        except Exception as exc:
+            logging.warning(f'[Decypharr] inject_sidecar_file error: {exc}')
+            return False
+
 
 def _map_state(raw: str) -> str:
     if raw in ('completed', 'downloaded', 'done', 'finished', 'cached'):
@@ -450,12 +567,27 @@ def _map_state(raw: str) -> str:
         return 'downloading'
     return 'unknown'
 
+# ---- Provider-switch factory (nzbdav-compat patch 2026-05-26) ----
+# Delegates to nzbdav_client when 'Usenet Provider.provider' == 'nzbdav'.
+# The DecypharrClient class above is unchanged.
 
-_client_instance: Optional[DecypharrClient] = None
+_client_instance = None
 
 
-def get_decypharr_client() -> DecypharrClient:
+def _provider_key() -> str:
+    try:
+        from utilities.settings import get_setting
+        cfg = get_setting('Usenet Provider') or {}
+        return (cfg.get('provider') or 'decypharr').strip().lower()
+    except Exception:
+        return 'decypharr'
+
+
+def get_decypharr_client():
     global _client_instance
+    if _provider_key() == 'nzbdav':
+        from .nzbdav_client import get_nzbdav_client
+        return get_nzbdav_client()
     if _client_instance is None:
         _client_instance = DecypharrClient()
     return _client_instance
@@ -464,3 +596,6 @@ def get_decypharr_client() -> DecypharrClient:
 def reset_decypharr_client() -> None:
     global _client_instance
     _client_instance = None
+    if _provider_key() == 'nzbdav':
+        from .nzbdav_client import reset_nzbdav_client
+        reset_nzbdav_client()

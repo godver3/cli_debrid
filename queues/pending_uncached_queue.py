@@ -168,7 +168,48 @@ class PendingUncachedQueue:
             torrent_id=torrent_id
         )
         self.remove_item(item)
-            
+
+        # Debrid File Naming: rename Decypharr DFS folder using structured CLI name
+        _dbn_hash3 = torrent_info.get('hash', '').lower()
+        if _dbn_hash3:
+            try:
+                from utilities.settings import get_setting as _dbn_gs3
+                if _dbn_gs3('Debrid Provider', 'enable_debrid_naming', False):
+                    from routes.scraper_routes import _build_debrid_title
+                    _dbn_mt3 = 'tv' if item.get('type') == 'episode' else item.get('type', '')
+                    _dbn_orig3 = item.get('original_scraped_torrent_title') or item.get('filled_by_title', '')
+                    _dbn_title3 = _build_debrid_title(
+                        title=item.get('title', ''),
+                        year=item.get('year', ''),
+                        imdb_id=item.get('imdb_id'),
+                        version=item.get('version', ''),
+                        original_scraped_torrent_title=_dbn_orig3,
+                        media_type=_dbn_mt3,
+                        season=item.get('season_number'),
+                        episode=item.get('episode_number'),
+                        episode_title=item.get('episode_title'),
+                        tags=item.get('tags') or None,
+                        content_source_display_name=item.get('content_source_detail') or item.get('content_source'),
+                    )
+                    if _dbn_title3 and _dbn_title3 != _dbn_orig3:
+                        import threading as _dbn_t3
+                        def _do_rename3(h, name):
+                            import time as _t
+                            try:
+                                from usenet.decypharr_client import get_decypharr_client
+                                _dc3 = get_decypharr_client()
+                                for _a3 in range(20):
+                                    if _dc3.rename_nzb(h, name):
+                                        logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} (pending uncached)')
+                                        return
+                                    _t.sleep(30)
+                                logging.warning(f'[DebridNaming] Could not rename {h!r} after 20 attempts (pending uncached)')
+                            except Exception as _e3:
+                                logging.debug(f'[DebridNaming] Rename error (pending uncached): {_e3}')
+                        _dbn_t3.Thread(target=_do_rename3, args=(_dbn_hash3, _dbn_title3), daemon=True).start()
+            except Exception as _dbn_ex3:
+                logging.debug(f'[DebridNaming] Setup error (pending uncached): {_dbn_ex3}')
+
         # Check for related items if it's an episode
         if item.get('type') == 'episode':
             logging.debug(f"Checking for related episodes for {item_identifier}")

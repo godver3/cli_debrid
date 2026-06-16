@@ -327,17 +327,32 @@ def handle_state_change(item: Dict[str, Any]) -> None:
             
             # Run subtitle downloader
             try:
-                if get_setting('File Management', 'file_collection_management') == 'Plex':
-                    pass
+                file_path = fresh_item.get('location_on_disk')
+                if not file_path:
+                    logging.warning("No location_on_disk found for item, skipping subtitle download")
+                elif get_setting('File Management', 'file_collection_management') == 'Plex':
+                    # Plex mode: media is on a read-only debrid/usenet mount, so a
+                    # sidecar .srt can't be written next to it. Download subtitles
+                    # and upload them to the Plex item via API (keyed on the stored
+                    # ratingKey). Storage-agnostic — works for zurg/nzbdav/decypharr.
+                    rk = fresh_item.get('ms_item_id')
+                    if rk:
+                        # The on-disk file is often obfuscated (e.g. tGcr.mkv) on
+                        # debrid/usenet mounts; the release folder name carries the
+                        # real title, so use it as the subtitle-matching hint.
+                        import os as _os_sub
+                        name_hint = (fresh_item.get('debrid_folder_name')
+                                     or fresh_item.get('filled_by_title')
+                                     or _os_sub.path.basename(_os_sub.path.dirname(file_path)) or None)
+                        logging.info("Running subtitle downloader (Plex API upload mode).")
+                        from .downsub import main as downsub_main
+                        downsub_main(file_path, rating_key=str(rk), name_hint=name_hint)
+                    else:
+                        logging.info("Plex-mode subtitle upload skipped: item has no Plex ratingKey (ms_item_id) yet")
                 else:
                     logging.info("Running subtitle downloader - this may take some time if it has never been run.")
-                    # Always use location_on_disk for subtitle downloads
-                    file_path = fresh_item.get('location_on_disk')
-                    if file_path:
-                        from .downsub import main as downsub_main
-                        downsub_main(file_path)
-                    else:
-                        logging.warning("No location_on_disk found for item, skipping subtitle download")
+                    from .downsub import main as downsub_main
+                    downsub_main(file_path)
             except Exception as e:
                 logging.error(f"Failed to run subtitle downloader: {str(e)}")
                 logging.exception("Subtitle downloader traceback:")

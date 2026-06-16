@@ -88,6 +88,7 @@ class CheckingQueue:
         self.last_check_time = datetime.now()
         self.last_report_time = datetime.now()
         self._nzb_missing_counts = {}  # tracks consecutive not-found polls per torrent_id
+        self._nzb_plex_scan_triggered = set()  # torrent_ids that have already had Plex scan fired
 
     def update(self):
         from database import get_all_media_items
@@ -346,25 +347,24 @@ class CheckingQueue:
         filled_by_title, debrid_folder_name, and original_scraped_torrent_title
         so that symlink creation and Plex file checks work identically to debrid adds.
         """
-        from usenet.decypharr_client import get_decypharr_client
+        from usenet import get_usenet_client
         from database.database_writing import update_media_item
 
         if not items:
             return
 
-        # Use the NZB title stored as filled_by_title to search Decypharr
+        # Use the NZB title stored as filled_by_title to search usenet provider
         sample_item = items[0]
         job_name = sample_item.get('filled_by_title') or sample_item.get('original_scraped_torrent_title') or ''
         if not job_name:
-            # Fallback: look up the job name directly from Decypharr using the job_id
+            # Fallback: look up the job name directly from usenet provider using the job_id
             try:
-                from usenet.decypharr_client import get_decypharr_client as _get_dcy
                 _job_id_raw = torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id
-                _dcy_status = _get_dcy().get_job_status(_job_id_raw)
-                if _dcy_status:
-                    job_name = _dcy_status.get('name') or _dcy_status.get('raw', {}).get('name') or ''
+                _status = get_usenet_client().get_job_status(_job_id_raw)
+                if _status:
+                    job_name = _status.get('name') or _status.get('raw', {}).get('name') or ''
                     if job_name:
-                        logging.info(f'[NZB] Resolved job_name from Decypharr API for {torrent_id}: {job_name!r}')
+                        logging.info(f'[NZB] Resolved job_name from usenet provider for {torrent_id}: {job_name!r}')
             except Exception:
                 pass
         if not job_name:
@@ -384,7 +384,7 @@ class CheckingQueue:
             return
 
         try:
-            client = get_decypharr_client()
+            client = get_usenet_client()
             is_pack = len(items) > 1  # Multiple items share same torrent_id = aggregate pack
 
             if is_pack:
@@ -493,10 +493,10 @@ class CheckingQueue:
     @timed_lru_cache(seconds=15)
     @with_timeout(45)  # 45 second timeout for the entire progress check
     def _get_nzb_progress(self, torrent_id: str) -> Union[int, str, None]:
-        """Poll Decypharr for progress of an NZB job. torrent_id format: 'nzb:<job_id>'"""
-        from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
-        reset_decypharr_client()
-        client = get_decypharr_client()
+        """Poll usenet provider for progress of an NZB job. torrent_id format: 'nzb:<job_id>'"""
+        from usenet import get_usenet_client, reset_usenet_client
+        reset_usenet_client()
+        client = get_usenet_client()
         job_id = torrent_id[4:] if torrent_id.startswith('nzb:') else torrent_id
         try:
             status = client.get_job_status(job_id)
@@ -1031,8 +1031,8 @@ class CheckingQueue:
                 logging.debug(f"Processing torrent {torrent_id} with {len(current_items_for_torrent)} associated items")
                 
                 # Call get_torrent_state with increment_strikes=True (default) for authoritative check
-                torrent_overall_state = self.get_torrent_state(torrent_id) 
-                
+                torrent_overall_state = self.get_torrent_state(torrent_id)
+
                 if torrent_overall_state == 'missing' or torrent_overall_state == 'stalled':
                     logging.info(f"Torrent {torrent_id} handled as '{torrent_overall_state}' by get_torrent_state. Items should have been processed.")
                     # Items are moved/removed by handle_missing_torrent or handle_stalled_torrent called within get_torrent_state.
@@ -1128,7 +1128,26 @@ class CheckingQueue:
                                             queue_manager.move_to_wanted(item_to_move, 'Checking')
                                 continue
                         elif _fbf:
-                            pass  # Health check now handled in adding_queue before moving to Checking
+                            # Resolve succeeded — trigger targeted Plex scan once per item, async
+                            if torrent_id not in self._nzb_plex_scan_triggered:
+                                self._nzb_plex_scan_triggered.add(torrent_id)
+                                _scan_mount = get_setting('Plex', 'mounted_file_location', '').rstrip('') or get_setting('Usenet Provider', 'mounted_file_location', '').rstrip('/')
+                                _scan_folder = _sample.get('debrid_folder_name') or _sample.get('filled_by_title') or ''
+                                _scan_itype = _sample.get('type', 'movie')
+                                if _scan_mount and _scan_folder:
+                                    import threading as _threading
+                                    def _do_plex_scan(_mount, _folder, _itype):
+                                        try:
+                                            for _cat in _os.listdir(_mount):
+                                                _candidate = _os.path.join(_mount, _cat, _folder)
+                                                if _os.path.isdir(_candidate):
+                                                    plex_update_item({'full_path': _candidate, 'location_on_disk': _candidate, 'type': _itype})
+                                                    logging.info(f'[NZB] Triggered Plex scan for {_candidate!r}')
+                                                    return
+                                            logging.debug(f'[NZB] Folder {_folder!r} not found under {_mount!r} for Plex scan')
+                                        except Exception as _pe:
+                                            logging.debug(f'[NZB] Plex scan failed: {_pe}')
+                                    _threading.Thread(target=_do_plex_scan, args=(_scan_mount, _scan_folder, _scan_itype), daemon=True).start()
 
                     # --- Restored Symlinked/Local processing logic ---
                     if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':

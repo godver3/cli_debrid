@@ -120,7 +120,7 @@
         <div class="settings-list">
 
 {% for section, section_data in settings_schema.items() %}
-    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "UI Settings" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" and section != "Plex Smart Collections" and section != "Plex Movie Box Sets" %}
+    {% if section_data.tab == "Additional Settings" and section != "Staleness Threshold" and section != "Sync Deletions" and section != "Subtitle Settings" and section != "Custom Post-Processing" and section != "Blacklist Duration" and section != "Queue" and section != "UI Settings" and section != "Library Manager" and section != "Bazarr Integration" and section != "AI Assistant" and section != "SSO" and section != "Plex Smart Collections" and section != "Plex Movie Box Sets" and section != "Tags" %}
     <div class="settings-section settings-card">
         <div class="settings-section-header">
             <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -577,7 +577,7 @@
         </div>
     </div>
     <div class="settings-section-content">
-        {% if settings.get('File Management', {}).get('file_collection_management') != 'Symlinked/Local' %}
+        {% if settings.get('File Management', {}).get('file_collection_management') not in ('Symlinked/Local', 'Plex') %}
         <!-- Unavailable Warning -->
         <div class="settings-form-group">
             <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); padding: 15px; border-radius: 8px;">

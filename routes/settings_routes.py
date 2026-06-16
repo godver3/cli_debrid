@@ -1868,6 +1868,9 @@ def update_settings():
                      else:
                         update_nested_dict(current[key], value)
                 else:
+                    # Convert tags comma-string back to list when saving Content Sources
+                    if parent_key == 'Content Sources' and key == 'tags' and isinstance(value, str):
+                        value = [t.strip() for t in value.split(',') if t.strip()] if value.strip() else []
                     # Update or add the value
                     current[key] = value
 
@@ -3982,4 +3985,82 @@ def regenerate_collection_poster_previews():
         t.start()
         return jsonify({'success': True, 'message': 'Preview regeneration started'})
     except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@settings_bp.route('/api/create_virtual_folder', methods=['POST'])
+@admin_required
+def create_virtual_folder():
+    """Create Decypharr virtual folder(s) from tags in config.json."""
+    try:
+        import json as _json
+        import os as _os
+
+        data = request.json or {}
+        folder_name = (data.get('folder_name') or '').strip()
+        tags = data.get('tags', [])  # list of tag strings
+        mode = data.get('mode', 'per_tag')  # 'per_tag' or 'combined'
+
+        if not folder_name and mode == 'combined':
+            return jsonify({'success': False, 'error': 'Folder name required'}), 400
+        if not tags:
+            return jsonify({'success': False, 'error': 'At least one tag required'}), 400
+
+        # Get Decypharr data_path
+        config = load_config()
+        data_path = (config.get('Usenet Provider', {}).get('data_path') or '').strip()
+        if not data_path:
+            return jsonify({'success': False, 'error': 'Decypharr data path not configured in Usenet Provider settings'}), 400
+
+        dc_config_path = _os.path.join(data_path, 'config.json')
+        if not _os.path.exists(dc_config_path):
+            return jsonify({'success': False, 'error': f'Decypharr config.json not found at {dc_config_path}'}), 400
+
+        with open(dc_config_path, 'r') as f:
+            dc_config = _json.load(f)
+
+        if 'custom_folders' not in dc_config:
+            dc_config['custom_folders'] = {}
+
+        created = []
+        skipped = []
+
+        if mode == 'per_tag':
+            # One folder per tag, folder name = tag name
+            for tag in tags:
+                tag = tag.strip()
+                if not tag:
+                    continue
+                fname = tag
+                if fname in dc_config['custom_folders']:
+                    skipped.append(fname)
+                    continue
+                dc_config['custom_folders'][fname] = {
+                    'filters': {
+                        'regex': f'(?i)\\{{tags-[^}}]*{tag}[^}}]*\\}}'
+                    }
+                }
+                created.append(fname)
+        else:
+            # One combined folder for all selected tags
+            if folder_name in dc_config['custom_folders']:
+                return jsonify({'success': False, 'error': f'Folder "{folder_name}" already exists'}), 400
+            tag_pattern = '|'.join(tag.strip() for tag in tags if tag.strip())
+            dc_config['custom_folders'][folder_name] = {
+                'filters': {
+                    'regex': f'(?i)\\{{tags-[^}}]*(?:{tag_pattern})[^}}]*\\}}'
+                }
+            }
+            created.append(folder_name)
+
+        with open(dc_config_path, 'w') as f:
+            _json.dump(dc_config, f, indent=2)
+
+        msg = f'Created: {", ".join(created)}'
+        if skipped:
+            msg += f'. Skipped (already exist): {", ".join(skipped)}'
+        return jsonify({'success': True, 'message': msg, 'created': created, 'skipped': skipped})
+
+    except Exception as e:
+        logging.error(f'create_virtual_folder error: {e}', exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500

@@ -383,6 +383,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
     'Clean Up Old Decypharr Backup Files':'database',
     'Manage Duplicate Versions':'database',
     'Fix Episode Numbers':'database',
+    'Migrate between usenet providers':'library',
     'Get Collected from Library (Plex)':'library',
     'Cleanup My Plex Watchlist and Other Plex Watchlists':'library',
     'Get Wanted Content':'library',
@@ -394,6 +395,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
     'Move Item ID to Upgrading':'library',
     'Plex Labels Management':'library',
     'Decypharr DB Cleanup':'library',
+    'Backfill NZB File Names':'library',
     'Symlink Verification Queue':'symlink',
     'Convert Library to Symlinks':'symlink',
     'Symlink Library Recovery':'symlink',
@@ -1298,6 +1300,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
     <!-- Library Tab -->
     <div id="library-tab" class="debug-tab-content">
         <div class="debug_items">
+        {% include '_provider_transfer.html' %}
         <div class="debug_item">
             <h3>Get Collected from Library (Plex)</h3>
             <form action="{{ url_for('debug.get_collected_from_plex') }}" method="POST" id="get-collected-form">
@@ -1603,6 +1606,25 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
             </div>
             <button type="button" id="dcy-run-btn" onclick="dcyRunCleanup()">Run Cleanup</button>
             <div id="dcy-status" style="margin-top:10px;padding:8px;background:#1a1a1a;border-radius:4px;display:none;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:120px;overflow-y:auto"></div>
+        </div>
+
+        <div class="debug_item" id="backfill-nzb-names-card">
+            <h3>Backfill NZB File Names</h3>
+            <p class="description">Rename collected NZB items in the database and Decypharr to the structured NZB naming format (<code>Title (Year) - {imdb-...} - Version - (Original.Release.Name)</code>). Requires NZB file naming to be enabled in settings.</p>
+            <div class="form-group" style="margin-bottom:10px">
+                <label>
+                    <input type="checkbox" id="backfill-nzb-dry-run">
+                    <strong>Dry Run</strong> <span style="font-size:12px;color:#888">(preview only, no changes)</span>
+                </label>
+            </div>
+            <div class="form-group" style="margin-bottom:10px">
+                <label>
+                    <input type="checkbox" id="backfill-nzb-force">
+                    <strong>Force</strong> <span style="font-size:12px;color:#888">(re-process even if already named)</span>
+                </label>
+            </div>
+            <button type="button" id="backfill-nzb-run-btn" onclick="backfillNzbNamesRun()">Run Backfill</button>
+            <div id="backfill-nzb-status" style="margin-top:10px;padding:8px;background:#1a1a1a;border-radius:4px;display:none;font-size:12px;font-family:monospace;white-space:pre-wrap;max-height:120px;overflow-y:auto"></div>
         </div>
 
         </div>
@@ -5891,6 +5913,44 @@ if (document.readyState === 'loading') {
     });
     // Also load on page ready if library tab is active
     if (document.getElementById('library-tab')?.classList.contains('active')) dcyLoadProviders();
+
+    async function backfillNzbNamesRun() {
+        const btn = document.getElementById('backfill-nzb-run-btn');
+        const status = document.getElementById('backfill-nzb-status');
+        const dryRun = document.getElementById('backfill-nzb-dry-run').checked;
+        const force = document.getElementById('backfill-nzb-force').checked;
+        btn.disabled = true;
+        status.style.display = 'block';
+        status.textContent = 'Starting...';
+        try {
+            const r = await fetch('/debug/api/backfill_nzb_names', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({dry_run: dryRun, force: force})
+            });
+            const data = await r.json();
+            if (!data.success) {
+                status.textContent = 'Error: ' + (data.error || 'Unknown error');
+                btn.disabled = false;
+                return;
+            }
+            const taskId = data.task_id;
+            status.textContent = 'Running... (task ' + taskId + ')';
+            // Poll for completion
+            const poll = setInterval(async () => {
+                const sr = await fetch('/debug/api/backfill_nzb_names/status/' + taskId);
+                const sd = await sr.json();
+                status.textContent = sd.message || sd.status || 'Running...';
+                if (sd.complete) {
+                    clearInterval(poll);
+                    btn.disabled = false;
+                }
+            }, 3000);
+        } catch(e) {
+            status.textContent = 'Error: ' + e.message;
+            btn.disabled = false;
+        }
+    }
 
     function runWatchlistCleanup() {
         const btn = document.getElementById('cleanup-watchlist-btn');

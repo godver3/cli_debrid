@@ -677,6 +677,20 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
             is_anime = 'anime' in item_genres_list
             versions_to_use = item.get('versions_to_add', versions)
 
+            # Resolve tags from content source config (Plex mode NZB folder routing)
+            # item may already have tags set (e.g. from content requestor), otherwise look up from source config
+            _item_tags = item.get('tags') or ''
+            if not _item_tags:
+                _cs_id = item.get('content_source', '')
+                if _cs_id:
+                    try:
+                        _cs_config = config.get('Content Sources', {}).get(_cs_id, {})
+                        _cs_tags = _cs_config.get('tags', [])
+                        if isinstance(_cs_tags, list) and _cs_tags:
+                            _item_tags = ','.join(t.strip() for t in _cs_tags if t.strip())
+                    except Exception:
+                        pass
+
             for version, enabled in versions_to_use.items():
                 if not enabled:
                     continue
@@ -758,7 +772,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                         item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime'),
                         item.get('country', '').lower(), item.get('content_source'), item.get('content_source_detail'),
                         item.get('physical_release_date'), item.get('theatrical_release_date'), early_release_flag,
-                        item.get('source_position')
+                        item.get('source_position'), item.get('selected_folder'), item.get('selected_folder_is_custom', False),
+                        _item_tags or None
                     )
                     movies_to_insert.append(movie_data)
                     items_added += 1
@@ -812,7 +827,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                         item['season_number'], item['episode_number'], item.get('episode_title', ''),
                         datetime.now(), version, item.get('runtime'), airtime, genres, item.get('country', '').lower(),
                         blacklisted_date, item.get('requested_season', False), item.get('content_source'), item.get('content_source_detail'),
-                        item.get('source_position')
+                        item.get('source_position'), item.get('selected_folder'), item.get('selected_folder_is_custom', False),
+                        _item_tags or None
                     )
                     episodes_to_insert.append(episode_data)
                     items_added += 1
@@ -829,8 +845,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
         if movies_to_insert:
             conn.executemany('''
                 INSERT INTO media_items
-                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime, country, content_source, content_source_detail, physical_release_date, theatrical_release_date, early_release, source_position)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (imdb_id, tmdb_id, title, year, release_date, state, type, last_updated, version, genres, runtime, country, content_source, content_source_detail, physical_release_date, theatrical_release_date, early_release, source_position, selected_folder, selected_folder_is_custom, tags)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', movies_to_insert)
 
         if episodes_to_insert:
@@ -838,8 +854,8 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                 INSERT INTO media_items
                 (imdb_id, tmdb_id, title, year, release_date, state, type, season_number, episode_number,
                  episode_title, last_updated, version, runtime, airtime, genres, country, blacklisted_date,
-                 requested_season, content_source, content_source_detail, source_position)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 requested_season, content_source, content_source_detail, source_position, selected_folder, selected_folder_is_custom, tags)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', episodes_to_insert)
 
         if movies_to_insert or episodes_to_insert or updated_any_title:

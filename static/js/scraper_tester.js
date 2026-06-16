@@ -721,7 +721,11 @@ document.addEventListener('DOMContentLoaded', function() {
                     // cloneNode drops onclick handlers — rebuild fresh so Add Item / Remove work
                     let liveEl;
                     if (k === 'filter_in' || k === 'filter_out') {
-                        const currentItems = Array.from(modEl.querySelectorAll('.filter-input')).map(i => i.value);
+                        const currentItems = Array.from(modEl.querySelectorAll('.filter-item')).map(item => {
+                            const pattern = item.querySelector('.filter-input')?.value || '';
+                            const source = item.querySelector('.filter-source')?.value || 'both';
+                            return {pattern, source};
+                        });
                         liveEl = createFilterList(k, currentItems, false);
                     } else {
                         const currentItems = Array.from(modEl.querySelectorAll('.preferred-filter-item')).map(item => {
@@ -914,13 +918,27 @@ document.addEventListener('DOMContentLoaded', function() {
     function createFilterItem(value, isOriginal) {
         const itemContainer = document.createElement('div');
         itemContainer.className = 'filter-item';
-    
+
+        const pattern = (value && typeof value === 'object') ? (value.pattern || '') : (value || '');
+        const source = (value && typeof value === 'object') ? (value.source || 'both') : 'both';
+
         const input = document.createElement('input');
         input.type = 'text';
-        input.value = value;
+        input.value = pattern;
         input.className = isOriginal ? 'filter-input original-input' : 'filter-input';
         input.disabled = isOriginal;
-    
+
+        const select = document.createElement('select');
+        select.className = isOriginal ? 'filter-source original-input' : 'filter-source';
+        select.disabled = isOriginal;
+        ['both', 'nzb', 'debrid'].forEach(opt => {
+            const o = document.createElement('option');
+            o.value = opt;
+            o.textContent = opt.charAt(0).toUpperCase() + opt.slice(1);
+            if (opt === source) o.selected = true;
+            select.appendChild(o);
+        });
+
         const removeButton = document.createElement('button');
         removeButton.textContent = 'Remove';
         removeButton.className = isOriginal ? 'remove-filter-item original-input' : 'remove-filter-item';
@@ -928,10 +946,11 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!isOriginal) {
             removeButton.onclick = () => itemContainer.remove();
         }
-    
+
         itemContainer.appendChild(input);
+        itemContainer.appendChild(select);
         itemContainer.appendChild(removeButton);
-    
+
         return itemContainer;
     }
     
@@ -1003,7 +1022,11 @@ document.addEventListener('DOMContentLoaded', function() {
             } else if (settingKey === 'filter_in' || settingKey === 'filter_out') {
                 // Prefer the live accordion copy (-vis) which has working Add/Remove handlers
                 const live = document.getElementById(input.id + '-vis') || input;
-                settings[settingKey] = Array.from(live.querySelectorAll('.filter-input')).map(item => item.value).filter(Boolean);
+                settings[settingKey] = Array.from(live.querySelectorAll('.filter-item')).map(item => {
+                    const pattern = item.querySelector('.filter-input')?.value?.trim();
+                    const source = item.querySelector('.filter-source')?.value || 'both';
+                    return pattern ? {pattern, source} : null;
+                }).filter(Boolean);
             } else if (settingKey === 'preferred_filter_in' || settingKey === 'preferred_filter_out') {
                 const live = document.getElementById(input.id + '-vis') || input;
                 settings[settingKey] = Array.from(live.querySelectorAll('.preferred-filter-item')).map(item => {

@@ -67,9 +67,11 @@ def get_cached_download_stats():
         
         logging.debug("Download stats cache expired, fetching fresh data...")
         
-        # If no debrid API key configured, use Decypharr stats instead
+        # Determine which provider stats to show based on user preference
+        _stats_priority = get_setting('UI Settings', 'stats_provider_priority', default='auto').strip()
         _debrid_api_key = get_setting('Debrid Provider', 'api_key', default='').strip()
-        if not _debrid_api_key:
+        _use_usenet = (_stats_priority == 'usenet') or (_stats_priority == 'auto' and not _debrid_api_key)
+        if _use_usenet:
             try:
                 _dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
                 _dcy_token = get_setting('Usenet Provider', 'api_token', default='').strip()

@@ -5036,10 +5036,10 @@ input#settingsSearch {
 }
 
 /* FORM ELEMENTS */
-.settings-form-group {
+/* .settings-form-group {
     margin-bottom: 18px !important;
     padding: 0 !important;
-}
+} */
 /* .settings-form-group:last-child { margin-bottom: 0 !important; } */
 .settings-title {
     font-size: 13px !important;

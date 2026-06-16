@@ -14,6 +14,7 @@ from utilities.settings import get_all_settings, get_setting, set_setting
 from queues.config_manager import load_config
 import logging
 from routes import admin_required
+from routes.models import user_required
 from cli_battery.app.direct_api import DirectAPI
 from database.torrent_tracking import get_recent_additions, get_torrent_history
 import os
@@ -8248,3 +8249,500 @@ def delete_decypharr_old_databases():
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/backfill_nzb_names', methods=['POST'])
+@user_required
+def backfill_nzb_names():
+    """Backfill NZB job names for collected NZB items.
+    Tier 1: Items not yet in NZB format — rename to new format.
+    Tier 2: Items already in NZB format — update tags, version, content source.
+    """
+    import threading, uuid as _uuid
+    from utilities.settings import get_setting as _gs
+    task_id = str(_uuid.uuid4())
+
+    if not _gs('Usenet Provider', 'enable_nzb_naming', False):
+        return jsonify({'success': False, 'error': 'NZB file naming is not enabled in settings'}), 400
+
+    data = request.get_json(silent=True) or {}
+    item_ids = data.get('item_ids')  # optional list of DB item IDs to limit scope
+    force = data.get('force', False)  # if True, re-process even if already named
+    dry_run = data.get('dry_run', False)  # if True, preview only — no DB or Decypharr changes
+
+    def _run():
+        try:
+            import os as _os
+            from database.core import get_db_connection
+            from routes.scraper_routes import _build_nzb_title, _get_content_source_display_name
+            from usenet.decypharr_client import get_decypharr_client
+            client = get_decypharr_client()
+
+            # Backup both DBs before making any changes (non-dry-run only)
+            if not dry_run:
+                try:
+                    from main import backup_database
+                    backup_database()
+                    logging.info("[NZBBackfill] CLI DB backup completed.")
+                except Exception as _be:
+                    logging.warning(f"[NZBBackfill] CLI DB backup failed: {_be}")
+                try:
+                    from main import backup_decypharr_databases
+                    backup_decypharr_databases()
+                    logging.info("[NZBBackfill] Decypharr DB backup completed.")
+                except Exception as _be:
+                    logging.warning(f"[NZBBackfill] Decypharr DB backup failed: {_be}")
+
+            def _build_location(media_type, new_folder, ext):
+                """Build correct location_on_disk.
+                Both folder and filename use new_folder (new NZB name).
+                /debrid/movies/NewName/NewName.mkv
+                """
+                folder = 'movies' if media_type != 'episode' else 'shows'
+                return f'/debrid/{folder}/{new_folder}/{new_folder}{ext}'
+
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            if item_ids:
+                placeholders = ','.join('?' * len(item_ids))
+                cursor.execute(f"""
+                    SELECT id, title, year, imdb_id, tmdb_id, type, season_number, episode_number,
+                           episode_title, version, original_scraped_torrent_title, filled_by_title,
+                           filled_by_torrent_id, location_on_disk, debrid_folder_name,
+                           content_source, tags, filled_by_file, location_basename
+                    FROM media_items
+                    WHERE id IN ({placeholders})
+                    AND state = 'Collected'
+                    AND filled_by_torrent_id IS NOT NULL AND filled_by_torrent_id != ''
+                """, item_ids)
+            else:
+                cursor.execute("""
+                    SELECT id, title, year, imdb_id, tmdb_id, type, season_number, episode_number,
+                           episode_title, version, original_scraped_torrent_title, filled_by_title,
+                           filled_by_torrent_id, location_on_disk, debrid_folder_name,
+                           content_source, tags, filled_by_file, location_basename
+                    FROM media_items
+                    WHERE state = 'Collected'
+                    AND filled_by_torrent_id IS NOT NULL AND filled_by_torrent_id != ''
+                    ORDER BY collected_at DESC
+                """)
+            rows = cursor.fetchall()
+            conn.close()
+
+            # Group by filled_by_torrent_id to detect season packs
+            # Season pack = multiple episodes sharing the same torrent ID
+            from collections import defaultdict
+            torrent_groups = defaultdict(list)
+            for row in rows:
+                torrent_groups[row['filled_by_torrent_id']].append(dict(row))
+
+            # Pre-compute season folder names for season packs
+            # season_folder_map: torrent_id -> season_level_folder_name
+            season_folder_map = {}
+            for torrent_id, group in torrent_groups.items():
+                if len(group) > 1 and group[0]['type'] == 'episode':
+                    # Season pack — build season-level name using first item
+                    first = group[0]
+                    fbf0 = first.get('filled_by_file') or ''
+                    fbf0_noext = _os.path.splitext(fbf0)[0]
+                    fbf0_is_nzb = '{imdb-' in fbf0
+                    orig0 = (
+                        (fbf0_noext if '.' in fbf0_noext and not fbf0_is_nzb else None) or
+                        first.get('original_scraped_torrent_title') or
+                        None
+                    )
+                    cs0 = _get_content_source_display_name(first.get('content_source'))
+                    season_folder = _build_nzb_title(
+                        title=first.get('title'),
+                        year=first.get('year'),
+                        imdb_id=first.get('imdb_id'),
+                        version=first.get('version'),
+                        original_scraped_torrent_title=orig0,
+                        media_type='show',
+                        season=first.get('season_number'),
+                        episode=None,
+                        episode_title=None,
+                        tags=first.get('tags') or None,
+                        content_source_display_name=cs0,
+                    )
+                    if season_folder:
+                        season_folder_map[torrent_id] = season_folder
+
+            # Track which torrent IDs have already been renamed in Decypharr
+            decypharr_renamed = set()
+            # Queue of {infohash: new_name} to batch rename in Decypharr after loop
+            dcy_rename_queue = {}
+
+            scan_progress[task_id].update({
+                'status': 'running',
+                'total': len(rows),
+                'processed': 0,
+                'renamed': 0,
+                'skipped': 0,
+                'errors': 0,
+                'message': f'Processing {len(rows)} items...',
+            })
+
+            renamed = 0
+            skipped = 0
+            errors = 0
+
+            for i, row in enumerate(rows):
+                item = dict(row)
+                try:
+                    # filled_by_file is the original release filename e.g. "Release.Name.mkv"
+                    fbf = item.get('filled_by_file') or ''
+                    fbf_noext, fbf_ext = _os.path.splitext(fbf)
+
+                    # location_basename is the most reliable source of the original filename
+                    loc_basename = item.get('location_basename') or ''
+                    loc_basename_noext = _os.path.splitext(loc_basename)[0] if loc_basename else ''
+
+                    # Check if filled_by_file was corrupted (overwritten with NZB format)
+                    fbf_is_nzb_format = '{imdb-' in fbf
+
+                    # If filled_by_file is corrupted, use location_basename if it's clean
+                    if fbf_is_nzb_format and loc_basename and '{imdb-' not in loc_basename:
+                        fbf = loc_basename
+                        fbf_noext, fbf_ext = _os.path.splitext(fbf)
+                        fbf_is_nzb_format = False
+
+                    # original_scraped_torrent_title priority:
+                    # 1. filled_by_file (no ext) if it has dots (reliable release name format)
+                    # 2. location_basename (no ext) if clean
+                    # 3. existing original_scraped_torrent_title
+                    fbf_has_dots = '.' in fbf_noext and not fbf_is_nzb_format
+                    existing_orig = item.get('original_scraped_torrent_title') or ''
+                    existing_orig_clean = existing_orig if '{imdb-' not in existing_orig else None
+                    orig_scraped = (
+                        (fbf_noext if fbf_has_dots else None) or
+                        (loc_basename_noext if loc_basename and '{imdb-' not in loc_basename else None) or
+                        existing_orig_clean or
+                        None
+                    )
+
+                    cs_display = _get_content_source_display_name(item.get('content_source'))
+                    media_type = 'episode' if item.get('type') == 'episode' else 'movie'
+                    logging.info(f"[NZBBackfill] item={item['id']} orig_scraped={orig_scraped!r} fbf={fbf!r} fbf_noext={fbf_noext!r}")
+                    new_name = _build_nzb_title(
+                        title=item.get('title'),
+                        year=item.get('year'),
+                        imdb_id=item.get('imdb_id'),
+                        version=item.get('version'),
+                        original_scraped_torrent_title=orig_scraped,
+                        media_type=media_type,
+                        season=item.get('season_number'),
+                        episode=item.get('episode_number'),
+                        episode_title=item.get('episode_title'),
+                        tags=item.get('tags') or None,
+                        content_source_display_name=cs_display,
+                    )
+
+                    current_name = item.get('filled_by_title') or item.get('debrid_folder_name') or ''
+
+                    if not new_name or (new_name == current_name and not force):
+                        skipped += 1
+                        continue
+
+                    # Detect season pack
+                    torrent_id = item.get('filled_by_torrent_id') or ''
+                    is_season_pack = torrent_id in season_folder_map
+                    season_folder = season_folder_map.get(torrent_id)
+
+                    # Build location_on_disk
+                    # For filename, prefer filled_by_file, fall back to location_basename
+                    loc_filename = fbf or loc_basename or ''
+                    ext = fbf_ext if fbf_ext else (_os.path.splitext(loc_basename)[1] if loc_basename else '.mkv')
+                    if is_season_pack and season_folder and loc_filename:
+                        # Season pack: folder = season name, filename = original file (filled_by_file or location_basename)
+                        new_loc = f'/debrid/shows/{season_folder}/{loc_filename}'
+                        dcy_rename_name = season_folder
+                    else:
+                        # Single episode or movie: folder and filename both = new_name
+                        new_loc = _build_location(media_type, new_name, ext)
+                        dcy_rename_name = new_name
+
+                    if dry_run:
+                        renamed += 1
+                        logging.info(f"[NZBBackfill][DRY] {item['id']} ({item.get('title')}): -> {new_name!r} dcy={dcy_rename_name!r} loc={new_loc!r} {'[PACK]' if is_season_pack else ''}")
+                        scan_progress[task_id].update({'processed': i + 1, 'renamed': renamed, 'skipped': skipped, 'errors': errors, 'message': f"[DRY] {item.get('title', '')}"})
+                        continue
+
+                    # Collect Decypharr renames — deduplicated, batched after loop
+                    if torrent_id.startswith('nzb:') and torrent_id not in decypharr_renamed:
+                        decypharr_renamed.add(torrent_id)
+                        dcy_rename_queue[torrent_id[4:]] = dcy_rename_name
+
+                    conn2 = get_db_connection()
+                    try:
+                        conn2.execute("""
+                            UPDATE media_items
+                            SET filled_by_title = ?,
+                                debrid_folder_name = ?,
+                                location_on_disk = ?,
+                                last_updated = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                        """, (new_name, dcy_rename_name, new_loc, item['id']))
+                        conn2.commit()
+                    finally:
+                        conn2.close()
+
+                    renamed += 1
+                    logging.info(f"[NZBBackfill] {item['id']} ({item.get('title')}): -> {new_name!r} loc={new_loc!r} {'[PACK]' if is_season_pack else ''}")
+
+                except Exception as e:
+                    logging.error(f"[NZBBackfill] Error on item {item.get('id')}: {e}")
+                    errors += 1
+
+                scan_progress[task_id].update({
+                    'processed': i + 1,
+                    'renamed': renamed,
+                    'skipped': skipped,
+                    'errors': errors,
+                    'message': f"Processing: {item.get('title', '')}",
+                })
+
+            # Batch rename in Decypharr using thread pool (10 workers)
+            if dcy_rename_queue and not dry_run:
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                total_dcy = len(dcy_rename_queue)
+                dcy_done = 0
+                scan_progress[task_id].update({'message': f'DB updated={renamed}. Sending {total_dcy} renames to Decypharr...'})
+                logging.info(f"[NZBBackfill] Sending {total_dcy} unique renames to Decypharr (10 workers)...")
+
+                def _do_rename(args):
+                    h, name = args
+                    return client.rename_nzb(h, name)
+
+                with ThreadPoolExecutor(max_workers=10) as executor:
+                    futures = {executor.submit(_do_rename, item): item for item in dcy_rename_queue.items()}
+                    for future in as_completed(futures):
+                        dcy_done += 1
+                        if dcy_done % 100 == 0:
+                            scan_progress[task_id].update({'message': f'Decypharr renames: {dcy_done}/{total_dcy}...'})
+
+                logging.info(f"[NZBBackfill] Decypharr renames complete: {dcy_done}/{total_dcy}")
+
+            scan_progress[task_id].update({
+                'status': 'complete',
+                'complete': True,
+                'message': f'Done. DB updated={renamed} Skipped={skipped} Errors={errors}' + ('' if dry_run else f' | Decypharr: {len(dcy_rename_queue)} entries renamed.'),
+            })
+
+        except Exception as e:
+            logging.error(f"[NZBBackfill] Fatal: {e}", exc_info=True)
+            scan_progress[task_id].update({'status': 'error', 'complete': True, 'message': str(e)})
+
+    scan_progress[task_id] = {'status': 'starting', 'complete': False}
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'success': True, 'task_id': task_id})
+
+
+@debug_bp.route('/api/backfill_nzb_names/status/<task_id>', methods=['GET'])
+@user_required
+def backfill_nzb_names_status(task_id):
+    """Get status of a backfill_nzb_names task."""
+    return jsonify(scan_progress.get(task_id, {'status': 'not_found', 'complete': True}))
+
+
+@debug_bp.route('/api/deduplicate_decypharr', methods=['POST'])
+@user_required
+def deduplicate_decypharr():
+    """Remove duplicate Decypharr entries (same name), keeping the one referenced in cli DB.
+    Runs in background. Returns task_id immediately; check logs for completion.
+    Accepts optional dry_run=true to preview without deleting.
+    """
+    import threading, uuid as _uuid, requests as _req
+    from collections import defaultdict
+    from database.database_reading import get_all_media_items
+    from utilities.settings import get_setting
+
+    data = request.get_json(silent=True) or {}
+    dry_run = data.get('dry_run', False)
+
+    dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
+    dcy_token = get_setting('Usenet Provider', 'api_token', default='')
+    if not dcy_url:
+        return jsonify({'success': False, 'error': 'Usenet Provider URL not configured'}), 400
+    headers = {'Authorization': f'Bearer {dcy_token}'} if dcy_token else {}
+
+    def _fetch_and_compute():
+        """Fetch all entries and compute what to delete. Returns (dupe_groups, to_delete) or raises."""
+        all_entries = []
+        page = 1
+        while True:
+            r = _req.get(f'{dcy_url}/api/torrents',
+                         params={'page': page, 'limit': 100, 'sort_by': 'added_on', 'sort_order': 'desc'},
+                         headers=headers, timeout=30)
+            if r.status_code != 200:
+                raise RuntimeError(f'Decypharr API HTTP {r.status_code}')
+            d = r.json()
+            for t in d.get('torrents', []):
+                name = (t.get('name') or '').strip()
+                ih = (t.get('info_hash') or '').strip()
+                if name and ih:
+                    all_entries.append({'name': name, 'hash': ih})
+            if not d.get('has_next'):
+                break
+            page += 1
+
+        by_name = defaultdict(list)
+        for e in all_entries:
+            by_name[e['name']].append(e['hash'])
+        dupe_groups = {n: v for n, v in by_name.items() if len(v) > 1}
+
+        cli_items = get_all_media_items(state='Collected')
+        referenced_hashes = {
+            item['filled_by_torrent_id'][4:]
+            for item in cli_items
+            if (item.get('filled_by_torrent_id') or '').startswith('nzb:')
+        }
+
+        to_delete = []
+        for name, hashes in dupe_groups.items():
+            keep = next((h for h in hashes if h in referenced_hashes), hashes[0])
+            for h in hashes:
+                if h != keep:
+                    to_delete.append(h)
+
+        return dupe_groups, to_delete
+
+    if dry_run:
+        try:
+            dupe_groups, to_delete = _fetch_and_compute()
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({
+            'success': True,
+            'dry_run': True,
+            'dupe_groups': len(dupe_groups),
+            'would_delete': len(to_delete),
+            'sample': to_delete[:10],
+        })
+
+    task_id = str(_uuid.uuid4())
+    scan_progress[task_id] = {'status': 'running', 'complete': False, 'deleted': 0, 'errors': 0}
+
+    def _run():
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        try:
+            dupe_groups, to_delete = _fetch_and_compute()
+            logging.info(f'[DedupDCY] {len(dupe_groups)} dupe groups, {len(to_delete)} to delete')
+
+            deleted = errors = 0
+
+            def _delete_one(ih):
+                try:
+                    r = _req.delete(f'{dcy_url}/api/browse/torrents/{ih}',
+                                    headers=headers, timeout=15)
+                    return r.status_code in (200, 204, 404)
+                except Exception:
+                    return False
+
+            with ThreadPoolExecutor(max_workers=10) as pool:
+                futures = {pool.submit(_delete_one, ih): ih for ih in to_delete}
+                for fut in as_completed(futures):
+                    if fut.result():
+                        deleted += 1
+                    else:
+                        errors += 1
+
+            msg = f'Done: {deleted} deleted, {errors} errors'
+            logging.info(f'[DedupDCY] {msg}')
+            scan_progress[task_id] = {'status': msg, 'complete': True, 'deleted': deleted, 'errors': errors}
+        except Exception as e:
+            logging.error(f'[DedupDCY] Error: {e}', exc_info=True)
+            scan_progress[task_id] = {'status': f'Error: {e}', 'complete': True, 'deleted': 0, 'errors': 0}
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({'success': True, 'task_id': task_id, 'message': 'Dedup running in background — check logs or poll /api/backfill_nzb_names/status/<task_id>'})
+
+
+@debug_bp.route('/api/delete_items_by_id', methods=['POST'])
+@user_required
+def delete_items_by_id():
+    """Delete media_items rows by ID (database only). No filesystem/debrid changes."""
+    from database.database_writing import delete_items_batch
+    data = request.get_json(silent=True) or {}
+    item_ids = data.get('item_ids', [])
+    if not item_ids:
+        return jsonify({'success': False, 'error': 'No item_ids provided'}), 400
+    try:
+        delete_items_batch(item_ids, blacklist=False)
+        return jsonify({'success': True, 'deleted': len(item_ids)})
+    except Exception as e:
+        logging.error(f'[DeleteItems] Error: {e}', exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debug_bp.route('/api/fix_nzbdav_uuid_filenames', methods=['POST'])
+@user_required
+def fix_nzbdav_uuid_filenames():
+    """Fix collected NzbDAV items where filled_by_file is a UUID filename.
+    Renames the file on disk and updates the DB to use the folder name instead.
+    Accepts optional dry_run=true.
+    """
+    import re as _re
+    from database.database_reading import get_all_media_items
+    from database.database_writing import update_media_item
+    from utilities.settings import get_setting
+
+    data = request.get_json(silent=True) or {}
+    dry_run = data.get('dry_run', False)
+
+    mount_path = get_setting('Usenet Provider', 'mounted_file_location', '').rstrip('/')
+    if mount_path.endswith('/__all__'):
+        mount_path = mount_path[:-8]
+
+    _UUID_RE = _re.compile(r'^[A-Za-z0-9]{20,}$')
+
+    def is_uuid(fname):
+        stem = fname.rsplit('.', 1)[0] if '.' in fname else fname
+        return bool(_UUID_RE.match(stem))
+
+    items = [dict(i) for i in get_all_media_items(state='Collected')
+             if is_uuid(i.get('filled_by_file') or '')]
+
+    fixed = skipped = errors = 0
+    for item in items:
+        fbf = item.get('filled_by_file', '')
+        loc = item.get('location_on_disk', '')
+        folder_name = item.get('debrid_folder_name') or item.get('filled_by_title') or ''
+        if not folder_name or not loc or not mount_path:
+            skipped += 1
+            continue
+
+        ext = fbf.rsplit('.', 1)[-1] if '.' in fbf else 'mkv'
+        new_filename = f'{folder_name}.{ext}'
+
+        if dry_run:
+            logging.info(f'[UUIDFix][DRY] id={item["id"]} {fbf!r} -> {new_filename!r}')
+            fixed += 1
+            continue
+
+        # Rename on disk
+        import os as _os
+        old_path = None
+        new_path = None
+        if loc:
+            old_path = loc
+            new_path = _os.path.join(_os.path.dirname(loc), new_filename)
+            if _os.path.exists(old_path) and old_path != new_path:
+                try:
+                    _os.rename(old_path, new_path)
+                except Exception as e:
+                    logging.warning(f'[UUIDFix] Rename failed for {old_path!r}: {e}')
+
+        # Update DB
+        try:
+            new_loc = _os.path.join(_os.path.dirname(loc), new_filename) if loc else loc
+            update_media_item(item['id'],
+                filled_by_file=new_filename,
+                location_on_disk=new_loc)
+            logging.info(f'[UUIDFix] Fixed id={item["id"]}: {fbf!r} -> {new_filename!r}')
+            fixed += 1
+        except Exception as e:
+            logging.error(f'[UUIDFix] DB update failed for id={item["id"]}: {e}')
+            errors += 1
+
+    return jsonify({'success': True, 'dry_run': dry_run, 'fixed': fixed, 'skipped': skipped, 'errors': errors})
