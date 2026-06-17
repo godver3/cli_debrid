@@ -1508,7 +1508,7 @@ def reverse_parser():
 
         # Parse versions using parse_filename_for_version function
         for item in items:
-            parsed_version = parse_filename_for_version(item['filled_by_file'])
+            parsed_version = parse_filename_for_version(item['filled_by_file'], is_nzb=str(item.get('filled_by_torrent_id') or '').startswith('nzb:'))
             item['parsed_version'] = parsed_version
             logging.debug(f"Filename: {item['filled_by_file']}, Parsed Version: {parsed_version}")
 
@@ -1550,7 +1550,7 @@ def apply_parsed_versions():
 
     for item in items_to_update:
         if item['filled_by_file']:
-            parsed_version = parse_filename_for_version(item['filled_by_file'])
+            parsed_version = parse_filename_for_version(item['filled_by_file'], is_nzb=str(item.get('filled_by_torrent_id') or '').startswith('nzb:'))
             
             current_version = item.get('version') # Use .get() for safety
             if parsed_version != current_version:
