@@ -8,6 +8,7 @@ import time
 
 from database.database_writing import update_media_item_state, add_media_item
 from database.database_reading import get_media_item_by_id, get_item_count_by_state
+from database.core import get_db_connection
 from database.collected_items import add_to_collected_notifications
 from routes.notifications import send_queue_pause_notification, send_queue_resume_notification
 
