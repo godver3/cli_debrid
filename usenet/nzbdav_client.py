@@ -128,6 +128,13 @@ def _resolve_category(bucket: str, cat_map: dict) -> str:
         if node in cat_map:
             return cat_map[node]
         node = _CATEGORY_PARENT.get(node)
+    # Tag-exclusive routing passes the tag itself as `bucket`. A tag is not a
+    # structural bucket (movies/shows/resolution/remux/anime) and has no parent
+    # chain, so without this it would fall through to the catch-all whenever a
+    # category map is configured. Land tag-exclusive items in their own category
+    # verbatim instead. Structural buckets stay in _ALL_CATEGORIES → unchanged.
+    if bucket and bucket not in _ALL_CATEGORIES:
+        return bucket
     return cat_map.get(_FALLBACK_KEY, '')
 
 

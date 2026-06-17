@@ -363,7 +363,9 @@ def add_torrent_to_debrid():
         from debrid.base import ProviderUnavailableError
         providers = get_debrid_providers()
         torrent_id = None
-        debrid_provider = providers[0]  # will be updated to whichever succeeds
+        # None on a usenet-only setup; the add loop below simply won't run and we
+        # return the "failed to add torrent" error.
+        debrid_provider = providers[0] if providers else None  # will be updated to whichever succeeds
         last_error = None
         for _prov in providers:
             try:
