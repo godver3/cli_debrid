@@ -1772,9 +1772,11 @@ def process_media_selection(media_id: str, title: str, year: str, media_type: st
     # Get all configured debrid providers (primary + fallbacks)
     from debrid import get_debrid_providers
     all_providers = get_debrid_providers()
-    debrid_provider = all_providers[0]  # primary — used for capability flags and legacy paths
-    supports_cache_check = debrid_provider.supports_direct_cache_check
-    supports_bulk_check = debrid_provider.supports_bulk_cache_checking
+    # usenet-only setup: no debrid provider. Use None + capability flags off so the
+    # cache-check blocks below (all gated on supports_cache_check) are skipped.
+    debrid_provider = all_providers[0] if all_providers else None  # primary — capability flags / legacy paths
+    supports_cache_check = debrid_provider.supports_direct_cache_check if debrid_provider else False
+    supports_bulk_check = debrid_provider.supports_bulk_cache_checking if debrid_provider else False
 
     # Determine behavior from provider capability flags
     is_real_debrid = getattr(debrid_provider, 'supports_direct_cache_check', False)
