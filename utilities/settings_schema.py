@@ -534,9 +534,16 @@ SETTINGS_SCHEMA = {
     },
     "Scraping": {
         "tab": "Versions",
+        # NOTE: 'Hybrid' is a real third option but is a VIRTUAL UI value — the UI
+        # decomposes it on save into uncached_content_handling='None' + hybrid_mode=True
+        # (see static/js/settings.js), so the stored value is never literally 'Hybrid'.
+        # The 'Hybrid' branch in main.py is a backward-compat migration for legacy
+        # configs that still hold the literal string; do NOT add 'Hybrid' to choices
+        # or remove that branch without understanding that design. Cached/uncached is a
+        # DEBRID-only concept — usenet/NZB results bypass this gate entirely.
         "uncached_content_handling": {
             "type": "string",
-            "description": "Uncached content management in the program queue. None: Only take the best Cached result. Full: Take the best result, whether it's Cached or Uncached.",
+            "description": "DEBRID ONLY (no effect on usenet/NZB results). Uncached content management for debrid torrent results in the program queue. None: only take the best Cached result. Full: take the best result, cached or uncached. (A third 'Hybrid' mode is exposed in the UI and stored via the separate hybrid_mode toggle: try cached first, then fall back to uncached.)",
             "default": "None",
             "choices": ["None", "Full"]
         },

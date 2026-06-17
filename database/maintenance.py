@@ -744,7 +744,25 @@ def run_plex_library_maintenance():
                     # If we can't resolve the path, skip this item
                     continue
                 
-                if not os.path.exists(full_path):
+                _missing = not os.path.exists(full_path)
+                if _missing and str(filled_by_torrent_id or '').startswith('nzb:'):
+                    # nzbdav safety net (READ-ONLY existence check — can only turn
+                    # 'missing' -> 'present', never cause a delete/re-grab). This
+                    # maintenance base is Plex.mounted_file_location, but nzbdav files
+                    # live on the Usenet Provider mount. Before declaring a Collected
+                    # nzb: item missing, also look on the usenet mount — otherwise an
+                    # nzbdav-only box left at the debrid default would wrongly re-grab
+                    # / DB-remove good items. Debrid/decypharr items skip this branch.
+                    _u_mount = (get_setting('Usenet Provider', 'mounted_file_location', '') or '').rstrip('/')
+                    if _u_mount.endswith('/__all__'):
+                        _u_mount = _u_mount[:-len('/__all__')]
+                    if _u_mount:
+                        try:
+                            if os.path.exists(os.path.join(_u_mount, location_on_disk)):
+                                _missing = False
+                        except Exception:
+                            pass
+                if _missing:
                     logging.warning(f"File not found for {title}: {full_path}")
                     missing_files.append({
                         'id': item_id,
