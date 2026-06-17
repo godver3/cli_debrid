@@ -291,6 +291,7 @@
       li.push('Bind the NzbDAV mount into cli-debrid: add <code>- ' + esc(p.mountbase) + '/nzbdav:' + esc(cm) + ':rshared</code> to cli-debrid\'s compose, apply the config block below, then <code>docker compose up -d --force-recreate cli_debrid</code>.');
     }
     li.push('Add the content folders to your Plex libraries (one per managed category — ' + CATS.map(function(c){ return '<code>' + esc(cm) + '/content/' + esc(c) + '</code>'; }).join(', ') + ') and disable Plex auto-scan on them (cli-debrid triggers scans itself).');
+    li.push('<strong>⚠️ Important for library deletes &amp; health checks:</strong> cli-debrid resolves a file\'s on-disk location for deletion/health via <code>Plex.mounted_file_location</code> and <code>File Management.original_files_path</code> — <em>not</em> the NzbDAV mount path. Make sure both point at a path that actually contains your NzbDAV content (the union mount above, or — for an NzbDAV-only box — your NzbDAV mount, e.g. <code>' + esc(cm) + '</code>). If they\'re left at a debrid default like <code>/mnt/zurg/__all__</code> on an NzbDAV-only setup, deletes/health checks look at the wrong (empty) mount and can wrongly flag items as missing.');
     return '<div style="margin-top:8px;"><strong>Deploy steps (run these on your host):</strong><ol class="settings-description" style="line-height:1.6;margin-top:4px;">'
       + li.map(function(s){ return '<li>' + s + '</li>'; }).join('') + '</ol></div>';
   }

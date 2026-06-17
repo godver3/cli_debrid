@@ -81,7 +81,9 @@ def get_debrid_providers() -> List[DebridProvider]:
         return _provider_list
 
     primary = get_debrid_provider()
-    providers = [primary]
+    # primary is None on a usenet-only setup (no debrid key); never put None in
+    # the chain — downstream iterates/derefs these providers.
+    providers = [primary] if primary is not None else []
 
     fallbacks = get_setting("Debrid Provider", "fallback_providers", []) or []
     for fb in fallbacks:

@@ -95,6 +95,19 @@ class TestResolveCategory(unittest.TestCase):
         m = {'movies': 'movies'}  # no fallback key
         self.assertEqual(nc._resolve_category('music', m), '')
 
+    def test_tag_exclusive_routes_to_own_category_not_fallback(self):
+        # tags_exclusive passes the tag itself as the bucket. A tag is not a
+        # structural bucket, so with a custom map it must NOT fall to the
+        # catch-all — it should land in its own category verbatim.
+        self.assertEqual(nc._resolve_category('ufc', OURMAP), 'ufc')
+        self.assertEqual(nc._resolve_category('sports', OURMAP), 'sports')
+        # a tag that the user explicitly mapped still honors the mapping
+        m = dict(OURMAP); m['ufc'] = 'combat_sports'
+        self.assertEqual(nc._resolve_category('ufc', m), 'combat_sports')
+        # structural buckets are unaffected: unmapped 2160p still -> fallback
+        self.assertEqual(nc._resolve_category('movies_2160p', {'movies': 'movies', 'fallback': '__unplayable__'}), 'movies')
+        self.assertEqual(nc._resolve_category('music', OURMAP), '__unplayable__')
+
 
 class TestManagedCategories(unittest.TestCase):
     def test_default_excludes_music(self):

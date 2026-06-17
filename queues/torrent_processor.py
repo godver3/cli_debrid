@@ -99,6 +99,10 @@ class TorrentProcessor:
 
             # Use passed provider or fall back to self.debrid_provider
             _provider = provider if provider is not None else self.debrid_provider
+            # usenet-only setup: no debrid provider to cache-check against. Treat
+            # as not-cached rather than dereferencing None.
+            if _provider is None:
+                return (False, 'no_provider')
 
             # Extract imdb_id and title from item
             imdb_id = item.get('imdb_id') if item else None
@@ -947,7 +951,12 @@ class TorrentProcessor:
                         logging.warning(f"[{prov.PROVIDER_NAME}] cache check error: {_e}")
                         return prov, None, 'error'
 
-                if len(providers) == 1:
+                if not providers:
+                    # usenet-only setup: no debrid provider to cache-check a
+                    # torrent result. Leave is_cached False (ThreadPoolExecutor
+                    # would raise on max_workers=0).
+                    is_cached = False
+                elif len(providers) == 1:
                     winning_provider, is_cached, cache_source = _check_one(providers[0])
                 else:
                     with ThreadPoolExecutor(max_workers=len(providers)) as _ex:
@@ -1229,6 +1238,8 @@ class TorrentProcessor:
                                             try:
                                                 from usenet.decypharr_client import get_decypharr_client
                                                 _dc = get_decypharr_client()
+                                                if not hasattr(_dc, 'rename_nzb'):
+                                                    return  # active usenet provider (e.g. nzbdav) has no rename semantics
                                                 for _attempt in range(20):
                                                     if _dc.rename_nzb(h, name):
                                                         logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} for {ident}')
