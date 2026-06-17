@@ -313,7 +313,8 @@ class ProgramRunner:
             'task_backfill_nzb_torrent_ids': 24 * 60 * 60, # Run once (disabled by default)
             'task_repair_broken_nzbs': 6 * 60 * 60, # Run every 6 hours (disabled by default)
             'task_nzb_health_check': 10,             # Run every 10 seconds — polls NZB items in Adding
-            'task_backfill_plex_guids': 24 * 60 * 60, # Run once (disabled by default)
+            'task_backfill_plex_guids': 24 * 60 * 60,    # Run once (disabled by default)
+            'task_backfill_plex_ms_item_id': 24 * 60 * 60, # Run once (disabled by default)
             # --- END EDIT ---
             'task_process_standalone_plex_removals': 60 * 60, # Run every hour
             'task_fix_stuck_plex_items': 5 * 60, # Run every 5 minutes
@@ -5368,6 +5369,163 @@ class ProgramRunner:
         except Exception as e:
             logging.error(f"Error in task_backfill_missing_labels: {e}", exc_info=True)
 
+    def task_backfill_plex_ms_item_id(self):
+        """
+        Two-phase backfill for Collected items missing ms_item_id:
+
+        Phase 1 — Plex scan triggers: For each unique folder derived from
+        location_on_disk, trigger a Plex section scan so Plex indexes the file.
+
+        Phase 2 — ms_item_id lookup: After triggering scans, query Plex by
+        filename and GUID to find the ratingKey and write it to ms_item_id.
+        Note: if Plex hasn't finished indexing by the time Phase 2 runs, those
+        items will still be missing ms_item_id. Run the task again after Plex
+        finishes scanning to pick them up.
+
+        Runs once (disabled by default). Enable in Task Manager under Features.
+        Only applies when Plex is the configured media server.
+        """
+        try:
+            from database.core import get_db_connection as _get_db
+            from urllib.parse import quote as _urlquote
+            import os as _os
+
+            # Connect to Plex using same pattern as task_check_plex_files
+            plex_url = get_setting('Plex', 'url', default='')
+            plex_token = get_setting('Plex', 'token', default='')
+            if not plex_url or not plex_token:
+                if get_setting('File Management', 'file_collection_management') == 'Symlinked/Local':
+                    plex_url = get_setting('File Management', 'plex_url_for_symlink', default='')
+                    plex_token = get_setting('File Management', 'plex_token_for_symlink', default='')
+            if not plex_url or not plex_token:
+                logging.info('[MSItemBackfill] Plex not configured — skipping')
+                return
+
+            plex = PlexServer(plex_url, plex_token)
+            sections = plex.library.sections()
+            logging.info(f'[MSItemBackfill] Connected to Plex, {len(sections)} sections')
+
+            # Fetch all affected items
+            conn = _get_db()
+            rows = conn.execute(
+                """SELECT id, type, imdb_id, tmdb_id, title, location_on_disk
+                   FROM media_items
+                   WHERE state='Collected'
+                   AND (ms_item_id IS NULL OR ms_item_id = '')
+                   AND location_on_disk IS NOT NULL
+                   AND location_on_disk != ''"""
+            ).fetchall()
+            conn.close()
+            items = [dict(r) for r in rows]
+            logging.info(f'[MSItemBackfill] {len(items)} items missing ms_item_id')
+            if not items:
+                return
+
+            # ── Phase 1: trigger Plex scans for unique folders ─────────────────
+            scanned_folders = set()
+            scan_count = 0
+            for item in items:
+                location = item['location_on_disk']
+                folder = _os.path.dirname(location)
+                if not folder or folder in scanned_folders:
+                    continue
+                is_episode = item['type'] == 'episode'
+                type_lookup = 'show' if is_episode else 'movie'
+                for section in sections:
+                    if section.type != type_lookup:
+                        continue
+                    # Only scan if the folder lives under a known section location
+                    for sec_loc in section.locations:
+                        if folder.startswith(sec_loc) or sec_loc in folder:
+                            try:
+                                section.update(path=folder)
+                                scanned_folders.add(folder)
+                                scan_count += 1
+                                logging.debug(f'[MSItemBackfill] Triggered scan: {folder}')
+                            except Exception as _se:
+                                logging.debug(f'[MSItemBackfill] Scan trigger failed for {folder}: {_se}')
+                            break
+                    if folder in scanned_folders:
+                        break
+            logging.info(f'[MSItemBackfill] Phase 1 complete — triggered {scan_count} folder scans')
+
+            # ── Phase 2: look up ratingKey and write ms_item_id ────────────────
+            updated = 0
+            not_found = 0
+            total = len(items)
+            for idx, item in enumerate(items, 1):
+                item_id = item['id']
+                location = item['location_on_disk']
+                imdb_id = item.get('imdb_id')
+                tmdb_id = item.get('tmdb_id')
+                is_episode = item['type'] == 'episode'
+                type_lookup = 'show' if is_episode else 'movie'
+                rating_key = None
+
+                # Log progress every 25 items
+                if idx % 25 == 0 or idx == 1:
+                    logging.info(f'[MSItemBackfill] Phase 2 progress: {idx}/{total} (updated={updated}, not_found={not_found})')
+
+                # Strategy 1: file path search (5s timeout)
+                try:
+                    filename = _os.path.basename(location)
+                    type_param = '&type=4' if is_episode else ''
+                    for section in sections:
+                        if section.type != type_lookup:
+                            continue
+                        try:
+                            results = plex.fetchItems(f'/library/sections/{section.key}/all?file={_urlquote(filename)}{type_param}', timeout=5)
+                            if results:
+                                r0 = results[0]
+                                if is_episode:
+                                    rating_key = str(getattr(r0, 'grandparentRatingKey', None) or getattr(r0, 'ratingKey', None) or '')
+                                else:
+                                    rating_key = str(getattr(r0, 'ratingKey', '') or '')
+                                break
+                        except Exception:
+                            pass
+                except Exception as _e:
+                    logging.debug(f'[MSItemBackfill] File search error item {item_id}: {_e}')
+
+                # Strategy 2: GUID fallback (5s timeout)
+                if not rating_key and (imdb_id or tmdb_id):
+                    try:
+                        for section in sections:
+                            if section.type != type_lookup:
+                                continue
+                            try:
+                                _results = []
+                                if imdb_id:
+                                    _results = section.search(**{'guid': f'imdb://{imdb_id}'})
+                                if not _results and tmdb_id:
+                                    _results = section.search(**{'guid': f'tmdb://{tmdb_id}'})
+                                if _results:
+                                    rating_key = str(getattr(_results[0], 'ratingKey', '') or '')
+                                    break
+                            except Exception:
+                                pass
+                    except Exception as _e:
+                        logging.debug(f'[MSItemBackfill] GUID search error item {item_id}: {_e}')
+
+                if rating_key:
+                    try:
+                        conn = _get_db()
+                        conn.execute("UPDATE media_items SET ms_item_id = ? WHERE id = ?", (rating_key, item_id))
+                        conn.commit()
+                        conn.close()
+                        updated += 1
+                        logging.info(f'[MSItemBackfill] Set ms_item_id={rating_key} for item {item_id} ({item.get("title")})')
+                    except Exception as _e:
+                        logging.error(f'[MSItemBackfill] DB write failed item {item_id}: {_e}')
+                else:
+                    not_found += 1
+                    logging.debug(f'[MSItemBackfill] Not in Plex yet: item {item_id} ({item.get("title")})')
+
+            logging.info(f'[MSItemBackfill] Phase 2 complete — ms_item_id updated: {updated}, still not in Plex: {not_found} (re-run task after Plex scans)')
+
+        except Exception as e:
+            logging.error(f'[MSItemBackfill] Task failed: {e}', exc_info=True)
+
     def task_refresh_plex_tokens(self):
         logging.info("Performing periodic Plex token validation")
         from content_checkers.plex_watchlist import validate_plex_tokens
@@ -6006,6 +6164,7 @@ class ProgramRunner:
                     # Plex ?file= matches against full Plex path; URL-encode the filename.
                     _plex_location = None
                     _new_basename = os.path.basename(item_dict['filled_by_file'] or '')
+                    _plex_rating_key = None
                     if actual_file_path:
                         from urllib.parse import quote as _urlquote
                         _plex_filename = os.path.basename(actual_file_path)
@@ -6020,6 +6179,14 @@ class ProgramRunner:
                                     _force_collect_reason = f"file indexed in Plex confirmed (tick {current_tick})"
                                     try:
                                         _plex_location = _fp_results[0].media[0].parts[0].file
+                                    except Exception:
+                                        pass
+                                    try:
+                                        _fp_item = _fp_results[0]
+                                        if _is_episode:
+                                            _plex_rating_key = str(getattr(_fp_item, 'grandparentRatingKey', None) or getattr(_fp_item, 'ratingKey', None) or '')
+                                        else:
+                                            _plex_rating_key = str(getattr(_fp_item, 'ratingKey', '') or '')
                                     except Exception:
                                         pass
                                     if not _plex_location:
@@ -6068,6 +6235,14 @@ class ProgramRunner:
                                                             _pp_file = getattr(_pp, 'file', '') or ''
                                                             if os.path.basename(_pp_file) == _new_basename:
                                                                 _plex_location = _pp_file
+                                                                if not _plex_rating_key:
+                                                                    try:
+                                                                        if _is_episode:
+                                                                            _plex_rating_key = str(getattr(_candidate, 'grandparentRatingKey', None) or getattr(_candidate, 'ratingKey', None) or '')
+                                                                        else:
+                                                                            _plex_rating_key = str(getattr(_candidate, 'ratingKey', '') or '')
+                                                                    except Exception:
+                                                                        pass
                                                                 break
                                                         if _plex_location:
                                                             break
@@ -6077,6 +6252,17 @@ class ProgramRunner:
                                                     break
                                         except Exception as _loc_err:
                                             logging.debug(f"[PlexCheck] Location extraction from GUID results failed for item {item_id}: {_loc_err}")
+                                    # Extract ratingKey even if location not found via file match
+                                    if not _plex_rating_key and _results:
+                                        try:
+                                            _pi0 = _results[0]
+                                            _is_episode = item_dict['type'] == 'episode'
+                                            if _is_episode:
+                                                _plex_rating_key = str(getattr(_pi0, 'ratingKey', '') or '')
+                                            else:
+                                                _plex_rating_key = str(getattr(_pi0, 'ratingKey', '') or '')
+                                        except Exception:
+                                            pass
                                     if not _plex_location:
                                         logging.warning(f"[PlexCheck] GUID search found item {item_id} ({item_title_for_log}) in Plex but could not extract location (filled_by_file basename='{_new_basename}')")
                                     break
@@ -6111,15 +6297,29 @@ class ProgramRunner:
                             # entries in the library and repeated cleanup prompts.
                             _location_to_store = _plex_location or actual_file_path
                             if _location_to_store:
-                                _cur_fb.execute(
-                                    'UPDATE media_items SET state = "Collected", collected_at = ?, location_on_disk = ? WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
-                                    (_now_fb, _location_to_store, item_id)
-                                )
+                                if _plex_rating_key:
+                                    _cur_fb.execute(
+                                        'UPDATE media_items SET state = "Collected", collected_at = ?, location_on_disk = ?, ms_item_id = ? WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
+                                        (_now_fb, _location_to_store, _plex_rating_key, item_id)
+                                    )
+                                    logging.info(f"[PlexCheck] Updated ms_item_id={_plex_rating_key} for item {item_id} ({item_title_for_log})")
+                                else:
+                                    _cur_fb.execute(
+                                        'UPDATE media_items SET state = "Collected", collected_at = ?, location_on_disk = ? WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
+                                        (_now_fb, _location_to_store, item_id)
+                                    )
                             else:
-                                _cur_fb.execute(
-                                    'UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
-                                    (_now_fb, item_id)
-                                )
+                                if _plex_rating_key:
+                                    _cur_fb.execute(
+                                        'UPDATE media_items SET state = "Collected", collected_at = ?, ms_item_id = ? WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
+                                        (_now_fb, _plex_rating_key, item_id)
+                                    )
+                                    logging.info(f"[PlexCheck] Updated ms_item_id={_plex_rating_key} for item {item_id} ({item_title_for_log})")
+                                else:
+                                    _cur_fb.execute(
+                                        'UPDATE media_items SET state = "Collected", collected_at = ? WHERE id = ? AND state = "Checking" AND (ghostlisted IS NULL OR ghostlisted = 0)',
+                                        (_now_fb, item_id)
+                                    )
                             if _cur_fb.rowcount > 0:
                                 _conn_fb.commit()
                                 logging.info(f"[PlexCheck] Marked item {item_id} ({item_title_for_log}) as Collected ({_force_collect_reason}).")
@@ -6457,8 +6657,16 @@ class ProgramRunner:
                                     logging.debug(f"  Scan path from Plex-confirmed location: '{_plex_scan_dir}' in section '{section.title}'")
                                     break
                     else:
-                        # Plex hasn't indexed the file yet — fall back to scanning all
-                        # matching section locations so Plex discovers it.
+                        # Plex hasn't indexed the file yet.
+                        # Use the ACTUAL folder name from the found file path (renamed CLI name)
+                        # rather than folder_name_for_plex_scan (raw DB torrent name).
+                        # actual_file_path is e.g. /debrid/__all__/Succession (2018) - S04 - {imdb-...}/file.mkv
+                        # so dirname gives the renamed folder name that actually exists under
+                        # /debrid/shows/, /debrid/movies/ etc.
+                        # Use os.listdir to verify the folder exists at each section location
+                        # before triggering a scan — this prevents scanning wrong virtual folders
+                        # (e.g. /debrid/ufc/) for items that don't belong there.
+                        _actual_folder_name = os.path.basename(os.path.dirname(actual_file_path)) if actual_file_path else folder_name_for_plex_scan
                         for section in sections:
                             if section.type != item_type_mapped:
                                 continue
@@ -6467,18 +6675,25 @@ class ProgramRunner:
                                 continue
                             logging.debug(f"  Checking Section '{section.title}' (Type: {section.type})")
                             for location in section.locations:
-                                if folder_name_for_plex_scan:
-                                    constructed_plex_path = os.path.join(location, folder_name_for_plex_scan)
+                                if _actual_folder_name:
+                                    constructed_plex_path = os.path.join(location, _actual_folder_name)
+                                    try:
+                                        _folder_present = _actual_folder_name in os.listdir(location)
+                                    except Exception:
+                                        _folder_present = False
+                                    if not _folder_present:
+                                        logging.debug(f"    Skipping '{constructed_plex_path}' — folder not in {location} listing")
+                                        continue
                                 else:
                                     constructed_plex_path = location
-                                logging.debug(f"    Considering scan path: '{constructed_plex_path}' based on location '{location}' and determined folder '{folder_name_for_plex_scan}'")
+                                logging.debug(f"    Scan path: '{constructed_plex_path}' (actual folder: '{_actual_folder_name}')")
                                 if section.title not in paths_to_scan_by_section:
                                     paths_to_scan_by_section[section.title] = set()
                                 paths_to_scan_by_section[section.title].add(constructed_plex_path)
                                 found_matching_section_location = True
 
                     if not found_matching_section_location:
-                        logging.warning(f"Could not find any matching Plex library section (type: {item_type_mapped}) for item {item_id} based on file '{filled_by_file}'. Scan might not be triggered correctly.")
+                        logging.warning(f"Could not find any matching Plex library section (type: {item_type_mapped}) for item {item_id} based on file '{current_filename}'. Scan might not be triggered correctly.")
                 # --- END: Logic to identify scan paths ---
 
 
@@ -6495,9 +6710,17 @@ class ProgramRunner:
                     # Deduplicate: if multiple episode folders share the same parent (show folder),
                     # scan the parent once instead of each episode folder separately.
                     # This prevents flooding Plex with N concurrent Scanner processes for season packs.
+                    # IMPORTANT: only collapse to parent when the parent is NOT a section root location
+                    # (e.g. /debrid/shows). Collapsing to the section root triggers a full library
+                    # re-scan which causes Plex to create duplicate/mismatched entries.
+                    _section_root_locations = set(section.locations)
                     deduped_paths = set()
                     for scan_path in scan_paths:
                         parent = os.path.dirname(scan_path)
+                        # Never collapse to a section root — that would scan the entire library
+                        if parent in _section_root_locations:
+                            deduped_paths.add(scan_path)
+                            continue
                         siblings = [p for p in scan_paths if os.path.dirname(p) == parent and p != scan_path]
                         if siblings:
                             deduped_paths.add(parent)
