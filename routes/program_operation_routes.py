@@ -973,6 +973,8 @@ def get_task_timings():
         'task_manual_plex_full_scan',
         'task_fix_stuck_plex_items',
         'task_sync_library_metadata',
+        'task_backfill_plex_guids',
+        'task_backfill_plex_ms_item_id',
     }
     _METADATA_TASKS = {
         'task_refresh_release_dates',
