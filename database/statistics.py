@@ -32,9 +32,31 @@ download_stats_cache = {
     'active_downloads': None,
     'usage_stats': None,
     'subscription': None,
-    'last_update': 0,
-    'cache_duration': 300  # 5 minutes in seconds
+    'last_update': 0,       # set when a refresh produces data (success or graceful)
+    'last_attempt': 0,      # set whenever a background refresh is started (throttle)
+    'cache_duration': 300   # 5 minutes in seconds
 }
+
+# Background-refresh coordination so the (potentially slow / unreachable) debrid
+# provider can never block the request thread. A down provider used to hang the
+# dashboard for up to ~90s (3 retries x 30s timeout). See get_cached_download_stats.
+import threading as _threading
+_stats_refresh_lock = _threading.Lock()
+_stats_refresh_in_progress = False
+_STATS_MIN_RETRY = 30        # seconds: don't restart a background refresh more often than this
+# Cold start only (no cached value yet): how long the request may wait for the
+# very first refresh before returning a non-blocking placeholder. Kept just long
+# enough for a HEALTHY provider's first response (~1s); a down provider therefore
+# costs at most this, not the full ~90s retry chain. The dashboard renders stats
+# server-side without polling, so a tiny wait lets a healthy first load show real
+# data instead of a placeholder.
+_STATS_COLD_START_WAIT = 3.0  # seconds
+
+# Same coordination for the subscription-status fetch (its own 30-min TTL). The
+# dashboard renders it server-side too, so it must not block on a down provider.
+_sub_refresh_lock = _threading.Lock()
+_sub_refresh_in_progress = False
+_SUB_TTL = 1800  # 30 minutes
 
 def parse_size(size_str):
     """Convert human readable size string to bytes"""
@@ -59,10 +81,69 @@ def parse_size(size_str):
         return 0
 
 def get_cached_download_stats():
-    """Get cached download stats or fetch new ones if cache is expired"""
+    """Return download stats, refreshing in the BACKGROUND (stale-while-revalidate).
+
+    The debrid provider call can be slow or time out (a down provider blocked the
+    dashboard for up to ~90s — 3 retries x 30s). To keep a non-critical stats
+    widget from ever blocking the request, we always serve the last cached value
+    immediately and refresh it on a background thread. On failure the background
+    refresh keeps the last good value (stale-if-error) instead of replacing it
+    with an error state. Only a true cold start (no value yet) waits a short,
+    bounded time and then returns a non-blocking placeholder.
+    """
+    now = time.time()
+    has_data = (download_stats_cache['active_downloads'] is not None and
+                download_stats_cache['usage_stats'] is not None)
+    fresh = has_data and (download_stats_cache['last_update'] + download_stats_cache['cache_duration'] >= now)
+    if fresh:
+        return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
+
+    # Kick off (at most one) background refresh, throttled so a failing provider
+    # isn't hammered on every request.
+    global _stats_refresh_in_progress
+    started = False
+    with _stats_refresh_lock:
+        if not _stats_refresh_in_progress and (now - download_stats_cache.get('last_attempt', 0) >= _STATS_MIN_RETRY):
+            _stats_refresh_in_progress = True
+            download_stats_cache['last_attempt'] = now
+            started = True
+    if started:
+        _t = _threading.Thread(target=_run_stats_refresh, name='download-stats-refresh', daemon=True)
+        _t.start()
+        if not has_data:
+            # cold start only: give the very first fetch a short, bounded chance
+            _t.join(timeout=_STATS_COLD_START_WAIT)
+
+    if (download_stats_cache['active_downloads'] is not None and
+            download_stats_cache['usage_stats'] is not None):
+        return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
+    # cold start and the provider is still slow → do NOT block; show a placeholder
+    return ({'count': 0, 'limit': 0, 'percentage': 0, 'status': 'loading', 'error': None},
+            {'used': '—', 'limit': '—', 'percentage': 0, 'error': None})
+
+
+def _run_stats_refresh():
+    """Background worker: run the blocking refresh and always clear the in-progress flag."""
+    global _stats_refresh_in_progress
+    try:
+        _refresh_download_stats_blocking()
+    except Exception as e:
+        logging.error(f"Background download-stats refresh failed: {str(e)}")
+    finally:
+        with _stats_refresh_lock:
+            _stats_refresh_in_progress = False
+
+
+def _refresh_download_stats_blocking():
+    """Fetch fresh download stats from the active provider and update the cache.
+
+    May block (provider I/O with retries) — always call this OFF the request
+    thread via _run_stats_refresh. On a provider error it preserves the last good
+    cached value (stale-if-error) rather than overwriting it with an error state.
+    """
     current_time = time.time()
-    if (download_stats_cache['last_update'] + download_stats_cache['cache_duration'] < current_time or 
-        download_stats_cache['active_downloads'] is None or 
+    if (download_stats_cache['last_update'] + download_stats_cache['cache_duration'] < current_time or
+        download_stats_cache['active_downloads'] is None or
         download_stats_cache['usage_stats'] is None):
         
         logging.debug("Download stats cache expired, fetching fresh data...")
@@ -205,13 +286,17 @@ def get_cached_download_stats():
                     }
             except Exception as e:
                 logging.error(f"Error getting active downloads: {str(e)}")
-                download_stats_cache['active_downloads'] = {
-                    'count': 0,
-                    'limit': 0,
-                    'percentage': 0,
-                    'status': 'error',
-                    'error': str(e)
-                }
+                # stale-if-error: keep the last good value if we have one; only
+                # surface an error state when there is nothing better to show.
+                _prev = download_stats_cache.get('active_downloads')
+                if not (_prev and _prev.get('error') is None):
+                    download_stats_cache['active_downloads'] = {
+                        'count': 0,
+                        'limit': 0,
+                        'percentage': 0,
+                        'status': 'error',
+                        'error': str(e)
+                    }
             
             # Get usage stats with timeout protection
             usage = None
@@ -268,12 +353,15 @@ def get_cached_download_stats():
             except Exception as e:
                 logging.error(f"Error getting usage stats: {str(e)}")
                 logging.error(f"Raw usage data that caused error: {usage}")
-                download_stats_cache['usage_stats'] = {
-                    'used': '0 GB',
-                    'limit': '2000 GB',
-                    'percentage': 0,
-                    'error': str(e)
-                }
+                # stale-if-error: preserve the last good usage value if present.
+                _prev_usage = download_stats_cache.get('usage_stats')
+                if not (_prev_usage and _prev_usage.get('error') is None):
+                    download_stats_cache['usage_stats'] = {
+                        'used': '0 GB',
+                        'limit': '2000 GB',
+                        'percentage': 0,
+                        'error': str(e)
+                    }
 
             download_stats_cache['last_update'] = current_time
             logging.debug("Download stats cache updated successfully")
@@ -329,39 +417,81 @@ def get_cached_download_stats():
 
     return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
 
-def get_cached_subscription_status() -> Dict:
-    """Return cached subscription info, refreshing if needed (30 min cache window)."""
+def _refresh_subscription_blocking():
+    """Fetch subscription status from the provider (may block on provider I/O).
+
+    Always run OFF the request thread via _run_subscription_refresh. On a provider
+    error the last good value is preserved (stale-if-error)."""
     try:
-        current_time = time.time()
-        # If we have never populated subscription, or our overall cache TTL expired, refresh
-        if (download_stats_cache.get('subscription') is None or
-            download_stats_cache['last_update'] + 1800 < current_time):
-            _debrid_key = get_setting('Debrid Provider', 'api_key', default='').strip()
-            provider = get_debrid_provider() if _debrid_key else None
-            # Get fresh subscription status from provider
-            subscription = provider.get_subscription_status() if provider and hasattr(provider, 'get_subscription_status') else {
-                'days_remaining': None,
-                'expiration': None,
-                'premium': None
-            }
-            download_stats_cache['subscription'] = subscription
-            # Do not touch last_update for download/usage cache cadence; subscription has its own TTL above
-        return download_stats_cache['subscription']
+        _debrid_key = get_setting('Debrid Provider', 'api_key', default='').strip()
+        provider = get_debrid_provider() if _debrid_key else None
+        subscription = provider.get_subscription_status() if provider and hasattr(provider, 'get_subscription_status') else {
+            'days_remaining': None,
+            'expiration': None,
+            'premium': None
+        }
+        download_stats_cache['subscription'] = subscription
+        download_stats_cache['subscription_update'] = time.time()
     except ProviderUnavailableError:
-        return {
-            'days_remaining': None,
-            'expiration': None,
-            'premium': None,
-            'error': 'provider_unavailable'
-        }
+        _prev = download_stats_cache.get('subscription')
+        if not (_prev and _prev.get('error') is None):
+            download_stats_cache['subscription'] = {
+                'days_remaining': None, 'expiration': None, 'premium': None,
+                'error': 'provider_unavailable'
+            }
     except Exception as e:
-        logging.error(f"Error getting cached subscription status: {str(e)}")
-        return {
-            'days_remaining': None,
-            'expiration': None,
-            'premium': None,
-            'error': str(e)
-        }
+        logging.error(f"Error refreshing subscription status: {str(e)}")
+        _prev = download_stats_cache.get('subscription')
+        if not (_prev and _prev.get('error') is None):
+            download_stats_cache['subscription'] = {
+                'days_remaining': None, 'expiration': None, 'premium': None,
+                'error': str(e)
+            }
+
+
+def _run_subscription_refresh():
+    """Background worker: run the blocking subscription refresh; clear the flag."""
+    global _sub_refresh_in_progress
+    try:
+        _refresh_subscription_blocking()
+    except Exception as e:
+        logging.error(f"Background subscription refresh failed: {str(e)}")
+    finally:
+        with _sub_refresh_lock:
+            _sub_refresh_in_progress = False
+
+
+def get_cached_subscription_status() -> Dict:
+    """Return subscription info, refreshing in the BACKGROUND (stale-while-revalidate).
+
+    The debrid call can block ~90s when the provider is down; the dashboard renders
+    this server-side, so we never call it on the request thread. Serve the last
+    cached value immediately; a cold start waits a short bounded time then returns
+    a neutral placeholder. (30-minute refresh cadence via _SUB_TTL.)
+    """
+    now = time.time()
+    sub = download_stats_cache.get('subscription')
+    fresh = sub is not None and (download_stats_cache.get('subscription_update', 0) + _SUB_TTL >= now)
+    if fresh:
+        return sub
+
+    global _sub_refresh_in_progress
+    started = False
+    with _sub_refresh_lock:
+        if not _sub_refresh_in_progress and (now - download_stats_cache.get('subscription_attempt', 0) >= _STATS_MIN_RETRY):
+            _sub_refresh_in_progress = True
+            download_stats_cache['subscription_attempt'] = now
+            started = True
+    if started:
+        _t = _threading.Thread(target=_run_subscription_refresh, name='subscription-refresh', daemon=True)
+        _t.start()
+        if sub is None:
+            _t.join(timeout=_STATS_COLD_START_WAIT)
+
+    sub = download_stats_cache.get('subscription')
+    if sub is not None:
+        return sub
+    return {'days_remaining': None, 'expiration': None, 'premium': None, 'error': None}
 
 def cache_for_seconds(seconds):
     """Cache the result of a function for the specified number of seconds."""
