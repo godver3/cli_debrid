@@ -93,12 +93,29 @@ def fetch_broken_items(annotate_mount: bool = False) -> list:
       'readable' — file exists and passed read test (likely false positive)
       'unreadable' — file exists but read test timed out or failed
       'unknown'  — no location_on_disk in DB, can't verify
+
+    When debrid file naming is enabled, debrid torrent entries (protocol='torrent')
+    are excluded — their rename causes false 'broken' status in Decypharr's health
+    checks because the download link resolution uses the renamed name which RD
+    doesn't recognise.
     """
     try:
         items = _client().fetch_broken_items()
     except Exception as e:
         logger.error(f'[NZBRepair] fetch_broken_items error: {e}')
         return []
+
+    # Filter out debrid torrent entries when debrid naming is enabled,
+    # as renaming causes false positives in Decypharr health checks.
+    try:
+        from utilities.settings import get_setting as _gs
+        if _gs('Debrid Provider', 'enable_debrid_naming', False):
+            before = len(items)
+            items = [e for e in items if (e.get('protocol') or '').lower() != 'torrent']
+            if len(items) < before:
+                logger.info(f'[NZBRepair] Skipped {before - len(items)} debrid torrent entries (debrid naming enabled)')
+    except Exception:
+        pass
 
     if not annotate_mount or not items:
         return items

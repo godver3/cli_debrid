@@ -454,11 +454,21 @@ class DecypharrClient:
         return data if isinstance(data, list) else data.get('entries', data.get('items', []))
 
     def fetch_broken_items(self) -> list:
-        """Return broken entries from Decypharr /api/repair/health."""
+        """Return broken entries from Decypharr /api/repair/health.
+        When debrid file naming is enabled, only fetches NZB protocol entries
+        to avoid false positives from renamed debrid torrents.
+        """
         if not self.is_enabled():
             return []
         try:
-            r = api.get(f'{self.base_url}/api/repair/health', headers=self._headers(), timeout=60)
+            params = {}
+            try:
+                from utilities.settings import get_setting as _gs
+                if _gs('Debrid Provider', 'enable_debrid_naming', False):
+                    params['protocol'] = 'nzb'
+            except Exception:
+                pass
+            r = api.get(f'{self.base_url}/api/repair/health', headers=self._headers(), params=params, timeout=60)
             if r.status_code != 200:
                 logging.warning(f'[Decypharr] /api/repair/health HTTP {r.status_code}')
                 return []
@@ -488,11 +498,23 @@ class DecypharrClient:
             return {}
 
     def trigger_health_scan(self) -> bool:
-        """POST /api/repair/run to start a fresh Decypharr health scan."""
+        """POST /api/repair/run to start a fresh Decypharr health scan.
+        When debrid file naming is enabled, restricts the scan to NZB protocol
+        only — debrid torrent entries produce false 'broken' results due to the
+        rename breaking Decypharr's RD download link resolution.
+        """
         if not self.is_enabled():
             return False
         try:
-            r = api.post(f'{self.base_url}/api/repair/run', headers=self._headers(), timeout=30)
+            params = {}
+            try:
+                from utilities.settings import get_setting as _gs
+                if _gs('Debrid Provider', 'enable_debrid_naming', False):
+                    params['protocol'] = 'nzb'
+                    logging.info('[Decypharr] trigger_health_scan: restricting to NZB only (debrid naming enabled)')
+            except Exception:
+                pass
+            r = api.post(f'{self.base_url}/api/repair/run', headers=self._headers(), params=params, timeout=30)
             return r.status_code in (200, 202, 204)
         except Exception as exc:
             logging.warning(f'[Decypharr] trigger_health_scan error: {exc}')
