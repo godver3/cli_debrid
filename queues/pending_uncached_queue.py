@@ -198,6 +198,8 @@ class PendingUncachedQueue:
                             try:
                                 from usenet.decypharr_client import get_decypharr_client
                                 _dc3 = get_decypharr_client()
+                                if not hasattr(_dc3, 'rename_nzb'):
+                                    return  # active usenet provider (e.g. nzbdav) has no rename semantics
                                 for _a3 in range(20):
                                     if _dc3.rename_nzb(h, name):
                                         logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} (pending uncached)')

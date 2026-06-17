@@ -353,6 +353,12 @@ SETTINGS_SCHEMA = {
             "description": "Maximum age of NZB results in days. Results older than this are filtered out before submission. Set to 0 to disable. Applies everywhere NZB indexers are searched.",
             "default": 1500
         },
+        "provider": {
+            "type": "string",
+            "description": "Which usenet backend to use: Decypharr or NzbDAV.",
+            "default": "decypharr",
+            "choices": ["decypharr", "nzbdav"]
+        },
         "owned_categories": {
             "type": "string",
             "description": "NzbDAV only. Comma-separated list of nzbdav categories the repair/health tool may act on. nzbdav history is shared with other SAB clients (e.g. Lidarr music), and repair can only re-acquire content cli-debrid manages — so it must never touch another app's entries. Leave empty to auto-pick the categories cli-debrid grabs into (movies, shows, movies_1080p_264, shows_1080p_264, plus the download-folder fallback). Set this only if your category names differ.",
