@@ -1191,20 +1191,25 @@ def filter_results(
                             result['filter_reason'] = f"Season pack not containing the requested season: {season}"
                             logging.info(f"Rejected: Season pack missing season {season} for '{original_title}' (Size: {result['size']:.2f}GB)")
                             continue
-                    # NZB-specific: reject incomplete season packs using the indexer's file count.
-                    # If the indexer reports fewer files than the expected episode count, the pack
-                    # is missing episodes and must be rejected — no partial packs allowed.
-                    # If nzb_files=0 (indexer didn't report file count) and we know the expected
-                    # episode count, also reject — an unverifiable pack is treated as incomplete.
+                    # NZB-specific: reject incomplete season packs using the indexer's file count
+                    # WHEN that count is actually reported. If the indexer reports fewer files than
+                    # the expected episode count, the pack is missing episodes — reject it.
+                    #
+                    # If nzb_files == 0 the indexer simply didn't report a count (e.g. Prowlarr never
+                    # populates the newznab `files` attr) — that is "unknown", NOT "zero/incomplete".
+                    # Rejecting it here drops 100% of such packs, including complete ones. Instead,
+                    # fall through to the SAME per-episode size heuristic that torrent packs already
+                    # use (total size / expected episodes vs the version's min_size_gb) — backed by
+                    # cli-debrid's per-file episode matching, which re-acquires any genuinely-missing
+                    # episodes via the normal Wanted→Scraping flow. Nothing NZB-specific is invented;
+                    # we just stop treating count-less NZB packs differently from every other result.
                     _nzb_files = result.get('nzb_files', 0)
                     _protocol = result.get('protocol', '')
                     if _protocol == 'nzb' and season and season_episode_counts:
                         _expected_eps = season_episode_counts.get(season, 0)
                         if _expected_eps > 0:
                             if _nzb_files == 0:
-                                result['filter_reason'] = f"Incomplete NZB season pack: indexer reported 0 files but season has {_expected_eps} episodes"
-                                logging.info(f"Rejected: NZB pack with 0 reported files (unverifiable) for '{original_title}' — season has {_expected_eps} episodes (Size: {result['size']:.2f}GB)")
-                                continue
+                                logging.debug(f"NZB pack '{original_title}': indexer reported no file count (unverifiable) — deferring to the size heuristic instead of rejecting")
                             elif _nzb_files < _expected_eps:
                                 result['filter_reason'] = f"Incomplete NZB season pack: {_nzb_files} files but season has {_expected_eps} episodes"
                                 logging.info(f"Rejected: Incomplete NZB pack ({_nzb_files}/{_expected_eps} files) for '{original_title}' (Size: {result['size']:.2f}GB)")
