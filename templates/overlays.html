@@ -793,12 +793,19 @@
                 </svg>
                 <span class="hidden sm:inline">Settings</span>
             </button>
-            <button type="button" class="action-btn action-btn-sm gap-2" id="regenerate-all-btn" title="Force re-render all overlays (movies, shows and seasons), overwriting existing ones" onclick="regenerateLibrary()">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-                </svg>
-                <span class="hidden sm:inline">Regenerate All</span>
-            </button>
+            <div style="position:relative;display:inline-block;" id="regenerate-all-wrapper">
+                <button type="button" class="action-btn action-btn-sm gap-2" id="regenerate-all-btn" title="Choose what to regenerate" onclick="toggleRegenerateMenu(event)">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                    </svg>
+                    <span class="hidden sm:inline">Regenerate All</span>
+                </button>
+                <div id="regenerate-scope-menu" style="display:none;position:absolute;top:calc(100% + 6px);left:0;z-index:9999;min-width:180px;background:rgba(28,28,40,0.98);border:1px solid rgba(255,255,255,0.12);border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.5);overflow:hidden;">
+                    <button type="button" style="display:block;width:100%;text-align:left;padding:9px 16px;font-size:0.875rem;font-weight:500;color:#e0e0e0;background:transparent;border:none;cursor:pointer;transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='transparent'" onclick="toggleRegenerateMenu(); regenerateLibrary('all');">All (Movies &amp; Shows)</button>
+                    <button type="button" style="display:block;width:100%;text-align:left;padding:9px 16px;font-size:0.875rem;font-weight:500;color:#e0e0e0;background:transparent;border:none;cursor:pointer;transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='transparent'" onclick="toggleRegenerateMenu(); regenerateLibrary('movie');">Movies only</button>
+                    <button type="button" style="display:block;width:100%;text-align:left;padding:9px 16px;font-size:0.875rem;font-weight:500;color:#e0e0e0;background:transparent;border:none;cursor:pointer;transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.08)'" onmouseout="this.style.background='transparent'" onclick="toggleRegenerateMenu(); regenerateLibrary('tv');">Shows only</button>
+                </div>
+            </div>
             <button type="button" class="action-btn action-btn-danger action-btn-sm gap-2" id="remove-all-overlays-btn" title="Remove All Overlays" onclick="removeAllOverlays()">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
@@ -2211,11 +2218,32 @@ async function generateAll(mediaType) {
     });
 }
 
-async function regenerateLibrary() {
+function toggleRegenerateMenu(event) {
+    if (event) event.stopPropagation();
+    const menu = document.getElementById('regenerate-scope-menu');
+    const isOpen = menu.style.display !== 'none';
+    menu.style.display = isOpen ? 'none' : 'block';
+    if (!isOpen) {
+        const close = function(e) {
+            if (!document.getElementById('regenerate-all-wrapper').contains(e.target)) {
+                menu.style.display = 'none';
+                document.removeEventListener('click', close);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', close), 0);
+    }
+}
+
+async function regenerateLibrary(scope) {
+    // scope: 'all' | 'movie' | 'tv'  (defaults to 'all' for backwards compatibility)
+    if (!scope) scope = 'all';
+    const scopeLabels = { all: 'movies, shows and seasons', movie: 'movies', tv: 'shows and seasons' };
+    const label = scopeLabels[scope] || scopeLabels.all;
+
     showPopup({
         type: 'confirm',
         title: 'Regenerate Library',
-        message: 'Regenerate ALL overlays for the entire library (movies, shows and seasons)? This will overwrite all existing overlays.',
+        message: `Regenerate ALL overlays for ${label}? This will overwrite all existing overlays.`,
         confirmText: 'Regenerate',
         cancelText: 'Cancel',
         onConfirm: async function() {
@@ -2223,30 +2251,37 @@ async function regenerateLibrary() {
             const btn = document.getElementById('regenerate-all-btn');
             btn.disabled = true;
 
-            _showProgress('Regenerating entire library…', 'Starting movies…');
             try {
-                // Phase 1: movies
-                const movieResp = await fetch('/api/overlays/generate/regenerate-all', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({media_type: 'movie', force: true})
-                });
-                const movieData = await movieResp.json();
-                if (!movieData.success) {
-                    _hideProgress();
-                    showPopup({ type: 'error', title: 'Error', message: 'Failed to start regeneration: ' + (movieData.error || 'Unknown error'), autoClose: 5000 });
-                    btn.disabled = false;
-                    return;
+                if (scope === 'all' || scope === 'movie') {
+                    _showProgress('Regenerating movies…', 'Starting movies…');
+                    const movieResp = await fetch('/api/overlays/generate/regenerate-all', {
+                        method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({media_type: 'movie', force: true})
+                    });
+                    const movieData = await movieResp.json();
+                    if (!movieData.success) {
+                        _hideProgress();
+                        showPopup({ type: 'error', title: 'Error', message: 'Failed to start regeneration: ' + (movieData.error || 'Unknown error'), autoClose: 5000 });
+                        btn.disabled = false;
+                        return;
+                    }
+                    document.getElementById('task-progress-title').textContent = movieData.label || 'Regenerating movies…';
+                    await new Promise(resolve => {
+                        _pollUntilDone('/api/overlays/generate/status',
+                            s => _updateProgressCounter(s.done, s.total, [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · ')),
+                            resolve
+                        );
+                    });
+                    if (scope === 'movie') {
+                        _hideProgress();
+                        showPopup({ type: 'success', title: 'Success', message: 'Movie overlay regeneration complete', autoClose: 4000 });
+                        _refreshGrids(null);
+                        btn.disabled = false;
+                        return;
+                    }
                 }
-                document.getElementById('task-progress-title').textContent = movieData.label || 'Regenerating movies…';
 
-                await new Promise(resolve => {
-                    _pollUntilDone('/api/overlays/generate/status',
-                        s => _updateProgressCounter(s.done, s.total, [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · ')),
-                        resolve
-                    );
-                });
-
-                // Phase 2: TV shows
+                // Phase: TV shows
                 _showProgress('Regenerating TV shows…', 'Starting shows…');
                 const tvResp = await fetch('/api/overlays/generate/regenerate-all', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -2255,13 +2290,13 @@ async function regenerateLibrary() {
                 const tvData = await tvResp.json();
                 if (!tvData.success) {
                     _hideProgress();
-                    showPopup({ type: 'error', title: 'Error', message: 'Movie regeneration done. Failed to start TV: ' + (tvData.error || 'Unknown error'), autoClose: 5000 });
+                    const prefix = scope === 'all' ? 'Movie regeneration done. ' : '';
+                    showPopup({ type: 'error', title: 'Error', message: prefix + 'Failed to start TV: ' + (tvData.error || 'Unknown error'), autoClose: 5000 });
                     _refreshGrids(null);
                     btn.disabled = false;
                     return;
                 }
                 document.getElementById('task-progress-title').textContent = tvData.label || 'Regenerating TV shows…';
-
                 await new Promise(resolve => {
                     _pollUntilDone('/api/overlays/generate/status',
                         s => _updateProgressCounter(s.done, s.total, [s.failed > 0 ? `${s.failed} failed` : '', (s.current || '').substring(0, 40)].filter(Boolean).join(' · ')),
@@ -2270,7 +2305,8 @@ async function regenerateLibrary() {
                 });
 
                 _hideProgress();
-                showPopup({ type: 'success', title: 'Success', message: 'Regeneration complete for entire library', autoClose: 4000 });
+                const doneMsg = scope === 'all' ? 'Regeneration complete for entire library' : 'Show overlay regeneration complete';
+                showPopup({ type: 'success', title: 'Success', message: doneMsg, autoClose: 4000 });
                 _refreshGrids(null);
             } catch (error) {
                 _hideProgress();
@@ -2278,6 +2314,7 @@ async function regenerateLibrary() {
                 showPopup({ type: 'error', title: 'Error', message: 'Regeneration encountered an error — check logs', autoClose: 5000 });
             } finally {
                 btn.disabled = false;
+                chevron.disabled = false;
             }
         }
     });
