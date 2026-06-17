@@ -4271,6 +4271,15 @@ class ProgramRunner:
             from database.database_reading import get_all_media_items
             from database.database_writing import update_media_item
 
+            # Decypharr-specific: this backfills filled_by_torrent_id for legacy
+            # Decypharr-collected items that predate the nzb: convention, via
+            # /api/torrents (which nzbdav doesn't implement). nzbdav items already
+            # carry their nzb: id natively, so there is nothing to backfill — skip
+            # cleanly to avoid failed requests + a misleading "Loaded 0 entries" log.
+            if (get_setting('Usenet Provider', 'provider', 'decypharr') or 'decypharr').strip().lower() != 'decypharr':
+                logging.info('[NZBBackfill] Skipped — Decypharr-specific backfill (active usenet provider is not decypharr).')
+                return
+
             dcy_url = get_setting('Usenet Provider', 'url', default='').rstrip('/')
             dcy_token = get_setting('Usenet Provider', 'api_token', default='')
             if not dcy_url:
@@ -7358,17 +7367,21 @@ class ProgramRunner:
                 return
             try:
                 if str(torrent_id).startswith('nzb:'):
-                    # NZB — delete from Decypharr by hash
-                    if not decypharr_enabled or not decypharr_url:
-                        return
+                    # NZB — remove from the ACTIVE usenet provider via the factory
+                    # (decypharr|nzbdav). The old inline Decypharr /api/torrents call
+                    # silently no-op'd under nzbdav, leaving the job + its WebDAV
+                    # content behind for Plex to re-import. remove_nzb exists on both
+                    # clients; decypharr issues the same /api/torrents delete.
                     nzb_hash = torrent_id[4:]  # strip 'nzb:' prefix
-                    d = _req.delete(f'{decypharr_url}/api/torrents',
-                                    params={'hashes': nzb_hash},
-                                    headers=decypharr_headers(), timeout=10)
-                    if d.status_code in (200, 204):
-                        logging.info(f"[StuckPlex] Deleted NZB source from Decypharr: {display} ({nzb_hash})")
-                    else:
-                        logging.debug(f"[StuckPlex] Decypharr NZB delete returned {d.status_code} for {display} — likely already gone")
+                    try:
+                        from usenet import get_usenet_client
+                        _uclient = get_usenet_client()
+                        if _uclient and _uclient.is_enabled() and _uclient.remove_nzb(nzb_hash, display):
+                            logging.info(f"[StuckPlex] Removed NZB source from usenet provider: {display} ({nzb_hash})")
+                        else:
+                            logging.debug(f"[StuckPlex] NZB source removal returned False for {display} ({nzb_hash}) — likely already gone")
+                    except Exception as _uerr:
+                        logging.debug(f"[StuckPlex] NZB source removal error for {display}: {_uerr}")
                 else:
                     # Debrid torrent
                     try:
