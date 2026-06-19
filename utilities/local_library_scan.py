@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional, Callable, Tuple
 import os
 import sys  # Import sys module
 from utilities.settings import get_setting
@@ -497,6 +497,56 @@ def truncate_path_components(
     return sanitized
 
 
+def _se_is_missing(value: Any) -> bool:
+    """A season/episode number counts as 'missing' if it is None or 0."""
+    if value is None:
+        return True
+    try:
+        return int(value) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+def recover_season_episode_from_filename(filename: str) -> Tuple[Optional[int], Optional[int]]:
+    """Best-effort recovery of (season, episode) from a release filename.
+
+    Season-pack releases that are labelled as a single episode (e.g. FLUX WEB-DLs)
+    and manually-assigned items frequently reach get_symlink_path with
+    season_number/episode_number == None/0, which makes the template render
+    'Season 00 / S00E00'. The real SxxExx almost always lives in the on-disk
+    filename, so parse it as a last resort. Returns (None, None) when nothing
+    usable is found. Never raises.
+    """
+    if not filename:
+        return None, None
+    base = os.path.basename(str(filename))
+    season = episode = None
+
+    # Primary: PTT (already a dependency, handles the long tail of naming schemes)
+    try:
+        from PTT import parse_title
+        parsed = parse_title(base)
+        seasons = parsed.get('seasons') or []
+        episodes = parsed.get('episodes') or []
+        if seasons:
+            season = int(seasons[0])
+        if episodes:
+            episode = int(episodes[0])
+    except Exception:
+        pass
+
+    # Backstop: explicit SxxExx / Sxx regex for anything PTT missed
+    if season is None or episode is None:
+        m = re.search(r'(?i)\bS(\d{1,3})(?:E(\d{1,3}))?\b', base)
+        if m:
+            if season is None and m.group(1):
+                season = int(m.group(1))
+            if episode is None and m.group(2):
+                episode = int(m.group(2))
+
+    return season, episode
+
+
 def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup: bool = False) -> str:
     """Get the full path for the symlink based on settings and metadata."""
     import json
@@ -806,7 +856,22 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         else: # episode
             s_num_val = item.get('season_number')
             e_num_val = item.get('episode_number')
-            
+
+            # Fallback: recover S/E from the on-disk filename when the item lacks them.
+            # Season packs labelled as a single episode and manually-assigned items often
+            # arrive with season/episode == None/0, which otherwise yields 'Season 00 / S00E00'.
+            if _se_is_missing(s_num_val) or _se_is_missing(e_num_val):
+                fname = (template_vars.get('original_filename')
+                         or item.get('filename_real_path')
+                         or item.get('filled_by_file') or '')
+                rec_s, rec_e = recover_season_episode_from_filename(fname)
+                if _se_is_missing(s_num_val) and rec_s is not None:
+                    logging.warning(f"[SymlinkPath] season_number missing on item; recovered S{rec_s:02d} from filename '{fname}'")
+                    s_num_val = rec_s
+                if _se_is_missing(e_num_val) and rec_e is not None:
+                    logging.warning(f"[SymlinkPath] episode_number missing on item; recovered E{rec_e:02d} from filename '{fname}'")
+                    e_num_val = rec_e
+
             episode_vars = {
                 'season_number': int(s_num_val if s_num_val is not None else 0),
                 'episode_number': int(e_num_val if e_num_val is not None else 0),
