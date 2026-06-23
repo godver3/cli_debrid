@@ -1121,7 +1121,7 @@ def _add_collected_items_impl(media_items_batch, recent=False, backfill=False, d
 
                             # Inherit NZB fields from a Collected sibling of the same season pack.
                             # Prevents new Plex-inserted episodes from re-entering the pipeline
-                            # and submitting duplicate NZB jobs to Decypharr.
+                            # and submitting duplicate NZB jobs to cli_mount.
                             _sibling_torrent_id = None
                             _sibling_magnet = None
                             _sibling_orig_title = None

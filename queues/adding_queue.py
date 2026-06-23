@@ -25,7 +25,7 @@ class AddingQueue:
         self.media_matcher = MediaMatcher(relaxed_matching=get_setting('Matching', 'relaxed_matching', False))
         self.items: List[Dict] = []
         self.last_process_time = {}
-        self._nzb_submitted_ids: set = set()  # IDs submitted to Decypharr; guards concurrent process() calls
+        self._nzb_submitted_ids: set = set()  # IDs submitted to cli_mount; guards concurrent process() calls
         self._adding_ticks: dict = {}  # item_id → tick count in Adding; at 3 → not-wanted + Wanted
         self._nzb_downloading_job_ids: set = set()  # job IDs confirmed actively downloading; skip in Adding loop
 
@@ -223,7 +223,7 @@ class AddingQueue:
                 logging.warning(f"Skipping item without ID in AddingQueue: {item.get('title')}")
                 continue
 
-            # Skip NZB items already submitted to Decypharr — handled by health check loop above.
+            # Skip NZB items already submitted to cli_mount — handled by health check loop above.
             # Tick counter only increments for items NOT yet submitted (no nzb: torrent_id).
             if str(item.get('filled_by_torrent_id', '')).startswith('nzb:'):
                 logging.debug(f"Skipping item {item_id} — already submitted as NZB, awaiting health check")
@@ -429,6 +429,12 @@ class AddingQueue:
                     ) if _remaining_sr else False
                     if _is_nzb_item:
                         logging.info(f"[AddingQueue] NZB attempt failed for {item_identifier}, {len(_remaining_sr)} result(s) remaining — retrying next tick")
+                        # Rotate to end so other items aren't starved by one slow NZB
+                        try:
+                            self.items.remove(item)
+                            self.items.append(item)
+                        except Exception:
+                            pass
                         continue
                     # All NZB candidates exhausted — distinguish missing-segments (expired usenet)
                     # from general failure so _handle_failed_item can route to Sleeping instead of Blacklist
@@ -491,7 +497,7 @@ class AddingQueue:
                 # The original_torrent_filename variable already holds the vetted name for 'real_debrid_original_title'.
                 # The logic later that determines 'torrent_title' for move_to_checking will use the vetted title parts.
 
-                # --- NZB / Usenet result — poll Decypharr until complete, health check, then move to Checking ---
+                # --- NZB / Usenet result — poll cli_mount until complete, health check, then move to Checking ---
                 if torrent_info.get('_is_nzb'):
                     job_id = torrent_info.get('id', '')
                     nzb_title = torrent_info.get('filename', item_identifier)
@@ -520,7 +526,7 @@ class AddingQueue:
                     # Keep segment ID in memory on the item dict for health check failure handling
                     item['_nzb_segment_id'] = nzb_segment_id
                     self._nzb_submitted_ids.add(item['id'])
-                    logging.info(f"[NZB] Item '{item_identifier}' submitted to Decypharr (checking_id={checking_id}). Staying in Adding for health check.")
+                    logging.info(f"[NZB] Item '{item_identifier}' submitted to cli_mount (checking_id={checking_id}). Staying in Adding for health check.")
                     processed_this_item = True
                     continue
 

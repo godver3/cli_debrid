@@ -226,12 +226,20 @@ def get_metadata(imdb_id: Optional[str] = None, tmdb_id: Optional[int] = None, i
                 processed_metadata['imdb_id'] = parsed_ids.get('imdb') or imdb_id
                 processed_metadata['tmdb_id'] = parsed_ids.get('tmdb') or tmdb_id
 
-        # Handle 'year' field
+        # Handle 'year' field — fallback to release_date if year is missing
         year = metadata.get('year')
         if isinstance(year, int):
             processed_metadata['year'] = year
         elif isinstance(year, str) and year.isdigit():
             processed_metadata['year'] = int(year)
+        else:
+            # Fallback: extract year from release_date
+            release_date = metadata.get('release_date') or processed_metadata.get('release_date', '')
+            if release_date and len(str(release_date)) >= 4:
+                try:
+                    processed_metadata['year'] = int(str(release_date)[:4])
+                except (ValueError, TypeError):
+                    pass
 
         # Handle 'genres' field
         genres = metadata.get('genres', [])

@@ -266,7 +266,14 @@ def index():
         'Debrid-Link':  'DL',
     }
     provider_abbrev = _prefix_map.get(provider_name, provider_name[:2].upper())
-    decypharr_mode = _get_bad_folder_path() is not None
+    climount_mode = _get_bad_folder_path() is not None
+    # Show cli_mount tab only when a cli_mount/usenet provider is configured and enabled
+    try:
+        from usenet.climount_client import get_climount_client
+        _dc = get_climount_client()
+        show_climount_tab = _dc.is_enabled()
+    except Exception:
+        show_climount_tab = False
     # Build provider list for reinsert target selector
     try:
         all_providers = [{'index': i, 'name': p.PROVIDER_NAME} for i, p in enumerate(get_debrid_providers())]
@@ -276,7 +283,8 @@ def index():
         'debrid_manager.html',
         show_plex_trash=show_plex_trash,
         symlink_mode=symlink_mode,
-        decypharr_mode=decypharr_mode,
+        climount_mode=climount_mode,
+        show_climount_tab=show_climount_tab,
         media_server_type=media_server,
         debrid_provider_name=provider_name,
         debrid_provider_abbrev=provider_abbrev,
@@ -1016,6 +1024,194 @@ def api_active():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@debrid_manager_bp.route('/api/active_files')
+@admin_required
+def api_active_files():
+    """
+    Return currently open/active files from cli_mount.
+    DFS mode:    active_streams from /debug/stats  (entry_name, file_name, started_at, cli_debrid_ids)
+    Rclone mode: mount.detail.transferring from /debug/stats (name, bytes, size, speed, progress)
+    """
+    try:
+        import requests as _req
+        from usenet.climount_client import get_climount_client
+        dc = get_climount_client()
+        if not dc or not dc.is_enabled():
+            return jsonify({'success': False, 'error': 'cli_mount not enabled'}), 400
+
+        base = dc.base_url.rstrip('/')
+        resp = _req.get(f'{base}/debug/stats', timeout=8)
+        if resp.status_code != 200:
+            return jsonify({'success': False, 'error': f'cli_mount stats returned {resp.status_code}'}), 502
+
+        data = resp.json()
+        now = int(time.time())
+
+        # DFS / WebDAV mode — active_streams
+        active_streams_raw = (data.get('active_streams') or {}).get('streams') or []
+        streams_out = []
+        for s in active_streams_raw:
+            started_at = s.get('started_at') or 0
+            duration_s = max(0, now - started_at) if started_at else 0
+            cli_debrid_ids = s.get('cli_debrid_ids') or {}
+            # Resolve cli_debrid_id for this specific file_name
+            file_name = s.get('file_name', '')
+            cli_debrid_id = cli_debrid_ids.get(file_name) if cli_debrid_ids else None
+
+            streams_out.append({
+                'mode': 'dfs',
+                'entry_name': s.get('entry_name', ''),
+                'file_name': file_name,
+                'file_size': s.get('file_size', 0),
+                'source': s.get('source', ''),
+                'debrid': s.get('debrid', ''),
+                'client': s.get('client', ''),
+                'started_at': started_at,
+                'last_active': s.get('last_active', 0),
+                'duration_seconds': duration_s,
+                'cli_debrid_id': cli_debrid_id,
+                'cli_debrid_ids': cli_debrid_ids,
+            })
+
+        # Rclone mode — mount.detail.core.transferring
+        # Path format: "<root_folder>/<EntryName>/<filename>"
+        mount_detail = (data.get('mount') or {}).get('detail') or {}
+        transferring = (mount_detail.get('core') or {}).get('transferring') or []
+        rclone_out = []
+        for t in transferring:
+            full_path = t.get('name', '')
+            # Strip leading root folder (movies/ or shows/) and split into entry+file
+            parts = full_path.split('/', 2)
+            entry_name = parts[1] if len(parts) >= 3 else ''
+            file_name = parts[2] if len(parts) >= 3 else full_path
+            rclone_out.append({
+                'mode': 'rclone',
+                'name': file_name,
+                'entry_name': entry_name,
+                'full_path': full_path,
+                'bytes': t.get('bytes', 0),
+                'size': t.get('size', 0),
+                'speed': t.get('speed', 0),
+                'progress': t.get('progress', 0),
+                'eta': t.get('eta', 0),
+            })
+
+        mount_type = (data.get('mount') or {}).get('type', 'unknown')
+        return jsonify({
+            'success': True,
+            'mount_type': mount_type,
+            'dfs_streams': streams_out,
+            'rclone_transfers': rclone_out,
+        })
+    except Exception as e:
+        logging.warning(f'[ActiveFiles] cli_mount unreachable or error: {type(e).__name__}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@debrid_manager_bp.route('/api/active_files/delete', methods=['POST'])
+@admin_required
+def api_active_files_delete():
+    """
+    Delete an active file from cli_mount — handles season packs by resetting ALL siblings.
+    Body (DFS):    { cli_debrid_ids: {filename: id, ...}, entry_name: str }
+    Body (rclone): { entry_name: str }
+    Steps:
+      1. Collect all item IDs — from cli_debrid_ids map (DFS) or DB lookup by entry_name (rclone)
+      2. Move every item to Wanted + delete each from Plex
+      3. Remove the entry from cli_mount (always — all siblings are being reset)
+    """
+    try:
+        from database.database_writing import update_media_item_state
+        from database.database_reading import get_media_item_by_id
+        from usenet.repair_engine import _delete_from_plex
+        from usenet.climount_client import get_climount_client
+        import re as _re
+
+        data = request.get_json(silent=True) or {}
+        entry_name = data.get('entry_name', '')
+        # cli_debrid_ids: {filename: item_id} — all siblings in the season pack
+        cli_debrid_ids = data.get('cli_debrid_ids') or {}
+
+        # Collect all item IDs to reset
+        item_ids = list({int(v) for v in cli_debrid_ids.values() if v}) if cli_debrid_ids else []
+
+        # Fallback when cli_debrid_ids not populated (entry not yet registered):
+        # Find one item by entry_name match, then expand to ALL siblings via filled_by_torrent_id
+        if not item_ids and entry_name:
+            from database.core import get_db_connection as _gdb_af
+            _conn_af = _gdb_af()
+            try:
+                # Step 1: find any one item matching this entry name
+                seed = _conn_af.execute(
+                    "SELECT id, filled_by_torrent_id FROM media_items "
+                    "WHERE (debrid_folder_name = ? OR filled_by_title = ? OR original_scraped_torrent_title = ?) "
+                    "AND state IN ('Collected','Upgrading','Checking') LIMIT 1",
+                    (entry_name, entry_name, entry_name)
+                ).fetchone()
+                if seed:
+                    torrent_id_seed = seed[1] or ''
+                    if torrent_id_seed:
+                        # Step 2: get ALL items with same filled_by_torrent_id (whole season pack)
+                        rows = _conn_af.execute(
+                            "SELECT id FROM media_items WHERE filled_by_torrent_id = ? "
+                            "AND state IN ('Collected','Upgrading','Checking')",
+                            (torrent_id_seed,)
+                        ).fetchall()
+                        item_ids = [r[0] for r in rows]
+                    else:
+                        item_ids = [seed[0]]
+            finally:
+                _conn_af.close()
+
+        if not item_ids:
+            return jsonify({'success': False, 'error': 'No items found to delete'}), 404
+
+        results = {'wanted': 0, 'plex': 0, 'cli_mount': False}
+
+        # Get infohash from the first item (all siblings share the same entry)
+        first_item = dict(get_media_item_by_id(item_ids[0]) or {})
+        info_hash = ''
+        torrent_id = first_item.get('filled_by_torrent_id', '')
+        if torrent_id.startswith('nzb:'):
+            info_hash = torrent_id[4:]
+        else:
+            m = _re.search(r'urn:btih:([0-9a-fA-F]{40})', first_item.get('filled_by_magnet', ''), _re.IGNORECASE)
+            info_hash = m.group(1).lower() if m else ''
+
+        # 1+2. Reset all items to Wanted and delete from Plex
+        for item_id in item_ids:
+            item = get_media_item_by_id(item_id)
+            if not item:
+                continue
+            item = dict(item)
+            try:
+                update_media_item_state(item_id, 'Wanted')
+                results['wanted'] += 1
+            except Exception as e:
+                logging.warning(f'[ActiveFiles] DB reset failed for {item_id}: {e}')
+            try:
+                # For episodes, skip ms_item_id (show-level key — deletes entire show)
+                # and use location_on_disk path instead to target only this episode.
+                _item_for_plex = dict(item)
+                if _item_for_plex.get('type') == 'episode':
+                    _item_for_plex['ms_item_id'] = None
+                if _delete_from_plex(_item_for_plex):
+                    results['plex'] += 1
+            except Exception as e:
+                logging.warning(f'[ActiveFiles] Plex delete failed for {item_id}: {e}')
+
+        # 3. cli_mount removal intentionally skipped — the entry_name from an active
+        # stream maps to one cli_mount entry which may contain multiple seasons or
+        # episodes that share it. Removing the entry would delete files for all of
+        # them. Items reset to Wanted will re-scrape and re-add naturally.
+
+        logging.info(f'[ActiveFiles] Deleted entry {entry_name!r}: wanted={results["wanted"]}, plex={results["plex"]}, cli_mount={results["cli_mount"]}')
+        return jsonify({'success': True, 'results': results})
+    except Exception as e:
+        logging.error(f'[ActiveFiles] Delete error: {e}', exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @debrid_manager_bp.route('/api/torrent/<torrent_id>', methods=['GET'])
 @admin_required
 def api_torrent_detail(torrent_id):
@@ -1226,7 +1422,7 @@ def api_reinsert_torrent(torrent_id):
 @admin_required
 def api_nzb_reinsert():
     """
-    Re-submit a Plex-trashed NZB item to Decypharr.
+    Re-submit a Plex-trashed NZB item to cli_mount.
 
     Step 1 — try the stored NZB URL from scrape_results.
     Step 2 — if that fails, run a targeted re-scrape and submit the best result.
@@ -1260,9 +1456,9 @@ def api_nzb_reinsert():
             row
         ))
 
-        from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
-        reset_decypharr_client()
-        client = get_decypharr_client()
+        from usenet.climount_client import get_climount_client, reset_climount_client
+        reset_climount_client()
+        client = get_climount_client()
 
         new_job_id = None
         used_url = None
@@ -1688,7 +1884,7 @@ def api_usenet_migrate():
     def _run():
         try:
             from utilities.debrid_backup import get_backup_dir
-            from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
+            from usenet.climount_client import get_climount_client, reset_climount_client
             from scraper.newznab import scrape_newznab_instance
             from utilities.settings import get_setting
             import json as _json
@@ -1761,12 +1957,12 @@ def api_usenet_migrate():
                         pass
                 return True
 
-            reset_decypharr_client()
-            client = get_decypharr_client()
+            reset_climount_client()
+            client = get_climount_client()
             if not client.is_enabled():
-                raise ValueError('Usenet provider (Decypharr) is not enabled')
+                raise ValueError('Usenet provider (cli_mount) is not enabled')
 
-            # Fetch existing NZBs from Decypharr to skip already-submitted items
+            # Fetch existing NZBs from cli_mount to skip already-submitted items
             # Normalize names for fuzzy matching: lowercase, strip punctuation/dots/underscores
             import re as _re_dedup
             def _norm(s):
@@ -1786,7 +1982,7 @@ def api_usenet_migrate():
             except Exception as _le:
                 logging.warning(f'[UsenetMigrate] Could not load submitted file: {_le}')
 
-            # Load all current Decypharr NZBs (paginated) to skip already-submitted items
+            # Load all current cli_mount NZBs (paginated) to skip already-submitted items
             from routes.api_tracker import api as _api_dc
             try:
                 _queue_count = 0
@@ -1808,9 +2004,9 @@ def api_usenet_migrate():
                     if _page >= _total_pages:
                         break
                     _page += 1
-                logging.info(f'[UsenetMigrate] Loaded {_queue_count} NZBs from Decypharr queue across {_page} pages')
+                logging.info(f'[UsenetMigrate] Loaded {_queue_count} NZBs from cli_mount queue across {_page} pages')
             except Exception as _de:
-                logging.warning(f'[UsenetMigrate] Could not fetch Decypharr queue: {_de}')
+                logging.warning(f'[UsenetMigrate] Could not fetch cli_mount queue: {_de}')
 
             total = len(backup)
             submitted = not_found = failed = skipped = 0
@@ -1951,10 +2147,10 @@ def api_usenet_migrate():
                         except Exception:
                             pass
 
-                        # Submit to Decypharr
+                        # Submit to cli_mount
                         job_id = client.add_nzb_content(nzb_content=_nzb_text, title=name or hash_val)
                         if not job_id:
-                            logging.debug(f'[UsenetMigrate] Candidate {_cand_idx+1} rejected by Decypharr — trying next')
+                            logging.debug(f'[UsenetMigrate] Candidate {_cand_idx+1} rejected by cli_mount — trying next')
                             continue
 
                         # Health check
@@ -1971,7 +2167,7 @@ def api_usenet_migrate():
                                 _add_guid(nzb_url)
                             except Exception:
                                 pass
-                            # Delete broken entry from Decypharr
+                            # Delete broken entry from cli_mount
                             try:
                                 _dcy_url = _gs_dm('Usenet Provider', 'url', default='').rstrip('/')
                                 _dcy_token = _gs_dm('Usenet Provider', 'api_token', default='')
@@ -1995,7 +2191,7 @@ def api_usenet_migrate():
                                     _pg += 1
                                 if _real_hash:
                                     _del_api.delete(f'{_dcy_url}/api/torrents', headers=_dh, params={'hashes': _real_hash}, timeout=10)
-                                    logging.info(f'[UsenetMigrate] Deleted broken entry {_real_hash} from Decypharr')
+                                    logging.info(f'[UsenetMigrate] Deleted broken entry {_real_hash} from cli_mount')
                             except Exception as _del_e:
                                 logging.warning(f'[UsenetMigrate] Could not delete broken entry: {_del_e}')
                             continue  # try next candidate
@@ -4082,7 +4278,7 @@ def api_battery_audit_sync():
 
 
 # ---------------------------------------------------------------------------
-# Bad Torrent Audit (decypharr __bad__ folder)
+# Bad Torrent Audit (climount __bad__ folder)
 # ---------------------------------------------------------------------------
 
 _BAD_TORRENT_AUDIT_STALE_AFTER = 3600  # 1 hour
@@ -4491,16 +4687,16 @@ def _get_all_folder_path():
     return os.path.join(debrid_root, '__all__')
 
 
-def _fetch_all_entries_from_decypharr(all_folder):
-    """Fetch __all__ entry names from decypharr API (avoids blocking os.listdir on FUSE).
-    Falls back to os.listdir if decypharr URL not configured.
+def _fetch_all_entries_from_climount(all_folder):
+    """Fetch __all__ entry names from climount API (avoids blocking os.listdir on FUSE).
+    Falls back to os.listdir if climount URL not configured.
     Returns list of entry names (folder names inside __all__).
     """
     import requests as _req
     from utilities.settings import get_setting
-    url = get_setting('Decypharr', 'url', default='').strip().rstrip('/')
+    url = get_setting('cli_mount', 'url', default='').strip().rstrip('/')
     if not url:
-        logging.info('[AllTorrentAudit] No decypharr URL — falling back to os.listdir')
+        logging.info('[AllTorrentAudit] No climount URL — falling back to os.listdir')
         return sorted(os.listdir(all_folder))
     all_entries = []
     page = 1
@@ -4514,22 +4710,22 @@ def _fetch_all_entries_from_decypharr(all_folder):
                 break
             all_entries.extend(e['name'] for e in page_entries if e.get('name'))
             total_pages = data.get('total_pages', 1)
-            logging.info(f'[AllTorrentAudit] Decypharr page {page}/{total_pages}: {len(page_entries)} entries')
+            logging.info(f'[AllTorrentAudit] cli_mount page {page}/{total_pages}: {len(page_entries)} entries')
             if page >= total_pages:
                 break
             page += 1
         except Exception as e:
-            logging.warning(f'[AllTorrentAudit] Decypharr API error on page {page}: {e} — falling back to os.listdir')
+            logging.warning(f'[AllTorrentAudit] cli_mount API error on page {page}: {e} — falling back to os.listdir')
             return sorted(os.listdir(all_folder))
     return sorted(all_entries)
 
 
 def _run_all_torrent_audit_bg(all_folder, resume_data=None, touch_only=False, ffprobe_timeout=0.5):
-    """Background thread: probe each __all__ entry via FUSE mount to trigger decypharr's repair check."""
+    """Background thread: probe each __all__ entry via FUSE mount to trigger climount's repair check."""
     try:
         with _all_torrent_audit_state['lock']:
-            _all_torrent_audit_state['progress_msg'] = 'Fetching entry list from decypharr…'
-        entries = _fetch_all_entries_from_decypharr(all_folder)
+            _all_torrent_audit_state['progress_msg'] = 'Fetching entry list from climount…'
+        entries = _fetch_all_entries_from_climount(all_folder)
         total = len(entries)
         logging.info(f"[AllTorrentAudit] Got {total} entries, starting ffprobe scan")
 
@@ -4591,7 +4787,7 @@ def _run_all_torrent_audit_bg(all_folder, resume_data=None, touch_only=False, ff
                 })
 
             if touch_only:
-                # Just stat the entry to trigger decypharr's file check — no ffprobe
+                # Just stat the entry to trigger climount's file check — no ffprobe
                 try:
                     os.stat(entry_path)
                 except Exception:
@@ -4601,7 +4797,7 @@ def _run_all_torrent_audit_bg(all_folder, resume_data=None, touch_only=False, ff
                                  'status': 'touched', 'detail': 'touched', 'probe_time': None})
                 continue
 
-            # Decypharr names the folder same as the video file inside it —
+            # cli_mount names the folder same as the video file inside it —
             # construct the path directly to avoid os.scandir on the FUSE mount
             _, ext = os.path.splitext(name)
             if ext.lower() in _VIDEO_EXTS:
@@ -4807,31 +5003,31 @@ def api_bad_torrent_audit_delete():
     })
 
 
-@debrid_manager_bp.route('/api/decypharr/settings', methods=['GET'])
+@debrid_manager_bp.route('/api/climount/settings', methods=['GET'])
 @admin_required
-def api_decypharr_settings_get():
+def api_climount_settings_get():
     from utilities.settings import get_setting
-    url = get_setting('Decypharr', 'url', default='')
+    url = get_setting('cli_mount', 'url', default='')
     return jsonify({'success': True, 'url': url})
 
 
-@debrid_manager_bp.route('/api/decypharr/settings', methods=['POST'])
+@debrid_manager_bp.route('/api/climount/settings', methods=['POST'])
 @admin_required
-def api_decypharr_settings_save():
+def api_climount_settings_save():
     from utilities.settings import set_setting
     req = request.get_json(silent=True) or {}
     url = (req.get('url') or '').strip().rstrip('/')
-    set_setting('Decypharr', 'url', url)
+    set_setting('cli_mount', 'url', url)
     return jsonify({'success': True})
 
 
-@debrid_manager_bp.route('/api/decypharr/test', methods=['POST'])
+@debrid_manager_bp.route('/api/climount/test', methods=['POST'])
 @admin_required
-def api_decypharr_test():
+def api_climount_test():
     import requests as _requests
     from utilities.settings import get_setting
     req = request.get_json(silent=True) or {}
-    url = (req.get('url') or '').strip().rstrip('/') or get_setting('Decypharr', 'url', default='')
+    url = (req.get('url') or '').strip().rstrip('/') or get_setting('cli_mount', 'url', default='')
     if not url:
         return jsonify({'success': False, 'error': 'No URL configured'})
     try:
@@ -4845,26 +5041,26 @@ def api_decypharr_test():
         return jsonify({'success': False, 'error': str(e)})
 
 
-def _get_decypharr_hash_map(names):
-    """Fetch hashes for the given folder names from decypharr's /api/browse/ endpoint.
+def _get_climount_hash_map(names):
+    """Fetch hashes for the given folder names from climount's /api/browse/ endpoint.
 
     Returns a dict of name -> info_hash (only entries with non-empty hashes).
-    Falls back to empty dict if decypharr URL is not configured or request fails.
+    Falls back to empty dict if climount URL is not configured or request fails.
     """
     import requests as _requests
     from utilities.settings import get_setting
-    url = get_setting('Decypharr', 'url', default='').strip().rstrip('/')
-    logging.debug(f'[BadTorrentAudit] decypharr url from settings: {url!r}')
+    url = get_setting('cli_mount', 'url', default='').strip().rstrip('/')
+    logging.debug(f'[BadTorrentAudit] climount url from settings: {url!r}')
     if not url:
-        logging.debug('[BadTorrentAudit] No decypharr URL configured, skipping hash lookup')
+        logging.debug('[BadTorrentAudit] No climount URL configured, skipping hash lookup')
         return {}
     try:
-        # Fetch all pages — decypharr uses 1-based ?page= pagination with a fixed limit of 50
+        # Fetch all pages — climount uses 1-based ?page= pagination with a fixed limit of 50
         all_entries = []
         page = 1
         while True:
             api_url = f'{url}/api/browse/__bad__?page={page}'
-            logging.info(f'[BadTorrentAudit] Fetching decypharr page {page}: {api_url}')
+            logging.info(f'[BadTorrentAudit] Fetching climount page {page}: {api_url}')
             r = _requests.get(api_url, timeout=10)
             r.raise_for_status()
             data = r.json()
@@ -4873,7 +5069,7 @@ def _get_decypharr_hash_map(names):
                 break
             all_entries.extend(page_entries)
             total_pages = data.get('total_pages', 1) if isinstance(data, dict) else 1
-            logging.info(f'[BadTorrentAudit] decypharr page {page}/{total_pages}: got {len(page_entries)} entries (total so far: {len(all_entries)})')
+            logging.info(f'[BadTorrentAudit] climount page {page}/{total_pages}: got {len(page_entries)} entries (total so far: {len(all_entries)})')
             if page == 1:
                 for e in page_entries[:3]:
                     logging.info(f'[BadTorrentAudit] sample entry: keys={list(e.keys())} name={e.get("name")!r} info_hash={e.get("info_hash")!r}')
@@ -4881,7 +5077,7 @@ def _get_decypharr_hash_map(names):
                 break
             page += 1
 
-        logging.info(f'[BadTorrentAudit] decypharr total entries fetched: {len(all_entries)}')
+        logging.info(f'[BadTorrentAudit] climount total entries fetched: {len(all_entries)}')
         name_set = set(names)
         result = {}
         for entry in all_entries:
@@ -4889,10 +5085,10 @@ def _get_decypharr_hash_map(names):
             h = entry.get('info_hash', '')
             if n in name_set and h:
                 result[n] = h
-        logging.info(f'[BadTorrentAudit] decypharr hash lookup: {len(result)}/{len(names)} matched')
+        logging.info(f'[BadTorrentAudit] climount hash lookup: {len(result)}/{len(names)} matched')
         return result
     except Exception as e:
-        logging.warning(f'[BadTorrentAudit] Could not fetch decypharr hashes: {e}')
+        logging.warning(f'[BadTorrentAudit] Could not fetch climount hashes: {e}')
         return {}
 
 
@@ -4901,7 +5097,7 @@ def _get_decypharr_hash_map(names):
 def api_bad_torrent_audit_reinsert():
     """Re-insert broken torrents back to the debrid service.
 
-    Prefers hashes from decypharr's /api/browse/ endpoint (if URL configured).
+    Prefers hashes from climount's /api/browse/ endpoint (if URL configured).
     Falls back to matching against the RD torrent library by normalised filename.
     """
     req = request.get_json(silent=True) or {}
@@ -4911,9 +5107,9 @@ def api_bad_torrent_audit_reinsert():
     if not names or not isinstance(names, list):
         return jsonify({'success': False, 'error': 'names list required'}), 400
 
-    # --- Primary: decypharr hash lookup ---
-    dcyp_hashes = _get_decypharr_hash_map(names)
-    logging.info(f'[BadTorrentAudit] Reinsert: decypharr resolved {len(dcyp_hashes)}/{len(names)} hashes')
+    # --- Primary: climount hash lookup ---
+    dcyp_hashes = _get_climount_hash_map(names)
+    logging.info(f'[BadTorrentAudit] Reinsert: climount resolved {len(dcyp_hashes)}/{len(names)} hashes')
 
     import re as _re
     def _norm(s):
@@ -4964,7 +5160,7 @@ def api_bad_torrent_audit_reinsert():
         torrent_hash = dcyp_hashes.get(name, '')
         old_id = ''
         filename = name
-        source = 'decypharr'
+        source = 'climount'
         if not torrent_hash:
             source = 'rd_fallback'
             match = rd_map.get(_norm(name))
@@ -5088,15 +5284,18 @@ def api_bad_torrent_audit_reinsert():
 _repair_thread = None
 _repair_progress = {}  # shared state for the running repair
 
+_debrid_repair_thread = None
+_debrid_repair_progress = {}  # shared state for the running debrid repair
+
 
 @debrid_manager_bp.route('/api/usenet/repair/stats')
 def usenet_repair_stats():
-    """Stats for the Usenet tab: Decypharr health summary + 30-day repair activity counts + available versions."""
+    """Stats for the Usenet tab: cli_mount health summary + 30-day repair activity counts + available versions."""
     try:
         from usenet.repair_engine import get_health_summary, get_available_versions, get_repair_version
         from database.nzb_repair_activity import get_repair_stats
         health = get_health_summary()
-        activity = get_repair_stats(days=30)
+        activity = get_repair_stats(days=30, source='usenet')
         versions = get_available_versions()
         repair_version = get_repair_version()
         return jsonify(success=True, health=health, activity=activity, versions=versions, repair_version=repair_version)
@@ -5113,7 +5312,7 @@ def usenet_repair_activity():
         limit = int(request.args.get('limit', 50))
         offset = int(request.args.get('offset', 0))
         outcome = request.args.get('outcome') or None
-        rows, total = get_repair_activity(limit=limit, offset=offset, outcome=outcome)
+        rows, total = get_repair_activity(limit=limit, offset=offset, outcome=outcome, source='usenet')
         return jsonify(success=True, rows=rows, total=total)
     except Exception as e:
         logging.error(f'[UsenetRepair] activity error: {e}')
@@ -5122,11 +5321,11 @@ def usenet_repair_activity():
 
 @debrid_manager_bp.route('/api/usenet/repair/scan_status')
 def usenet_scan_status():
-    """Check if Decypharr is currently running a health sweep (active_run != null)."""
+    """Check if cli_mount is currently running a health sweep (active_run != null and running)."""
     try:
-        from usenet.decypharr_client import get_decypharr_client
+        from usenet.climount_client import get_climount_client
         from routes.api_tracker import api as _api
-        client = get_decypharr_client()
+        client = get_climount_client()
         if not client.is_enabled():
             return jsonify(success=True, is_scanning=False)
         r = _api.get(f'{client.base_url}/api/repair/status', headers=client._headers(), timeout=10)
@@ -5134,7 +5333,8 @@ def usenet_scan_status():
             return jsonify(success=True, is_scanning=False)
         data = r.json()
         active_run = data.get('active_run') or data.get('value', {}).get('active_run')
-        is_scanning = active_run is not None
+        run_status = (active_run or {}).get('status', '') if active_run else ''
+        is_scanning = active_run is not None and run_status in ('running', 'pending', '')
         return jsonify(success=True, is_scanning=is_scanning, active_run=active_run)
     except Exception as e:
         logging.debug(f'[UsenetRepair] scan_status error: {e}')
@@ -5143,25 +5343,64 @@ def usenet_scan_status():
 
 @debrid_manager_bp.route('/api/usenet/repair/health_scan', methods=['POST'])
 def usenet_trigger_health_scan():
-    """Trigger a fresh health scan in Decypharr."""
+    """Trigger a health scan for NZB entries. ?full=true scans all, default scans unchecked only."""
     try:
         from usenet.repair_engine import trigger_health_scan
-        ok = trigger_health_scan()
-        return jsonify(success=ok, message='Health scan triggered' if ok else 'Failed to trigger scan')
+        full = request.args.get('full', 'false').lower() in ('true', '1', 'yes')
+        ok = trigger_health_scan(full=full)
+        scan_type = 'full' if full else 'partial'
+        return jsonify(success=ok, message=f'{scan_type.capitalize()} health scan triggered' if ok else 'Failed to trigger scan')
     except Exception as e:
         logging.error(f'[UsenetRepair] health_scan error: {e}')
         return jsonify(success=False, error=str(e))
 
 
+@debrid_manager_bp.route('/api/usenet/repair/stop', methods=['POST'])
+def usenet_stop_health_scan():
+    """Stop a running NZB health scan in cli_mount."""
+    try:
+        from usenet.debrid_repair_engine import _dcy_cfg, _dcy_headers
+        from routes.api_tracker import api
+        url, _ = _dcy_cfg()
+        if not url:
+            return jsonify(success=False, error='cli_mount not configured')
+        r = api.post(f'{url}/api/repair/stop', headers=_dcy_headers(), timeout=10)
+        if r.status_code == 200:
+            return jsonify(success=True, message='Health scan stop requested')
+        return jsonify(success=False, error=f'cli_mount returned HTTP {r.status_code}')
+    except Exception as e:
+        logging.error(f'[UsenetRepair] stop_scan error: {e}')
+        return jsonify(success=False, error=str(e))
+
+
 @debrid_manager_bp.route('/api/usenet/repair/broken')
 def usenet_broken_items():
-    """Return current broken items from Decypharr health with mount verification."""
+    """Return current broken items from cli_mount health."""
     try:
         from usenet.repair_engine import fetch_broken_items
-        items = fetch_broken_items(annotate_mount=True)
+        # annotate_mount=False for fast response — mount verification
+        # is only needed by the actual repair pipeline, not display.
+        items = fetch_broken_items(annotate_mount=False)
         return jsonify(success=True, items=items, count=len(items))
     except Exception as e:
         logging.error(f'[UsenetRepair] broken items error: {e}')
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/usenet/repair/fix_single', methods=['POST'])
+def usenet_fix_single():
+    """Repair a single broken entry by entry_name."""
+    try:
+        body = request.get_json(silent=True) or {}
+        entry_name = body.get('entry_name', '').strip()
+        version_override = body.get('version_override') or None
+        if not entry_name:
+            return jsonify(success=False, error='entry_name required'), 400
+        from usenet.repair_engine import repair_single_entry
+        result = repair_single_entry(entry_name, version_override=version_override)
+        return jsonify(success=True, result=result)
+    except Exception as e:
+        logging.error(f'[UsenetRepair] fix_single error: {e}')
         return jsonify(success=False, error=str(e))
 
 
@@ -5210,7 +5449,7 @@ def usenet_repair_progress():
 
 @debrid_manager_bp.route('/api/usenet/repair/delete_all_broken', methods=['POST'])
 def usenet_delete_all_broken():
-    """Delete all broken NZBs from Decypharr, Plex, and reset CLI DB items to Wanted."""
+    """Delete all broken NZBs from cli_mount, Plex, and reset CLI DB items to Wanted."""
     try:
         from usenet.repair_engine import (
             fetch_broken_items, _find_db_items_by_entry_name,
@@ -5221,9 +5460,9 @@ def usenet_delete_all_broken():
 
         broken = fetch_broken_items()
         if not broken:
-            return jsonify(success=True, message='No broken items found', deleted_decypharr=0, deleted_plex=0, reset_db=0)
+            return jsonify(success=True, message='No broken items found', deleted_cli_mount=0, deleted_plex=0, reset_db=0)
 
-        deleted_decypharr = 0
+        deleted_climount = 0
         deleted_plex = 0
         reset_db = 0
 
@@ -5231,9 +5470,9 @@ def usenet_delete_all_broken():
             info_hash = entry.get('info_hash', '')
             entry_name = entry.get('entry_name', '') or entry.get('name', '')
 
-            # Delete from Decypharr first
+            # Delete from cli_mount first
             if _delete_from_provider(info_hash, entry_name):
-                deleted_decypharr += 1
+                deleted_climount += 1
 
             # Find matching DB items
             db_items = _find_db_items_by_entry_name(entry_name) if entry_name else []
@@ -5257,12 +5496,12 @@ def usenet_delete_all_broken():
                         except Exception:
                             pass
 
-        msg = (f'Deleted {deleted_decypharr} from Decypharr, '
+        msg = (f'Deleted {deleted_climount} from cli_mount, '
                f'{deleted_plex} from Plex, '
                f'{reset_db} items reset to Wanted.')
         logging.info(f'[DeleteBroken] {msg}')
         return jsonify(success=True, message=msg,
-                       deleted_decypharr=deleted_decypharr,
+                       deleted_climount=deleted_climount,
                        deleted_plex=deleted_plex,
                        reset_db=reset_db)
     except Exception as e:
@@ -5288,4 +5527,277 @@ def usenet_repair_settings_save():
         return jsonify(success=True)
     except Exception as e:
         logging.error(f'[UsenetRepair] save settings error: {e}')
+        return jsonify(success=False, error=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Debrid (RealDebrid torrent) Health & Repair API
+# ---------------------------------------------------------------------------
+
+@debrid_manager_bp.route('/api/debrid/repair/stats')
+def debrid_repair_stats():
+    """Stats for the Debrid repair tab: cli_mount torrent health summary + 30-day activity counts."""
+    try:
+        from usenet.debrid_repair_engine import get_health_summary, get_repair_stats
+        health = get_health_summary()
+        activity = get_repair_stats(days=30)
+        return jsonify(success=True, health=health, activity=activity)
+    except Exception as e:
+        logging.error(f'[DebridRepair] stats error: {e}')
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/debrid/repair/activity')
+def debrid_repair_activity():
+    """Paginated repair activity log for debrid entries."""
+    try:
+        from usenet.debrid_repair_engine import get_repair_activity
+        limit = int(request.args.get('limit', 25))
+        offset = int(request.args.get('offset', 0))
+        outcome = request.args.get('outcome') or None
+        rows, total = get_repair_activity(limit=limit, offset=offset, outcome=outcome)
+        return jsonify(success=True, rows=rows, total=total)
+    except Exception as e:
+        logging.error(f'[DebridRepair] activity error: {e}')
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/debrid/repair/scan_status')
+def debrid_scan_status():
+    """Check if cli_mount is currently running a health sweep."""
+    try:
+        from usenet.climount_client import get_climount_client
+        from routes.api_tracker import api as _api
+        client = get_climount_client()
+        if not client.is_enabled():
+            return jsonify(success=True, is_scanning=False)
+        r = _api.get(f'{client.base_url}/api/repair/status', headers=client._headers(), timeout=10)
+        if r.status_code != 200:
+            return jsonify(success=True, is_scanning=False)
+        data = r.json()
+        active_run = data.get('active_run') or data.get('value', {}).get('active_run')
+        run_status = (active_run or {}).get('status', '') if active_run else ''
+        is_scanning = active_run is not None and run_status in ('running', 'pending', '')
+        return jsonify(success=True, is_scanning=is_scanning, active_run=active_run)
+    except Exception as e:
+        logging.debug(f'[DebridRepair] scan_status error: {e}')
+        return jsonify(success=True, is_scanning=False)
+
+
+@debrid_manager_bp.route('/api/debrid/repair/health_scan', methods=['POST'])
+def debrid_trigger_health_scan():
+    """Trigger a health scan for torrent entries. ?full=true scans all, default scans unchecked only."""
+    try:
+        from usenet.debrid_repair_engine import trigger_health_scan
+        full = request.args.get('full', 'false').lower() in ('true', '1', 'yes')
+        ok = trigger_health_scan(full=full)
+        scan_type = 'full' if full else 'partial'
+        return jsonify(success=ok, message=f'{scan_type.capitalize()} health scan triggered' if ok else 'Failed to trigger scan')
+    except Exception as e:
+        logging.error(f'[DebridRepair] health_scan error: {e}')
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/debrid/repair/stop', methods=['POST'])
+def debrid_stop_health_scan():
+    """Stop a running torrent health scan in cli_mount."""
+    try:
+        from usenet.debrid_repair_engine import _dcy_cfg, _dcy_headers
+        from routes.api_tracker import api
+        url, _ = _dcy_cfg()
+        if not url:
+            return jsonify(success=False, error='cli_mount not configured')
+        r = api.post(f'{url}/api/repair/stop', headers=_dcy_headers(), timeout=10)
+        if r.status_code == 200:
+            return jsonify(success=True, message='Health scan stop requested')
+        return jsonify(success=False, error=f'cli_mount returned HTTP {r.status_code}')
+    except Exception as e:
+        logging.error(f'[DebridRepair] stop_scan error: {e}')
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/debrid/repair/broken')
+def debrid_broken_items():
+    """Return current broken torrent items from cli_mount health."""
+    try:
+        from usenet.debrid_repair_engine import fetch_broken_items
+        items = fetch_broken_items()
+        return jsonify(success=True, items=items, count=len(items))
+    except Exception as e:
+        logging.error(f'[DebridRepair] broken items error: {e}')
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/debrid/repair/fix_single', methods=['POST'])
+def debrid_fix_single():
+    """Repair a single broken debrid entry. action: 'reinsert' | 'replace'."""
+    try:
+        body = request.get_json(silent=True) or {}
+        entry_name = body.get('entry_name', '').strip()
+        info_hash = body.get('info_hash', '').strip()
+        action = body.get('action', 'replace')
+        version_override = body.get('version_override') or None
+        if not entry_name:
+            return jsonify(success=False, error='entry_name required'), 400
+        from usenet.debrid_repair_engine import reinsert_entry, replace_entry
+        if action == 'reinsert':
+            result = reinsert_entry(entry_name, info_hash)
+        else:
+            result = replace_entry(entry_name, info_hash, version_override=version_override)
+        return jsonify(success=True, result=result)
+    except Exception as e:
+        logging.error(f'[DebridRepair] fix_single error: {e}')
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/debrid/repair/run', methods=['POST'])
+def debrid_run_repair():
+    """Kick off a debrid repair run in background."""
+    global _debrid_repair_thread, _debrid_repair_progress
+
+    if _debrid_repair_thread and _debrid_repair_thread.is_alive():
+        return jsonify(success=False, message='Debrid repair already running')
+
+    body = request.get_json(silent=True) or {}
+    version_override = body.get('version_override') or None
+
+    _debrid_repair_progress = {'status': 'running', 'summary': None, 'error': None,
+                                'started_at': time.time(), 'version_override': version_override}
+
+    def _run():
+        global _debrid_repair_progress
+        try:
+            # Clean ghosts before repair so they don't show up as actionable broken items
+            try:
+                from usenet.debrid_repair_engine import delete_ghost_health_records
+                ghost_result = delete_ghost_health_records()
+                if ghost_result['deleted']:
+                    logging.info(f'[DebridRepair] Ghost cleanup before repair: deleted={ghost_result["deleted"]}')
+            except Exception as _ge:
+                logging.warning(f'[DebridRepair] Ghost cleanup failed (continuing): {_ge}')
+            from usenet.debrid_repair_engine import run_repair
+            summary = run_repair(triggered_by='manual', version_override=version_override)
+            _debrid_repair_progress['status'] = 'done'
+            _debrid_repair_progress['summary'] = summary
+        except Exception as e:
+            logging.error(f'[DebridRepair] run_repair thread error: {e}', exc_info=True)
+            _debrid_repair_progress['status'] = 'error'
+            _debrid_repair_progress['error'] = str(e)
+
+    _debrid_repair_thread = threading.Thread(target=_run, daemon=True, name='debrid-repair')
+    _debrid_repair_thread.start()
+    return jsonify(success=True, message='Debrid repair started')
+
+
+@debrid_manager_bp.route('/api/debrid/repair/progress')
+def debrid_repair_progress():
+    """Poll debrid repair run progress."""
+    global _debrid_repair_thread, _debrid_repair_progress
+    is_running = bool(_debrid_repair_thread and _debrid_repair_thread.is_alive())
+    return jsonify(
+        success=True,
+        is_running=is_running,
+        **_debrid_repair_progress,
+    )
+
+
+@debrid_manager_bp.route('/api/debrid/repair/clear_bad_flags', methods=['POST'])
+def debrid_clear_bad_flags():
+    """Clear Bad=true flag on all cli_mount torrent entries by calling the sync endpoint.
+    This recovers entries that cli_mount marked as bad after failed repair attempts."""
+    try:
+        from usenet.debrid_repair_engine import _dcy_cfg, _dcy_headers
+        from routes.api_tracker import api
+        import urllib.parse
+
+        url, _ = _dcy_cfg()
+        if not url:
+            return jsonify(success=False, error='cli_mount not configured')
+
+        # Get all torrent entries from cli_mount
+        r = api.get(f'{url}/api/repair/health', headers=_dcy_headers(), timeout=60)
+        if r.status_code != 200:
+            return jsonify(success=False, error=f'Health API returned {r.status_code}')
+
+        data = r.json()
+        entries = data if isinstance(data, list) else data.get('entries', [])
+        torrent_entries = [e for e in entries if (e.get('protocol') or '').lower() == 'torrent']
+
+        cleared = 0
+        errors = 0
+        for entry in torrent_entries:
+            broken_files = entry.get('broken_files') or []
+            info_hash = (entry.get('info_hash') or entry.get('hash') or
+                        (broken_files[0].get('info_hash') if broken_files else '') or '')
+            if not info_hash:
+                continue
+            try:
+                sr = api.post(f'{url}/api/torrents/{info_hash}/sync',
+                              headers=_dcy_headers(), timeout=15)
+                if sr.status_code == 200:
+                    cleared += 1
+                else:
+                    errors += 1
+            except Exception:
+                errors += 1
+
+        msg = f'Cleared Bad flag on {cleared} entries ({errors} errors)'
+        logging.info(f'[DebridRepair] {msg}')
+        return jsonify(success=True, message=msg, cleared=cleared, errors=errors)
+    except Exception as e:
+        logging.error(f'[DebridRepair] clear_bad_flags error: {e}', exc_info=True)
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/debrid/repair/delete_ghost_entries', methods=['POST'])
+def debrid_delete_ghost_entries():
+    """Delete all ghost entries from cli_mount's repair health records."""
+    try:
+        from usenet.debrid_repair_engine import delete_ghost_health_records
+        result = delete_ghost_health_records()
+        msg = f'Deleted {result["deleted"]} ghost health records ({result["skipped"]} real entries skipped, {result["errors"]} errors)'
+        return jsonify(success=True, message=msg, **result)
+    except Exception as e:
+        logging.error(f'[DebridRepair] delete_ghost_entries error: {e}', exc_info=True)
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/debrid/repair/delete_ghost_single', methods=['POST'])
+def debrid_delete_ghost_single():
+    """Delete a single ghost health record by entry name."""
+    try:
+        import urllib.parse as _up
+        from usenet.debrid_repair_engine import _dcy_cfg, _dcy_headers
+        from routes.api_tracker import api
+        body = request.get_json(silent=True) or {}
+        entry_name = (body.get('entry_name') or '').strip()
+        if not entry_name:
+            return jsonify(success=False, error='entry_name required'), 400
+        url, _ = _dcy_cfg()
+        if not url:
+            return jsonify(success=False, error='cli_mount not configured')
+        encoded = _up.quote(entry_name, safe='')
+        r = api.delete(f'{url}/api/repair/health/{encoded}', headers=_dcy_headers(), timeout=15)
+        if r.status_code == 200:
+            logging.info(f'[DebridRepair] Deleted ghost health record: {entry_name!r}')
+            return jsonify(success=True)
+        return jsonify(success=False, error=f'cli_mount returned HTTP {r.status_code}')
+    except Exception as e:
+        logging.error(f'[DebridRepair] delete_ghost_single error: {e}', exc_info=True)
+        return jsonify(success=False, error=str(e))
+
+
+@debrid_manager_bp.route('/api/debrid/repair/delete_all_broken', methods=['POST'])
+def debrid_delete_all_broken():
+    """Delete all broken torrent entries from cli_mount, Plex, and reset CLI DB items to Wanted."""
+    try:
+        from usenet.debrid_repair_engine import delete_all_broken
+        result = delete_all_broken()
+        msg = (f'Deleted {result["deleted_climount"]} from cli_mount, '
+               f'{result["deleted_plex"]} from Plex, '
+               f'{result["reset_db"]} items reset to Wanted.')
+        logging.info(f'[DebridRepair] {msg}')
+        return jsonify(success=True, message=msg, **result)
+    except Exception as e:
+        logging.error(f'[DebridRepair] delete_all_broken error: {e}', exc_info=True)
         return jsonify(success=False, error=str(e))

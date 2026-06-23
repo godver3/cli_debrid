@@ -1990,9 +1990,9 @@ def update_settings():
                     reset_provider()
                     logging.info("Debrid provider reset complete")
 
-                    from usenet.decypharr_client import reset_decypharr_client
-                    reset_decypharr_client()
-                    logging.info("Decypharr client reset complete")
+                    from usenet.climount_client import reset_climount_client
+                    reset_climount_client()
+                    logging.info("cli_mount client reset complete")
 
                     from queues.queue_manager import QueueManager
                     QueueManager().reinitialize()
@@ -3991,7 +3991,7 @@ def regenerate_collection_poster_previews():
 @settings_bp.route('/api/create_virtual_folder', methods=['POST'])
 @admin_required
 def create_virtual_folder():
-    """Create Decypharr virtual folder(s) from tags in config.json."""
+    """Create cli_mount virtual folder(s) from tags in config.json."""
     try:
         import json as _json
         import os as _os
@@ -4006,15 +4006,15 @@ def create_virtual_folder():
         if not tags:
             return jsonify({'success': False, 'error': 'At least one tag required'}), 400
 
-        # Get Decypharr data_path
+        # Get cli_mount data_path
         config = load_config()
         data_path = (config.get('Usenet Provider', {}).get('data_path') or '').strip()
         if not data_path:
-            return jsonify({'success': False, 'error': 'Decypharr data path not configured in Usenet Provider settings'}), 400
+            return jsonify({'success': False, 'error': 'cli_mount data path not configured in Usenet Provider settings'}), 400
 
         dc_config_path = _os.path.join(data_path, 'config.json')
         if not _os.path.exists(dc_config_path):
-            return jsonify({'success': False, 'error': f'Decypharr config.json not found at {dc_config_path}'}), 400
+            return jsonify({'success': False, 'error': f'cli_mount config.json not found at {dc_config_path}'}), 400
 
         with open(dc_config_path, 'r') as f:
             dc_config = _json.load(f)

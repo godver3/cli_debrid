@@ -2014,7 +2014,7 @@ body[data-theme="tangerine"] .bta-status-unknown { background: rgba(255,152,0,0.
 /* Empty row */
 body[data-theme="tangerine"] .bta-empty-row td { padding: 24px 14px; color: #444; font-size: 12px; text-align: center; font-style: italic; }
 
-/* Decypharr URL input */
+/* cli_mount URL input */
 body[data-theme="tangerine"] .dm-input-url {
     background: rgba(0, 0, 0, 0.35);
     border: 1px solid rgba(255, 255, 255, 0.12);

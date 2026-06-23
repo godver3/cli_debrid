@@ -972,7 +972,7 @@ class UpgradingQueue:
 
                 # If the current item was collected via NZB, clear filled_by_torrent_id
                 # before passing to AddingQueue. Otherwise the health check loop in
-                # adding_queue sees the old nzb:<job_id>, finds it complete in Decypharr,
+                # adding_queue sees the old nzb:<job_id>, finds it complete in cli_mount,
                 # and moves straight to Checking without ever submitting the new NZB.
                 _original_torrent_id = str(item.get('filled_by_torrent_id') or '')
                 if _original_torrent_id.startswith('nzb:'):
@@ -1021,7 +1021,7 @@ class UpgradingQueue:
 
                 # Success conditions:
                 #   Debrid: state moves to 'Checking' (torrent added to debrid service)
-                #   NZB:    state stays 'Adding' while Decypharr polls, but filled_by_torrent_id
+                #   NZB:    state stays 'Adding' while cli_mount polls, but filled_by_torrent_id
                 #           changed to a new 'nzb:<job_id>' confirming the job was submitted
                 _upgrade_succeeded = (
                     current_state_after_add == 'Checking' or
@@ -1177,6 +1177,28 @@ class UpgradingQueue:
                                 logging.info(f"[{item_identifier}] Removed failed hub magnet — item will fall back to normal scraping.")
                         except Exception:
                             pass
+
+                    # Clean up the newly submitted job before restoring state.
+                    # If a new NZB or debrid torrent was submitted during the failed upgrade
+                    # attempt, remove it so it doesn't linger in cli_mount/RD.
+                    if _nzb_submitted and _new_torrent_id.startswith('nzb:'):
+                        try:
+                            from usenet import get_usenet_client as _guc_fail
+                            _uc_fail = _guc_fail()
+                            if _uc_fail:
+                                _uc_fail.remove_nzb(_new_torrent_id[4:], entry_name=best_result.get('title', ''))
+                                logging.info(f"[{item_identifier}] Removed failed new NZB job {_new_torrent_id} from cli_mount")
+                        except Exception as _nzb_cleanup_err:
+                            logging.warning(f"[{item_identifier}] Could not clean up failed NZB job {_new_torrent_id}: {_nzb_cleanup_err}")
+                    elif current_state_after_add == 'Checking' and _new_torrent_id and not _new_torrent_id.startswith('nzb:'):
+                        try:
+                            from debrid import get_debrid_provider as _gdp_fail
+                            _dp_fail = _gdp_fail()
+                            if _dp_fail:
+                                _dp_fail.remove_torrent(_new_torrent_id, removal_reason='Upgrade failed — rolling back')
+                                logging.info(f"[{item_identifier}] Removed failed new debrid torrent {_new_torrent_id} from RD")
+                        except Exception as _dt_cleanup_err:
+                            logging.warning(f"[{item_identifier}] Could not clean up failed debrid torrent {_new_torrent_id}: {_dt_cleanup_err}")
 
                     # Restore complete previous state
                     if self.restore_item_state(item):

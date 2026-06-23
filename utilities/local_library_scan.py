@@ -806,7 +806,17 @@ def get_symlink_path(item: Dict[str, Any], original_file: str, skip_jikan_lookup
         else: # episode
             s_num_val = item.get('season_number')
             e_num_val = item.get('episode_number')
-            
+
+            # If DB has season=0/episode=0 (e.g. misnamed season pack grabbed as S01E01),
+            # try to recover the real S##E## from the actual filename.
+            if (not s_num_val or int(s_num_val) == 0) and (not e_num_val or int(e_num_val) == 0):
+                _orig = template_vars.get('original_filename', '')
+                _m = re.search(r'[Ss](\d{1,2})[Ee](\d{1,2})', _orig)
+                if _m:
+                    s_num_val = int(_m.group(1))
+                    e_num_val = int(_m.group(2))
+                    logging.debug(f'[SymlinkPath] Recovered S{s_num_val:02d}E{e_num_val:02d} from original_filename {_orig!r}')
+
             episode_vars = {
                 'season_number': int(s_num_val if s_num_val is not None else 0),
                 'episode_number': int(e_num_val if e_num_val is not None else 0),
@@ -1357,7 +1367,7 @@ def check_local_file_for_item(item: Dict[str, Any], is_webhook: bool = False, ex
 
                 if old_torrent_id:
                     if str(old_torrent_id).startswith('nzb:'):
-                        # NZB jobs are managed by Decypharr, not debrid — skip debrid removal
+                        # NZB jobs are managed by cli_mount, not debrid — skip debrid removal
                         logging.debug(f"[UPGRADE] Old torrent {old_torrent_id} is an NZB job — skipping debrid removal")
                         removal_successful = True
                     else:

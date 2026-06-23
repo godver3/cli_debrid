@@ -1,4 +1,4 @@
-"""Migrate downloads between usenet providers (Decypharr <-> NzbDAV) over HTTP.
+"""Migrate downloads between usenet providers (cli_mount <-> NzbDAV) over HTTP.
 
 Powers the "Migrate between usenet providers" tool in Debug -> Library. It moves
 the stored .nzb of each item from a source provider to a target provider, which
@@ -9,12 +9,12 @@ Why HTTP / a mounted path (not docker): cli-debrid runs in a container with no
 Docker socket, so it can't `docker cp` a provider's .nzb store. Instead:
   - NzbDAV source: list `mode=history` (each slot carries `nzb_blob_id`), fetch
     the .nzb via `GET /api/download-nzb?nzbBlobId=`.
-  - Decypharr source: Decypharr has no HTTP .nzb export, so read the .nzb files
-    straight from Decypharr's nzb store, which the user bind-mounts into
-    cli-debrid (same data_path bind used by the Decypharr DB tools).
-Submitting is always HTTP: NzbDAV `mode=addfile`, Decypharr `POST /api/add`.
+  - cli_mount source: cli_mount has no HTTP .nzb export, so read the .nzb files
+    straight from cli_mount's nzb store, which the user bind-mounts into
+    cli-debrid (same data_path bind used by the cli_mount DB tools).
+Submitting is always HTTP: NzbDAV `mode=addfile`, cli_mount `POST /api/add`.
 
-This is best-effort: Decypharr trims old .nzb files, so part of an old library
+This is best-effort: cli_mount trims old .nzb files, so part of an old library
 may not be transferable; and the target re-downloads from usenet (subject to
 your provider's retention/connection limits).
 """
@@ -46,8 +46,8 @@ def _norm(url):
 
 def list_source_items(direction, source_url='', source_token='', source_nzb_path='', limit=100000):
     """Returns (items, error). item = {name, category, ref}. ref is the
-    nzb_blob_id (nzbdav source) or the absolute .nzb path (decypharr source)."""
-    if direction == 'nzbdav_to_decypharr':
+    nzb_blob_id (nzbdav source) or the absolute .nzb path (climount source)."""
+    if direction == 'nzbdav_to_climount':
         url = _norm(source_url)
         if not url:
             return None, 'No NzbDAV source URL.'
@@ -69,12 +69,12 @@ def list_source_items(direction, source_url='', source_token='', source_nzb_path
                           'status': s.get('status') or ''})
         return items, None
 
-    if direction == 'decypharr_to_nzbdav':
+    if direction == 'climount_to_nzbdav':
         path = (source_nzb_path or '').strip()
         if not path:
-            return None, 'No Decypharr nzb-store path.'
+            return None, 'No cli_mount nzb-store path.'
         if not os.path.isdir(path):
-            return None, (f'Path not found in this container: {path}. Bind Decypharr\'s '
+            return None, (f'Path not found in this container: {path}. Bind cli_mount\'s '
                           f'appdata into cli-debrid and point this at its usenet/nzbs folder.')
         items = []
         try:
@@ -91,7 +91,7 @@ def list_source_items(direction, source_url='', source_token='', source_nzb_path
 # --- read one item's .nzb bytes ---------------------------------------------
 
 def _read_nzb(direction, item, source_url='', source_token=''):
-    if direction == 'nzbdav_to_decypharr':
+    if direction == 'nzbdav_to_climount':
         url = _norm(source_url)
         try:
             r = requests.get(f'{url}/api/download-nzb', params={'nzbBlobId': item['ref']}, timeout=30)
@@ -100,7 +100,7 @@ def _read_nzb(direction, item, source_url='', source_token=''):
             return None, f'download-nzb HTTP {r.status_code}'
         except RequestException as e:
             return None, str(e)
-    # decypharr source: read from mounted file
+    # climount source: read from mounted file
     try:
         with open(item['ref'], 'rb') as fh:
             return fh.read(), None
@@ -126,7 +126,7 @@ def _submit_nzbdav(url, token, name, category, nzb_bytes):
     return None, f'HTTP {r.status_code}: {r.text[:200]}'
 
 
-def _submit_decypharr(url, token, name, category, nzb_bytes):
+def _submit_climount(url, token, name, category, nzb_bytes):
     headers = {'Accept': 'application/json'}
     if token:
         headers['Authorization'] = f'Bearer {token}'
@@ -158,7 +158,7 @@ def _target_existing_names(target_kind, url, token):
                     n = s.get('name') or s.get('nzb_name')
                     if n:
                         names.add(n)
-        else:  # decypharr
+        else:  # climount
             r = requests.get(f'{_norm(url)}/api/browse/nzbs',
                              headers={'Authorization': f'Bearer {token}'} if token else {},
                              params={'limit': 100000}, timeout=20)
@@ -221,7 +221,7 @@ def _set(job_id, **kw):
 def _run_job(job_id, p):
     try:
         direction = p['direction']
-        target_kind = 'nzbdav' if direction == 'decypharr_to_nzbdav' else 'decypharr'
+        target_kind = 'nzbdav' if direction == 'climount_to_nzbdav' else 'climount'
         target_url, target_token = p.get('target_url', ''), p.get('target_token', '')
         target_cat = p.get('target_category', '')
         skip_existing = bool(p.get('skip_existing', True))
@@ -267,7 +267,7 @@ def _run_job(job_id, p):
             if target_kind == 'nzbdav':
                 jid, serr = _submit_nzbdav(target_url, target_token, name, cat, nzb)
             else:
-                jid, serr = _submit_decypharr(target_url, target_token, name, cat, nzb)
+                jid, serr = _submit_climount(target_url, target_token, name, cat, nzb)
 
             if jid:
                 _set(job_id, submitted=_jobs[job_id]['submitted'] + 1, done=i)

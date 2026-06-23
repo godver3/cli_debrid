@@ -919,9 +919,10 @@ def bulk_queue_action():
 
                     placeholders_select = ','.join('?' * len(batch)) # 'batch' here is the current chunk of item IDs
                     query_select = f"""
-                        SELECT id, state, location_on_disk, original_path_for_symlink, 
-                               filled_by_file, title, type, episode_title, version, original_scraped_torrent_title
-                        FROM media_items 
+                        SELECT id, state, location_on_disk, original_path_for_symlink,
+                               filled_by_file, title, type, episode_title, version, original_scraped_torrent_title,
+                               filled_by_torrent_id, filled_by_magnet
+                        FROM media_items
                         WHERE id IN ({placeholders_select})
                     """
                     cursor_rescape_batch.execute(query_select, batch)
@@ -970,12 +971,61 @@ def bulk_queue_action():
                             'current_original_scraped_title': item_db_data.get('original_scraped_torrent_title') # Store for rescrape_original_torrent_title
                         })
 
-                    except Exception as e_indiv_item_proc: 
+                    except Exception as e_indiv_item_proc:
                         error_count += 1
                         error_msg = f"Error during file/Plex processing for item {item_id} (for rescrape): {str(e_indiv_item_proc)}"
                         errors.append(error_msg)
                         logging.error(f"Rescrape: {error_msg}", exc_info=True)
-                
+
+                # --- Remove cli_mount entries for torrents/NZBs no longer needed ---
+                # Collect unique torrent_ids from items being rescrapped that are in active states
+                batch_id_set = set(int(x) for x in batch)
+                torrent_ids_to_check = {}  # torrent_id -> infohash (or '' for NZBs using torrent_id directly)
+                for item_db_data in items_in_batch_details_raw:
+                    if item_db_data.get('state') not in ('Collected', 'Upgrading', 'Checking'):
+                        continue
+                    tid = item_db_data.get('filled_by_torrent_id') or ''
+                    if not tid:
+                        continue
+                    if tid not in torrent_ids_to_check:
+                        magnet = item_db_data.get('filled_by_magnet') or ''
+                        import re as _re
+                        m = _re.search(r'urn:btih:([0-9a-fA-F]{40})', magnet, _re.IGNORECASE)
+                        torrent_ids_to_check[tid] = m.group(1).lower() if m else ''
+
+                if torrent_ids_to_check:
+                    try:
+                        from usenet.climount_client import get_climount_client as _get_dc
+                        _dc = _get_dc()
+                        if _dc and _dc.is_enabled():
+                            tid_placeholders = ','.join('?' * len(torrent_ids_to_check))
+                            # Items outside this batch that still actively use these torrent IDs
+                            survivors = cursor_rescape_batch.execute(
+                                f"""SELECT filled_by_torrent_id FROM media_items
+                                    WHERE filled_by_torrent_id IN ({tid_placeholders})
+                                    AND state IN ('Collected','Upgrading','Checking')
+                                    AND id NOT IN ({','.join('?' * len(batch_id_set))})""",
+                                list(torrent_ids_to_check.keys()) + list(batch_id_set)
+                            ).fetchall()
+                            still_used = {r[0] for r in survivors}
+                            for tid, infohash in torrent_ids_to_check.items():
+                                if tid in still_used:
+                                    logging.info(f"Rescrape: Skipping cli_mount removal for {tid!r} — still used by other items")
+                                    continue
+                                if tid.startswith('nzb:'):
+                                    nzb_hash = tid[4:]
+                                    if nzb_hash:
+                                        _dc.remove_nzb(nzb_hash)
+                                        logging.info(f"Rescrape: Removed NZB {nzb_hash!r} from cli_mount")
+                                elif infohash:
+                                    _dc.remove_nzb(infohash)
+                                    logging.info(f"Rescrape: Removed debrid torrent {infohash!r} (RD id={tid!r}) from cli_mount")
+                                else:
+                                    logging.warning(f"Rescrape: Cannot remove {tid!r} from cli_mount — no infohash in magnet link")
+                    except Exception as _cm_err:
+                        logging.warning(f"Rescrape: cli_mount removal failed: {_cm_err}")
+                # --- End cli_mount removal ---
+
                 if prepared_items_for_db_update: 
                     try:
                         item_ids_for_update_clause = [item['id'] for item in prepared_items_for_db_update]
@@ -1405,6 +1455,45 @@ def delete_item():
                         logging.error(f"Delete item: Error during immediate Plex removal for {item['title']} ({path_for_plex_api_call}): {str(e)}.")
                 else:
                     logging.warning(f"Delete item: No suitable path found for Plex removal for item {item_id} ({item['title']}) (Symlinked/Local mode). Skipping Plex removal.")
+
+        # --- cli_mount removal ---
+        # Remove the entry from cli_mount (and RD) if no other live items share the same torrent.
+        # Must happen BEFORE DB deletion so we can still check siblings.
+        _torrent_id = item.get('filled_by_torrent_id') or ''
+        _magnet = item.get('filled_by_magnet') or ''
+        if _torrent_id and item.get('state') in ('Collected', 'Upgrading', 'Checking'):
+            try:
+                import re as _re_dh
+                from database import get_db_connection as _gdb_del
+                _conn_del = _gdb_del()
+                try:
+                    _sibs = _conn_del.execute(
+                        "SELECT COUNT(*) FROM media_items "
+                        "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
+                        (_torrent_id, item_id)
+                    ).fetchone()[0]
+                finally:
+                    _conn_del.close()
+                if _sibs == 0:
+                    from usenet.climount_client import get_climount_client as _get_dc_del
+                    _dc_del = _get_dc_del()
+                    if _dc_del and _dc_del.is_enabled():
+                        if _torrent_id.startswith('nzb:'):
+                            _nzb_hash = _torrent_id[4:]
+                            if _nzb_hash:
+                                _dc_del.remove_nzb(_nzb_hash)
+                                logging.info(f"Delete item: Removed NZB {_nzb_hash!r} from cli_mount for item {item_id}")
+                        else:
+                            _m = _re_dh.search(r'urn:btih:([0-9a-fA-F]{40})', _magnet, _re_dh.IGNORECASE)
+                            _infohash = _m.group(1).lower() if _m else ''
+                            if _infohash:
+                                _dc_del.remove_nzb(_infohash)
+                                logging.info(f"Delete item: Removed debrid torrent {_infohash!r} from cli_mount for item {item_id}")
+                else:
+                    logging.info(f"Delete item: Skipping cli_mount removal for {_torrent_id!r} — {_sibs} sibling(s) still active")
+            except Exception as _cm_del_err:
+                logging.warning(f"Delete item: cli_mount removal failed for item {item_id}: {_cm_del_err}")
+        # --- End cli_mount removal ---
 
         # Handle database operation based on blacklist flag
         if blacklist:

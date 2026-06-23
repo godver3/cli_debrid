@@ -538,7 +538,7 @@ def prepare_manual_assignment():
 
     if is_nzb_url or is_nzb_file:
         from routes.scraper_routes import _add_nzb_to_usenet
-        from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
+        from usenet.climount_client import get_climount_client, reset_climount_client
         try:
             season_num = int(season) if season and season.lower() != 'null' else None
         except (ValueError, TypeError):
@@ -550,15 +550,15 @@ def prepare_manual_assignment():
 
         try:
             if is_nzb_file:
-                # Upload .nzb file content directly to Decypharr, then track in queue
-                reset_decypharr_client()
-                client = get_decypharr_client()
+                # Upload .nzb file content directly to cli_mount, then track in queue
+                reset_climount_client()
+                client = get_climount_client()
                 if not client.is_enabled():
-                    return jsonify({'success': False, 'error': 'Usenet provider (Decypharr) is not enabled'}), 503
+                    return jsonify({'success': False, 'error': 'Usenet provider (cli_mount) is not enabled'}), 503
                 nzb_content = torrent_file.read().decode('utf-8', errors='replace')
                 job_id = client.add_nzb_content(nzb_content=nzb_content, title=torrent_file.filename)
                 if not job_id:
-                    return jsonify({'success': False, 'error': 'Failed to submit NZB to Decypharr'}), 500
+                    return jsonify({'success': False, 'error': 'Failed to submit NZB to cli_mount'}), 500
                 # Track in queue directly — NZB already submitted, skip re-submission
                 from database.database_writing import add_media_item
                 from database.database_reading import get_media_item_by_id
@@ -599,7 +599,7 @@ def prepare_manual_assignment():
                     logging.info(f'[NZB] Item {item_id} placed in Adding queue for health check (checking_id={checking_id})')
                 _nzb_redirect = f'/library/show/{tmdb_id}' if tmdb_id else '/library'
                 return jsonify({'success': True, 'message': f'NZB file submitted to {_usenet_pname()} (job: {job_id}). Tracking through queue.',
-                                'job_id': job_id, 'provider': 'Decypharr', 'redirect_url': _nzb_redirect})
+                                'job_id': job_id, 'provider': 'cli_mount', 'redirect_url': _nzb_redirect})
             else:
                 # NZB URL — use full _add_nzb_to_usenet flow then add redirect_url
                 _nzb_resp = _add_nzb_to_usenet(

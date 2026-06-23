@@ -213,7 +213,7 @@ def upload_subtitle_to_plex(rating_key, content, lang_code, fmt='srt'):
     Used when the media lives on a read-only mount (Plex mode over a debrid/
     usenet rclone/WebDAV mount), where a sidecar .srt cannot be written. This is
     storage-agnostic — keyed on the Plex ratingKey — so it works identically for
-    zurg, nzbdav, decypharr and any future backend. Returns True on success.
+    zurg, nzbdav, climount and any future backend. Returns True on success.
     """
     import requests as _rq
     from utilities.settings import get_setting
@@ -436,7 +436,7 @@ def download_subtitles_for_video(video_path, rating_key=None, name_hint=None):
             #       → write a sidecar .srt next to the file (media-server-neutral).
             #   - media dir NOT writable (read-only debrid/usenet mount in Plex mode)
             #       → upload to Plex via API keyed on rating_key (storage-agnostic;
-            #         works the same for zurg/nzbdav/decypharr/future backends).
+            #         works the same for zurg/nzbdav/climount/future backends).
             can_write_sidecar = os.access(str(symlink_dir), os.W_OK)
             use_plex_upload = (not can_write_sidecar) and bool(rating_key)
             saved = 0
@@ -459,10 +459,10 @@ def download_subtitles_for_video(video_path, rating_key=None, name_hint=None):
                     except Exception as e:
                         logging.error(f"Failed to save subtitle {symlink_srt}: {e}")
                 else:
-                    # Fallback: Decypharr sidecar injection
+                    # Fallback: cli_mount sidecar injection
                     try:
-                        from usenet.decypharr_client import get_decypharr_client
-                        # Decypharr's inject API uses the job UUID (info_hash) as the folder
+                        from usenet.climount_client import get_climount_client
+                        # cli_mount's inject API uses the job UUID (info_hash) as the folder
                         # identifier, not the human-readable folder title. Look it up from
                         # the DB via filled_by_file or location_on_disk matching.
                         torrent_name = symlink_dir.name  # fallback
@@ -485,16 +485,16 @@ def download_subtitles_for_video(video_path, rating_key=None, name_hint=None):
                         except Exception as _dbl:
                             logging.debug(f"[subs] Could not resolve job UUID from DB: {_dbl}")
                         srt_filename = f"{base_name}.{lang}.srt"
-                        client = get_decypharr_client()
+                        client = get_climount_client()
                         if client.inject_sidecar_file(torrent_name, srt_filename, content):
-                            logging.info(f"[subs] Injected sidecar subtitle via Decypharr: {torrent_name}/{srt_filename}")
+                            logging.info(f"[subs] Injected sidecar subtitle via cli_mount: {torrent_name}/{srt_filename}")
                             saved += 1
                         else:
-                            logging.warning(f"[subs] {base_name}: Decypharr sidecar injection failed for {lang}")
+                            logging.warning(f"[subs] {base_name}: cli_mount sidecar injection failed for {lang}")
                     except Exception as _dce:
-                        logging.warning(f"[subs] {base_name}: media dir not writable, no Plex ratingKey, Decypharr injection failed: {_dce}")
+                        logging.warning(f"[subs] {base_name}: media dir not writable, no Plex ratingKey, cli_mount injection failed: {_dce}")
             logging.info(f"💾 Saved/uploaded {saved}/{len(subtitles[video])} subtitle(s) for {base_name} "
-                         f"({'Plex API' if use_plex_upload else 'sidecar' if can_write_sidecar else 'Decypharr sidecar'})")
+                         f"({'Plex API' if use_plex_upload else 'sidecar' if can_write_sidecar else 'cli_mount sidecar'})")
             return saved > 0
         else:
             logging.warning("❌ No subtitles found")
