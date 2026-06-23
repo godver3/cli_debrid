@@ -665,7 +665,7 @@ class ScrapingQueue:
                                 else:
                                     # Partial batch or individual mode — scrape each episode in the
                                     # batch right now so they all move to Adding in one tick.
-                                    # Each gets its own Decypharr job and independent health check.
+                                    # Each gets its own cli_mount job and independent health check.
                                     _batch_submitted = 0
                                     _batch_ids_to_remove = set()
                                     # Process all siblings except current item (it falls through to normal scrape below)

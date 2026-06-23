@@ -15,10 +15,10 @@ Files appear on the WebDAV mount under two roots:
   /completed-symlinks/<cat>/<nzbname>/         : symlinks to .ids/{uuid} per file
 The `storage` field in history points to the completed-symlinks root.
 
-Designed to match the DecypharrClient class interface so cli-debrid can route
+Designed to match the CliMountClient class interface so cli-debrid can route
 either provider transparently via the factory in usenet/__init__.py.
 
-LIMITATIONS vs decypharr:
+LIMITATIONS vs climount:
   * NzbDAV has no user-triggered health-check API — health checks run internally
     via HealthCheckService. trigger_health_check() / poll_health_result() return
     no-op success so callers don't break, but cannot drive on-demand repair.
@@ -45,7 +45,7 @@ _VIDEO_EXTS = {'.mkv', '.mp4', '.avi', '.mov', '.wmv', '.m4v', '.ts'}
 
 # ── Category taxonomy (single source of truth) ─────────────────────────────
 #
-# nzbdav (unlike Decypharr) does NO post-categorisation: whatever SAB category a
+# nzbdav (unlike cli_mount) does NO post-categorisation: whatever SAB category a
 # job is submitted under becomes the folder, verbatim. If cli-debrid submits a
 # category that the instance hasn't created (and that no Plex section maps), the
 # item is invisible to Plex and loops in "Wanted". So the set of categories the
@@ -183,7 +183,7 @@ def _detect_category_from_title(title: str, is_anime: bool = False, media_type: 
     """
     # Tag-based routing: if tags are set and tags_exclusive is True,
     # use the first tag as the category (lowercased, spaces→underscores).
-    # If tags_exclusive is False, tags are embedded in the title only (Decypharr behavior)
+    # If tags_exclusive is False, tags are embedded in the title only (cli_mount behavior)
     # and resolution detection runs normally.
     if tags and tags_exclusive:
         first_tag = str(tags).split(',')[0].strip().lower().replace(' ', '_')
@@ -232,7 +232,7 @@ def _detect_category_from_title(title: str, is_anime: bool = False, media_type: 
 class NzbdavClient:
     """Submits NZBs to nzbdav and polls for completion.
 
-    Mirrors the DecypharrClient interface 1:1 so cli-debrid call sites are
+    Mirrors the CliMountClient interface 1:1 so cli-debrid call sites are
     drop-in compatible. Differences in behaviour are documented per method.
     """
 
@@ -268,7 +268,7 @@ class NzbdavClient:
         if not self.mount_path:
             self.mount_path = '/mnt/remote/nzbdav'
         # Flag set by add_nzb_content when nzbdav reports ARTICLE_NOT_FOUND-style
-        # errors (matches DecypharrClient.last_missing_segments contract).
+        # errors (matches CliMountClient.last_missing_segments contract).
         self.last_missing_segments = False
 
     # -- internal helpers ---------------------------------------------------
@@ -352,7 +352,7 @@ class NzbdavClient:
                         tags=None, tags_exclusive: bool = False) -> Optional[str]:
         """Submit NZB content directly as a file upload.
 
-        Matches DecypharrClient.add_nzb_content signature & return contract.
+        Matches CliMountClient.add_nzb_content signature & return contract.
         Returns the nzo_id string on success, None on failure.
         """
         self.last_missing_segments = False
@@ -397,7 +397,7 @@ class NzbdavClient:
 
         Falls back to pre-fetch + add_nzb_content if the server-side fetch fails
         (e.g. if the indexer blocks nzbdav's User-Agent).
-        Matches DecypharrClient.add_nzb signature & return contract.
+        Matches CliMountClient.add_nzb signature & return contract.
         """
         self.last_missing_segments = False
         if not self.is_enabled():
@@ -594,7 +594,7 @@ class NzbdavClient:
     def get_nzb_file_info(self, job_name: str, season: int = None, episode: int = None) -> Optional[Tuple[str, str]]:
         """Find folder + best-matching video for a completed job.
 
-        Identical signature & return contract to DecypharrClient.
+        Identical signature & return contract to CliMountClient.
         """
         def _norm(s):
             return re.sub(r'[^a-z0-9]', '', s.lower())
@@ -779,7 +779,7 @@ class NzbdavClient:
           1. Check mode=queue — if found, returns state=downloading/queued
           2. If not in queue, check mode=history — if found, completed
           3. Otherwise unknown (likely deleted/expired)
-        Returns dict matching DecypharrClient.get_job_status shape.
+        Returns dict matching CliMountClient.get_job_status shape.
         """
         try:
             # Queue first

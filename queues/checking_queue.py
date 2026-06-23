@@ -204,7 +204,7 @@ class CheckingQueue:
 
         # NZB jobs — add NZB URL to not-wanted then move items back to Wanted
         if str(torrent_id).startswith('nzb:'):
-            logging.info(f"[NZB] Decypharr job {torrent_id} failed/missing. Adding to not-wanted and moving {len(items)} item(s) back to Wanted.")
+            logging.info(f"[NZB] cli_mount job {torrent_id} failed/missing. Adding to not-wanted and moving {len(items)} item(s) back to Wanted.")
             from queues.queue_manager import QueueManager
             from database.database_writing import update_media_item_state
             from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nzb_guid
@@ -342,7 +342,7 @@ class CheckingQueue:
 
     def _resolve_nzb_file_info(self, torrent_id: str, items: list) -> None:
         """
-        When an NZB download completes, query Decypharr to find the actual folder and
+        When an NZB download completes, query cli_mount to find the actual folder and
         video filename, then update all items with the correct filled_by_file,
         filled_by_title, debrid_folder_name, and original_scraped_torrent_title
         so that symlink creation and Plex file checks work identically to debrid adds.
@@ -391,7 +391,7 @@ class CheckingQueue:
                 # Aggregate pack — get all files and match each item to its episode file
                 result = client.get_nzb_folder_all_files(job_name)
                 if not result:
-                    logging.warning(f'[NZB] Could not find Decypharr folder for pack {job_name!r}')
+                    logging.warning(f'[NZB] Could not find cli_mount folder for pack {job_name!r}')
                     return
                 folder_name, video_files = result
                 if not video_files:
@@ -440,28 +440,39 @@ class CheckingQueue:
                     if not matched_file:
                         matched_file = folder_name
 
-                    update_media_item(item['id'], **{
+                    update_fields = {
                         'filled_by_file': matched_file,
                         'filled_by_title': folder_name,
                         'debrid_folder_name': folder_name,
                         'location_basename': folder_name,
                         'original_scraped_torrent_title': orig_scraped,
                         'real_debrid_original_title': orig_scraped,
-                    })
+                    }
+                    # If DB has season=0/episode=0 (misnamed pack), recover from actual filename
+                    if (not season or int(season) == 0) and (not ep or int(ep) == 0):
+                        _m = _re_ep.search(r'[Ss](\d{1,2})[Ee](\d{1,2})', matched_file)
+                        if _m:
+                            update_fields['season_number'] = int(_m.group(1))
+                            update_fields['episode_number'] = int(_m.group(2))
+                            item['season_number'] = update_fields['season_number']
+                            item['episode_number'] = update_fields['episode_number']
+                            logging.info(f'[NZB] Recovered S{update_fields["season_number"]:02d}E{update_fields["episode_number"]:02d} from filename {matched_file!r} for item {item["id"]}')
+
+                    update_media_item(item['id'], **update_fields)
                     item['filled_by_file'] = matched_file
                     item['filled_by_title'] = folder_name
                     item['debrid_folder_name'] = folder_name
                     item['location_basename'] = folder_name
                     item['original_scraped_torrent_title'] = orig_scraped
                     item['real_debrid_original_title'] = orig_scraped
-                    logging.info(f'[NZB] Pack item {item["id"]} S{season:02d}E{ep:02d} → {matched_file!r}')
+                    logging.info(f'[NZB] Pack item {item["id"]} S{(item.get("season_number") or 0):02d}E{(item.get("episode_number") or 0):02d} → {matched_file!r}')
             else:
                 # Single NZB — pass season/episode for accurate file matching
                 _ep_season = sample_item.get('season_number')
                 _ep_episode = sample_item.get('episode_number')
                 result = client.get_nzb_file_info(job_name, season=_ep_season, episode=_ep_episode)
                 if not result:
-                    logging.warning(f'[NZB] Could not find Decypharr folder for job {job_name!r}')
+                    logging.warning(f'[NZB] Could not find cli_mount folder for job {job_name!r}')
                     return
                 folder_name, video_file = result
                 if not video_file:
@@ -471,14 +482,28 @@ class CheckingQueue:
 
                 for item in items:
                     orig_scraped = item.get('original_scraped_torrent_title') or job_name
-                    update_media_item(item['id'], **{
+                    update_fields = {
                         'filled_by_file': video_file,
                         'filled_by_title': folder_name,
                         'debrid_folder_name': folder_name,
                         'location_basename': folder_name,
                         'original_scraped_torrent_title': orig_scraped,
                         'real_debrid_original_title': orig_scraped,
-                    })
+                    }
+                    # If DB has season=0/episode=0 (misnamed pack), recover from actual filename
+                    _s = item.get('season_number')
+                    _e = item.get('episode_number')
+                    if (not _s or int(_s) == 0) and (not _e or int(_e) == 0):
+                        import re as _re_single
+                        _m = _re_single.search(r'[Ss](\d{1,2})[Ee](\d{1,2})', video_file)
+                        if _m:
+                            update_fields['season_number'] = int(_m.group(1))
+                            update_fields['episode_number'] = int(_m.group(2))
+                            item['season_number'] = update_fields['season_number']
+                            item['episode_number'] = update_fields['episode_number']
+                            logging.info(f'[NZB] Recovered S{update_fields["season_number"]:02d}E{update_fields["episode_number"]:02d} from filename {video_file!r} for item {item["id"]}')
+
+                    update_media_item(item['id'], **update_fields)
                     item['filled_by_file'] = video_file
                     item['filled_by_title'] = folder_name
                     item['debrid_folder_name'] = folder_name
@@ -501,36 +526,36 @@ class CheckingQueue:
         try:
             status = client.get_job_status(job_id)
             if not status:
-                # Job not found in Decypharr — track consecutive misses
+                # Job not found in cli_mount — track consecutive misses
                 # After 3 consecutive misses declare it missing so handle_missing_torrent fires
                 _count = self._nzb_missing_counts.get(torrent_id, 0) + 1
                 if _count >= 3:
-                    logging.warning(f'[NZB] Job {job_id} not found in Decypharr after {_count} checks — declaring missing')
+                    logging.warning(f'[NZB] Job {job_id} not found in cli_mount after {_count} checks — declaring missing')
                     self._nzb_missing_counts.pop(torrent_id, None)
                     return PROGRESS_RESULT_MISSING
                 self._nzb_missing_counts[torrent_id] = _count
-                logging.debug(f'[NZB] Job {job_id} not found in Decypharr (miss {_count}/3)')
+                logging.debug(f'[NZB] Job {job_id} not found in cli_mount (miss {_count}/3)')
                 return None
             # Job found — clear any miss counter
             self._nzb_missing_counts.pop(torrent_id, None)
             raw = status.get('raw', {})
             state = str(raw.get('state', status.get('state', 'unknown'))).lower()
             inner_status = str(raw.get('status', '')).lower()
-            # Decypharr progress is 0.0–1.0
+            # cli_mount progress is 0.0–1.0
             raw_progress = raw.get('progress', status.get('progress', 0))
             progress_pct = int(float(raw_progress) * 100)
             is_complete = raw.get('is_complete', False)
 
             # Fully complete: is_complete=True OR state is pausedUP/completed with status=downloaded
             if is_complete or inner_status == 'downloaded' and state in ('pausedup', 'completed', 'seeding'):
-                logging.info(f"[NZB] Decypharr job {job_id} complete (state={state} is_complete={is_complete})")
+                logging.info(f"[NZB] cli_mount job {job_id} complete (state={state} is_complete={is_complete})")
                 return 100
             # Downloaded segments, still assembling — treat as 99% so we keep polling
             if inner_status == 'downloaded' and progress_pct >= 100:
                 return 99
             # Failed
             if state in ('error', 'failed', 'bad') or raw.get('bad'):
-                logging.warning(f"[NZB] Decypharr job {job_id} failed (state={state})")
+                logging.warning(f"[NZB] cli_mount job {job_id} failed (state={state})")
                 return PROGRESS_RESULT_MISSING
             # Not found in queue — may have completed and been cleaned up
             if status.get('state') == 'completed':
@@ -540,7 +565,7 @@ class CheckingQueue:
                 return max(1, min(99, progress_pct))
             return None  # queued/unknown — retry later
         except Exception as e:
-            logging.error(f"[NZB] Error polling Decypharr for job {job_id}: {e}")
+            logging.error(f"[NZB] Error polling cli_mount for job {job_id}: {e}")
             return None
 
     def get_torrent_progress(self, torrent_id: str) -> Union[int, str, None]:
@@ -552,7 +577,7 @@ class CheckingQueue:
             - None: If there's a temporary issue (e.g., rate limit, other recoverable error),
                     or if progress cannot be determined for other reasons that warrant a retry.
         """
-        # Route NZB jobs to Decypharr instead of debrid provider
+        # Route NZB jobs to cli_mount instead of debrid provider
         if str(torrent_id).startswith('nzb:'):
             return self._get_nzb_progress(torrent_id)
 
@@ -1069,10 +1094,10 @@ class CheckingQueue:
                 logging.debug(f"Torrent {torrent_id} - Current progress: {current_progress}%, Last progress: {last_progress}%, Time since last check: {current_time - last_check}s")
                 
                 if int(current_progress) == 100:
-                    # --- NZB: resolve actual folder/file names from Decypharr before symlink/Plex checks ---
+                    # --- NZB: resolve actual folder/file names from cli_mount before symlink/Plex checks ---
                     if str(torrent_id).startswith('nzb:'):
                         # Guard: if no filled_by_file on any item in this group, we have nothing
-                        # to look up in Decypharr — add to not-wanted and send back to Wanted.
+                        # to look up in cli_mount — add to not-wanted and send back to Wanted.
                         _any_file = any(i.get('filled_by_file') for i in current_items_for_torrent)
                         if not _any_file:
                             logging.warning(f'[NZB] {torrent_id} has no filled_by_file on any item — adding to not-wanted and moving group back to Wanted')
@@ -1105,7 +1130,7 @@ class CheckingQueue:
                                 self.progress_checks[torrent_id] = {'last_check': current_time, 'last_progress': 100, 'nzb_resolve_failures': 0}
                             self.progress_checks[torrent_id]['nzb_resolve_failures'] = self.progress_checks[torrent_id].get('nzb_resolve_failures', 0) + 1
                             failures = self.progress_checks[torrent_id]['nzb_resolve_failures']
-                            logging.warning(f'[NZB] {torrent_id} resolve failure #{failures} — folder not found in Decypharr')
+                            logging.warning(f'[NZB] {torrent_id} resolve failure #{failures} — folder not found in cli_mount')
                             if failures >= 5:
                                 logging.warning(f'[NZB] {torrent_id} failed to resolve after {failures} attempts — adding to not-wanted and moving back to Wanted')
                                 self.progress_checks[torrent_id]['nzb_resolve_failures'] = 0
@@ -1128,7 +1153,50 @@ class CheckingQueue:
                                             queue_manager.move_to_wanted(item_to_move, 'Checking')
                                 continue
                         elif _fbf:
-                            # Resolve succeeded — trigger targeted Plex scan once per item, async
+                            # Resolve succeeded — register cli_debrid IDs with cli_mount now
+                            # that all episodes have their filenames. Covers ALL modes.
+                            try:
+                                import re as _re_ih2
+                                _cli_ids2 = {}
+                                # Query ALL siblings by torrent_id across all states
+                                # (Checking, Collected, Upgrading) — season pack episodes
+                                # move to Collected one-by-one, so current_items_for_torrent
+                                # only has the episode currently in Checking.
+                                try:
+                                    from database import get_all_media_items as _gami2
+                                    _all_sibs2 = [
+                                        dict(i) for i in _gami2()
+                                        if i.get('filled_by_torrent_id') == torrent_id
+                                        and i.get('filled_by_file')
+                                    ]
+                                except Exception:
+                                    _all_sibs2 = current_items_for_torrent
+                                for _item2 in _all_sibs2:
+                                    _fbf2 = (_item2.get('filled_by_file') or '').strip()
+                                    _iid2 = _item2.get('id')
+                                    if _fbf2 and _iid2:
+                                        _cli_ids2[_fbf2] = _iid2
+                                if _cli_ids2:
+                                    _tid2 = str(torrent_id)
+                                    _ih2 = _tid2[4:] if _tid2.startswith('nzb:') else ''
+                                    if not _ih2:
+                                        _mag2 = current_items_for_torrent[0].get('filled_by_magnet') or ''
+                                        _m2 = _re_ih2.search(r'urn:btih:([0-9a-fA-F]{40})', _mag2, _re_ih2.IGNORECASE)
+                                        if _m2:
+                                            _ih2 = _m2.group(1).lower()
+                                    if _ih2:
+                                        try:
+                                            from usenet.climount_client import get_climount_client as _get_dc2
+                                            _dc2 = _get_dc2()
+                                            if _dc2 and _dc2.is_enabled():
+                                                _dc2.register_cli_ids(_ih2, _cli_ids2)
+                                                logging.info(f'[CheckingQueue] Registered {len(_cli_ids2)} cli_debrid IDs for {_ih2}')
+                                        except Exception as _r2:
+                                            logging.debug(f'[CheckingQueue] cli_ids registration error: {_r2}')
+                            except Exception as _r2e:
+                                logging.debug(f'[CheckingQueue] cli_ids build error: {_r2e}')
+
+                            # Trigger targeted Plex scan once per item, async
                             if torrent_id not in self._nzb_plex_scan_triggered:
                                 self._nzb_plex_scan_triggered.add(torrent_id)
                                 _scan_mount = get_setting('Plex', 'mounted_file_location', '').rstrip('') or get_setting('Usenet Provider', 'mounted_file_location', '').rstrip('/')
@@ -1244,6 +1312,47 @@ class CheckingQueue:
 
                         if items_to_scan:
                             logging.info("Full library scan disabled for now")
+
+                        # Register cli_debrid IDs with cli_mount — one call per torrent group
+                        # Maps each episode filename to its media_items.id for direct sync lookups
+                        try:
+                            import re as _re_ih
+                            _cli_ids = {}
+                            # Include all siblings across all states (Checking+Collected+Upgrading)
+                            # since season pack episodes move to Collected one-by-one.
+                            _sample = current_items_for_torrent[0] if current_items_for_torrent else {}
+                            _tid_all = str(_sample.get('filled_by_torrent_id') or '')
+                            try:
+                                from database import get_all_media_items as _gami
+                                _all_sibs = [
+                                    dict(i) for i in _gami()
+                                    if i.get('filled_by_torrent_id') == _tid_all
+                                    and i.get('filled_by_file')
+                                ] if _tid_all else current_items_for_torrent
+                            except Exception:
+                                _all_sibs = current_items_for_torrent
+                            for _item in _all_sibs:
+                                _fbf = (_item.get('filled_by_file') or '').strip()
+                                _iid = _item.get('id')
+                                if _fbf and _iid:
+                                    _cli_ids[_fbf] = _iid
+                            if _cli_ids:
+                                _tid = str(_sample.get('filled_by_torrent_id') or '')
+                                _infohash = ''
+                                if _tid.startswith('nzb:'):
+                                    _infohash = _tid[4:]
+                                else:
+                                    _mag = _sample.get('filled_by_magnet') or ''
+                                    _m = _re_ih.search(r'urn:btih:([0-9a-fA-F]{40})', _mag, _re_ih.IGNORECASE)
+                                    if _m:
+                                        _infohash = _m.group(1).lower()
+                                if _infohash:
+                                    from usenet.climount_client import get_climount_client as _get_dc
+                                    _dc = _get_dc()
+                                    if _dc and _dc.is_enabled():
+                                        _dc.register_cli_ids(_infohash, _cli_ids)
+                        except Exception as _cli_reg_err:
+                            logging.debug(f'[CheckingQueue] cli_ids registration error: {_cli_reg_err}')
                     # --- End of restored Symlinked/Local processing logic ---
 
                     oldest_item_time = min((self.checking_queue_times.get(item['id'], current_time) for item in current_items_for_torrent), default=current_time)

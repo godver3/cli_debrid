@@ -157,25 +157,34 @@ def is_in_backoff(broken_nzb_id: str) -> bool:
         return False
 
 
-def get_repair_activity(limit: int = 100, offset: int = 0, outcome: str = None):
+def get_repair_activity(limit: int = 100, offset: int = 0, outcome: str = None, source: str = None):
+    """
+    Get repair activity log entries.
+    source='usenet'  → only NZB entries (broken_nzb_id NOT LIKE 'debrid:%')
+    source='debrid'  → only debrid entries (broken_nzb_id LIKE 'debrid:%')
+    source=None      → all entries
+    """
     conn = get_db_connection()
     try:
+        # Build WHERE clause
+        conditions = []
+        params = []
         if outcome:
-            total = conn.execute(
-                "SELECT COUNT(*) FROM nzb_repair_activity WHERE outcome = ?", (outcome,)
-            ).fetchone()[0]
-            rows = conn.execute(
-                """SELECT * FROM nzb_repair_activity WHERE outcome = ?
-                   ORDER BY created_at DESC LIMIT ? OFFSET ?""",
-                (outcome, limit, offset),
-            ).fetchall()
-        else:
-            total = conn.execute("SELECT COUNT(*) FROM nzb_repair_activity").fetchone()[0]
-            rows = conn.execute(
-                """SELECT * FROM nzb_repair_activity
-                   ORDER BY created_at DESC LIMIT ? OFFSET ?""",
-                (limit, offset),
-            ).fetchall()
+            conditions.append("outcome = ?")
+            params.append(outcome)
+        if source == 'usenet':
+            conditions.append("(broken_nzb_id NOT LIKE 'debrid:%' OR broken_nzb_id IS NULL OR broken_nzb_id = '')")
+        elif source == 'debrid':
+            conditions.append("broken_nzb_id LIKE 'debrid:%'")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM nzb_repair_activity {where}", params
+        ).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT * FROM nzb_repair_activity {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            params + [limit, offset],
+        ).fetchall()
         return [dict(r) for r in rows], total
     except Exception as e:
         logger.debug(f"[NZBRepair] get_repair_activity error: {e}")
@@ -184,13 +193,18 @@ def get_repair_activity(limit: int = 100, offset: int = 0, outcome: str = None):
         conn.close()
 
 
-def get_repair_stats(days: int = 30) -> dict:
+def get_repair_stats(days: int = 30, source: str = None) -> dict:
     conn = get_db_connection()
     try:
         since = f"datetime('now', '-{days} days')"
+        source_filter = ""
+        if source == 'usenet':
+            source_filter = " AND (broken_nzb_id NOT LIKE 'debrid:%' OR broken_nzb_id IS NULL OR broken_nzb_id = '')"
+        elif source == 'debrid':
+            source_filter = " AND broken_nzb_id LIKE 'debrid:%'"
         rows = conn.execute(
             f"SELECT outcome, COUNT(*) FROM nzb_repair_activity "
-            f"WHERE created_at >= {since} GROUP BY outcome"
+            f"WHERE created_at >= {since}{source_filter} GROUP BY outcome"
         ).fetchall()
         stats = {r[0]: r[1] for r in rows}
         return {

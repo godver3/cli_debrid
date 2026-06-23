@@ -407,15 +407,15 @@ def validate_onboarding_settings():
                 headers = {'Authorization': f'Bearer {usenet_token}'} if usenet_token else {}
                 r = requests.get(f"{usenet_url.rstrip('/')}/version", headers=headers, timeout=10)
                 if r.status_code == 200:
-                    provider_valid, provider_message = True, "Successfully connected to Decypharr"
+                    provider_valid, provider_message = True, "Successfully connected to cli_mount"
                 else:
-                    provider_valid, provider_message = False, f"Decypharr returned HTTP {r.status_code}"
+                    provider_valid, provider_message = False, f"cli_mount returned HTTP {r.status_code}"
             except Exception as e:
-                provider_valid, provider_message = False, f"Could not connect to Decypharr: {str(e)}"
+                provider_valid, provider_message = False, f"Could not connect to cli_mount: {str(e)}"
         else:
-            provider_valid, provider_message = False, "Decypharr URL is required"
+            provider_valid, provider_message = False, "cli_mount URL is required"
         validation_checks.append({
-            'name': 'Usenet Provider (Decypharr)',
+            'name': 'Usenet Provider (cli_mount)',
             'valid': provider_valid,
             'message': provider_message
         })

@@ -503,13 +503,13 @@ class TorrentProcessor:
                     logging.error(f"Error cleaning up temp file {temp_file}: {e}")
                     
     def _process_nzb_result(self, result: Dict, item: Optional[Dict] = None, adding_queue_items: Optional[list] = None) -> Optional[Tuple]:
-        """Submit an NZB result to Decypharr and return a synthetic torrent_info tuple."""
-        from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
-        reset_decypharr_client()
-        client = get_decypharr_client()
+        """Submit an NZB result to cli_mount and return a synthetic torrent_info tuple."""
+        from usenet.climount_client import get_climount_client, reset_climount_client
+        reset_climount_client()
+        client = get_climount_client()
 
         if not client.is_enabled():
-            logging.debug('[NZB] Decypharr not enabled, skipping NZB result')
+            logging.debug('[NZB] cli_mount not enabled, skipping NZB result')
             return None
 
         nzb_url = result.get('nzb_url') or result.get('magnet') or ''
@@ -550,13 +550,13 @@ class TorrentProcessor:
                                          f'(job={_mem_job}) — reusing')
                             return {'id': _mem_id, 'filename': title, 'original_title': title,
                                     'status': 'downloading', 'files': [], 'progress': 0,
-                                    '_provider': 'Decypharr', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+                                    '_provider': 'cli_mount', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
                         elif not _is_pack and _mem_is_pack:
                             logging.info(f'[{item_identifier}] [Memory] Season pack already submitted for S{_season:02d} '
                                          f'(job={_mem_job}) — skipping individual episode submission')
                             return {'id': _mem_id, 'filename': title, 'original_title': title,
                                     'status': 'downloading', 'files': [], 'progress': 0,
-                                    '_provider': 'Decypharr', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+                                    '_provider': 'cli_mount', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
                         elif _is_pack and not _mem_is_pack:
                             # New result is a pack, existing job is individual — fall through to submit pack
                             break
@@ -587,7 +587,7 @@ class TorrentProcessor:
                             return {'id': _existing_id, 'filename': _existing_file,
                                     'original_title': _existing_file, 'status': 'downloading',
                                     'files': [], 'progress': 0,
-                                    '_provider': 'Decypharr', '_is_nzb': True,
+                                    '_provider': 'cli_mount', '_is_nzb': True,
                                     '_nzb_url': nzb_url}, nzb_url, result
                         elif not _is_pack and _sibling_is_pack:
                             # New result is individual episode, existing job is a season pack — skip individual
@@ -598,11 +598,11 @@ class TorrentProcessor:
                             return {'id': _existing_id, 'filename': title,
                                     'original_title': title, 'status': 'downloading',
                                     'files': [], 'progress': 0,
-                                    '_provider': 'Decypharr', '_is_nzb': True,
+                                    '_provider': 'cli_mount', '_is_nzb': True,
                                     '_nzb_url': nzb_url}, nzb_url, result
                         elif _is_pack and not _sibling_is_pack:
                             # New result is a pack, existing jobs are individual episodes.
-                            # Cancel the individual Decypharr jobs so we don't end up with
+                            # Cancel the individual cli_mount jobs so we don't end up with
                             # both individual files AND a season pack folder on disk.
                             try:
                                 from database import get_db_connection as _gdb2
@@ -618,7 +618,7 @@ class TorrentProcessor:
                                 finally:
                                     _conn2.close()
                                 if _individuals:
-                                    from usenet.decypharr_client import get_decypharr_client as _get_dc
+                                    from usenet.climount_client import get_climount_client as _get_dc
                                     _dc = _get_dc()
                                     _cancelled = set()
                                     for _ind_id, _ind_tid in _individuals:
@@ -644,7 +644,7 @@ class TorrentProcessor:
             _media_type = 'tv' if _item_type == 'episode' else _item_type
             # Season packs (one NZB for whole season) must NOT include SxxExx in the job title.
             # All episodes in Scraping that share the same pack NZB must produce the identical
-            # Decypharr job name so they land in a single folder and the dedup check fires.
+            # cli_mount job name so they land in a single folder and the dedup check fires.
             # Detection: parsed_info has seasons but no episodes (PTT leaves episodes empty for packs).
             _parsed = result.get('parsed_info', {}) or {}
             _parsed_seasons = _parsed.get('seasons') or []
@@ -665,7 +665,7 @@ class TorrentProcessor:
         except Exception:
             job_title = title
 
-        # Check if same NZB title already in Decypharr/NzbDAV to avoid duplicates.
+        # Check if same NZB title already in cli_mount/NzbDAV to avoid duplicates.
         # Two match levels:
         #   1. Exact title match — catches same release resubmitted
         #   2. Prefix match — catches same show/episode submitted with a different
@@ -679,7 +679,7 @@ class TorrentProcessor:
         _job_prefix = _title_prefix(job_title)
 
         # DB-level dedup: check if same item already in Adding/Checking with nzb: torrent ID.
-        # Works for both Decypharr and NzbDAV since it uses the DB, not provider API.
+        # Works for both cli_mount and NzbDAV since it uses the DB, not provider API.
         try:
             from database.core import get_db_connection as _get_dbc_dd
             _item_imdb = (item or {}).get('imdb_id')
@@ -706,7 +706,7 @@ class TorrentProcessor:
         except Exception:
             pass
 
-        # Decypharr-only: also check provider queue by title for exact/prefix match.
+        # cli_mount-only: also check provider queue by title for exact/prefix match.
         # NzbDAV has no /api/torrents endpoint — silently skipped via except.
         try:
             from routes.api_tracker import api as _check_api
@@ -732,11 +732,11 @@ class TorrentProcessor:
                     if _exact or _prefix:
                         _existing_hash = _t.get('info_hash', '')
                         _match_type = 'exact' if _exact else 'prefix'
-                        logging.info(f'[{item_identifier}] NZB already in Decypharr ({_match_type} match): {_t_name} (hash={_existing_hash}) — reusing job')
+                        logging.info(f'[{item_identifier}] NZB already in cli_mount ({_match_type} match): {_t_name} (hash={_existing_hash}) — reusing job')
                         _found_dc = True
                         return {'id': _existing_hash, 'filename': job_title, 'original_title': job_title,
                                 'status': _t.get('status', 'downloading'), 'files': [], 'progress': 0,
-                                '_provider': 'Decypharr', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
+                                '_provider': 'cli_mount', '_is_nzb': True, '_nzb_url': nzb_url}, nzb_url, result
                 if not _data_dc.get('has_next'):
                     break
                 _page_dc += 1
@@ -783,13 +783,13 @@ class TorrentProcessor:
         except Exception:
             pass
 
-        logging.info(f'[{item_identifier}] Submitting NZB to Decypharr: {job_title}')
+        logging.info(f'[{item_identifier}] Submitting NZB to cli_mount: {job_title}')
         if _nzb_xml:
             job_id = client.add_nzb_content(nzb_content=_nzb_xml, title=job_title,
                                             is_anime=_is_anime, media_type=_item_media_type,
                                             tags=_tags, tags_exclusive=_tags_exclusive)
             if not job_id and client.last_missing_segments:
-                logging.warning(f'[{item_identifier}] Decypharr server missing segments for {job_title!r} — adding NZB URL to not-wanted')
+                logging.warning(f'[{item_identifier}] cli_mount server missing segments for {job_title!r} — adding NZB URL to not-wanted')
                 try:
                     from database.not_wanted_magnets import add_to_not_wanted_nzb_guid as _add_nw_seg
                     if nzb_url:
@@ -817,7 +817,7 @@ class TorrentProcessor:
                                                     is_anime=_is_anime, media_type=_item_media_type,
                                                     tags=_tags, tags_exclusive=_tags_exclusive)
                     if not job_id and client.last_missing_segments:
-                        logging.warning(f'[{item_identifier}] Decypharr server missing segments on fallback for {job_title!r}')
+                        logging.warning(f'[{item_identifier}] cli_mount server missing segments on fallback for {job_title!r}')
                         if item:
                             item['_nzb_all_missing_segments'] = True
                         return None
@@ -827,14 +827,14 @@ class TorrentProcessor:
                 logging.warning(f'[{item_identifier}] Direct upload fallback failed: {_fe}')
 
         if not job_id:
-            logging.warning(f'[{item_identifier}] Decypharr rejected NZB: {title}')
+            logging.warning(f'[{item_identifier}] cli_mount rejected NZB: {title}')
             return None
 
-        # Verify job is actually in Decypharr's queue — brief wait for processing
+        # Verify job is actually in cli_mount's queue — brief wait for processing
         time.sleep(1)
         status = client.get_job_status(job_id)
         if status and status.get('state') == 'failed':
-            logging.warning(f'[{item_identifier}] Decypharr failed NZB immediately after submission: {title} (job_id={job_id})')
+            logging.warning(f'[{item_identifier}] cli_mount failed NZB immediately after submission: {title} (job_id={job_id})')
             return None
 
         logging.info(f'[{item_identifier}] NZB submitted successfully, job_id={job_id}')
@@ -856,7 +856,7 @@ class TorrentProcessor:
             'status': 'downloading',
             'files': [],
             'progress': 0,
-            '_provider': 'Decypharr',
+            '_provider': 'cli_mount',
             '_is_nzb': True,
             '_nzb_url': nzb_url,
             '_nzb_segment_id': _segment_id,
@@ -887,7 +887,7 @@ class TorrentProcessor:
         for idx, result in enumerate(results, 1):
             chosen_result_for_return = None # Initialize variable to hold the chosen result
             try:
-                # NZB results are handled by Decypharr, not debrid — route them separately
+                # NZB results are handled by cli_mount, not debrid — route them separately
                 if result.get('protocol') == 'nzb' or result.get('nzb_url'):
                     nzb_result = self._process_nzb_result(result, item, adding_queue_items=adding_queue_items)
                     if nzb_result:
@@ -1199,10 +1199,10 @@ class TorrentProcessor:
                         elif item and not definitive_hash:
                              logging.warning(f"[{item_identifier}] [Result {idx}/{len(results)}] No definitive_hash in torrent info. Skipping not_wanted and tracking. Original link: {original_link if original_link else 'N/A'}")
 
-                        # Debrid File Naming: rename the Decypharr DFS folder using
+                        # Debrid File Naming: rename the cli_mount DFS folder using
                         # the structured CLI name if the setting is enabled.
                         # Runs asynchronously so it doesn't block the adding flow.
-                        # Retries up to 3 times with 30s delay to handle Decypharr's
+                        # Retries up to 3 times with 30s delay to handle cli_mount's
                         # periodic sync window (default 10 min).
                         if item and definitive_hash:
                             try:
@@ -1215,12 +1215,19 @@ class TorrentProcessor:
                                     _dbn_seasons = _parsed_dbn.get('seasons') or []
                                     _dbn_episodes = _parsed_dbn.get('episodes') or []
                                     _dbn_is_pack = bool(_dbn_seasons) and not _dbn_episodes
+                                    # Fallback: if no parsed_info (e.g. upgrade hub candidate),
+                                    # detect season pack by checking if title has SXX but no SXXEXX
+                                    if not _dbn_is_pack and not _parsed_dbn and _dbn_type == 'episode':
+                                        import re as _re_dbn
+                                        _t = result.get('title') or result.get('original_title') or ''
+                                        if _re_dbn.search(r'[Ss]\d{2}(?![Ee]\d)', _t):
+                                            _dbn_is_pack = True
                                     _dbn_title = _build_debrid_title(
-                                        title=item.get('title', '') or title,
+                                        title=item.get('title', '') or result_title,
                                         year=item.get('year', ''),
                                         imdb_id=item.get('imdb_id'),
                                         version=item.get('version', ''),
-                                        original_scraped_torrent_title=result.get('original_title') or title,
+                                        original_scraped_torrent_title=result.get('original_title') or result_title,
                                         media_type=_dbn_media_type,
                                         season=item.get('season_number'),
                                         episode=None if _dbn_is_pack else item.get('episode_number'),
@@ -1228,29 +1235,70 @@ class TorrentProcessor:
                                         tags=item.get('tags') or None,
                                         content_source_display_name=item.get('content_source_detail') or item.get('content_source'),
                                     )
-                                    if _dbn_title and _dbn_title != (result.get('original_title') or title):
+                                    logging.info(f'[DebridNaming] title={_dbn_title!r} orig={result.get("original_title") or result_title!r} will_rename={bool(_dbn_title and _dbn_title != (result.get("original_title") or result_title))}')
+                                    if _dbn_title and _dbn_title != (result.get('original_title') or result_title):
                                         import threading as _dbn_threading
                                         _dbn_hash = definitive_hash
                                         _dbn_name = _dbn_title
                                         _dbn_id = item_identifier
-                                        def _do_debrid_rename(h, name, ident):
+                                        _dbn_item_id = item.get('id')
+                                        def _do_debrid_rename(h, name, ident, item_id):
                                             import time as _t
+                                            logging.info(f'[DebridNaming] Thread started for {ident!r} hash={h!r}')
                                             try:
-                                                from usenet.decypharr_client import get_decypharr_client
-                                                _dc = get_decypharr_client()
+                                                from usenet.climount_client import get_climount_client
+                                                _dc = get_climount_client()
                                                 if not hasattr(_dc, 'rename_nzb'):
+                                                    logging.info(f'[DebridNaming] Client has no rename_nzb for {ident!r}')
                                                     return  # active usenet provider (e.g. nzbdav) has no rename semantics
-                                                for _attempt in range(20):
+                                                for _attempt in range(100):
                                                     if _dc.rename_nzb(h, name):
                                                         logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} for {ident}')
+                                                        if item_id:
+                                                            try:
+                                                                from database.database_writing import update_media_item as _umi
+                                                                _umi(item_id, debrid_folder_name=name, filled_by_title=name)
+                                                            except Exception as _db_err:
+                                                                logging.debug(f'[DebridNaming] DB update failed for {ident}: {_db_err}')
+                                                        # Register cli_debrid IDs for all siblings sharing this torrent
+                                                        try:
+                                                            from database.core import get_db_connection as _gdb_dn
+                                                            import os as _os_dn
+                                                            _VIDEO_EXTS_DN = {'.mkv','.mp4','.avi','.mov','.wmv','.m4v','.ts'}
+                                                            with _gdb_dn() as _dbc:
+                                                                # Find all live items sharing this torrent by provider_id
+                                                                _torrent_id_val = None
+                                                                _r = _dbc.execute(
+                                                                    'SELECT filled_by_torrent_id FROM media_items WHERE id=?', (item_id,)
+                                                                ).fetchone()
+                                                                if _r:
+                                                                    _torrent_id_val = _r[0]
+                                                                if _torrent_id_val:
+                                                                    _sibs = _dbc.execute(
+                                                                        "SELECT id, filled_by_file FROM media_items "
+                                                                        "WHERE filled_by_torrent_id=? AND state IN ('Checking','Collected','Upgrading')",
+                                                                        (_torrent_id_val,)
+                                                                    ).fetchall()
+                                                                    _cli_ids_dn = {
+                                                                        s[1]: s[0]
+                                                                        for s in _sibs
+                                                                        if s[1] and _os_dn.path.splitext(s[1])[1].lower() in _VIDEO_EXTS_DN
+                                                                    }
+                                                                    if _cli_ids_dn:
+                                                                        _dc.register_cli_ids(h, _cli_ids_dn)
+                                                                        logging.info(f'[DebridNaming] Registered {len(_cli_ids_dn)} cli_debrid IDs for {h!r}')
+                                                        except Exception as _reg_dn_err:
+                                                            logging.debug(f'[DebridNaming] cli_ids registration error: {_reg_dn_err}')
                                                         return
                                                     _t.sleep(30)
-                                                logging.warning(f'[DebridNaming] Could not rename {h!r} after 20 attempts for {ident}')
+                                                logging.warning(f'[DebridNaming] Could not rename {h!r} after 100 attempts for {ident}')
                                             except Exception as _dbn_err:
-                                                logging.debug(f'[DebridNaming] Rename error for {ident}: {_dbn_err}')
-                                        _dbn_threading.Thread(target=_do_debrid_rename, args=(_dbn_hash, _dbn_name, _dbn_id), daemon=True).start()
+                                                logging.info(f'[DebridNaming] Rename error for {ident}: {_dbn_err}')
+                                        _dbn_threading.Thread(target=_do_debrid_rename, args=(_dbn_hash, _dbn_name, _dbn_id, _dbn_item_id), daemon=True).start()
+                                        logging.info(f'[DebridNaming] Thread launched for {item_identifier!r} hash={definitive_hash!r}')
                             except Exception as _dbn_ex:
-                                logging.debug(f'[DebridNaming] Setup error for {item_identifier}: {_dbn_ex}')
+                                import traceback as _dbn_tb
+                                logging.info(f'[DebridNaming] Setup error for {item_identifier}: {_dbn_ex}\n{_dbn_tb.format_exc()}')
 
                         logging.info(f"[{item_identifier}] [Result {idx}/{len(results)}] Successfully processed and added")
                         chosen_result_for_return = result # Store the successful result

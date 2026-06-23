@@ -1746,6 +1746,51 @@ def move_to_upgrading():
     finally:
         conn.close()
 
+@debug_bp.route('/run_full_climount_sync', methods=['POST'])
+@admin_required
+def run_full_climount_sync():
+    """Run a full cli_mount sync (since=0) in a background thread, pausing the queue during sync."""
+    try:
+        import threading
+        from usenet.climount_sync import sync_changes_from_climount
+        from routes.program_operation_routes import get_program_runner
+
+        runner = get_program_runner()
+
+        def _run():
+            paused = False
+            try:
+                if runner:
+                    runner.pause_info = {
+                        'reason_string': 'cli_mount full sync in progress — queue resumes automatically when complete',
+                        'error_type': 'SYSTEM_MAINTENANCE',
+                        'service_name': 'cli_mount sync',
+                        'status_code': None,
+                        'retry_count': 0,
+                    }
+                    runner.pause_queue()
+                    paused = True
+                    logging.info('[FullCMSync] Queue paused during full sync')
+                result = sync_changes_from_climount(force_full=True)
+                logging.info(f'[FullCMSync] Complete: {result}')
+            except Exception as e:
+                logging.error(f'[FullCMSync] Error: {e}', exc_info=True)
+            finally:
+                if paused and runner:
+                    runner.last_resume_time = None  # bypass 30s throttle
+                    runner.pause_info = {'reason_string': None, 'error_type': None,
+                                         'service_name': None, 'status_code': None, 'retry_count': 0}
+                    runner.resume_queue()
+                    logging.info('[FullCMSync] Queue resumed after full sync')
+
+        t = threading.Thread(target=_run, daemon=True, name='full-cm-sync')
+        t.start()
+        return jsonify({'success': True, 'message': 'Full cli_mount sync started — queue will pause automatically'}), 200
+    except Exception as e:
+        logging.error(f"Error in run_full_climount_sync: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @debug_bp.route('/run_task', methods=['POST'])
 @admin_required
 def run_task():
@@ -7950,31 +7995,31 @@ def trim_memory():
 
 
 # ---------------------------------------------------------------------------
-# Decypharr Cleanup
+# cli_mount Cleanup
 # ---------------------------------------------------------------------------
 
-@debug_bp.route('/api/decypharr_providers', methods=['GET'])
+@debug_bp.route('/api/climount_providers', methods=['GET'])
 @admin_required
-def decypharr_providers():
-    """Return list of debrid provider names configured in Decypharr."""
+def climount_providers():
+    """Return list of debrid provider names configured in cli_mount."""
     try:
         from utilities.settings import get_setting
-        from utilities.decypharr_cleanup import get_decypharr_providers
-        data_path = get_setting('Usenet Provider', 'data_path', '/decypharr_data')
+        from utilities.climount_cleanup import get_climount_providers
+        data_path = get_setting('Usenet Provider', 'data_path', '/climount_data')
         db_dir = os.path.join(data_path, 'db')
-        providers = get_decypharr_providers(db_dir)
+        providers = get_climount_providers(db_dir)
         return jsonify({'success': True, 'providers': providers, 'data_path': data_path})
     except Exception as e:
-        logging.error(f"decypharr_providers error: {e}")
+        logging.error(f"climount_providers error: {e}")
         return jsonify({'success': False, 'error': str(e), 'providers': []})
 
 
-_decypharr_cleanup_jobs = {}  # job_id -> result dict
+_climount_cleanup_jobs = {}  # job_id -> result dict
 
-@debug_bp.route('/api/decypharr_cleanup', methods=['POST'])
+@debug_bp.route('/api/climount_cleanup', methods=['POST'])
 @admin_required
-def decypharr_cleanup():
-    """Run Decypharr cleanup in a background thread. Returns job_id immediately."""
+def climount_cleanup():
+    """Run cli_mount cleanup in a background thread. Returns job_id immediately."""
     import uuid, threading
     try:
         data = request.get_json() or {}
@@ -7986,45 +8031,45 @@ def decypharr_cleanup():
             return jsonify({'success': False, 'error': 'Provider is required'}), 400
         if not db_path:
             from utilities.settings import get_setting
-            base = get_setting('Usenet Provider', 'data_path', '/decypharr_data')
+            base = get_setting('Usenet Provider', 'data_path', '/climount_data')
             db_path = os.path.join(base, 'db')
         if not os.path.isdir(db_path):
             return jsonify({'success': False, 'error': f'DB directory not found: {db_path}'}), 400
 
         job_id = str(uuid.uuid4())[:8]
-        _decypharr_cleanup_jobs[job_id] = {'status': 'running', 'result': None}
+        _climount_cleanup_jobs[job_id] = {'status': 'running', 'result': None}
 
         def _run():
             try:
-                from utilities.decypharr_cleanup import run_cleanup
+                from utilities.climount_cleanup import run_cleanup
                 result = run_cleanup(db_path, provider, dry_run)
-                _decypharr_cleanup_jobs[job_id] = {'status': 'done', 'result': result}
+                _climount_cleanup_jobs[job_id] = {'status': 'done', 'result': result}
             except Exception as e:
-                logging.error(f"Decypharr cleanup job {job_id} error: {e}", exc_info=True)
-                _decypharr_cleanup_jobs[job_id] = {
+                logging.error(f"cli_mount cleanup job {job_id} error: {e}", exc_info=True)
+                _climount_cleanup_jobs[job_id] = {
                     'status': 'error',
                     'result': {'success': False, 'error': str(e), 'lines': [f"ERROR: {e}"]}
                 }
 
-        threading.Thread(target=_run, daemon=True, name=f'decypharr-cleanup-{job_id}').start()
+        threading.Thread(target=_run, daemon=True, name=f'climount-cleanup-{job_id}').start()
         return jsonify({'success': True, 'job_id': job_id})
 
     except Exception as e:
-        logging.error(f"decypharr_cleanup error: {e}")
+        logging.error(f"climount_cleanup error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@debug_bp.route('/api/decypharr_cleanup_status/<job_id>', methods=['GET'])
+@debug_bp.route('/api/climount_cleanup_status/<job_id>', methods=['GET'])
 @admin_required
-def decypharr_cleanup_status(job_id):
-    job = _decypharr_cleanup_jobs.get(job_id)
+def climount_cleanup_status(job_id):
+    job = _climount_cleanup_jobs.get(job_id)
     if not job:
         return jsonify({'status': 'not_found'}), 404
     return jsonify(job)
 
 
 # ---------------------------------------------------------------------------
-# Decypharr DB Backup / Restore / Scan / Delete
+# cli_mount DB Backup / Restore / Scan / Delete
 # (follows same pattern as CLI DB equivalents)
 # ---------------------------------------------------------------------------
 
@@ -8033,7 +8078,7 @@ def _get_dcy_dirs():
     from utilities.settings import get_setting
     data_path = get_setting('Usenet Provider', 'data_path', '').strip()
     if not data_path:
-        raise ValueError("Decypharr Data Path is not configured in Settings → Usenet Provider")
+        raise ValueError("cli_mount Data Path is not configured in Settings → Usenet Provider")
     db_dir = os.path.join(data_path, 'db')
     backup_dir = os.path.join(db_dir, 'backups')
     return data_path, db_dir, backup_dir
@@ -8054,24 +8099,24 @@ def _dcy_age_display(age_sec):
     return f"{int(age_sec/86400)}d ago"
 
 
-@debug_bp.route('/api/decypharr_backup_now', methods=['POST'])
+@debug_bp.route('/api/climount_backup_now', methods=['POST'])
 @admin_required
-def decypharr_backup_now():
-    """Trigger an immediate Decypharr DB backup."""
+def climount_backup_now():
+    """Trigger an immediate cli_mount DB backup."""
     try:
-        from main import backup_decypharr_databases
-        ok = backup_decypharr_databases()
+        from main import backup_climount_databases
+        ok = backup_climount_databases()
         if ok:
-            return jsonify({'success': True, 'message': 'Decypharr databases backed up successfully'})
+            return jsonify({'success': True, 'message': 'cli_mount databases backed up successfully'})
         return jsonify({'success': False, 'error': 'Backup failed — check logs'}), 500
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@debug_bp.route('/api/list_decypharr_backups', methods=['GET'])
+@debug_bp.route('/api/list_climount_backups', methods=['GET'])
 @admin_required
-def list_decypharr_backups():
-    """List available Decypharr DB backups — same structure as list_database_backups."""
+def list_climount_backups():
+    """List available cli_mount DB backups — same structure as list_database_backups."""
     try:
         _, db_dir, backup_dir = _get_dcy_dirs()
         if not os.path.isdir(backup_dir):
@@ -8112,12 +8157,12 @@ def list_decypharr_backups():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@debug_bp.route('/api/request_decypharr_restore', methods=['POST'])
+@debug_bp.route('/api/request_climount_restore', methods=['POST'])
 @admin_required
-def request_decypharr_restore():
+def request_climount_restore():
     """
-    Restore a Decypharr DB file by direct copy (no container restart needed —
-    Decypharr must be stopped by the user first).
+    Restore a cli_mount DB file by direct copy (no container restart needed —
+    cli_mount must be stopped by the user first).
     """
     try:
         data = request.get_json() or {}
@@ -8152,17 +8197,17 @@ def request_decypharr_restore():
 
         _shutil.copy2(backup_path, target)
         logging.info(f"[DCY_RESTORE] Restored {fname} → {target}")
-        return jsonify({'success': True, 'message': f'Restored {os.path.basename(target)} from {fname}. Start Decypharr to apply.'})
+        return jsonify({'success': True, 'message': f'Restored {os.path.basename(target)} from {fname}. Start cli_mount to apply.'})
 
     except Exception as e:
         logging.error(f"[DCY_RESTORE] Error: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@debug_bp.route('/api/scan_decypharr_old_databases', methods=['GET'])
+@debug_bp.route('/api/scan_climount_old_databases', methods=['GET'])
 @admin_required
-def scan_decypharr_old_databases():
-    """Scan Decypharr backup dir for old/corrupted DB files — mirrors scan_old_databases."""
+def scan_climount_old_databases():
+    """Scan cli_mount backup dir for old/corrupted DB files — mirrors scan_old_databases."""
     try:
         _, db_dir, backup_dir = _get_dcy_dirs()
         if not os.path.isdir(backup_dir):
@@ -8203,10 +8248,10 @@ def scan_decypharr_old_databases():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
-@debug_bp.route('/api/delete_decypharr_old_databases', methods=['POST'])
+@debug_bp.route('/api/delete_climount_old_databases', methods=['POST'])
 @admin_required
-def delete_decypharr_old_databases():
-    """Delete selected Decypharr backup files — mirrors delete_old_databases."""
+def delete_climount_old_databases():
+    """Delete selected cli_mount backup files — mirrors delete_old_databases."""
     try:
         data = request.get_json() or {}
         file_paths = data.get('file_paths', [])
@@ -8268,15 +8313,15 @@ def backfill_nzb_names():
     data = request.get_json(silent=True) or {}
     item_ids = data.get('item_ids')  # optional list of DB item IDs to limit scope
     force = data.get('force', False)  # if True, re-process even if already named
-    dry_run = data.get('dry_run', False)  # if True, preview only — no DB or Decypharr changes
+    dry_run = data.get('dry_run', False)  # if True, preview only — no DB or cli_mount changes
 
     def _run():
         try:
             import os as _os
             from database.core import get_db_connection
             from routes.scraper_routes import _build_nzb_title, _get_content_source_display_name
-            from usenet.decypharr_client import get_decypharr_client
-            client = get_decypharr_client()
+            from usenet.climount_client import get_climount_client
+            client = get_climount_client()
 
             # Backup both DBs before making any changes (non-dry-run only)
             if not dry_run:
@@ -8287,11 +8332,11 @@ def backfill_nzb_names():
                 except Exception as _be:
                     logging.warning(f"[NZBBackfill] CLI DB backup failed: {_be}")
                 try:
-                    from main import backup_decypharr_databases
-                    backup_decypharr_databases()
-                    logging.info("[NZBBackfill] Decypharr DB backup completed.")
+                    from main import backup_climount_databases
+                    backup_climount_databases()
+                    logging.info("[NZBBackfill] cli_mount DB backup completed.")
                 except Exception as _be:
-                    logging.warning(f"[NZBBackfill] Decypharr DB backup failed: {_be}")
+                    logging.warning(f"[NZBBackfill] cli_mount DB backup failed: {_be}")
 
             def _build_location(media_type, new_folder, ext):
                 """Build correct location_on_disk.
@@ -8368,9 +8413,9 @@ def backfill_nzb_names():
                     if season_folder:
                         season_folder_map[torrent_id] = season_folder
 
-            # Track which torrent IDs have already been renamed in Decypharr
-            decypharr_renamed = set()
-            # Queue of {infohash: new_name} to batch rename in Decypharr after loop
+            # Track which torrent IDs have already been renamed in cli_mount
+            climount_renamed = set()
+            # Queue of {infohash: new_name} to batch rename in cli_mount after loop
             dcy_rename_queue = {}
 
             scan_progress[task_id].update({
@@ -8468,9 +8513,9 @@ def backfill_nzb_names():
                         scan_progress[task_id].update({'processed': i + 1, 'renamed': renamed, 'skipped': skipped, 'errors': errors, 'message': f"[DRY] {item.get('title', '')}"})
                         continue
 
-                    # Collect Decypharr renames — deduplicated, batched after loop
-                    if torrent_id.startswith('nzb:') and torrent_id not in decypharr_renamed:
-                        decypharr_renamed.add(torrent_id)
+                    # Collect cli_mount renames — deduplicated, batched after loop
+                    if torrent_id.startswith('nzb:') and torrent_id not in climount_renamed:
+                        climount_renamed.add(torrent_id)
                         dcy_rename_queue[torrent_id[4:]] = dcy_rename_name
 
                     conn2 = get_db_connection()
@@ -8502,13 +8547,13 @@ def backfill_nzb_names():
                     'message': f"Processing: {item.get('title', '')}",
                 })
 
-            # Batch rename in Decypharr using thread pool (10 workers)
+            # Batch rename in cli_mount using thread pool (10 workers)
             if dcy_rename_queue and not dry_run:
                 from concurrent.futures import ThreadPoolExecutor, as_completed
                 total_dcy = len(dcy_rename_queue)
                 dcy_done = 0
-                scan_progress[task_id].update({'message': f'DB updated={renamed}. Sending {total_dcy} renames to Decypharr...'})
-                logging.info(f"[NZBBackfill] Sending {total_dcy} unique renames to Decypharr (10 workers)...")
+                scan_progress[task_id].update({'message': f'DB updated={renamed}. Sending {total_dcy} renames to cli_mount...'})
+                logging.info(f"[NZBBackfill] Sending {total_dcy} unique renames to cli_mount (10 workers)...")
 
                 def _do_rename(args):
                     h, name = args
@@ -8519,14 +8564,14 @@ def backfill_nzb_names():
                     for future in as_completed(futures):
                         dcy_done += 1
                         if dcy_done % 100 == 0:
-                            scan_progress[task_id].update({'message': f'Decypharr renames: {dcy_done}/{total_dcy}...'})
+                            scan_progress[task_id].update({'message': f'cli_mount renames: {dcy_done}/{total_dcy}...'})
 
-                logging.info(f"[NZBBackfill] Decypharr renames complete: {dcy_done}/{total_dcy}")
+                logging.info(f"[NZBBackfill] cli_mount renames complete: {dcy_done}/{total_dcy}")
 
             scan_progress[task_id].update({
                 'status': 'complete',
                 'complete': True,
-                'message': f'Done. DB updated={renamed} Skipped={skipped} Errors={errors}' + ('' if dry_run else f' | Decypharr: {len(dcy_rename_queue)} entries renamed.'),
+                'message': f'Done. DB updated={renamed} Skipped={skipped} Errors={errors}' + ('' if dry_run else f' | cli_mount: {len(dcy_rename_queue)} entries renamed.'),
             })
 
         except Exception as e:
@@ -8545,10 +8590,10 @@ def backfill_nzb_names_status(task_id):
     return jsonify(scan_progress.get(task_id, {'status': 'not_found', 'complete': True}))
 
 
-@debug_bp.route('/api/deduplicate_decypharr', methods=['POST'])
+@debug_bp.route('/api/deduplicate_climount', methods=['POST'])
 @user_required
-def deduplicate_decypharr():
-    """Remove duplicate Decypharr entries (same name), keeping the one referenced in cli DB.
+def deduplicate_climount():
+    """Remove duplicate cli_mount entries (same name), keeping the one referenced in cli DB.
     Runs in background. Returns task_id immediately; check logs for completion.
     Accepts optional dry_run=true to preview without deleting.
     """
@@ -8575,7 +8620,7 @@ def deduplicate_decypharr():
                          params={'page': page, 'limit': 100, 'sort_by': 'added_on', 'sort_order': 'desc'},
                          headers=headers, timeout=30)
             if r.status_code != 200:
-                raise RuntimeError(f'Decypharr API HTTP {r.status_code}')
+                raise RuntimeError(f'cli_mount API HTTP {r.status_code}')
             d = r.json()
             for t in d.get('torrents', []):
                 name = (t.get('name') or '').strip()

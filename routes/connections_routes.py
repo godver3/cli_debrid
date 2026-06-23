@@ -560,7 +560,7 @@ def check_tmdb_connection():
         return {'name': 'TMDB', 'connected': False, 'error': str(e), 'details': {}}
 
 
-def check_decypharr_connection():
+def check_climount_connection():
     """Check usenet provider connection if usenet is enabled and URL is set.
 
     Uses the provider factory so NzbDAV is checked (and its ensure_categories()
@@ -1337,7 +1337,7 @@ def api_check_system():
         tasks['plex_status'] = check_plex_connection
     tasks['tvdb_status'] = check_tvdb_connection
     tasks['tmdb_status'] = check_tmdb_connection
-    tasks['decypharr_status'] = check_decypharr_connection
+    tasks['climount_status'] = check_climount_connection
     results = {}
     with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
         future_to_task = {executor.submit(func): name for name, func in tasks.items()}
@@ -1357,7 +1357,7 @@ def api_check_system():
     results.setdefault('cli_battery_status', None)
     results.setdefault('tvdb_status', None)
     results.setdefault('tmdb_status', None)
-    results.setdefault('decypharr_status', None)
+    results.setdefault('climount_status', None)
     return jsonify(results)
 
 
@@ -1584,7 +1584,7 @@ def index():
         'cli_battery_status': None, 'plex_status': None,
         'jellyfin_status': None, 'mounted_files_status': None,
         'phalanx_db_status': None,
-        'tvdb_status': None, 'tmdb_status': None, 'decypharr_status': None,
+        'tvdb_status': None, 'tmdb_status': None, 'climount_status': None,
         'scraper_statuses': skeleton_scrapers,
         'content_source_statuses': skeleton_sources,
     }
@@ -1608,7 +1608,7 @@ def index():
                          phalanx_db_status=results['phalanx_db_status'],
                          tvdb_status=results['tvdb_status'],
                          tmdb_status=results['tmdb_status'],
-                         decypharr_status=results['decypharr_status'],
+                         climount_status=results['climount_status'],
                          scraper_statuses=results['scraper_statuses'],
                          content_source_statuses=results['content_source_statuses'],
                          failing_connections=failing_connections,

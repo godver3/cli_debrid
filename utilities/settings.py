@@ -92,6 +92,16 @@ def load_config():
                     with open(config_file_path, 'r') as config_file:
                         config = json.load(config_file)
 
+                    # One-time migration: rename legacy 'Decypharr' section → 'cli_mount'
+                    if 'Decypharr' in config and 'cli_mount' not in config:
+                        config['cli_mount'] = config.pop('Decypharr')
+                        logging.info("Settings migration: renamed 'Decypharr' section to 'cli_mount'")
+                        try:
+                            with open(config_file_path, 'w') as _mf:
+                                json.dump(config, _mf, indent=4)
+                        except Exception as _me:
+                            logging.warning(f"Settings migration: could not persist rename: {_me}")
+
                     # Parse string representations in Content Sources (Keep this logic)
                     if 'Content Sources' in config:
                         for key, value in config['Content Sources'].items():

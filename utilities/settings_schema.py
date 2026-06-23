@@ -168,7 +168,7 @@ SETTINGS_SCHEMA = {
         },
         "stats_provider_priority": {
             "type": "string",
-            "description": "Choose which provider's stats to display on the Statistics page. Auto uses debrid if configured, otherwise usenet. Select Usenet to always show Decypharr/usenet stats even when a debrid provider is also configured.",
+            "description": "Choose which provider's stats to display on the Statistics page. Auto uses debrid if configured, otherwise usenet. Select Usenet to always show cli_mount/usenet stats even when a debrid provider is also configured.",
             "default": "auto",
             "choices": ["auto", "debrid", "usenet"]
         }
@@ -291,7 +291,7 @@ SETTINGS_SCHEMA = {
         },
         "enable_debrid_naming": {
             "type": "boolean",
-            "description": "Name debrid torrent folders in Decypharr's DFS mount using a structured format: {title} ({year}) - {imdb-id} - {version} - (original) for movies and {title} ({year}) - SxxExx - {episode title} - {imdb-id} - {version} - (original) for episodes. Requires Decypharr as the usenet provider (URL configured). Only renames the virtual folder in Decypharr — the actual file on the debrid service is unchanged.",
+            "description": "Name debrid torrent folders in cli_mount's DFS mount using a structured format: {title} ({year}) - {imdb-id} - {version} - (original) for movies and {title} ({year}) - SxxExx - {episode title} - {imdb-id} - {version} - (original) for episodes. Requires cli_mount as the usenet provider (URL configured). Only renames the virtual folder in cli_mount — the actual file on the debrid service is unchanged.",
             "default": False
         },
         "include_version_in_debrid_naming": {
@@ -309,29 +309,29 @@ SETTINGS_SCHEMA = {
         "tab": "Required Settings",
         "enabled": {
             "type": "boolean",
-            "description": "Enable usenet as a download source via Decypharr",
+            "description": "Enable usenet as a download source via cli_mount",
             "default": False
         },
         "url": {
             "type": "string",
-            "description": "Decypharr URL — must not conflict with Phalanx DB (port 8888). Use the actual Decypharr host/port (e.g. http://192.168.1.x:8888 or http://decypharr:8888)",
+            "description": "cli_mount URL — must not conflict with Phalanx DB (port 8888). Use the actual cli_mount host/port (e.g. http://192.168.1.x:8888 or http://climount:8888)",
             "default": ""
         },
         "api_token": {
             "type": "string",
-            "description": "Decypharr API token (leave empty if auth is disabled)",
+            "description": "cli_mount API token (leave empty if auth is disabled)",
             "default": "",
             "sensitive": True
         },
         "download_folder": {
             "type": "string",
-            "description": "Download folder category in Decypharr (leave empty for default)",
+            "description": "Download folder category in cli_mount (leave empty for default)",
             "default": ""
         },
         "data_path": {
             "type": "string",
-            "description": "Path to Decypharr's data directory inside the container — bind mount your Decypharr host data folder to /decypharr_data in your docker-compose (e.g. - /mnt/data/appdata/decypharr:/decypharr_data) then set this to /decypharr_data. Required for the Decypharr cleanup tool.",
-            "default": "/decypharr_data"
+            "description": "Path to cli_mount's data directory inside the container — bind mount your cli_mount host data folder to /climount_data in your docker-compose (e.g. - /mnt/data/appdata/climount:/climount_data) then set this to /climount_data. Required for the cli_mount cleanup tool.",
+            "default": "/climount_data"
         },
         "enable_nzb_naming": {
             "type": "boolean",
@@ -355,9 +355,9 @@ SETTINGS_SCHEMA = {
         },
         "provider": {
             "type": "string",
-            "description": "Which usenet backend to use: Decypharr or NzbDAV.",
-            "default": "decypharr",
-            "choices": ["decypharr", "nzbdav"]
+            "description": "Which usenet backend to use: cli_mount or NzbDAV.",
+            "default": "climount",
+            "choices": ["climount", "nzbdav"]
         },
         "owned_categories": {
             "type": "string",
@@ -3046,7 +3046,7 @@ SETTINGS_SCHEMA = {
         "tab": "Additional Settings",
         "tags_list": {
             "type": "list",
-            "description": "Global tag list for Plex mode NZB folder routing. Tags are embedded in NZB filenames so Decypharr can route items to virtual folders.",
+            "description": "Global tag list for Plex mode NZB folder routing. Tags are embedded in NZB filenames so cli_mount can route items to virtual folders.",
             "default": []
         }
     },

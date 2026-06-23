@@ -432,7 +432,7 @@ def check_service_connectivity():
             services_reachable = False
             failed_services_details.append({"service": "Plex", "type": "CONNECTION_ERROR", "status_code": None, "message": error_msg})
 
-    # Check provider connectivity — requires at least debrid OR usenet (Decypharr) to be configured
+    # Check provider connectivity — requires at least debrid OR usenet (cli_mount) to be configured
     debrid_configured = bool(debrid_provider and debrid_api_key)
     usenet_enabled = get_setting('Usenet Provider', 'enabled', False)
     usenet_url = get_setting('Usenet Provider', 'url', '')
@@ -442,7 +442,7 @@ def check_service_connectivity():
         failed_services_details.append({
             "service": "Provider",
             "type": "NO_PROVIDER_CONFIGURED",
-            "message": "No provider configured — set up a Debrid provider or a Usenet provider (Decypharr) to continue"
+            "message": "No provider configured — set up a Debrid provider or a Usenet provider (cli_mount) to continue"
         })
     elif debrid_configured:
         # Check Debrid Provider connectivity
@@ -491,7 +491,7 @@ def check_service_connectivity():
 
     if usenet_enabled and usenet_url:
         # Provider-agnostic connectivity check via usenet-client factory.
-        # Supports Decypharr (default) and NzbDAV via 'Usenet Provider.provider'.
+        # Supports cli_mount (default) and NzbDAV via 'Usenet Provider.provider'.
         try:
             from usenet import get_usenet_client
             _client = get_usenet_client()
@@ -921,7 +921,7 @@ def check_program_conditions():
         if not value:
             missing_fields.append(f"{category}.{key}")
 
-    # Require at least one of: Debrid Provider OR Usenet Provider (Decypharr)
+    # Require at least one of: Debrid Provider OR Usenet Provider (cli_mount)
     debrid_ok = bool(get_setting('Debrid Provider', 'provider') and get_setting('Debrid Provider', 'api_key'))
     usenet_ok = bool(get_setting('Usenet Provider', 'enabled') and get_setting('Usenet Provider', 'url'))
     if not debrid_ok and not usenet_ok:
@@ -971,10 +971,12 @@ def get_task_timings():
         'task_run_library_maintenance',
         'task_analyze_media_files',
         'task_manual_plex_full_scan',
-        'task_fix_stuck_plex_items',
         'task_sync_library_metadata',
         'task_backfill_plex_guids',
         'task_backfill_plex_ms_item_id',
+        'task_sync_cli_mount_changes',
+        'task_repair_broken_nzbs',
+        'task_repair_broken_debrids',
     }
     _METADATA_TASKS = {
         'task_refresh_release_dates',
@@ -997,7 +999,6 @@ def get_task_timings():
         'task_upgrade_hub_auto_queue',
         'task_plex_smart_collection_posters',
         'task_plex_movie_boxsets',
-        'task_repair_broken_nzbs',
         'task_backfill_nzb_torrent_ids',
     }
 
@@ -1506,6 +1507,11 @@ def _format_task_display_name(task_name, queue_map, content_sources_map):
 
     # Handle other system tasks (usually start with 'task_')
     if task_name.startswith('task_'):
+        _TASK_DISPLAY_OVERRIDES = {
+            'task_sync_cli_mount_changes': 'Sync cli_mount Changes',
+        }
+        if task_name in _TASK_DISPLAY_OVERRIDES:
+            return _TASK_DISPLAY_OVERRIDES[task_name]
         display_name = task_name[5:].replace('_', ' ').strip() # Remove prefix, replace underscores
          # Capitalize first letter of each word
         return ' '.join(word.capitalize() for word in display_name.split())
@@ -1706,7 +1712,7 @@ def nzbdav_ensure_categories():
 def provider_transfer_config():
     """The configured Usenet Provider, used to prefill the transfer UI (it lives
     in Debug -> Library where the settings context isn't available)."""
-    data_path = get_setting('Usenet Provider', 'data_path', '') or '/decypharr_data'
+    data_path = get_setting('Usenet Provider', 'data_path', '') or '/climount_data'
     return jsonify({
         'provider': get_setting('Usenet Provider', 'provider', '') or '',
         'url': get_setting('Usenet Provider', 'url', '') or '',
@@ -1737,7 +1743,7 @@ def provider_transfer_start():
     """Kick off a background transfer job. Returns a job_id to poll."""
     from utilities import provider_transfer
     p = request.get_json(silent=True) or request.form
-    if p.get('direction') not in ('decypharr_to_nzbdav', 'nzbdav_to_decypharr'):
+    if p.get('direction') not in ('climount_to_nzbdav', 'nzbdav_to_climount'):
         return jsonify({'success': False, 'error': 'invalid direction'}), 400
     if not (p.get('target_url') or '').strip():
         return jsonify({'success': False, 'error': 'target URL required'}), 400

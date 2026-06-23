@@ -363,6 +363,23 @@ def _refresh_movie(imdb_id: str, session: SqlAlchemySession) -> Optional[dict]:
         logger.debug(f"TMDB alias enrichment failed for {imdb_id}: {_e}")
 
     movie_data.setdefault('type', 'movie')
+
+    # If year is still missing, try to recover from release_dates already in movie_data
+    if not movie_data.get('year') and movie_data.get('release_dates'):
+        try:
+            earliest = None
+            for country_dates in movie_data['release_dates'].values():
+                for rd in (country_dates if isinstance(country_dates, list) else []):
+                    d = (rd.get('date') or rd.get('release_date') or '')[:10]
+                    if d and len(d) >= 4:
+                        y = int(d[:4])
+                        if earliest is None or y < earliest:
+                            earliest = y
+            if earliest:
+                movie_data['year'] = earliest
+        except Exception:
+            pass
+
     _ensure_plex_guids_in_data(imdb_id, movie_data, 'movie')
     _persist_item(imdb_id, dict(movie_data), session)
     return movie_data
@@ -417,6 +434,9 @@ def _persist_item(imdb_id: str, data: dict, session: SqlAlchemySession):
     session.flush()
 
     for key, value in data.items():
+        # Skip None values — storing str(None)="None" causes false "None" metadata
+        if value is None:
+            continue
         processed = value
         if isinstance(value, (dict, list)):
             try:

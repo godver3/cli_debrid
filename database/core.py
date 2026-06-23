@@ -54,8 +54,7 @@ def retry_on_db_lock(max_attempts=10, initial_wait=0.2, backoff_factor=2,
                     return result
                 except sqlite3.OperationalError as e:
                     last_exception = e
-                    # TEMPORARY DEBUG LOGGING
-                    logging.critical(f"RETRY_DEBUG: Decorator caught OperationalError in {func.__name__}. Error type: {type(e)}. Error str: '{str(e)}'")
+                    logging.debug(f"RETRY_DEBUG: Decorator caught OperationalError in {func.__name__}. Error type: {type(e)}. Error str: '{str(e)}'")
                     
                     if "database is locked" in str(e): # Original check
                         # Check if we have retries left.
@@ -78,8 +77,7 @@ def retry_on_db_lock(max_attempts=10, initial_wait=0.2, backoff_factor=2,
                             attempt += 1 # Reflect this last failed attempt
                             break # Exit loop to handle final failure
                     else:
-                        # TEMPORARY DEBUG LOGGING
-                        logging.critical(f"RETRY_DEBUG: Decorator in {func.__name__} - error IS NOT 'database is locked'. Actual: '{str(e)}'")
+                        logging.debug(f"RETRY_DEBUG: Decorator in {func.__name__} - error IS NOT 'database is locked'. Actual: '{str(e)}'")
                         # Database error not related to lock
                         overall_end_time = time.monotonic()
                         duration = overall_end_time - overall_start_time
