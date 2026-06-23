@@ -313,6 +313,22 @@ def get_movie_data(imdb_id: str) -> Optional[dict]:
         if releases:
             data['release_dates'] = releases
 
+    # Fallback: if Trakt has no year, extract from release_dates
+    if not data.get('year') and data.get('release_dates'):
+        earliest = None
+        for country_dates in data['release_dates'].values():
+            for rd in (country_dates if isinstance(country_dates, list) else []):
+                d = (rd.get('date') or rd.get('release_date') or '')[:10]
+                if d and len(d) >= 4:
+                    try:
+                        y = int(d[:4])
+                        if earliest is None or y < earliest:
+                            earliest = y
+                    except (ValueError, TypeError):
+                        pass
+        if earliest:
+            data['year'] = earliest
+
     return data
 
 

@@ -75,6 +75,16 @@ def generate_api_key():
     return secrets.token_hex(16)
 
 
+def _get_stable_app_guid() -> str:
+    """Return a stable app GUID derived from the configured API key.
+    Must be the same on every request — Bazarr uses this to identify the
+    Radarr/Sonarr instance and associates its media library with it.
+    A random GUID per request causes Bazarr to lose all media associations."""
+    import hashlib
+    api_key = get_setting('Bazarr Integration', 'api_key', 'cli_debrid_bazarr')
+    return hashlib.md5(f'cli_debrid_bazarr_{api_key}'.encode()).hexdigest()
+
+
 # ============================================================================
 # Helper Functions - Database Queries
 # ============================================================================
@@ -886,7 +896,7 @@ def system_status():
         'appName': app_name,
         'version': version,
         'buildTime': PROCESS_START_TIME.isoformat() + 'Z',
-        'appGuid': secrets.token_hex(16),
+        'appGuid': _get_stable_app_guid(),
         'instanceName': 'cli_debrid',
         'isDebug': False,
         'isProduction': True,
@@ -932,6 +942,7 @@ def root_folder():
     mode = get_setting('File Management', 'file_collection_management', 'Plex')
     if mode == 'Plex':
         mount_path = ''
+        # Try to read mount path from cli_mount config.json
         try:
             from utilities.settings import load_config
             import json as _json
@@ -944,10 +955,19 @@ def root_folder():
                 mount_path = (dc_cfg.get('mount', {}).get('mount_path') or '').strip()
         except Exception:
             pass
+        # Fallback: derive mount base from CLI's mounted_file_location setting
+        if not mount_path:
+            try:
+                mounted = get_setting('Usenet Provider', 'mounted_file_location', '/debrid/__all__')
+                # Strip trailing path components like /__all__ or /content to get the mount base
+                import re as _re
+                mount_path = _re.sub(r'/(__all__|content|movies|shows)$', '', mounted.rstrip('/'))
+            except Exception:
+                mount_path = '/debrid'
         folders = [
             {'id': 1, 'path': os.path.join(mount_path, 'movies')},
             {'id': 2, 'path': os.path.join(mount_path, 'shows')}
-        ] if mount_path else []
+        ]
     else:
         symlink_path = get_setting('File Management', 'symlinked_files_path', '/mnt/symlinked')
         folders = [

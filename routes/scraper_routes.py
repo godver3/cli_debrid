@@ -257,7 +257,7 @@ def add_torrent_to_debrid():
         except (ValueError, TypeError):
             episode_number = None
             
-        # NZB / Usenet path — route to Decypharr instead of debrid
+        # NZB / Usenet path — route to cli_mount instead of debrid
         protocol = request.form.get('protocol', '').lower()
         nzb_url = request.form.get('nzb_url', '')
         episode_nzb_urls_raw = request.form.get('episode_nzb_urls', '')
@@ -773,6 +773,73 @@ def add_torrent_to_debrid():
                     else:
                          logging.warning(f"No metadata or no 'seasons' key found in metadata for TMDB ID {tmdb_id} during season pack processing for {title} S{season_number}.") # Enhanced log
 
+                    # Debrid File Naming: rename the season pack folder in cli_mount DFS
+                    # The single rename covers all episodes since they share the same torrent.
+                    if torrent_hash:
+                        try:
+                            from utilities.settings import get_setting as _dbn_gs_sp
+                            if _dbn_gs_sp('Debrid Provider', 'enable_debrid_naming', False):
+                                _dbn_orig_sp = original_scraped_torrent_title or filled_by_title
+                                _dbn_title_sp = _build_debrid_title(
+                                    title=title,
+                                    year=year,
+                                    imdb_id=imdb_id,
+                                    version=final_version_for_item,
+                                    original_scraped_torrent_title=_dbn_orig_sp,
+                                    media_type='tv',
+                                    season=season_number,
+                                    episode=None,
+                                    episode_title=None,
+                                    tags=selected_tags or None,
+                                    content_source_display_name=None,
+                                )
+                                if _dbn_title_sp and _dbn_title_sp != _dbn_orig_sp:
+                                    import threading as _dbn_t_sp
+                                    _dbn_h_sp = torrent_hash
+                                    _dbn_n_sp = _dbn_title_sp
+                                    _dbn_provider_id_sp = torrent_id  # RD provider ID for DB lookup
+                                    def _do_rename_sp(h, name, provider_id=None):
+                                        import time as _t
+                                        try:
+                                            from usenet.climount_client import get_climount_client
+                                            _dc_sp = get_climount_client()
+                                            for _a in range(100):
+                                                if _dc_sp.rename_nzb(h, name):
+                                                    logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} (season pack)')
+                                                    # Register cli_debrid IDs — match via magnet infohash
+                                                    # (filled_by_torrent_id stores the RD provider ID, not the infohash)
+                                                    try:
+                                                        import os as _os_sp
+                                                        from database.core import get_db_connection as _gdb_sp
+                                                        _VIDEO_EXTS_SP = {'.mkv','.mp4','.avi','.mov','.wmv','.m4v','.ts'}
+                                                        with _gdb_sp() as _dbc_sp:
+                                                            # Use provider_id (RD torrent ID) for lookup — more reliable
+                                                            # than infohash since filled_by_magnet may be NULL at rename time
+                                                            _lookup = provider_id or h
+                                                            _sibs_sp = _dbc_sp.execute(
+                                                                "SELECT id, filled_by_file FROM media_items "
+                                                                "WHERE (filled_by_torrent_id=? OR filled_by_magnet LIKE ?) "
+                                                                "AND state IN ('Checking','Collected','Upgrading')",
+                                                                (_lookup, f'%{h}%')
+                                                            ).fetchall()
+                                                            _cli_ids_sp = {
+                                                                s[1]: s[0] for s in _sibs_sp
+                                                                if s[1] and _os_sp.path.splitext(s[1])[1].lower() in _VIDEO_EXTS_SP
+                                                            }
+                                                            if _cli_ids_sp:
+                                                                _dc_sp.register_cli_ids(h, _cli_ids_sp)
+                                                                logging.info(f'[DebridNaming] Registered {len(_cli_ids_sp)} cli_debrid IDs for {h!r} (season pack)')
+                                                    except Exception as _reg_sp:
+                                                        logging.debug(f'[DebridNaming] cli_ids registration error (season pack): {_reg_sp}')
+                                                    return
+                                                _t.sleep(30)
+                                            logging.warning(f'[DebridNaming] Could not rename {h!r} after 100 attempts (season pack)')
+                                        except Exception as _e_sp:
+                                            logging.debug(f'[DebridNaming] Rename error (season pack): {_e_sp}')
+                                    _dbn_t_sp.Thread(target=_do_rename_sp, args=(_dbn_h_sp, _dbn_n_sp, _dbn_provider_id_sp), daemon=True).start()
+                        except Exception as _dbn_ex_sp:
+                            logging.debug(f'[DebridNaming] Setup error (season pack): {_dbn_ex_sp}')
+
                     return jsonify({
                         'success': True,
                         'message': 'Successfully processed season pack',
@@ -848,7 +915,7 @@ def add_torrent_to_debrid():
                     checking_queue.add_item(item)
                     logging.info(f"Added item to checking queue: {item}")
 
-                    # Debrid File Naming: rename Decypharr DFS folder using structured CLI name
+                    # Debrid File Naming: rename cli_mount DFS folder using structured CLI name
                     if torrent_hash:
                         try:
                             from utilities.settings import get_setting as _dbn_gs2
@@ -874,20 +941,28 @@ def add_torrent_to_debrid():
                                 if _dbn_title2 and _dbn_title2 != _dbn_orig2:
                                     import threading as _dbn_t2
                                     _dbn_h2, _dbn_n2 = torrent_hash, _dbn_title2
-                                    def _do_rename2(h, name):
+                                    _dbn_item_id2 = item.get('id')
+                                    def _do_rename2(h, name, item_id):
                                         import time as _t
                                         try:
-                                            from usenet.decypharr_client import get_decypharr_client
-                                            _dc2 = get_decypharr_client()
-                                            for _a2 in range(20):
+                                            from usenet.climount_client import get_climount_client
+                                            _dc2 = get_climount_client()
+                                            for _a2 in range(100):
                                                 if _dc2.rename_nzb(h, name):
-                                                    logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} (manual add, attempt {_a2+1} of 20)')
+                                                    logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} (manual add, attempt {_a2+1} of 100)')
+                                                    if item_id:
+                                                        try:
+                                                            from database.database_writing import update_media_item as _umi
+                                                            _umi(item_id, debrid_folder_name=name)
+                                                        except Exception as _db_err:
+                                                            logging.debug(f'[DebridNaming] DB update failed (manual add): {_db_err}')
+                                                        _dc2.register_cli_ids_for_item(h, item_id)
                                                     return
                                                 _t.sleep(30)
-                                            logging.warning(f'[DebridNaming] Could not rename {h!r} after 20 attempts (manual add)')
+                                            logging.warning(f'[DebridNaming] Could not rename {h!r} after 100 attempts (manual add)')
                                         except Exception as _e2:
                                             logging.debug(f'[DebridNaming] Rename error (manual add): {_e2}')
-                                    _dbn_t2.Thread(target=_do_rename2, args=(_dbn_h2, _dbn_n2), daemon=True).start()
+                                    _dbn_t2.Thread(target=_do_rename2, args=(_dbn_h2, _dbn_n2, _dbn_item_id2), daemon=True).start()
                         except Exception as _dbn_ex2:
                             logging.debug(f'[DebridNaming] Setup error (manual add): {_dbn_ex2}')
 
@@ -1788,7 +1863,7 @@ def _build_nzb_title(title, year, imdb_id, version, original_scraped_torrent_tit
                      pack_original=None, tags=None, content_source_display_name=None):
     """
     Build a structured NZB job title when 'Enable NZB File Naming' is on.
-    This becomes both the Decypharr folder name and filename.
+    This becomes both the cli_mount folder name and filename.
     Falls back to original_scraped_torrent_title if setting is off or data missing.
 
     pack_original: if provided, used for the (original) bracket instead of
@@ -1815,13 +1890,31 @@ def _build_nzb_title(title, year, imdb_id, version, original_scraped_torrent_tit
     _include_cs = _gs('Usenet Provider', 'include_content_source_in_nzb_naming', False)
     _cs_part = _san(content_source_display_name) if (_include_cs and content_source_display_name) else ''
     # (original) bracket uses pack_original when provided, else original_scraped_torrent_title
-    _orig = _san(pack_original or original_scraped_torrent_title or '')
+    _orig_full = _san(pack_original or original_scraped_torrent_title or '')
+    # Strip redundant prefix — pass 1: year-based, pass 2: resolution-based for episodes.
+    _orig = _orig_full
+    if _orig_full and _year:
+        _strip_pat = _re.compile(
+            r'^.*?[\s.]' + _re.escape(str(_year)) + r'[\s.]+',
+            _re.IGNORECASE
+        )
+        _stripped = _strip_pat.sub('', _orig_full).strip(' .')
+        if _stripped and _stripped != _orig_full:
+            _orig = _stripped
+    if _orig == _orig_full and _orig_full:
+        _ep_strip = _re.compile(r'^.*?((?:2160|1080|720)[pP][\s.])', _re.IGNORECASE)
+        _em = _ep_strip.match(_orig_full)
+        if _em:
+            _orig = _orig_full[_em.start(1):].strip(' .')
     # Tags block: {tags-Tag1,Tag2} — only if tags provided
     _tags_part = f'{{tags-{tags}}}' if tags and str(tags).strip() else ''
 
     is_episode = media_type in ('tv', 'show', 'episode') and season is not None and episode is not None
 
-    _MAX_TITLE = 220  # leave room for path prefix + .nzb.processing suffix
+    # NZB name is used as both folder AND filename: folder/folder.nzb
+    # Full path = folder + '/' + folder + '.nzb' = 2*folder + 5
+    # Keep full path <= 240: folder <= (240-5)/2 = 117
+    _MAX_TITLE = 117
 
     def _assemble(*p):
         return ' - '.join(x for x in p if x)
@@ -1864,13 +1957,13 @@ def _build_nzb_title(title, year, imdb_id, version, original_scraped_torrent_tit
         _season_part = f'S{int(season):02d}' if season is not None else ''
         base = _assemble(f'{_title} ({_year})', _season_part)
         _imdb_str = f'{{imdb-{_imdb}}}' if _imdb else ''
+        _orig_part = f'({_orig})' if _orig else ''
         for attempt in [
-            _assemble(base, _imdb_str, _tags_part, _version, _cs_part, f'({_orig})' if _orig else ''),
-            _assemble(base, _imdb_str, _tags_part, _version, _cs_part),
-            _assemble(base, _imdb_str, _tags_part, _version, f'({_orig})' if _orig else ''),
-            _assemble(base, _imdb_str, _tags_part, _version),
-            _assemble(base, _imdb_str, _tags_part),
-            _assemble(base, _imdb_str),
+            _assemble(base, _imdb_str, _tags_part, _version, _cs_part, _orig_part),
+            _assemble(base, _imdb_str, _tags_part, _version, _orig_part),
+            _assemble(base, _imdb_str, _tags_part, _orig_part),
+            _assemble(base, _imdb_str, _orig_part),
+            _assemble(base, _orig_part),
             base,
         ]:
             if len(attempt) <= _MAX_TITLE:
@@ -1883,7 +1976,7 @@ def _build_debrid_title(title, year, imdb_id, version, original_scraped_torrent_
                         tags=None, content_source_display_name=None):
     """
     Build a structured debrid folder name when 'Enable Debrid File Naming' is on.
-    This becomes the Decypharr DFS mount folder/file name for the debrid torrent.
+    This becomes the cli_mount DFS mount folder/file name for the debrid torrent.
     Completely separate from _build_nzb_title — reads Debrid Provider settings only.
     Falls back to original_scraped_torrent_title if setting is off or data missing.
     Tags are embedded as {tags-Tag1,Tag2} between imdb and version, same as NZB naming.
@@ -1904,28 +1997,53 @@ def _build_debrid_title(title, year, imdb_id, version, original_scraped_torrent_
     _version = _san(version).strip('*') if (version and _include_version) else ''
     _include_cs = _gs('Debrid Provider', 'include_content_source_in_debrid_naming', False)
     _cs_part = _san(content_source_display_name) if (_include_cs and content_source_display_name) else ''
-    _orig = _san(original_scraped_torrent_title or '')
+    _orig_full = _san(original_scraped_torrent_title or '')
+    # Strip redundant prefix from the original torrent name so only quality tags remain.
+    # Pass 1: strip everything up to and including the year (movies/shows with year).
+    # Pass 2: strip SxxExx + optional episode title (episode filenames without year).
+    _orig = _orig_full
+    if _orig_full and _year:
+        _strip_pat = _re.compile(
+            r'^.*?[\s.]' + _re.escape(str(_year)) + r'[\s.]+',
+            _re.IGNORECASE
+        )
+        _stripped = _strip_pat.sub('', _orig_full).strip(' .')
+        if _stripped and _stripped != _orig_full:
+            _orig = _stripped
+    if _orig == _orig_full and _orig_full:
+        # No year found — try stripping everything up to resolution/quality tag.
+        # Handles episode filenames like "Show S10E04 Title 1080p TrueHD..." → "1080p TrueHD..."
+        _ep_strip = _re.compile(r'^.*?((?:2160|1080|720)[pP][\s.])', _re.IGNORECASE)
+        _em = _ep_strip.match(_orig_full)
+        if _em:
+            _orig = _orig_full[_em.start(1):].strip(' .')
     # Tags block: {tags-Tag1,Tag2} — only if tags provided (same format as NZB naming)
     _tags_part = f'{{tags-{tags}}}' if tags and str(tags).strip() else ''
 
     is_episode = media_type in ('tv', 'show', 'episode') and season is not None and episode is not None
 
-    _MAX_TITLE = 220
+    # Debrid folder name is used as both folder AND filename: folder/folder.mkv
+    # Full path = folder + '/' + folder + '.mkv' = 2*folder + 5
+    # Keep full path <= 240: folder <= (240-5)/2 = 117
+    _MAX_TITLE = 117
 
     def _assemble(*p):
         return ' - '.join(x for x in p if x)
+
+    # (original) is mandatory — drop cs/version/tags before dropping it
+    _orig_part = f'({_orig})' if _orig else ''
 
     if is_episode:
         _ep_title = _san(episode_title or '')
         base = _assemble(f'{_title} ({_year})', f'S{int(season):02d}E{int(episode):02d}')
         _imdb_part = f'{{imdb-{_imdb}}}' if _imdb else ''
         for attempt in [
-            _assemble(base, _ep_title, _imdb_part, _tags_part, _version, _cs_part, f'({_orig})' if _orig else ''),
-            _assemble(base, _imdb_part, _tags_part, _version, _cs_part, f'({_orig})' if _orig else ''),
-            _assemble(base, _imdb_part, _tags_part, _version, _cs_part),
-            _assemble(base, _imdb_part, _tags_part, _version, f'({_orig})' if _orig else ''),
-            _assemble(base, _imdb_part, _tags_part, _version),
-            _assemble(base, _imdb_part),
+            _assemble(base, _ep_title, _imdb_part, _tags_part, _version, _cs_part, _orig_part),
+            _assemble(base, _imdb_part, _tags_part, _version, _cs_part, _orig_part),
+            _assemble(base, _imdb_part, _tags_part, _version, _orig_part),
+            _assemble(base, _imdb_part, _tags_part, _orig_part),
+            _assemble(base, _imdb_part, _orig_part),
+            _assemble(base, _orig_part),
             base,
         ]:
             if len(attempt) <= _MAX_TITLE:
@@ -1936,11 +2054,11 @@ def _build_debrid_title(title, year, imdb_id, version, original_scraped_torrent_
         base = _assemble(f'{_title} ({_year})', _season_part)
         _imdb_str = f'{{imdb-{_imdb}}}' if _imdb else ''
         for attempt in [
-            _assemble(base, _imdb_str, _tags_part, _version, _cs_part, f'({_orig})' if _orig else ''),
-            _assemble(base, _imdb_str, _tags_part, _version, _cs_part),
-            _assemble(base, _imdb_str, _tags_part, _version, f'({_orig})' if _orig else ''),
-            _assemble(base, _imdb_str, _tags_part, _version),
-            _assemble(base, _imdb_str),
+            _assemble(base, _imdb_str, _tags_part, _version, _cs_part, _orig_part),
+            _assemble(base, _imdb_str, _tags_part, _version, _orig_part),
+            _assemble(base, _imdb_str, _tags_part, _orig_part),
+            _assemble(base, _imdb_str, _orig_part),
+            _assemble(base, _orig_part),
             base,
         ]:
             if len(attempt) <= _MAX_TITLE:
@@ -1952,7 +2070,7 @@ def _submit_single_episode_nzb(client, nzb_url, ep_label, is_anime=False, media_
                                 tags=None, tags_exclusive=False):
     """Fetch + submit one episode NZB.
     Returns (job_id, nzb_text, missing_segments) where missing_segments=True means
-    Decypharr's server couldn't find the articles (abort pack, don't blacklist)."""
+    cli_mount's server couldn't find the articles (abort pack, don't blacklist)."""
     from routes.api_tracker import api as _nzb_api
     from database.not_wanted_magnets import is_nzb_segment_not_wanted
     nzb_text = None
@@ -1969,7 +2087,7 @@ def _submit_single_episode_nzb(client, nzb_url, ep_label, is_anime=False, media_
                                         is_anime=is_anime, media_type=media_type,
                                         tags=tags, tags_exclusive=tags_exclusive)
         if not job_id and client.last_missing_segments:
-            logging.warning(f'[NZBPack] {ep_label}: Decypharr server missing segments — aborting pack (NZB not blacklisted)')
+            logging.warning(f'[NZBPack] {ep_label}: cli_mount server missing segments — aborting pack (NZB not blacklisted)')
             return None, None, True
         return job_id, nzb_text, False
     except Exception as e:
@@ -1990,15 +2108,15 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
                     creating new ones. When provided, those items are updated in-place (state →
                     Adding) preserving their IDs and history. Used by scraping_queue batch path.
     """
-    from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
+    from usenet.climount_client import get_climount_client, reset_climount_client
     from database.not_wanted_magnets import add_to_not_wanted_nzb_segment, extract_nzb_segment_id
     from metadata.metadata import get_metadata, get_release_date
     from database.database_writing import add_media_item, update_media_item_state, update_media_item
 
-    reset_decypharr_client()
-    client = get_decypharr_client()
+    reset_climount_client()
+    client = get_climount_client()
     if not client.is_enabled():
-        return jsonify({'error': 'Usenet provider (Decypharr) is not enabled.'}), 503
+        return jsonify({'error': 'Usenet provider (cli_mount) is not enabled.'}), 503
 
     # Resolve metadata once
     imdb_id = None
@@ -2035,7 +2153,7 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
     if not imdb_id:
         logging.warning(f'[NZBPack] Could not resolve imdb_id for tmdb_id={tmdb_id} — replace cleanup will not fire')
 
-    # Pre-load existing Decypharr NZB names to skip already-submitted episodes
+    # Pre-load existing cli_mount NZB names to skip already-submitted episodes
     _existing_nzb_names = set()
     try:
         from routes.api_tracker import api as _dcy_check_api
@@ -2062,9 +2180,9 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
             if _pg2 >= _total2:
                 break
             _pg2 += 1
-        logging.info(f'[NZBPack] Loaded {len(_existing_nzb_names)} existing Decypharr NZBs for dedup check')
+        logging.info(f'[NZBPack] Loaded {len(_existing_nzb_names)} existing cli_mount NZBs for dedup check')
     except Exception as _de2:
-        logging.warning(f'[NZBPack] Could not load existing Decypharr NZBs: {_de2}')
+        logging.warning(f'[NZBPack] Could not load existing cli_mount NZBs: {_de2}')
 
     # Pre-load already-collected episodes to avoid duplicates
     # Exclude episodes marked manual_replace=1 — those are intentional replacements
@@ -2101,7 +2219,7 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
         # Aggregate pack display title — always has quality tags, used for (original) bracket
         _pack_orig = _re_label.sub(r'\s*\[NZB Pack[^\]]*\]', '', original_scraped_torrent_title or title).strip()
 
-        # Per-episode raw filename — used only for the Decypharr job name (has SxxExx)
+        # Per-episode raw filename — used only for the cli_mount job name (has SxxExx)
         _ep_raw = (episode_filenames or {}).get(ep_num, '') or ''
         _ep_raw_clean = _re_label.sub(r'\.(mkv|mp4|avi|m4v|nfo|nzb)$', '', _ep_raw, flags=_re_label.IGNORECASE).strip()
         if not _ep_raw_clean:
@@ -2147,7 +2265,7 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
                         _add_guid(primary_url)
                     except Exception:
                         pass
-                    # Delete from Decypharr
+                    # Delete from cli_mount
                     try:
                         from routes.api_tracker import api as _del_api
                         from utilities.settings import get_setting as _gs
@@ -2190,7 +2308,7 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
             # Create queue item for this episode
             try:
                 checking_id = f"nzb:{job_id}" if not str(job_id).startswith('nzb:') else str(job_id)
-                # ep_label is what was submitted to Decypharr — adding_queue uses
+                # ep_label is what was submitted to cli_mount — adding_queue uses
                 # filled_by_file to look up the entry, so it must match exactly
                 # Reuse existing item if provided (scraping_queue batch path)
                 # otherwise create a new item (scraper UI path)
@@ -2251,21 +2369,21 @@ def _add_nzb_pack_to_usenet(episode_nzb_urls, fallback_nzb_urls, title, year, me
         'message': msg,
         'submitted': len(submitted),
         'failed_episodes': failed_eps,
-        'provider': 'Decypharr',
+        'provider': 'cli_mount',
     })
 
 
 def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, version, tmdb_id,
                        original_scraped_torrent_title=None, genres=None, current_score=0.0,
                        selected_folder=None, selected_folder_is_custom=False, selected_tags=None):
-    """Submit an NZB URL to Decypharr and track it through the queue like a debrid add."""
-    from usenet.decypharr_client import get_decypharr_client, reset_decypharr_client
+    """Submit an NZB URL to cli_mount and track it through the queue like a debrid add."""
+    from usenet.climount_client import get_climount_client, reset_climount_client
     from metadata.metadata import get_metadata, get_release_date
-    reset_decypharr_client()
-    client = get_decypharr_client()
+    reset_climount_client()
+    client = get_climount_client()
 
     if not client.is_enabled():
-        return jsonify({'error': 'Usenet provider (Decypharr) is not enabled. Configure it in Required Settings.'}), 503
+        return jsonify({'error': 'Usenet provider (cli_mount) is not enabled. Configure it in Required Settings.'}), 503
 
     if not nzb_url:
         return jsonify({'error': 'No NZB URL provided'}), 400
@@ -2316,7 +2434,7 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
                                         is_anime=_is_anime, media_type=media_type or '',
                                         tags=selected_tags, tags_exclusive=False)
         if not job_id and client.last_missing_segments:
-            logging.warning(f'[NZB] Decypharr server missing segments for {title!r}')
+            logging.warning(f'[NZB] cli_mount server missing segments for {title!r}')
         elif job_id:
             logging.info(f'[NZB] Submitted via content upload: {title}')
     else:
@@ -2325,7 +2443,7 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
                                 tags=selected_tags, tags_exclusive=False)
 
     if not job_id:
-        return jsonify({'error': 'Failed to submit NZB to Decypharr'}), 500
+        return jsonify({'error': 'Failed to submit NZB to cli_mount'}), 500
 
     logging.info(f'[NZB] Submitted successfully, job_id={job_id}')
 
@@ -2419,13 +2537,13 @@ def _add_nzb_to_usenet(nzb_url, title, year, media_type, season, episode, versio
                 _place_nzb_in_adding(item_id)
     except Exception as _qe:
         logging.error(f'[NZB] Queue tracking failed for {title}: {_qe}', exc_info=True)
-        # Don't fail the response — NZB was submitted successfully to Decypharr
+        # Don't fail the response — NZB was submitted successfully to cli_mount
 
     return jsonify({
         'success': True,
         'message': f'NZB submitted to {_usenet_pname()} (job: {job_id}). Tracking through queue.',
         'job_id': job_id,
-        'provider': 'Decypharr',
+        'provider': 'cli_mount',
     })
 
 

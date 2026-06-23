@@ -69,7 +69,7 @@ def inject_usenet_provider_name():
         from usenet import get_usenet_provider_display_name
         return dict(usenet_provider_name=get_usenet_provider_display_name())
     except Exception:
-        return dict(usenet_provider_name='Decypharr')
+        return dict(usenet_provider_name='cli_mount')
 
 @app.context_processor
 def inject_nzbdav_categories():

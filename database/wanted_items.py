@@ -767,6 +767,21 @@ def add_wanted_items(media_items_batch: List[Dict[str, Any]], versions_input, un
                             logging.error(f"Error checking Trakt early release for {imdb_id}: {str(e)}")
                             skip_stats['trakt_error'] += 1
                     
+                    # Battery year fallback: process_metadata may have gotten year=None if
+                    # battery didn't have the item yet. Try battery now before inserting.
+                    if not item.get('year') and item.get('imdb_id'):
+                        try:
+                            from cli_battery.app.direct_api import DirectAPI as _DirectAPI
+                            _batt_meta, _ = _DirectAPI.get_movie_metadata(item['imdb_id'])
+                            if _batt_meta and _batt_meta.get('year'):
+                                item['year'] = _batt_meta['year']
+                            elif _batt_meta and _batt_meta.get('release_date'):
+                                _rd = str(_batt_meta['release_date'])
+                                if len(_rd) >= 4 and _rd[:4].isdigit():
+                                    item['year'] = int(_rd[:4])
+                        except Exception:
+                            pass
+
                     movie_data = (
                         item.get('imdb_id'), item.get('tmdb_id'), normalized_title, item.get('year'),
                         item.get('release_date'), 'Wanted', 'movie', datetime.now(), version, genres, item.get('runtime'),

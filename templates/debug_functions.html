@@ -378,9 +378,9 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
     'Remove Duplicate Database Items':'database',
     'Restore Database from Backup':'database',
     'Clean Up Old Database Files':'database',
-    'Backup Decypharr Databases':'database',
-    'Restore Decypharr Database from Backup':'database',
-    'Clean Up Old Decypharr Backup Files':'database',
+    'Backup cli_mount Databases':'database',
+    'Restore cli_mount Database from Backup':'database',
+    'Clean Up Old cli_mount Backup Files':'database',
     'Manage Duplicate Versions':'database',
     'Fix Episode Numbers':'database',
     'Migrate between usenet providers':'library',
@@ -394,7 +394,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
     'Direct Emby/Jellyfin Scan':'library',
     'Move Item ID to Upgrading':'library',
     'Plex Labels Management':'library',
-    'Decypharr DB Cleanup':'library',
+    'cli_mount DB Cleanup':'library',
     'Backfill NZB File Names':'library',
     'Symlink Verification Queue':'symlink',
     'Convert Library to Symlinks':'symlink',
@@ -1046,17 +1046,17 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
             </div>
             <div id="cleanupResults" style="margin-top: 15px;"></div>
         </div>
-        <!-- ── Decypharr DB Backup / Restore / Cleanup ── -->
+        <!-- ── cli_mount DB Backup / Restore / Cleanup ── -->
         <div class="debug_item" id="dcy-backup-section" style="display:none">
-            <h3>Backup Decypharr Databases</h3>
-            <p class="description">Back up Decypharr's <code>entries.db</code> and <code>items.db</code> to <code>{data_path}/db/backups/</code>. Uses the same tiered retention as CLI backups (4 copies per file). Also runs automatically with the daily CLI database backup task.</p>
+            <h3>Backup cli_mount Databases</h3>
+            <p class="description">Back up cli_mount's <code>entries.db</code> and <code>items.db</code> to <code>{data_path}/db/backups/</code>. Uses the same tiered retention as CLI backups (4 copies per file). Also runs automatically with the daily CLI database backup task.</p>
             <button type="button" class="btn" id="dcy-backup-now-btn" onclick="dcyBackupNow()">Backup Now</button>
             <div id="dcy-backup-result" style="margin-top:8px"></div>
         </div>
 
         <div class="debug_item" id="dcy-restore-section" style="display:none">
-            <h3>Restore Decypharr Database from Backup</h3>
-            <p class="description">Restore <code>entries.db</code> or <code>items.db</code> from a backup. <strong>Stop Decypharr before restoring</strong>, then start it again after. No container restart needed.</p>
+            <h3>Restore cli_mount Database from Backup</h3>
+            <p class="description">Restore <code>entries.db</code> or <code>items.db</code> from a backup. <strong>Stop cli_mount before restoring</strong>, then start it again after. No container restart needed.</p>
             <div style="margin-bottom:10px">
                 <button type="button" class="btn" onclick="dcyLoadBackupsList()">Load Available Backups</button>
             </div>
@@ -1070,8 +1070,8 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
         </div>
 
         <div class="debug_item" id="dcy-cleanup-db-section" style="display:none">
-            <h3>Clean Up Old Decypharr Backup Files</h3>
-            <p class="description">Scan and remove old Decypharr database backups to free up disk space.</p>
+            <h3>Clean Up Old cli_mount Backup Files</h3>
+            <p class="description">Scan and remove old cli_mount database backups to free up disk space.</p>
             <div style="margin-bottom:10px">
                 <button type="button" class="btn" onclick="dcyScanOldDatabases()">Scan for Old Backups</button>
             </div>
@@ -1579,12 +1579,12 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
             </div>
         </div>
 
-        <!-- Decypharr Cleanup -->
-        <div class="debug_item" id="decypharr-cleanup-card">
-            <h3>Decypharr DB Cleanup</h3>
-            <p class="description">Remove entries for a specific debrid provider from Decypharr's <code>entries.db</code> and <code>items.db</code> using infohash matching. Mixed folders (containing files from multiple providers) are rebuilt with only non-provider files kept.</p>
+        <!-- cli_mount Cleanup -->
+        <div class="debug_item" id="climount-cleanup-card">
+            <h3>cli_mount DB Cleanup</h3>
+            <p class="description">Remove entries for a specific debrid provider from cli_mount's <code>entries.db</code> and <code>items.db</code> using infohash matching. Mixed folders (containing files from multiple providers) are rebuilt with only non-provider files kept.</p>
             <div style="background:#2a1a00;border:1px solid #ff6b35;border-radius:4px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#ffaa66;">
-                &#9888; <strong>Stop Decypharr before running a live cleanup.</strong> Dry run is safe to run anytime.
+                &#9888; <strong>Stop cli_mount before running a live cleanup.</strong> Dry run is safe to run anytime.
             </div>
             <div class="form-group" style="margin-bottom:10px">
                 <label for="dcy-provider">Debrid Provider:</label>
@@ -1595,8 +1595,8 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
             </div>
             <div class="form-group" style="margin-bottom:10px">
                 <label for="dcy-db-path">DB Path:</label>
-                <input type="text" id="dcy-db-path" placeholder="/decypharr_data/db" style="width:300px;font-family:monospace;font-size:12px">
-                <span style="font-size:11px;color:#888;margin-left:6px">path to Decypharr's db/ folder inside container</span>
+                <input type="text" id="dcy-db-path" placeholder="/cli_mount_data/db" style="width:300px;font-family:monospace;font-size:12px">
+                <span style="font-size:11px;color:#888;margin-left:6px">path to cli_mount's db/ folder inside container</span>
             </div>
             <div class="form-group" style="margin-bottom:12px">
                 <label>
@@ -1610,7 +1610,7 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
 
         <div class="debug_item" id="backfill-nzb-names-card">
             <h3>Backfill NZB File Names</h3>
-            <p class="description">Rename collected NZB items in the database and Decypharr to the structured NZB naming format (<code>Title (Year) - {imdb-...} - Version - (Original.Release.Name)</code>). Requires NZB file naming to be enabled in settings.</p>
+            <p class="description">Rename collected NZB items in the database and cli_mount to the structured NZB naming format (<code>Title (Year) - {imdb-...} - Version - (Original.Release.Name)</code>). Requires NZB file naming to be enabled in settings.</p>
             <div class="form-group" style="margin-bottom:10px">
                 <label>
                     <input type="checkbox" id="backfill-nzb-dry-run">
@@ -1630,12 +1630,12 @@ body:not(.tangerine-theme) #tngDebug { display: none !important; }
         </div>
     </div>
 
-    <!-- Decypharr Cleanup Results Modal -->
+    <!-- cli_mount Cleanup Results Modal -->
     <div id="dcy-results-modal" class="episode-modal" style="display:none">
         <div class="episode-modal-overlay" onclick="document.getElementById('dcy-results-modal').style.display='none'"></div>
         <div class="episode-modal-content">
             <div class="episode-modal-header">
-                <h2>Decypharr Cleanup Results</h2>
+                <h2>cli_mount Cleanup Results</h2>
                 <button class="episode-modal-close" onclick="document.getElementById('dcy-results-modal').style.display='none'">&times;</button>
             </div>
             <div class="episode-modal-body" id="dcy-modal-body" style="font-family:monospace;font-size:12px;white-space:pre-wrap"></div>
@@ -2560,12 +2560,18 @@ if (document.readyState === 'loading') {
                 
                 // Clear any existing options
                 taskSelect.innerHTML = '';
-                
+
+                // Add special Full cli_mount Sync option at top
+                const fullSyncOpt = document.createElement('option');
+                fullSyncOpt.value = '__full_climount_sync__';
+                fullSyncOpt.textContent = 'Full cli_mount Sync (reset + full)';
+                taskSelect.appendChild(fullSyncOpt);
+
                 // Check if we have the new structured format
                 if (data.task_map) {
                     // Sort tasks alphabetically by display name
                     data.task_map.sort((a, b) => a.display_name.localeCompare(b.display_name));
-                    
+
                     // Add options with display names
                     data.task_map.forEach(task => {
                         const option = document.createElement('option');
@@ -2636,7 +2642,27 @@ if (document.readyState === 'loading') {
             const taskSelect = document.getElementById('task_select');
             const taskName = taskSelect.value;
             const taskDisplayName = taskSelect.options[taskSelect.selectedIndex].textContent;
-            
+
+            // Handle special Full cli_mount Sync option
+            if (taskName === '__full_climount_sync__') {
+                showPopup({
+                    type: POPUP_TYPES.CONFIRM,
+                    message: 'Reset sync timestamp and run a full cli_mount sync?',
+                    title: 'Full cli_mount Sync',
+                    onConfirm: () => {
+                        Loading.show();
+                        fetch('/debug/run_full_climount_sync', { method: 'POST' })
+                            .then(r => r.json())
+                            .then(d => {
+                                Loading.hide();
+                                if (d.success) showPopup({ type: POPUP_TYPES.SUCCESS, title: 'Success', message: d.message });
+                                else showPopup({ type: POPUP_TYPES.ERROR, title: 'Error', message: d.error || 'Failed' });
+                            }).catch(() => { Loading.hide(); });
+                    }
+                });
+                return;
+            }
+
             showPopup({
                 type: POPUP_TYPES.CONFIRM,
                 message: `Are you sure you want to run the task "${taskDisplayName}"?`,
@@ -5600,7 +5626,7 @@ if (document.readyState === 'loading') {
     window.toggleAllContent = toggleAllContent;
     window.deleteOldDatabases = deleteOldDatabases;
 
-    // ── Decypharr Cleanup ──────────────────────────────────────────────────
+    // ── cli_mount Cleanup ──────────────────────────────────────────────────
     let _dcyPollTimer = null;
 
     async function dcyLoadProviders() {
@@ -5608,7 +5634,7 @@ if (document.readyState === 'loading') {
         const dbInput = document.getElementById('dcy-db-path');
         sel.innerHTML = '<option value="">Loading...</option>';
         try {
-            const r = await fetch('/debug/api/decypharr_providers');
+            const r = await fetch('/debug/api/climount_providers');
             const d = await r.json();
             if (d.success && d.providers && d.providers.length) {
                 sel.innerHTML = d.providers.map(p => `<option value="${p}">${p}</option>`).join('');
@@ -5617,7 +5643,7 @@ if (document.readyState === 'loading') {
                     dbInput.value = d.data_path.replace(/\/?$/, '/db');
                 }
             } else {
-                sel.innerHTML = '<option value="">No providers found — check Decypharr Data Path setting</option>';
+                sel.innerHTML = '<option value="">No providers found — check cli_mount Data Path setting</option>';
             }
         } catch(e) {
             sel.innerHTML = '<option value="">Error loading providers</option>';
@@ -5642,7 +5668,7 @@ if (document.readyState === 'loading') {
         clearTimeout(_dcyPollTimer);
 
         try {
-            const r = await fetch('/debug/api/decypharr_cleanup', {
+            const r = await fetch('/debug/api/climount_cleanup', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({provider, dry_run: dryRun, db_path: dbPath})
@@ -5665,7 +5691,7 @@ if (document.readyState === 'loading') {
     function _dcyPollCleanup(jobId, btn, status) {
         _dcyPollTimer = setTimeout(async () => {
             try {
-                const r = await fetch(`/debug/api/decypharr_cleanup_status/${jobId}`);
+                const r = await fetch(`/debug/api/climount_cleanup_status/${jobId}`);
                 const d = await r.json();
                 if (d.status === 'running') {
                     status.textContent = 'Running...';
@@ -5701,12 +5727,12 @@ if (document.readyState === 'loading') {
     window.dcyLoadProviders = dcyLoadProviders;
     window.dcyRunCleanup = dcyRunCleanup;
 
-    // ── Decypharr DB Backup / Restore / Cleanup ───────────────────────────
+    // ── cli_mount DB Backup / Restore / Cleanup ───────────────────────────
 
-    // Show Decypharr DB sections only if data_path is configured
+    // Show cli_mount DB sections only if data_path is configured
     (async function dcyCheckDataPath() {
         try {
-            const r = await fetch('/debug/api/decypharr_providers');
+            const r = await fetch('/debug/api/climount_providers');
             const d = await r.json();
             if (d.success && d.data_path) {
                 ['dcy-backup-section','dcy-restore-section','dcy-cleanup-db-section'].forEach(id => {
@@ -5723,7 +5749,7 @@ if (document.readyState === 'loading') {
         btn.disabled = true; btn.textContent = 'Backing up...';
         result.textContent = '';
         try {
-            const r = await fetch('/debug/api/decypharr_backup_now', {method:'POST'});
+            const r = await fetch('/debug/api/climount_backup_now', {method:'POST'});
             const d = await r.json();
             result.style.color = d.success ? '#4ade80' : '#ff6b6b';
             result.textContent = d.success ? d.message : ('Error: ' + d.error);
@@ -5740,7 +5766,7 @@ if (document.readyState === 'loading') {
         const resultsDiv = document.getElementById('dcyRestoreResults');
         resultsDiv.innerHTML = '<div class="spinner-border text-primary" role="status"><span class="sr-only">Loading...</span></div>';
         try {
-            const r = await fetch('/debug/api/list_decypharr_backups');
+            const r = await fetch('/debug/api/list_climount_backups');
             const d = await r.json();
             if (!d.success) { resultsDiv.innerHTML = `<div class="alert alert-danger">Error: ${d.error}</div>`; return; }
             if (!d.backups.length) { resultsDiv.innerHTML = '<div class="alert alert-info">No backup files found.</div>'; return; }
@@ -5805,11 +5831,11 @@ if (document.readyState === 'loading') {
         if (!_dcySelectedBackupPath) return;
         const fname = _dcySelectedBackupPath.split('/').pop();
         const safety = document.getElementById('dcyBackupBeforeRestore').checked;
-        if (!confirm(`Restore "${fname}"?\n\nMake sure Decypharr is stopped before proceeding.\n${safety ? 'A safety backup will be created.' : 'No safety backup will be created.'}`)) return;
+        if (!confirm(`Restore "${fname}"?\n\nMake sure cli_mount is stopped before proceeding.\n${safety ? 'A safety backup will be created.' : 'No safety backup will be created.'}`)) return;
         const btn = document.getElementById('dcyRestoreBtn');
         btn.disabled = true; btn.textContent = 'Restoring...';
         try {
-            const r = await fetch('/debug/api/request_decypharr_restore', {
+            const r = await fetch('/debug/api/request_climount_restore', {
                 method: 'POST',
                 headers: {'Content-Type':'application/json'},
                 body: JSON.stringify({backup_path: _dcySelectedBackupPath, create_safety_backup: safety})
@@ -5832,7 +5858,7 @@ if (document.readyState === 'loading') {
         const resultsDiv = document.getElementById('dcyCleanupResults');
         resultsDiv.innerHTML = '<em>Scanning...</em>';
         try {
-            const r = await fetch('/debug/api/scan_decypharr_old_databases');
+            const r = await fetch('/debug/api/scan_climount_old_databases');
             const d = await r.json();
             if (!d.success) { resultsDiv.innerHTML = `<span style="color:#ff6b6b">Error: ${d.error}</span>`; return; }
             if (!d.files.length) { resultsDiv.innerHTML = '<em>No old backup files found.</em>'; return; }
@@ -5878,7 +5904,7 @@ if (document.readyState === 'loading') {
         const result = document.getElementById('dcyDeleteResult');
         result.textContent = dryRun ? 'Previewing...' : 'Deleting...';
         try {
-            const r = await fetch('/debug/api/delete_decypharr_old_databases', {
+            const r = await fetch('/debug/api/delete_climount_old_databases', {
                 method: 'POST',
                 headers: {'Content-Type':'application/json'},
                 body: JSON.stringify({file_paths: paths, dry_run: dryRun})

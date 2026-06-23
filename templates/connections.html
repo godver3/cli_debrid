@@ -285,12 +285,12 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
             </div>
         </div>
 
-        <!-- Usenet provider (Decypharr / NzbDAV) -->
-        <div class="connection-card" data-service="decypharr" {% if not decypharr_status %}style="display:none"{% endif %}>
+        <!-- Usenet provider (cli_mount / NzbDAV) -->
+        <div class="connection-card" data-service="climount" {% if not climount_status %}style="display:none"{% endif %}>
             <div class="connection-header">
                 <i class="fas fa-newspaper"></i>
                 <span class="connection-title">{{ usenet_provider_name }}</span>
-                <div class="status-indicator {% if decypharr_status %}{{ 'connected' if decypharr_status.connected else 'disconnected' }}{% else %}checking{% endif %}"></div>
+                <div class="status-indicator {% if climount_status %}{{ 'connected' if climount_status.connected else 'disconnected' }}{% else %}checking{% endif %}"></div>
             </div>
             <div class="conn-card-footer" data-ts="">
                 <span class="conn-card-spinner"></span><span>Checking…</span>
@@ -497,7 +497,7 @@ body.tangerine-theme #tng-connections .tng-empty{text-align:center;padding:3rem;
                 'phalanx_db_status': 'phalanx-db',
                 'tvdb_status': 'tvdb',
                 'tmdb_status': 'tmdb',
-                'decypharr_status': 'decypharr',
+                'climount_status': 'climount',
             };
             for (const [key, service] of Object.entries(map)) {
                 if (data[key]) {

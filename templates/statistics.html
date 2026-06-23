@@ -96,7 +96,7 @@
 <div class="statistics-wrapper {% if compact_view %}compact-view{% endif %}">
     <div class="toggle-container" id="toggle_container">
       <div class="topbar-inner">
-        {% set _is_dcy = stats.active_downloads_data and stats.active_downloads_data.get('source') == 'decypharr' %}
+        {% set _is_dcy = stats.active_downloads_data and stats.active_downloads_data.get('source') == 'climount' %}
         {% if not limited_env %}
         <div class="tb-pill">
             <i class="fas fa-server" style="color:var(--st-accent)"></i>
@@ -935,27 +935,27 @@
                     </div>
                 </div>
                 {% if not limited_env %}
-                {% set is_decypharr = stats.active_downloads_data and stats.active_downloads_data.get('source') == 'decypharr' %}
-                <div class="stat-item {% if not is_decypharr %}stat-item-clickable{% endif %} status-{{ stats.active_downloads_data.status }}" id="kpi-active" {% if not is_decypharr %}onclick="window.location.href='/debrid_manager/?tab=active'"{% endif %}>
+                {% set is_climount = stats.active_downloads_data and stats.active_downloads_data.get('source') == 'climount' %}
+                <div class="stat-item {% if not is_climount %}stat-item-clickable{% endif %} status-{{ stats.active_downloads_data.status }}" id="kpi-active" {% if not is_climount %}onclick="window.location.href='/debrid_manager/?tab=active'"{% endif %}>
                     <div class="stat-content">
                         <div class="stat-icon">
-                            <i class="fas fa-{% if is_decypharr %}newspaper{% else %}download{% endif %}"></i>
+                            <i class="fas fa-{% if is_climount %}newspaper{% else %}download{% endif %}"></i>
                         </div>
                         <div class="stat-text-content">
-                            <div class="stat-label">{% if is_decypharr %}Connections{% else %}Active{% endif %}</div>
+                            <div class="stat-label">{% if is_climount %}Connections{% else %}Active{% endif %}</div>
                             <div class="stat-number {{ stats.active_downloads_data.status }}">
-                                <span id="active_downloads">{{ stats.active_downloads_data.count|default(0) }}</span>{% if not is_decypharr %}/<span id="download_limit">{{ stats.active_downloads_data.limit|default(25) }}</span>{% endif %}
+                                <span id="active_downloads">{{ stats.active_downloads_data.count|default(0) }}</span>{% if not is_climount %}/<span id="download_limit">{{ stats.active_downloads_data.limit|default(25) }}</span>{% endif %}
                             </div>
                         </div>
                     </div>
                 </div>
-                <div class="stat-item {% if not is_decypharr %}stat-item-clickable{% endif %}" {% if not is_decypharr %}onclick="window.location.href='/debrid_manager/?tab=usage'"{% endif %}>
+                <div class="stat-item {% if not is_climount %}stat-item-clickable{% endif %}" {% if not is_climount %}onclick="window.location.href='/debrid_manager/?tab=usage'"{% endif %}>
                     <div class="stat-content">
                         <div class="stat-icon">
                             <i class="fas fa-chart-line"></i>
                         </div>
                         <div class="stat-text-content">
-                            <div class="stat-label">{% if is_decypharr %}Pool Usage{% else %}Usage{% endif %}</div>
+                            <div class="stat-label">{% if is_climount %}Pool Usage{% else %}Usage{% endif %}</div>
                             <div class="stat-number">
                                 <span id="daily_usage">{{ stats.usage_stats_data.percentage }}%</span>
                             </div>

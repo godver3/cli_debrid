@@ -1106,7 +1106,12 @@ class QueueManager:
             return
 
         # Update the item state in the database - no need to add to a queue since Collected is a state, not a queue
-        update_media_item_state(item['id'], 'Collected', collected_at=collected_at)
+        # Write original_filename once at first collection (NULL-guard — never overwrite).
+        # filled_by_file holds the raw provider filename at this point before any CLI renaming.
+        _kwargs = {'collected_at': collected_at}
+        if not item.get('original_filename') and item.get('filled_by_file'):
+            _kwargs['original_filename'] = item['filled_by_file']
+        update_media_item_state(item['id'], 'Collected', **_kwargs)
         
         # Get the updated item
         updated_item = get_media_item_by_id(item['id'])

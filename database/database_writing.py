@@ -191,6 +191,7 @@ def update_media_item_state(item_id, state, **kwargs):
             'resolution',
             'upgrading_from',
             'debrid_folder_name',
+            'original_filename',
         ]
         for field in optional_fields:
             if field in kwargs:
@@ -818,6 +819,22 @@ def add_media_item(item: dict, user_initiated: bool = False) -> int:
                 # Different version: INSERT new entry (leave old ghostlisted alone)
                 else:
                     logging.info(f"🔓 User-initiated add: Different version detected (existing: {existing_version}, new: {version}). Inserting new entry, leaving old ghostlisted entry (ID: {existing_id}) as-is.")
+
+        # Sanitize year — never store the string "None", convert to None/int
+        if 'year' in item:
+            y = item['year']
+            if y == 'None' or y == '' or y is None:
+                # Try to recover from release_date
+                rd = item.get('release_date', '')
+                if rd and len(str(rd)) >= 4:
+                    try:
+                        item['year'] = int(str(rd)[:4])
+                    except (ValueError, TypeError):
+                        item['year'] = None
+                else:
+                    item['year'] = None
+            elif isinstance(y, str) and y.isdigit():
+                item['year'] = int(y)
 
         # Get the column names from the item dictionary
         columns = list(item.keys())

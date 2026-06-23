@@ -334,7 +334,7 @@ def handle_state_change(item: Dict[str, Any]) -> None:
                     # Plex mode: media is on a read-only debrid/usenet mount, so a
                     # sidecar .srt can't be written next to it. Download subtitles
                     # and upload them to the Plex item via API (keyed on the stored
-                    # ratingKey). Storage-agnostic — works for zurg/nzbdav/decypharr.
+                    # ratingKey). Storage-agnostic — works for zurg/nzbdav/climount.
                     rk = fresh_item.get('ms_item_id')
                     if rk:
                         # The on-disk file is often obfuscated (e.g. tGcr.mkv) on

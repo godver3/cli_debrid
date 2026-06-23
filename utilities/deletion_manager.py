@@ -2067,7 +2067,7 @@ class DeletionManager:
                 is_nzb = str(torrent_id or '').startswith('nzb:')
                 logging.info(f"[DEBRID_REMOVAL] Removal requested. is_nzb={is_nzb}, torrent_id={torrent_id}")
                 if is_nzb:
-                    # NZB item — delete from usenet provider (Decypharr or NzbDAV)
+                    # NZB item — delete from usenet provider (cli_mount or NzbDAV)
                     try:
                         from usenet import get_usenet_client, reset_usenet_client
                         reset_usenet_client()
@@ -2494,8 +2494,8 @@ class DeletionManager:
             from database.database_reading import get_item_by_id
 
             # Collect unique torrent/NZB IDs from all items, split by type
-            unique_torrent_ids = {}   # torrent_id -> first item title (debrid provider)
-            unique_nzb_ids = {}       # info_hash -> (filled_by_file, title) (Decypharr)
+            unique_torrent_ids = {}   # torrent_id -> (title, infohash, debrid_folder_name)
+            unique_nzb_ids = {}       # info_hash -> (filled_by_file, title) (cli_mount)
             for item_id in item_ids:
                 try:
                     item = get_item_by_id(item_id)
@@ -2509,11 +2509,17 @@ class DeletionManager:
                                 match_name = item.get('location_basename') or item.get('filled_by_file') or title
                                 unique_nzb_ids[tid] = (match_name, title)
                         elif tid not in unique_torrent_ids:
-                            unique_torrent_ids[tid] = title
+                            # Store infohash (from magnet) and folder name for cli_mount deletion
+                            magnet = item.get('filled_by_magnet') or ''
+                            import re as _re
+                            _m = _re.search(r'urn:btih:([0-9a-fA-F]{40})', magnet, _re.IGNORECASE)
+                            infohash = _m.group(1).lower() if _m else ''
+                            folder_name = item.get('debrid_folder_name') or ''
+                            unique_torrent_ids[tid] = (title, infohash, folder_name)
                 except Exception as e:
                     logging.warning(f"[DELETE_MULTIPLE] Could not get item {item_id} for dedup: {e}")
 
-            # Remove NZB items from usenet provider (Decypharr or NzbDAV)
+            # Remove NZB items from usenet provider (cli_mount or NzbDAV)
             if unique_nzb_ids:
                 logging.info(f"[DELETE_MULTIPLE] Phase 0: Removing {len(unique_nzb_ids)} NZB(s) from usenet provider")
                 try:
@@ -2539,25 +2545,32 @@ class DeletionManager:
             if unique_torrent_ids and self.debrid:
                 logging.info(f"[DELETE_MULTIPLE] Phase 0: Removing {len(unique_torrent_ids)} unique torrent(s) from debrid (from {len(item_ids)} items) - PARALLEL MODE (5 concurrent)")
 
-                def remove_single_torrent(torrent_id_and_title):
-                    torrent_id, first_title = torrent_id_and_title
+                def remove_single_torrent(torrent_id_and_info):
+                    torrent_id, (first_title, infohash, folder_name) = torrent_id_and_info
                     try:
                         self.debrid.remove_torrent(torrent_id, removal_reason=f"Library deletion: {first_title}", skip_hash_tracking=True)
                         logging.info(f"[DELETE_MULTIPLE] Removed torrent {torrent_id} from debrid")
-                        return torrent_id, True, None
                     except Exception as e:
                         error_msg = str(e)
                         if '404' in error_msg or 'Not Found' in error_msg:
                             logging.info(f"[DELETE_MULTIPLE] Torrent {torrent_id} already removed from debrid")
-                            return torrent_id, True, None
                         else:
                             logging.error(f"[DELETE_MULTIPLE] Failed to remove torrent {torrent_id}: {e}")
                             return torrent_id, False, str(e)
+                    # Also remove from cli_mount — it keeps its own entry separate from RD
+                    if infohash:
+                        try:
+                            from usenet.debrid_repair_engine import _delete_from_climount
+                            _delete_from_climount(infohash, folder_name)
+                            logging.info(f"[DELETE_MULTIPLE] Removed torrent {infohash} from cli_mount")
+                        except Exception as dcy_err:
+                            logging.warning(f"[DELETE_MULTIPLE] cli_mount removal failed for {infohash}: {dcy_err}")
+                    return torrent_id, True, None
 
                 with ThreadPoolExecutor(max_workers=5) as executor:
                     future_to_torrent = {
-                        executor.submit(remove_single_torrent, (tid, title)): tid
-                        for tid, title in unique_torrent_ids.items()
+                        executor.submit(remove_single_torrent, (tid, info)): tid
+                        for tid, info in unique_torrent_ids.items()
                     }
                     for future in as_completed(future_to_torrent):
                         torrent_id, success, error = future.result()

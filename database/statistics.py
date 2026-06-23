@@ -24,7 +24,7 @@ def format_bytes(size):
         size /= 1024.0
     return f"{size:.2f} PB"
 
-# Cache for Decypharr nzbs folder size (updated by background du -sh)
+# Cache for cli_mount nzbs folder size (updated by background du -sh)
 _dcy_nzbs_size_cache = {'size': 'N/A', 'last_update': 0}
 
 # Cache for download stats
@@ -207,7 +207,7 @@ def _refresh_download_stats_blocking():
                             'percentage': round((_active / _max * 100) if _max > 0 else 0),
                             'status': _status,
                             'error': None,
-                            'source': 'decypharr',
+                            'source': 'climount',
                             'library_size': _library_size_str,
                             'broken_nzbs': _broken,
                         }
@@ -216,15 +216,15 @@ def _refresh_download_stats_blocking():
                             'limit': str(_max),
                             'percentage': _pct,
                             'error': None,
-                            'source': 'decypharr',
+                            'source': 'climount',
                             'label': 'Connections'
                         }
                         download_stats_cache['last_update'] = current_time
-                        logging.debug(f"Decypharr stats: active={_active}, idle={_idle}, max={_max}, broken={_broken}, library={_library_size_str}")
+                        logging.debug(f"cli_mount stats: active={_active}, idle={_idle}, max={_max}, broken={_broken}, library={_library_size_str}")
                         return download_stats_cache['active_downloads'], download_stats_cache['usage_stats']
             except Exception as _dcy_err:
-                logging.debug(f"Decypharr stats fetch failed: {_dcy_err}")
-            # Decypharr not available either — return empty stats
+                logging.debug(f"cli_mount stats fetch failed: {_dcy_err}")
+            # cli_mount not available either — return empty stats
             download_stats_cache['active_downloads'] = {'count': 0, 'limit': 0, 'percentage': 0, 'status': 'error', 'error': 'no_provider'}
             download_stats_cache['usage_stats'] = {'used': '0', 'limit': '0', 'percentage': 0, 'error': 'no_provider'}
             download_stats_cache['last_update'] = current_time
