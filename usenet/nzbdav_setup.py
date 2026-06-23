@@ -3,8 +3,8 @@
 nzbdav setup & migration assistant for cli-debrid.
 
 Generates the Docker/rclone/config files for an NzbDAV usenet backend and walks
-you through either a FRESH install or a migration FROM Decypharr — so a new user
-can get started, and a Decypharr user can switch, without rediscovering every
+you through either a FRESH install or a migration FROM cli_mount — so a new user
+can get started, and a cli_mount user can switch, without rediscovering every
 gotcha by hand. Generic and stdlib-only: it prompts for your paths/credentials
 and writes templated files; it does not hard-code one person's setup.
 
@@ -16,7 +16,7 @@ Subcommands
 -----------
   wizard          Interactive walk-through (fresh or migrate). Recommended.
   generate        Non-interactive: write compose + rclone.conf + config block.
-  migrate-files   Replay existing Decypharr .nzb files into NzbDAV (file move).
+  migrate-files   Replay existing cli_mount .nzb files into NzbDAV (file move).
   check           Reminder to run the preflight doctor (nzbdav_migrate.py).
 
 Examples
@@ -25,7 +25,7 @@ Examples
   python3 nzbdav_setup.py generate --nzbdav-host 192.168.1.50 --apikey KEY \\
       --mount-base /srv/DUMB/mnt --out ./nzbdav-generated
   python3 nzbdav_setup.py migrate-files --nzbdav-host 192.168.1.50 --apikey KEY \\
-      --decypharr-container decypharr
+      --climount-container climount
 
 After generating: review the files, add the categories (printed), `docker compose
 up -d` the nzbdav stack, set cli-debrid's Usenet Provider config, restart
@@ -55,8 +55,8 @@ DEFAULT_CATEGORIES = [
     '__unplayable__', 'music',
 ]
 
-# Decypharr-folder -> NzbDAV-category mapping used when replaying files. Edit via
-# --category-map k=v,k=v. Defaults map Decypharr's content folders to the cli-debrid
+# cli_mount-folder -> NzbDAV-category mapping used when replaying files. Edit via
+# --category-map k=v,k=v. Defaults map cli_mount's content folders to the cli-debrid
 # heuristic category names so replayed files land where cli-debrid/Plex expect them.
 DEFAULT_CATEGORY_MAP = {
     'movies': 'movies',
@@ -307,15 +307,15 @@ python3 nzbdav_migrate.py --config <cli-debrid config.json>
 ```
 Should report no blocking issues.
 
-## (Migration only) Move existing Decypharr files
+## (Migration only) Move existing cli_mount files
 NzbDAV has no copy of your old grabs. Options:
 - **Recommended:** run NzbDAV in parallel and let NEW grabs fill it; let the old
-  Decypharr library age out. Robust, no surprises.
-- **Replay** old .nzb files (best-effort — Decypharr trims old .nzb files, so a
+  cli_mount library age out. Robust, no surprises.
+- **Replay** old .nzb files (best-effort — cli_mount trims old .nzb files, so a
   large fraction may be unavailable, and some replays double-nest folders):
   ```
   python3 nzbdav_setup.py migrate-files --nzbdav-host {a.nzbdav_host} --port {a.port} \\
-      --apikey <api.key> --decypharr-container decypharr
+      --apikey <api.key> --climount-container climount
   ```
 Do NOT hard-swap mounts under Plex — a video section can purge "missing" items.
 """
@@ -337,7 +337,7 @@ def _merge_into_config(path, block):
 
 
 # ---------------------------------------------------------------------------
-# migrate-files (Decypharr .nzb replay → NzbDAV)
+# migrate-files (cli_mount .nzb replay → NzbDAV)
 # ---------------------------------------------------------------------------
 
 def do_migrate_files(a):
@@ -357,22 +357,22 @@ def do_migrate_files(a):
         except Exception:
             pass
 
-    print(f"Replaying Decypharr .nzb files from container '{a.decypharr_container}' → {base}")
-    print("NOTE: best-effort. Decypharr trims old .nzb files; unavailable ones are skipped.\n")
+    print(f"Replaying cli_mount .nzb files from container '{a.climount_container}' → {base}")
+    print("NOTE: best-effort. cli_mount trims old .nzb files; unavailable ones are skipped.\n")
 
-    # Enumerate available .nzb files inside the decypharr container
-    r = subprocess.run(['docker', 'exec', a.decypharr_container, 'sh', '-c', f'ls {a.decypharr_nzb_path}'],
+    # Enumerate available .nzb files inside the climount container
+    r = subprocess.run(['docker', 'exec', a.climount_container, 'sh', '-c', f'ls {a.climount_nzb_path}'],
                        capture_output=True, text=True)
     if r.returncode != 0:
-        print(f"ERROR: cannot list {a.decypharr_nzb_path} in {a.decypharr_container}: {r.stderr[:200]}")
+        print(f"ERROR: cannot list {a.climount_nzb_path} in {a.climount_container}: {r.stderr[:200]}")
         return 1
     nzb_basenames = {f[:-4] for f in r.stdout.split() if f.endswith('.nzb')}
-    print(f"Found {len(nzb_basenames)} replayable .nzb files in Decypharr.")
+    print(f"Found {len(nzb_basenames)} replayable .nzb files in cli_mount.")
 
-    # Build work list from the mounted decypharr content folders
+    # Build work list from the mounted climount content folders
     work = []
     for decy_cat, nz_cat in catmap.items():
-        folder = os.path.join(a.decypharr_mount, decy_cat)
+        folder = os.path.join(a.climount_mount, decy_cat)
         if not os.path.isdir(folder):
             continue
         for release in os.listdir(folder):
@@ -393,7 +393,7 @@ def do_migrate_files(a):
         # throttle on queue depth
         _wait_queue(base, a.apikey, a.max_queue)
         local = os.path.join(staging, f"{release}.nzb")
-        cp = subprocess.run(['docker', 'cp', f"{a.decypharr_container}:{a.decypharr_nzb_path}/{release}.nzb", local],
+        cp = subprocess.run(['docker', 'cp', f"{a.climount_container}:{a.climount_nzb_path}/{release}.nzb", local],
                            capture_output=True, text=True)
         if cp.returncode != 0:
             state['failed'].append(f"{key} (copy-fail)"); _save(state, state_file); continue
@@ -451,7 +451,7 @@ def _save(state, path):
 
 def do_wizard(a):
     print("== NzbDAV setup assistant ==\n")
-    scenario = prompt("Scenario — (f)resh install or (m)igrate from Decypharr?", "f").lower()
+    scenario = prompt("Scenario — (f)resh install or (m)igrate from cli_mount?", "f").lower()
     a.nzbdav_host = prompt("NzbDAV host/IP cli-debrid will reach", a.nzbdav_host)
     a.port = prompt("NzbDAV port", a.port)
     a.apikey = prompt("NzbDAV SAB api.key (blank if not created yet)", a.apikey)
@@ -468,11 +468,11 @@ def do_wizard(a):
     rc = do_generate(a, interactive=True)
     if scenario.startswith('m'):
         print("\n--- Migration ---")
-        print("Generated files set up NzbDAV alongside Decypharr. For the existing")
+        print("Generated files set up NzbDAV alongside cli_mount. For the existing")
         print("library, the recommended path is parallel-fill (let new grabs populate")
         print("NzbDAV). If you want to attempt replaying old .nzb files, run:")
         print(f"  python3 {os.path.basename(__file__)} migrate-files --nzbdav-host {a.nzbdav_host} "
-              f"--port {a.port} --apikey <api.key> --decypharr-container decypharr")
+              f"--port {a.port} --apikey <api.key> --climount-container climount")
     return rc
 
 
@@ -512,12 +512,12 @@ def build_parser():
     w.add_argument('--out', default='./nzbdav-generated')
     w.add_argument('--cli-debrid-config', default=''); w.add_argument('--write-config', action='store_true')
 
-    m = sub.add_parser('migrate-files', help='replay Decypharr .nzb files into NzbDAV (best-effort)')
+    m = sub.add_parser('migrate-files', help='replay cli_mount .nzb files into NzbDAV (best-effort)')
     add_common(m)
-    m.add_argument('--decypharr-container', default='decypharr')
-    m.add_argument('--decypharr-nzb-path', default='/app/usenet/nzbs', help='.nzb store inside the container')
-    m.add_argument('--decypharr-mount', default='/srv/DUMB/mnt/debrid/decypharr', help='host path of decypharr content folders')
-    m.add_argument('--category-map', default='', help='decypharr_cat=nzbdav_cat,comma-separated')
+    m.add_argument('--climount-container', default='climount')
+    m.add_argument('--climount-nzb-path', default='/app/usenet/nzbs', help='.nzb store inside the container')
+    m.add_argument('--climount-mount', default='/srv/DUMB/mnt/debrid/climount', help='host path of climount content folders')
+    m.add_argument('--category-map', default='', help='climount_cat=nzbdav_cat,comma-separated')
     m.add_argument('--max-queue', type=int, default=3, help='throttle: keep nzbdav queue below this')
     m.add_argument('--state-file', default='./nzbdav_replay.state.json')
 

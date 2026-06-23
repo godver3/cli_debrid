@@ -1505,7 +1505,7 @@ def get_library_size_api():
     is_cached_value = False
     calculation_error = None # Store the specific error if calculation fails
 
-    # Decypharr mode — reset nzbs size cache and re-run statvfs
+    # cli_mount mode — reset nzbs size cache and re-run statvfs
     from utilities.settings import get_setting as _gs_lib
     if not _gs_lib('Debrid Provider', 'api_key', default='').strip():
         try:

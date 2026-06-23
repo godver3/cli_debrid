@@ -3,7 +3,7 @@
 nzbdav migration doctor for cli-debrid.
 
 Preflight checker that encodes the things you otherwise learn the hard way when
-switching cli-debrid's usenet backend from Decypharr to NzbDAV. It is read-only
+switching cli-debrid's usenet backend from cli_mount to NzbDAV. It is read-only
 by default and works for ANY cli-debrid install (it reads your config and probes
 your nzbdav), not one specific setup.
 
@@ -22,8 +22,8 @@ What it checks
 
 What it deliberately does NOT do
 --------------------------------
-  Bulk re-import of your existing Decypharr library into nzbdav. In practice that
-  is unreliable: Decypharr trims old .nzb files (a large fraction are not
+  Bulk re-import of your existing cli_mount library into nzbdav. In practice that
+  is unreliable: cli_mount trims old .nzb files (a large fraction are not
   replayable), replays can double-nest folders, and a hard mount-swap can make
   Plex purge "missing" items from its DB. The robust path is to run nzbdav in
   PARALLEL and let new grabs fill it, rather than a big-bang replay. This tool

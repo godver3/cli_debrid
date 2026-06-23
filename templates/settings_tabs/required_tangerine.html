@@ -185,7 +185,7 @@
 </script>
 {% endif %}
 
-<!-- Usenet Provider (Decypharr) -->
+<!-- Usenet Provider (cli_mount) -->
 <div class="settings-section settings-card">
     <div class="settings-section-header">
         <svg class="expand-icon settings-toggle-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -200,7 +200,7 @@
             <svg class="info-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
             </svg>
-            <div class="info-banner-content">Connect a usenet backend — <strong>Decypharr</strong> (custom API, default port 8888) or <strong>NzbDAV</strong> (SAB-compatible API, default port 3000). Both handle NNTP and serve files via the rclone mount.</div>
+            <div class="info-banner-content">Connect a usenet backend — <strong>cli_mount</strong> (custom API, default port 8888) or <strong>NzbDAV</strong> (SAB-compatible API, default port 3000). Both handle NNTP and serve files via the rclone mount.</div>
         </div>
         <div class="settings-form-group">
             <label for="usenet_provider-enabled" class="settings-title">Enable Usenet:</label>
@@ -208,20 +208,20 @@
                    data-section="Usenet Provider" data-key="enabled"
                    {% if settings.get('Usenet Provider', {}).get('enabled') %}checked{% endif %}>
         </div>
-        {% set _provider = settings.get('Usenet Provider', {}).get('provider', 'decypharr') %}
+        {% set _provider = settings.get('Usenet Provider', {}).get('provider', 'climount') %}
         <div class="settings-form-group">
             <label for="usenet_provider-provider" class="settings-title">Provider:</label>
             <select id="usenet_provider-provider" name="Usenet Provider.provider"
                     data-section="Usenet Provider" data-key="provider"
                     class="settings-input">
-                <option value="decypharr" {% if _provider == 'decypharr' %}selected{% endif %}>Decypharr</option>
+                <option value="climount" {% if _provider == 'climount' %}selected{% endif %}>cli_mount</option>
                 <option value="nzbdav"    {% if _provider == 'nzbdav' %}selected{% endif %}>NzbDAV</option>
             </select>
-            <p class="settings-description">Backend type. Decypharr uses custom endpoints (<code>/api/add</code>, <code>/api/browse/nzbs</code>); NzbDAV uses standard SAB query-string API (<code>?mode=…</code>). Both expose the same client interface internally.</p>
+            <p class="settings-description">Backend type. cli_mount uses custom endpoints (<code>/api/add</code>, <code>/api/browse/nzbs</code>); NzbDAV uses standard SAB query-string API (<code>?mode=…</code>). Both expose the same client interface internally.</p>
         </div>
         <details data-provider-only="nzbdav" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
             <summary style="cursor:pointer;font-weight:600;">How to set up NzbDAV (click to expand)</summary>
-            <p class="settings-description" style="margin-top:8px;"><strong>Two containers, one backend (same pattern as zurg + zurg_rclone):</strong> the <code>nzbdav</code> container is the downloader + WebDAV server; an <code>rclone</code> container mounts that WebDAV as a normal folder (e.g. <code>/mnt/nzbdav</code>) so Plex and cli-debrid can read the files as a path. You need both — Decypharr only looked simpler because it bundled the mount internally.</p>
+            <p class="settings-description" style="margin-top:8px;"><strong>Two containers, one backend (same pattern as zurg + zurg_rclone):</strong> the <code>nzbdav</code> container is the downloader + WebDAV server; an <code>rclone</code> container mounts that WebDAV as a normal folder (e.g. <code>/mnt/nzbdav</code>) so Plex and cli-debrid can read the files as a path. You need both — cli_mount only looked simpler because it bundled the mount internally.</p>
             <p class="settings-description"><strong>Don't write these by hand:</strong> use the <strong>setup helper</strong> below — it generates the <code>docker-compose.yml</code> (both containers) + <code>rclone.conf</code> + the config block for you, and can test the connection and create the required categories. The steps below are what it sets up:</p>
             <ol class="settings-description" style="margin-top:8px;line-height:1.6;">
                 <li><strong>Deploy the NzbDAV stack</strong> (nzbdav + rclone) — copy the files from the setup helper below, then <code>docker compose up -d</code>.</li>
@@ -231,15 +231,15 @@
                 <li><strong>Bind the mount + Plex:</strong> bind the nzbdav rclone mount into this container at that path, and add the <code>content/movies</code>, <code>content/shows</code> (+ <code>_1080p_264</code>) folders to your Plex libraries.</li>
                 <li><strong>Verify</strong> with the helper's <em>Test connection &amp; ensure categories</em> button below, then toggle <em>Enable Usenet</em> above.</li>
             </ol>
-            <p class="settings-description" style="margin-top:4px;"><strong>Switching from Decypharr?</strong> Just set Provider to NzbDAV and update the URL/Token here — your existing Decypharr files don't move. Run NzbDAV in parallel and let new grabs fill it (a hard mount-swap can make Plex purge "missing" items). To move existing downloads across, use <strong>Debug → Library → "Migrate between usenet providers"</strong> (in-app, both directions). For the Decypharr→NzbDAV direction it reads Decypharr's stored <code>.nzb</code> files, so bind Decypharr's appdata into cli-debrid (set <em>Decypharr Data Path</em> below) and the tool reads them from <code>&lt;data_path&gt;/usenet/nzbs</code>. (The host CLI <code>nzbdav_setup.py migrate-files</code> does the same from the shell.)</p>
+            <p class="settings-description" style="margin-top:4px;"><strong>Switching from cli_mount?</strong> Just set Provider to NzbDAV and update the URL/Token here — your existing cli_mount files don't move. Run NzbDAV in parallel and let new grabs fill it (a hard mount-swap can make Plex purge "missing" items). To move existing downloads across, use <strong>Debug → Library → "Migrate between usenet providers"</strong> (in-app, both directions). For the cli_mount→NzbDAV direction it reads cli_mount's stored <code>.nzb</code> files, so bind cli_mount's appdata into cli-debrid (set <em>cli_mount Data Path</em> below) and the tool reads them from <code>&lt;data_path&gt;/usenet/nzbs</code>. (The host CLI <code>nzbdav_setup.py migrate-files</code> does the same from the shell.)</p>
         </details>
         {% include '_nzbdav_setup_helper.html' %}
-        <details data-provider-only="decypharr" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
-            <summary style="cursor:pointer;font-weight:600;">How to set up Decypharr (click to expand)</summary>
+        <details data-provider-only="climount" class="settings-form-group" style="border:1px solid #444;border-radius:6px;padding:8px 12px;">
+            <summary style="cursor:pointer;font-weight:600;">How to set up cli_mount (click to expand)</summary>
             <ol class="settings-description" style="margin-top:8px;line-height:1.6;">
-                <li>Run Decypharr with its rclone mount; configure your usenet provider + indexers in Decypharr.</li>
-                <li>Fill below: Decypharr URL (host:8888 — not localhost, conflicts with Phalanx DB), API Token (if auth enabled), Download Folder (leave empty for Decypharr's default).</li>
-                <li>Set the Decypharr Data Path (bind Decypharr's appdata to <code>/decypharr_data</code>) if you want backup/restore/cleanup tools.</li>
+                <li>Run cli_mount with its rclone mount; configure your usenet provider + indexers in cli_mount.</li>
+                <li>Fill below: cli_mount URL (host:8888 — not localhost, conflicts with Phalanx DB), API Token (if auth enabled), Download Folder (leave empty for cli_mount's default).</li>
+                <li>Set the cli_mount Data Path (bind cli_mount's appdata to <code>/cli_mount_data</code>) if you want backup/restore/cleanup tools.</li>
                 <li>Toggle <em>Enable Usenet</em> above.</li>
             </ol>
         </details>
@@ -248,8 +248,8 @@
             <input type="text" id="usenet_provider-url" name="Usenet Provider.url"
                    value="{{ settings.get('Usenet Provider', {}).get('url', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="url"
-                   placeholder="e.g. http://192.168.1.x:8888 (decypharr) or http://192.168.1.x:3000 (nzbdav)">
-            <p class="settings-description" data-provider-only="decypharr">Do not use localhost:8888 — that conflicts with Phalanx DB. Use the Decypharr host IP or container name.</p>
+                   placeholder="e.g. http://192.168.1.x:8888 (cli_mount) or http://192.168.1.x:3000 (nzbdav)">
+            <p class="settings-description" data-provider-only="climount">Do not use localhost:8888 — that conflicts with Phalanx DB. Use the cli_mount host IP or container name.</p>
             <p class="settings-description" data-provider-only="nzbdav">Use the NzbDAV host IP or container name with its port (default 3000), e.g. <code>http://192.168.1.x:3000</code>. Do not append <code>/sabnzbd</code> — NzbDAV serves its SAB-compatible API at the root <code>/api</code>.</p>
         </div>
         <div class="settings-form-group">
@@ -260,21 +260,21 @@
                    placeholder="Leave empty if auth is disabled">
         </div>
         <div class="settings-form-group">
-            <label for="usenet_provider-download_folder" class="settings-title"><span data-provider-only="nzbdav">Fallback Category <span style="color:#888;font-size:0.85em;">(rarely used)</span></span><span data-provider-only="decypharr">Download Folder / Category</span>:</label>
+            <label for="usenet_provider-download_folder" class="settings-title"><span data-provider-only="nzbdav">Fallback Category <span style="color:#888;font-size:0.85em;">(rarely used)</span></span><span data-provider-only="climount">Download Folder / Category</span>:</label>
             <input type="text" id="usenet_provider-download_folder" name="Usenet Provider.download_folder"
                    value="{{ settings.get('Usenet Provider', {}).get('download_folder', '') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="download_folder"
-                   placeholder="decypharr: blank for default · nzbdav: __unplayable__">
-            <p class="settings-description" data-provider-only="decypharr">Category/folder in Decypharr for downloads. Leave empty to use Decypharr's default download folder.</p>
+                   placeholder="cli_mount: blank for default · nzbdav: __unplayable__">
+            <p class="settings-description" data-provider-only="climount">Category/folder in cli_mount for downloads. Leave empty to use cli_mount's default download folder.</p>
             <p class="settings-description" data-provider-only="nzbdav">This is <strong>not</strong> a download destination — it's the <strong>fallback category</strong> used only if the per-release title heuristic can't classify a grab. In practice the heuristic classifies everything (it auto-routes to <code>movies</code> / <code>shows</code> / <code>music</code> and the <code>*_1080p_264</code> variants), so this almost never fires. Recommended value: <code>__unplayable__</code> — a category Plex doesn't scan, so any unclassifiable grab parks there harmlessly instead of polluting a library. This name (and every category the heuristic emits) must exist in NzbDAV's <code>api.categories</code> — use the setup helper's "ensure categories" button above, or add them in NzbDAV → Settings → Categories.</p>
         </div>
-        <div class="settings-form-group" data-provider-only="decypharr">
-            <label for="usenet_provider-data_path" class="settings-title">Decypharr Data Path:</label>
+        <div class="settings-form-group" data-provider-only="climount">
+            <label for="usenet_provider-data_path" class="settings-title">cli_mount Data Path:</label>
             <input type="text" id="usenet_provider-data_path" name="Usenet Provider.data_path"
-                   value="{{ settings.get('Usenet Provider', {}).get('data_path', '/decypharr_data') }}"
+                   value="{{ settings.get('Usenet Provider', {}).get('data_path', '/climount_data') }}"
                    class="settings-input" data-section="Usenet Provider" data-key="data_path"
-                   placeholder="/decypharr_data">
-            <p class="settings-description">Path to Decypharr's data directory inside the container. Add <code>- /path/to/decypharr/appdata:/decypharr_data</code> to your docker-compose volumes, then set this to <code>/decypharr_data</code>. Required for Decypharr DB backup, restore, and cleanup tools — and lets the in-app provider migration (<strong>Debug → Library</strong>) read Decypharr's stored <code>.nzb</code> files from <code>&lt;data_path&gt;/usenet/nzbs</code>.</p>
+                   placeholder="/cli_mount_data">
+            <p class="settings-description">Path to cli_mount's data directory inside the container. Add <code>- /path/to/cli_mount/appdata:/cli_mount_data</code> to your docker-compose volumes, then set this to <code>/cli_mount_data</code>. Required for cli_mount DB backup, restore, and cleanup tools — and lets the in-app provider migration (<strong>Debug → Library</strong>) read cli_mount's stored <code>.nzb</code> files from <code>&lt;data_path&gt;/usenet/nzbs</code>.</p>
         </div>
         <div class="settings-form-group" data-provider-only="nzbdav">
             <label for="usenet_provider-mounted_file_location" class="settings-title">NzbDAV Mount Path:</label>
@@ -338,7 +338,7 @@
         </div>
         {% endif %}
         <script>
-        // Provider-aware field visibility (decypharr vs nzbdav).
+        // Provider-aware field visibility (climount vs nzbdav).
         // Watches the Provider <select> and hides fields tagged data-provider-only=*.
         (function() {
             const sel = document.getElementById('usenet_provider-provider');

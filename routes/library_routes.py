@@ -2420,7 +2420,7 @@ def check_deletion_impact():
                 debrid_hash = item.get('filled_by_magnet_hash') if not is_nzb else torrent_id
                 item_impact['layers']['debrid'] = {
                     'will_delete': bool(is_nzb or debrid_hash),
-                    'description': 'Usenet NZB (Decypharr)' if is_nzb else 'Debrid torrent',
+                    'description': 'Usenet NZB (cli_mount)' if is_nzb else 'Debrid torrent',
                     'hash': debrid_hash,
                     'is_nzb': is_nzb,
                 }

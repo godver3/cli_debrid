@@ -169,7 +169,7 @@ class PendingUncachedQueue:
         )
         self.remove_item(item)
 
-        # Debrid File Naming: rename Decypharr DFS folder using structured CLI name
+        # Debrid File Naming: rename cli_mount DFS folder using structured CLI name
         _dbn_hash3 = torrent_info.get('hash', '').lower()
         if _dbn_hash3:
             try:
@@ -193,22 +193,30 @@ class PendingUncachedQueue:
                     )
                     if _dbn_title3 and _dbn_title3 != _dbn_orig3:
                         import threading as _dbn_t3
-                        def _do_rename3(h, name):
+                        _dbn_item_id3 = item.get('id')
+                        def _do_rename3(h, name, item_id):
                             import time as _t
                             try:
-                                from usenet.decypharr_client import get_decypharr_client
-                                _dc3 = get_decypharr_client()
+                                from usenet.climount_client import get_climount_client
+                                _dc3 = get_climount_client()
                                 if not hasattr(_dc3, 'rename_nzb'):
                                     return  # active usenet provider (e.g. nzbdav) has no rename semantics
-                                for _a3 in range(20):
+                                for _a3 in range(100):
                                     if _dc3.rename_nzb(h, name):
                                         logging.info(f'[DebridNaming] Renamed {h!r} -> {name!r} (pending uncached)')
+                                        if item_id:
+                                            try:
+                                                from database.database_writing import update_media_item as _umi
+                                                _umi(item_id, debrid_folder_name=name)
+                                            except Exception as _db_err:
+                                                logging.debug(f'[DebridNaming] DB update failed (pending uncached): {_db_err}')
+                                            _dc3.register_cli_ids_for_item(h, item_id)
                                         return
                                     _t.sleep(30)
-                                logging.warning(f'[DebridNaming] Could not rename {h!r} after 20 attempts (pending uncached)')
+                                logging.warning(f'[DebridNaming] Could not rename {h!r} after 100 attempts (pending uncached)')
                             except Exception as _e3:
                                 logging.debug(f'[DebridNaming] Rename error (pending uncached): {_e3}')
-                        _dbn_t3.Thread(target=_do_rename3, args=(_dbn_hash3, _dbn_title3), daemon=True).start()
+                        _dbn_t3.Thread(target=_do_rename3, args=(_dbn_hash3, _dbn_title3, _dbn_item_id3), daemon=True).start()
             except Exception as _dbn_ex3:
                 logging.debug(f'[DebridNaming] Setup error (pending uncached): {_dbn_ex3}')
 

@@ -752,7 +752,7 @@ def run_plex_library_maintenance():
                     # live on the Usenet Provider mount. Before declaring a Collected
                     # nzb: item missing, also look on the usenet mount — otherwise an
                     # nzbdav-only box left at the debrid default would wrongly re-grab
-                    # / DB-remove good items. Debrid/decypharr items skip this branch.
+                    # / DB-remove good items. Debrid/climount items skip this branch.
                     _u_mount = (get_setting('Usenet Provider', 'mounted_file_location', '') or '').rstrip('/')
                     if _u_mount.endswith('/__all__'):
                         _u_mount = _u_mount[:-len('/__all__')]

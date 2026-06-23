@@ -1,8 +1,8 @@
 """
-Decypharr DB cleanup — removes entries for a specific debrid provider
+cli_mount DB cleanup — removes entries for a specific debrid provider
 from entries.db and items.db using infohash matching.
 
-Adapted from decypharr_remove_rd.py for use inside cli_debrid.
+Adapted from climount_remove_rd.py for use inside cli_debrid.
 """
 
 import struct
@@ -223,7 +223,7 @@ def parse_item_files(value_bytes):
 
 def run_cleanup(db_dir: str, provider: str, dry_run: bool = True) -> Dict[str, Any]:
     """
-    Run the Decypharr cleanup for the given provider.
+    Run the cli_mount cleanup for the given provider.
     Returns a dict with status, counts, samples, and log lines.
     """
     lines = []
@@ -392,13 +392,13 @@ def run_cleanup(db_dir: str, provider: str, dry_run: bool = True) -> Dict[str, A
     lines.append("Done.")
     lines.append(f"  entries.db:  {n1} deleted")
     lines.append(f"  items.db:    {n2} fully deleted + {n3} partially updated")
-    lines.append("Restart Decypharr — provider files will no longer appear in the mount.")
+    lines.append("Restart cli_mount — provider files will no longer appear in the mount.")
 
     result['success'] = True
     return result
 
 
-def get_decypharr_providers(data_path: str) -> List[str]:
+def get_climount_providers(data_path: str) -> List[str]:
     """Read unique provider names directly from entries.db."""
     entries_path = os.path.join(data_path, 'entries.db')
     if not os.path.exists(entries_path):

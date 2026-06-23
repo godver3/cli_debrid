@@ -271,7 +271,7 @@
             displayItems = Array.from(seen.values());
         }
 
-        // For Adding queue: split active items from those waiting on a download in Decypharr
+        // For Adding queue: split active items from those waiting on a download in cli_mount
         if (queueName === 'Adding') {
             const activeItems = displayItems.filter(item => item.display_state !== 'Downloading');
             const downloadingItems = displayItems.filter(item => item.display_state === 'Downloading');

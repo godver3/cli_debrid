@@ -3,13 +3,13 @@
    dependency (the debug template doesn't pass it). #}
 <div class="debug_item" id="provider-transfer">
   <h3>Migrate between usenet providers</h3>
-  <p class="description">Moves the stored <code>.nzb</code> of each item from one usenet backend to the other; the target re-fetches it from usenet. No re-search, categories preserved where the source exposes them. cli-debrid runs in a container, so it reads NzbDAV over HTTP and Decypharr from a mounted path (no Docker needed).</p>
+  <p class="description">Moves the stored <code>.nzb</code> of each item from one usenet backend to the other; the target re-fetches it from usenet. No re-search, categories preserved where the source exposes them. cli-debrid runs in a container, so it reads NzbDAV over HTTP and cli_mount from a mounted path (no Docker needed).</p>
 
   <div style="border:1px solid #7a5; border-left-width:4px; border-radius:6px; padding:8px 12px; background:rgba(120,170,90,0.08); margin:8px 0;">
     <strong>Before you run this:</strong>
     <ul style="margin:4px 0 0 18px; line-height:1.5;">
       <li>The target <strong>re-downloads from usenet</strong> — subject to your provider's retention &amp; connection limits.</li>
-      <li><strong>Best-effort:</strong> Decypharr trims old <code>.nzb</code> files, so part of an older library may not be transferable.</li>
+      <li><strong>Best-effort:</strong> cli_mount trims old <code>.nzb</code> files, so part of an older library may not be transferable.</li>
       <li>Avoid running it <strong>during a Plex scan</strong> on the same library (heavy concurrent activity).</li>
       <li>Start with a small <em>limit</em> to test before transferring everything.</li>
     </ul>
@@ -18,21 +18,21 @@
   <div class="form-group">
     <label for="pt-direction">Direction:</label>
     <select id="pt-direction">
-      <option value="decypharr_to_nzbdav">Decypharr → NzbDAV</option>
-      <option value="nzbdav_to_decypharr">NzbDAV → Decypharr</option>
+      <option value="climount_to_nzbdav">cli_mount → NzbDAV</option>
+      <option value="nzbdav_to_climount">NzbDAV → cli_mount</option>
     </select>
   </div>
 
-  {# --- Decypharr fields --- #}
+  {# --- cli_mount fields --- #}
   <div class="pt-field" data-for="decy-nzbpath">
-    <label for="pt-decy-nzbpath">Decypharr nzb-store path <span style="color:#888">(source)</span>:</label>
-    <input type="text" id="pt-decy-nzbpath" placeholder="/decypharr_data/usenet/nzbs">
-    <p class="description">Path <em>inside this cli-debrid container</em> to Decypharr's stored <code>.nzb</code> files. Bind Decypharr's appdata into cli-debrid (the same <code>data_path</code> bind the Decypharr DB tools use) and point this at its <code>usenet/nzbs</code> folder. Example compose volume: <code>- /host/decypharr/appdata:/decypharr_data</code> → then this path is <code>/decypharr_data/usenet/nzbs</code>.</p>
+    <label for="pt-decy-nzbpath">cli_mount nzb-store path <span style="color:#888">(source)</span>:</label>
+    <input type="text" id="pt-decy-nzbpath" placeholder="/cli_mount_data/usenet/nzbs">
+    <p class="description">Path <em>inside this cli-debrid container</em> to cli_mount's stored <code>.nzb</code> files. Bind cli_mount's appdata into cli-debrid (the same <code>data_path</code> bind the cli_mount DB tools use) and point this at its <code>usenet/nzbs</code> folder. Example compose volume: <code>- /host/cli_mount/appdata:/cli_mount_data</code> → then this path is <code>/cli_mount_data/usenet/nzbs</code>.</p>
   </div>
   <div class="pt-field" data-for="decy-conn">
-    <label for="pt-decy-url">Decypharr URL <span style="color:#888">(target)</span>:</label>
+    <label for="pt-decy-url">cli_mount URL <span style="color:#888">(target)</span>:</label>
     <input type="text" id="pt-decy-url" placeholder="http://192.168.1.x:8888">
-    <label for="pt-decy-token" style="margin-top:6px;">Decypharr API token (if auth enabled):</label>
+    <label for="pt-decy-token" style="margin-top:6px;">cli_mount API token (if auth enabled):</label>
     <input type="text" id="pt-decy-token" placeholder="optional">
   </div>
 
@@ -46,7 +46,7 @@
   <div class="pt-field" data-for="nzbdav-cat">
     <label for="pt-nzbdav-cat">Target category (NzbDAV):</label>
     <input type="text" id="pt-nzbdav-cat" placeholder="__unplayable__">
-    <p class="description">Decypharr's nzb-store is flat (no category), so transferred items land in this NzbDAV category. Must already exist in NzbDAV. To preserve categories, migrate one category at a time by pointing the path above at that category's releases.</p>
+    <p class="description">cli_mount's nzb-store is flat (no category), so transferred items land in this NzbDAV category. Must already exist in NzbDAV. To preserve categories, migrate one category at a time by pointing the path above at that category's releases.</p>
   </div>
 
   <div style="display:flex; gap:14px; flex-wrap:wrap; align-items:center; margin-top:6px;">
@@ -78,34 +78,34 @@
   fetch(BASE + '/config').then(function(r){return r.json();}).then(function(d){
     CFG = d || {};
     if (CFG.provider === 'nzbdav') { if(!val('pt-nzbdav-url')) $('pt-nzbdav-url').value = CFG.url||''; if(!val('pt-nzbdav-token')) $('pt-nzbdav-token').value = CFG.token||''; }
-    if (CFG.provider === 'decypharr') { if(!val('pt-decy-url')) $('pt-decy-url').value = CFG.url||''; if(!val('pt-decy-token')) $('pt-decy-token').value = CFG.token||''; }
-    if (!val('pt-decy-nzbpath')) $('pt-decy-nzbpath').value = CFG.nzb_path_guess || '/decypharr_data/usenet/nzbs';
+    if (CFG.provider === 'climount') { if(!val('pt-decy-url')) $('pt-decy-url').value = CFG.url||''; if(!val('pt-decy-token')) $('pt-decy-token').value = CFG.token||''; }
+    if (!val('pt-decy-nzbpath')) $('pt-decy-nzbpath').value = CFG.nzb_path_guess || '/cli_mount_data/usenet/nzbs';
     if (!val('pt-nzbdav-cat')) $('pt-nzbdav-cat').value = '__unplayable__';
   }).catch(function(){});
 
   function applyDirection(){
     var d = $('pt-direction').value;
-    var show = (d === 'decypharr_to_nzbdav')
+    var show = (d === 'climount_to_nzbdav')
       ? {'decy-nzbpath':1,'nzbdav-conn':1,'nzbdav-cat':1,'decy-conn':0}
       : {'nzbdav-conn':1,'decy-conn':1,'decy-nzbpath':0,'nzbdav-cat':0};
     root.querySelectorAll('.pt-field').forEach(function(el){
       el.style.display = show[el.dataset.for] ? '' : 'none';
     });
-    $('pt-nzbdav-role').textContent = (d === 'decypharr_to_nzbdav') ? '(target)' : '(source)';
+    $('pt-nzbdav-role').textContent = (d === 'climount_to_nzbdav') ? '(target)' : '(source)';
   }
   $('pt-direction').addEventListener('change', applyDirection);
   applyDirection();
 
   function sourcePayload(){
     var d = $('pt-direction').value;
-    if (d === 'decypharr_to_nzbdav') return {direction:d, source_nzb_path: val('pt-decy-nzbpath')};
+    if (d === 'climount_to_nzbdav') return {direction:d, source_nzb_path: val('pt-decy-nzbpath')};
     return {direction:d, source_url: val('pt-nzbdav-url'), source_token: val('pt-nzbdav-token')};
   }
   function startPayload(){
     var d = $('pt-direction').value;
     var base = {direction:d, skip_existing:$('pt-skip').checked,
                 max_queue: parseInt(val('pt-maxqueue')||'3',10), limit: parseInt(val('pt-limit')||'0',10)};
-    if (d === 'decypharr_to_nzbdav') {
+    if (d === 'climount_to_nzbdav') {
       base.source_nzb_path = val('pt-decy-nzbpath');
       base.target_url = val('pt-nzbdav-url'); base.target_token = val('pt-nzbdav-token');
       base.target_category = val('pt-nzbdav-cat');

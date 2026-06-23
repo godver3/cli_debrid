@@ -9,7 +9,7 @@ Correct repair workflow (modelled after altmount/nzbdav):
   4. Blacklist broken NZB URL/segment so it won't be re-grabbed
   5. Targeted re-scrape for replacement (NZB-only, broken title filtered out)
   6. IF no replacement found:
-       - Move item to Wanted (keep Plex/Decypharr intact — file still playable)
+       - Move item to Wanted (keep Plex/cli_mount intact — file still playable)
        - Log 'no_replacement', schedule backoff retry
   7. IF replacement found:
        a. Submit replacement to provider → get new job_id
@@ -26,7 +26,7 @@ Correct repair workflow (modelled after altmount/nzbdav):
 
 Key differences from previous implementation:
   - Replacement is CONFIRMED before any deletion (never delete-before-confirm)
-  - Plex deleted BEFORE Decypharr (Plex first so no orphaned Plex entries)
+  - Plex deleted BEFORE cli_mount (Plex first so no orphaned Plex entries)
   - Exponential backoff: 1h, 2h, 4h... capped at 24h
   - Failure breaker: give up after MAX_REPAIR_ATTEMPTS, require manual intervention
 """
@@ -73,7 +73,7 @@ def _plex_cfg():
 
 
 def _client():
-    """Active usenet client (decypharr or nzbdav) via the provider factory."""
+    """Active usenet client (climount or nzbdav) via the provider factory."""
     from usenet import get_usenet_client
     return get_usenet_client()
 
@@ -95,7 +95,7 @@ def fetch_broken_items(annotate_mount: bool = False) -> list:
       'unknown'  — no location_on_disk in DB, can't verify
 
     When debrid file naming is enabled, debrid torrent entries (protocol='torrent')
-    are excluded — their rename causes false 'broken' status in Decypharr's health
+    are excluded — their rename causes false 'broken' status in cli_mount's health
     checks because the download link resolution uses the renamed name which RD
     doesn't recognise.
     """
@@ -106,7 +106,7 @@ def fetch_broken_items(annotate_mount: bool = False) -> list:
         return []
 
     # Filter out debrid torrent entries when debrid naming is enabled,
-    # as renaming causes false positives in Decypharr health checks.
+    # as renaming causes false positives in cli_mount health checks.
     try:
         from utilities.settings import get_setting as _gs
         if _gs('Debrid Provider', 'enable_debrid_naming', False):
@@ -144,10 +144,12 @@ def fetch_broken_items(annotate_mount: bool = False) -> list:
     return items
 
 
-def trigger_health_scan() -> bool:
-    """Trigger a fresh health scan on the active provider."""
+def trigger_health_scan(full: bool = False, wait: bool = False, timeout: int = 300) -> bool:
+    """Trigger a health scan on the active provider.
+    full=True scans all files; full=False scans only unchecked files.
+    wait=True blocks until the scan completes."""
     try:
-        return _client().trigger_health_scan()
+        return _client().trigger_health_scan(full=full, wait=wait, timeout=timeout)
     except Exception as e:
         logger.warning(f'[NZBRepair] trigger_health_scan error: {e}')
         return False
@@ -988,6 +990,61 @@ def set_repair_version(version: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Single-entry repair
+# ---------------------------------------------------------------------------
+
+def repair_single_entry(entry_name: str, version_override: str = None) -> dict:
+    """Repair a single broken entry by name. Returns outcome dict."""
+    broken_entries = fetch_broken_items()
+    entry = next((e for e in broken_entries if _entry_name(e) == entry_name), None)
+    if not entry:
+        return {'outcome': 'not_found', 'message': f'Entry {entry_name!r} not found in broken list'}
+    if version_override is None:
+        saved = get_repair_version()
+        if saved:
+            version_override = saved
+    # Re-use inner loop logic by calling _run_repair_inner on just this entry
+    with _repair_lock:
+        return _repair_single_entry_inner(entry, version_override=version_override)
+
+
+def _repair_single_entry_inner(entry: dict, version_override: str = None) -> dict:
+    """Run repair logic for one entry. Must be called with _repair_lock held."""
+    entry_name = _entry_name(entry)
+    info_hash = entry.get('info_hash') or entry.get('hash') or ''
+    if not info_hash and entry_name:
+        info_hash = _resolve_info_hash_from_provider(entry_name)
+
+    try:
+        db_items = []
+        if info_hash:
+            single = _find_db_item_by_info_hash(info_hash)
+            if single:
+                db_items = [single]
+        if not db_items and entry_name and not entry.get('hash_is_authoritative'):
+            db_items = _find_db_items_by_entry_name(entry_name)
+        db_items = [i for i in db_items if i.get('state') in ('Collected', 'Checking', 'Upgrading', 'Adding')]
+        if not db_items:
+            return {'outcome': 'not_found', 'message': f'No matching DB item for {entry_name!r}'}
+        # Run repair on just this entry using the full inner loop
+        from usenet.repair_engine import _run_repair_inner
+        # Pass entry directly — we borrow the inner logic via a single-entry broken list
+        _orig_fetch = None
+        try:
+            import usenet.repair_engine as _re_mod
+            _orig_fetch = _re_mod.fetch_broken_items
+            _re_mod.fetch_broken_items = lambda: [entry]
+            result = _run_repair_inner(triggered_by='manual_single', version_override=version_override)
+            return {'outcome': 'ok', 'summary': result}
+        finally:
+            if _orig_fetch is not None:
+                _re_mod.fetch_broken_items = _orig_fetch
+    except Exception as e:
+        logger.error(f'[NZBRepair] single entry repair error for {entry_name!r}: {e}', exc_info=True)
+        return {'outcome': 'error', 'message': str(e)}
+
+
+# ---------------------------------------------------------------------------
 # Main repair loop
 # ---------------------------------------------------------------------------
 
@@ -1103,11 +1160,34 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             summary['matched'] += len(db_items)
 
             # --- Step 1b: Verify file is actually unreadable before repairing ---
-            # Decypharr's NNTP STAT check can produce false positives (server hiccups,
+            # cli_mount's NNTP STAT check can produce false positives (server hiccups,
             # temporary routing issues). Read the first 1MB via subprocess with a hard
             # timeout — safe on FUSE mounts, won't block the main process.
+            #
+            # IMPORTANT: Only check readability when location_on_disk actually points
+            # to the broken NZB entry. If location_on_disk was overwritten by a stale
+            # repair or upgrade (pointing to a different healthy version), the check
+            # would incorrectly report the file as readable and skip a real repair.
+            # Guard: verify the broken entry name is referenced in location_on_disk.
             _loc = db_items[0].get('location_on_disk', '') if db_items else ''
-            if _loc:
+            _failure_reason = entry.get('failure_reason', '')
+            # Skip readability check when cli_mount explicitly reports usenet_segment_missing
+            # — that is a definitive diagnosis, not a transient server hiccup.
+            _skip_readability = _failure_reason == 'usenet_segment_missing'
+            if not _skip_readability:
+                # Also skip when location_on_disk points to a different version.
+                # Compare the parent folder against entry_name — mismatch means
+                # location_on_disk was overwritten by a stale repair/upgrade.
+                import os as _os_rep
+                _loc_folder = _os_rep.path.basename(_os_rep.path.dirname(_loc)) if _loc else ''
+                _loc_matches_entry = bool(_loc_folder and entry_name and _loc_folder == entry_name)
+                if _loc and not _loc_matches_entry:
+                    logger.info(
+                        f'[NZBRepair] {entry_name!r} — location_on_disk folder differs from '
+                        f'entry name, skipping readability check.'
+                    )
+                    _skip_readability = True
+            if _loc and not _skip_readability:
                 if _verify_file_readable(_loc):
                     logger.info(
                         f'[NZBRepair] {entry_name!r} — marked broken by provider but file '
@@ -1116,6 +1196,11 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                     summary.setdefault('skipped_playable', 0)
                     summary['skipped_playable'] += 1
                     continue
+            if _skip_readability:
+                logger.info(
+                    f'[NZBRepair] {entry_name!r} — bypassing readability check '
+                    f'(reason: {_failure_reason or "location mismatch"}).'
+                )
 
             # --- Step 2: Check backoff/attempt limit ---
             repair_state = get_repair_state(info_hash or entry_name)
@@ -1191,11 +1276,13 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                 best['title'] = named_title
 
             if not new_job_id:
-                # Submission failed — move to Wanted WITHOUT touching Plex or provider
-                logger.warning(f'[NZBRepair] Replacement submission failed for {entry_name!r} — moving to Wanted (file kept)')
+                # Submission failed — keep item in Collected state (file still exists/plays).
+                # Moving to Wanted here causes re-scrape → re-submit → new cli_mount entry
+                # created each cycle, producing duplicate entries in the mount.
+                # The backoff system will retry on the next scheduled repair cycle.
+                logger.warning(f'[NZBRepair] Replacement submission failed for {entry_name!r} — keeping Collected, will retry with backoff')
                 next_repair_at = calculate_next_repair_at(new_attempts)
                 for db_item in db_items:
-                    _move_to_wanted(db_item)
                     log_repair_activity(
                         item_id=db_item.get('id'),
                         title=db_item.get('title'),

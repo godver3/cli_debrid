@@ -501,9 +501,9 @@ def backup_database(skip_if_recent=False, skip_hours=6):
         return False
 
 
-def backup_decypharr_databases():
+def backup_climount_databases():
     """
-    Back up Decypharr's HYBR database files (entries.db, items.db) if data_path is configured.
+    Back up cli_mount's HYBR database files (entries.db, items.db) if data_path is configured.
     Stores backups in {data_path}/db/backups/ using the same tiered retention as CLI backups.
     Returns True if successful or skipped (not configured), False on error.
     """
@@ -515,7 +515,7 @@ def backup_decypharr_databases():
 
         db_dir = os.path.join(data_path, 'db')
         if not os.path.isdir(db_dir):
-            logging.debug(f"[DCY_BACKUP] Decypharr db dir not found: {db_dir}, skipping")
+            logging.debug(f"[DCY_BACKUP] cli_mount db dir not found: {db_dir}, skipping")
             return True
 
         backup_dir = os.path.join(db_dir, 'backups')
@@ -550,11 +550,11 @@ def backup_decypharr_databases():
                     logging.warning(f"[DCY_BACKUP] Could not remove old backup {old}: {e}")
 
         if backed_up:
-            logging.info(f"[DCY_BACKUP] Decypharr backup complete: {len(backed_up)} file(s)")
+            logging.info(f"[DCY_BACKUP] cli_mount backup complete: {len(backed_up)} file(s)")
         return True
 
     except Exception as e:
-        logging.error(f"[DCY_BACKUP] Error backing up Decypharr databases: {e}")
+        logging.error(f"[DCY_BACKUP] Error backing up cli_mount databases: {e}")
         return False
 
 

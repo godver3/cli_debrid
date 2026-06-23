@@ -115,9 +115,9 @@
     {% endif %}
     <script>
         // Display name of the configured Usenet provider — used by JS dialogs
-        // so they read e.g. "Submit this NZB to Decypharr" or "...to NzbDAV"
+        // so they read e.g. "Submit this NZB to cli_mount" or "...to NzbDAV"
         // instead of the generic fallback "the Usenet provider".
-        window.USENET_PROVIDER_NAME = "{{ usenet_provider_name|default('Decypharr') }}";
+        window.USENET_PROVIDER_NAME = "{{ usenet_provider_name|default('cli_mount') }}";
     </script>
     
     <script>

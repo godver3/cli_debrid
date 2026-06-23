@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% set _provider_name = usenet_provider_name|default('Decypharr') %}
+{% set _provider_name = usenet_provider_name|default('cli_mount') %}
 {% block title %}Debrid Manager{% endblock %}
 
 {% block head %}
@@ -35,11 +35,13 @@
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
                 Usage
             </button>
+            {% if show_climount_tab %}
             <button class="dm-tab" data-tab="usenet">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                Usenet
+                cli_mount
                 <span class="dm-tab-badge" id="usenet-tab-badge" style="display:none"></span>
             </button>
+            {% endif %}
             {% if show_plex_trash %}
             <button class="dm-tab" data-tab="plex-trash">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
@@ -335,19 +337,19 @@
                     </div>
                 </div>
 
-                <!-- ── DECYPHARR SECTION ── -->
+                <!-- ── CLI_MOUNT SECTION ── -->
                 <div class="dm-maint-section">
                     <div class="dm-backup-card">
                         <div class="dm-backup-card-header">
-                            <span>Decypharr</span>
+                            <span>cli_mount</span>
                         </div>
-                        <p class="dm-backup-desc">Optional. Set the Decypharr base URL to enable hash lookup during Bad Torrent Audit reinsertion (e.g. <code class="bta-code">http://decypharr:8282</code>).</p>
+                        <p class="dm-backup-desc">Optional. Set the cli_mount base URL to enable hash lookup during Bad Torrent Audit reinsertion (e.g. <code class="bta-code">http://cli_mount:8282</code>).</p>
                     </div>
                     <div class="dm-backup-card">
                         <div class="dm-backup-card-title">Connection</div>
                         <div class="dm-backup-ret-row" style="align-items:center">
                             <span class="dm-backup-ret-label" style="flex:0 0 auto;min-width:80px">Base URL</span>
-                            <input type="text" id="dcyp-url" placeholder="http://decypharr:8282" class="dm-input-url" style="flex:1;margin:0 8px">
+                            <input type="text" id="dcyp-url" placeholder="http://cli_mount:8282" class="dm-input-url" style="flex:1;margin:0 8px">
                         </div>
                         <div class="dm-backup-actions">
                             <button id="dcyp-save-btn" class="dm-btn dm-btn-primary dm-btn-sm">
@@ -601,7 +603,8 @@
         <div id="usage-error" class="dm-error" style="display:none"></div>
     </div>
 
-    <!-- ── USENET TAB ── -->
+    {% if show_climount_tab %}
+    <!-- ── USENET TAB (cli_mount) ── -->
     <div id="usenet-tab" class="dm-panel">
         <style>
             /* Exact values from tangerine_overlays.css */
@@ -618,7 +621,82 @@
             #usenet-content .un-card::after { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:#e8601c; opacity:.5; border-radius:8px 8px 0 0; }
             #usenet-content .un-val { font-size:26px; font-weight:700; color:#e8601c; font-family:'JetBrains Mono','Fira Code',ui-monospace,monospace; line-height:1; margin-bottom:6px; }
             #usenet-content .un-lbl { font-size:9px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:#888; margin-bottom:8px; }
+            /* Debrid sub-tab shares same card/btn styles via dr- prefixed IDs */
+            #dr-content { font-family:'Inter',system-ui,sans-serif; font-size:13px; color:#f0f0f0; }
+            #dr-content .un-header { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; margin-bottom:1.75rem; flex-wrap:wrap; }
+            #dr-content .un-title { font-size: 14px; font-weight: 600; color: var(--text); border-left: 3px solid #CE93D8; padding-left: 10px; line-height: 1.3;}
+            #dr-content .un-subtitle { font-size:12px; color:#888; padding-left:13px; }
+            #dr-content .un-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+            #dr-content .un-btn { display:inline-flex; align-items:center; gap:8px; height:36px; padding:0 14px; border-radius:8px; font-size:13px; font-weight:500; font-family:'Inter',system-ui,sans-serif; cursor:pointer; border:1px solid #333; background:#1e1e1e; color:#ccc; transition:background .15s,color .15s; white-space:nowrap; }
+            #dr-content .un-btn:hover { background:#2a2a2a; color:#fff; }
+            #dr-content .un-btn i { font-size:13px; }
+            #dr-content .un-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin-bottom:1.25rem; }
+            #dr-content .un-card { background:#161616; border:1px solid #252525; border-radius:8px; padding:16px 14px 12px; position:relative; overflow:hidden; text-align:left; }
+            #dr-content .un-card::after { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:#CE93D8; opacity:.5; border-radius:8px 8px 0 0; }
+            #dr-content .un-val { font-size:26px; font-weight:700; color:#CE93D8; font-family:'JetBrains Mono','Fira Code',ui-monospace,monospace; line-height:1; margin-bottom:6px; }
+            #dr-content .un-lbl { font-size:9px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:#888; margin-bottom:8px; }
+            /* cli_mount sub-tab nav */
+            .dcy-subtab-btn { display:inline-flex; align-items:center; gap:6px; padding:8px 16px; border-radius:8px 8px 0 0; border:1px solid transparent; background:none; color:#888; font-size:13px; font-weight:500; cursor:pointer; transition:background .15s,color .15s; border-bottom:none; margin-bottom:-1px; }
+            .dcy-subtab-btn.active { background:#1e1e1e; border-color:#252525; color:#f0f0f0; }
+            .dcy-subtab-btn:not(.active):hover { color:#ccc; }
+            /* Protocol badges — same colors as upgrade_hub.css */
+            .dr-proto-badge { display:inline-block; font-size:0.65rem; font-weight:700; padding:1px 5px; border-radius:3px; margin-left:4px; vertical-align:middle; letter-spacing:0.04em; text-transform:uppercase; }
+            .dr-proto-nzb { background:#1a2a3a; color:#80CBC4; border:1px solid #2a5a55; }
+            .dr-proto-debrid { background:#2a1a3a; color:#CE93D8; border:1px solid #5a2a7a; }
         </style>
+
+        <!-- ── ACTIVE FILES WIDGET ── -->
+        <style>
+            #af-widget { margin-bottom:16px; }
+            #af-header { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+            #af-title { font-size:13px; font-weight:600; color:#f0f0f0; }
+            #af-count-badge { background:#1e1e1e; border:1px solid #333; border-radius:10px; padding:1px 8px; font-size:11px; color:#888; font-family:'JetBrains Mono',ui-monospace,monospace; }
+            #af-count-badge.af-has-items { background:#1a2a1a; border-color:#2a4a2a; color:#81c784; }
+            #af-refresh-btn { margin-left:auto; background:none; border:1px solid #333; border-radius:6px; color:#888; cursor:pointer; padding:3px 10px; font-size:12px; transition:color .15s,border-color .15s; }
+            #af-refresh-btn:hover { color:#f0f0f0; border-color:#555; }
+            #af-list { display:flex; flex-direction:column; gap:6px; }
+            .af-item { background:#111; border:1px solid #222; border-radius:8px; padding:10px 12px; display:flex; align-items:center; gap:10px; }
+            .af-item-info { flex:1; min-width:0; }
+            .af-item-name { font-size:12px; color:#e0e0e0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+            .af-item-meta { font-size:11px; color:#666; margin-top:2px; display:flex; gap:10px; flex-wrap:wrap; }
+            .af-item-meta span { white-space:nowrap; }
+            .af-duration { color:#80cbc4; font-family:'JetBrains Mono',ui-monospace,monospace; }
+            .af-size { color:#aaa; }
+            .af-source-badge { font-size:10px; font-weight:700; padding:1px 5px; border-radius:3px; text-transform:uppercase; letter-spacing:.04em; }
+            .af-source-nzb { background:#1a2a3a; color:#80CBC4; border:1px solid #2a5a55; }
+            .af-source-torrent { background:#2a1a3a; color:#CE93D8; border:1px solid #5a2a7a; }
+            .af-source-rclone { background:#2a2a1a; color:#fff176; border:1px solid #5a5a2a; }
+            .af-del-btn { background:none; border:1px solid #3a1a1a; color:#c66; border-radius:6px; cursor:pointer; padding:4px 10px; font-size:12px; white-space:nowrap; flex-shrink:0; transition:background .15s,color .15s; }
+            .af-del-btn:hover { background:#3a1a1a; color:#f88; }
+            .af-del-btn:disabled { opacity:.4; cursor:not-allowed; }
+            #af-empty { font-size:12px; color:#555; padding:8px 0; }
+            .af-progress-bar { height:2px; background:#222; border-radius:1px; margin-top:5px; overflow:hidden; }
+            .af-progress-fill { height:100%; background:#80cbc4; border-radius:1px; transition:width .5s; }
+        </style>
+        <div id="af-widget">
+            <div id="af-header">
+                <span id="af-title">Active Files</span>
+                <span id="af-count-badge">—</span>
+                <button id="af-refresh-btn" onclick="afLoad()">↻ Refresh</button>
+            </div>
+            <div id="af-list"><div id="af-empty" style="display:none">No active files</div></div>
+        </div>
+
+        <!-- Sub-tab nav -->
+        <div id="climount-subtabs" style="display:flex;gap:4px;margin-bottom:0;border-bottom:1px solid #252525;padding-bottom:0">
+            <button id="usenet-subtab-btn" class="dcy-subtab-btn active" onclick="switchcli_mountSubtab('usenet')">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:14px;height:14px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4M17 8v12m0 0l4-4m-4 4l-4-4"/></svg>
+                Usenet
+            </button>
+            <button id="debrid-subtab-btn" class="dcy-subtab-btn" onclick="switchcli_mountSubtab('debrid')">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:14px;height:14px"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/></svg>
+                Debrid
+                <span id="debrid-tab-badge" style="display:none;background:#CE93D8;color:#1a0a2a;border-radius:10px;padding:1px 7px;font-size:0.75rem;margin-left:2px"></span>
+            </button>
+        </div>
+
+        <!-- Usenet sub-tab content -->
+        <div id="usenet-subtab-content" style="padding-top:16px">
         <div id="usenet-loading" style="padding:40px;text-align:center;color:#888">Loading…</div>
         <div id="usenet-content" style="display:none">
 
@@ -627,10 +705,18 @@
                     <h1 class="un-title">Health &amp; Repair</h1>
                     <p class="un-subtitle">Usenet NZB health monitoring and automatic repair</p>
                 </div>
-                <div class="un-actions">
-                    <button id="usenet-scan-btn" onclick="usenetTriggerScan()" class="un-btn">
-                        <i class="fa-solid fa-rotate" style="color:#e8601c"></i> Run Health Scan
-                    </button>
+                <div class="un-actions" style="flex-wrap:nowrap">
+                    <div style="position:relative;display:inline-block" id="usenet-scan-btn-wrap">
+                        <button id="usenet-scan-btn" onclick="usenetTriggerScan(false)" class="un-btn" style="padding-right:28px">
+                            <i class="fa-solid fa-rotate" style="color:#e8601c"></i> Run Health Scan
+                        </button>
+                        <select onchange="if(this.value){usenetTriggerScan(this.value==='full');this.value=''}" style="position:absolute;top:0;right:0;height:100%;width:24px;opacity:0;cursor:pointer;border:none;background:none">
+                            <option value=""></option>
+                            <option value="partial">Partial (unchecked only)</option>
+                            <option value="full">Full (all files)</option>
+                        </select>
+                        <i class="fa-solid fa-chevron-down" id="usenet-scan-chevron" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:0.65rem;pointer-events:none;color:#aaa"></i>
+                    </div>
                     <button id="usenet-view-broken-btn" onclick="usenetViewBroken()" class="un-btn">
                         <i class="fa-solid fa-eye" style="color:#ef4444"></i> View Broken <span id="usenet-broken-badge" style="display:none;background:#ff4444;color:#fff;border-radius:10px;padding:1px 7px;font-size:0.75rem;margin-left:2px"></span>
                     </button>
@@ -683,8 +769,9 @@
                 </div>
                 <table style="width:100%;border-collapse:collapse;font-size:13px">
                     <thead><tr style="border-bottom:2px solid var(--border-color,#333);text-align:left">
-                        <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:75%">Title</th>
-                        <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:25%;text-align:right">Broken Files</th>
+                        <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600">Title</th>
+                        <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;text-align:right;white-space:nowrap">Broken Files</th>
+                        <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;text-align:center;white-space:nowrap">Action</th>
                     </tr></thead>
                     <tbody id="usenet-broken-tbody"></tbody>
                 </table>
@@ -714,7 +801,122 @@
 
         </div>
         <div id="usenet-error" style="display:none;padding:20px;color:#f87171;text-align:center"></div>
-    </div>
+        </div><!-- /usenet-subtab-content -->
+
+        <!-- Debrid sub-tab content -->
+        <div id="debrid-subtab-content" style="display:none;padding-top:16px">
+        <div id="dr-loading" style="padding:40px;text-align:center;color:#888">Loading…</div>
+        <div id="dr-content" style="display:none">
+
+            <div class="un-header">
+                <div>
+                    <h1 class="un-title">Debrid Health &amp; Repair</h1>
+                    <p class="un-subtitle">RealDebrid torrent health monitoring and repair</p>
+                </div>
+                <div class="un-actions" style="flex-wrap:nowrap">
+                    <div style="position:relative;display:inline-block" id="dr-scan-btn-wrap">
+                        <button id="dr-scan-btn" onclick="debridTriggerScan(false)" class="un-btn" style="padding-right:28px">
+                            <i class="fa-solid fa-rotate" style="color:#CE93D8"></i> Run Health Scan
+                        </button>
+                        <select onchange="if(this.value){debridTriggerScan(this.value==='full');this.value=''}" style="position:absolute;top:0;right:0;height:100%;width:24px;opacity:0;cursor:pointer;border:none;background:none">
+                            <option value=""></option>
+                            <option value="partial">Partial (unchecked only)</option>
+                            <option value="full">Full (all files)</option>
+                        </select>
+                        <i class="fa-solid fa-chevron-down" id="dr-scan-chevron" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:0.65rem;pointer-events:none;color:#aaa"></i>
+                    </div>
+                    <button id="dr-view-broken-btn" onclick="debridViewBroken()" class="un-btn">
+                        <i class="fa-solid fa-eye" style="color:#ef4444"></i> View Broken <span id="dr-broken-badge" style="display:none;background:#ff4444;color:#fff;border-radius:10px;padding:1px 7px;font-size:0.75rem;margin-left:2px"></span>
+                    </button>
+                    <select id="debrid-version-select" onchange="debridSaveVersion(this.value)" class="un-btn" style="cursor:pointer;min-width:130px">
+                        <option value="">Item's version</option>
+                    </select>
+                    <button id="dr-fix-btn" onclick="debridRunRepair()" class="un-btn">
+                        <i class="fa-solid fa-wrench" style="color:#CE93D8"></i> Fix Broken
+                    </button>
+                    <button id="dr-delete-broken-btn" onclick="debridDeleteAllBroken()" class="un-btn">
+                        <i class="fa-solid fa-trash" style="color:#ef4444"></i> Delete All Broken
+                    </button>
+                    <button id="dr-delete-ghosts-btn" onclick="debridDeleteGhostEntries()" class="un-btn">
+                        <i class="fa-solid fa-ghost" style="color:#f59e0b"></i> Delete Ghost Entries
+                    </button>
+                </div>
+            </div>
+
+            <div class="un-stats">
+                <div class="un-card">
+                    <div class="un-val" style="color:#4ade80" id="dr-stat-healthy">—</div>
+                    <div class="un-lbl">Healthy</div>
+                </div>
+                <div class="un-card">
+                    <div class="un-val" style="color:#ff6b6b" id="dr-stat-broken">—</div>
+                    <div class="un-lbl">Broken</div>
+                </div>
+                <div class="un-card">
+                    <div class="un-val" style="color:var(--text-secondary,#888)" id="dr-stat-unknown">—</div>
+                    <div class="un-lbl">Unknown</div>
+                </div>
+                <div class="un-card">
+                    <div class="un-val" style="color:#CE93D8" id="dr-stat-reinserted">—</div>
+                    <div class="un-lbl">Re-inserted (30d)</div>
+                </div>
+                <div class="un-card">
+                    <div class="un-val" style="color:#ff6b35" id="dr-stat-replaced">—</div>
+                    <div class="un-lbl">Replaced (30d)</div>
+                </div>
+            </div>
+
+            <div id="dr-repair-running" style="display:none;background:var(--card-background,#1e1e1e);border:1px solid var(--border-color,#333);border-radius:8px;padding:12px 16px;margin-bottom:16px">
+                <div style="font-size:12px;color:var(--text-secondary,#888);margin-bottom:8px" id="dr-repair-status-text">Repair running…</div>
+                <div style="height:3px;background:var(--border-color,#333);border-radius:2px;overflow:hidden">
+                    <div id="dr-repair-bar" style="height:100%;background:#CE93D8;width:0%;transition:width 0.5s ease"></div>
+                </div>
+            </div>
+
+            <div id="dr-broken-list" style="display:none;margin-bottom:20px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                    <div class="un-title">Currently Broken Torrents</div>
+                    <button onclick="document.getElementById('dr-broken-list').style.display='none'" style="background:none;border:none;color:var(--text-secondary,#888);cursor:pointer;font-size:20px;line-height:1">&times;</button>
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:13px">
+                    <thead><tr style="border-bottom:2px solid var(--border-color,#333);text-align:left">
+                        <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600">Title</th>
+                        <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600">Reason</th>
+                        <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;text-align:right;white-space:nowrap">Broken Files</th>
+                        <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;text-align:center;white-space:nowrap">Action</th>
+                    </tr></thead>
+                    <tbody id="dr-broken-tbody"></tbody>
+                </table>
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+                <div class="un-title">Repair Activity Log</div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                    <select id="dr-filter-select" onchange="debridLoadActivity(this.value||null)" class="un-btn" style="cursor:pointer;min-width:160px">
+                        <option value="">All outcomes</option>
+                        <option value="reinserted">Re-inserted</option>
+                        <option value="replaced">Replaced</option>
+                        <option value="not_found">Not Found</option>
+                        <option value="error">Error</option>
+                    </select>
+                    <button onclick="debridLoadActivity(document.getElementById('dr-filter-select').value||null)" class="un-btn"><i class="fa-solid fa-rotate" style="color:#CE93D8"></i> Refresh</button>
+                </div>
+            </div>
+            <div id="dr-activity-container">
+                <p style="color:var(--text-secondary,#666);padding:20px 0">Loading activity…</p>
+            </div>
+            <div id="dr-activity-pagination" style="display:none;margin-top:16px;display:flex;justify-content:center;align-items:center;gap:8px">
+                <button class="un-btn" id="dr-prev-btn" onclick="debridActivityPage(-1)" disabled>&#8592; Previous</button>
+                <span id="dr-activity-info" style="font-size:13px;color:var(--text-secondary,#666);padding:0 10px"></span>
+                <button class="un-btn" id="dr-next-btn" onclick="debridActivityPage(1)" disabled>Next &#8594;</button>
+            </div>
+
+        </div><!-- /dr-content -->
+        <div id="dr-error" style="display:none;padding:20px;color:#f87171;text-align:center"></div>
+        </div><!-- /debrid-subtab-content -->
+
+    </div><!-- /usenet-tab -->
+    {% endif %}
 
     {% if show_plex_trash %}
     <!-- ── PLEX TRASH TAB ── -->
@@ -1059,7 +1261,7 @@
                         <span class="dm-rc-badge dm-rc-badge-mixed">META</span>
                     </span>
                 </button>
-                {% if decypharr_mode %}
+                {% if climount_mode %}
                 <button class="dm-rc-tab" data-rc-group="bad-torrents" id="rc-tab-bad-torrents">
                     <span class="dm-rc-tab-name">Broken</span>
                     <span class="dm-rc-tab-count" id="bta-total-badge">—</span>
@@ -1437,7 +1639,7 @@
                 </div><!-- /#batt-content -->
             </div><!-- /#rc-panel-battery -->
 
-            {% if decypharr_mode %}
+            {% if climount_mode %}
             <!-- ── BAD TORRENT AUDIT PANEL ── -->
             <div id="rc-panel-bad-torrents" class="dm-rc-group-panel bta-panel" style="display:none">
 
@@ -1448,7 +1650,7 @@
                             <span class="bta-card-title">Broken Torrents</span>
                         </div>
                         <div class="bta-card-body">
-                            <p class="bta-desc">Scans the decypharr <code class="bta-code">__bad__</code> folder and probes each entry with ffprobe to classify it as <span class="bta-tag bta-tag-broken">broken</span> (unplayable) or <span class="bta-tag bta-tag-stale">stale</span> (file works, stuck in bad folder). Broken entries can be deleted from Real-Debrid.</p>
+                            <p class="bta-desc">Scans the cli_mount <code class="bta-code">__bad__</code> folder and probes each entry with ffprobe to classify it as <span class="bta-tag bta-tag-broken">broken</span> (unplayable) or <span class="bta-tag bta-tag-stale">stale</span> (file works, stuck in bad folder). Broken entries can be deleted from Real-Debrid.</p>
                             <div class="bta-action-row">
                                 <button class="bta-btn bta-btn-primary" onclick="_btaStartScan()">
                                     <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-4.35-4.35"/></svg>
@@ -1731,6 +1933,8 @@ document.querySelectorAll('.dm-tab').forEach(btn => {
         if (btn.dataset.tab === 'library' && !window._libLoaded) loadLibrary(false);
         if (btn.dataset.tab === 'maintenance' && !_bkLoaded) loadMaintenance();
         if (btn.dataset.tab === 'usenet' && !window._usenetLoaded) loadUsenetTab();
+        if (btn.dataset.tab === 'usenet') afStartPolling();
+        if (btn.dataset.tab !== 'usenet') afStopPolling();
         if (btn.dataset.tab === 'reconcile' && !window._rcLoaded) { loadReconcile(false); loadBatteryAudit(false); }
         if (btn.dataset.tab === 'reconcile' && typeof _slInitAudit === 'function') _slInitAudit();
     });
@@ -3271,9 +3475,9 @@ async function loadMaintenance() {
     } catch(e) {
         document.getElementById('bk-activity').innerHTML = `<div class="dm-error">Failed to load: ${e.message}</div>`;
     }
-    // Load decypharr URL (non-blocking)
+    // Load climount URL (non-blocking)
     try {
-        const dr = await fetch('/debrid_manager/api/decypharr/settings');
+        const dr = await fetch('/debrid_manager/api/climount/settings');
         const dd = await dr.json();
         if (dd.success) {
             const el = document.getElementById('dcyp-url');
@@ -3498,7 +3702,7 @@ document.getElementById('dcyp-save-btn').addEventListener('click', async functio
     btn.innerHTML = '<span class="dm-spinner"></span>';
     try {
         const url = (document.getElementById('dcyp-url').value || '').trim();
-        const r = await fetch('/debrid_manager/api/decypharr/settings', {
+        const r = await fetch('/debrid_manager/api/climount/settings', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({url}),
@@ -3528,7 +3732,7 @@ document.getElementById('dcyp-test-btn').addEventListener('click', async functio
     btn.disabled = true;
     btn.innerHTML = '<span class="dm-spinner"></span> Testing…';
     try {
-        const r = await fetch('/debrid_manager/api/decypharr/test', {method: 'POST',
+        const r = await fetch('/debrid_manager/api/climount/test', {method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({url: (document.getElementById('dcyp-url').value || '').trim()}),
         });
@@ -4156,7 +4360,7 @@ async function loadUsenetTab() {
         await usenetLoadActivity(null);
         // Only start polling if a repair is already in progress
         _usenetMaybeStartPolling();
-        // Check if Decypharr sweep is already running and start scan status polling if so
+        // Check if cli_mount sweep is already running and start scan status polling if so
         _usenetScanPoll();
     } catch(e) {
         document.getElementById('usenet-loading').style.display = 'none';
@@ -4173,6 +4377,8 @@ async function _usenetMaybeStartPolling() {
             document.getElementById('usenet-repair-running').style.display = 'block';
             document.getElementById('usenet-repair-status-text').textContent = 'Repair running…';
             document.getElementById('usenet-repair-bar').style.width = '60%';
+            const fixBtn = document.getElementById('usenet-fix-btn');
+            if (fixBtn) { fixBtn.disabled = true; fixBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="color:#e8601c"></i> Repairing…'; }
             _usenetPollRepairProgress();
         }
     } catch(e) { /* ignore */ }
@@ -4232,6 +4438,71 @@ async function _usenetFetchActivity() {
     } catch(e) { console.error('[Usenet] activity fetch error', e); }
 }
 
+function _renderActivityBadge(nzb_id) {
+    const isDebrid = (nzb_id || '').startsWith('debrid:');
+    return isDebrid
+        ? '<span class="dr-proto-badge dr-proto-debrid">DEBRID</span>'
+        : '<span class="dr-proto-badge dr-proto-nzb">NZB</span>';
+}
+
+function _buildOutcomeTooltip(r) {
+    const lines = [];
+    const triggerMap = {
+        'auto_detected':     'Auto-detected by health check',
+        'scheduled':         'Scheduled repair task',
+        'manual':            'Manually triggered',
+        'cache_warm_error':  'Cache warm error (file unreadable)',
+        'article_not_found': 'ARTICLE_NOT_FOUND in usenet log',
+    };
+    const trigger = triggerMap[r.triggered_by] || (r.triggered_by || 'Unknown trigger');
+    lines.push('Trigger: ' + trigger);
+    if (r.repair_attempts > 0) lines.push('Attempts: ' + r.repair_attempts);
+    switch (r.outcome) {
+        case 'submission_failed':
+            lines.push('A replacement NZB was found but failed to submit to cli_mount.');
+            lines.push('Item kept in Collected state — will retry with backoff.');
+            break;
+        case 'not_found':
+            lines.push('No matching CLI DB record found for this entry.');
+            lines.push('Entry was an orphan in cli_mount with no DB record.');
+            break;
+        case 'no_replacement':
+            lines.push('Broken entry detected but no replacement NZB could be found on indexers.');
+            lines.push('Item moved to Wanted for re-scrape. Will retry with backoff.');
+            if (r.next_repair_at) lines.push('Next retry: ' + new Date(r.next_repair_at + (r.next_repair_at.endsWith('Z') ? '' : 'Z')).toLocaleString());
+            break;
+        case 'plex_deleted':
+            lines.push('File was unreadable — deleted from Plex and cli_mount.');
+            lines.push('Item moved to Wanted for fresh scrape and re-download.');
+            break;
+        case 'replaced':
+            lines.push('Broken file successfully replaced with a new NZB download.');
+            if (r.replacement_title) lines.push('New: ' + r.replacement_title);
+            break;
+        case 'reinserted':
+            lines.push('cli_mount link resolver re-triggered for this entry.');
+            break;
+        case 'skipped_max_attempts':
+            lines.push('Maximum repair attempts reached — requires manual intervention.');
+            if (r.repair_attempts) lines.push('Attempts made: ' + r.repair_attempts);
+            break;
+    }
+    return lines.join('\n').replace(/"/g, '&quot;');
+}
+
+function _renderActivityCandidateCell(currentTitle, replacedTitle, nzb_id) {
+    const badge = _renderActivityBadge(nzb_id);
+    const current = _esc(currentTitle || '—');
+    if (replacedTitle && replacedTitle !== '—') {
+        // Show stacked: current (grey) on top, replacement (green) below — upgrade hub style
+        return `<div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+            <div style="font-size:12px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${current}">${current} ${badge}</div>
+            <div style="font-size:12px;color:#00d4aa;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(replacedTitle)}">${_esc(replacedTitle)}</div>
+        </div>`;
+    }
+    return `<div style="font-size:12px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${current}">${current} ${badge}</div>`;
+}
+
 function _usenetRenderActivity(rows, container, pagination) {
     if (!rows || rows.length === 0) {
         container.innerHTML = '<p style="color:var(--text-secondary,#666);padding:20px 0">No activity recorded yet.</p>';
@@ -4242,29 +4513,29 @@ function _usenetRenderActivity(rows, container, pagination) {
     let html = `<table style="width:100%;border-collapse:collapse;font-size:13px;">
         <thead>
             <tr style="border-bottom:2px solid var(--border-color,#333);text-align:left;">
-                <th style="padding:8px 12px;white-space:nowrap;color:var(--text-secondary,#888);font-weight:600;width:155px;">Date / Time</th>
-                <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;">Title</th>
-                <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;">Broken NZB</th>
-                <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;">Replaced With</th>
-                <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:100px;">Outcome</th>
+                <th style="padding:8px 12px;white-space:nowrap;color:var(--text-secondary,#888);font-weight:600;width:145px;">Date / Time</th>
+                <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:160px;">Title</th>
+                <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;">Broken / Replaced</th>
+                <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:90px;">Outcome</th>
             </tr>
         </thead>
         <tbody>`;
 
     rows.forEach((r, idx) => {
         const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
-        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : '#ff4444';
-        const outcomeLabel = r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : (r.outcome || '—');
+        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa' : r.outcome === 'not_found' ? '#ffaa44' : r.outcome === 'plex_deleted' ? '#4488ff' : r.outcome === 'reinserted' ? '#a78bfa' : '#ff4444';
+        const outcomeLabel = r.outcome === 'replaced' ? 'Replaced' : r.outcome === 'not_found' ? 'Not Found' : r.outcome === 'plex_deleted' ? 'Plex Deleted' : r.outcome === 'reinserted' ? 'Re-inserted' : (r.outcome || '—');
+        const outcomeTooltip = _buildOutcomeTooltip(r);
         const epSub = r.season_number ? `<br><span style="font-size:11px;color:#888">S${String(r.season_number).padStart(2,'0')}E${String(r.episode_number||0).padStart(2,'0')}</span>` : '';
         const ts = r.created_at ? new Date(r.created_at + (r.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString() : '—';
         const brokenTitle = r.broken_nzb_title || r.broken_nzb_id || '—';
-        const replTitle   = r.replacement_title || '—';
+        const replTitle = (r.replacement_title && r.replacement_title !== '—') ? r.replacement_title : null;
+        const candidateCell = _renderActivityCandidateCell(brokenTitle, replTitle, r.broken_nzb_id);
         html += `<tr style="border-bottom:1px solid var(--border-color,#2a2a2a);background:${bg};">
-            <td style="padding:8px 12px;white-space:nowrap;font-family:monospace;font-size:12px;color:var(--text-secondary,#888)">${ts}</td>
-            <td style="padding:8px 12px;font-weight:500">${_esc(r.title || '—')}${epSub}</td>
-            <td style="padding:8px 12px;font-size:12px;color:#888;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(brokenTitle)}">${_esc(brokenTitle.substring(0,60))}</td>
-            <td style="padding:8px 12px;font-size:12px;color:#aaa;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(replTitle)}">${_esc(replTitle.substring(0,60))}</td>
-            <td style="padding:8px 12px"><span style="color:${outcomeColor};font-weight:600;font-size:12px">${outcomeLabel}</span></td>
+            <td style="padding:8px 12px;white-space:nowrap;font-family:monospace;font-size:11px;color:var(--text-secondary,#888)">${ts}</td>
+            <td style="padding:8px 12px;font-weight:500;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(r.title || '—')}${epSub}</td>
+            <td style="padding:8px 12px;max-width:0;overflow:hidden">${candidateCell}</td>
+            <td style="padding:8px 12px;white-space:nowrap"><span style="color:${outcomeColor};font-weight:600;font-size:12px;cursor:help" title="${outcomeTooltip}">${outcomeLabel}</span></td>
         </tr>`;
     });
 
@@ -4302,15 +4573,16 @@ async function usenetSaveVersion(version) {
     } catch(e) { console.error('[Usenet] save version error', e); }
 }
 
-async function usenetTriggerScan() {
+async function usenetTriggerScan(full = false) {
     const btn = document.getElementById('usenet-scan-btn');
     const orig = btn.innerHTML;
     btn.disabled = true;
-    btn.textContent = 'Triggering…';
+    btn.innerHTML = full ? '<i class="fa-solid fa-rotate fa-spin" style="color:#e8601c"></i> Running full…' : '<i class="fa-solid fa-rotate fa-spin" style="color:#e8601c"></i> Running…';
     try {
-        const r = await fetch('/debrid_manager/api/usenet/repair/health_scan', {method:'POST'});
+        const url = '/debrid_manager/api/usenet/repair/health_scan' + (full ? '?full=true' : '');
+        const r = await fetch(url, {method:'POST'});
         const d = await r.json();
-        btn.textContent = d.success ? '✓ Scan triggered' : '✗ Failed';
+        btn.innerHTML = d.success ? '<i class="fa-solid fa-check" style="color:#4ade80"></i> Triggered' : '<i class="fa-solid fa-xmark" style="color:#ef4444"></i> Failed';
         setTimeout(() => { btn.disabled = false; btn.innerHTML = orig; }, 3000);
         if (d.success) _usenetStartScanPolling();
     } catch(e) { btn.disabled = false; btn.innerHTML = orig; }
@@ -4320,14 +4592,51 @@ let _usenetScanPollTimer = null;
 
 function _usenetSetScanningState(scanning) {
     const btn = document.getElementById('usenet-scan-btn');
+    const chevron = document.getElementById('usenet-scan-chevron');
+    const select = btn?.parentElement?.querySelector('select');
     if (!btn) return;
     if (scanning) {
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fa-solid fa-rotate fa-spin" style="color:#e8601c"></i> Running…';
+        btn.style.paddingRight = '';
+        btn.onclick = usenetStopScan;
+        btn.innerHTML = '<i class="fa-solid fa-rotate fa-spin" style="color:#e8601c"></i> Running… <i class="fa-solid fa-stop" style="color:#ef4444;margin-left:4px;font-size:0.8em"></i>';
+        if (chevron) chevron.style.display = 'none';
+        if (select) select.style.display = 'none';
     } else {
-        btn.disabled = false;
+        btn.style.paddingRight = '28px';
+        btn.onclick = function(){ usenetTriggerScan(false); };
         btn.innerHTML = '<i class="fa-solid fa-rotate" style="color:#e8601c"></i> Run Health Scan';
+        if (chevron) chevron.style.display = '';
+        if (select) select.style.display = '';
     }
+}
+
+async function usenetStopScan() {
+    const btn = document.getElementById('usenet-scan-btn');
+    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Stopping…';
+    try {
+        const r = await fetch('/debrid_manager/api/usenet/repair/stop', {method: 'POST'});
+        const d = await r.json();
+        if (!d.success) alert('Failed to stop scan: ' + (d.error || 'Unknown error'));
+        // Keep polling until scan actually stops (cli_mount finishes current entry first)
+        _usenetPollUntilStopped(0);
+    } catch(e) {
+        console.error('[Usenet] stop scan error', e);
+        _usenetSetScanningState(false);
+    }
+}
+
+async function _usenetPollUntilStopped(attempts) {
+    if (attempts > 20) { _usenetSetScanningState(false); return; } // safety cap ~20s
+    await new Promise(res => setTimeout(res, 1000));
+    try {
+        const pr = await fetch('/debrid_manager/api/usenet/repair/scan_status');
+        const pd = await pr.json();
+        if (pd.is_scanning) {
+            _usenetPollUntilStopped(attempts + 1);
+        } else {
+            _usenetSetScanningState(false);
+        }
+    } catch(e) { _usenetSetScanningState(false); }
 }
 
 function _usenetStartScanPolling() {
@@ -4341,13 +4650,11 @@ async function _usenetScanPoll() {
         const d = await r.json();
         _usenetSetScanningState(d.is_scanning);
         if (d.is_scanning) {
-            // Refresh stats every 10s while scanning
             fetch('/debrid_manager/api/usenet/repair/stats').then(r => r.json()).then(sd => {
                 if (sd.success) _usenetRenderStats(sd.health || {}, sd.activity || {}, sd.versions || [], sd.repair_version || '');
             }).catch(() => {});
-            _usenetScanPollTimer = setTimeout(_usenetScanPoll, 10000);
+            _usenetScanPollTimer = setTimeout(_usenetScanPoll, 2000);
         }
-        // If not scanning, stop polling — button already re-enabled above
     } catch(e) {
         _usenetSetScanningState(false);
     }
@@ -4366,10 +4673,14 @@ async function usenetViewBroken() {
             tbody.innerHTML = d.items.map((i, idx) => {
                 const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
                 const name = _esc(i.entry_name || i.name || i.title || '—');
+                const rawName = (i.entry_name || i.name || i.title || '').replace(/'/g, "\\'");
                 const broken = i.broken_count || i.broken_files || '?';
                 return `<tr style="border-bottom:1px solid var(--border-color,#2a2a2a);background:${bg}">
-                    <td style="padding:8px 12px;font-weight:500;width:75%">${name}</td>
-                    <td style="padding:8px 12px;color:#ff4444;font-weight:600;width:25%;text-align:right">${broken}</td>
+                    <td style="padding:8px 12px;font-weight:500">${name}</td>
+                    <td style="padding:8px 12px;color:#ff4444;font-weight:600;text-align:right;white-space:nowrap">${broken}</td>
+                    <td style="padding:8px 12px;text-align:center;white-space:nowrap">
+                        <button onclick="usenetFixSingle('${rawName}', this)" class="un-btn" style="padding:4px 12px;font-size:12px">Fix</button>
+                    </td>
                 </tr>`;
             }).join('');
         }
@@ -4377,10 +4688,39 @@ async function usenetViewBroken() {
     } catch(e) { console.error('[Usenet] view broken error', e); }
 }
 
+async function usenetFixSingle(entryName, btn) {
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+        const versionOverride = document.getElementById('usenet-version-select')?.value || null;
+        const r = await fetch('/debrid_manager/api/usenet/repair/fix_single', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({entry_name: entryName, version_override: versionOverride})
+        });
+        const d = await r.json();
+        if (d.success) {
+            btn.textContent = '✓';
+            btn.style.color = '#4caf50';
+            setTimeout(() => usenetViewBroken(), 2000); // refresh list
+        } else {
+            btn.textContent = '✗';
+            btn.style.color = '#ff4444';
+            setTimeout(() => { btn.textContent = orig; btn.disabled = false; btn.style.color = ''; }, 3000);
+        }
+    } catch(e) {
+        console.error('[Usenet] fix single error', e);
+        btn.textContent = orig;
+        btn.disabled = false;
+    }
+}
+
 async function usenetRunRepair() {
     const btn = document.getElementById('usenet-fix-btn');
     const orig = btn.innerHTML;
     btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Starting…';
     const statusEl = document.getElementById('usenet-repair-status-text');
     const barEl = document.getElementById('usenet-repair-bar');
     const runningEl = document.getElementById('usenet-repair-running');
@@ -4393,6 +4733,7 @@ async function usenetRunRepair() {
         });
         const d = await r.json();
         if (d.success) {
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="color:#e8601c"></i> Repairing…';
             runningEl.style.display = 'block';
             statusEl.textContent = 'Repair running…';
             barEl.style.width = '15%';
@@ -4461,12 +4802,16 @@ function _usenetPollRepairProgress() {
             const barEl = document.getElementById('usenet-repair-bar');
             if (d.is_running) {
                 barEl.style.width = '60%';
+                fixBtn.disabled = true;
+                fixBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="color:#e8601c"></i> Repairing…';
                 _usenetPollRepairProgress();
             } else if (d.status === 'done' && d.summary) {
                 barEl.style.width = '100%';
                 statusEl.textContent =
                     `Done — ${d.summary.replaced} replaced, ${d.summary.not_found} not found, ${d.summary.errors} errors`;
                 fixBtn.disabled = false;
+                fixBtn.innerHTML = '<i class="fa-solid fa-check" style="color:#4ade80"></i> Done';
+                setTimeout(() => { fixBtn.innerHTML = '<i class="fa-solid fa-wrench" style="color:#e8601c"></i> Fix Broken'; }, 3000);
                 // Refresh stats without reloading whole tab (avoid flash)
                 fetch('/debrid_manager/api/usenet/repair/stats').then(r => r.json()).then(sd => {
                     if (sd.success) {
@@ -4481,13 +4826,711 @@ function _usenetPollRepairProgress() {
                 barEl.style.width = '0%';
                 statusEl.textContent = 'Error: ' + (d.error || 'unknown');
                 fixBtn.disabled = false;
+                fixBtn.innerHTML = '<i class="fa-solid fa-wrench" style="color:#e8601c"></i> Fix Broken';
             }
             // If idle/no status, leave bar visible with last message — no flash
         } catch(e) { /* ignore */ }
     }, 3000);
 }
 
-if (_dmActiveTab === 'usenet') loadUsenetTab();
+if (_dmActiveTab === 'usenet') { loadUsenetTab(); afStartPolling(); }
+
+// ── ACTIVE FILES WIDGET ────────────────────────────────────────────────────
+var _afTimer = null;
+
+function afFmtDuration(seconds) {
+    if (!seconds || seconds < 0) return '0s';
+    if (seconds < 60) return seconds + 's';
+    const m = Math.floor(seconds / 60), s = seconds % 60;
+    if (m < 60) return m + 'm ' + s + 's';
+    const h = Math.floor(m / 60), mm = m % 60;
+    return h + 'h ' + mm + 'm';
+}
+
+function afFmtSize(bytes) {
+    if (!bytes) return '—';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
+    if (bytes < 1073741824) return (bytes/1048576).toFixed(1) + ' MB';
+    return (bytes/1073741824).toFixed(2) + ' GB';
+}
+
+function afFmtSpeed(bytesPerSec) {
+    if (!bytesPerSec) return '';
+    return ' · ' + afFmtSize(bytesPerSec) + '/s';
+}
+
+async function afLoad() {
+    try {
+        const r = await fetch('/debrid_manager/api/active_files');
+        const d = await r.json();
+        if (!d.success) { console.warn('[ActiveFiles]', d.error); return; }
+
+        const list = document.getElementById('af-list');
+        const badge = document.getElementById('af-count-badge');
+        const empty = document.getElementById('af-empty');
+        if (!list) return;
+
+        const now = Math.floor(Date.now() / 1000);
+        const items = [];
+
+        // DFS / WebDAV streams
+        for (const s of (d.dfs_streams || [])) {
+            const dur = s.started_at ? Math.max(0, now - s.started_at) : 0;
+            items.push({
+                mode: 'dfs',
+                name: s.file_name || s.entry_name,
+                entryName: s.entry_name,
+                source: s.source || 'dfs',
+                size: s.file_size,
+                durationSeconds: dur,
+                cliDebridId: s.cli_debrid_id,
+                cliDebridIds: s.cli_debrid_ids || {},
+                speed: 0,
+                progress: 0,
+            });
+        }
+
+        // Rclone transfers are omitted — in rclone mode the same file already
+        // appears as a DFS/NZB/torrent stream above, so showing both is redundant.
+        if (false) for (const t of (d.rclone_transfers || [])) {
+            items.push({
+                mode: 'rclone',
+                name: t.name || '—',
+                entryName: t.entry_name || '',
+                source: 'rclone',
+                size: t.size,
+                durationSeconds: 0,
+                cliDebridId: null, // not available in rclone mode — delete uses entry_name
+                speed: t.speed || 0,
+                progress: t.progress || 0,
+                bytesTransferred: t.bytes,
+            });
+        }
+
+        const count = items.length;
+        badge.textContent = count;
+        badge.className = 'af-count-badge' + (count ? ' af-has-items' : '');
+
+        // Keep existing rows to avoid flicker — rebuild only if count changed
+        const existingRows = list.querySelectorAll('.af-item');
+        if (existingRows.length !== count || count === 0) {
+            list.innerHTML = '';
+            if (empty) list.appendChild(empty);
+        }
+
+        if (count === 0) {
+            if (empty) empty.style.display = '';
+            return;
+        }
+        if (empty) empty.style.display = 'none';
+
+        // Rebuild rows
+        const newRows = [];
+        for (const item of items) {
+            const srcClass = item.source === 'nzb' ? 'af-source-nzb'
+                           : item.source === 'torrent' ? 'af-source-torrent'
+                           : 'af-source-rclone';
+            const srcLabel = item.source.toUpperCase();
+            const dur = item.durationSeconds > 0 ? afFmtDuration(item.durationSeconds) : '';
+            const sz = afFmtSize(item.size);
+            const spd = afFmtSpeed(item.speed);
+            const prog = item.progress > 0 ? `<div class="af-progress-bar"><div class="af-progress-fill" style="width:${Math.min(100,item.progress)}%"></div></div>` : '';
+            const canDelete = item.cliDebridId != null || item.entryName;
+            const idsJson = JSON.stringify(item.cliDebridIds || {}).replace(/"/g,'&quot;');
+            const delBtn = canDelete
+                ? `<button class="af-del-btn" data-ids="${idsJson}" data-entry="${(item.entryName||'').replace(/"/g,'&quot;')}" onclick="afDelete(this)">Delete</button>`
+                : '';
+
+            const div = document.createElement('div');
+            div.className = 'af-item';
+            div.innerHTML = `
+                <div class="af-item-info">
+                    <div class="af-item-name" title="${item.name.replace(/"/g,'&quot;')}">${item.name}</div>
+                    <div class="af-item-meta">
+                        <span class="af-source-badge ${srcClass}">${srcLabel}</span>
+                        ${dur ? `<span class="af-duration">⏱ ${dur}</span>` : ''}
+                        ${sz !== '—' ? `<span class="af-size">${sz}</span>` : ''}
+                        ${spd ? `<span class="af-size">${spd.trim()}</span>` : ''}
+                    </div>
+                    ${prog}
+                </div>
+                ${delBtn}`;
+            newRows.push(div);
+        }
+
+        // Replace content
+        if (empty) empty.style.display = 'none';
+        while (list.firstChild) list.removeChild(list.firstChild);
+        newRows.forEach(r => list.appendChild(r));
+
+    } catch (e) {
+        console.warn('[ActiveFiles] fetch error:', e);
+    }
+}
+
+async function afDelete(btn) {
+    const entryName = btn.dataset.entry || '';
+    let cliDebridIds = {};
+    try { cliDebridIds = JSON.parse(btn.dataset.ids || '{}'); } catch(e) {}
+    const siblingCount = Object.keys(cliDebridIds).length;
+    const msg = siblingCount > 1
+        ? `Move all ${siblingCount} episodes of this season pack back to Wanted and delete from Plex?`
+        : 'Move this item back to Wanted and delete from Plex?';
+    if (!confirm(msg)) return;
+    btn.disabled = true;
+    btn.textContent = '…';
+    const body = {entry_name: entryName, cli_debrid_ids: cliDebridIds};
+    try {
+        const r = await fetch('/debrid_manager/api/active_files/delete', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        if (d.success) {
+            btn.closest('.af-item').remove();
+            afLoad();
+        } else {
+            btn.disabled = false;
+            btn.textContent = 'Delete';
+            alert('Delete failed: ' + (d.error || 'unknown error'));
+        }
+    } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'Delete';
+        alert('Delete error: ' + e.message);
+    }
+}
+
+// Auto-refresh every 10s while the usenet tab is visible
+function afStartPolling() {
+    afLoad();
+    clearInterval(_afTimer);
+    _afTimer = setInterval(afLoad, 10000);
+}
+function afStopPolling() {
+    clearInterval(_afTimer);
+    _afTimer = null;
+}
+
+// ── cli_mount SUB-TAB SWITCHING ────────────────────────────────────────────
+let _climountActiveSubtab = 'usenet';
+
+function switchcli_mountSubtab(tab) {
+    _climountActiveSubtab = tab;
+    const usenetBtn  = document.getElementById('usenet-subtab-btn');
+    const debridBtn  = document.getElementById('debrid-subtab-btn');
+    const usenetContent = document.getElementById('usenet-subtab-content');
+    const debridContent = document.getElementById('debrid-subtab-content');
+    if (usenetBtn)  usenetBtn.classList.toggle('active', tab === 'usenet');
+    if (debridBtn)  debridBtn.classList.toggle('active', tab === 'debrid');
+    if (usenetContent) usenetContent.style.display = tab === 'usenet' ? '' : 'none';
+    if (debridContent) debridContent.style.display = tab === 'debrid' ? '' : 'none';
+    if (tab === 'debrid' && !window._debridLoaded) loadDebridTab();
+}
+
+// ── DEBRID REPAIR TAB ──────────────────────────────────────────────────────
+window._debridLoaded = false;
+let _debridActivityOffset = 0;
+let _debridActivityTotal  = 0;
+const _debridActivityLimit = 25;
+let _debridActivityFilter  = null;
+let _debridRepairPollTimer = null;
+
+async function loadDebridTab() {
+    window._debridLoaded = true;
+    const loadEl  = document.getElementById('dr-loading');
+    const content = document.getElementById('dr-content');
+    const errEl   = document.getElementById('dr-error');
+    if (loadEl)  loadEl.style.display  = 'block';
+    if (content) content.style.display = 'none';
+    if (errEl)   errEl.style.display   = 'none';
+    try {
+        const r = await fetch('/debrid_manager/api/debrid/repair/stats');
+        const d = await r.json();
+        if (!d.success) throw new Error(d.error || 'Failed to load debrid stats');
+        _debridRenderStats(d.health || {}, d.activity || {});
+        // Populate version selector from usenet settings (same version list)
+        try {
+            const sr = await fetch('/debrid_manager/api/usenet/repair/stats');
+            const sd = await sr.json();
+            if (sd.success) _debridRenderVersions(sd.versions || [], sd.repair_version || '');
+        } catch(_) {}
+        if (loadEl)  loadEl.style.display  = 'none';
+        if (content) content.style.display = 'block';
+        await debridLoadActivity(null);
+        _debridMaybeStartPolling();
+        _debridScanPoll();
+    } catch(e) {
+        if (loadEl) loadEl.style.display = 'none';
+        if (errEl)  { errEl.style.display = 'block'; errEl.textContent = 'Failed to load debrid data: ' + e.message; }
+    }
+}
+
+async function _debridMaybeStartPolling() {
+    try {
+        const r = await fetch('/debrid_manager/api/debrid/repair/progress');
+        const d = await r.json();
+        if (d.is_running || d.status === 'running') {
+            document.getElementById('dr-repair-running').style.display = 'block';
+            document.getElementById('dr-repair-status-text').textContent = 'Repair running…';
+            document.getElementById('dr-repair-bar').style.width = '60%';
+            const fixBtn = document.getElementById('dr-fix-btn');
+            if (fixBtn) { fixBtn.disabled = true; fixBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="color:#CE93D8"></i> Repairing…'; }
+            _debridPollRepairProgress();
+        }
+    } catch(e) { /* ignore */ }
+}
+
+function _debridRenderStats(health, activity) {
+    const healthy   = health.healthy  || 0;
+    const broken    = health.broken   || 0;
+    const unknown   = health.unknown  || 0;
+    const reinserted = activity.reinserted || 0;
+    const replaced  = activity.replaced   || 0;
+    const setEl = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setEl('dr-stat-healthy',    healthy.toLocaleString());
+    setEl('dr-stat-broken',     broken);
+    setEl('dr-stat-unknown',    unknown.toLocaleString());
+    setEl('dr-stat-reinserted', reinserted);
+    setEl('dr-stat-replaced',   replaced);
+    const badge    = document.getElementById('dr-broken-badge');
+    const tabBadge = document.getElementById('debrid-tab-badge');
+    if (broken > 0) {
+        if (badge)    { badge.textContent = broken; badge.style.display = 'inline-block'; }
+        if (tabBadge) { tabBadge.textContent = broken; tabBadge.style.display = 'inline-block'; }
+    } else {
+        if (badge)    badge.style.display = 'none';
+        if (tabBadge) tabBadge.style.display = 'none';
+    }
+}
+
+function _debridRenderVersions(versions, savedVersion) {
+    const sel = document.getElementById('debrid-version-select');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">Item\'s version</option>' +
+        versions.map(v => `<option value="${_esc(v)}"${v === savedVersion ? ' selected' : ''}>${_esc(v)}</option>`).join('');
+}
+
+async function debridSaveVersion(version) {
+    try {
+        await fetch('/debrid_manager/api/usenet/repair/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({repair_version: version || ''}),
+        });
+    } catch(e) { console.error('[Debrid] save version error', e); }
+}
+
+async function debridLoadActivity(filter) {
+    _debridActivityFilter = filter || null;
+    _debridActivityOffset = 0;
+    const sel = document.getElementById('dr-filter-select');
+    if (sel) sel.value = filter || '';
+    await _debridFetchActivity();
+}
+
+async function _debridFetchActivity() {
+    const container  = document.getElementById('dr-activity-container');
+    const pagination = document.getElementById('dr-activity-pagination');
+    if (!container) return;
+    container.innerHTML = '<div style="color:#666;padding:20px 0">Loading activity…</div>';
+    const url = `/debrid_manager/api/debrid/repair/activity?limit=${_debridActivityLimit}&offset=${_debridActivityOffset}` +
+        (_debridActivityFilter ? `&outcome=${_debridActivityFilter}` : '');
+    try {
+        const r = await fetch(url);
+        const d = await r.json();
+        if (!d.success) return;
+        _debridActivityTotal = d.total;
+        _debridRenderActivity(d.rows, container, pagination);
+    } catch(e) { console.error('[Debrid] activity fetch error', e); }
+}
+
+function _debridRenderActivity(rows, container, pagination) {
+    if (!rows || rows.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-secondary,#666);padding:20px 0">No debrid repair activity recorded yet.</p>';
+        if (pagination) pagination.style.display = 'none';
+        return;
+    }
+
+    let html = `<table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+            <tr style="border-bottom:2px solid var(--border-color,#333);text-align:left;">
+                <th style="padding:8px 12px;white-space:nowrap;color:var(--text-secondary,#888);font-weight:600;width:145px;">Date / Time</th>
+                <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:160px;">Title</th>
+                <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;">Broken / Replaced</th>
+                <th style="padding:8px 12px;color:var(--text-secondary,#888);font-weight:600;width:90px;">Outcome</th>
+            </tr>
+        </thead>
+        <tbody>`;
+
+    rows.forEach((r, idx) => {
+        const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
+        const outcomeColor = r.outcome === 'replaced' ? '#00d4aa'
+            : r.outcome === 'reinserted' ? '#a78bfa'
+            : r.outcome === 'not_found'  ? '#ffaa44'
+            : '#ff4444';
+        const outcomeLabel = r.outcome === 'replaced'   ? 'Replaced'
+            : r.outcome === 'reinserted' ? 'Re-inserted'
+            : r.outcome === 'not_found'  ? 'Not Found'
+            : (r.outcome || '—');
+        const outcomeTooltip = _buildOutcomeTooltip(r);
+        const epSub = r.season_number
+            ? `<br><span style="font-size:11px;color:#888">S${String(r.season_number).padStart(2,'0')}E${String(r.episode_number||0).padStart(2,'0')}</span>`
+            : '';
+        const ts = r.created_at
+            ? new Date(r.created_at + (r.created_at.endsWith('Z') ? '' : 'Z')).toLocaleString()
+            : '—';
+        const brokenTitle = r.broken_nzb_title || r.broken_nzb_id || '—';
+        const replTitle = (r.replacement_title && r.replacement_title !== '—') ? r.replacement_title : null;
+        const candidateCell = _renderActivityCandidateCell(brokenTitle, replTitle, r.broken_nzb_id);
+        html += `<tr style="border-bottom:1px solid var(--border-color,#2a2a2a);background:${bg};">
+            <td style="padding:8px 12px;white-space:nowrap;font-family:monospace;font-size:11px;color:var(--text-secondary,#888)">${ts}</td>
+            <td style="padding:8px 12px;font-weight:500;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_esc(r.title || '—')}${epSub}</td>
+            <td style="padding:8px 12px;max-width:0;overflow:hidden">${candidateCell}</td>
+            <td style="padding:8px 12px;white-space:nowrap"><span style="color:${outcomeColor};font-weight:600;font-size:12px;cursor:help" title="${outcomeTooltip}">${outcomeLabel}</span></td>
+        </tr>`;
+    });
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+
+    const totalPages  = Math.ceil(_debridActivityTotal / _debridActivityLimit);
+    const currentPage = Math.floor(_debridActivityOffset / _debridActivityLimit) + 1;
+    if (pagination) {
+        if (totalPages > 1) {
+            pagination.style.display = 'flex';
+            const infoEl = document.getElementById('dr-activity-info');
+            const prevBtn = document.getElementById('dr-prev-btn');
+            const nextBtn = document.getElementById('dr-next-btn');
+            if (infoEl)  infoEl.textContent = `Page ${currentPage} of ${totalPages} (${_debridActivityTotal} events)`;
+            if (prevBtn) prevBtn.disabled = _debridActivityOffset === 0;
+            if (nextBtn) nextBtn.disabled = _debridActivityOffset + _debridActivityLimit >= _debridActivityTotal;
+        } else {
+            pagination.style.display = 'none';
+        }
+    }
+}
+
+function debridActivityPage(dir) {
+    _debridActivityOffset = Math.max(0, _debridActivityOffset + dir * _debridActivityLimit);
+    _debridFetchActivity();
+}
+
+async function debridTriggerScan(full = false) {
+    const btn  = document.getElementById('dr-scan-btn');
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = full ? '<i class="fa-solid fa-rotate fa-spin" style="color:#CE93D8"></i> Running full…' : '<i class="fa-solid fa-rotate fa-spin" style="color:#CE93D8"></i> Running…';
+    try {
+        const url = '/debrid_manager/api/debrid/repair/health_scan' + (full ? '?full=true' : '');
+        const r = await fetch(url, {method: 'POST'});
+        const d = await r.json();
+        btn.innerHTML = d.success ? '<i class="fa-solid fa-check" style="color:#4ade80"></i> Triggered' : '<i class="fa-solid fa-xmark" style="color:#ef4444"></i> Failed';
+        setTimeout(() => { btn.disabled = false; btn.innerHTML = orig; }, 3000);
+        if (d.success) _debridStartScanPolling();
+    } catch(e) { btn.disabled = false; btn.innerHTML = orig; }
+}
+
+let _debridScanPollTimer = null;
+
+function _debridSetScanningState(scanning) {
+    const btn = document.getElementById('dr-scan-btn');
+    const chevron = document.getElementById('dr-scan-chevron');
+    const select = btn?.parentElement?.querySelector('select');
+    if (!btn) return;
+    if (scanning) {
+        btn.style.paddingRight = '';
+        btn.onclick = debridStopScan;
+        btn.innerHTML = '<i class="fa-solid fa-rotate fa-spin" style="color:#CE93D8"></i> Running… <i class="fa-solid fa-stop" style="color:#ef4444;margin-left:4px;font-size:0.8em"></i>';
+        if (chevron) chevron.style.display = 'none';
+        if (select) select.style.display = 'none';
+    } else {
+        btn.style.paddingRight = '28px';
+        btn.onclick = function(){ debridTriggerScan(false); };
+        btn.innerHTML = '<i class="fa-solid fa-rotate" style="color:#CE93D8"></i> Run Health Scan';
+        if (chevron) chevron.style.display = '';
+        if (select) select.style.display = '';
+    }
+}
+
+async function debridStopScan() {
+    const btn = document.getElementById('dr-scan-btn');
+    if (btn) btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Stopping…';
+    try {
+        const r = await fetch('/debrid_manager/api/debrid/repair/stop', {method: 'POST'});
+        const d = await r.json();
+        if (!d.success) alert('Failed to stop scan: ' + (d.error || 'Unknown error'));
+        // Keep polling until scan actually stops (cli_mount finishes current entry first)
+        _debridPollUntilStopped(0);
+    } catch(e) {
+        console.error('[Debrid] stop scan error', e);
+        _debridSetScanningState(false);
+    }
+}
+
+async function _debridPollUntilStopped(attempts) {
+    if (attempts > 20) { _debridSetScanningState(false); return; } // safety cap ~20s
+    await new Promise(res => setTimeout(res, 1000));
+    try {
+        const pr = await fetch('/debrid_manager/api/debrid/repair/scan_status');
+        const pd = await pr.json();
+        if (pd.is_scanning) {
+            _debridPollUntilStopped(attempts + 1);
+        } else {
+            _debridSetScanningState(false);
+        }
+    } catch(e) { _debridSetScanningState(false); }
+}
+
+function _debridStartScanPolling() {
+    clearTimeout(_debridScanPollTimer);
+    _debridScanPoll();
+}
+
+async function _debridScanPoll() {
+    try {
+        const r = await fetch('/debrid_manager/api/debrid/repair/scan_status');
+        const d = await r.json();
+        _debridSetScanningState(d.is_scanning);
+        if (d.is_scanning) {
+            fetch('/debrid_manager/api/debrid/repair/stats').then(r => r.json()).then(sd => {
+                if (sd.success) _debridRenderStats(sd.health || {}, sd.activity || {});
+            }).catch(() => {});
+            _debridScanPollTimer = setTimeout(_debridScanPoll, 2000);
+        }
+    } catch(e) { _debridSetScanningState(false); }
+}
+
+async function debridViewBroken() {
+    const list = document.getElementById('dr-broken-list');
+    if (list.style.display !== 'none') { list.style.display = 'none'; return; }
+    try {
+        const r = await fetch('/debrid_manager/api/debrid/repair/broken');
+        const d = await r.json();
+        const tbody = document.getElementById('dr-broken-tbody');
+        if (!d.success || !d.items || d.items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#666;padding:20px 12px">No broken torrent items</td></tr>';
+        } else {
+            tbody.innerHTML = d.items.map((item, idx) => {
+                const bg = idx % 2 === 0 ? 'transparent' : 'rgba(128,128,128,0.04)';
+                const name        = _esc(item.entry_name || item.name || item.title || '—');
+                const rawName     = (item.entry_name || item.name || item.title || '').replace(/'/g, "\\'");
+                const rawHash     = (item.info_hash || item.hash || (item.broken_files && item.broken_files[0] && item.broken_files[0].info_hash) || '').replace(/'/g, "\\'");
+                const broken      = item.broken_count || item.broken_files || '?';
+                const reason      = item.failure_reason || '—';
+                const isGhost     = item.is_ghost === true;
+                const isMissing   = reason === 'missing_provider_link';
+                const actionLabel = isMissing ? 'Re-insert' : 'Replace';
+                const actionVal   = isMissing ? 'reinsert' : 'replace';
+                const rowOpacity  = isGhost ? 'opacity:0.5' : '';
+                const reasonCell  = isGhost
+                    ? `<span style="color:#f59e0b">ghost</span>`
+                    : `<span style="color:#CE93D8">${_esc(reason)}</span>`;
+                const actionCell  = isGhost
+                    ? `<button onclick="debridDeleteGhostSingle('${rawName}', this)" class="un-btn" style="padding:4px 12px;font-size:12px;color:#f59e0b;border-color:#f59e0b"><i class="fa-solid fa-ghost"></i> Delete</button>`
+                    : `<button onclick="debridFixSingle('${rawName}', '${rawHash}', '${actionVal}', this)" class="un-btn" style="padding:4px 12px;font-size:12px">${actionLabel}</button>`;
+                return `<tr style="border-bottom:1px solid var(--border-color,#2a2a2a);background:${bg};${rowOpacity}">
+                    <td style="padding:8px 12px;font-weight:500">${name}</td>
+                    <td style="padding:8px 12px;font-size:12px">${reasonCell}</td>
+                    <td style="padding:8px 12px;color:#ff4444;font-weight:600;text-align:right;white-space:nowrap">${broken}</td>
+                    <td style="padding:8px 12px;text-align:center;white-space:nowrap">${actionCell}</td>
+                </tr>`;
+            }).join('');
+        }
+        list.style.display = 'block';
+    } catch(e) { console.error('[Debrid] view broken error', e); }
+}
+
+async function debridFixSingle(entryName, infoHash, action, btn) {
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+        const r = await fetch('/debrid_manager/api/debrid/repair/fix_single', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({entry_name: entryName, info_hash: infoHash, action: action})
+        });
+        const d = await r.json();
+        if (d.success) {
+            btn.textContent = '✓';
+            btn.style.color = '#4caf50';
+            setTimeout(() => debridViewBroken(), 2000);
+        } else {
+            btn.textContent = '✗';
+            btn.style.color = '#ff4444';
+            setTimeout(() => { btn.textContent = orig; btn.disabled = false; btn.style.color = ''; }, 3000);
+        }
+    } catch(e) {
+        console.error('[Debrid] fix single error', e);
+        btn.textContent = orig;
+        btn.disabled = false;
+    }
+}
+
+async function debridRunRepair() {
+    const btn      = document.getElementById('dr-fix-btn');
+    const orig     = btn.innerHTML;
+    const statusEl = document.getElementById('dr-repair-status-text');
+    const barEl    = document.getElementById('dr-repair-bar');
+    const runningEl = document.getElementById('dr-repair-running');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Starting…';
+    try {
+        const versionOverride = document.getElementById('debrid-version-select')?.value || null;
+        const r = await fetch('/debrid_manager/api/debrid/repair/run', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(versionOverride ? {version_override: versionOverride} : {}),
+        });
+        const d = await r.json();
+        if (d.success) {
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="color:#CE93D8"></i> Repairing…';
+            runningEl.style.display = 'block';
+            statusEl.textContent = 'Repair running…';
+            barEl.style.width = '15%';
+            _debridPollRepairProgress();
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = orig;
+            runningEl.style.display = 'block';
+            statusEl.textContent = d.message || 'Already running or could not start';
+            barEl.style.width = '0%';
+        }
+    } catch(e) {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+        console.error('[Debrid] run repair error', e);
+    }
+}
+
+async function debridDeleteAllBroken() {
+    const btn  = document.getElementById('dr-delete-broken-btn');
+    const orig = btn.innerHTML;
+    const brokenCount = parseInt(document.getElementById('dr-stat-broken')?.textContent || '0') || 0;
+    const label = brokenCount > 0 ? `${brokenCount} broken` : 'all broken';
+    if (!confirm(`Delete ${label} debrid torrents?\n\nThis will:\n• Delete from cli_mount\n• Delete from Plex\n• Reset items to Wanted (will re-scrape)\n\nContinue?`)) return;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Deleting…';
+    try {
+        const r = await fetch('/debrid_manager/api/debrid/repair/delete_all_broken', {method: 'POST'});
+        const d = await r.json();
+        if (d.success) {
+            btn.innerHTML = '<i class="fa-solid fa-check" style="color:#4ade80"></i> Done';
+            setTimeout(() => { btn.disabled = false; btn.innerHTML = orig; }, 3000);
+            fetch('/debrid_manager/api/debrid/repair/stats').then(r => r.json()).then(sd => {
+                if (sd.success) _debridRenderStats(sd.health || {}, sd.activity || {});
+            }).catch(() => {});
+            const msg = d.message || 'Done';
+            const statusEl  = document.getElementById('dr-repair-status-text');
+            const runningEl = document.getElementById('dr-repair-running');
+            if (statusEl && runningEl) { runningEl.style.display = 'block'; statusEl.textContent = msg; }
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = orig;
+            alert('Delete failed: ' + (d.error || 'Unknown error'));
+        }
+    } catch(e) {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+        console.error('[Debrid] delete all broken error', e);
+    }
+}
+
+async function debridDeleteGhostEntries() {
+    const btn  = document.getElementById('dr-delete-ghosts-btn');
+    const orig = btn.innerHTML;
+    if (!confirm('Delete ghost entries?\n\nThis removes raw-RD-filename entries (created by cli_mount\'s own repair) from both cli_mount and RealDebrid.\n\nYour properly-named CLI entries are NOT affected.\n\nContinue?')) return;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Cleaning…';
+    try {
+        const r = await fetch('/debrid_manager/api/debrid/repair/delete_ghost_entries', {method: 'POST'});
+        const d = await r.json();
+        if (d.success) {
+            btn.innerHTML = '<i class="fa-solid fa-check" style="color:#4ade80"></i> Done';
+            setTimeout(() => { btn.disabled = false; btn.innerHTML = orig; }, 3000);
+            alert(d.message);
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = orig;
+            alert('Failed: ' + (d.error || 'Unknown error'));
+        }
+    } catch(e) {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+        console.error('[Debrid] delete ghost entries error', e);
+    }
+}
+
+async function debridDeleteGhostSingle(entryName, btn) {
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    try {
+        const r = await fetch('/debrid_manager/api/debrid/repair/delete_ghost_single', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({entry_name: entryName})
+        });
+        const d = await r.json();
+        if (d.success) {
+            btn.closest('tr').remove();
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = orig;
+            alert('Failed: ' + (d.error || 'Unknown error'));
+        }
+    } catch(e) {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+        console.error('[Debrid] delete ghost single error', e);
+    }
+}
+
+function _debridPollRepairProgress() {
+    clearTimeout(_debridRepairPollTimer);
+    _debridRepairPollTimer = setTimeout(async () => {
+        try {
+            const r = await fetch('/debrid_manager/api/debrid/repair/progress');
+            const d = await r.json();
+            const runningEl = document.getElementById('dr-repair-running');
+            const fixBtn    = document.getElementById('dr-fix-btn');
+            const statusEl  = document.getElementById('dr-repair-status-text');
+            const barEl     = document.getElementById('dr-repair-bar');
+            if (d.is_running) {
+                if (barEl) barEl.style.width = '60%';
+                if (fixBtn) { fixBtn.disabled = true; fixBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin" style="color:#CE93D8"></i> Repairing…'; }
+                _debridPollRepairProgress();
+            } else if (d.status === 'done' && d.summary) {
+                if (barEl)    barEl.style.width = '100%';
+                if (statusEl) statusEl.textContent =
+                    `Done — ${d.summary.reinserted || 0} re-inserted, ${d.summary.replaced || 0} replaced, ${d.summary.errors || 0} errors`;
+                if (fixBtn) {
+                    fixBtn.disabled = false;
+                    fixBtn.innerHTML = '<i class="fa-solid fa-check" style="color:#4ade80"></i> Done';
+                    setTimeout(() => { fixBtn.innerHTML = '<i class="fa-solid fa-wrench" style="color:#CE93D8"></i> Fix Broken'; }, 3000);
+                }
+                fetch('/debrid_manager/api/debrid/repair/stats').then(r => r.json()).then(sd => {
+                    if (sd.success) {
+                        _debridRenderStats(sd.health || {}, sd.activity || {});
+                        const c = document.getElementById('dr-activity-container');
+                        const p = document.getElementById('dr-activity-pagination');
+                        fetch(`/debrid_manager/api/debrid/repair/activity?limit=${_debridActivityLimit}&offset=0`)
+                            .then(r => r.json()).then(d => {
+                                if (d.success) { _debridActivityOffset = 0; _debridActivityTotal = d.total; _debridRenderActivity(d.rows, c, p); }
+                            });
+                    }
+                });
+            } else if (d.status === 'error') {
+                if (barEl)    barEl.style.width = '0%';
+                if (statusEl) statusEl.textContent = 'Error: ' + (d.error || 'unknown');
+                if (fixBtn)   { fixBtn.disabled = false; fixBtn.innerHTML = '<i class="fa-solid fa-wrench" style="color:#CE93D8"></i> Fix Broken'; }
+            }
+        } catch(e) { /* ignore */ }
+    }, 3000);
+}
 
 {% if show_plex_trash %}
 // ── PLEX TRASH TAB ─────────────────────────────────────────────────────────
@@ -6978,7 +8021,7 @@ _battEl('batt-reid-commit-btn')?.addEventListener('click', async function() {
 
 // Battery audit loads on-demand when Battery sub-tab is clicked (not auto-loaded)
 
-{% if decypharr_mode %}
+{% if climount_mode %}
 // ── Bad Torrent Audit ──────────────────────────────────────────────────────
 (function () {
     let _btaData = null;

@@ -379,6 +379,9 @@ def migrate_schema():
         if 'nzb_segment_id' not in columns:
             conn.execute('ALTER TABLE media_items ADD COLUMN nzb_segment_id TEXT')
             logging.info("Added nzb_segment_id column to media_items table.")
+        if 'original_filename' not in columns:
+            conn.execute('ALTER TABLE media_items ADD COLUMN original_filename TEXT')
+            logging.info("Added original_filename column to media_items table.")
 
         # Migrate data from legacy plex_* columns to ms_* columns (one-time migration)
         # Only runs when plex_rating_key data exists AND ms_item_id is completely unpopulated
