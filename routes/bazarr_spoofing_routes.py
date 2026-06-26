@@ -423,17 +423,23 @@ def _remap_plex_path(path: str) -> str:
 
 def get_file_path(item: Dict[str, Any]) -> str:
     """Get the full file path for an item.
-    Uses same logic as downsub: location_on_disk joined with filled_by_file if not already ending with it.
+
+    location_on_disk is always a complete file path in both modes:
+    - Symlinked/Local: full path to the renamed symlink file
+    - Plex: /debrid/movies/Folder/file.mkv or similar
+
+    In Symlinked/Local mode the symlink filename differs from filled_by_file (the original
+    source name), so appending filled_by_file would produce a non-existent path.
+    Use location_on_disk directly when present; only fall back to filled_by_file when absent.
     """
     location = (item.get('location_on_disk') or item.get('file_path') or '').rstrip('/')
     filled_by_file = (item.get('filled_by_file') or '').strip()
-    if location and filled_by_file:
-        if not location.endswith('/' + filled_by_file):
-            full_path = location + '/' + filled_by_file
-        else:
-            full_path = location
-    else:
+
+    if location:
         full_path = location
+    else:
+        full_path = filled_by_file
+
     return _remap_plex_path(full_path)
 
 
@@ -970,9 +976,11 @@ def root_folder():
         ]
     else:
         symlink_path = get_setting('File Management', 'symlinked_files_path', '/mnt/symlinked')
+        movies_folder = get_setting('Debug', 'movies_folder_name', 'Movies')
+        tv_folder = get_setting('Debug', 'tv_shows_folder_name', 'TV Shows')
         folders = [
-            {'id': 1, 'path': os.path.join(symlink_path, 'Movies')},
-            {'id': 2, 'path': os.path.join(symlink_path, 'TV Shows')}
+            {'id': 1, 'path': os.path.join(symlink_path, movies_folder)},
+            {'id': 2, 'path': os.path.join(symlink_path, tv_folder)}
         ]
 
     return jsonify(folders)
