@@ -1187,9 +1187,17 @@ def filter_results(
                                 logging.info(f"Rejected: Not enough episodes for multi mode for '{original_title}' (is_anime={is_anime}, heuristic_failed={not is_likely_anime_pack}) (Size: {result['size']:.2f}GB)")
                                 continue
                     else:
-                        if season not in season_episode_info.get('seasons', []):
+                        result_seasons = season_episode_info.get('seasons', [])
+                        if season not in result_seasons:
                             result['filter_reason'] = f"Season pack not containing the requested season: {season}"
                             logging.info(f"Rejected: Season pack missing season {season} for '{original_title}' (Size: {result['size']:.2f}GB)")
+                            continue
+                        # Reject multi-season packs when searching for a single season in multi mode.
+                        # A pack containing seasons [1,2,3,4,5] is not a valid match for a season 1
+                        # request — downloading 4 extra seasons is wrong regardless of cache status.
+                        if len(result_seasons) > 1:
+                            result['filter_reason'] = f"Multi-season pack {result_seasons} when searching for single season {season}"
+                            logging.info(f"Rejected: Multi-season pack {result_seasons} for single season {season} request: '{original_title}' (Size: {result['size']:.2f}GB)")
                             continue
                     # NZB-specific: reject incomplete season packs using the indexer's file count
                     # WHEN that count is actually reported. If the indexer reports fewer files than
