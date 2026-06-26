@@ -5978,6 +5978,8 @@ if (document.readyState === 'loading') {
         }
     }
 
+    window.backfillNzbNamesRun = backfillNzbNamesRun;
+
     function runWatchlistCleanup() {
         const btn = document.getElementById('cleanup-watchlist-btn');
         const result = document.getElementById('cleanup-watchlist-result');

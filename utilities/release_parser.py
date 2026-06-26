@@ -42,8 +42,8 @@ class ReleaseParser:
     }
     
     CODEC_PATTERNS = {
-        'x265': r'(?:x265|h265|HEVC)',
-        'x264': r'(?:x264|h264|AVC)',
+        'x265': r'(?:x265|h\.?265|HEVC)',
+        'x264': r'(?:x264|h\.?264|AVC)',
         'AV1': r'AV1',
         'VP9': r'VP9',
         'XviD': r'XviD',

@@ -1128,6 +1128,23 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             db_items = [i for i in db_items
                         if i.get('state') in ('Collected', 'Checking', 'Upgrading', 'Adding')]
 
+            # For fuzzy-matched Collected items, skip any whose current filled_by_torrent_id
+            # does NOT match the broken entry's job ID. This means the item was already
+            # successfully re-collected under a different NZB — the stale debrid_folder_name
+            # just happens to match the broken entry name.
+            if info_hash and db_items:
+                def _matches_broken(item):
+                    if item.get('state') != 'Collected':
+                        return True
+                    torrent_id = item.get('filled_by_torrent_id') or ''
+                    # filled_by_torrent_id is stored as "nzb:<uuid>"
+                    return torrent_id == info_hash or torrent_id == f'nzb:{info_hash}'
+                filtered = [i for i in db_items if _matches_broken(i)]
+                if len(filtered) < len(db_items):
+                    skipped = [i.get('id') for i in db_items if not _matches_broken(i)]
+                    logger.info(f'[NZBRepair] Skipping already-replaced Collected items {skipped} for {entry_name!r} — torrent_id mismatch')
+                    db_items = filtered
+
             if not db_items:
                 # Orphan — no CLI DB match.
                 # Only attempt provider delete if we have a hash — name-search deletes
@@ -1139,7 +1156,7 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                 else:
                     logger.debug(f'[NZBRepair] No repairable DB items for {entry_name!r} — orphan with no hash, skipping provider delete')
                 log_repair_activity(
-                    broken_nzb_id=info_hash,
+                    broken_nzb_id=info_hash or entry_name,
                     broken_nzb_title=entry_name,
                     outcome='not_found',
                     triggered_by=triggered_by,
@@ -1218,7 +1235,7 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                         media_type=db_item.get('type'),
                         season_number=db_item.get('season_number'),
                         episode_number=db_item.get('episode_number'),
-                        broken_nzb_id=info_hash,
+                        broken_nzb_id=info_hash or entry_name,
                         broken_nzb_title=entry_name,
                         outcome='skipped_max_attempts',
                         triggered_by=triggered_by,
@@ -1245,19 +1262,25 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             candidates = _scrape_for_replacement(rep, broken_nzb_title, version_override=version_override)
 
             if not candidates:
-                # No replacement found — move to Wanted WITHOUT touching Plex or provider
-                # File may still be playable; just re-queue for fresh scrape
-                logger.warning(f'[NZBRepair] No replacement found for {entry_name!r} — moving to Wanted (file kept)')
+                # No replacement found — leave Collected items in place (file may still be
+                # playable) and let the repair backoff handle retrying. Moving Collected items
+                # to Wanted would trigger the normal scraping queue to hit indexers immediately,
+                # doubling the spam. Non-Collected items (Checking/Adding) have no file on disk
+                # yet so they are moved to Wanted for a fresh scrape.
                 next_repair_at = calculate_next_repair_at(new_attempts)
                 for db_item in db_items:
-                    _move_to_wanted(db_item)
+                    if db_item.get('state') == 'Collected':
+                        logger.warning(f'[NZBRepair] No replacement found for {entry_name!r} — keeping Collected, backoff until {next_repair_at}')
+                    else:
+                        _move_to_wanted(db_item)
+                        logger.warning(f'[NZBRepair] No replacement found for {entry_name!r} — moving to Wanted (no file on disk)')
                     log_repair_activity(
                         item_id=db_item.get('id'),
                         title=db_item.get('title'),
                         media_type=db_item.get('type'),
                         season_number=db_item.get('season_number'),
                         episode_number=db_item.get('episode_number'),
-                        broken_nzb_id=info_hash,
+                        broken_nzb_id=info_hash or entry_name,
                         broken_nzb_title=broken_nzb_title,
                         outcome='no_replacement',
                         triggered_by=triggered_by,
@@ -1289,7 +1312,7 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                         media_type=db_item.get('type'),
                         season_number=db_item.get('season_number'),
                         episode_number=db_item.get('episode_number'),
-                        broken_nzb_id=info_hash,
+                        broken_nzb_id=info_hash or entry_name,
                         broken_nzb_title=broken_nzb_title,
                         outcome='submission_failed',
                         triggered_by=triggered_by,
@@ -1327,7 +1350,7 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
                     media_type=db_item.get('type'),
                     season_number=db_item.get('season_number'),
                     episode_number=db_item.get('episode_number'),
-                    broken_nzb_id=info_hash,
+                    broken_nzb_id=info_hash or entry_name,
                     broken_nzb_title=broken_nzb_title,
                     replacement_nzb_id=new_job_id,
                     replacement_title=best.get('title'),
