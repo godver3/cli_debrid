@@ -1222,8 +1222,9 @@ class UpgradingQueue:
                         # We might need to update the 'upgrading' flag back to False if restore_item_state doesn't
                         update_media_item(item['id'], upgrading=False)
                     else:
-                        logging.error(f"Failed to restore previous state for {item_identifier}, manual intervention may be needed")
-                        # Item might be stuck, consider moving to a failed state?
+                        # No snapshot to restore; revert to Collected instead of leaving it stuck mid-upgrade.
+                        logging.error(f"Failed to restore previous state for {item_identifier}; reverting to Collected")
+                        update_media_item(item['id'], state='Collected', upgrading=False, upgrading_from=None)
 
                     # Log failure to Upgrade Hub activity (after purge/not_wanted so we can include outcomes)
                     if pre_candidate is not None:
