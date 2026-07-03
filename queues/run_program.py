@@ -3616,14 +3616,40 @@ class ProgramRunner:
                             if _remaining:
                                 _has_more_results = True
                                 # Delete the broken job from cli_mount so prefix-match in
-                                # torrent_processor won't reuse it on the next retry attempt
+                                # torrent_processor won't reuse it on the next retry attempt.
+                                # Safety: never delete if another item (e.g. a different version
+                                # that already Collected) still owns this job — that would leave
+                                # a broken symlink pointing at a removed mount file.
+                                _broken_hash = torrent_id.replace('nzb:', '') if torrent_id else ''
+                                _job_still_owned = False
                                 try:
-                                    from usenet.repair_engine import _delete_from_provider as _dfp
-                                    _broken_hash = torrent_id.replace('nzb:', '') if torrent_id else ''
-                                    _dfp(_broken_hash, item.get('filled_by_file', '') or '')
-                                    logging.debug(f'[NZB] Deleted broken job {_broken_hash} from provider before retry')
-                                except Exception as _del_err:
-                                    logging.debug(f'[NZB] Could not delete broken job from provider: {_del_err}')
+                                    from database import get_db_connection as _gdb_own
+                                    _conn_own = _gdb_own()
+                                    try:
+                                        _owner = _conn_own.execute(
+                                            "SELECT id, version, state FROM media_items "
+                                            "WHERE filled_by_torrent_id=? AND id!=? "
+                                            "AND state IN ('Collected','Checking','Upgrading') "
+                                            "LIMIT 1",
+                                            (torrent_id, item_id)
+                                        ).fetchone()
+                                    finally:
+                                        _conn_own.close()
+                                    if _owner:
+                                        _job_still_owned = True
+                                        logging.warning(
+                                            f'[NZB] Skipping delete of {_broken_hash} — still owned by '
+                                            f'item {_owner[0]} (version={_owner[1]!r}, state={_owner[2]!r})'
+                                        )
+                                except Exception as _own_err:
+                                    logging.debug(f'[NZB] Owner check failed, will attempt delete: {_own_err}')
+                                if not _job_still_owned:
+                                    try:
+                                        from usenet.repair_engine import _delete_from_provider as _dfp
+                                        _dfp(_broken_hash, item.get('filled_by_file', '') or '')
+                                        logging.debug(f'[NZB] Deleted broken job {_broken_hash} from provider before retry')
+                                    except Exception as _del_err:
+                                        logging.debug(f'[NZB] Could not delete broken job from provider: {_del_err}')
                                 from database.database_writing import update_media_item as _umi_retry
                                 _umi_retry(item_id,
                                     filled_by_torrent_id=None,

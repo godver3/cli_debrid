@@ -565,13 +565,17 @@ class TorrentProcessor:
                     from database import get_db_connection as _gdb
                     _conn = _gdb()
                     import re as _re_dedup
+                    # Only reuse/cancel jobs for the same version — different versions
+                    # (e.g. 1080p vs 4k) must keep separate cli_mount entries.
+                    _pack_version = (item.get('version') or '').rstrip('*')
                     try:
                         _sibling = _conn.execute(
                             "SELECT filled_by_torrent_id, filled_by_file FROM media_items "
                             "WHERE imdb_id=? AND season_number=? AND type='episode' "
                             "AND id!=? AND filled_by_torrent_id LIKE 'nzb:%' "
-                            "AND state IN ('Adding','Checking','Collected','Upgrading') LIMIT 1",
-                            (_imdb, _season, item.get('id', -1))
+                            "AND state IN ('Adding','Checking','Collected','Upgrading') "
+                            "AND REPLACE(COALESCE(version,''), '*', '')=? LIMIT 1",
+                            (_imdb, _season, item.get('id', -1), _pack_version)
                         ).fetchone()
                     finally:
                         _conn.close()
@@ -604,6 +608,7 @@ class TorrentProcessor:
                             # New result is a pack, existing jobs are individual episodes.
                             # Cancel the individual cli_mount jobs so we don't end up with
                             # both individual files AND a season pack folder on disk.
+                            # Only cancel same-version individuals — leave other versions alone.
                             try:
                                 from database import get_db_connection as _gdb2
                                 _conn2 = _gdb2()
@@ -612,8 +617,9 @@ class TorrentProcessor:
                                         "SELECT id, filled_by_torrent_id FROM media_items "
                                         "WHERE imdb_id=? AND season_number=? AND type='episode' "
                                         "AND filled_by_torrent_id LIKE 'nzb:%' "
-                                        "AND state IN ('Adding','Checking')",
-                                        (_imdb, _season)
+                                        "AND state IN ('Adding','Checking') "
+                                        "AND REPLACE(COALESCE(version,''), '*', '')=?",
+                                        (_imdb, _season, _pack_version)
                                     ).fetchall()
                                 finally:
                                     _conn2.close()
@@ -680,21 +686,27 @@ class TorrentProcessor:
 
         # DB-level dedup: check if same item already in Adding/Checking with nzb: torrent ID.
         # Works for both cli_mount and NzbDAV since it uses the DB, not provider API.
+        # Version-aware: different versions (1080p vs 4k) must never share a job — otherwise
+        # a failed health check for one version can delete the other's mount entry.
         try:
             from database.core import get_db_connection as _get_dbc_dd
             _item_imdb = (item or {}).get('imdb_id')
             _item_type = (item or {}).get('type', '')
+            _item_version = ((item or {}).get('version') or '').rstrip('*')
             if _item_imdb and _item_type:
                 _dd_q = ("SELECT filled_by_torrent_id FROM media_items "
                          "WHERE imdb_id=? AND type=? AND state IN ('Adding','Checking') "
-                         "AND filled_by_torrent_id LIKE 'nzb:%'")
-                _dd_p = (_item_imdb, _item_type)
+                         "AND filled_by_torrent_id LIKE 'nzb:%' "
+                         "AND REPLACE(COALESCE(version,''), '*', '')=?")
+                _dd_p = (_item_imdb, _item_type, _item_version)
                 if _item_type == 'episode':
                     _dd_q = ("SELECT filled_by_torrent_id FROM media_items "
                              "WHERE imdb_id=? AND type=? AND season_number=? AND episode_number=? "
-                             "AND state IN ('Adding','Checking') AND filled_by_torrent_id LIKE 'nzb:%'")
+                             "AND state IN ('Adding','Checking') AND filled_by_torrent_id LIKE 'nzb:%' "
+                             "AND REPLACE(COALESCE(version,''), '*', '')=?")
                     _dd_p = (_item_imdb, _item_type,
-                             (item or {}).get('season_number'), (item or {}).get('episode_number'))
+                             (item or {}).get('season_number'), (item or {}).get('episode_number'),
+                             _item_version)
                 with _get_dbc_dd() as _dbc:
                     _dd_row = _dbc.execute(_dd_q, _dd_p).fetchone()
                 if _dd_row:
