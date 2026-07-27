@@ -134,24 +134,25 @@ def get_collected_series() -> List[Dict[str, Any]]:
     conn.execute('PRAGMA query_only = ON')
     try:
         cursor = conn.cursor()
-        # Get unique shows with their metadata
+        # NULLIF so empty-string imdb_id falls through to tmdb (matches normalize_show_id)
         cursor.execute("""
             SELECT DISTINCT
-                COALESCE(imdb_id, tmdb_id) as show_id,
+                COALESCE(NULLIF(imdb_id, ''), NULLIF(CAST(tmdb_id AS TEXT), '')) as show_id,
                 imdb_id, tmdb_id, title, year, genres, runtime
             FROM media_items
             WHERE state = 'Collected'
             AND type = 'episode'
             AND (file_path IS NOT NULL OR location_on_disk IS NOT NULL)
-            GROUP BY COALESCE(imdb_id, tmdb_id), title
+            GROUP BY COALESCE(NULLIF(imdb_id, ''), NULLIF(CAST(tmdb_id AS TEXT), '')), title
         """)
 
         series_list = []
         for row in cursor.fetchall():
+            imdb_id, tmdb_id = row[1], row[2]
             series_list.append({
-                'show_id': row[0],
-                'imdb_id': row[1],
-                'tmdb_id': row[2],
+                'show_id': normalize_show_id(imdb_id, tmdb_id) or row[0],
+                'imdb_id': imdb_id,
+                'tmdb_id': tmdb_id,
                 'title': row[3],
                 'year': row[4],
                 'genres': row[5],
@@ -244,8 +245,30 @@ def get_all_collected_episodes() -> List[Dict[str, Any]]:
         conn.close()
 
 
+def _movie_row_to_dict(row) -> Dict[str, Any]:
+    return {
+        'id': row[0],
+        'imdb_id': row[1],
+        'tmdb_id': row[2],
+        'title': row[3],
+        'year': row[4],
+        'file_path': row[5],
+        'location_on_disk': row[6],
+        'genres': row[7],
+        'runtime': row[8],
+        'collected_at': row[9],
+        'version': row[10],
+        'filled_by_file': row[11],
+        'resolution': row[12]
+    }
+
+
 def get_movie_by_id(movie_id: int) -> Optional[Dict[str, Any]]:
-    """Get a specific movie by its ID."""
+    """Get a specific movie by its Radarr id (TMDB, else hashed media id).
+
+    Prefer tmdb_id match — never match media_items.id first, which collides
+    with TMDB ids and returns the wrong title.
+    """
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
@@ -254,64 +277,76 @@ def get_movie_by_id(movie_id: int) -> Optional[Dict[str, Any]]:
                    location_on_disk, genres, runtime, collected_at, version,
                    filled_by_file, resolution
             FROM media_items
-            WHERE (id = ? OR tmdb_id = ? OR tmdb_id = ?)
-            AND state = 'Collected'
+            WHERE state = 'Collected'
             AND type = 'movie'
+            AND (tmdb_id = ? OR tmdb_id = ?)
             LIMIT 1
-        """, (movie_id, str(movie_id), movie_id))
+        """, (str(movie_id), movie_id))
 
         row = cursor.fetchone()
         if row:
-            return {
-                'id': row[0],
-                'imdb_id': row[1],
-                'tmdb_id': row[2],
-                'title': row[3],
-                'year': row[4],
-                'file_path': row[5],
-                'location_on_disk': row[6],
-                'genres': row[7],
-                'runtime': row[8],
-                'collected_at': row[9],
-                'version': row[10],
-                'filled_by_file': row[11],
-                'resolution': row[12]
-            }
-        return None
+            return _movie_row_to_dict(row)
     finally:
         conn.close()
 
+    # Fallback: hashed movie ids when TMDB is missing
+    for movie in get_collected_movies():
+        try:
+            tmdb_id = int(movie.get('tmdb_id') or 0)
+        except (ValueError, TypeError):
+            tmdb_id = 0
+        resolved = tmdb_id or generate_unique_id(movie.get('id'), 'movie')
+        if resolved == movie_id:
+            return movie
+    return None
+
 
 def get_series_by_id(series_id: int) -> Optional[Dict[str, Any]]:
-    """Get a specific series by its ID."""
+    """Resolve a Sonarr series id to show metadata.
+
+    Prefer tmdb_id match (not media_items.id — PK collisions with TMDB break
+    Bazarr FK inserts). Fall back to scanning collected shows for hashed
+    sonarr_series_id matches when TMDB is absent.
+    """
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT DISTINCT
-                COALESCE(imdb_id, tmdb_id) as show_id,
+                COALESCE(NULLIF(imdb_id, ''), NULLIF(CAST(tmdb_id AS TEXT), '')) as show_id,
                 imdb_id, tmdb_id, title, year, genres, runtime
             FROM media_items
-            WHERE (id = ? OR tmdb_id = ? OR tmdb_id = ? OR imdb_id = ?)
-            AND state = 'Collected'
+            WHERE state = 'Collected'
             AND type = 'episode'
+            AND (tmdb_id = ? OR tmdb_id = ?)
+            AND (file_path IS NOT NULL OR location_on_disk IS NOT NULL)
             LIMIT 1
-        """, (series_id, str(series_id), series_id, str(series_id)))
+        """, (str(series_id), series_id))
 
         row = cursor.fetchone()
         if row:
+            imdb_id, tmdb_id = row[1], row[2]
             return {
-                'show_id': row[0],
-                'imdb_id': row[1],
-                'tmdb_id': row[2],
+                'show_id': normalize_show_id(imdb_id, tmdb_id) or row[0],
+                'imdb_id': imdb_id,
+                'tmdb_id': tmdb_id,
                 'title': row[3],
                 'year': row[4],
                 'genres': row[5],
                 'runtime': row[6]
             }
-        return None
     finally:
         conn.close()
+
+    for series in get_collected_series():
+        if sonarr_series_id(series) == series_id:
+            result = dict(series)
+            result['show_id'] = (
+                normalize_show_id(result.get('imdb_id'), result.get('tmdb_id'))
+                or result.get('show_id')
+            )
+            return result
+    return None
 
 
 # ============================================================================
@@ -382,6 +417,36 @@ def generate_unique_id(base_id: Any, prefix: str = '') -> int:
     # Always use hash to ensure prefix is incorporated
     hash_input = f"{prefix}{base_id}".encode()
     return int(hashlib.md5(hash_input).hexdigest()[:8], 16)
+
+
+def normalize_show_id(imdb_id: Any = None, tmdb_id: Any = None) -> str:
+    """Normalize show identity for grouping and lookups.
+
+    Blank/whitespace strings are treated as missing. Prefer IMDB, then TMDB —
+    matching SQL COALESCE(NULLIF(imdb_id, ''), NULLIF(tmdb_id, '')).
+    """
+    def _clean(value: Any) -> str:
+        if value is None:
+            return ''
+        text = str(value).strip()
+        return text if text else ''
+
+    return _clean(imdb_id) or _clean(tmdb_id)
+
+
+def sonarr_series_id(item: Dict[str, Any]) -> int:
+    """Stable Sonarr series id used by every HTTP and SignalR path.
+
+    Use integer TMDB when present; otherwise a deterministic hash of show_id.
+    """
+    try:
+        tmdb_id = int(item.get('tmdb_id') or 0)
+    except (ValueError, TypeError):
+        tmdb_id = 0
+    if tmdb_id:
+        return tmdb_id
+    show_id = item.get('show_id') or normalize_show_id(item.get('imdb_id'), item.get('tmdb_id'))
+    return generate_unique_id(show_id, 'series')
 
 
 def generate_tvdb_id(tmdb_id: Any, title: str, episode_info: Optional[Dict[str, Any]] = None) -> int:
@@ -639,7 +704,7 @@ def create_series_resource(item: Dict[str, Any], episodes: List[Dict[str, Any]] 
         tmdb_id = int(item.get('tmdb_id') or 0)
     except (ValueError, TypeError):
         tmdb_id = 0
-    series_id = tmdb_id or generate_unique_id(item.get('show_id'), 'series')
+    series_id = sonarr_series_id(item)
     title = item.get('title', 'Unknown')
 
     # Generate consistent tvdbId for Bazarr compatibility
@@ -1130,16 +1195,17 @@ def get_series():
 
     try:
         series_list = get_collected_series()
-        # Load all episodes in one query and group by show_id
+        # Load all episodes in one query and group by normalized show_id
         all_episodes = get_all_collected_episodes()
         ep_map = {}
         for ep in all_episodes:
-            key = ep.get('imdb_id') or ep.get('tmdb_id') or ''
-            ep_map.setdefault(key, []).append(ep)
+            key = normalize_show_id(ep.get('imdb_id'), ep.get('tmdb_id'))
+            if key:
+                ep_map.setdefault(key, []).append(ep)
 
         result = []
         for s in series_list:
-            show_id = s.get('show_id', '')
+            show_id = normalize_show_id(s.get('imdb_id'), s.get('tmdb_id')) or s.get('show_id', '')
             episodes = ep_map.get(show_id, [])
             result.append(create_series_resource(s, episodes))
         return jsonify(result)

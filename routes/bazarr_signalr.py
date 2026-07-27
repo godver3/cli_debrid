@@ -262,12 +262,14 @@ def notify_media_collected(media_item: Dict[str, Any], media_type: str):
             from routes.bazarr_spoofing_routes import (
                 create_episode_file_resource,
                 create_series_resource,
-                generate_unique_id,
-                get_episodes_for_series
+                get_episodes_for_series,
+                normalize_show_id,
             )
-            # Get series info for the full event sequence
-            show_id = media_item.get('tmdb_id') or media_item.get('imdb_id')
-            series_id = generate_unique_id(show_id, 'series')
+            # Get series info for the full event sequence — same show_id
+            # contract as HTTP /api/v3/series (imdb preferred, blank ignored)
+            show_id = normalize_show_id(
+                media_item.get('imdb_id'), media_item.get('tmdb_id')
+            )
 
             # Build series resource for series events
             series_info = {
@@ -282,13 +284,16 @@ def notify_media_collected(media_item: Dict[str, Any], media_type: str):
 
             # Get all episodes for this series to build complete series resource
             try:
-                episodes = get_episodes_for_series(show_id)
+                episodes = get_episodes_for_series(show_id) if show_id else [media_item]
             except Exception:
                 episodes = [media_item]  # Fall back to just this episode
 
             series_resource = create_series_resource(series_info, episodes)
 
-            # Create episode file resource
+            # MUST reuse series_resource['id'] — never re-hash separately.
+            # HTTP create_series_resource uses TMDB as id when present; a
+            # separate generate_unique_id caused Bazarr FK failures.
+            series_id = series_resource['id']
             episode_file_resource = create_episode_file_resource(media_item, series_id)
 
             # Broadcast with full sequence (series events -> episode events)
