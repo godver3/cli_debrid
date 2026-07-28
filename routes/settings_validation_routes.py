@@ -147,12 +147,6 @@ def validate_trakt_credentials(client_id, client_secret):
     if not client_id or not client_secret:
         return False, "Both Client ID and Client Secret are required"
     
-    # Validate format
-    if len(client_id) != 64:
-        return False, "Invalid Trakt Client ID format (must be 64 characters)"
-    if len(client_secret) != 64:
-        return False, "Invalid Trakt Client Secret format (must be 64 characters)"
-    
     try:
         # Try to get a device code - this validates both client ID and secret
         device_code_response = get_device_code(client_id, client_secret)
