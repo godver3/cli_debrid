@@ -3616,12 +3616,28 @@ class ProgramRunner:
                             if _remaining:
                                 _has_more_results = True
                                 # Delete the broken job from cli_mount so prefix-match in
-                                # torrent_processor won't reuse it on the next retry attempt
+                                # torrent_processor won't reuse it on the next retry attempt.
+                                # Safety: never delete if another live item (e.g. a different
+                                # version sharing this job id due to a since-fixed dedup bug)
+                                # still references it — that would delete its file too.
                                 try:
                                     from usenet.repair_engine import _delete_from_provider as _dfp
+                                    from database import get_db_connection as _gdb_stuck
                                     _broken_hash = torrent_id.replace('nzb:', '') if torrent_id else ''
-                                    _dfp(_broken_hash, item.get('filled_by_file', '') or '')
-                                    logging.debug(f'[NZB] Deleted broken job {_broken_hash} from provider before retry')
+                                    _conn_stuck = _gdb_stuck()
+                                    try:
+                                        _stuck_sibs = _conn_stuck.execute(
+                                            "SELECT COUNT(*) FROM media_items "
+                                            "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
+                                            (torrent_id, item_id)
+                                        ).fetchone()[0]
+                                    finally:
+                                        _conn_stuck.close()
+                                    if _stuck_sibs:
+                                        logging.info(f'[NZB] Skipping provider delete of {_broken_hash} — {_stuck_sibs} sibling(s) still active')
+                                    else:
+                                        _dfp(_broken_hash, item.get('filled_by_file', '') or '')
+                                        logging.debug(f'[NZB] Deleted broken job {_broken_hash} from provider before retry')
                                 except Exception as _del_err:
                                     logging.debug(f'[NZB] Could not delete broken job from provider: {_del_err}')
                                 from database.database_writing import update_media_item as _umi_retry
@@ -3723,13 +3739,29 @@ class ProgramRunner:
                                     break
                                 _page_to += 1
                             if _real_hash_to:
-                                _dr_to = _req_to.delete(f'{_dcy_url_to}/api/torrents',
-                                                        headers=_headers_to,
-                                                        params={'hashes': _real_hash_to}, timeout=10)
-                                if _dr_to.status_code == 200:
-                                    logging.info(f'[NZB] Deleted stalled job {_real_hash_to} from cli_mount')
+                                # Safety: never delete if another live item (e.g. a different
+                                # version sharing this job id due to a since-fixed dedup bug)
+                                # still references it — that would delete its file too.
+                                from database import get_db_connection as _gdb_stall
+                                _conn_stall = _gdb_stall()
+                                try:
+                                    _stall_sibs = _conn_stall.execute(
+                                        "SELECT COUNT(*) FROM media_items "
+                                        "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
+                                        (torrent_id, item_id)
+                                    ).fetchone()[0]
+                                finally:
+                                    _conn_stall.close()
+                                if _stall_sibs:
+                                    logging.info(f'[NZB] Skipping provider delete of stalled job {_real_hash_to} — {_stall_sibs} sibling(s) still active')
                                 else:
-                                    logging.warning(f'[NZB] Could not delete stalled job: HTTP {_dr_to.status_code}')
+                                    _dr_to = _req_to.delete(f'{_dcy_url_to}/api/torrents',
+                                                            headers=_headers_to,
+                                                            params={'hashes': _real_hash_to}, timeout=10)
+                                    if _dr_to.status_code == 200:
+                                        logging.info(f'[NZB] Deleted stalled job {_real_hash_to} from cli_mount')
+                                    else:
+                                        logging.warning(f'[NZB] Could not delete stalled job: HTTP {_dr_to.status_code}')
                         except Exception as _del_to_err:
                             logging.debug(f'[NZB] Could not delete stalled job from cli_mount: {_del_to_err}')
                         # Handle siblings sharing this stalled job
@@ -4227,7 +4259,14 @@ class ProgramRunner:
                                             # Resolve info_hash for provider deletion
                                             _ihash = _resolve_info_hash_from_provider(_ename)
                                             # Find DB items
+                                            from usenet.repair_engine import AMBIGUOUS as _AMBIGUOUS_WD
                                             _items = _find_db_items_by_entry_name(_ename)
+                                            if _items is _AMBIGUOUS_WD:
+                                                # Multiple versions ambiguously matched — do not delete
+                                                # from provider, a live row we can't identify may need it.
+                                                logging.warning(f'[NZBHealthCheck] {_ename!r} — ambiguous multi-version match, skipping without deleting')
+                                                self._webdav_repaired_entries.add(_ename)
+                                                continue
                                             _items = [i for i in _items
                                                       if i.get('state') in ('Collected', 'Checking', 'Upgrading')]
                                             if not _items:
@@ -4817,7 +4856,7 @@ class ProgramRunner:
             if items_to_update:
                 try:
                     promoted_rows = cursor.execute(
-                        f"SELECT id, type, imdb_id, season_number, episode_number, filled_by_torrent_id "
+                        f"SELECT id, type, imdb_id, season_number, episode_number, filled_by_torrent_id, version "
                         f"FROM media_items WHERE id IN ({','.join(['?']*len(items_to_update))})",
                         items_to_update
                     ).fetchall()
@@ -4840,9 +4879,11 @@ class ProgramRunner:
                             old_replace_rows = cursor.execute(
                                 f'''SELECT {_recon_select} FROM media_items
                                    WHERE imdb_id = ? AND season_number = ? AND episode_number = ?
-                                   AND type = 'episode' AND manual_replace = 1 AND id != ?''',
+                                   AND type = 'episode' AND manual_replace = 1 AND id != ?
+                                   AND REPLACE(COALESCE(version,''),'*','') = ?''',
                                 (promoted['imdb_id'], promoted['season_number'],
-                                 promoted['episode_number'], promoted['id'])
+                                 promoted['episode_number'], promoted['id'],
+                                 (promoted['version'] or '').replace('*', ''))
                             ).fetchall()
                             log_tag = 'REPLACE_SEASON'
                             removal_reason = 'Replaced by new season pack'
@@ -4851,8 +4892,10 @@ class ProgramRunner:
                         elif promoted['type'] == 'movie':
                             old_replace_rows = cursor.execute(
                                 f'''SELECT {_recon_select} FROM media_items
-                                   WHERE imdb_id = ? AND type = 'movie' AND manual_replace = 1 AND id != ?''',
-                                (promoted['imdb_id'], promoted['id'])
+                                   WHERE imdb_id = ? AND type = 'movie' AND manual_replace = 1 AND id != ?
+                                   AND REPLACE(COALESCE(version,''),'*','') = ?''',
+                                (promoted['imdb_id'], promoted['id'],
+                                 (promoted['version'] or '').replace('*', ''))
                             ).fetchall()
                             log_tag = 'REPLACE_MOVIE'
                             removal_reason = 'Replaced by new movie torrent'
@@ -4865,14 +4908,22 @@ class ProgramRunner:
                             old_id = old_item['id']
                             old_torrent_id = old_item['filled_by_torrent_id']
                             if old_torrent_id and old_torrent_id != new_torrent_id and _debrid_prov:
-                                try:
-                                    _debrid_prov.remove_torrent(old_torrent_id, removal_reason=removal_reason)
-                                    logging.info(f"[{log_tag}] Removed debrid torrent {old_torrent_id} for replaced item {old_id}")
-                                except Exception as _debrid_err:
-                                    if '404' in str(_debrid_err):
-                                        logging.debug(f"[{log_tag}] Old torrent {old_torrent_id} already removed (404)")
-                                    else:
-                                        logging.error(f"[{log_tag}] Failed to remove torrent {old_torrent_id}: {_debrid_err}")
+                                _sibs = cursor.execute(
+                                    "SELECT COUNT(*) FROM media_items "
+                                    "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
+                                    (old_torrent_id, old_id)
+                                ).fetchone()[0]
+                                if _sibs:
+                                    logging.info(f"[{log_tag}] Skipping debrid removal of {old_torrent_id} for replaced item {old_id} — {_sibs} sibling(s) still active")
+                                else:
+                                    try:
+                                        _debrid_prov.remove_torrent(old_torrent_id, removal_reason=removal_reason)
+                                        logging.info(f"[{log_tag}] Removed debrid torrent {old_torrent_id} for replaced item {old_id}")
+                                    except Exception as _debrid_err:
+                                        if '404' in str(_debrid_err):
+                                            logging.debug(f"[{log_tag}] Old torrent {old_torrent_id} already removed (404)")
+                                        else:
+                                            logging.error(f"[{log_tag}] Failed to remove torrent {old_torrent_id}: {_debrid_err}")
                             if old_id not in items_to_delete_filepath and old_id not in items_to_update:
                                 # Plex removal
                                 _old_path = old_item['location_on_disk'] or old_item['filled_by_file']
@@ -4896,24 +4947,27 @@ class ProgramRunner:
                     _imdb_sweep = {}
                     for _p in promoted_rows:
                         if _p['imdb_id'] and _p['type'] in ('episode', 'movie'):
-                            if _p['imdb_id'] not in _imdb_sweep:
-                                _imdb_sweep[_p['imdb_id']] = {'type': _p['type'], 'seasons': set()}
+                            _sw_key = (_p['imdb_id'], (_p['version'] or '').replace('*', ''))
+                            if _sw_key not in _imdb_sweep:
+                                _imdb_sweep[_sw_key] = {'type': _p['type'], 'seasons': set()}
                             if _p['type'] == 'episode' and _p['season_number'] is not None:
-                                _imdb_sweep[_p['imdb_id']]['seasons'].add(_p['season_number'])
-                    for _sw_imdb, _sw_info in _imdb_sweep.items():
+                                _imdb_sweep[_sw_key]['seasons'].add(_p['season_number'])
+                    for (_sw_imdb, _sw_version), _sw_info in _imdb_sweep.items():
                         if _sw_info['type'] == 'episode':
                             for _sw_season in _sw_info['seasons']:
                                 _sw_rows = cursor.execute(
                                     f'''SELECT {_recon_select} FROM media_items m
                                        WHERE m.imdb_id = ? AND m.season_number = ? AND m.type = 'episode'
                                        AND m.manual_replace = 1
+                                       AND REPLACE(COALESCE(m.version,''),'*','') = ?
                                        AND EXISTS (
                                            SELECT 1 FROM media_items m2
                                            WHERE m2.imdb_id = m.imdb_id AND m2.season_number = m.season_number
                                            AND m2.episode_number = m.episode_number AND m2.type = 'episode'
                                            AND m2.manual_replace = 0 AND m2.state = 'Collected'
+                                           AND REPLACE(COALESCE(m2.version,''),'*','') = REPLACE(COALESCE(m.version,''),'*','')
                                        )''',
-                                    (_sw_imdb, _sw_season)
+                                    (_sw_imdb, _sw_season, _sw_version)
                                 ).fetchall()
                                 for _sr in _sw_rows:
                                     _sid = _sr['id']
@@ -4923,12 +4977,20 @@ class ProgramRunner:
                                     elif _sid not in items_to_delete_filepath and _sid not in ids_to_delete_replace:
                                         _st = _sr['filled_by_torrent_id']
                                         if _st and _debrid_prov:
-                                            try:
-                                                _debrid_prov.remove_torrent(_st, removal_reason='Replaced by new season pack')
-                                                logging.info(f"[REPLACE_SEASON] Removed debrid torrent {_st} for stale item {_sid}")
-                                            except Exception as _de:
-                                                if '404' not in str(_de):
-                                                    logging.error(f"[REPLACE_SEASON] Failed to remove torrent {_st}: {_de}")
+                                            _sw_sibs = cursor.execute(
+                                                "SELECT COUNT(*) FROM media_items "
+                                                "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
+                                                (_st, _sid)
+                                            ).fetchone()[0]
+                                            if _sw_sibs:
+                                                logging.info(f"[REPLACE_SEASON] Skipping debrid removal of {_st} for stale item {_sid} — {_sw_sibs} sibling(s) still active")
+                                            else:
+                                                try:
+                                                    _debrid_prov.remove_torrent(_st, removal_reason='Replaced by new season pack')
+                                                    logging.info(f"[REPLACE_SEASON] Removed debrid torrent {_st} for stale item {_sid}")
+                                                except Exception as _de:
+                                                    if '404' not in str(_de):
+                                                        logging.error(f"[REPLACE_SEASON] Failed to remove torrent {_st}: {_de}")
                                         _sw_path = _sr['location_on_disk'] or _sr['filled_by_file']
                                         if _sw_path:
                                             try:
@@ -4947,12 +5009,14 @@ class ProgramRunner:
                                 f'''SELECT {_recon_select} FROM media_items m
                                    WHERE m.imdb_id = ? AND m.type = 'movie'
                                    AND m.manual_replace = 1
+                                   AND REPLACE(COALESCE(m.version,''),'*','') = ?
                                    AND EXISTS (
                                        SELECT 1 FROM media_items m2
                                        WHERE m2.imdb_id = m.imdb_id AND m2.type = 'movie'
                                        AND m2.manual_replace = 0 AND m2.state = 'Collected'
+                                       AND REPLACE(COALESCE(m2.version,''),'*','') = REPLACE(COALESCE(m.version,''),'*','')
                                    )''',
-                                (_sw_imdb,)
+                                (_sw_imdb, _sw_version)
                             ).fetchall()
                             for _sr in _sw_rows:
                                 _sid = _sr['id']
@@ -4962,12 +5026,20 @@ class ProgramRunner:
                                 elif _sid not in items_to_delete_filepath and _sid not in ids_to_delete_replace:
                                     _st = _sr['filled_by_torrent_id']
                                     if _st and _debrid_prov:
-                                        try:
-                                            _debrid_prov.remove_torrent(_st, removal_reason='Replaced by new movie torrent')
-                                            logging.info(f"[REPLACE_MOVIE] Removed debrid torrent {_st} for stale item {_sid}")
-                                        except Exception as _de:
-                                            if '404' not in str(_de):
-                                                logging.error(f"[REPLACE_MOVIE] Failed to remove torrent {_st}: {_de}")
+                                        _sw_sibs = cursor.execute(
+                                            "SELECT COUNT(*) FROM media_items "
+                                            "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
+                                            (_st, _sid)
+                                        ).fetchone()[0]
+                                        if _sw_sibs:
+                                            logging.info(f"[REPLACE_MOVIE] Skipping debrid removal of {_st} for stale item {_sid} — {_sw_sibs} sibling(s) still active")
+                                        else:
+                                            try:
+                                                _debrid_prov.remove_torrent(_st, removal_reason='Replaced by new movie torrent')
+                                                logging.info(f"[REPLACE_MOVIE] Removed debrid torrent {_st} for stale item {_sid}")
+                                            except Exception as _de:
+                                                if '404' not in str(_de):
+                                                    logging.error(f"[REPLACE_MOVIE] Failed to remove torrent {_st}: {_de}")
                                     _sw_path = _sr['location_on_disk'] or _sr['filled_by_file']
                                     if _sw_path:
                                         try:
@@ -5704,6 +5776,7 @@ class ProgramRunner:
         item_type = promoted_dict.get('type')
         item_id = promoted_dict.get('id')
         new_torrent_id = promoted_dict.get('filled_by_torrent_id')
+        item_version = (promoted_dict.get('version') or '').replace('*', '')
 
         if not imdb_id or item_type not in ('episode', 'movie'):
             return
@@ -5727,8 +5800,9 @@ class ProgramRunner:
                 old_rows = cur.execute(
                     f'''SELECT {_select_fields} FROM media_items
                        WHERE imdb_id = ? AND season_number = ? AND episode_number = ?
-                       AND type = 'episode' AND manual_replace = 1 AND id != ?''',
-                    (imdb_id, season_number, episode_number, item_id)
+                       AND type = 'episode' AND manual_replace = 1 AND id != ?
+                       AND REPLACE(COALESCE(version,''),'*','') = ?''',
+                    (imdb_id, season_number, episode_number, item_id, item_version)
                 ).fetchall()
                 log_tag = 'REPLACE_SEASON'
                 removal_reason = 'Replaced by new season pack'
@@ -5736,8 +5810,9 @@ class ProgramRunner:
             else:  # movie
                 old_rows = cur.execute(
                     f'''SELECT {_select_fields} FROM media_items
-                       WHERE imdb_id = ? AND type = 'movie' AND manual_replace = 1 AND id != ?''',
-                    (imdb_id, item_id)
+                       WHERE imdb_id = ? AND type = 'movie' AND manual_replace = 1 AND id != ?
+                       AND REPLACE(COALESCE(version,''),'*','') = ?''',
+                    (imdb_id, item_id, item_version)
                 ).fetchall()
                 log_tag = 'REPLACE_MOVIE'
                 removal_reason = 'Replaced by new movie torrent'
@@ -5751,14 +5826,22 @@ class ProgramRunner:
                 old_id = row['id']
                 old_torrent_id = row['filled_by_torrent_id']
                 if old_torrent_id and old_torrent_id != new_torrent_id and _debrid_prov:
-                    try:
-                        _debrid_prov.remove_torrent(old_torrent_id, removal_reason=removal_reason)
-                        logging.info(f"[{log_tag}] Removed debrid torrent {old_torrent_id} for {reason_label} {old_id}")
-                    except Exception as debrid_err:
-                        if '404' in str(debrid_err):
-                            logging.debug(f"[{log_tag}] Old torrent {old_torrent_id} already removed (404)")
-                        else:
-                            logging.error(f"[{log_tag}] Failed to remove torrent {old_torrent_id}: {debrid_err}")
+                    _sibs = cur.execute(
+                        "SELECT COUNT(*) FROM media_items "
+                        "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
+                        (old_torrent_id, old_id)
+                    ).fetchone()[0]
+                    if _sibs:
+                        logging.info(f"[{log_tag}] Skipping debrid removal of {old_torrent_id} for {reason_label} {old_id} — {_sibs} sibling(s) still active")
+                    else:
+                        try:
+                            _debrid_prov.remove_torrent(old_torrent_id, removal_reason=removal_reason)
+                            logging.info(f"[{log_tag}] Removed debrid torrent {old_torrent_id} for {reason_label} {old_id}")
+                        except Exception as debrid_err:
+                            if '404' in str(debrid_err):
+                                logging.debug(f"[{log_tag}] Old torrent {old_torrent_id} already removed (404)")
+                            else:
+                                logging.error(f"[{log_tag}] Failed to remove torrent {old_torrent_id}: {debrid_err}")
                 # Plex removal
                 item_path = row['location_on_disk'] or row['filled_by_file']
                 if item_path:
@@ -5786,25 +5869,29 @@ class ProgramRunner:
                     f'''SELECT {_select_fields} FROM media_items m
                        WHERE m.imdb_id = ? AND m.season_number = ? AND m.type = 'episode'
                        AND m.manual_replace = 1 AND m.id != ?
+                       AND REPLACE(COALESCE(m.version,''),'*','') = ?
                        AND EXISTS (
                            SELECT 1 FROM media_items m2
                            WHERE m2.imdb_id = m.imdb_id AND m2.season_number = m.season_number
                            AND m2.episode_number = m.episode_number AND m2.type = 'episode'
                            AND m2.manual_replace = 0 AND m2.state = 'Collected'
+                           AND REPLACE(COALESCE(m2.version,''),'*','') = REPLACE(COALESCE(m.version,''),'*','')
                        )''',
-                    (imdb_id, season_number, item_id)
+                    (imdb_id, season_number, item_id, item_version)
                 ).fetchall()
             else:  # movie
                 stale_rows = cur.execute(
                     f'''SELECT {_select_fields} FROM media_items m
                        WHERE m.imdb_id = ? AND m.type = 'movie'
                        AND m.manual_replace = 1 AND m.id != ?
+                       AND REPLACE(COALESCE(m.version,''),'*','') = ?
                        AND EXISTS (
                            SELECT 1 FROM media_items m2
                            WHERE m2.imdb_id = m.imdb_id AND m2.type = 'movie'
                            AND m2.manual_replace = 0 AND m2.state = 'Collected'
+                           AND REPLACE(COALESCE(m2.version,''),'*','') = REPLACE(COALESCE(m.version,''),'*','')
                        )''',
-                    (imdb_id, item_id)
+                    (imdb_id, item_id, item_version)
                 ).fetchall()
 
             for stale_row in stale_rows:

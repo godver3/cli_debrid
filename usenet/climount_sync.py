@@ -311,6 +311,25 @@ def sync_changes_from_climount(force_full: bool = False) -> dict:
                         logger.debug(f'[CMSync] No match for {entry.get("protocol")} entry: {entry.get("folder_name","?")}')
                         continue
 
+                    # Safety: if matched rows span more than one distinct version, this
+                    # is not one logical item — applying the same update (esp.
+                    # filled_by_torrent_id) to all of them would converge different
+                    # versions onto the same job id (e.g. from a since-fixed dedup bug
+                    # or other stale data), risking one version's file being deleted
+                    # later when the other's lifecycle acts on that shared id.
+                    if len(item_ids) > 1:
+                        _versions = set()
+                        for _iid in item_ids:
+                            _vrow = conn.execute('SELECT version FROM media_items WHERE id = ?', (_iid,)).fetchone()
+                            _versions.add((_vrow[0] or '').rstrip('*') if _vrow else '')
+                        if len(_versions) > 1:
+                            summary['skipped'] += 1
+                            logger.warning(
+                                f'[CMSync] Matched {len(item_ids)} rows spanning multiple versions '
+                                f'{sorted(_versions)} for {entry.get("folder_name","?")} — skipping update to avoid cross-version collapse'
+                            )
+                            continue
+
                     summary['matched'] += len(item_ids)
                     logger.debug(f'[CMSync] Matched {len(item_ids)} row(s) for {entry.get("folder_name","?")}')
 

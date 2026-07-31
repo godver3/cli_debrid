@@ -659,6 +659,11 @@ class DeletionManager:
         symlink_paths = []
         for item in items:
             symlink_path = item.get('location_on_disk')
+            # Translate Plex-view paths to local paths, same as delete_single_item,
+            # so items whose location_on_disk isn't already the local symlink path
+            # aren't silently dropped from the batch.
+            if symlink_path:
+                symlink_path = self._translate_plex_path_to_local(symlink_path)
             if symlink_path and symlink_path.startswith(symlink_base):
                 symlink_paths.append(symlink_path)
 
@@ -671,11 +676,17 @@ class DeletionManager:
         # PHASE 2: Delete all symlinks (batch operation)
         for symlink_path in symlink_paths:
             try:
-                if os.path.exists(symlink_path) and os.path.islink(symlink_path):
+                # os.path.islink() alone (not gated on os.path.exists()) is required
+                # to catch broken symlinks: exists() follows the link and returns
+                # False when the target is missing, which is the defining trait of
+                # a broken symlink — the exact case this deletion needs to handle.
+                if os.path.islink(symlink_path):
                     os.unlink(symlink_path)
                     result['deleted_symlinks'].append(symlink_path)
                 elif os.path.exists(symlink_path):
                     logging.warning(f"[BATCH_DELETE_SYMLINKS] Path exists but is not a symlink: {symlink_path}")
+                else:
+                    logging.info(f"[BATCH_DELETE_SYMLINKS] Symlink {symlink_path} already removed (not found)")
             except Exception as e:
                 logging.error(f"[BATCH_DELETE_SYMLINKS] Failed to delete symlink {symlink_path}: {e}")
                 result['errors'].append(f"Symlink deletion failed: {str(e)}")
@@ -2066,7 +2077,30 @@ class DeletionManager:
                 item_title = item.get('title', 'Unknown')
                 is_nzb = str(torrent_id or '').startswith('nzb:')
                 logging.info(f"[DEBRID_REMOVAL] Removal requested. is_nzb={is_nzb}, torrent_id={torrent_id}")
-                if is_nzb:
+                # Sibling guard: never remove the provider entry while another
+                # media_items row (e.g. a different version sharing this job id due
+                # to a since-fixed dedup bug) still references it — that would delete
+                # the file out from under the surviving row.
+                _has_sibling = False
+                if torrent_id:
+                    try:
+                        from database import get_db_connection as _gdb_single_del
+                        _conn_sd = _gdb_single_del()
+                        try:
+                            _sib_row = _conn_sd.execute(
+                                "SELECT COUNT(*) FROM media_items "
+                                "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
+                                (torrent_id, item_id)
+                            ).fetchone()
+                            _has_sibling = (_sib_row[0] if _sib_row else 0) > 0
+                        finally:
+                            _conn_sd.close()
+                    except Exception as _sib_err:
+                        logging.warning(f"[DEBRID_REMOVAL] Sibling check failed for {torrent_id!r}, skipping removal to be safe: {_sib_err}")
+                        _has_sibling = True
+                if _has_sibling:
+                    logging.info(f"[DEBRID_REMOVAL] Skipping removal of {torrent_id!r} — still referenced by another item")
+                elif is_nzb:
                     # NZB item — delete from usenet provider (cli_mount or NzbDAV)
                     try:
                         from usenet import get_usenet_client, reset_usenet_client
@@ -2519,6 +2553,35 @@ class DeletionManager:
                 except Exception as e:
                     logging.warning(f"[DELETE_MULTIPLE] Could not get item {item_id} for dedup: {e}")
 
+            # Sibling guard: never remove a torrent/NZB from the provider while a
+            # media_items row OUTSIDE this delete batch (e.g. a different version
+            # sharing the same job id due to a since-fixed dedup bug) still references
+            # it — that would delete the file out from under the surviving row,
+            # leaving it with a broken symlink. Mirrors the guard already used for
+            # single-item deletion in routes/database_routes.py.
+            _batch_id_set = set(item_ids)
+
+            def _has_external_sibling(_torrent_or_nzb_id):
+                # Select rows by torrent id (one small query, no per-batch-item
+                # placeholder) and compare returned ids against the batch in
+                # Python — avoids SQLite's bound-parameter limit on large batches
+                # (e.g. deleting an entire show with thousands of episodes).
+                try:
+                    from database import get_db_connection as _gdb_dm
+                    _conn_dm = _gdb_dm()
+                    try:
+                        _rows = _conn_dm.execute(
+                            "SELECT id FROM media_items "
+                            "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking')",
+                            (_torrent_or_nzb_id,)
+                        ).fetchall()
+                        return any(r[0] not in _batch_id_set for r in _rows)
+                    finally:
+                        _conn_dm.close()
+                except Exception as _sib_err:
+                    logging.warning(f"[DELETE_MULTIPLE] Sibling check failed for {_torrent_or_nzb_id!r}, skipping removal to be safe: {_sib_err}")
+                    return True
+
             # Remove NZB items from usenet provider (cli_mount or NzbDAV)
             if unique_nzb_ids:
                 logging.info(f"[DELETE_MULTIPLE] Phase 0: Removing {len(unique_nzb_ids)} NZB(s) from usenet provider")
@@ -2528,6 +2591,9 @@ class DeletionManager:
                     dcy_client = get_usenet_client()
                     for tid, (file_name, title) in unique_nzb_ids.items():
                         info_hash = tid[4:]
+                        if _has_external_sibling(tid):
+                            logging.info(f"[DELETE_MULTIPLE] Skipping usenet provider removal for {info_hash} — still referenced by an item outside this batch")
+                            continue
                         try:
                             removed = dcy_client.remove_nzb(info_hash, file_name or title)
                             if removed:
@@ -2547,6 +2613,9 @@ class DeletionManager:
 
                 def remove_single_torrent(torrent_id_and_info):
                     torrent_id, (first_title, infohash, folder_name) = torrent_id_and_info
+                    if _has_external_sibling(torrent_id):
+                        logging.info(f"[DELETE_MULTIPLE] Skipping debrid removal for {torrent_id} — still referenced by an item outside this batch")
+                        return torrent_id, False, None
                     try:
                         self.debrid.remove_torrent(torrent_id, removal_reason=f"Library deletion: {first_title}", skip_hash_tracking=True)
                         logging.info(f"[DELETE_MULTIPLE] Removed torrent {torrent_id} from debrid")

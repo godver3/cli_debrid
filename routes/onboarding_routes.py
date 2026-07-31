@@ -30,13 +30,12 @@ def get_next_onboarding_step():
         return 1
     
     # Step 2: Check if required settings are configured
+    # Trakt is an optional integration and is intentionally not part of this list.
     required_settings = [
         ('Plex', 'url'),
         ('Plex', 'token'),
         ('Plex', 'shows_libraries'),
         ('Plex', 'movie_libraries'),
-        ('Trakt', 'client_id'),
-        ('Trakt', 'client_secret')
     ]
 
     for category, key in required_settings:
@@ -44,11 +43,6 @@ def get_next_onboarding_step():
             return 2
 
     if not _media_provider_configured():
-        return 2
-    
-    # Check if Trakt is authorized
-    trakt_status = json.loads(check_trakt_auth_status().get_data(as_text=True))
-    if trakt_status['status'] != 'authorized':
         return 2
 
     # Step 3: Check if at least one scraper is configured
@@ -136,10 +130,8 @@ def onboarding_step(step):
                                is_onboarding=True)
        
     elif step_num == 2:
-        required_settings = [
-            ('Trakt', 'client_id'),
-            ('Trakt', 'client_secret')
-        ]
+        # Trakt is an optional integration and is intentionally not required here.
+        required_settings = []
 
         # Check if platform is Windows
         is_windows = platform.system() == 'Windows'
@@ -231,11 +223,15 @@ def onboarding_step(step):
                         'api_key': api_key
                     }
                 
-                config['Trakt'] = {
-                    'client_id': request.form['trakt_client_id'],
-                    'client_secret': request.form['trakt_client_secret']
-                }
-                
+                # Trakt is optional — only save if the user provided credentials.
+                trakt_client_id = request.form.get('trakt_client_id', '')
+                trakt_client_secret = request.form.get('trakt_client_secret', '')
+                if trakt_client_id or trakt_client_secret:
+                    config['Trakt'] = {
+                        'client_id': trakt_client_id,
+                        'client_secret': trakt_client_secret
+                    }
+
                 save_config(config)
                 
                 # Check if all required settings are now present

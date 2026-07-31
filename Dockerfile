@@ -7,7 +7,11 @@ WORKDIR /app
 # Install build dependencies and Node.js
 RUN apt-get update && \
     apt-get install -y gcc gosu nodejs npm ffmpeg \
-    build-essential gyp && \
+    build-essential gyp \
+    # xvfb + Chromium runtime deps for the Cloudflare-challenge bypass browser
+    # (see utilities/cloudflare_bypass.py) — headless mode alone fails the
+    # challenge, so a real headed browser under a virtual display is required.
+    xvfb && \
     # Cleanup
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
@@ -25,6 +29,11 @@ RUN pip install --upgrade pip "setuptools<78" wheel supervisor
 
 # Install the requirements
 RUN pip install --no-cache-dir -r requirements-linux.txt
+
+# Install Chromium + its OS-level dependencies for patchright (Cloudflare-challenge
+# bypass browser, see utilities/cloudflare_bypass.py). --with-deps installs the
+# required apt packages automatically.
+RUN patchright install --with-deps chromium
 
 # Copy the current directory contents into the container at /app
 COPY . .

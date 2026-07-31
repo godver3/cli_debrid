@@ -93,17 +93,34 @@ class AddingQueue:
         else:
             logging.error("Attempted to remove item without ID from queue")
         
-    def remove_unwanted_torrent(self, torrent_id: str):
+    def remove_unwanted_torrent(self, torrent_id: str, is_nzb: bool = False):
         """
         Remove an unwanted torrent from the debrid service and track the removal
-        
+
         Args:
-            torrent_id: ID of the torrent to remove
+            torrent_id: ID of the torrent to remove. May be an 'nzb:'-prefixed or bare
+                cli_mount job ID rather than a real debrid torrent ID — pass is_nzb=True
+                (or use the 'nzb:' prefix) so it's routed to cli_mount instead of the
+                debrid provider.
+            is_nzb: True if torrent_id identifies a cli_mount NZB job, not a debrid torrent.
         """
         if not torrent_id:
             logging.warning("Attempted to remove torrent with empty ID")
             return
-            
+
+        # NZB job IDs are never valid debrid torrent IDs — calling
+        # get_torrent_info/remove_torrent on one 404s against the debrid provider.
+        # Cancel the cli_mount job instead.
+        if is_nzb or str(torrent_id).startswith('nzb:'):
+            job_hash = torrent_id[4:] if str(torrent_id).startswith('nzb:') else torrent_id
+            try:
+                from usenet.climount_client import get_climount_client
+                get_climount_client().remove_nzb(job_hash)
+                logging.info(f"Cancelled unwanted NZB job {job_hash}")
+            except Exception as e:
+                logging.warning(f"Could not cancel NZB job {job_hash}: {e}")
+            return
+
         hash_value = None # Initialize hash_value
         try:
             # Get torrent info before removal to record hash
@@ -452,6 +469,50 @@ class AddingQueue:
                 if filename_filter_out_list:
                     filters = [f.strip().lower() for f in filename_filter_out_list.split(',') if f.strip()]
 
+                _is_nzb_result = bool(torrent_info.get('_is_nzb'))
+
+                def _suppress_filtered_result(reason: str):
+                    """Mark this exact release as not-wanted so re-scraping won't re-select it,
+                    and cancel any cli_mount job already submitted for it."""
+                    if _is_nzb_result:
+                        _guid = ''
+                        if chosen_result_info:
+                            _guid = (chosen_result_info.get('parsed_info', {}) or {}).get('guid') or ''
+                        _nzb_url = _guid or torrent_info.get('_nzb_url', '')
+                        if _nzb_url:
+                            try:
+                                from database.not_wanted_magnets import add_to_not_wanted_nzb_guid
+                                add_to_not_wanted_nzb_guid(_nzb_url)
+                                logging.info(f"Added NZB guid for {_nzb_url} to not-wanted list ({reason})")
+                            except Exception as _e:
+                                logging.warning(f"Could not add NZB guid to not-wanted list: {_e}")
+                        else:
+                            logging.warning(f"Could not determine NZB guid/URL to suppress rejected result ({reason})")
+                        _seg_id = torrent_info.get('_nzb_segment_id', '')
+                        if _seg_id:
+                            try:
+                                from database.not_wanted_magnets import add_to_not_wanted_nzb_segment
+                                add_to_not_wanted_nzb_segment(_seg_id)
+                            except Exception as _e:
+                                logging.warning(f"Could not add NZB segment to not-wanted list: {_e}")
+                        _job_id = torrent_info.get('id', '')
+                        if _job_id:
+                            try:
+                                from usenet.climount_client import get_climount_client
+                                get_climount_client().remove_nzb(_job_id)
+                                logging.info(f"Cancelled rejected NZB job {_job_id} ({reason})")
+                            except Exception as _e:
+                                logging.warning(f"Could not cancel rejected NZB job {_job_id}: {_e}")
+                    else:
+                        _hash = (torrent_info.get('hash') or '').lower()
+                        if _hash:
+                            try:
+                                from database.not_wanted_magnets import add_to_not_wanted
+                                add_to_not_wanted(_hash)
+                                logging.info(f"Added hash {_hash} to not-wanted list ({reason})")
+                            except Exception as _e:
+                                logging.warning(f"Could not add hash to not-wanted list: {_e}")
+
                 # 1. Filter torrent's original_filename
                 original_torrent_filename = torrent_info.get('original_filename')
                 if original_torrent_filename and filters:
@@ -459,15 +520,8 @@ class AddingQueue:
                     if any(filter_term in original_torrent_filename_lower for filter_term in filters):
                         logging.warning(f"Torrent's original_filename '{original_torrent_filename}' matches filter list: {filters}. Rejecting entire torrent.")
                         item['torrent_id'] = torrent_info.get('id')
-                        _hash = (torrent_info.get('hash') or '').lower()
-                        if _hash:
-                            try:
-                                from database.not_wanted_magnets import add_to_not_wanted
-                                add_to_not_wanted(_hash)
-                                logging.info(f"Added hash {_hash} to not-wanted list (filename filter match)")
-                            except Exception as _e:
-                                logging.warning(f"Could not add hash to not-wanted list: {_e}")
-                        self._handle_failed_item(item, f"Torrent's original name '{original_torrent_filename}' matched filter-out list", queue_manager)
+                        _suppress_filtered_result("filename filter match")
+                        self._handle_failed_item(item, f"Torrent's original name '{original_torrent_filename}' matched filter-out list", queue_manager, is_nzb=_is_nzb_result)
                         processed_this_item = True
                         continue
 
@@ -481,15 +535,8 @@ class AddingQueue:
                     if any(filter_term in potential_torrent_title_lower for filter_term in filters):
                         logging.warning(f"Torrent's determined title '{potential_torrent_title_from_info}' matches filter list: {filters}. Rejecting torrent.")
                         item['torrent_id'] = torrent_info.get('id')
-                        _hash = (torrent_info.get('hash') or '').lower()
-                        if _hash:
-                            try:
-                                from database.not_wanted_magnets import add_to_not_wanted
-                                add_to_not_wanted(_hash)
-                                logging.info(f"Added hash {_hash} to not-wanted list (title filter match)")
-                            except Exception as _e:
-                                logging.warning(f"Could not add hash to not-wanted list: {_e}")
-                        self._handle_failed_item(item, f"Torrent's title '{potential_torrent_title_from_info}' matched filter-out list", queue_manager)
+                        _suppress_filtered_result("title filter match")
+                        self._handle_failed_item(item, f"Torrent's title '{potential_torrent_title_from_info}' matched filter-out list", queue_manager, is_nzb=_is_nzb_result)
                         processed_this_item = True
                         continue
 
@@ -754,11 +801,14 @@ class AddingQueue:
             logging.error(f"Cannot call _handle_failed_item from _process_results_with_mode directly.")
             return None, None, None # Return None for all three on error
 
-    def _handle_failed_item(self, item: Dict, error: str, queue_manager: Any):
+    def _handle_failed_item(self, item: Dict, error: str, queue_manager: Any, *, is_nzb: bool = False):
         """
         Handle a failed item by moving it back to Wanted queue if media matching failed,
         or to Sleeping/Blacklisted state for other failures, correctly handling upgrades.
         (Keep existing logic, but note the matching error messages might change slightly)
+
+        is_nzb: True if item['torrent_id'] identifies a cli_mount NZB job rather than a
+            debrid torrent — routes removal to cli_mount instead of the debrid provider.
         """
         from database import get_media_item_by_id, update_media_item
         from queues.upgrading_queue import UpgradingQueue
@@ -814,7 +864,7 @@ class AddingQueue:
                 if "matched filter-out list" in error:
                     logging.info(f"Upgrade for {item_identifier} failed due to filename filter. Attempting to remove torrent.")
                     if item.get('torrent_id'):
-                        self.remove_unwanted_torrent(item['torrent_id'])
+                        self.remove_unwanted_torrent(item['torrent_id'], is_nzb=is_nzb)
                 # --- END EDIT ---
 
                 # Remove from Adding queue memory regardless of restore success for upgrades
@@ -839,7 +889,7 @@ class AddingQueue:
             elif "matched filter-out list" in error:
                 logging.info(f"Item {item_identifier} matched filename/title filter, moving back to Wanted queue. Error: {error}")
                 if item.get('torrent_id'):
-                    self.remove_unwanted_torrent(item['torrent_id'])
+                    self.remove_unwanted_torrent(item['torrent_id'], is_nzb=is_nzb)
                 queue_manager.move_to_wanted(item, "Adding")
                 # move_to_wanted handles removing from self.items
                 return

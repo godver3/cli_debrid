@@ -516,52 +516,40 @@ def check_service_connectivity():
                 "message": f"Connectivity check error: {_ue}"
             })
 
-    # Check Metadata Battery connectivity and Trakt authorization
-    try:
-        from cli_battery.app.direct_api import DirectAPI
-        result = DirectAPI.check_trakt_auth()
-        trakt_status = result.get('status')
+    # Check Trakt authorization — only if the user has actually configured Trakt.
+    # Trakt is an optional integration; an unconfigured or unauthorized Trakt
+    # account must never block program start or pause the running queues.
+    trakt_client_id = get_setting('Trakt', 'client_id')
+    trakt_client_secret = get_setting('Trakt', 'client_secret')
 
-        if trakt_status != 'authorized':
-            logging.warning("Metadata Battery is reachable, but Trakt is not authorized.")
+    if trakt_client_id and trakt_client_secret:
+        try:
+            from cli_battery.app.direct_api import DirectAPI
+            result = DirectAPI.check_trakt_auth()
+            trakt_status = result.get('status')
 
-            # Attempt automatic re-authentication
-            auto_reauth_success = attempt_trakt_auto_reauth()
-            if auto_reauth_success:
-                logging.info("Automatic Trakt re-authentication successful. Re-checking authorization...")
-                result = DirectAPI.check_trakt_auth()
-                trakt_status = result.get('status')
+            if trakt_status != 'authorized':
+                logging.warning("Trakt is configured, but not authorized.")
 
-                if trakt_status == 'authorized':
-                    logging.info("Trakt authorization restored after automatic re-authentication.")
+                # Attempt automatic re-authentication
+                auto_reauth_success = attempt_trakt_auto_reauth()
+                if auto_reauth_success:
+                    logging.info("Automatic Trakt re-authentication successful. Re-checking authorization...")
+                    result = DirectAPI.check_trakt_auth()
+                    trakt_status = result.get('status')
+
+                    if trakt_status == 'authorized':
+                        logging.info("Trakt authorization restored after automatic re-authentication.")
+                    else:
+                        logging.warning("Trakt still not authorized after automatic re-authentication attempt. Continuing without Trakt.")
                 else:
-                    logging.warning("Trakt still not authorized after automatic re-authentication attempt.")
-                    services_reachable = False
-                    failed_services_details.append({
-                        "service": "Trakt",
-                        "type": "UNAUTHORIZED",
-                        "message": "Trakt not authorized after auto-reauth attempt. Manual re-authorization is required. Please re-authorize Trakt in the settings UI."
-                    })
-            else:
-                logging.warning("Automatic Trakt re-authentication failed.")
-                services_reachable = False
+                    logging.warning("Automatic Trakt re-authentication failed. Continuing without Trakt.")
 
-                error_message = "Trakt not authorized. Automatic re-authentication failed. Manual re-authorization is required. Please re-authorize Trakt in the settings UI."
+        except Exception as e:
+            logging.error(f"Error checking Trakt auth via battery (non-fatal, Trakt is optional): {e}")
+    else:
+        logging.debug("Trakt is not configured; skipping Trakt authorization check.")
 
-                if is_refresh_token_expired():
-                    error_message = "Trakt refresh token has expired. Manual re-authentication is required. Please re-authorize Trakt in the settings UI."
-
-                failed_services_details.append({
-                    "service": "Trakt",
-                    "type": "UNAUTHORIZED",
-                    "message": error_message
-                })
-
-    except Exception as e:
-        logging.error(f"Error checking Trakt auth via battery: {e}")
-        services_reachable = False
-        failed_services_details.append({"service": "Metadata Battery", "type": "CONNECTION_ERROR", "status_code": None, "message": str(e)})
-    
     return services_reachable, failed_services_details
 
 def attempt_trakt_auto_reauth():

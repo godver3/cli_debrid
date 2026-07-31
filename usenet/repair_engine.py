@@ -124,6 +124,8 @@ def fetch_broken_items(annotate_mount: bool = False) -> list:
         entry_name = _entry_name(entry)
         try:
             db_items = _find_db_items_by_entry_name(entry_name)
+            if db_items is AMBIGUOUS:
+                db_items = []
             loc = db_items[0].get('location_on_disk', '') if db_items else ''
             if not loc:
                 entry['mount_status'] = 'unknown'
@@ -273,16 +275,32 @@ def _backfill_hash_for_item(item: dict) -> str:
 
 
 def _find_db_item_by_info_hash(info_hash: str) -> Optional[dict]:
-    """Look up a media_items row whose filled_by_torrent_id == 'nzb:{info_hash}'."""
+    """
+    Look up a media_items row whose filled_by_torrent_id == 'nzb:{info_hash}'.
+
+    Returns None (rather than an arbitrary row) if MORE THAN ONE live row shares
+    this exact torrent id — e.g. two different versions (1080p/4k) that ended up
+    sharing a job id due to a since-fixed dedup bug. Acting on an arbitrary one of
+    them (repairing/resetting/deleting) can destroy the other version's file.
+    Callers fall back to _find_db_items_by_entry_name, which returns the full set
+    for the caller to handle explicitly.
+    """
     if not info_hash:
         return None
     conn = get_db_connection()
     try:
-        row = conn.execute(
-            "SELECT * FROM media_items WHERE filled_by_torrent_id = ? LIMIT 1",
+        rows = conn.execute(
+            "SELECT * FROM media_items WHERE filled_by_torrent_id = ? "
+            "AND state IN ('Collected','Checking','Upgrading','Adding')",
             (f'nzb:{info_hash}',),
-        ).fetchone()
-        return dict(row) if row else None
+        ).fetchall()
+        if len(rows) > 1:
+            logger.warning(
+                f'[NZBRepair] {len(rows)} live items share torrent id nzb:{info_hash} '
+                f'(likely different versions) — refusing to pick one arbitrarily'
+            )
+            return None
+        return dict(rows[0]) if rows else None
     except Exception as e:
         logger.debug(f'[NZBRepair] DB lookup error for {info_hash}: {e}')
         return None
@@ -290,7 +308,52 @@ def _find_db_item_by_info_hash(info_hash: str) -> Optional[dict]:
         conn.close()
 
 
-def _find_db_items_by_entry_name(entry_name: str) -> list:
+# Sentinel returned by _find_db_items_by_entry_name when a fuzzy strategy matched
+# multiple rows that could not be disambiguated. Callers MUST check for this
+# explicitly and treat it as "skip this entry" — NOT as "no DB item / orphan".
+# Falling through to orphan-delete logic on this result would delete a cli_mount
+# entry that a live (but unidentified) row still depends on.
+AMBIGUOUS = object()
+
+
+def _disambiguate_by_version_in_name(rows: list, entry_name: str):
+    """
+    When a fuzzy match strategy (imdb_id-only, or title+S/E-only) returns multiple
+    rows, try to narrow to the one whose version appears in entry_name as a
+    " - <version> - " delimited segment (the structured NZB naming convention
+    used by _build_nzb_title in routes/scraper_routes.py, when 'Enable NZB File
+    Naming' and 'Include Version' are both on — the version is sanitized the
+    same way filenames are, stripping \\/*?:"<>| and trailing '*').
+
+    This is inherently best-effort: if naming is off, or the version isn't
+    embedded for any other reason, no segment will match and this correctly
+    falls through to AMBIGUOUS rather than a false match. If more than one row's
+    sanitized version matches (or none do), return the AMBIGUOUS sentinel rather
+    than an empty list or a guess — an empty list would be mistaken for "no
+    match" and trigger orphan-delete logic, destroying a file another live
+    version still needs.
+    """
+    if len(rows) <= 1:
+        return rows
+    _name_lower = entry_name.lower()
+    _matched = []
+    for r in rows:
+        _ver = (r.get('version') or '').rstrip('*')
+        if not _ver:
+            continue
+        _ver_san = re.sub(r'[\\/*?:"<>|]', '', _ver).strip().lower()
+        if _ver_san and f' - {_ver_san} - ' in _name_lower:
+            _matched.append(r)
+    if len(_matched) == 1:
+        return _matched
+    logger.warning(
+        f'[NZBRepair] {len(rows)} live items ambiguously match entry {entry_name!r} '
+        f'(likely different versions) — refusing to pick one arbitrarily'
+    )
+    return AMBIGUOUS
+
+
+def _find_db_items_by_entry_name(entry_name: str):
     """
     Find ALL DB items whose files belong to this provider entry (folder).
     Falls through multiple strategies from most to least precise.
@@ -301,6 +364,12 @@ def _find_db_items_by_entry_name(entry_name: str) -> list:
     - Replacement entry: filled_by_file matches entry_name (after repair, debrid_folder_name
       still has old name but filled_by_file was updated to the new replacement name)
     - Partial match: IMDB ID + episode extracted from entry_name pattern
+
+    Returns a list (possibly empty = genuinely not found), OR the AMBIGUOUS
+    sentinel if a fuzzy strategy matched multiple rows it couldn't tell apart
+    (e.g. two versions of the same movie/episode). Callers MUST check for
+    AMBIGUOUS explicitly and skip the entry — treating it as an empty list
+    would trigger orphan-delete logic and destroy a file a live row still needs.
     """
     if not entry_name:
         return []
@@ -336,7 +405,11 @@ def _find_db_items_by_entry_name(entry_name: str) -> list:
             return [dict(r) for r in rows]
 
         # Strategy 4: IMDB ID + episode number extracted from entry_name
-        # Handles {imdb-ttXXX} pattern with S/E — works when names diverge between releases
+        # Handles {imdb-ttXXX} pattern with S/E — works when names diverge between releases.
+        # These match on imdb_id (+ S/E for episodes) only — if two versions (e.g.
+        # 1080p/4k) are both live, this can return both rows. If more than one row
+        # comes back and we can't disambiguate, refuse to guess: acting on the wrong
+        # row can delete another live version's file.
         imdb_match = re.search(r'\{imdb-(tt\d+)\}', entry_name)
         ep_match = re.search(r'[Ss](\d{1,2})[Ee](\d{1,2})', entry_name)
         if imdb_match and ep_match:
@@ -350,7 +423,7 @@ def _find_db_items_by_entry_name(entry_name: str) -> list:
                 (imdb_id, season_num, ep_num),
             ).fetchall()
             if rows:
-                return [dict(r) for r in rows]
+                return _disambiguate_by_version_in_name([dict(r) for r in rows], entry_name)
         elif imdb_match and not ep_match:
             # Movie: IMDB ID only
             imdb_id = imdb_match.group(1)
@@ -359,7 +432,7 @@ def _find_db_items_by_entry_name(entry_name: str) -> list:
                 (imdb_id,),
             ).fetchall()
             if rows:
-                return [dict(r) for r in rows]
+                return _disambiguate_by_version_in_name([dict(r) for r in rows], entry_name)
 
         # Strategy 5: original_scraped_torrent_title match
         rows = conn.execute(
@@ -383,7 +456,7 @@ def _find_db_items_by_entry_name(entry_name: str) -> list:
                     (title_prefix + '%', season_num, ep_num),
                 ).fetchall()
                 if rows:
-                    return [dict(r) for r in rows]
+                    return _disambiguate_by_version_in_name([dict(r) for r in rows], entry_name)
 
         return []
     except Exception as e:
@@ -1023,6 +1096,8 @@ def _repair_single_entry_inner(entry: dict, version_override: str = None) -> dic
                 db_items = [single]
         if not db_items and entry_name and not entry.get('hash_is_authoritative'):
             db_items = _find_db_items_by_entry_name(entry_name)
+        if db_items is AMBIGUOUS:
+            return {'outcome': 'ambiguous', 'message': f'Multiple versions ambiguously match {entry_name!r} — refusing to guess which to repair'}
         db_items = [i for i in db_items if i.get('state') in ('Collected', 'Checking', 'Upgrading', 'Adding')]
         if not db_items:
             return {'outcome': 'not_found', 'message': f'No matching DB item for {entry_name!r}'}
@@ -1123,6 +1198,20 @@ def _run_repair_inner(triggered_by: str = 'scheduled', version_override: str = N
             # Fuzzy fallback only when hash is not authoritative (nzbdav sets hash_is_authoritative)
             if not db_items and entry_name and not entry.get('hash_is_authoritative'):
                 db_items = _find_db_items_by_entry_name(entry_name)
+
+            if db_items is AMBIGUOUS:
+                # Multiple versions ambiguously matched — do NOT fall through to the
+                # orphan-delete branch below, which would delete a cli_mount entry
+                # that a live (but unidentified) row still depends on.
+                logger.warning(f'[NZBRepair] {entry_name!r} — ambiguous multi-version match, skipping without deleting')
+                log_repair_activity(
+                    broken_nzb_id=info_hash or entry_name,
+                    broken_nzb_title=entry_name,
+                    outcome='ambiguous',
+                    triggered_by=triggered_by,
+                )
+                summary['errors'] += 1
+                continue
 
             # Only repair items in live, repairable states
             db_items = [i for i in db_items
