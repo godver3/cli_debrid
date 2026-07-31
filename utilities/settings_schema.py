@@ -415,6 +415,21 @@ SETTINGS_SCHEMA = {
             "max": 168
         }
     },
+    "Trakt": {
+        "tab": "Additional Settings",
+        "client_id": {
+            "type": "string",
+            "description": "Trakt client ID",
+            "default": "",
+            "sensitive": True
+        },
+        "client_secret": {
+            "type": "string",
+            "description": "Trakt client secret",
+            "default": "",
+            "sensitive": True
+        }
+    },
     "Staleness Threshold": {
         "tab": "Additional Settings",
         "staleness_threshold": {
@@ -765,21 +780,6 @@ SETTINGS_SCHEMA = {
             "description": "If an item was released within the last X hours, accept uncached releases. Set to 0 to disable.",
             "default": 0,
             "min": 0
-        }
-    },
-    "Trakt": {
-        "tab": "Required Settings",
-        "client_id": {
-            "type": "string",
-            "description": "Trakt client ID",
-            "default": "",
-            "sensitive": True
-        },
-        "client_secret": {
-            "type": "string",
-            "description": "Trakt client secret",
-            "default": "",
-            "sensitive": True
         }
     },
     "Debug": {

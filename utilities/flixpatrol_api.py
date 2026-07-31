@@ -14,6 +14,10 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 import re
 
+from utilities.cloudflare_bypass import get_clearance, invalidate as invalidate_clearance
+
+FLIXPATROL_CHALLENGE_URL = 'https://flixpatrol.com/top10'
+
 # Supported streaming platforms
 # Most platforms have global Top 10 data, Hulu and Peacock use US data
 FLIXPATROL_PLATFORMS = {
@@ -72,7 +76,9 @@ HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'gzip, deflate, br',
+    # No 'br' (Brotli) — this repo doesn't bundle a brotli decoder, and requests/urllib3
+    # can't transparently decompress it without one, leaving response.text as raw bytes.
+    'Accept-Encoding': 'gzip, deflate',
     'Cache-Control': 'no-cache',
     'Pragma': 'no-cache',
     'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
@@ -84,6 +90,47 @@ HEADERS = {
     'Sec-Fetch-User': '?1',
     'Upgrade-Insecure-Requests': '1'
 }
+
+
+def _build_session(force_refresh: bool = False) -> requests.Session:
+    """
+    Build a requests.Session carrying a real-browser Cloudflare `cf_clearance`
+    cookie and matching User-Agent (solved on demand via a headed browser —
+    see utilities.cloudflare_bypass), falling back to plain browser-like
+    headers with no clearance if a solve isn't available. FlixPatrol blocks
+    all plain HTTP clients with a Cloudflare managed challenge, so requests
+    made without valid clearance will 403.
+    """
+    session = requests.Session()
+    session.headers.update(HEADERS)
+
+    clearance = get_clearance('flixpatrol.com', FLIXPATROL_CHALLENGE_URL, force_refresh=force_refresh)
+    if clearance:
+        session.headers.update({'User-Agent': clearance['user_agent']})
+        for name, value in clearance['cookies'].items():
+            session.cookies.set(name, value, domain='.flixpatrol.com')
+    else:
+        logging.warning("[FlixPatrol] No Cloudflare clearance available — request will likely be blocked")
+
+    return session
+
+
+def _request_with_clearance_retry(session_factory, request_fn):
+    """
+    Call request_fn(session) with a clearance-equipped session; on a 403
+    (clearance expired/rejected), invalidate the cached clearance, rebuild
+    the session with a freshly-solved one, and retry exactly once.
+    """
+    session = session_factory(force_refresh=False)
+    try:
+        return request_fn(session)
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 403:
+            logging.info("[FlixPatrol] Got 403 with cached clearance — refreshing and retrying once")
+            invalidate_clearance('flixpatrol.com')
+            session = session_factory(force_refresh=True)
+            return request_fn(session)
+        raise
 
 
 def get_available_platforms() -> Dict[str, Any]:
@@ -227,16 +274,17 @@ def fetch_top10(
     try:
         logging.info(f"[FlixPatrol] Fetching {platform_name} Top 10 from: {url}")
 
-        # Use a session to carry cookies — FlixPatrol requires a homepage visit first
-        session = requests.Session()
-        session.headers.update(HEADERS)
-        try:
-            session.get('https://flixpatrol.com/', timeout=10, allow_redirects=True)
-        except Exception:
-            pass
-        session.headers.update({'Referer': 'https://flixpatrol.com/'})
-        response = session.get(url, timeout=15, allow_redirects=True)
-        response.raise_for_status()
+        _session_holder = {}
+
+        def _do_request(session):
+            _session_holder['session'] = session
+            session.headers.update({'Referer': 'https://flixpatrol.com/'})
+            resp = session.get(url, timeout=15, allow_redirects=True)
+            resp.raise_for_status()
+            return resp
+
+        response = _request_with_clearance_retry(_build_session, _do_request)
+        session = _session_holder['session']
 
         # Parse HTML
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -319,8 +367,12 @@ def _fetch_single_day(platform_slug: str, platform_region: str, date_str: str) -
     """Fetch raw items for one day's FlixPatrol page. Returns [] on failure."""
     url = f'https://flixpatrol.com/top10/{platform_slug}/{platform_region}/{date_str}/'
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=15, allow_redirects=True)
-        resp.raise_for_status()
+        def _do_request(session):
+            resp = session.get(url, timeout=15, allow_redirects=True)
+            resp.raise_for_status()
+            return resp
+
+        resp = _request_with_clearance_retry(_build_session, _do_request)
         soup = BeautifulSoup(resp.text, 'html.parser')
         items = []
         for movie in _extract_top10_from_section(soup, 'TOP 10 Movies'):
@@ -423,8 +475,12 @@ def get_title_ids_from_flixpatrol(flixpatrol_id: str) -> Optional[Dict[str, Any]
     try:
         url = f'https://flixpatrol.com/title/{flixpatrol_id}/'
 
-        response = requests.get(url, headers=HEADERS, timeout=10)
-        response.raise_for_status()
+        def _do_request(session):
+            resp = session.get(url, timeout=10)
+            resp.raise_for_status()
+            return resp
+
+        response = _request_with_clearance_retry(_build_session, _do_request)
 
         soup = BeautifulSoup(response.text, 'html.parser')
 

@@ -8,6 +8,7 @@ from collections import defaultdict
 from flask import current_app, g
 from requests.exceptions import RequestException
 import os
+from utilities.version import get_app_version
 
 def setup_api_logging():
     print("Setting up API logging")
@@ -141,6 +142,9 @@ class APIRateLimiter:
 class APITracker:
     def __init__(self):
         self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': f'cli_debrid/{get_app_version()} (+https://github.com/godver3/cli_debrid)'
+        })
         self.cookies = requests.cookies
         self.exceptions = requests.exceptions
         self.utils = requests.utils

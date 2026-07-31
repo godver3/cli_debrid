@@ -565,13 +565,17 @@ class TorrentProcessor:
                     from database import get_db_connection as _gdb
                     _conn = _gdb()
                     import re as _re_dedup
+                    # Matches SQL's REPLACE(COALESCE(version,''),'*','') exactly — fall back
+                    # to '' (not a literal like 'Default') so NULL/empty version rows still compare equal.
+                    _sibling_ver = (item.get('version') or '').rstrip('*')
                     try:
                         _sibling = _conn.execute(
                             "SELECT filled_by_torrent_id, filled_by_file FROM media_items "
                             "WHERE imdb_id=? AND season_number=? AND type='episode' "
                             "AND id!=? AND filled_by_torrent_id LIKE 'nzb:%' "
+                            "AND REPLACE(COALESCE(version,''),'*','')=? "
                             "AND state IN ('Adding','Checking','Collected','Upgrading') LIMIT 1",
-                            (_imdb, _season, item.get('id', -1))
+                            (_imdb, _season, item.get('id', -1), _sibling_ver)
                         ).fetchone()
                     finally:
                         _conn.close()
@@ -612,8 +616,9 @@ class TorrentProcessor:
                                         "SELECT id, filled_by_torrent_id FROM media_items "
                                         "WHERE imdb_id=? AND season_number=? AND type='episode' "
                                         "AND filled_by_torrent_id LIKE 'nzb:%' "
+                                        "AND REPLACE(COALESCE(version,''),'*','')=? "
                                         "AND state IN ('Adding','Checking')",
-                                        (_imdb, _season)
+                                        (_imdb, _season, _sibling_ver)
                                     ).fetchall()
                                 finally:
                                     _conn2.close()
@@ -680,21 +685,31 @@ class TorrentProcessor:
 
         # DB-level dedup: check if same item already in Adding/Checking with nzb: torrent ID.
         # Works for both cli_mount and NzbDAV since it uses the DB, not provider API.
+        # Version-scoped: different versions (e.g. 1080p vs 4k) of the same movie/episode
+        # must never be treated as duplicates of each other — reusing another version's
+        # job id corrupts both DB rows and can lead to one version's file being deleted
+        # when the other's lifecycle (health check, cleanup, repair) acts on that job id.
         try:
             from database.core import get_db_connection as _get_dbc_dd
             _item_imdb = (item or {}).get('imdb_id')
             _item_type = (item or {}).get('type', '')
+            _item_id = (item or {}).get('id', -1)
+            # Matches SQL's REPLACE(COALESCE(version,''),'*','') exactly.
+            _item_ver = ((item or {}).get('version') or '').rstrip('*')
             if _item_imdb and _item_type:
                 _dd_q = ("SELECT filled_by_torrent_id FROM media_items "
                          "WHERE imdb_id=? AND type=? AND state IN ('Adding','Checking') "
-                         "AND filled_by_torrent_id LIKE 'nzb:%'")
-                _dd_p = (_item_imdb, _item_type)
+                         "AND filled_by_torrent_id LIKE 'nzb:%' "
+                         "AND REPLACE(COALESCE(version,''),'*','')=? AND id!=?")
+                _dd_p = (_item_imdb, _item_type, _item_ver, _item_id)
                 if _item_type == 'episode':
                     _dd_q = ("SELECT filled_by_torrent_id FROM media_items "
                              "WHERE imdb_id=? AND type=? AND season_number=? AND episode_number=? "
-                             "AND state IN ('Adding','Checking') AND filled_by_torrent_id LIKE 'nzb:%'")
+                             "AND state IN ('Adding','Checking') AND filled_by_torrent_id LIKE 'nzb:%' "
+                             "AND REPLACE(COALESCE(version,''),'*','')=? AND id!=?")
                     _dd_p = (_item_imdb, _item_type,
-                             (item or {}).get('season_number'), (item or {}).get('episode_number'))
+                             (item or {}).get('season_number'), (item or {}).get('episode_number'),
+                             _item_ver, _item_id)
                 with _get_dbc_dd() as _dbc:
                     _dd_row = _dbc.execute(_dd_q, _dd_p).fetchone()
                 if _dd_row:

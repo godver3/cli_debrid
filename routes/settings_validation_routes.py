@@ -430,16 +430,18 @@ def validate_onboarding_settings():
         })
     all_valid = all_valid and provider_valid
 
-    # Validate Trakt settings
+    # Validate Trakt settings — Trakt is optional, so only validate (and gate
+    # all_valid on) it if the user actually entered credentials.
     trakt_client_id = settings_data.get('trakt_client_id', '')
     trakt_client_secret = settings_data.get('trakt_client_secret', '')
-    trakt_valid, trakt_message = validate_trakt_credentials(trakt_client_id, trakt_client_secret)
-    validation_checks.append({
-        'name': 'Trakt Configuration',
-        'valid': trakt_valid,
-        'message': trakt_message
-    })
-    all_valid = all_valid and trakt_valid
+    if trakt_client_id or trakt_client_secret:
+        trakt_valid, trakt_message = validate_trakt_credentials(trakt_client_id, trakt_client_secret)
+        validation_checks.append({
+            'name': 'Trakt Configuration',
+            'valid': trakt_valid,
+            'message': trakt_message
+        })
+        all_valid = all_valid and trakt_valid
 
     return jsonify({
         'valid': all_valid,

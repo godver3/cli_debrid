@@ -17,6 +17,8 @@ def replace_cleanup_after_collect(item_dict):
     item_type = item_dict.get('type')
     item_id = item_dict.get('id')
     new_torrent_id = item_dict.get('filled_by_torrent_id')
+    # Matches SQL's REPLACE(COALESCE(version,''),'*','') exactly.
+    item_version = (item_dict.get('version') or '').rstrip('*')
 
     if not imdb_id or item_type not in ('episode', 'movie'):
         return
@@ -45,20 +47,23 @@ def replace_cleanup_after_collect(item_dict):
             old_rows = cur.execute(
                 f'''SELECT {_fields} FROM media_items
                    WHERE imdb_id = ? AND season_number = ? AND episode_number = ?
-                   AND type = 'episode' AND manual_replace = 1 AND id != ?''',
-                (imdb_id, season_number, episode_number, item_id)
+                   AND type = 'episode' AND manual_replace = 1 AND id != ?
+                   AND REPLACE(COALESCE(version,''),'*','') = ?''',
+                (imdb_id, season_number, episode_number, item_id, item_version)
             ).fetchall()
             stale_rows = cur.execute(
                 f'''SELECT {_fields} FROM media_items m
                    WHERE m.imdb_id = ? AND m.season_number = ? AND m.type = 'episode'
                    AND m.manual_replace = 1 AND m.id != ?
+                   AND REPLACE(COALESCE(m.version,''),'*','') = ?
                    AND EXISTS (
                        SELECT 1 FROM media_items m2
                        WHERE m2.imdb_id = m.imdb_id AND m2.season_number = m.season_number
                        AND m2.episode_number = m.episode_number AND m2.type = 'episode'
                        AND m2.manual_replace = 0 AND m2.state = 'Collected'
+                       AND REPLACE(COALESCE(m2.version,''),'*','') = REPLACE(COALESCE(m.version,''),'*','')
                    )''',
-                (imdb_id, season_number, item_id)
+                (imdb_id, season_number, item_id, item_version)
             ).fetchall()
             log_tag = 'REPLACE_SEASON'
             removal_reason = 'Replaced by new season pack'
@@ -66,19 +71,22 @@ def replace_cleanup_after_collect(item_dict):
         else:  # movie
             old_rows = cur.execute(
                 f'''SELECT {_fields} FROM media_items
-                   WHERE imdb_id = ? AND type = 'movie' AND manual_replace = 1 AND id != ?''',
-                (imdb_id, item_id)
+                   WHERE imdb_id = ? AND type = 'movie' AND manual_replace = 1 AND id != ?
+                   AND REPLACE(COALESCE(version,''),'*','') = ?''',
+                (imdb_id, item_id, item_version)
             ).fetchall()
             stale_rows = cur.execute(
                 f'''SELECT {_fields} FROM media_items m
                    WHERE m.imdb_id = ? AND m.type = 'movie'
                    AND m.manual_replace = 1 AND m.id != ?
+                   AND REPLACE(COALESCE(m.version,''),'*','') = ?
                    AND EXISTS (
                        SELECT 1 FROM media_items m2
                        WHERE m2.imdb_id = m.imdb_id AND m2.type = 'movie'
                        AND m2.manual_replace = 0 AND m2.state = 'Collected'
+                       AND REPLACE(COALESCE(m2.version,''),'*','') = REPLACE(COALESCE(m.version,''),'*','')
                    )''',
-                (imdb_id, item_id)
+                (imdb_id, item_id, item_version)
             ).fetchall()
             log_tag = 'REPLACE_MOVIE'
             removal_reason = 'Replaced by new movie torrent'
@@ -96,14 +104,30 @@ def replace_cleanup_after_collect(item_dict):
             old_id = old_row['id']
             old_torrent_id = old_row['filled_by_torrent_id']
             if old_torrent_id and old_torrent_id != new_torrent_id and _debrid_prov:
+                # Sibling guard: never remove a torrent still referenced by another
+                # live media_items row (e.g. a different version sharing this job id
+                # due to a since-fixed dedup bug) — that would delete the file out
+                # from under the surviving row, leaving it with a broken symlink.
                 try:
-                    _debrid_prov.remove_torrent(old_torrent_id, removal_reason=removal_reason)
-                    logging.info(f"[{log_tag}] Removed debrid torrent {old_torrent_id} for old entry {old_id}")
-                except Exception as debrid_err:
-                    if '404' in str(debrid_err):
-                        logging.debug(f"[{log_tag}] Old torrent {old_torrent_id} already removed (404)")
-                    else:
-                        logging.error(f"[{log_tag}] Failed to remove torrent {old_torrent_id}: {debrid_err}")
+                    _sib_count = cur.execute(
+                        "SELECT COUNT(*) FROM media_items "
+                        "WHERE filled_by_torrent_id = ? AND state IN ('Collected','Upgrading','Checking') AND id != ?",
+                        (old_torrent_id, old_id)
+                    ).fetchone()[0]
+                except Exception as sib_err:
+                    logging.warning(f"[{log_tag}] Sibling check failed for {old_torrent_id}, skipping removal to be safe: {sib_err}")
+                    _sib_count = 1
+                if _sib_count > 0:
+                    logging.info(f"[{log_tag}] Skipping debrid removal for {old_torrent_id} — still referenced by {_sib_count} other item(s)")
+                else:
+                    try:
+                        _debrid_prov.remove_torrent(old_torrent_id, removal_reason=removal_reason)
+                        logging.info(f"[{log_tag}] Removed debrid torrent {old_torrent_id} for old entry {old_id}")
+                    except Exception as debrid_err:
+                        if '404' in str(debrid_err):
+                            logging.debug(f"[{log_tag}] Old torrent {old_torrent_id} already removed (404)")
+                        else:
+                            logging.error(f"[{log_tag}] Failed to remove torrent {old_torrent_id}: {debrid_err}")
             item_path = old_row['location_on_disk'] or old_row['filled_by_file']
             if item_path:
                 ep_title = old_row['episode_title'] if item_type == 'episode' else None

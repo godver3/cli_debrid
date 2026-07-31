@@ -1112,12 +1112,33 @@ class CheckingQueue:
                                 if self.contains_item_id(_item['id']):
                                     queue_manager.move_to_wanted(_item, 'Checking')
                             continue
+                        # Version-scoped grouping: a real season pack always shares one version
+                        # across its episodes. If items sharing this torrent_id span more than
+                        # one version, that indicates a stale/corrupted shared job id (e.g. from
+                        # a since-fixed dedup bug) rather than a genuine pack — resolving them
+                        # together would collapse two different versions onto the same file.
+                        # Only process the subset matching the first item's version this pass;
+                        # other-version items are left for a later pass once their own torrent_id
+                        # is corrected (e.g. by a fresh scrape/resubmission).
+                        def _norm_ver(_v):
+                            return (_v or 'Default').rstrip('*')
+                        _group_ver = _norm_ver(current_items_for_torrent[0].get('version'))
+                        if any(_norm_ver(_i.get('version')) != _group_ver for _i in current_items_for_torrent):
+                            logging.warning(
+                                f'[NZB] Torrent {torrent_id} has items spanning multiple versions '
+                                f'({sorted(set(_norm_ver(_i.get("version")) for _i in current_items_for_torrent))}) — '
+                                f'processing only version {_group_ver!r} this pass to avoid cross-version collapse'
+                            )
+                            current_items_for_torrent = [
+                                _i for _i in current_items_for_torrent if _norm_ver(_i.get('version')) == _group_ver
+                            ]
                         self._resolve_nzb_file_info(torrent_id, current_items_for_torrent)
                         # Reload items from DB so updated fields are visible to symlink/plex checks
                         from database import get_all_media_items
                         current_items_for_torrent = [
                             dict(item) for item in get_all_media_items(state='Checking')
                             if item.get('filled_by_torrent_id') == torrent_id
+                            and _norm_ver(item.get('version')) == _group_ver
                         ]
                         # If resolve still hasn't found the file after multiple attempts, move back to Wanted
                         import os as _os

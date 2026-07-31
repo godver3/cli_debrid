@@ -180,11 +180,56 @@ def trigger_health_scan(full: bool = False, wait: bool = False, timeout: int = 3
 # DB lookup — same strategies as usenet repair_engine lines 291-380
 # ---------------------------------------------------------------------------
 
-def _find_db_items_by_entry_name(entry_name: str) -> list:
+# Sentinel returned by _find_db_items_by_entry_name when a fuzzy strategy matched
+# multiple rows that could not be disambiguated. Callers MUST check for this
+# explicitly and treat it as "skip this entry" — NOT as "no DB item / orphan".
+# Falling through to orphan-delete logic on this result would delete a cli_mount
+# entry that a live (but unidentified) row still depends on.
+AMBIGUOUS = object()
+
+
+def _disambiguate_by_hash(rows: list, info_hash: str):
+    """
+    When a fuzzy match strategy returns multiple rows (e.g. two versions of the
+    same movie), narrow to the row(s) whose filled_by_magnet actually contains
+    info_hash. If that still doesn't resolve to a single row — including when
+    info_hash itself is unknown, in which case there is no way to disambiguate
+    at all — return the AMBIGUOUS sentinel rather than an empty list or all rows
+    unfiltered. Acting on the wrong version's row (or returning every row for the
+    caller to pick db_items[0] from) can delete another live version's file.
+    """
+    if len(rows) <= 1:
+        return rows
+    if not info_hash:
+        # No hash to correlate against — genuinely can't tell these rows apart.
+        return AMBIGUOUS
+    _hash_lower = info_hash.lower()
+    _matched = [r for r in rows if _hash_lower in (r.get('filled_by_magnet') or '').lower()]
+    if len(_matched) == 1:
+        return _matched
+    if not _matched:
+        # None of the fuzzy-matched rows correlate to this hash — ambiguous, refuse to guess.
+        return AMBIGUOUS
+    # Multiple rows share this hash (e.g. legitimate season-pack siblings) — fine to
+    # return them all; callers that need one pick db_items[0] deliberately for that case.
+    return _matched
+
+
+def _find_db_items_by_entry_name(entry_name: str, info_hash: str = ''):
     """
     Find all DB items whose files belong to this cli_mount entry.
     Falls through multiple strategies from most to least precise.
     Mirrors usenet repair_engine._find_db_items_by_entry_name exactly.
+
+    info_hash (optional): when a fuzzy strategy (4 or 6) returns more than one
+    row — e.g. two versions of the same movie/episode sharing an imdb_id — this
+    is used to disambiguate via filled_by_magnet rather than picking arbitrarily.
+
+    Returns a list (possibly empty = genuinely not found), OR the AMBIGUOUS
+    sentinel if a fuzzy strategy matched multiple rows it couldn't tell apart.
+    Callers MUST check for AMBIGUOUS explicitly and skip the entry — treating it
+    as an empty list would trigger orphan-delete logic and destroy a file a live
+    row still needs.
     """
     if not entry_name:
         return []
@@ -220,7 +265,10 @@ def _find_db_items_by_entry_name(entry_name: str) -> list:
             if rows:
                 return [dict(r) for r in rows]
 
-            # Strategy 4: IMDB ID + episode number from entry_name pattern
+            # Strategy 4: IMDB ID + episode number from entry_name pattern.
+            # These match on imdb_id (+ S/E for episodes) only — if two versions
+            # (e.g. 1080p/4k) are both live, this can return both rows. Disambiguate
+            # via info_hash correlation rather than acting on an arbitrary one.
             imdb_match = re.search(r'\{imdb-(tt\d+)\}', entry_name)
             ep_match = re.search(r'[Ss](\d{1,2})[Ee](\d{1,2})', entry_name)
             if imdb_match and ep_match:
@@ -234,7 +282,7 @@ def _find_db_items_by_entry_name(entry_name: str) -> list:
                     (imdb_id, season_num, ep_num),
                 ).fetchall()
                 if rows:
-                    return [dict(r) for r in rows]
+                    return _disambiguate_by_hash([dict(r) for r in rows], info_hash)
             elif imdb_match and not ep_match:
                 imdb_id = imdb_match.group(1)
                 rows = conn.execute(
@@ -242,7 +290,7 @@ def _find_db_items_by_entry_name(entry_name: str) -> list:
                     (imdb_id,),
                 ).fetchall()
                 if rows:
-                    return [dict(r) for r in rows]
+                    return _disambiguate_by_hash([dict(r) for r in rows], info_hash)
 
             # Strategy 5: original_scraped_torrent_title match
             rows = conn.execute(
@@ -266,7 +314,7 @@ def _find_db_items_by_entry_name(entry_name: str) -> list:
                         (title_prefix + '%', season_num, ep_num),
                     ).fetchall()
                     if rows:
-                        return [dict(r) for r in rows]
+                        return _disambiguate_by_hash([dict(r) for r in rows], info_hash)
 
             return []
         except Exception as e:
@@ -521,7 +569,16 @@ def reinsert_entry(entry_name: str, info_hash: str) -> dict:
     try:
         from database.nzb_repair_activity import log_repair_activity
 
-        db_items = _find_db_items_by_entry_name(entry_name)
+        db_items = _find_db_items_by_entry_name(entry_name, info_hash)
+        if db_items is AMBIGUOUS:
+            logger.warning(f'[DebridRepair] reinsert_entry {entry_name!r}: ambiguous multi-version match, skipping without deleting')
+            log_repair_activity(
+                broken_nzb_id=f'debrid:{info_hash}',
+                broken_nzb_title=entry_name,
+                outcome='ambiguous',
+                triggered_by='debrid_repair',
+            )
+            return {'outcome': 'ambiguous', 'message': 'Multiple versions ambiguously match — refusing to guess which to repair'}
         db_item = db_items[0] if db_items else {}
 
         # Orphan check — DB item is already collected via a different provider
@@ -706,7 +763,16 @@ def replace_entry(entry_name: str, info_hash: str, version_override: str = None)
     try:
         from database.nzb_repair_activity import log_repair_activity
 
-        db_items = _find_db_items_by_entry_name(entry_name)
+        db_items = _find_db_items_by_entry_name(entry_name, info_hash)
+        if db_items is AMBIGUOUS:
+            logger.warning(f'[DebridRepair] replace_entry {entry_name!r}: ambiguous multi-version match, skipping without deleting')
+            log_repair_activity(
+                broken_nzb_id=f'debrid:{info_hash}',
+                broken_nzb_title=entry_name,
+                outcome='ambiguous',
+                triggered_by='debrid_repair',
+            )
+            return {'outcome': 'ambiguous', 'message': 'Multiple versions ambiguously match — refusing to guess which to repair'}
         db_items = [i for i in db_items if i.get('state') in ('Collected', 'Checking', 'Upgrading', 'Adding')]
 
         if not db_items:
@@ -873,7 +939,10 @@ def delete_all_broken() -> dict:
             if _delete_from_climount(info_hash, entry_name):
                 deleted_climount += 1
 
-            db_items = _find_db_items_by_entry_name(entry_name) if entry_name else []
+            db_items = _find_db_items_by_entry_name(entry_name, info_hash) if entry_name else []
+            if db_items is AMBIGUOUS:
+                logger.warning(f'[DebridRepair] delete_all_broken: ambiguous multi-version match for {entry_name!r} — skipping DB reset for this entry')
+                db_items = []
             for item in db_items:
                 if _delete_from_plex(item):
                     deleted_plex += 1

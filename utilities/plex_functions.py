@@ -2018,6 +2018,20 @@ def scan_and_empty_plex_trash(paths: list = None, section_type: str = None, empt
         # Step 3: Empty trash ONLY for sections that were actually scanned
         if not empty_trash:
             return result
+
+        # Safety: if specific paths were requested but none of them matched any
+        # Plex library section (e.g. a debrid-mount path that doesn't match the
+        # section's Plex-visible location), scanned_sections stays empty. Emptying
+        # trash in that case would fall through to "every section" below, wiping
+        # unrelated content across the whole library instead of the intended item.
+        # Fail closed: skip the trash-empty entirely rather than guess.
+        if paths and not scanned_sections:
+            error_msg = f"No Plex section matched any of the requested paths {paths!r} — skipping trash empty to avoid affecting unrelated sections"
+            logger.warning(error_msg)
+            result['success'] = False
+            result['errors'].append(error_msg)
+            return result
+
         for section in sections:
             try:
                 # Skip if this section wasn't scanned
