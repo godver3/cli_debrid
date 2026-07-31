@@ -50,5 +50,5 @@ Markdown==3.8
 Flask-Compress==1.15
 simple-websocket>=1.0.0
 psycopg2-binary
-patchright==1.52.5
+patchright==1.61.2
 pyvirtualdisplay==3.0
